@@ -8,7 +8,7 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
-  "description": "Test-side-load shell for explicitly leased local Chrome tabs.",
+  "description": "Local Beta unpacked extension for explicitly attached Chrome tabs via Forge Desktop. Requires Chrome 125+, Developer Mode, and a dedicated profile.",
   "host_permissions": [
     "<all_urls>"
   ],

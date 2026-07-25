@@ -93,10 +93,10 @@ async function claim(event: SubmitEvent): Promise<void> {
     status('Select at least one unrestricted tab.', true)
     return
   }
-  const sessionLabel = query<HTMLInputElement>('[data-forge-session]').value.trim() || 'M1 spike'
+  const sessionLabel = query<HTMLInputElement>('[data-forge-session]').value.trim() || 'local'
   const selectedGroups = [...new Set(tabIds.map((tabId) => groupByTab.get(tabId) ?? null))]
   const groupId = selectedGroups.length === 1 && selectedGroups[0] !== null ? selectedGroups[0] : undefined
-  status('Claiming and attaching Chrome debugger…')
+  status('Attaching Chrome debugger…')
   const result = await request<{ lease: LeaseRecord }>({
     kind: 'picker.claim', leaseId, leaseEpoch, sessionAgentId: `local:${sessionLabel}`.slice(0, 128), tabIds,
     ...(groupId === undefined ? {} : { groupId }),
@@ -112,7 +112,7 @@ async function createGroupedTab(): Promise<void> {
     status('Detach the current lease before creating another grouped tab.', true)
     return
   }
-  const sessionLabel = query<HTMLInputElement>('[data-forge-session]').value.trim() || 'Forge session'
+  const sessionLabel = query<HTMLInputElement>('[data-forge-session]').value.trim() || 'local'
   const result = await request<{ lease: LeaseRecord }>({
     kind: 'picker.create', leaseId, leaseEpoch, sessionAgentId: `local:${sessionLabel}`.slice(0, 128),
     groupTitle: `Forge · ${sessionLabel}`.slice(0, 512),

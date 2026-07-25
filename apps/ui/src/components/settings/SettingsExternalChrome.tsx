@@ -29,32 +29,32 @@ import { SettingsSection } from './settings-row'
 const CONFIRMATIONS = {
   enable: {
     title: 'Enable External Chrome?',
-    description: 'Enable only after you verify the unpacked folder, pinned extension ID, broad Chrome permissions, and dedicated-profile recommendation. This starts the local coordinator and native host; it does not attach any tab.',
+    description: 'Enable only after you verify the unpacked folder, pinned extension ID, broad Chrome permissions, and dedicated-profile recommendation. This starts the local coordinator and native host for this Forge data directory; it does not attach any tab.',
     action: 'Enable',
   },
   disable: {
     title: 'Disable External Chrome?',
-    description: 'This stops the local coordinator and disconnects the native host. Chrome keeps the manually loaded extension.',
+    description: 'This stops the local coordinator and disconnects the native host. Chrome keeps the manually loaded extension in each profile.',
     action: 'Disable',
   },
   repair: {
     title: 'Repair the native host?',
-    description: 'Forge will repair its native-messaging registration and may rotate local authentication. It will not inspect or change Chrome profiles.',
+    description: 'Forge will repair its native-messaging registration and may rotate local authentication. It will not inspect or change Chrome profiles or tabs.',
     action: 'Repair',
   },
   rollback: {
     title: 'Roll back External Chrome?',
-    description: 'Forge will select the last validated payload and native host. Reload the unpacked extension manually in every Chrome profile afterward.',
+    description: 'Forge will select the last validated payload and native host. Compatible connected profiles auto-reload afterward; reload manually in chrome://extensions only when status shows Manual extension reload required.',
     action: 'Roll back',
   },
   remove: {
     title: 'Remove the native integration?',
-    description: 'Forge will disable the coordinator, unregister its native host, and remove local authentication. Remove the unpacked extension manually from each Chrome profile.',
+    description: 'Forge will disable the coordinator, unregister its native host, and remove local authentication. Remove the unpacked extension manually from each Chrome profile. Detach leaves user tabs open.',
     action: 'Remove integration',
   },
   takeover: {
-    title: 'Take over External Chrome authority?',
-    description: 'First quiesce External Chrome in the currently owning Forge Desktop/data directory. This explicit confirmation never interrupts a live authority and rotates local authentication only after release is proven.',
+    title: 'Take over stale Forge ownership?',
+    description: 'This transfers stale Forge coordinator and native-host ownership for this data directory. It does not take over Chrome profiles or tabs. Quiesce External Chrome in the currently owning Forge Desktop/data directory first. Confirmation never interrupts a live authority and rotates local authentication only after release is proven.',
     action: 'Confirm takeover',
   },
 } as const
@@ -122,7 +122,7 @@ export function SettingsExternalChrome() {
     <div className="flex flex-col gap-8">
       <SettingsSection
         label="External Chrome (Local Beta)"
-        description="One-time, local-only setup for Forge Desktop's unpacked Chrome extension and native host."
+        description="Local-only setup for Forge Desktop's unpacked Chrome extension and native host. Coordinator ownership is scoped to this Forge data directory; extension loading is per Chrome profile."
         cta={bridge ? (
           <Button type="button" variant="ghost" size="sm" onClick={() => void load()} disabled={loading || busy !== null}>
             <RefreshCw className={`mr-1.5 size-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -135,7 +135,7 @@ export function SettingsExternalChrome() {
             <div className="space-y-1">
               <p className="font-semibold">Unpacked extension — not from the Chrome Web Store</p>
               <p className="text-muted-foreground">
-                This Local Beta is intentionally loaded from a Forge-managed folder. Chrome does not update it through the Web Store. Forge requests an authenticated automatic reload after updates; if Chrome blocks it, this page shows the required manual reload state.
+                Requires Chrome 125+, Developer Mode, and Load unpacked from a Forge-managed folder. Chrome does not update it through the Web Store. Compatible connected profiles auto-reload after Forge update or rollback; use manual Reload only when this page shows Manual extension reload required. Managed or enterprise Chrome policy may disable unpacked extensions or Developer Mode.
               </p>
             </div>
           </div>
@@ -147,7 +147,7 @@ export function SettingsExternalChrome() {
             <div className="space-y-1">
               <p className="font-semibold">Powerful browser permissions</p>
               <p className="text-muted-foreground">
-                External Chrome can access all websites and requests debugger, history, bookmarks, downloads, top-sites, tabs, sessions, navigation, scripting, storage, tab-group, notification, side-panel, and native-messaging permissions. It can expose page content, browsing activity, downloads, and authenticated actions. Use a dedicated Chrome profile with only the accounts needed for Forge work; do not start with your everyday profile.
+                External Chrome requests broad V1 permissions: all websites plus debugger, history, bookmarks, downloads, top-sites, tabs, sessions, navigation, scripting, storage, tab-group, notification, side-panel, and native-messaging. History, bookmarks, and top-sites remain declared for the accepted compatibility envelope but are not read by current Local Beta code. Selected-tab page content, downloads metadata, and authenticated actions can still be exposed during agent turns. Use a dedicated Chrome profile with only the accounts needed for Forge work; do not start with your everyday profile.
               </p>
             </div>
           </div>
@@ -201,17 +201,17 @@ export function SettingsExternalChrome() {
         {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
       </SettingsSection>
 
-      <SettingsSection label="Load it in each Chrome profile" description="Forge does not open chrome:// pages, enumerate profiles, or install the extension for you.">
+      <SettingsSection label="Load it in each Chrome profile" description="Forge does not open chrome:// pages, enumerate profiles, or install the extension for you. Setup state is per Chrome profile and per Forge data directory.">
         <ol className="list-decimal space-y-3 pl-5 text-sm text-muted-foreground">
-          <li>Create or open the dedicated Chrome profile you intend to use. Extension loading is per Chrome profile, so repeat these steps separately for every profile.</li>
-          <li>Manually enter <code className="select-all rounded bg-muted px-1 py-0.5 text-foreground">chrome://extensions</code> in Chrome.</li>
-          <li>Turn on <strong className="text-foreground">Developer mode</strong> in the top-right corner.</li>
+          <li>Create or open the dedicated Chrome profile you intend to use. Prefer a profile with only the accounts needed for Forge work. Extension loading is per Chrome profile; coordinator ownership is per Forge data directory. Repeat these steps separately for every profile.</li>
+          <li>Use Chrome 125 or newer. Manually enter <code className="select-all rounded bg-muted px-1 py-0.5 text-foreground">chrome://extensions</code> in Chrome.</li>
+          <li>Turn on <strong className="text-foreground">Developer mode</strong> in the top-right corner. Managed or enterprise policy may block Developer Mode or unpacked extensions.</li>
           <li>Click <strong className="text-foreground">Load unpacked</strong> and choose the exact validated folder shown above. Do not choose its parent or a payload subfolder.</li>
           <li>Confirm Chrome shows extension ID <code className="select-all break-all text-foreground">fcchfcnadajoejfbiclihglkmbcfhajd</code>. If the ID differs, remove that extension and do not enable the integration.</li>
-          <li>If Forge reports <strong className="text-foreground">Manual extension reload required</strong>, return here, compare versions/hashes, then click <strong className="text-foreground">Reload</strong> on the extension card in each Chrome profile.</li>
+          <li>Compatible connected profiles auto-reload after update or rollback. Use manual <strong className="text-foreground">Reload</strong> only when Forge reports <strong className="text-foreground">Manual extension reload required</strong>: return here, compare versions/hashes, then click Reload on the extension card in each affected Chrome profile.</li>
         </ol>
         <p className="rounded-md border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
-          Removing or repairing the Forge native integration does not remove the unpacked extension from Chrome. Do that manually in each profile. Forge never scans Chrome profiles for this setup.
+          Removing or repairing the Forge native integration does not remove the unpacked extension from Chrome. Do that manually in each profile. Detach leaves user tabs open. Forge never scans Chrome profiles for this setup.
         </p>
       </SettingsSection>
 
@@ -249,7 +249,7 @@ function StatusSummary({ status }: { status: ExternalChromeCoordinatorStatus }) 
       <StatusItem label="Native host" value={nativeMessage} />
       <StatusItem label="Local authentication" value={status.auth} />
       {status.detail ? <p className="sm:col-span-2 text-xs text-muted-foreground">{status.detail}</p> : null}
-      {status.state === 'other-instance' ? <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">Another live Forge Desktop instance owns the coordinator. Quiesce it before confirming takeover.{status.ownerDataDirHash ? ` Owner data-dir hash: ${status.ownerDataDirHash}` : ''}</p> : null}
+      {status.state === 'other-instance' ? <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">Another live Forge Desktop instance owns the coordinator and native host. Quiesce it before confirming takeover of that Forge ownership; this does not take over Chrome profiles or tabs.{status.ownerDataDirHash ? ` Owner data-dir hash: ${status.ownerDataDirHash}` : ''}</p> : null}
     </div>
   )
 }
@@ -260,9 +260,9 @@ function RecoveryStatus({ status }: { status: ExternalChromeCoordinatorStatus })
     updating: 'Updating External Chrome. New claims and browser operations are paused.',
     reconnecting: 'Reconnecting. Forge requires a new authenticated hello before re-enabling operations.',
     'rolled-back': 'Rolled back to the last verified compatible payload.',
-    'manual-extension-reload': 'Manual extension reload required: open chrome://extensions and click Reload for Forge External Chrome.',
+    'manual-extension-reload': 'Manual extension reload required: open chrome://extensions and click Reload for Forge External Chrome. Compatible connected profiles otherwise auto-reload after update or rollback.',
     'incompatible-payload': 'The current and previous payloads are incompatible. External Chrome remains detached; Managed Browser is still available.',
-    'authority-owned-by-other-data-dir': 'Another Forge data directory owns External Chrome. Quiesce that authority, then explicitly confirm takeover.',
+    'authority-owned-by-other-data-dir': 'Another Forge data directory owns External Chrome coordinator and native-host authority. Quiesce that authority, then explicitly confirm takeover. This does not transfer Chrome profiles or tabs.',
   }
   return (
     <div data-testid="external-chrome-recovery" className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
@@ -301,7 +301,7 @@ function CoordinatorActions({
     <div className="space-y-3 rounded-md border border-border/70 p-4">
       <div>
         <p className="text-sm font-semibold">Local coordinator actions</p>
-        <p className="text-xs text-muted-foreground">These actions manage only Forge-owned deployment, authentication, and native registration. They do not attach tabs or change Chrome profiles.</p>
+        <p className="text-xs text-muted-foreground">These actions manage only Forge-owned deployment, authentication, and native registration for this data directory. Takeover transfers stale coordinator/native-host ownership only. They do not attach tabs or change Chrome profiles.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" onClick={() => onConfirm('enable')} disabled={!deploymentReady || !status.canEnable || unavailable}>Enable</Button>
@@ -325,7 +325,7 @@ function BuildStatus({ status }: { status: ExternalChromeCoordinatorStatus }) {
       <div className="space-y-3">
         <Inventory label="Packaged with Desktop" value={status.setup.packaged} />
         <Inventory label="Deployed on disk" value={status.setup.deployed} />
-        <Inventory label="Reported running" value={status.setup.running} empty="Not reported in this setup milestone" />
+        <Inventory label="Reported running" value={status.setup.running} empty="Not reported until an authenticated extension connection exists" />
       </div>
     </div>
   )

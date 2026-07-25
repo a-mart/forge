@@ -116,21 +116,28 @@ async function render(bridge?: ExternalChromeBridge) {
 }
 
 describe('SettingsExternalChrome', () => {
-  it('shows the no-store/security/profile/manual-reload ceremony and copies only coordinator-projected values', async () => {
+  it('shows the no-store/security/profile/auto-reload ceremony and copies only coordinator-projected values', async () => {
     const bridge = createBridge()
     await render(bridge)
 
     expect(document.body.textContent).toContain('Unpacked extension — not from the Chrome Web Store')
+    expect(document.body.textContent).toContain('Chrome 125+')
+    expect(document.body.textContent).toContain('Developer Mode')
+    expect(document.body.textContent).toContain('Compatible connected profiles auto-reload')
+    expect(document.body.textContent).toContain('Manual extension reload required')
     expect(document.body.textContent).toContain('Powerful browser permissions')
+    expect(document.body.textContent).toContain('not read by current Local Beta code')
     expect(document.body.textContent).toContain('dedicated Chrome profile')
+    expect(document.body.textContent).toContain('per Chrome profile')
+    expect(document.body.textContent).toContain('Forge data directory')
     expect(document.body.textContent).toContain('chrome://extensions')
     expect(document.body.textContent).toContain('Developer mode')
-    expect(document.body.textContent).toContain('per Chrome profile')
-    expect(document.body.textContent).toContain('Reload')
+    expect(document.body.textContent).toContain('Detach leaves user tabs open')
     expect(screen.getByTestId('external-chrome-load-path').textContent).toBe(LOAD_PATH)
     expect(screen.getByTestId('external-chrome-extension-id').textContent).toBe('fcchfcnadajoejfbiclihglkmbcfhajd')
     expect(document.body.textContent).toContain(`sha256:${HASH_A}`)
-    expect(document.body.textContent).toContain('Not reported in this setup milestone')
+    expect(document.body.textContent).toContain('Not reported until an authenticated extension connection exists')
+    expect(document.body.textContent).not.toContain('setup milestone')
 
     await click(screen.getByRole('button', { name: 'Copy path' }))
     await click(screen.getByRole('button', { name: 'Copy ID' }))
@@ -163,6 +170,14 @@ describe('SettingsExternalChrome', () => {
       await waitFor(() => expect(actionButton.disabled).toBe(false))
       await click(actionButton)
       const dialog = await screen.findByRole('alertdialog')
+      if (buttonName === 'Take over stale owner') {
+        expect(dialog.textContent).toContain('coordinator and native-host ownership')
+        expect(dialog.textContent).toContain('does not take over Chrome profiles or tabs')
+      }
+      if (buttonName === 'Roll back') {
+        expect(dialog.textContent).toContain('Compatible connected profiles auto-reload')
+        expect(dialog.textContent).toContain('Manual extension reload required')
+      }
       await click(within(dialog).getByRole('button', { name: confirmName }))
       await waitFor(() => expect(method).toHaveBeenCalledTimes(1))
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
@@ -181,7 +196,8 @@ describe('SettingsExternalChrome', () => {
     await render(bridge)
 
     expect(document.body.textContent).toContain('untrusted — repair blocked')
-    expect(document.body.textContent).toContain('Another live Forge Desktop instance owns the coordinator')
+    expect(document.body.textContent).toContain('Another live Forge Desktop instance owns the coordinator and native host')
+    expect(document.body.textContent).toContain('does not take over Chrome profiles or tabs')
     expect(document.body.textContent).toContain('failed integrity, identity, compatibility, or path validation')
     expect(document.body.textContent).toContain('Load unpacked folder not ready')
     expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
@@ -205,9 +221,9 @@ describe('SettingsExternalChrome', () => {
     ['updating', 'New claims and browser operations are paused.'],
     ['reconnecting', 'requires a new authenticated hello'],
     ['rolled-back', 'last verified compatible payload'],
-    ['manual-extension-reload', 'open chrome://extensions'],
+    ['manual-extension-reload', 'Compatible connected profiles otherwise auto-reload'],
     ['incompatible-payload', 'Managed Browser is still available'],
-    ['authority-owned-by-other-data-dir', 'explicitly confirm takeover'],
+    ['authority-owned-by-other-data-dir', 'does not transfer Chrome profiles or tabs'],
   ] as const)('renders truthful %s recovery guidance', async (recovery, guidance) => {
     await render(createBridge(coordinatorStatus({ recovery })))
     expect(screen.getByTestId('external-chrome-recovery').textContent).toContain(recovery)
