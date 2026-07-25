@@ -51,14 +51,16 @@ export function assertConnectedSocket(socket: WebSocket | null): asserts socket 
 }
 
 export function buildSubscribeCommand(
-  agentId?: string | null,
-  conversationView?: BuilderTimelineChannelView,
+  agentId: string | null | undefined,
+  conversationView: BuilderTimelineChannelView,
+  subscriptionId: string,
 ): ClientCommand {
   return {
     type: 'subscribe',
     agentId: agentId ?? undefined,
     conversationPaging: true,
-    ...(conversationView ? { conversationView } : {}),
+    conversationView,
+    subscriptionId,
   }
 }
 

@@ -16,11 +16,16 @@
 
 import { OriginStore, type OriginStoreOptions } from './origin-store'
 import type { OriginId } from './origin-key'
+import { ConversationSnapshotCache } from '../ws-client/conversation-snapshot-cache'
+import { SESSION_SWITCH_SNAPSHOT_CACHE_ENABLED } from '../ws-client/conversation-snapshot-cache-gate'
 
 type Unsubscribe = () => void
 
 export class OriginRegistry {
   private readonly stores = new Map<OriginId, OriginStore>()
+  private readonly conversationSnapshotCache = SESSION_SWITCH_SNAPSHOT_CACHE_ENABLED
+    ? new ConversationSnapshotCache()
+    : undefined
   /** Listeners notified when an origin is added or removed. */
   private readonly listeners = new Set<() => void>()
 
@@ -37,11 +42,15 @@ export class OriginRegistry {
         return existing
       }
       // URL changed → tear down and recreate.
+      this.conversationSnapshotCache?.evictOrigin(options.originId)
       existing.destroy()
       this.stores.delete(options.originId)
     }
 
-    const store = new OriginStore(options)
+    const store = new OriginStore({
+      ...options,
+      conversationSnapshotCache: options.conversationSnapshotCache ?? this.conversationSnapshotCache,
+    })
     this.stores.set(options.originId, store)
     this.notifyRegistry()
     return store
@@ -65,6 +74,7 @@ export class OriginRegistry {
   destroyOrigin(originId: OriginId): void {
     const store = this.stores.get(originId)
     if (!store) return
+    this.conversationSnapshotCache?.evictOrigin(originId)
     store.destroy()
     this.stores.delete(originId)
     this.notifyRegistry()
@@ -90,7 +100,8 @@ export class OriginRegistry {
 
   /** Destroy every store (test cleanup / full teardown). */
   destroyAll(): void {
-    for (const store of this.stores.values()) {
+    for (const [originId, store] of this.stores) {
+      this.conversationSnapshotCache?.evictOrigin(originId)
       store.destroy()
     }
     this.stores.clear()

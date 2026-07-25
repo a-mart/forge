@@ -27,6 +27,7 @@
 
 import type { ServerEvent } from '@forge/protocol'
 import { ManagerWsClient } from '@/lib/ws-client'
+import type { ConversationSnapshotCache } from '@/lib/ws-client/conversation-snapshot-cache'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { handleConversationEvent } from '@/lib/ws-client/event-handlers/conversation-event-handlers'
 import { reduceAgentStatus } from '@/lib/ws-client/snapshot-reducers'
@@ -73,6 +74,8 @@ export interface OriginStoreOptions {
    * no real socket.  Defaults to `false`.
    */
   offline?: boolean
+  /** Shared application-owned presentation cache. */
+  conversationSnapshotCache?: ConversationSnapshotCache
 }
 
 export class OriginStore {
@@ -81,6 +84,7 @@ export class OriginStore {
 
   private readonly client: ManagerWsClient
   private readonly httpClient: SettingsApiClient
+  private readonly conversationSnapshotCache?: ConversationSnapshotCache
 
   private state: ManagerWsState
   private meta: OriginMetaState
@@ -96,8 +100,12 @@ export class OriginStore {
   constructor(options: OriginStoreOptions) {
     this.originId = options.originId
     this.wsUrl = options.wsUrl
+    this.conversationSnapshotCache = options.conversationSnapshotCache
 
-    this.client = new ManagerWsClient(options.wsUrl, null)
+    this.client = new ManagerWsClient(options.wsUrl, null, {
+      originId: options.originId,
+      conversationSnapshotCache: options.conversationSnapshotCache,
+    })
     this.state = this.client.getState()
     this.meta = createInitialOriginMetaState()
 
@@ -264,6 +272,7 @@ export class OriginStore {
   // -----------------------------------------------------------------------
 
   destroy(): void {
+    this.conversationSnapshotCache?.evictOrigin(this.originId)
     this.detachClient()
     this.client.destroy()
     this.slices.clear()

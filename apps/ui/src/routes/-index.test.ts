@@ -226,6 +226,7 @@ async function renderPage(): Promise<FakeWebSocket> {
     type: 'subscribe',
     conversationPaging: true,
     conversationView: 'web',
+    subscriptionId: expect.any(String),
   })
   emitServerEvent(socket, {
     type: 'ready',

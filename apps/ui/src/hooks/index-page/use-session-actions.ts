@@ -208,7 +208,7 @@ export function useSessionActions({
         try {
           const result = await client.createSession(profileId, name)
           navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
-          client.subscribeToAgent(result.sessionAgent.agentId)
+          client.subscribeToAgent(result.sessionAgent.agentId, { reason: 'create' })
         } catch (error) {
           setState((prev) => ({
             ...prev,
@@ -231,7 +231,7 @@ export function useSessionActions({
             label: 'Agent Creator',
           })
           navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
-          client.subscribeToAgent(result.sessionAgent.agentId)
+          client.subscribeToAgent(result.sessionAgent.agentId, { reason: 'create' })
         } catch (error) {
           setState((prev) => ({
             ...prev,
@@ -475,7 +475,7 @@ export function useSessionActions({
         try {
           const result = await client.forkSession(sourceAgentId, name)
           navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
-          client.subscribeToAgent(result.newSessionAgent.agentId)
+          client.subscribeToAgent(result.newSessionAgent.agentId, { reason: 'fork' })
         } catch (error) {
           setState((prev) => ({
             ...prev,
@@ -508,7 +508,7 @@ export function useSessionActions({
         try {
           const result = await client.forkSession(activeAgentId, name, messageId)
           navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
-          client.subscribeToAgent(result.newSessionAgent.agentId)
+          client.subscribeToAgent(result.newSessionAgent.agentId, { reason: 'fork' })
         } catch (error) {
           setState((prev) => ({
             ...prev,

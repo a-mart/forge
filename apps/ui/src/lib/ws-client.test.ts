@@ -2,6 +2,7 @@ import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { WsRequestContractType } from '@forge/protocol'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
+import { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import { REQUEST_TIMEOUT_MS, WS_REQUEST_ERROR_HINTS, WS_REQUEST_TYPES } from './ws-client/runtime-types'
 import type { WsRequestType } from './ws-client/types'
 
@@ -254,6 +255,7 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
       conversationPaging: true,
       conversationView: 'web',
+      subscriptionId: expect.any(String),
     })
 
     emitServerEvent(socket, {
@@ -593,12 +595,18 @@ describe('ManagerWsClient', () => {
       type: 'subscribe',
       conversationPaging: true,
       conversationView: 'web',
+      subscriptionId: expect.any(String),
     })
 
     emitServerEvent(socket, {
       type: 'ready',
       serverTime: new Date().toISOString(),
       subscribedAgentId: 'release-manager',
+    })
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'release-manager',
+      messages: [],
     })
 
     expect(client.getState().targetAgentId).toBe('release-manager')
@@ -634,6 +642,7 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
       conversationPaging: true,
       conversationView: 'web',
+      subscriptionId: expect.any(String),
     })
     expect(client.getState().connectionEpoch).toBe(1)
     emitServerEvent(socket, { type: 'profiles_snapshot', profiles: [] })
@@ -660,6 +669,7 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
       conversationPaging: true,
       conversationView: 'web',
+      subscriptionId: expect.any(String),
     })
     expect(client.getState().connected).toBe(true)
     expect(client.getState().connectionEpoch).toBe(2)
@@ -672,11 +682,14 @@ describe('ManagerWsClient', () => {
     emitServerEvent(reconnectedSocket, { type: 'builder_sidebar_order_updated', revision: 1 })
     expect(client.getState().builderSidebarOrderRevision).toBe(1)
 
-    // The re-subscribe lands: the backend's fresh `ready` re-hydrates the target.
+    // The re-subscribe lands: the backend's correlated `ready` re-hydrates the target.
+    const reconnectSubscribe = JSON.parse(reconnectedSocket.sentPayloads[0]) as { subscriptionId: string }
     emitServerEvent(reconnectedSocket, {
       type: 'ready',
       serverTime: new Date().toISOString(),
       subscribedAgentId: 'manager',
+      subscriptionId: reconnectSubscribe.subscriptionId,
+      servedConversationView: 'web',
     })
     expect(client.getState().subscribedAgentId).toBe('manager')
     expect(reload).not.toHaveBeenCalled()
@@ -991,6 +1004,7 @@ describe('ManagerWsClient', () => {
       agentId: 'worker-1',
       conversationPaging: true,
       conversationView: 'web',
+      subscriptionId: expect.any(String),
     })
 
     emitServerEvent(socket, {
@@ -1236,6 +1250,7 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
       conversationPaging: true,
       conversationView: 'all',
+      subscriptionId: expect.any(String),
     })
     expect(client.getState().conversationPage).toBeNull()
     client.destroy()
@@ -1505,10 +1520,14 @@ describe('ManagerWsClient', () => {
     const socket = FakeWebSocket.instances[0]
     socket.emit('open')
 
+    client.subscribeToAgent('worker-1')
+    const workerSubscribe = JSON.parse(socket.sentPayloads.at(-1) ?? '{}') as { subscriptionId: string }
     emitServerEvent(socket, {
       type: 'ready',
       serverTime: new Date().toISOString(),
       subscribedAgentId: 'worker-1',
+      subscriptionId: workerSubscribe.subscriptionId,
+      servedConversationView: 'web',
     })
 
     emitServerEvent(socket, {
@@ -4986,8 +5005,9 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['choice-1'] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } })
 
-      // All 4 events coalesced into exactly 1 state update
-      expect(notificationCount).toBe(1)
+      // Legacy history completes authority immediately; choices and unread are
+      // subsequent lifecycle commits.
+      expect(notificationCount).toBe(3)
 
       // All bootstrap data present in final state
       const state = client.getState()
@@ -5019,11 +5039,10 @@ describe('ManagerWsClient', () => {
         counts: { 'session-b': 1, 'session-c': 5, 'session-d': 2 },
       })
 
-      // Exactly one snapshot from bootstrap flush
-      expect(snapshots).toHaveLength(1)
+      expect(snapshots).toHaveLength(3)
 
       // Unread counts present, with target session-b filtered out
-      expect(snapshots[0].unreadCounts).toEqual({ 'session-c': 5, 'session-d': 2 })
+      expect(snapshots.at(-1)?.unreadCounts).toEqual({ 'session-c': 5, 'session-d': 2 })
 
       unsub()
       client.destroy()
@@ -5048,8 +5067,8 @@ describe('ManagerWsClient', () => {
         ],
       })
 
-      // No notifications yet — events are buffered
-      expect(snapshots).toHaveLength(0)
+      // Matching legacy history is the completion point.
+      expect(snapshots).toHaveLength(1)
 
       // Live event arrives before bootstrap completes → force-flush
       emitServerEvent(socket, {
@@ -5099,9 +5118,10 @@ describe('ManagerWsClient', () => {
         pendingCount: 1,
       })
 
-      // Force-flush produced a notification, and the agent_status was processed
+      // Status is live authority, but an uncorrelated ready cannot claim the
+      // selected subscription before matching history.
       expect(notificationCount).toBeGreaterThanOrEqual(1)
-      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().subscribedAgentId).toBeNull()
       expect(client.getState().statuses['worker-1']?.status).toBe('streaming')
 
       unsub()
@@ -5122,7 +5142,7 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(3)
       expect(client.getState().messages).toHaveLength(0)
       expect(client.getState().pendingChoiceIds.size).toBe(0)
       expect(client.getState().subscribedAgentId).toBe('session-b')
@@ -5145,14 +5165,11 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
 
-      // No flush yet — waiting for terminal signal
-      expect(notificationCount).toBe(0)
+      // Legacy history is itself terminal; no obsolete buffer timeout is needed.
+      expect(notificationCount).toBe(2)
 
-      // Advance past the safety timeout (100ms)
       vi.advanceTimersByTime(200)
-
-      // Buffer flushed via timeout
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(2)
       expect(client.getState().subscribedAgentId).toBe('session-b')
 
       unsub()
@@ -5173,12 +5190,13 @@ describe('ManagerWsClient', () => {
       socket.emit('open')
       notificationCount = 0 // reset after connect state update
 
-      // Each event produces its own state update (no batching)
+      // Uncorrelated ready is only a health ping; matching legacy history owns
+      // the first conversation state commit.
       emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a' })
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(0)
 
       emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-a', messages: [] })
-      expect(notificationCount).toBe(2)
+      expect(notificationCount).toBe(1)
 
       client.destroy()
     })
@@ -5273,8 +5291,9 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-      // Single coalesced update for session-b
-      expect(notificationCount).toBe(1)
+      // History, choices, and unread commit independently after stale A frames
+      // were rejected.
+      expect(notificationCount).toBe(3)
       expect(client.getState().subscribedAgentId).toBe('session-b')
       expect(client.getState().messages).toHaveLength(1)
       const firstMsg = client.getState().messages[0]
@@ -5309,19 +5328,19 @@ describe('ManagerWsClient', () => {
           { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'slow history', timestamp: new Date().toISOString(), source: 'user_input' },
         ],
       })
-      expect(notificationCount).toBe(0)
+      expect(notificationCount).toBe(1)
 
       // Advance another 80ms — would be 160ms total from first event,
       // past the original timeout, but the reset means we're only 80ms
       // from the last event
       vi.advanceTimersByTime(80)
-      expect(notificationCount).toBe(0) // still buffered
+      expect(notificationCount).toBe(1)
 
-      // Terminal signal arrives — flushes
+      // Later legacy lifecycle projections remain ordered after history.
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(3)
       expect(client.getState().subscribedAgentId).toBe('session-b')
       expect(client.getState().messages).toHaveLength(1)
 
@@ -5349,7 +5368,7 @@ describe('ManagerWsClient', () => {
       client.destroy()
     })
 
-    it('does not flush when only conversation_history has been received', () => {
+    it('accepts matching legacy conversation_history as the sole completion signal', () => {
       const { client, socket } = setupConnectedClient()
 
       client.subscribeToAgent('session-b')
@@ -5366,14 +5385,14 @@ describe('ManagerWsClient', () => {
         ],
       })
 
-      // No flush — conversation_history alone is insufficient
-      expect(notificationCount).toBe(0)
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
 
       unsub()
       client.destroy()
     })
 
-    it('does not flush when only pending_choices_snapshot has been received', () => {
+    it('applies selected legacy choices before history without completing bootstrap', () => {
       const { client, socket } = setupConnectedClient()
 
       client.subscribeToAgent('session-b')
@@ -5384,8 +5403,9 @@ describe('ManagerWsClient', () => {
 
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['c-1'] })
 
-      // No flush — pending_choices_snapshot alone is insufficient (need terminal signal)
-      expect(notificationCount).toBe(0)
+      expect(notificationCount).toBe(1)
+      expect(client.getState().pendingChoiceIds).toEqual(new Set(['c-1']))
+      expect(client.getState().subscribedAgentId).not.toBe('session-b')
 
       unsub()
       client.destroy()
@@ -5432,9 +5452,10 @@ describe('ManagerWsClient', () => {
         pendingCount: 1,
       })
 
-      // Force-flush produced a notification, and the agent_status was processed
+      // Live status applies, while uncorrelated ready still cannot establish
+      // conversation subscription authority.
       expect(notificationCount).toBeGreaterThanOrEqual(1)
-      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().subscribedAgentId).toBeNull()
       expect(client.getState().statuses['session-b']?.status).toBe('streaming')
 
       unsub()
@@ -5501,7 +5522,7 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(3)
       expect(client.getState().messages).toHaveLength(1)
       const msg = client.getState().messages[0]
       expect(msg.type === 'conversation_message' ? msg.text : undefined).toBe('correct')
@@ -5527,7 +5548,7 @@ describe('ManagerWsClient', () => {
       emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['good-choice'] })
       emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-      expect(notificationCount).toBe(1)
+      expect(notificationCount).toBe(3)
       expect(client.getState().pendingChoiceIds.has('good-choice')).toBe(true)
       expect(client.getState().pendingChoiceIds.has('stale-choice')).toBe(false)
 
@@ -5580,6 +5601,283 @@ describe('ManagerWsClient', () => {
   // -------------------------------------------------------------------------
   // Async request behavior
   // -------------------------------------------------------------------------
+
+  // Legacy coalescing mechanics remain covered by bootstrap-buffer.test.ts;
+  // correlated completion/races are covered below.
+
+  describe('correlated conversation lifecycle', () => {
+    function lastSubscribe(socket: FakeWebSocket): { agentId?: string; subscriptionId: string; conversationView: 'web' | 'all' } {
+      return JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    }
+
+    it('installs pending before the sole subscribe emitter sends and completes only matching history', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+
+      client.subscribeToAgent('session-b')
+      const subscribe = lastSubscribe(socket)
+      expect(client.getState().conversationBootstrap).toMatchObject({
+        phase: 'pending',
+        agentId: 'session-b',
+        subscriptionId: subscribe.subscriptionId,
+      })
+      expect(client.getState().messages).toEqual([])
+
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId: 'session-b', messages: [{
+          type: 'conversation_message', agentId: 'session-b', id: 'wrong', role: 'assistant',
+          text: 'wrong generation', timestamp: new Date().toISOString(), source: 'speak_to_user',
+        }], subscriptionId: 'older-id', servedConversationView: 'web',
+      })
+      expect(client.getState().conversationBootstrap.phase).toBe('pending')
+      expect(client.getState().messages).toEqual([])
+
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId: 'session-b', messages: [],
+        subscriptionId: subscribe.subscriptionId, servedConversationView: 'web',
+      })
+      expect(client.getState().conversationBootstrap).toMatchObject({ phase: 'ready', protocolMode: 'correlated' })
+      expect(client.getState().messages).toEqual([])
+      client.destroy()
+    })
+
+    it('fails closed for legacy history and ignores an uncorrelated ping ready', () => {
+      const cache = new ConversationSnapshotCache()
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a', {
+        originId: 'origin-a', conversationSnapshotCache: cache,
+      })
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'other' })
+      expect(client.getState().targetAgentId).toBe('session-a')
+      expect(client.getState().conversationBootstrap.protocolMode).toBe('unknown')
+
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-a', messages: [] })
+      expect(client.getState().conversationBootstrap).toMatchObject({ phase: 'ready', protocolMode: 'legacy' })
+      expect(client.getState().conversationPresentation).toBeNull()
+      client.destroy()
+    })
+
+    it('times out, exposes retry, and ignores late frames for the terminal id', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a', {
+        conversationBootstrapWatchdogMs: 25,
+      })
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      const first = lastSubscribe(socket)
+      vi.advanceTimersByTime(25)
+      expect(client.getState().conversationBootstrap).toMatchObject({ phase: 'error', errorCode: 'BOOTSTRAP_TIMEOUT' })
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId: 'session-a', messages: [],
+        subscriptionId: first.subscriptionId, servedConversationView: 'web',
+      })
+      expect(client.getState().conversationBootstrap.phase).toBe('error')
+      expect(client.retryConversationBootstrap()).toBe(true)
+      expect(lastSubscribe(socket).subscriptionId).not.toBe(first.subscriptionId)
+      expect(client.getState().conversationBootstrap.phase).toBe('pending')
+      client.destroy()
+    })
+
+    it('drops wrong id, agent, and view choices/failures without disturbing live reduction', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      client.subscribeToAgent('session-b')
+      const active = lastSubscribe(socket)
+
+      emitServerEvent(socket, {
+        type: 'conversation_message', agentId: 'session-b', id: 'live', role: 'assistant',
+        text: 'live during pending', timestamp: new Date().toISOString(), source: 'speak_to_user',
+      })
+      expect(client.getState().messages[0]).toMatchObject({ id: 'live' })
+
+      emitServerEvent(socket, {
+        type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['wrong-id'],
+        subscriptionId: 'older', servedConversationView: 'web',
+      })
+      emitServerEvent(socket, {
+        type: 'pending_choices_snapshot', agentId: 'session-a', choiceIds: ['wrong-agent'],
+        subscriptionId: active.subscriptionId, servedConversationView: 'web',
+      })
+      emitServerEvent(socket, {
+        type: 'bootstrap_failed', agentId: 'session-b', subscriptionId: active.subscriptionId,
+        servedConversationView: 'all', code: 'BOOTSTRAP_FAILED', message: 'wrong view', retryable: true,
+      })
+      expect(client.getState().pendingChoiceIds.size).toBe(0)
+      expect(client.getState().conversationBootstrap.phase).toBe('pending')
+      expect(client.getState().messages[0]).toMatchObject({ id: 'live' })
+      client.destroy()
+    })
+
+    function installManagers(socket: FakeWebSocket, managers: Array<{ agentId: string; profileId: string }>): void {
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: managers.map(({ agentId, profileId }) => makeManagerDescriptor({
+          agentId, managerId: agentId, profileId, displayName: agentId,
+        })),
+      })
+    }
+
+    function completeCorrelated(socket: FakeWebSocket, agentId: string, text = agentId): string {
+      const subscribe = lastSubscribe(socket)
+      emitServerEvent(socket, {
+        type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: agentId,
+        subscriptionId: subscribe.subscriptionId, servedConversationView: subscribe.conversationView,
+      })
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId, subscriptionId: subscribe.subscriptionId,
+        servedConversationView: subscribe.conversationView, messages: [{
+          type: 'conversation_message', agentId, id: `${agentId}-row`, role: 'assistant',
+          text, timestamp: new Date().toISOString(), source: 'speak_to_user',
+        }],
+      })
+      return subscribe.subscriptionId
+    }
+
+    it('shows only exact warm presentation after correlated ready and always revalidates', () => {
+      const cache = new ConversationSnapshotCache()
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a', {
+        originId: 'origin-a', conversationSnapshotCache: cache,
+      })
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      const a1 = lastSubscribe(socket)
+      emitServerEvent(socket, {
+        type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a',
+        subscriptionId: a1.subscriptionId, servedConversationView: 'web',
+      })
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId: 'session-a', subscriptionId: a1.subscriptionId,
+        servedConversationView: 'web', messages: [{
+          type: 'conversation_message', agentId: 'session-a', id: 'a-row', role: 'assistant',
+          text: 'cached A', timestamp: new Date().toISOString(), source: 'speak_to_user',
+        }],
+      })
+
+      client.subscribeToAgent('session-b')
+      const b = lastSubscribe(socket)
+      emitServerEvent(socket, {
+        type: 'conversation_history', agentId: 'session-b', messages: [],
+        subscriptionId: b.subscriptionId, servedConversationView: 'web',
+      })
+      const before = socket.sentPayloads.length
+      client.subscribeToAgent('session-a')
+      const a2 = lastSubscribe(socket)
+      expect(socket.sentPayloads).toHaveLength(before + 1)
+      expect(client.getState().conversationPresentation).toBeNull()
+      emitServerEvent(socket, {
+        type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a',
+        subscriptionId: a2.subscriptionId, servedConversationView: 'web',
+      })
+      expect(client.getState().conversationPresentation?.messages[0]).toMatchObject({ id: 'a-row' })
+      expect(client.getState().messages).toEqual([])
+      client.destroy()
+    })
+
+    it('never recaptures selected manager or session authority during destructive fallback', () => {
+      for (const deletionType of ['manager_deleted', 'session_deleted'] as const) {
+        const cache = new ConversationSnapshotCache()
+        const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a', {
+          originId: 'origin-a', conversationSnapshotCache: cache,
+        })
+        client.start()
+        vi.advanceTimersByTime(60)
+        const socket = FakeWebSocket.instances.at(-1)!
+        socket.emit('open')
+        installManagers(socket, [
+          { agentId: 'session-a', profileId: 'profile-a' },
+          { agentId: 'session-b', profileId: 'profile-a' },
+        ])
+        completeCorrelated(socket, 'session-a', `deleted ${deletionType}`)
+
+        emitServerEvent(socket, deletionType === 'manager_deleted' ? {
+          type: deletionType, requestId: `delete-${deletionType}`, managerId: 'session-a', terminatedWorkerIds: [],
+        } : {
+          type: deletionType, requestId: `delete-${deletionType}`, agentId: 'session-a', profileId: 'profile-a',
+        })
+
+        expect(client.getState().targetAgentId).toBe('session-b')
+        expect(cache.get({ originId: 'origin-a', agentId: 'session-a', servedView: 'web' })).toBeNull()
+        client.destroy()
+      }
+    })
+
+    it('keeps archive/profile and deleted-agents-snapshot invalidation evicted across fallback', () => {
+      for (const invalidation of ['profile_archived', 'agents_snapshot'] as const) {
+        const cache = new ConversationSnapshotCache()
+        const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a', {
+          originId: 'origin-a', conversationSnapshotCache: cache,
+        })
+        client.start()
+        vi.advanceTimersByTime(60)
+        const socket = FakeWebSocket.instances.at(-1)!
+        socket.emit('open')
+        installManagers(socket, [
+          { agentId: 'session-a', profileId: 'profile-a' },
+          { agentId: 'session-b', profileId: 'profile-b' },
+        ])
+        completeCorrelated(socket, 'session-a', `invalidated ${invalidation}`)
+
+        if (invalidation === 'profile_archived') {
+          emitServerEvent(socket, {
+            type: 'profile_archived', requestId: 'archive-profile', profileId: 'profile-a',
+            archivedAt: new Date().toISOString(),
+          })
+        }
+        installManagers(socket, [{ agentId: 'session-b', profileId: 'profile-b' }])
+
+        expect(client.getState().targetAgentId).toBe('session-b')
+        expect(cache.get({ originId: 'origin-a', agentId: 'session-a', servedView: 'web' })).toBeNull()
+        client.destroy()
+      }
+    })
+
+    it('clears explicit selection bookkeeping on matching legacy history', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+      client.subscribeToAgent('session-b')
+      expect(client.hasExplicitSelection()).toBe(true)
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      expect(client.hasExplicitSelection()).toBe(false)
+      expect(client.getExplicitSelectionAgentId()).toBeNull()
+      expect(client.isExplicitSelectionPending()).toBe(false)
+      expect(client.getRejectedExplicitSelectionAgentId()).toBeNull()
+      client.destroy()
+    })
+
+    it('keeps terminal de-duplication bounded to one current subscription id', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+      const first = completeCorrelated(socket, 'session-a')
+      client.subscribeToAgent('session-b')
+      const second = completeCorrelated(socket, 'session-b')
+      const guard = client as unknown as {
+        terminalSubscriptionId: string | null
+        terminalSubscriptionIds?: Set<string>
+      }
+      expect(first).not.toBe(second)
+      expect(guard.terminalSubscriptionId).toBe(second)
+      expect(guard.terminalSubscriptionIds).toBeUndefined()
+      client.destroy()
+    })
+  })
 
   describe('async request behavior', () => {
     function setupReadyClient(agentId = 'manager') {
@@ -6310,6 +6608,160 @@ describe('ManagerWsClient', () => {
         try { return JSON.parse(p).type === 'get_session_workers' } catch { return false }
       })
       expect(refetchAttempts).toHaveLength(0)
+
+      client.destroy()
+    })
+  })
+
+  describe('terminal snapshot scope gating', () => {
+    function makeTerminalDescriptor(sessionAgentId: string, terminalId: string, profileId: string) {
+      return {
+        terminalId,
+        sessionAgentId,
+        profileId,
+        name: terminalId,
+        shell: '/bin/zsh',
+        cwd: '/tmp',
+        cols: 80,
+        rows: 24,
+        state: 'running' as const,
+        pid: 1,
+        exitCode: null,
+        exitSignal: null,
+        recoveredFromPersistence: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }
+    }
+
+    function setupTerminalScopedClient() {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          makeManagerDescriptor({
+            agentId: 'session-a',
+            managerId: 'session-a',
+            profileId: 'profile-a',
+            displayName: 'Session A',
+          }),
+          makeManagerDescriptor({
+            agentId: 'session-b',
+            managerId: 'session-b',
+            profileId: 'profile-b',
+            displayName: 'Session B',
+          }),
+        ],
+      })
+      emitServerEvent(socket, {
+        type: 'ready',
+        serverTime: new Date().toISOString(),
+        subscribedAgentId: 'session-a',
+      })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-a', messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-a', choiceIds: [] })
+      emitServerEvent(socket, {
+        type: 'terminals_snapshot',
+        sessionAgentId: 'profile-a',
+        terminals: [makeTerminalDescriptor('profile-a', 'term-a', 'profile-a')],
+      })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(client.getState().terminals).toHaveLength(1)
+      expect(client.getState().terminalSessionScopeId).toBe('profile-a')
+
+      return { client, socket }
+    }
+
+    it('rejects a late prior-scope terminals_snapshot after rapid A→B switch', () => {
+      const { client, socket } = setupTerminalScopedClient()
+
+      // A→B clears terminals because resolved scopes differ (profile-a → profile-b).
+      client.subscribeToAgent('session-b')
+      expect(client.getState().targetAgentId).toBe('session-b')
+      expect(client.getState().terminals).toEqual([])
+      expect(client.getState().terminalSessionScopeId).toBeNull()
+      expect(client.getState().conversationBootstrap.phase).toBe('pending')
+      expect(client.getState().conversationBootstrap.agentId).toBe('session-b')
+
+      // Late in-flight A bootstrap snapshot must not repopulate B's terminal state.
+      emitServerEvent(socket, {
+        type: 'terminals_snapshot',
+        sessionAgentId: 'profile-a',
+        terminals: [makeTerminalDescriptor('profile-a', 'term-a-late', 'profile-a')],
+      })
+
+      expect(client.getState().terminals).toEqual([])
+      expect(client.getState().terminalSessionScopeId).toBeNull()
+      expect(client.getState().targetAgentId).toBe('session-b')
+
+      client.destroy()
+    })
+
+    it('applies a matching-scope terminals_snapshot for the selected target', () => {
+      const { client, socket } = setupTerminalScopedClient()
+
+      client.subscribeToAgent('session-b')
+      expect(client.getState().terminals).toEqual([])
+      expect(client.getState().terminalSessionScopeId).toBeNull()
+
+      const bTerminal = makeTerminalDescriptor('profile-b', 'term-b', 'profile-b')
+      emitServerEvent(socket, {
+        type: 'terminals_snapshot',
+        sessionAgentId: 'profile-b',
+        terminals: [bTerminal],
+      })
+
+      expect(client.getState().terminals).toEqual([bTerminal])
+      expect(client.getState().terminalSessionScopeId).toBe('profile-b')
+
+      client.destroy()
+    })
+
+    it('preserves same-scope terminal snapshots across manager/session targets', () => {
+      const { client, socket } = setupTerminalScopedClient()
+
+      // Worker under session-a resolves to the same profile-a terminal scope.
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          makeManagerDescriptor({
+            agentId: 'session-a',
+            managerId: 'session-a',
+            profileId: 'profile-a',
+            displayName: 'Session A',
+          }),
+          makeManagerDescriptor({
+            agentId: 'session-b',
+            managerId: 'session-b',
+            profileId: 'profile-b',
+            displayName: 'Session B',
+          }),
+          makeWorkerDescriptor('worker-a', 'session-a'),
+        ],
+      })
+
+      client.subscribeToAgent('worker-a')
+      // Same resolved scope — terminals must not clear on switch.
+      expect(client.getState().terminals).toHaveLength(1)
+      expect(client.getState().terminalSessionScopeId).toBe('profile-a')
+
+      emitServerEvent(socket, {
+        type: 'terminals_snapshot',
+        sessionAgentId: 'profile-a',
+        terminals: [
+          makeTerminalDescriptor('profile-a', 'term-a', 'profile-a'),
+          makeTerminalDescriptor('profile-a', 'term-a-2', 'profile-a'),
+        ],
+      })
+
+      expect(client.getState().terminals).toHaveLength(2)
+      expect(client.getState().terminalSessionScopeId).toBe('profile-a')
 
       client.destroy()
     })

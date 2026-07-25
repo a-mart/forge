@@ -100,6 +100,8 @@ describe('sendSubscriptionBootstrap', () => {
       socket: {} as WebSocket,
       targetAgentId: worker.agentId,
       supportsConversationPaging: true,
+      conversationView: 'web',
+      subscriptionId: ' bootstrap:worker-1 ',
       swarmManager: {
         listBootstrapAgents: () => [manager],
         getAgent: (agentId: string) => agentId === worker.agentId ? worker : manager,
@@ -137,6 +139,19 @@ describe('sendSubscriptionBootstrap', () => {
         event.type === 'agents_snapshot',
     )
     expect(snapshot?.agents.map((agent) => agent.agentId)).toEqual(['manager-1', 'worker-1'])
+
+    const correlatedTypes = new Set(['ready', 'conversation_history', 'pending_choices_snapshot'])
+    for (const event of sent) {
+      if (correlatedTypes.has(event.type)) {
+        expect(event).toMatchObject({
+          subscriptionId: ' bootstrap:worker-1 ',
+          servedConversationView: 'web',
+        })
+      } else {
+        expect(event).not.toHaveProperty('subscriptionId')
+        expect(event).not.toHaveProperty('servedConversationView')
+      }
+    }
   })
 
   it('retains the legacy full-history bootstrap for clients that do not advertise paging', async () => {

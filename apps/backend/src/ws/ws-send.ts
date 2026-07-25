@@ -16,6 +16,7 @@ export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "ready",
   "conversation_history",
   "pending_choices_snapshot",
+  "bootstrap_failed",
   "agents_snapshot",
   "profiles_snapshot",
   "unread_counts_snapshot",

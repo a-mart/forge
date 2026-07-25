@@ -169,7 +169,7 @@ export class ConversationProjector {
       }
 
       const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
-      const isVisible = buildBuilderPageVisibilityPredicate(
+      const visibility = buildBuilderPageVisibility(
         descriptor,
         view,
         [...this.deps.descriptors.values()],
@@ -186,7 +186,7 @@ export class ConversationProjector {
           endExclusive: boundaryIndex,
           limit: options?.limit,
           view,
-          isVisible,
+          ...visibility,
           canonicalPrefixMayExist: this.canonicalPrefixMayExistByAgentId.has(agentId),
         }));
       }
@@ -203,14 +203,15 @@ export class ConversationProjector {
         cursor: seamCursor,
         limit: options?.limit,
         projectionKey: view,
-        isVisible: buildCanonicalMemorySeamVisibility(history, isVisible),
+        isVisible: buildCanonicalMemorySeamVisibility(history, visibility.isVisible),
+        countsTowardLimit: visibility.countsTowardLimit,
       }));
     }
 
     if (!options?.cursor && this.deps.runtimes.has(agentId)) {
       const history = this.getConversationHistory(agentId);
       if (history.length > 0) {
-        const isVisible = buildBuilderPageVisibilityPredicate(
+        const visibility = buildBuilderPageVisibility(
           descriptor,
           view,
           [...this.deps.descriptors.values()],
@@ -223,14 +224,14 @@ export class ConversationProjector {
           endExclusive: history.length,
           limit: options?.limit,
           view,
-          isVisible,
+          ...visibility,
           canonicalPrefixMayExist: this.canonicalPrefixMayExistByAgentId.has(agentId),
         }));
       }
     }
 
     const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
-    const isVisible = buildBuilderPageVisibilityPredicate(
+    const visibility = buildBuilderPageVisibility(
       descriptor,
       view,
       [...this.deps.descriptors.values()],
@@ -245,9 +246,10 @@ export class ConversationProjector {
       isVisible: this.deps.runtimes.has(agentId)
         ? buildCanonicalMemorySeamVisibility(
             history,
-            isVisible,
+            visibility.isVisible,
           )
-        : isVisible,
+        : visibility.isVisible,
+      countsTowardLimit: visibility.countsTowardLimit,
     }));
   }
 
@@ -870,15 +872,22 @@ function buildMemoryHistoryPage(options: {
   limit?: number;
   view: BuilderTimelineChannelView;
   isVisible?: (entry: ConversationEntryEvent) => boolean;
+  countsTowardLimit?: (entry: ConversationEntryEvent) => boolean;
   canonicalPrefixMayExist: boolean;
 }): ConversationHistoryPageResult {
   const limit = normalizeMemoryPageLimit(options.limit);
   const messages: ConversationEntryEvent[] = [];
   const activitySummaryIds = new Set<string>();
+  const supplementalMessages = new Set<ConversationEntryEvent>();
+  const maxSupplementalItems = options.countsTowardLimit
+    ? Math.min(limit, Math.floor(MAX_CONVERSATION_PAGE_ITEMS / 2))
+    : 0;
+  let countedMessages = 0;
+  let supplementalItems = 0;
   let pageBytes = 0;
   let startIndex = options.endExclusive;
 
-  for (let index = options.endExclusive - 1; index >= 0 && messages.length < limit; index -= 1) {
+  for (let index = options.endExclusive - 1; index >= 0 && countedMessages < limit; index -= 1) {
     const projected = projectConversationEntryForBuilderWire(options.history[index]);
     if (options.isVisible && !options.isVisible(projected)) {
       startIndex = index;
@@ -888,8 +897,41 @@ function buildMemoryHistoryPage(options: {
       startIndex = index;
       continue;
     }
+    const countsTowardLimit = !options.countsTowardLimit || options.countsTowardLimit(projected);
+    if (
+      !countsTowardLimit &&
+      (supplementalItems >= maxSupplementalItems || messages.length >= MAX_CONVERSATION_PAGE_ITEMS)
+    ) {
+      startIndex = index;
+      continue;
+    }
     const entryBytes = Buffer.byteLength(JSON.stringify(projected), "utf8");
-    if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) break;
+    if (countsTowardLimit) {
+      while (
+        messages.length > 0 &&
+        (messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+          pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+      ) {
+        const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
+        if (supplementalIndex < 0) break;
+        const removed = messages.splice(supplementalIndex, 1)[0]!;
+        supplementalMessages.delete(removed);
+        supplementalItems -= 1;
+        pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
+      }
+      if (
+        messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+        (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+      ) break;
+      countedMessages += 1;
+    } else {
+      if (pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+        startIndex = index;
+        continue;
+      }
+      supplementalMessages.add(projected);
+      supplementalItems += 1;
+    }
     if (projected.type === "activity_summary") activitySummaryIds.add(projected.itemId);
     messages.push(projected);
     pageBytes += entryBytes;
@@ -930,6 +972,16 @@ function buildMemoryHistoryPage(options: {
   };
 }
 
+function findLastSupplementalIndex(
+  messages: readonly ConversationEntryEvent[],
+  supplementalMessages: ReadonlySet<ConversationEntryEvent>,
+): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (supplementalMessages.has(messages[index])) return index;
+  }
+  return -1;
+}
+
 function buildCanonicalMemorySeamVisibility(
   history: readonly ConversationEntryEvent[],
   isVisible: ((entry: ConversationEntryEvent) => boolean) | undefined,
@@ -945,17 +997,27 @@ function buildCanonicalMemorySeamVisibility(
     (!isVisible || isVisible(entry));
 }
 
-function buildBuilderPageVisibilityPredicate(
+function buildBuilderPageVisibility(
   descriptor: AgentDescriptor,
   view: BuilderTimelineChannelView,
   agents: readonly AgentDescriptor[],
   history: readonly ConversationEntryEvent[],
-): ((entry: ConversationEntryEvent) => boolean) | undefined {
+): {
+  isVisible?: (entry: ConversationEntryEvent) => boolean;
+  countsTowardLimit?: (entry: ConversationEntryEvent) => boolean;
+} {
   // Web rules do not depend on legacy manager-alias inference. Worker All is
-  // intentionally unfiltered. Manager All is safe to filter when the bounded
-  // active history supplies its alias context; cold canonical paging leaves
-  // that final product-policy pass to the same shared predicate in the UI.
-  if (view === "all" && (descriptor.role !== "manager" || history.length === 0)) return undefined;
+  // intentionally unfiltered. Cold manager All preserves unfiltered wire
+  // inclusion, while still treating known worker quick-look rows as
+  // supplemental to the requested canonical row count.
+  if (view === "all" && descriptor.role !== "manager") return {};
+  const knownWorkerIds = collectKnownWorkerIds(agents, descriptor.agentId);
+  if (view === "all" && history.length === 0) {
+    return {
+      countsTowardLimit: (entry) =>
+        !isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds),
+    };
+  }
   const isVisibleInTimeline = createBuilderTimelineVisibilityPredicate({
     activeAgentId: descriptor.agentId,
     activeAgentRole: descriptor.role,
@@ -963,12 +1025,19 @@ function buildBuilderPageVisibilityPredicate(
     agents,
     history,
   });
-  if (descriptor.role !== "manager") return isVisibleInTimeline;
+  if (descriptor.role !== "manager") return { isVisible: isVisibleInTimeline };
 
-  const knownWorkerIds = collectKnownWorkerIds(agents, descriptor.agentId);
-  return (entry) =>
-    isVisibleInTimeline(entry) ||
+  const isWorkerQuickLook = (entry: ConversationEntryEvent) =>
     isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds);
+  return {
+    isVisible: (entry) => isVisibleInTimeline(entry) || isWorkerQuickLook(entry),
+    // Worker quick-look hydration shares the wire page for compatibility, but
+    // it must not consume the manager transcript's requested row count. The
+    // page builders separately cap these supplemental rows by item/byte budget.
+    countsTowardLimit: view === "all"
+      ? (entry) => !isWorkerQuickLook(entry)
+      : isVisibleInTimeline,
+  };
 }
 
 function hasCompleteTimelineMetadata(history: readonly ConversationEntryEvent[]): boolean {
