@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { resolveBrowserHostKind } from '@forge/protocol'
+import { EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS, resolveBrowserHostKind } from '@forge/protocol'
 import type {
   BrowserAutomationErrorCode,
   BrowserAutomationRequest,
@@ -71,6 +71,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const automaticEmptyOpenAttempts = useRef(new Set<string>())
     const [workspaceMode, setWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(workspace?.capability.popoutAvailable ? 'docked' : 'unavailable')
     const [externalRuntimeAvailable, setExternalRuntimeAvailable] = useState(false)
+    const [externalRuntimeOperations, setExternalRuntimeOperations] = useState<BrowserHostRegistration['capabilities']['supportedOperations']>([])
+    const [externalPayloadVersion, setExternalPayloadVersion] = useState('unknown')
     const workspaceModeRef = useRef<ManagedBrowserWorkspaceMode>(workspaceMode)
 
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
@@ -279,7 +281,15 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
             && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0
           // Once registered, retain the handler across runtime loss so status can report
           // available:false immediately instead of leaving a stale broker registration to time out.
-          if (!disposed && ready) setExternalRuntimeAvailable(true)
+          if (!disposed && ready) {
+            const operationSets = result.status.instances.map((instance) => new Set(instance.supportedOperations ?? EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS))
+            const supportedOperations = [...(operationSets[0] ?? new Set(EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS))]
+              .filter((operation) => operationSets.every((operations) => operations.has(operation)))
+            setExternalRuntimeOperations((current) => current.length === supportedOperations.length &&
+              current.every((operation, index) => operation === supportedOperations[index]) ? current : supportedOperations)
+            setExternalPayloadVersion(result.status.instances[0]?.payloadVersion ?? 'unknown')
+            setExternalRuntimeAvailable(true)
+          }
         } catch { /* initial registration remains gated; an existing handler stays live */ }
       }
       void inspect()
@@ -288,14 +298,14 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [selectedProfileId, selectedSessionAgentId])
 
     useEffect(() => {
-      if (!client || !bridge || !externalRuntimeAvailable || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
+      if (!client || !bridge || !externalRuntimeAvailable || externalRuntimeOperations.length === 0 || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
       const registration: BrowserHostRegistration = {
         hostId: externalHostIdRef.current,
         clientInstanceId: controllerInstanceIdRef.current,
         capabilities: {
           hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
-          supportedOperations: ['status', 'open', 'navigate'], maxResponseBytes: 1024 * 1024,
-          runtimeVersions: { chrome: 'external', extension: 'm3-runtime' },
+          supportedOperations: externalRuntimeOperations, maxResponseBytes: 1024 * 1024,
+          runtimeVersions: { chrome: 'external', extension: externalPayloadVersion },
           features: {
             resize: false, recording: false, capturePage: false, downloadEvents: false,
             downloadArtifacts: false, downloadOpen: false,
@@ -305,7 +315,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         registeredAt: new Date().toISOString(),
       }
       return client.registerSecondaryBrowserAutomationHost(registration, executeRequest)
-    }, [bridge, client, executeRequest, externalRuntimeAvailable])
+    }, [bridge, client, executeRequest, externalPayloadVersion, externalRuntimeAvailable, externalRuntimeOperations])
 
     useEffect(() => {
       if (!bridge) return

@@ -42,14 +42,14 @@ async function connectedRuntime(instanceId = 'instance_profile_a', now: () => nu
   })
   await client.send({
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
-      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion: 'm3-runtime.1',
+      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion: 'm4-runtime.1',
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', extensionInstanceId: instanceId, chromeVersion: '125.0.0.0',
       methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.listCandidates', 'forge.browser.claim', 'forge.browser.create', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
-        operation, supported: ['status', 'open', 'navigate'].includes(operation), ...(['status', 'open', 'navigate'].includes(operation) ? {} : { reason: 'M4 disabled' }),
+        operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
       })),
-      features: { resize: false, recording: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false, oopif: false, humanInterruption: true, groups: true },
+      features: { resize: false, recording: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true, groups: true },
     },
   })
   await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1, requiredShellAbi: 1 } })
@@ -57,7 +57,7 @@ async function connectedRuntime(instanceId = 'instance_profile_a', now: () => nu
   return { runtime, client, root }
 }
 
-function request(operation: 'open' | 'navigate' | 'status', tabId: string | null, input: Record<string, unknown> = {}): BrowserAutomationRequest {
+function request(operation: BrowserAutomationRequest['operation'], tabId: string | null, input: Record<string, unknown> = {}): BrowserAutomationRequest {
   return {
     requestId: `request-${operation}`, hostKind: 'external-chrome', sessionAgentId: 'session-a', profileId: 'profile-a',
     tabId, operation, input, hostId: 'external-host', hostGeneration: 3,
@@ -90,16 +90,34 @@ async function fakeExtensionLoop(client: AuthenticatedRelayClient, requests: Arr
       } })
     } else if (message.method === 'forge.browser.execute') {
       const now = new Date(0).toISOString()
+      const operation = String(params.operation)
+      const result = operation === 'navigate' ? {
+        readiness: 'load', tab: {
+          hostKind: 'external-chrome', tabId: '41', sessionAgentId: 'session-a', profileId: 'instance_profile_a',
+          url: 'https://navigated.invalid/', title: 'Navigated', lifecycle: 'ready', loading: false, live: true,
+          canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: null, recording: null,
+          viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
+        },
+      } : operation === 'status' ? {
+        available: true,
+        host: { hostKind: 'external-chrome', connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
+        panelVisible: false, panelRevealRequested: false, physicalTabVisible: false,
+        selectedTab: {
+          hostKind: 'external-chrome', tabId: String(params.tabId), sessionAgentId: 'session-a', profileId: 'instance_profile_a',
+          url: 'https://selected.invalid/private', title: 'Selected private title', lifecycle: 'ready', loading: false, live: true,
+          canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'human', agentCursor: null, recording: null,
+          viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
+        },
+      } : operation === 'evaluate' ? { tabId: String(params.tabId), value: { answer: 42 }, serializedBytes: 13 }
+        : { tabId: String(params.tabId), matched: true, elapsedMs: 2 }
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, requestId: params.requestId,
-        tabId: params.tabId, operation: 'navigate', ok: true, result: {
-          readiness: 'load', tab: {
-            hostKind: 'external-chrome', tabId: '41', sessionAgentId: 'session-a', profileId: 'instance_profile_a',
-            url: 'https://navigated.invalid/', title: 'Navigated', lifecycle: 'ready', loading: false, live: true,
-            canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: null, recording: null,
-            viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
-          },
-        },
+        tabId: params.tabId, operation, ok: true, result,
+      } })
+    } else if (message.method === 'forge.browser.turnEnded') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, turnId: params.turnId,
+        releasedTabs: params.finalTabs, handoffTabs: params.handoffTabs,
       } })
     }
   }
@@ -131,11 +149,37 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
       url: 'https://navigated.invalid/', readiness: 'load', timeoutMs: 1_000,
     }))
     expect(navigated).toMatchObject({ ok: true, result: { tab: { tabId: 'ext.instance_profile_a.41', profileId: 'profile-a' } } })
+    await expect(runtime.execute(request('status', 'ext.instance_profile_a.41'))).resolves.toMatchObject({
+      ok: true, result: { selectedTab: { tabId: 'ext.instance_profile_a.41', profileId: 'profile-a', url: 'https://selected.invalid/private', title: 'Selected private title' } },
+    })
     await expect(runtime.execute(request('navigate', 'ext.wrong_instance.41', { url: 'https://x.invalid/', readiness: 'load', timeoutMs: 1_000 })))
       .resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
     runtime.deactivate()
     client.close()
     await loop
+  })
+
+  it('routes M4 functional results and exact bounded turn dispositions without persisting page data', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-m4', leaseEpoch: 12, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    await expect(runtime.execute(request('evaluate', 'ext.instance_profile_a.40', {
+      expression: 'Promise.resolve({answer: 42})', awaitPromise: true, returnByValue: true,
+    }))).resolves.toMatchObject({ ok: true, result: { tabId: 'ext.instance_profile_a.40', value: { answer: 42 } } })
+    await expect(runtime.turnEnded({
+      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-m4', leaseEpoch: 12, turnId: 'turn-12', finalTabs: [], handoffTabs: [40],
+    })).resolves.toMatchObject({ turnId: 'turn-12', releasedTabs: [], handoffTabs: [40] })
+    const checkpoint = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
+    expect(checkpoint).not.toContain('Promise.resolve')
+    expect(JSON.parse(checkpoint).leases[0]).toMatchObject({ tabIds: [40], leaseId: 'lease-m4' })
+    await expect(runtime.turnEnded({
+      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-m4', leaseEpoch: 12, turnId: 'turn-final', finalTabs: [40], handoffTabs: [],
+    })).resolves.toMatchObject({ releasedTabs: [40], handoffTabs: [] })
+    expect(JSON.parse(await readFile(path.join(root, 'state', 'leases.json'), 'utf8')).leases).toEqual([])
+    runtime.deactivate(); client.close(); await loop
   })
 
   it('reloads durable lease authority before a restarted Desktop accepts reconciliation', async () => {
@@ -229,6 +273,7 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
 
   it('adopts only authenticated side-panel leases without persisting candidate tab metadata', async () => {
     const { runtime, client, root } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
     await client.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
       protocolVersion: 1, leaseId: 'side-panel-local-lease', leaseEpoch: 7, state: 'claimed',
       tabIds: [73], groupId: 4, childPolicy: 'manual',
@@ -245,6 +290,7 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     expect(tombstone).toContain('"sessionAgentId":"session-a"')
     runtime.deactivate()
     client.close()
+    await loop
   })
 
   it('accepts explicit instance-scoped claims but never arbitrary pre-existing tabs', async () => {

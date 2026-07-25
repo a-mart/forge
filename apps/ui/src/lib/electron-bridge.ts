@@ -1,4 +1,5 @@
 import type {
+  BrowserAutomationOperation,
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserHostConnectionSnapshot,
@@ -9,6 +10,7 @@ import type {
   ExternalChromeCoordinatorStatus,
   ExternalChromeCandidateWindow,
   ExternalChromeChildPolicy,
+  ExternalChromeFeatures,
 } from '@forge/protocol'
 
 export interface SleepBlockerStatus { enabled: boolean; blocking: boolean; graceRemainingMs: number | null; reason: string }
@@ -22,7 +24,11 @@ export type UpdateStatus =
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
 export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
 export type ExternalChromeLocalError = 'invalid-request' | 'setup-required' | 'attachment-required' | 'lease-conflict' | 'restricted-target' | 'debugger-unavailable' | 'chrome-policy-blocked' | 'stale-or-lost' | 'extension-update-required' | 'operation-failed'
-export interface ExternalChromeRuntimeInstance { extensionInstanceId: string; profileAlias?: string; chromeVersion: string; payloadVersion: string; connectedAt: string }
+export interface ExternalChromeRuntimeInstance {
+  extensionInstanceId: string; profileAlias?: string; chromeVersion: string; payloadVersion: string; connectedAt: string
+  /** Absent only for older Desktop bridges; those safely fall back to the M3 surface. */
+  supportedOperations?: BrowserAutomationOperation[]; features?: ExternalChromeFeatures
+}
 export interface ExternalChromeLocalAttachment {
   sessionAgentId: string; profileId: string; extensionInstanceId: string; profileAlias: string; groupId: number | null
   childPolicy: ExternalChromeChildPolicy; state: 'attached' | 'recovering' | 'lost'; attachedAt: string

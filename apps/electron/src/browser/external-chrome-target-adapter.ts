@@ -1,5 +1,5 @@
 import {
-  EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
   type BrowserAutomationFailure,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
@@ -30,7 +30,7 @@ export interface ExternalChromeTransport {
 
 export class ExternalChromeTargetAdapter implements BrowserTargetAdapter {
   readonly hostKind = 'external-chrome' as const
-  readonly supportedOperations = EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS
+  readonly supportedOperations = EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS
 
   constructor(
     private readonly transport: ExternalChromeTransport,
@@ -47,7 +47,7 @@ export class ExternalChromeTargetAdapter implements BrowserTargetAdapter {
     if (!(this.supportedOperations as readonly string[]).includes(request.operation)) {
       return this.failure(request, {
         code: 'unsupported-operation',
-        message: `External Chrome M3 does not support ${request.operation}.`,
+        message: `External Chrome does not support ${request.operation}.`,
         retryable: false,
         details: { operation: request.operation, hostKind: this.hostKind },
       }, started)

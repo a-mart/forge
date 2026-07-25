@@ -48,11 +48,25 @@ export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
   'waitFor',
 ] as const satisfies readonly BrowserAutomationOperation[]
 
-/** Operations qualified by the production M3 lease runtime. M4 operations stay fail-closed. */
+/** Operations qualified by the production M3 lease runtime. */
 export const EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS = [
   'status',
   'open',
   'navigate',
+] as const satisfies readonly BrowserAutomationOperation[]
+
+/** Complete External Chrome M4 functional surface; physical viewport and recording stay disabled. */
+export const EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS = [
+  'status',
+  'open',
+  'navigate',
+  'snapshot',
+  'click',
+  'type',
+  'press',
+  'scroll',
+  'evaluate',
+  'waitFor',
 ] as const satisfies readonly BrowserAutomationOperation[]
 
 export const BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000

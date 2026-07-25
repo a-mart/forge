@@ -9,10 +9,12 @@ import {
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
   parseExternalChromeJsonRpcFrame,
   type BrowserAutomationFailure,
+  type BrowserAutomationOperation,
   type BrowserAutomationRequest,
   type BrowserAutomationResultByOperation,
   type BrowserTabSnapshot,
   type ExternalChromeChildPolicy,
+  type ExternalChromeFeatures,
   type ExternalChromeHelloParams,
   type ExternalChromeJsonRpcMessage,
   type ExternalChromeLeaseChangedParams,
@@ -40,6 +42,8 @@ export interface ExternalChromeRuntimeInventory {
   profileAlias?: string
   chromeVersion: string
   payloadVersion: string
+  supportedOperations: BrowserAutomationOperation[]
+  features: ExternalChromeFeatures
   connectedAt: string
 }
 
@@ -300,11 +304,17 @@ class RuntimeConnection {
     if (this.closed) throw new Error('extension runtime is disconnected')
     if (this.pending.size >= MAX_PENDING_REQUESTS) throw new Error('extension request queue is full')
     const id = `desktop-${++this.requestSequence}-${randomUUID()}`.slice(0, 128)
+    const requestedDeadline = method === 'forge.browser.execute' && typeof (params as { deadlineAt?: unknown }).deadlineAt === 'string'
+      ? Date.parse((params as { deadlineAt: string }).deadlineAt)
+      : Number.NaN
+    const timeoutMs = Number.isFinite(requestedDeadline)
+      ? Math.max(1, Math.min(61_000, requestedDeadline - Date.now() + 250))
+      : 10_000
     const response = await new Promise<ExternalChromeJsonRpcMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`${method} timed out`))
-      }, 10_000)
+      }, timeoutMs)
       timer.unref?.()
       this.pending.set(id, { method, resolve, reject, timer })
       void this.sendPayload({ jsonrpc: '2.0', id, method, params }).catch((error) => {
@@ -372,6 +382,8 @@ class RuntimeConnection {
         ...(hello.profileAlias ? { profileAlias: hello.profileAlias } : {}),
         chromeVersion: hello.chromeVersion,
         payloadVersion: hello.payloadVersion,
+        supportedOperations: hello.operations.filter((operation) => operation.supported).map((operation) => operation.operation),
+        features: structuredClone(hello.features),
         connectedAt: new Date().toISOString(),
       }
       await this.onHello(this, hello)
@@ -481,6 +493,30 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return result
   }
 
+  async turnEnded(input: {
+    extensionInstanceId: string; leaseId: string; leaseEpoch: number; turnId: string; finalTabs: number[]; handoffTabs: number[]
+  }): Promise<ExternalChromeResultByMethod['forge.browser.turnEnded']> {
+    const checkpoint = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === input.extensionInstanceId &&
+      lease.leaseId === input.leaseId && lease.leaseEpoch === input.leaseEpoch && lease.releasedAt === undefined)
+    if (!checkpoint) throw new Error('turn disposition used stale lease authority')
+    const requested = [...input.finalTabs, ...input.handoffTabs].sort((a, b) => a - b)
+    if (new Set(requested).size !== requested.length || canonical(requested) !== canonical(checkpoint.tabIds)) {
+      throw new Error('turn disposition changed the compare-and-set lease scope')
+    }
+    const result = await this.connection(input.extensionInstanceId).request('forge.browser.turnEnded', {
+      protocolVersion: 1, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch, turnId: input.turnId,
+      finalTabs: input.finalTabs, handoffTabs: input.handoffTabs,
+    })
+    if (result.leaseId !== input.leaseId || result.leaseEpoch !== input.leaseEpoch || result.turnId !== input.turnId ||
+      canonical([...result.releasedTabs].sort((a, b) => a - b)) !== canonical([...input.finalTabs].sort((a, b) => a - b)) ||
+      canonical([...result.handoffTabs].sort((a, b) => a - b)) !== canonical([...input.handoffTabs].sort((a, b) => a - b))) {
+      throw new Error('extension turn response changed authorized dispositions')
+    }
+    if (input.handoffTabs.length === 0) await this.checkpoints.remove(input.leaseId, input.leaseEpoch)
+    else await this.checkpoints.put({ ...checkpoint, tabIds: [...input.handoffTabs].sort((a, b) => a - b), expiresAt: Math.min(checkpoint.expiresAt, this.now() + 2 * 60_000) })
+    return result
+  }
+
   release(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason = 'released'): Promise<void> {
     return this.serializeLifecycleRelease(async () => {
       const checkpoint = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId
@@ -568,13 +604,33 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (request.operation === 'status') return this.statusResult(request)
     if (request.operation === 'open') return this.openResult(request)
     if (request.operation === 'navigate') return this.navigateResult(request)
-    return failure('unsupported-operation', `External Chrome M3 does not support ${request.operation}.`, false)
+    if (['snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(request.operation)) {
+      return this.functionalResult(request)
+    }
+    return failure('unsupported-operation', `External Chrome does not support ${request.operation}.`, false)
   }
 
   private async statusResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
     const leases = await this.activeCheckpoints()
     const checkpoint = request.tabId ? findCheckpoint(leases, request.tabId, request.sessionAgentId, request.profileId) : undefined
-    const selectedTab = checkpoint && request.tabId ? checkpointTab(checkpoint, request.tabId, request, '', 'External Chrome tab') : null
+    let selectedTab = checkpoint && request.tabId ? checkpointTab(checkpoint, request.tabId, request, '', 'External Chrome tab') : null
+    if (checkpoint && request.tabId) {
+      const decoded = decodeTabId(request.tabId)
+      if (decoded && decoded.extensionInstanceId === checkpoint.extensionInstanceId && checkpoint.tabIds.includes(decoded.tabId)) {
+        const response = await this.connection(checkpoint.extensionInstanceId).request('forge.browser.execute', {
+          protocolVersion: 1, requestId: request.requestId, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+          tabId: decoded.tabId, operation: 'status', input: {}, deadlineAt: request.deadlineAt,
+        })
+        if (response.requestId !== request.requestId || response.leaseId !== checkpoint.leaseId || response.leaseEpoch !== checkpoint.leaseEpoch ||
+          response.tabId !== decoded.tabId || response.operation !== 'status') return failure('lease-lost', 'Extension status changed authorized lease routing.', false)
+        if (!response.ok) return { ok: false, error: response.error }
+        const reported = response.result.selectedTab
+        selectedTab = reported ? {
+          ...reported, hostKind: 'external-chrome', tabId: request.tabId,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, controller: 'human', physicalVisible: false,
+        } : null
+      }
+    }
     const result: BrowserAutomationResultByOperation['status'] = {
       available: this.connections.size > 0,
       host: {
@@ -641,7 +697,12 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       const tab = navigated.updatedTab!
       return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
     }
-    const tab = checkpointTab(checkpoint, opaqueTabId, request, '', 'External Chrome tab')
+    const inspected = await this.statusResult({
+      ...request, operation: 'status', tabId: opaqueTabId, input: { hostKind: 'external-chrome', tabId: opaqueTabId },
+    } as BrowserAutomationRequest)
+    if (!inspected.ok) return inspected
+    const selected = (inspected.result as BrowserAutomationResultByOperation['status']).selectedTab
+    const tab = selected ?? checkpointTab(checkpoint, opaqueTabId, request, '', 'External Chrome tab')
     return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
   }
 
@@ -668,6 +729,30 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const raw = response.result as BrowserAutomationResultByOperation['navigate']
     const tab = { ...raw.tab, hostKind: 'external-chrome' as const, tabId: request.tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId }
     return { ok: true, result: { ...raw, tab }, updatedTab: tab }
+  }
+
+  private async functionalResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    if (!request.tabId) return failure('attachment-required', `${request.operation} requires an explicitly leased tab.`, false)
+    const checkpoint = findCheckpoint(await this.activeCheckpoints(), request.tabId, request.sessionAgentId, request.profileId)
+    if (!checkpoint) return failure('lease-lost', 'The External Chrome lease is missing or stale.', true)
+    const decoded = decodeTabId(request.tabId)
+    if (!decoded || decoded.extensionInstanceId !== checkpoint.extensionInstanceId || !checkpoint.tabIds.includes(decoded.tabId)) {
+      return failure('lease-lost', 'The tab is outside the authorized lease.', false)
+    }
+    const rawInput = request.input as Record<string, unknown>
+    const { hostKind: _hostKind, tabId: _tabId, ...input } = rawInput
+    void _hostKind; void _tabId
+    const response = await this.connection(checkpoint.extensionInstanceId).request('forge.browser.execute', {
+      protocolVersion: 1, requestId: request.requestId, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+      tabId: decoded.tabId, operation: request.operation, input, deadlineAt: request.deadlineAt,
+    } as ExternalChromeRequestParamsByMethod['forge.browser.execute'])
+    if (response.requestId !== request.requestId || response.leaseId !== checkpoint.leaseId || response.leaseEpoch !== checkpoint.leaseEpoch ||
+      response.tabId !== decoded.tabId || response.operation !== request.operation) {
+      return failure('lease-lost', 'Extension response changed authorized lease routing.', false)
+    }
+    if (!response.ok) return { ok: false, error: response.error }
+    const result = { ...(response.result as unknown as Record<string, unknown>), tabId: request.tabId } as BrowserAutomationResultByOperation[BrowserAutomationOperation]
+    return { ok: true, result }
   }
 
   private async activeCheckpoints(): Promise<ExternalChromeLeaseCheckpoint[]> {

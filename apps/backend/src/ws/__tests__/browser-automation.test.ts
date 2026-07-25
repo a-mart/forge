@@ -44,7 +44,7 @@ describe('browser websocket transport', () => {
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
   })
 
-  it('normalizes legacy host payloads and restricts External Chrome registration to M3 capabilities', () => {
+  it('normalizes legacy host payloads and restricts External Chrome registration to M4 capabilities', () => {
     const legacy = parseClientCommand(Buffer.from(JSON.stringify({
       type: 'browser_host_register', requestId: 'legacy', registration: registration(),
     })))
@@ -60,10 +60,10 @@ describe('browser websocket transport', () => {
         hostId: 'external-host', clientInstanceId: 'external-instance', registeredAt: new Date().toISOString(),
         capabilities: {
           hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
-          supportedOperations: ['status', 'open', 'navigate'],
+          supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
           maxResponseBytes: 1_000_000,
           features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
-          runtimeVersions: { chrome: '138', extension: 'm3-fake' },
+          runtimeVersions: { chrome: '138', extension: 'm4-fake' },
         },
       },
     })))
@@ -72,20 +72,20 @@ describe('browser websocket transport', () => {
       type: 'browser_host_register', requestId: 'external-overclaim', registration: {
         hostId: 'external-host', clientInstanceId: 'external-instance', registeredAt: new Date().toISOString(),
         capabilities: {
-          hostKind: 'external-chrome', supportedOperations: ['status', 'snapshot'], maxResponseBytes: 1_000_000,
+          hostKind: 'external-chrome', supportedOperations: ['status', 'resize'], maxResponseBytes: 1_000_000,
           features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
         },
       },
     }))
     expect(parseClientCommand(Buffer.from(JSON.stringify(overclaim)))).toEqual({
       ok: false,
-      error: 'External Chrome may advertise only M3-qualified operations',
+      error: 'External Chrome may advertise only M4-qualified operations',
     })
     overclaim.registration.capabilities.supportedOperations = ['status']
     overclaim.registration.capabilities.features.capturePage = true
     expect(parseClientCommand(Buffer.from(JSON.stringify(overclaim)))).toEqual({
       ok: false,
-      error: 'External Chrome may not advertise unqualified M3 features',
+      error: 'External Chrome may not advertise physical viewport, recording, capture, or download features',
     })
     const oldResponse = parseClientCommand(Buffer.from(JSON.stringify({
       type: 'browser_host_response', response: {

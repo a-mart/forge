@@ -10,7 +10,7 @@ import { candidateOrigin, restrictedTargetReason } from './restricted-target.js'
 
 const SESSION_LEASE_KEY = 'forge.externalChrome.activeLease.v1'
 
-export type LeaseState = 'LEASED_HUMAN' | 'CONTROLLING_AGENT' | 'INTERRUPTING' | 'LOST'
+export type LeaseState = 'LEASED_HUMAN' | 'CONTROLLING_AGENT' | 'INTERRUPTING' | 'HANDOFF' | 'LOST'
 
 export interface LeaseRecord {
   leaseId: string
@@ -66,7 +66,7 @@ function assertLeaseRecord(value: unknown): LeaseRecord | null {
     candidate.tabIds.some((tabId) => !Number.isSafeInteger(tabId)) ||
     (candidate.groupId !== null && !Number.isSafeInteger(candidate.groupId)) ||
     (candidate.childPolicy !== 'manual' && candidate.childPolicy !== 'include-opened-by-leased-tabs') ||
-    !['LEASED_HUMAN', 'CONTROLLING_AGENT', 'INTERRUPTING', 'LOST'].includes(String(candidate.state)) ||
+    !['LEASED_HUMAN', 'CONTROLLING_AGENT', 'INTERRUPTING', 'HANDOFF', 'LOST'].includes(String(candidate.state)) ||
     !Number.isSafeInteger(candidate.controlEpoch) ||
     typeof candidate.payloadVersion !== 'string' ||
     !Number.isFinite(candidate.expiresAt)
@@ -290,11 +290,48 @@ export class LeaseManager {
 
   assertScope(leaseId: string, leaseEpoch: number, tabId: number): LeaseRecord {
     const lease = this.active
-    if (lease === null || lease.state === 'LOST' || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch) {
+    if (lease === null || lease.state === 'LOST' || lease.state === 'HANDOFF' || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch) {
       throw new LeaseError('lease-lost', 'the lease is not active at this epoch')
     }
     if (!lease.tabIds.includes(tabId)) throw new LeaseError('scope-mismatch', 'tab is outside the lease')
     return structuredClone(lease)
+  }
+
+  resumeHandoff(leaseId: string, leaseEpoch: number, tabId: number): Promise<LeaseRecord> {
+    return this.mutate(async () => {
+      const lease = this.active
+      if (lease === null || lease.state !== 'HANDOFF' || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch ||
+        lease.expiresAt <= this.now() || !lease.tabIds.includes(tabId)) {
+        throw new LeaseError('lease-lost', 'the handoff lease is missing, expired, or outside scope')
+      }
+      this.active = { ...lease, state: 'LEASED_HUMAN', expiresAt: this.now() + this.ttlMs }
+      await this.persist()
+      return structuredClone(this.active)
+    })
+  }
+
+  turnEnded(leaseId: string, leaseEpoch: number, finalTabs: number[], handoffTabs: number[], handoffTtlMs: number): Promise<{ releasedTabs: number[]; handoffTabs: number[] }> {
+    return this.mutate(async () => {
+      const lease = this.active
+      if (lease === null || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch || lease.state === 'LOST') {
+        throw new LeaseError('lease-lost', 'cannot finalize a stale lease epoch')
+      }
+      const final = [...new Set(finalTabs)].sort((a, b) => a - b)
+      const handoff = [...new Set(handoffTabs)].sort((a, b) => a - b)
+      const requested = [...final, ...handoff].sort((a, b) => a - b)
+      if (final.length !== finalTabs.length || handoff.length !== handoffTabs.length || final.some((tabId) => handoff.includes(tabId)) ||
+        requested.length !== lease.tabIds.length || requested.some((tabId, index) => tabId !== lease.tabIds[index])) {
+        throw new LeaseError('scope-mismatch', 'turn dispositions must cover the exact leased tab scope once')
+      }
+      if (handoff.length === 0) {
+        this.active = null
+        await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
+      } else {
+        this.active = { ...lease, tabIds: handoff, state: 'HANDOFF', expiresAt: this.now() + handoffTtlMs }
+        await this.persist()
+      }
+      return { releasedTabs: final, handoffTabs: handoff }
+    })
   }
 
   beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number): Promise<number> {

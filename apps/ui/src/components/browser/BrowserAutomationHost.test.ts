@@ -192,18 +192,24 @@ describe('BrowserAutomationHost main-owned view controller', () => {
       releaseForLifecycle,
       localStatus: vi.fn(async () => ({ ok: true as const, status: {
         coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
-        instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
+        instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'm4', connectedAt: now, supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'] }], attachment: null,
       } })),
     } as never
     const state = createInitialManagerWsState('session-1')
     let executeSecondary: ((request: BrowserAutomationRequest) => Promise<any>) | null = null
+    let secondaryRegistration: BrowserHostRegistration | null = null
     const client = {
       registerBrowserAutomationHost: vi.fn(() => vi.fn()),
-      registerSecondaryBrowserAutomationHost: vi.fn((_registration, handler) => { executeSecondary = handler; return vi.fn() }),
+      registerSecondaryBrowserAutomationHost: vi.fn((registration, handler) => { secondaryRegistration = registration; executeSecondary = handler; return vi.fn() }),
       reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
     } as never
     await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve() })
     const request = { requestId: 'external-chrome-release:prepare:archive:correlation-1', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.profile_a.7', hostId: 'external-host', hostGeneration: 5, deadlineAt: new Date(Date.now() + 5_000).toISOString(), artifactDirectory: null, operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7', externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1', reason: 'archive', originalHostId: 'external-host', originalHostGeneration: 5 } } } as BrowserAutomationRequest
+    expect(secondaryRegistration!.capabilities).toMatchObject({
+      supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
+      runtimeVersions: { extension: 'm4' },
+      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false },
+    })
     const response = await executeSecondary!(request)
     expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, phase: 'prepare', releaseId: 'release-1', reason: 'archive', tabId: 'ext.profile_a.7' }))
     expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true, result: { externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1' } } })

@@ -13,12 +13,14 @@ import { PAYLOAD_VERSION } from '../../runtime/identity.js'
 import { LeaseError, LeaseManager } from '../../runtime/lease-manager.js'
 import { restrictedTargetReason } from '../../runtime/restricted-target.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
+import { ExternalChromeOperationExecutor } from '../../runtime/operation-executor.js'
 import type { ServiceWorkerPayload, ShellEventName } from '../../shell/service-worker-bootstrap.js'
 
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
 const PROFILE_ALIAS_KEY = 'forge.externalChrome.profileAlias.v1'
 const HEARTBEAT_ALARM = 'forge.externalChrome.heartbeat.v1'
 const TRANSPORT_GRACE_ALARM = 'forge.externalChrome.transportGrace.v1'
+const HANDOFF_TTL_MS = 2 * 60_000
 
 interface ContentPort extends ChromeRuntimePort {
   sender?: ChromeRuntimeSender
@@ -72,6 +74,7 @@ export class Runtime implements ServiceWorkerPayload {
   private readonly chrome = installedChrome()
   private readonly leases = new LeaseManager(this.chrome, PAYLOAD_VERSION)
   private readonly debuggers = new DebuggerController(this.chrome.debugger)
+  private readonly operations = new ExternalChromeOperationExecutor(this.debuggers, (tabId) => this.chrome.tabs.get(tabId))
   private readonly contentPorts = new Map<number, Set<ContentPort>>()
   private readonly pendingChildren = new Map<number, number>()
   private readonly pendingSynthetic = new Map<string, {
@@ -108,7 +111,7 @@ export class Runtime implements ServiceWorkerPayload {
     if (recovered !== null) {
       if (recovered.state === 'LOST') {
         for (const tabId of recovered.tabIds) await this.debuggers.reconcileForRelease(tabId, this.chrome.runtime.id)
-      } else {
+      } else if (recovered.state !== 'HANDOFF') {
         try {
           for (const tabId of recovered.tabIds) await this.attachTab(tabId)
         } catch {
@@ -307,22 +310,77 @@ export class Runtime implements ServiceWorkerPayload {
       }
       case 'forge.browser.execute':
         return this.executeDesktopRequest(request.params)
-      case 'forge.browser.turnEnded':
+      case 'forge.browser.turnEnded': {
+        const current = this.leases.current()
+        if (current === null || current.leaseId !== request.params.leaseId || current.leaseEpoch !== request.params.leaseEpoch) {
+          throw new LeaseError('lease-lost', 'turn disposition used stale lease authority')
+        }
+        const dispositions = [...request.params.finalTabs, ...request.params.handoffTabs]
+        if (new Set(dispositions).size !== dispositions.length || dispositions.length !== current.tabIds.length ||
+          [...dispositions].sort((a, b) => a - b).some((tabId, index) => tabId !== current.tabIds[index])) {
+          throw new LeaseError('scope-mismatch', 'turn dispositions must exactly cover the leased tabs')
+        }
+        const detachResults = await Promise.allSettled(current.tabIds.map((tabId) => this.debuggers.detach(tabId)))
+        if (detachResults.some((result) => result.status === 'rejected')) {
+          await this.leases.markLost()
+          throw new LeaseError('lease-lost', 'Chrome did not acknowledge every debugger detach at turn end')
+        }
+        const result = await this.leases.turnEnded(
+          request.params.leaseId, request.params.leaseEpoch, request.params.finalTabs, request.params.handoffTabs, HANDOFF_TTL_MS,
+        )
+        this.broadcastStatus(result.releasedTabs, 'detached')
+        this.broadcastStatus(result.handoffTabs, 'handoff')
+        return {
+          protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch,
+          turnId: request.params.turnId, releasedTabs: result.releasedTabs, handoffTabs: result.handoffTabs,
+        }
+      }
       case 'forge.runtime.prepareUpdate':
       case 'forge.runtime.reload':
       case 'forge.runtime.hello':
-        throw new Error(`${request.method} is not enabled in M3`)
+        throw new Error(`${request.method} is not enabled by the current External Chrome runtime`)
     }
   }
 
   private async executeDesktopRequest(params: Extract<ExternalChromeRequest, { method: 'forge.browser.execute' }>['params']): Promise<unknown> {
-    const lease = this.leases.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
-    if (params.operation !== 'navigate') {
+    let lease = this.leases.current()
+    if (lease?.state === 'HANDOFF' && lease.leaseId === params.leaseId && lease.leaseEpoch === params.leaseEpoch && lease.tabIds.includes(params.tabId)) {
+      const handoffTabs = [...lease.tabIds]
+      try {
+        for (const tabId of handoffTabs) await this.attachTab(tabId)
+        lease = await this.leases.resumeHandoff(params.leaseId, params.leaseEpoch, params.tabId)
+      } catch (error) {
+        await this.leases.markLost()
+        await this.debuggers.detachAll()
+        this.broadcastStatus(handoffTabs, 'detached')
+        throw error
+      }
+      this.broadcastStatus(handoffTabs, 'human')
+    } else {
+      lease = this.leases.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
+    }
+    if (params.operation === 'status') {
+      const tab = await this.chrome.tabs.get(params.tabId)
+      const selectedTab = this.browserTabSnapshot(tab, lease.sessionAgentId)
       return {
         protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: params.operation, ok: false,
-        error: { code: 'unsupported-operation', message: `External Chrome M3 does not support ${params.operation}.`, retryable: false },
+        tabId: params.tabId, operation: 'status', ok: true,
+        result: {
+          available: true,
+          host: { hostKind: 'external-chrome', connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
+          panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab,
+        },
       }
+    }
+    if (params.operation !== 'navigate') {
+      if (!['snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(params.operation)) {
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: params.operation, ok: false,
+          error: { code: 'unsupported-operation', message: `External Chrome does not support ${params.operation}.`, retryable: false },
+        }
+      }
+      return this.executeFunctionalOperation(params)
     }
     if (Date.parse(params.deadlineAt) <= Date.now()) {
       return {
@@ -391,6 +449,42 @@ export class Runtime implements ServiceWorkerPayload {
       if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) {
         this.broadcastStatus([params.tabId], 'human')
       }
+    }
+  }
+
+  private async executeFunctionalOperation(params: Extract<ExternalChromeRequest, { method: 'forge.browser.execute' }>['params']): Promise<unknown> {
+    const controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId)
+    const navigationGeneration = this.debuggers.navigationGeneration(params.tabId)
+    const protectedInput = params.operation === 'click' || params.operation === 'type' || params.operation === 'press'
+    const operationId = protectedInput ? crypto.randomUUID() : null
+    try {
+      this.broadcastStatus([params.tabId], 'agent')
+      if (operationId !== null) await this.signalSyntheticStart(params.tabId, operationId, controlEpoch)
+      const outcome = await this.operations.execute(params, {
+        navigationGeneration,
+        isCurrent: () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
+        wasHumanInterrupted: () => {
+          const current = this.leases.current()
+          return current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
+        },
+      })
+      return {
+        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        tabId: params.tabId, operation: params.operation, ...outcome,
+      }
+    } catch (error) {
+      const current = this.leases.current()
+      const humanInterrupted = current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
+      return {
+        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        tabId: params.tabId, operation: params.operation, ok: false,
+        error: humanInterrupted
+          ? { code: 'control-interrupted', message: 'Trusted human input interrupted the operation.', retryable: true }
+          : { code: 'execution-failed', message: error instanceof Error ? error.message.slice(0, 1_024) : 'External Chrome operation failed.', retryable: true },
+      }
+    } finally {
+      if (operationId !== null) this.signalSyntheticEnd(params.tabId, operationId, controlEpoch)
+      if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) this.broadcastStatus([params.tabId], 'human')
     }
   }
 
@@ -513,9 +607,14 @@ export class Runtime implements ServiceWorkerPayload {
     const method = typeof args[1] === 'string' ? args[1] : ''
     const accepted = await this.debuggers.onEvent(source, method, args[2])
     if (!accepted.accepted || source.tabId === undefined) return
+    const routedSessionId = accepted.sessionId ?? source.sessionId
+    const routedTargetId = accepted.targetId ?? this.debuggers.targetId(source.tabId, routedSessionId)
+    if (routedTargetId !== undefined) this.operations.onCdpEvent(source.tabId, {
+      targetId: routedTargetId, ...(routedSessionId === undefined ? {} : { sessionId: routedSessionId }),
+    }, method, args[2])
     const lease = this.leases.current()
     if (lease === null || !lease.tabIds.includes(source.tabId)) return
-    const targetId = accepted.targetId ?? this.debuggers.targetId(source.tabId, source.sessionId)
+    const targetId = routedTargetId
     if (targetId === undefined) return
     this.native?.sendNotification('browser.cdpEvent', {
       protocolVersion: 1,
@@ -536,6 +635,7 @@ export class Runtime implements ServiceWorkerPayload {
     const lease = this.leases.current()
     if (notice === null || lease === null || !lease.tabIds.includes(notice.tabId)) return
     await this.leases.markLost()
+    this.operations.clear(notice.tabId)
     await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'detached')
     this.native?.sendNotification('browser.detached', {
@@ -604,6 +704,7 @@ export class Runtime implements ServiceWorkerPayload {
       }
       return
     }
+    this.notifyLocalLease(lease, 'claimed')
     this.native?.sendNotification('browser.tabChanged', {
       protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, tabId,
       change: { groupId: lease.groupId },

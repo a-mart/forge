@@ -2,7 +2,7 @@ import {
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_HOST_PROTOCOL_VERSION,
   DEFAULT_BROWSER_HOST_KIND,
-  EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
   isBrowserHostKind,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
@@ -190,13 +190,13 @@ function parseCapabilities(value: unknown): BrowserHostCapabilities {
       }
     : parseRuntimeVersions(capabilities.runtimeVersions);
   if (resolvedHostKind === "external-chrome") {
-    const qualified = EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS as readonly unknown[];
+    const qualified = EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS as readonly unknown[];
     if (operations.some((operation) => !qualified.includes(operation))) {
-      throw new Error("External Chrome may advertise only M3-qualified operations");
+      throw new Error("External Chrome may advertise only M4-qualified operations");
     }
     if (features.resize || features.recording || features.capturePage || features.downloadEvents
       || features.downloadArtifacts || features.downloadOpen) {
-      throw new Error("External Chrome may not advertise unqualified M3 features");
+      throw new Error("External Chrome may not advertise physical viewport, recording, capture, or download features");
     }
   }
   return {

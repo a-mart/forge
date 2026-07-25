@@ -88,6 +88,13 @@ export class OopifAncestryTracker {
     return this.targetBySession.get(sessionId)
   }
 
+  sessions(): Array<{ sessionId: string; targetId: string }> {
+    return [...this.targetBySession.entries()]
+      .filter(([, targetId]) => this.isDescendantOrRoot(targetId))
+      .map(([sessionId, targetId]) => ({ sessionId, targetId }))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+  }
+
   rootId(): string | null {
     return this.rootTargetId
   }
@@ -148,10 +155,16 @@ export interface DebuggerDetachNotice {
   devtoolsContention: boolean
 }
 
+export interface DebuggerRoute {
+  targetId: string
+  sessionId?: string
+}
+
 export class DebuggerController {
   private readonly states = new Map<number, DebuggerState>()
   private readonly trackers = new Map<number, OopifAncestryTracker>()
   private readonly navigationSignals = new Map<number, Set<(method: string) => void>>()
+  private readonly navigationGenerations = new Map<number, number>()
 
   constructor(private readonly debuggerApi: ChromeDebuggerApi) {}
 
@@ -196,6 +209,7 @@ export class DebuggerController {
       tracker.registerRoot(rootTargetId, rootFrameId)
       if (frameTree !== null) seedFrameTree(tracker, frameTree)
       this.trackers.set(tabId, tracker)
+      this.navigationGenerations.set(tabId, this.navigationGenerations.get(tabId) ?? 0)
       await this.debuggerApi.sendCommand(target, 'Target.setAutoAttach', {
         autoAttach: true,
         waitForDebuggerOnStart: false,
@@ -212,9 +226,26 @@ export class DebuggerController {
     }
   }
 
-  async sendCommand(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown> {
+  async sendCommand(tabId: number, method: string, params?: Record<string, unknown>, sessionId?: string): Promise<unknown> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
-    return this.debuggerApi.sendCommand({ tabId }, method, params)
+    if (sessionId !== undefined && this.trackers.get(tabId)?.acceptsSession(sessionId) !== true) {
+      throw new Error('debugger child session is outside the proven leased-root ancestry')
+    }
+    return this.debuggerApi.sendCommand({ tabId, ...(sessionId === undefined ? {} : { sessionId }) }, method, params)
+  }
+
+  routes(tabId: number): DebuggerRoute[] {
+    const tracker = this.trackers.get(tabId)
+    const root = tracker?.rootId()
+    if (this.state(tabId) !== 'ATTACHED' || tracker === undefined || root === null || root === undefined) return []
+    return [
+      { targetId: root },
+      ...tracker.sessions().map(({ targetId, sessionId }) => ({ targetId, sessionId })),
+    ]
+  }
+
+  navigationGeneration(tabId: number): number {
+    return this.navigationGenerations.get(tabId) ?? 0
   }
 
   async navigateAndWait(
@@ -280,6 +311,7 @@ export class DebuggerController {
     }
     this.states.set(tabId, 'UNATTACHED')
     this.trackers.delete(tabId)
+    this.navigationGenerations.delete(tabId)
   }
 
   async detachAll(): Promise<void> {
@@ -299,7 +331,15 @@ export class DebuggerController {
     if (payload === null) return { accepted: false }
     if (source.sessionId === undefined) for (const signal of this.navigationSignals.get(source.tabId) ?? []) signal(method)
     if (method === 'Target.attachedToTarget') {
-      const result = tracker.attached(source.sessionId, payload)
+      let result = tracker.attached(source.sessionId, payload)
+      if (!result.accepted && result.sessionId !== undefined) {
+        // Dynamic OOPIF attachment can race the corresponding Page.frameAttached event.
+        // Re-read Chrome's root frame tree and retry only after it proves ancestry.
+        const frameTreeResult = record(await this.debuggerApi.sendCommand({ tabId: source.tabId }, 'Page.getFrameTree').catch(() => null))
+        const frameTree = record(frameTreeResult?.frameTree)
+        if (frameTree !== null) seedFrameTree(tracker, frameTree)
+        result = tracker.attached(source.sessionId, payload)
+      }
       if (!result.accepted && result.sessionId !== undefined) {
         await this.debuggerApi.sendCommand({ tabId: source.tabId }, 'Target.detachFromTarget', { sessionId: result.sessionId }).catch(() => undefined)
         return { accepted: false, rejectedSessionId: result.sessionId }
@@ -331,6 +371,14 @@ export class DebuggerController {
       return { accepted: typeof payload.frameId === 'string' && tracker.frameAttached(payload.frameId, typeof payload.parentFrameId === 'string' ? payload.parentFrameId : null) }
     }
     if (source.sessionId !== undefined && !tracker.acceptsSession(source.sessionId)) return { accepted: false }
+    if (method === 'Page.frameNavigated') {
+      const frame = record(payload.frame)
+      const isRootNavigation = source.sessionId === undefined && typeof frame?.parentId !== 'string'
+      const isAcceptedChildNavigation = source.sessionId !== undefined
+      if (isRootNavigation || isAcceptedChildNavigation) {
+        this.navigationGenerations.set(source.tabId, this.navigationGeneration(source.tabId) + 1)
+      }
+    }
     const targetId = source.sessionId === undefined ? tracker.rootId() : tracker.targetIdForSession(source.sessionId)
     return { accepted: true, ...(targetId === null || targetId === undefined ? {} : { targetId }) }
   }
@@ -341,6 +389,7 @@ export class DebuggerController {
     this.navigationSignals.delete(source.tabId)
     this.states.set(source.tabId, 'LOST')
     this.trackers.delete(source.tabId)
+    this.navigationGenerations.set(source.tabId, this.navigationGeneration(source.tabId) + 1)
     const normalized = reason.toLowerCase()
     return {
       tabId: source.tabId,

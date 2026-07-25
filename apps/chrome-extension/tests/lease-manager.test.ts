@@ -231,6 +231,23 @@ describe('candidate picker and one-session leases', () => {
     expect(manager.current()).toMatchObject({ state: 'LEASED_HUMAN', controlEpoch: interruptedEpoch + 1 })
   })
 
+  it('CAS-finalizes exact turn dispositions and retains only bounded visible handoff scope', async () => {
+    let now = 1_000
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs) })
+    const manager = new LeaseManager(chrome, 'm1-spike.1', () => now, 10_000)
+    await manager.claim({ leaseId: 'lease-turn', leaseEpoch: 4, sessionAgentId: 'session-a', tabIds: [3, 4], childPolicy: 'manual' })
+    await expect(manager.turnEnded('lease-turn', 4, [3], [], 2_000)).rejects.toMatchObject({ code: 'scope-mismatch' })
+    await expect(manager.turnEnded('lease-turn', 4, [3], [4], 2_000)).resolves.toEqual({ releasedTabs: [3], handoffTabs: [4] })
+    expect(manager.current()).toMatchObject({ state: 'HANDOFF', tabIds: [4], expiresAt: 3_000 })
+    expect(() => manager.assertScope('lease-turn', 4, 4)).toThrow()
+    await expect(manager.resumeHandoff('lease-turn', 4, 4)).resolves.toMatchObject({ state: 'LEASED_HUMAN', tabIds: [4] })
+
+    await manager.turnEnded('lease-turn', 4, [], [4], 500)
+    now = 2_000
+    await expect(manager.resumeHandoff('lease-turn', 4, 4)).rejects.toMatchObject({ code: 'lease-lost' })
+    expect(chrome.commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(0)
+  })
+
   it('retains multi-tab release authority after a partial detach failure and retries all tabs', async () => {
     const failures = new Set([4])
     const chrome = fakeChrome({ tabs: structuredClone(normalTabs), detachFailures: failures })

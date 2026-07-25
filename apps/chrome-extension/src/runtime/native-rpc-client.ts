@@ -143,7 +143,7 @@ export class NativeRpcClient {
       operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({
         operation,
         supported: supported.has(operation),
-        ...(supported.has(operation) ? {} : { reason: 'External Chrome does not qualify this operation in M3' }),
+        ...(supported.has(operation) ? {} : { reason: 'External Chrome does not qualify physical viewport control or recording in M4' }),
       })),
       features: {
         resize: false,
@@ -151,7 +151,7 @@ export class NativeRpcClient {
         downloadEvents: false,
         downloadArtifacts: false,
         downloadOpen: false,
-        oopif: false,
+        oopif: true,
         humanInterruption: true,
         groups: true,
       },
