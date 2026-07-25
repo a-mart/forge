@@ -818,11 +818,11 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       descriptors: this.descriptors,
       profiles: this.profiles,
       configuredManagerId: this.config.managerId,
-      getPendingChoiceCount: (agentId) =>
-        this.choiceService.getPendingChoiceIdsForSession(agentId).length,
+      getPendingChoiceCount: (agentId) => this.choiceService.getPendingChoiceIdsForSession(agentId).length,
     });
   }
   private createConfigurationCoordinator(): SwarmConfigurationCoordinator {
+    const secureSessions = this.secureSessionsService;
     return new SwarmConfigurationCoordinator({
       config: this.config,
       defaultModelPreset: this.defaultModelPreset,
@@ -833,13 +833,14 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       skillFileService: this.skillFileService,
       secretsEnvService: this.secretsEnvService,
       secureSessions: {
-        hasActiveSession: (agentId) => this.secureSessionsService.getSecureRuntimeBinding(this.descriptors.get(agentId)!) !== undefined,
-        stopForLifecycle: (agentId) =>
-          this.secureSessionsService.stopSecureSessionForLifecycle(agentId),
+        hasActiveSession: (agentId) => secureSessions.getSecureRuntimeBinding(this.descriptors.get(agentId)!) !== undefined,
+        stopForLifecycle: (agentId) => secureSessions.stopSecureSessionForLifecycle(agentId),
+        beginLifecycleFence: (profileId, sessionAgentIds) => secureSessions.beginSecureSessionLifecycleFence(profileId, sessionAgentIds),
+        cancelLifecycleFence: (fenceId) => secureSessions.cancelSecureSessionLifecycleFence(fenceId),
+        completeLifecycleFence: (fenceId, outcome) => secureSessions.completeSecureSessionLifecycleFence(fenceId, outcome),
       },
       sessions: {
-        getSessionsForProfile: (profileId) =>
-          this.agentDirectory.getBuilderSessionsForProfile(profileId),
+        getSessionsForProfile: (profileId) => this.agentDirectory.getBuilderSessionsForProfile(profileId),
         getAllManagerSessions: () => Array.from(this.descriptors.values()).filter(
           (descriptor): descriptor is AgentDescriptor & { role: "manager"; profileId: string } =>
             this.agentDirectory.isSessionAgent(descriptor),
@@ -852,8 +853,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       access: {
         assertManagerSettingsTargetNotArchived: (managerId, action) =>
           this.agentDirectory.assertManagerSettingsTargetNotArchived(managerId, action),
-        assertProfileNotArchived: (profileId) =>
-          this.agentDirectory.assertProfileNotArchived(profileId),
+        assertProfileNotArchived: (profileId) => this.agentDirectory.assertProfileNotArchived(profileId),
         getRequiredBuilderSessionDescriptor: (agentId, action) => this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
         getRequiredCollaborationSessionDescriptor: (agentId, action) =>
           this.agentDirectory.getRequiredCollaborationSessionDescriptor(agentId, action),

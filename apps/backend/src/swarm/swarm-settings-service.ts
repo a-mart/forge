@@ -101,6 +101,12 @@ export interface SwarmSettingsServiceOptions {
   ) => Promise<ManagerRuntimeRecycleDisposition>;
   hasActiveSecureSession(agentId: string): boolean;
   stopSecureSessionForLifecycle(agentId: string): Promise<void>;
+  beginSecureSessionLifecycleFence(
+    profileId: string,
+    sessionAgentIds: readonly string[],
+  ): Promise<string>;
+  cancelSecureSessionLifecycleFence(fenceId: string): Promise<void>;
+  completeSecureSessionLifecycleFence(fenceId: string): Promise<void>;
   now?: () => string;
   transactionDescriptors?: <T>(callback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>) => Promise<T>;
   saveStore: () => Promise<void>;
@@ -233,65 +239,93 @@ export class SwarmSettingsService {
       return resolvedCwd;
     }
 
-    for (const session of sessions) {
-      await this.options.stopSecureSessionForLifecycle(session.agentId);
-    }
+    const sessionAgentIds = sessions.map((session) => session.agentId);
+    const lifecycleFenceId =
+      await this.options.beginSecureSessionLifecycleFence(
+        profile.profileId,
+        sessionAgentIds,
+      );
+    let lifecycleFenceCompleted = false;
 
     const recycledSessions: string[] = [];
     const deferredSessions: string[] = [];
     const recycleFailures: Array<{ agentId: string; error: string }> = [];
 
-    await this.runDescriptorTransaction(async (store) => {
+    try {
       for (const session of sessions) {
-        store.patchDescriptor(session.agentId, { cwd: resolvedCwd });
+        await this.options.stopSecureSessionForLifecycle(session.agentId);
       }
-    }, async () => {
-      const originalCwds = sessions.map((session) => ({ session, cwd: session.cwd }));
-      try {
+
+      await this.runDescriptorTransaction(async (store) => {
         for (const session of sessions) {
-          session.cwd = resolvedCwd;
+          store.patchDescriptor(session.agentId, { cwd: resolvedCwd });
         }
-        await this.options.saveStore();
-      } catch (error) {
-        for (const originalState of originalCwds) {
-          originalState.session.cwd = originalState.cwd;
+      }, async () => {
+        const originalCwds = sessions.map((session) => ({ session, cwd: session.cwd }));
+        try {
+          for (const session of sessions) {
+            session.cwd = resolvedCwd;
+          }
+          await this.options.saveStore();
+        } catch (error) {
+          for (const originalState of originalCwds) {
+            originalState.session.cwd = originalState.cwd;
+          }
+          throw error;
         }
-        throw error;
+      });
+
+      for (const session of sessions) {
+        try {
+          const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "cwd_change");
+          if (recycleDisposition === "recycled") {
+            recycledSessions.push(session.agentId);
+          } else if (recycleDisposition === "deferred") {
+            deferredSessions.push(session.agentId);
+          }
+        } catch (error) {
+          recycleFailures.push({
+            agentId: session.agentId,
+            error: errorToMessage(error)
+          });
+        }
       }
-    });
 
-    for (const session of sessions) {
-      try {
-        const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "cwd_change");
-        if (recycleDisposition === "recycled") {
-          recycledSessions.push(session.agentId);
-        } else if (recycleDisposition === "deferred") {
-          deferredSessions.push(session.agentId);
-        }
-      } catch (error) {
-        recycleFailures.push({
-          agentId: session.agentId,
-          error: errorToMessage(error)
-        });
+      if (recycleFailures.length > 0) {
+        console.warn(`[swarm] manager:update_cwd:recycle_failed managerId=${managerId} failures=${JSON.stringify(recycleFailures)}`);
       }
+
+      this.options.emitAgentsSnapshot();
+
+      this.options.logDebug("manager:update_cwd", {
+        managerId,
+        newCwd: resolvedCwd,
+        updatedSessions: sessionAgentIds,
+        recycledSessions,
+        deferredSessions,
+        recycleFailures
+      });
+
+      await this.options.completeSecureSessionLifecycleFence(
+        lifecycleFenceId,
+      );
+      lifecycleFenceCompleted = true;
+      return resolvedCwd;
+    } catch (error) {
+      if (!lifecycleFenceCompleted) {
+        try {
+          await this.options.cancelSecureSessionLifecycleFence(
+            lifecycleFenceId,
+          );
+        } catch (cancelError) {
+          this.options.logDebug("manager:update_cwd:secure_fence_cancel:error", {
+            managerId,
+            error: errorToMessage(cancelError),
+          });
+        }
+      }
+      throw error;
     }
-
-    if (recycleFailures.length > 0) {
-      console.warn(`[swarm] manager:update_cwd:recycle_failed managerId=${managerId} failures=${JSON.stringify(recycleFailures)}`);
-    }
-
-    this.options.emitAgentsSnapshot();
-
-    this.options.logDebug("manager:update_cwd", {
-      managerId,
-      newCwd: resolvedCwd,
-      updatedSessions: sessions.map((session) => session.agentId),
-      recycledSessions,
-      deferredSessions,
-      recycleFailures
-    });
-
-    return resolvedCwd;
   }
 
   async notifyModelSpecificInstructionsChanged(modelKeys: string[]): Promise<void> {

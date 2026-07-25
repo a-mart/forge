@@ -643,6 +643,23 @@ describe("Secure Sessions worker principal vertical slice", () => {
     await harness.close();
   });
 
+  it("rejects a captured binding after its session workspace changes", async () => {
+    const harness = createHarness();
+    await harness.service.startSecureSession(MANAGER_A);
+    const descriptor = harness.descriptors.get(MANAGER_A)!;
+    const staleBinding = harness.service.getSecureRuntimeBinding(descriptor)!;
+
+    descriptor.cwd = "/workspace-a-moved";
+
+    await expectBindingRejected(
+      staleBinding,
+      "must-not-run-from-stale-workspace",
+    );
+    expect(harness.execution.records).toHaveLength(0);
+
+    await harness.close();
+  });
+
   it("invalidates a captured binding when the same assignment replaces its secure sandbox", async () => {
     const harness = createHarness();
     const secret = await createEnvironmentSecret(

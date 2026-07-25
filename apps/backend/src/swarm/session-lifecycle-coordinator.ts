@@ -88,7 +88,7 @@ export interface SecureSessionLifecyclePort {
   cancelLifecycleFence(fenceId: string): Promise<void>;
   completeLifecycleFence(
     fenceId: string,
-    outcome: "archived" | "deleted",
+    outcome: "archived" | "deleted" | "updated",
   ): Promise<void>;
   clearLifecycleFenceForRestore(
     profileId: string,

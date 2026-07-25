@@ -549,10 +549,14 @@ export class SecureSessionsService {
 
   async completeSecureSessionLifecycleFence(
     fenceId: string,
-    outcome: "archived" | "deleted",
+    outcome: "archived" | "deleted" | "updated",
   ): Promise<void> {
     const normalizedFenceId = bounded(fenceId, 256);
-    if (outcome !== "archived" && outcome !== "deleted") {
+    if (
+      outcome !== "archived"
+      && outcome !== "deleted"
+      && outcome !== "updated"
+    ) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
     await this.withAuthorityMutation(async () => {
@@ -2563,6 +2567,8 @@ export class SecureSessionsService {
         || !current
         || current !== identity.active
         || current.closed
+        || !currentDescriptor
+        || current.task.workspacePath !== currentDescriptor.cwd
         || currentAssignmentId !== identity.workerAssignmentId
       ) {
         throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");

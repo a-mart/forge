@@ -118,6 +118,15 @@ export interface SwarmConfigurationCoordinatorOptions {
   secureSessions: {
     hasActiveSession(agentId: string): boolean;
     stopForLifecycle(agentId: string): Promise<void>;
+    beginLifecycleFence(
+      profileId: string,
+      sessionAgentIds: readonly string[],
+    ): Promise<string>;
+    cancelLifecycleFence(fenceId: string): Promise<void>;
+    completeLifecycleFence(
+      fenceId: string,
+      outcome: "updated",
+    ): Promise<void>;
   };
   sessions: SwarmConfigurationSessionIndex;
   access: SwarmConfigurationAccessPolicy;
@@ -169,6 +178,15 @@ export class SwarmConfigurationCoordinator {
       secretsEnvService: options.secretsEnvService,
       stopSecureSessionForLifecycle: (agentId) =>
         options.secureSessions.stopForLifecycle(agentId),
+      beginSecureSessionLifecycleFence: (profileId, sessionAgentIds) =>
+        options.secureSessions.beginLifecycleFence(
+          profileId,
+          sessionAgentIds,
+        ),
+      cancelSecureSessionLifecycleFence: (fenceId) =>
+        options.secureSessions.cancelLifecycleFence(fenceId),
+      completeSecureSessionLifecycleFence: (fenceId) =>
+        options.secureSessions.completeLifecycleFence(fenceId, "updated"),
       getSessionsForProfile: options.sessions.getSessionsForProfile,
       getAllManagerSessions: options.sessions.getAllManagerSessions,
       getSessionById: options.sessions.getSessionById,

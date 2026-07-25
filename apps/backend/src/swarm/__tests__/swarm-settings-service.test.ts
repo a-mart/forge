@@ -116,6 +116,9 @@ function createService(options: {
   applyManagerRuntimeRecyclePolicy?: ReturnType<typeof vi.fn>;
   hasActiveSecureSession?: ReturnType<typeof vi.fn>;
   stopSecureSessionForLifecycle?: ReturnType<typeof vi.fn>;
+  beginSecureSessionLifecycleFence?: ReturnType<typeof vi.fn>;
+  cancelSecureSessionLifecycleFence?: ReturnType<typeof vi.fn>;
+  completeSecureSessionLifecycleFence?: ReturnType<typeof vi.fn>;
   saveStore?: ReturnType<typeof vi.fn>;
   transactionDescriptors?: (callback: any) => Promise<any>;
   emitAgentsSnapshot?: ReturnType<typeof vi.fn>;
@@ -141,6 +144,12 @@ function createService(options: {
     hasActiveSecureSession: options.hasActiveSecureSession ?? vi.fn(() => false),
     stopSecureSessionForLifecycle:
       options.stopSecureSessionForLifecycle ?? vi.fn(async () => undefined),
+    beginSecureSessionLifecycleFence:
+      options.beginSecureSessionLifecycleFence ?? vi.fn(async () => "cwd-fence"),
+    cancelSecureSessionLifecycleFence:
+      options.cancelSecureSessionLifecycleFence ?? vi.fn(async () => undefined),
+    completeSecureSessionLifecycleFence:
+      options.completeSecureSessionLifecycleFence ?? vi.fn(async () => undefined),
     now: options.now,
     transactionDescriptors: options.transactionDescriptors,
     saveStore: options.saveStore ?? vi.fn(async () => {}),
@@ -1007,6 +1016,9 @@ describe("SwarmSettingsService.updateManagerCwd", () => {
     const firstSession = createSession(root, "manager");
     const secondSession = createSession(root, "manager--s2");
     const transactionDescriptors = vi.fn(async () => undefined);
+    const beginSecureSessionLifecycleFence = vi.fn(async () => "cwd-fence");
+    const cancelSecureSessionLifecycleFence = vi.fn(async () => undefined);
+    const completeSecureSessionLifecycleFence = vi.fn(async () => undefined);
     const stopSecureSessionForLifecycle = vi.fn(async (agentId: string) => {
       if (agentId === secondSession.agentId) {
         throw new Error("secure teardown failed");
@@ -1017,6 +1029,9 @@ describe("SwarmSettingsService.updateManagerCwd", () => {
       sessions: [firstSession, secondSession],
       transactionDescriptors,
       stopSecureSessionForLifecycle,
+      beginSecureSessionLifecycleFence,
+      cancelSecureSessionLifecycleFence,
+      completeSecureSessionLifecycleFence,
     });
 
     await expect(service.updateManagerCwd("manager", nextCwd)).rejects.toThrow(
@@ -1027,8 +1042,83 @@ describe("SwarmSettingsService.updateManagerCwd", () => {
       ["manager--s2"],
     ]);
     expect(transactionDescriptors).not.toHaveBeenCalled();
+    expect(beginSecureSessionLifecycleFence).toHaveBeenCalledWith(
+      "manager",
+      ["manager", "manager--s2"],
+    );
+    expect(cancelSecureSessionLifecycleFence).toHaveBeenCalledWith("cwd-fence");
+    expect(completeSecureSessionLifecycleFence).not.toHaveBeenCalled();
     expect(firstSession.cwd).toBe(root);
     expect(secondSession.cwd).toBe(root);
+  });
+
+  it("holds the secure lifecycle fence through teardown, mutation, and runtime recycle", async () => {
+    const root = await createTempRoot();
+    const nextCwd = join(root, "workspace");
+    const session = createSession(root, "manager");
+    const events: string[] = [];
+    let fenceActive = false;
+    const beginSecureSessionLifecycleFence = vi.fn(async (
+      profileId: string,
+      sessionAgentIds: readonly string[],
+    ) => {
+      expect(profileId).toBe("manager");
+      expect(sessionAgentIds).toEqual(["manager"]);
+      fenceActive = true;
+      events.push("fence:begin");
+      return "cwd-fence";
+    });
+    const stopSecureSessionForLifecycle = vi.fn(async () => {
+      expect(fenceActive).toBe(true);
+      events.push("secure:stop");
+    });
+    const transactionDescriptors = vi.fn(async (callback: any) => {
+      expect(fenceActive).toBe(true);
+      events.push("descriptor:transaction");
+      return callback({
+        patchDescriptor: (agentId: string, patch: Partial<AgentDescriptor>) => {
+          Object.assign(session, patch);
+          return session;
+        },
+        patchProfile: () => {
+          throw new Error("unexpected profile patch");
+        },
+      });
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => {
+      expect(fenceActive).toBe(true);
+      events.push("runtime:recycle");
+      return "recycled";
+    });
+    const completeSecureSessionLifecycleFence = vi.fn(async (fenceId: string) => {
+      expect(fenceId).toBe("cwd-fence");
+      expect(fenceActive).toBe(true);
+      events.push("fence:complete");
+      fenceActive = false;
+    });
+    const cancelSecureSessionLifecycleFence = vi.fn(async () => undefined);
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      beginSecureSessionLifecycleFence,
+      stopSecureSessionForLifecycle,
+      transactionDescriptors,
+      applyManagerRuntimeRecyclePolicy,
+      completeSecureSessionLifecycleFence,
+      cancelSecureSessionLifecycleFence,
+    });
+
+    await expect(service.updateManagerCwd("manager", nextCwd)).resolves.toBe(nextCwd);
+
+    expect(events).toEqual([
+      "fence:begin",
+      "secure:stop",
+      "descriptor:transaction",
+      "runtime:recycle",
+      "fence:complete",
+    ]);
+    expect(fenceActive).toBe(false);
+    expect(cancelSecureSessionLifecycleFence).not.toHaveBeenCalled();
   });
 
   it("patches all profile sessions in one transaction and recycles only after save", async () => {
