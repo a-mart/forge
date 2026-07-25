@@ -61,6 +61,7 @@ import {
   shouldInterruptExternalThreadSidecar,
 } from "./external-thread-compatibility.js";
 import { isBuiltinModePromptId } from "./worker-mode-prompt.js";
+import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -153,6 +154,7 @@ export interface SwarmAgentLifecycleServiceOptions {
     | "clearPendingManagerRuntimeRecycle"
     | "clearRecoveryAbortedWorkerTurn"
   >;
+  secureWorkers: SecureWorkerLifecyclePort;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
   sessionProvisioner: SessionProvisioner;
   descriptorMutations: AgentLifecycleDescriptorMutations;
@@ -838,50 +840,63 @@ export class SwarmAgentLifecycleService {
       cwd: descriptor.cwd
     });
 
+    let secureWorkerPrepared = false;
     try {
-      const baseSystemPrompt =
-        explicitSystemPrompt && explicitSystemPrompt.length > 0
-          ? explicitSystemPrompt
-          : await this.options.resolveSystemPromptForDescriptor(descriptor);
+      secureWorkerPrepared =
+        await this.options.secureWorkers.prepareWorkerForSecureTeam(agentId);
+      if (secureWorkerPrepared) {
+        this.options.emitStatus(agentId, descriptor.status, 0);
+        this.options.emitAgentsSnapshot();
+      } else {
+        const baseSystemPrompt =
+          explicitSystemPrompt && explicitSystemPrompt.length > 0
+            ? explicitSystemPrompt
+            : await this.options.resolveSystemPromptForDescriptor(descriptor);
 
-      const runtimeSystemPrompt = this.options.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
+        const runtimeSystemPrompt = this.options.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
 
-      let runtime: SwarmAgentRuntime;
-      try {
-        runtime = await this.options.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-      } catch (error) {
-        if (specialistFallbackModel && shouldRetrySpecialistSpawnWithFallback(error, descriptor.model)) {
-          const previousModel = { ...descriptor.model };
-          descriptor.model = { ...specialistFallbackModel };
-          this.upsertDescriptor(descriptor);
-          await this.options.saveStore();
-
-          this.options.logDebug("agent:spawn:specialist_fallback_retry", {
-            agentId,
-            specialistId: specialist?.specialistId,
-            previousModel,
-            fallbackModel: descriptor.model,
-            error: error instanceof Error ? error.message : String(error)
-          });
-
+        let runtime: SwarmAgentRuntime;
+        try {
           runtime = await this.options.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-        } else {
-          throw error;
+        } catch (error) {
+          if (specialistFallbackModel && shouldRetrySpecialistSpawnWithFallback(error, descriptor.model)) {
+            const previousModel = { ...descriptor.model };
+            descriptor.model = { ...specialistFallbackModel };
+            this.upsertDescriptor(descriptor);
+            await this.options.saveStore();
+
+            this.options.logDebug("agent:spawn:specialist_fallback_retry", {
+              agentId,
+              specialistId: specialist?.specialistId,
+              previousModel,
+              fallbackModel: descriptor.model,
+              error: error instanceof Error ? error.message : String(error)
+            });
+
+            runtime = await this.options.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
+          } else {
+            throw error;
+          }
         }
+
+        this.options.attachRuntime(agentId, runtime);
+
+        const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
+        const contextUsage = runtime.getContextUsage();
+        descriptor.contextUsage = contextUsage;
+        this.upsertDescriptor(descriptor);
+        await this.options.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
+        await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+
+        this.options.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
+        this.options.emitAgentsSnapshot();
       }
-
-      this.options.attachRuntime(agentId, runtime);
-
-      const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
-      const contextUsage = runtime.getContextUsage();
-      descriptor.contextUsage = contextUsage;
-      this.upsertDescriptor(descriptor);
-      await this.options.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
-      await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-
-      this.options.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
-      this.options.emitAgentsSnapshot();
     } catch (error) {
+      let secureTeardownFailure: unknown;
+      if (secureWorkerPrepared) {
+        secureTeardownFailure =
+          await this.captureSecureWorkerTeardownFailure(agentId);
+      }
       try {
         if (this.options.runtimes.has(agentId)) {
           const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
@@ -913,6 +928,13 @@ export class SwarmAgentLifecycleService {
         });
       }
 
+      if (secureTeardownFailure) {
+        throw this.createSecureWorkerCleanupFailure(
+          agentId,
+          secureTeardownFailure,
+          error,
+        );
+      }
       throw error;
     }
 
@@ -942,7 +964,15 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Only owning manager can kill agent ${targetAgentId}`);
     }
 
-    await this.terminateDescriptor(target, { abort: true, emitStatus: false });
+    let cleanupFailure: unknown;
+    try {
+      await this.terminateDescriptor(target, {
+        abort: true,
+        emitStatus: false,
+      });
+    } catch (error) {
+      cleanupFailure = error;
+    }
     await this.options.saveStore();
 
     this.options.logDebug("agent:kill", {
@@ -954,6 +984,11 @@ export class SwarmAgentLifecycleService {
     const refreshedTarget = this.options.descriptors.get(targetAgentId) ?? target;
     this.options.emitStatus(targetAgentId, refreshedTarget.status, 0);
     this.options.emitAgentsSnapshot();
+    if (cleanupFailure) {
+      throw cleanupFailure instanceof Error
+        ? cleanupFailure
+        : new Error("agent_cleanup_failed");
+    }
   }
 
   async stopWorker(agentId: string): Promise<void> {
@@ -962,6 +997,34 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Unknown worker agent: ${agentId}`);
     }
 
+    const secureTeardownFailure =
+      await this.captureSecureWorkerTeardownFailure(agentId);
+    try {
+      await this.stopWorkerRuntime(
+        descriptor as AgentDescriptor & { role: "worker" },
+      );
+    } catch (error) {
+      if (secureTeardownFailure) {
+        throw this.createSecureWorkerCleanupFailure(
+          agentId,
+          secureTeardownFailure,
+          error,
+        );
+      }
+      throw error;
+    }
+    if (secureTeardownFailure) {
+      throw this.createSecureWorkerCleanupFailure(
+        agentId,
+        secureTeardownFailure,
+      );
+    }
+  }
+
+  private async stopWorkerRuntime(
+    descriptor: AgentDescriptor & { role: "worker" },
+  ): Promise<void> {
+    const agentId = descriptor.agentId;
     if (isExternalThreadDescriptor(descriptor)) {
       if (!shouldInterruptExternalThreadSidecar(descriptor)) {
         return;
@@ -1076,6 +1139,7 @@ export class SwarmAgentLifecycleService {
 
     const stoppedWorkerIds: string[] = [];
     const workerShutdownTimeoutIds: string[] = [];
+    const secureTeardownFailures: unknown[] = [];
     const managerRuntime = this.options.runtimes.get(target.agentId);
     const shouldAllowManualStopMessageEnd =
       managerRuntime !== undefined && (target.status === "streaming" || managerRuntime.getStatus() === "streaming");
@@ -1095,6 +1159,12 @@ export class SwarmAgentLifecycleService {
 
       if (descriptor.managerId !== targetManagerId) {
         continue;
+      }
+
+      const secureTeardownFailure =
+        await this.captureSecureWorkerTeardownFailure(descriptor.agentId);
+      if (secureTeardownFailure) {
+        secureTeardownFailures.push(secureTeardownFailure);
       }
 
       if (isExternalThreadDescriptor(descriptor)) {
@@ -1190,6 +1260,13 @@ export class SwarmAgentLifecycleService {
       stoppedWorkerIds,
       managerStopped
     });
+
+    if (secureTeardownFailures.length > 0) {
+      throw new AggregateError(
+        secureTeardownFailures,
+        `secure_worker_teardown_failed: ${targetManagerId}`,
+      );
+    }
 
     return {
       managerId: targetManagerId,
@@ -1341,16 +1418,51 @@ export class SwarmAgentLifecycleService {
     }
 
     const terminatedWorkerIds: string[] = [];
+    const workerDescriptors: AgentDescriptor[] = [];
+    const terminationFailures: unknown[] = [];
 
     for (const sessionDescriptor of sessionDescriptors) {
       for (const workerDescriptor of this.options.getWorkersForManager(sessionDescriptor.agentId)) {
         terminatedWorkerIds.push(workerDescriptor.agentId);
-        await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
-        this.deleteDescriptor(workerDescriptor.agentId);
-        this.options.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
+        workerDescriptors.push(workerDescriptor);
+        try {
+          await this.terminateDescriptor(workerDescriptor, {
+            abort: true,
+            emitStatus: true,
+          });
+        } catch (error) {
+          terminationFailures.push(error);
+        }
       }
 
-      await this.terminateDescriptor(sessionDescriptor, { abort: true, emitStatus: true });
+      try {
+        await this.terminateDescriptor(sessionDescriptor, {
+          abort: true,
+          emitStatus: true,
+        });
+      } catch (error) {
+        terminationFailures.push(error);
+      }
+    }
+
+    if (terminationFailures.length > 0) {
+      await this.options.saveStore();
+      this.options.emitAgentsSnapshot();
+      this.options.emitProfilesSnapshot();
+      throw new AggregateError(
+        terminationFailures,
+        `agent_cleanup_failed: ${targetManagerId}`,
+      );
+    }
+
+    for (const workerDescriptor of workerDescriptors) {
+      this.deleteDescriptor(workerDescriptor.agentId);
+      this.options.deleteConversationHistory(
+        workerDescriptor.agentId,
+        workerDescriptor.sessionFile,
+      );
+    }
+    for (const sessionDescriptor of sessionDescriptors) {
       this.deleteDescriptor(sessionDescriptor.agentId);
       this.options.deleteConversationHistory(sessionDescriptor.agentId, sessionDescriptor.sessionFile);
     }
@@ -1498,7 +1610,14 @@ export class SwarmAgentLifecycleService {
       return existingRuntime;
     }
 
-    const creationPromise = this.createAndAttachRuntimeForDescriptor(descriptor);
+    const creationPromise = (async () => {
+      if (descriptor.role === "worker") {
+        await this.options.secureWorkers.prepareWorkerForSecureTeam(
+          descriptor.agentId,
+        );
+      }
+      return this.createAndAttachRuntimeForDescriptor(descriptor);
+    })();
     this.setRuntimeCreationPromise(descriptor.agentId, creationPromise);
 
     try {
@@ -1598,6 +1717,7 @@ export class SwarmAgentLifecycleService {
     const terminatedWorkerDescriptors: AgentDescriptor[] = [];
     const unsafeShutdownAgentIds: string[] = [];
     const interruptedWorkerIds: string[] = [];
+    const workerCleanupFailures: unknown[] = [];
     const runtime = this.options.runtimes.get(agentId);
     const shouldEmitManualStopNotice = (options.manualStopNotice ?? true) && !options.deleteWorkers;
     const shouldAllowManualStopMessageEnd =
@@ -1622,7 +1742,16 @@ export class SwarmAgentLifecycleService {
         continue;
       }
 
-      await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
+      try {
+        await this.terminateDescriptor(workerDescriptor, {
+          abort: true,
+          emitStatus: true,
+        });
+      } catch (error) {
+        workerCleanupFailures.push(error);
+        unsafeShutdownAgentIds.push(workerDescriptor.agentId);
+        continue;
+      }
       if (workerDescriptor.status !== "terminated") {
         unsafeShutdownAgentIds.push(workerDescriptor.agentId);
         continue;
@@ -1692,6 +1821,13 @@ export class SwarmAgentLifecycleService {
       this.options.emitProfilesSnapshot();
     }
 
+    if (workerCleanupFailures.length > 0) {
+      throw new AggregateError(
+        workerCleanupFailures,
+        `secure_worker_teardown_failed: ${agentId}`,
+      );
+    }
+
     return { terminatedWorkerIds, unsafeShutdownAgentIds };
   }
 
@@ -1701,6 +1837,19 @@ export class SwarmAgentLifecycleService {
   ): Promise<"recycled" | "deferred" | "none"> {
     const descriptor = this.options.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
+      this.clearPendingManagerRuntimeRecycle(agentId);
+      return "none";
+    }
+
+    return this.applyAgentRuntimeRecyclePolicy(agentId, reason);
+  }
+
+  async applyAgentRuntimeRecyclePolicy(
+    agentId: string,
+    reason: ManagerRuntimeRecycleReason
+  ): Promise<"recycled" | "deferred" | "none"> {
+    const descriptor = this.options.descriptors.get(agentId);
+    if (!descriptor || isExternalThreadDescriptor(descriptor)) {
       this.clearPendingManagerRuntimeRecycle(agentId);
       return "none";
     }
@@ -1720,16 +1869,73 @@ export class SwarmAgentLifecycleService {
       return "none";
     }
 
-    if (!this.canRecycleManagerRuntimeImmediately(descriptor, runtime)) {
+    if (!this.canRecycleAgentRuntimeImmediately(descriptor, runtime)) {
       this.setPendingManagerRuntimeRecycle(agentId, effectiveReason);
       return "deferred";
     }
 
-    await this.recycleManagerRuntime(descriptor, runtime, effectiveReason);
+    await this.recycleAgentRuntime(descriptor, runtime, effectiveReason);
     return "recycled";
   }
 
+  private async captureSecureWorkerTeardownFailure(
+    workerAgentId: string,
+  ): Promise<unknown | undefined> {
+    try {
+      await this.options.secureWorkers.teardownWorkerSecurePrincipal(
+        workerAgentId,
+      );
+      return undefined;
+    } catch (error) {
+      this.options.logDebug("secure_worker:teardown:error", {
+        workerAgentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return error;
+    }
+  }
+
+  private createSecureWorkerCleanupFailure(
+    workerAgentId: string,
+    _secureTeardownFailure: unknown,
+    runtimeCleanupFailure?: unknown,
+  ): Error {
+    this.options.logDebug("secure_worker:cleanup:failed", {
+      workerAgentId,
+      runtimeCleanupFailed: runtimeCleanupFailure !== undefined,
+    });
+    return new Error(`secure_worker_teardown_failed: ${workerAgentId}`);
+  }
+
   async terminateDescriptor(
+    descriptor: AgentDescriptor,
+    options: { abort: boolean; emitStatus: boolean }
+  ): Promise<void> {
+    const secureTeardownFailure =
+      descriptor.role === "worker"
+        ? await this.captureSecureWorkerTeardownFailure(descriptor.agentId)
+        : undefined;
+    try {
+      await this.terminateDescriptorRuntime(descriptor, options);
+    } catch (error) {
+      if (secureTeardownFailure) {
+        throw this.createSecureWorkerCleanupFailure(
+          descriptor.agentId,
+          secureTeardownFailure,
+          error,
+        );
+      }
+      throw error;
+    }
+    if (secureTeardownFailure) {
+      throw this.createSecureWorkerCleanupFailure(
+        descriptor.agentId,
+        secureTeardownFailure,
+      );
+    }
+  }
+
+  private async terminateDescriptorRuntime(
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
@@ -1901,12 +2107,11 @@ export class SwarmAgentLifecycleService {
     }
   }
 
-  private canRecycleManagerRuntimeImmediately(
+  private canRecycleAgentRuntimeImmediately(
     descriptor: AgentDescriptor,
     runtime: SwarmAgentRuntime
   ): boolean {
     return (
-      descriptor.role === "manager" &&
       descriptor.status === "idle" &&
       runtime.getStatus() === "idle" &&
       runtime.getPendingCount() === 0 &&
@@ -1914,15 +2119,11 @@ export class SwarmAgentLifecycleService {
     );
   }
 
-  private async recycleManagerRuntime(
+  private async recycleAgentRuntime(
     descriptor: AgentDescriptor,
     runtime: SwarmAgentRuntime,
     reason: ManagerRuntimeRecycleReason
   ): Promise<void> {
-    if (descriptor.role !== "manager") {
-      return;
-    }
-
     const runtimeToken = this.options.getRuntimeToken(descriptor.agentId);
     this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
 
@@ -1944,11 +2145,19 @@ export class SwarmAgentLifecycleService {
       this.upsertDescriptor(descriptor);
     }
 
-    await this.options.refreshSessionMetaStats(descriptor);
+    if (descriptor.role === "worker") {
+      await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.options.refreshSessionMetaStatsBySessionId(
+        descriptor.managerId,
+      );
+    } else {
+      await this.options.refreshSessionMetaStats(descriptor);
+    }
 
     this.options.emitStatus(descriptor.agentId, descriptor.status, 0);
-    this.options.logDebug("manager:runtime_recycled", {
+    this.options.logDebug("agent:runtime_recycled", {
       agentId: descriptor.agentId,
+      role: descriptor.role,
       profileId: descriptor.profileId,
       reason,
       model: descriptor.model
@@ -1971,7 +2180,15 @@ export class SwarmAgentLifecycleService {
       return existingRuntime;
     }
 
-    const systemPrompt = await this.options.resolveSystemPromptForDescriptor(descriptor);
+    const resolvedSystemPrompt =
+      await this.options.resolveSystemPromptForDescriptor(descriptor);
+    const systemPrompt =
+      descriptor.role === "worker"
+        ? this.options.injectWorkerIdentityContext(
+            descriptor,
+            resolvedSystemPrompt,
+          )
+        : resolvedSystemPrompt;
     const runtimeBeforeCreate = this.options.runtimes.get(descriptor.agentId);
     if (runtimeBeforeCreate) {
       return runtimeBeforeCreate;

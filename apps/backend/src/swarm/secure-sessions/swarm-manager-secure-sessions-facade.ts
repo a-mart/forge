@@ -21,6 +21,7 @@ import type {
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
+  TeardownWorkerSecurePrincipalOptions,
   UpdateSecureSecretInput,
 } from "./secure-sessions-api.js";
 
@@ -106,6 +107,50 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: StopSecureSessionInput,
   ): Promise<SecureSessionSnapshot> {
     return this.secureSessions.stopSecureSession(sessionAgentId, input);
+  }
+
+  isTeamSecureMode(managerAgentId: string): boolean {
+    return this.secureSessions.isTeamSecureMode(managerAgentId);
+  }
+
+  listSecureSessionTeamSnapshots(
+    managerAgentId: string,
+  ): Promise<SecureSessionSnapshot[]> {
+    return this.secureSessions.listSecureSessionTeamSnapshots(managerAgentId);
+  }
+
+  prepareWorkerForSecureTeam(workerAgentId: string): Promise<boolean> {
+    return this.secureSessions.prepareWorkerForSecureTeam(workerAgentId);
+  }
+
+  advanceWorkerSecureAssignment(
+    workerAgentId: string,
+    assignmentId: string,
+  ): Promise<void> {
+    return this.secureSessions.advanceWorkerSecureAssignment(
+      workerAgentId,
+      assignmentId,
+    );
+  }
+
+  abortWorkerSecureAssignment(
+    workerAgentId: string,
+    assignmentId: string,
+  ): Promise<void> {
+    return this.secureSessions.abortWorkerSecureAssignment(
+      workerAgentId,
+      assignmentId,
+    );
+  }
+
+  teardownWorkerSecurePrincipal(
+    workerAgentId: string,
+    options?: TeardownWorkerSecurePrincipalOptions,
+  ): Promise<void> {
+    return this.secureSessions.teardownWorkerSecurePrincipal(
+      workerAgentId,
+      options,
+    );
   }
 
   grantSecureSessionLease(

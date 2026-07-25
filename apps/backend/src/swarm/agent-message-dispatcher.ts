@@ -20,6 +20,7 @@ import {
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import type { ExternalProjectAgentDeliveryAuthorization } from "./project-agent-sharing-service.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
+import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import type {
   RuntimeImageAttachment,
   RuntimeUserMessage,
@@ -221,6 +222,7 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
   goals: AgentMessageGoalPort;
   projectAgents: AgentMessageProjectAgentPort;
   codex: AgentMessageCodexPort<TCodexGate>;
+  secureWorkers: SecureWorkerLifecyclePort;
   getOrCreateRuntime(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
   appendProjectAgentConversation(
     target: AgentDescriptor,
@@ -574,7 +576,14 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         ? input.target.workerParentContext?.assignmentId ?? null
         : undefined;
     const managerContextIds = resolveActivityManagerContextIds(input.sender, input.target);
-    const runtime = await this.options.getOrCreateRuntime(input.target);
+    const secureWorkerPrepared =
+      input.target.role === "worker" &&
+      input.sender.role === "manager" &&
+      input.target.managerId === input.sender.agentId
+        ? await this.options.secureWorkers.prepareWorkerForSecureTeam(
+            input.target.agentId,
+          )
+        : false;
     let modelMessage = await this.prepareModelInboundMessage(
       input.target.agentId,
       { text: input.message, attachments: input.attachments },
@@ -643,20 +652,101 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     const { rollback, turnId: managerTurnId } = queuedTurn;
 
     let assignmentTransaction: WorkerAssignmentTransaction | undefined;
+    let secureAssignmentId: string | undefined;
     try {
       assignmentTransaction = await this.persistWorkerAssignment(
         input.sender,
         input.target,
         workerAssignmentExpectation,
       );
+      secureAssignmentId =
+        assignmentTransaction?.assignmentId ??
+        (workerAssignmentExpectation === null
+          ? undefined
+          : workerAssignmentExpectation);
+      if (secureWorkerPrepared && secureAssignmentId) {
+        await this.options.secureWorkers.advanceWorkerSecureAssignment(
+          input.target.agentId,
+          secureAssignmentId,
+        );
+      }
     } catch (error) {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "worker_assignment_persist_failed");
+      await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && secureAssignmentId) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          secureAssignmentId,
+        );
+      }
       throw error;
     }
     const expectedWorkerAssignmentId =
       assignmentTransaction?.assignmentId ??
       (workerAssignmentExpectation === null ? undefined : workerAssignmentExpectation);
+
+    const assignmentErrorBeforeRuntime =
+      this.getWorkerAssignmentDispatchError(
+        input.target,
+        expectedWorkerAssignmentId,
+      );
+    if (assignmentErrorBeforeRuntime) {
+      rollback();
+      this.options.observability.cancelRuntimeInput(
+        observabilityInput,
+        "worker_assignment_completed_before_dispatch",
+      );
+      await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && assignmentTransaction) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          assignmentTransaction.assignmentId,
+        );
+      }
+      throw assignmentErrorBeforeRuntime;
+    }
+
+    let runtime: SwarmAgentRuntime;
+    try {
+      runtime = await this.options.getOrCreateRuntime(input.target);
+    } catch (error) {
+      rollback();
+      this.options.observability.cancelRuntimeInput(
+        observabilityInput,
+        "runtime_creation_failed",
+      );
+      await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && assignmentTransaction) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          assignmentTransaction.assignmentId,
+        );
+      }
+      throw error;
+    }
+
+    const assignmentErrorAfterRuntime =
+      this.getWorkerAssignmentDispatchError(
+        input.target,
+        expectedWorkerAssignmentId,
+      );
+    if (assignmentErrorAfterRuntime) {
+      rollback();
+      this.options.observability.cancelRuntimeInput(
+        observabilityInput,
+        "worker_assignment_completed_before_dispatch",
+      );
+      await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && assignmentTransaction) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          assignmentTransaction.assignmentId,
+        );
+      }
+      throw assignmentErrorAfterRuntime;
+    }
+
     const deliveryId = [
       input.workerResult ? "worker-result" : "agent-message",
       input.sender.agentId,
@@ -688,20 +778,24 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       });
     }
 
-    if (
-      expectedWorkerAssignmentId &&
-      (
-        input.target.role !== "worker" ||
-        input.target.workerParentContext?.assignmentId !== expectedWorkerAssignmentId ||
-        Boolean(input.target.workerParentContext?.completedAt)
-      )
-    ) {
+    const assignmentErrorBeforeSend =
+      this.getWorkerAssignmentDispatchError(
+        input.target,
+        expectedWorkerAssignmentId,
+      );
+    if (assignmentErrorBeforeSend) {
       rollback();
       this.options.observability.cancelRuntimeInput(
         observabilityInput,
         "worker_assignment_completed_before_dispatch",
       );
       await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && assignmentTransaction) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          assignmentTransaction.assignmentId,
+        );
+      }
       if (hasDeliveryLedger) {
         await this.options.ledger.recordDeliveryAcked({
           sessionAgentId: input.target.agentId,
@@ -714,9 +808,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
           });
         });
       }
-      throw new Error(
-        `Worker ${input.target.agentId} completed its assignment before this message could be dispatched. Retry the message.`,
-      );
+      throw assignmentErrorBeforeSend;
     }
 
     let receipt: SendMessageReceipt;
@@ -726,6 +818,12 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "runtime_send_message_failed");
       await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (secureWorkerPrepared && assignmentTransaction) {
+        await this.abortFailedSecureWorkerAssignment(
+          input.target.agentId,
+          assignmentTransaction.assignmentId,
+        );
+      }
       throw error;
     }
 
@@ -875,6 +973,48 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         message: errorToMessage(error),
       });
     });
+  }
+
+  private async abortFailedSecureWorkerAssignment(
+    workerAgentId: string,
+    assignmentId: string,
+  ): Promise<void> {
+    try {
+      await this.options.secureWorkers.abortWorkerSecureAssignment(
+        workerAgentId,
+        assignmentId,
+      );
+    } catch (error) {
+      this.options.logDebug("secure_worker_assignment:abort:error", {
+        workerAgentId,
+        assignmentId,
+        message: errorToMessage(error),
+      });
+      throw new Error(
+        `secure_worker_assignment_abort_failed: ${workerAgentId}`,
+      );
+    }
+  }
+
+  private getWorkerAssignmentDispatchError(
+    target: AgentDescriptor,
+    expectedAssignmentId: string | undefined,
+  ): Error | undefined {
+    if (!expectedAssignmentId) return undefined;
+    if (
+      target.role !== "worker" ||
+      target.workerParentContext?.assignmentId !== expectedAssignmentId
+    ) {
+      return new Error(
+        `Worker ${target.agentId} assignment changed before this message could be dispatched. Retry the message.`,
+      );
+    }
+    if (target.workerParentContext.completedAt) {
+      return new Error(
+        `Worker ${target.agentId} completed its assignment before this message could be dispatched. Retry the message.`,
+      );
+    }
+    return undefined;
   }
 
   private requireSender(agentId: string): AgentDescriptor {

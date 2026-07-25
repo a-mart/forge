@@ -80,6 +80,13 @@ function baseLifecycleOptions(
         return true;
       }),
     runtimeRecoveryState,
+    secureWorkers: overrides.secureWorkers ?? {
+      isTeamSecureMode: () => false,
+      prepareWorkerForSecureTeam: vi.fn(async () => false),
+      advanceWorkerSecureAssignment: vi.fn(async () => {}),
+      abortWorkerSecureAssignment: vi.fn(async () => {}),
+      teardownWorkerSecurePrincipal: vi.fn(async () => {}),
+    },
     modelCapacityBlocks,
     sessionProvisioner,
     descriptorMutations: overrides.descriptorMutations ?? {
@@ -2106,6 +2113,41 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
   });
 
+  it("recycles an idle secure worker runtime without tearing down its principal", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "secure-worker-recycle",
+      status: "idle",
+    });
+    const recycle = vi.fn(async () => {});
+    const runtime = makeRuntimeStub({ descriptor: worker, recycle });
+    const runtimes = new Map([[worker.agentId, runtime]]);
+    const teardownWorkerSecurePrincipal = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam: vi.fn(async () => true),
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+          abortWorkerSecureAssignment: vi.fn(async () => {}),
+          teardownWorkerSecurePrincipal,
+        },
+      }),
+    );
+
+    await expect(
+      svc.applyAgentRuntimeRecyclePolicy(
+        worker.agentId,
+        "secure_session_mode_change",
+      ),
+    ).resolves.toBe("recycled");
+
+    expect(recycle).toHaveBeenCalledOnce();
+    expect(teardownWorkerSecurePrincipal).not.toHaveBeenCalled();
+    expect(runtimes.has(worker.agentId)).toBe(false);
+  });
+
   it("stopWorker shuts down the worker runtime and clears health hooks via options", async () => {
     const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
     const descriptors = new Map([[worker.agentId, worker]]);
@@ -2134,6 +2176,101 @@ describe("SwarmAgentLifecycleService", () => {
     expect(deleteWorkerStallState).toHaveBeenCalled();
     expect(runtimes.has("w1")).toBe(false);
     expect(worker.status).toBe("idle");
+  });
+
+  it("stopWorker still shuts down the model runtime when secure teardown fails", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-secure-stop",
+      status: "streaming",
+    });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map([
+      [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+    ]);
+    const runRuntimeShutdown = vi.fn(async () => ({
+      timedOut: false,
+      runtimeToken: 1,
+    }));
+    const teardownWorkerSecurePrincipal = vi.fn(async () => {
+      throw new Error("sandbox destroy unconfirmed");
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        runRuntimeShutdown,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam: vi.fn(async () => true),
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+          abortWorkerSecureAssignment: vi.fn(async () => {}),
+          teardownWorkerSecurePrincipal,
+        },
+      }),
+    );
+
+    await expect(svc.stopWorker(worker.agentId)).rejects.toThrow(
+      "secure_worker_teardown_failed",
+    );
+
+    expect(teardownWorkerSecurePrincipal).toHaveBeenCalledWith(worker.agentId);
+    expect(runRuntimeShutdown).toHaveBeenCalled();
+    expect(worker.status).toBe("idle");
+  });
+
+  it("killAgent tears down the exact secure worker before persisting termination", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-secure-kill",
+      role: "manager",
+      managerId: "m-secure-kill",
+      profileId: "m-secure-kill",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-secure-kill",
+      status: "streaming",
+    });
+    const order: string[] = [];
+    const teardownWorkerSecurePrincipal = vi.fn(async (agentId: string) => {
+      order.push(`secure:${agentId}`);
+    });
+    const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
+      order.push(`runtime:${descriptor.agentId}`);
+      return { timedOut: false, runtimeToken: 1 };
+    });
+    const saveStore = vi.fn(async () => {
+      order.push("store");
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([
+          [manager.agentId, manager],
+          [worker.agentId, worker],
+        ]),
+        runtimes: new Map([
+          [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+        ]),
+        assertManager: () => manager,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam: vi.fn(async () => true),
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+          abortWorkerSecureAssignment: vi.fn(async () => {}),
+          teardownWorkerSecurePrincipal,
+        },
+        runRuntimeShutdown,
+        saveStore,
+      }),
+    );
+
+    await svc.killAgent(manager.agentId, worker.agentId);
+
+    expect(order).toEqual([
+      `secure:${worker.agentId}`,
+      `runtime:${worker.agentId}`,
+      "store",
+    ]);
+    expect(worker.status).toBe("terminated");
   });
 
   it("routes lifecycle descriptor mutations through the mutation adapter", async () => {
@@ -2221,6 +2358,65 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.specialistId).toBe("collab-specialist");
     expect(spawned.specialistDisplayName).toBe("Collab Specialist");
     expect(spawned.model.modelId).toBe("gpt-5.4");
+  });
+
+  it("defers an eligible secure worker runtime until its first assignment is dispatched", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "secure-manager",
+      role: "manager",
+      managerId: "secure-manager",
+      profileId: "secure-manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const order: string[] = [];
+    const prepareWorkerForSecureTeam = vi.fn(async () => {
+      order.push("secure:prepare");
+      return true;
+    });
+    const createRuntimeForDescriptor = vi.fn(async (descriptor: AgentDescriptor) => {
+      order.push("runtime:create");
+      return makeRuntimeStub({ descriptor });
+    });
+    const sendMessage = vi.fn(async () => {
+      order.push("message:send");
+      return { delivered: true } as never;
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam,
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+          abortWorkerSecureAssignment: vi.fn(async () => {}),
+          teardownWorkerSecurePrincipal: vi.fn(async () => {}),
+        },
+        createRuntimeForDescriptor,
+        sendMessage,
+      }),
+    );
+
+    await svc.spawnAgent(manager.agentId, {
+      agentId: "secure-worker",
+      initialMessage: "Inspect the secure workspace",
+    });
+
+    expect(prepareWorkerForSecureTeam).toHaveBeenCalledWith("secure-worker");
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      manager.agentId,
+      "secure-worker",
+      "Inspect the secure workspace",
+      "auto",
+      expect.objectContaining({
+        origin: "internal",
+        planAssignmentSource: "spawn_agent",
+      }),
+    );
+    expect(order).toEqual(["secure:prepare", "message:send"]);
   });
 
   it("spawnAgent composes tier and lens into model, prompt, and composite specialist metadata", async () => {

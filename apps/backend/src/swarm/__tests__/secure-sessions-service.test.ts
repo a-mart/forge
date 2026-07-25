@@ -2603,6 +2603,548 @@ describe("SecureSessionsService", () => {
     );
     await harness.close();
   });
+
+  it("starts Secure Mode for every eligible current worker and recycles each exact principal", async () => {
+    const harness = createHarness();
+    harness.descriptors.set(
+      "worker-a",
+      workerDescriptor(
+        "worker-a",
+        "manager-a",
+        "profile-a",
+        "/workspace-a",
+        "assignment-1",
+      ),
+    );
+
+    const manager = await harness.service.startSecureSession("manager-a");
+    const snapshots = await harness.service.listSecureSessionTeamSnapshots(
+      "manager-a",
+    );
+
+    expect(manager).toEqual(expect.objectContaining({
+      principalKind: "manager",
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
+      environmentStatus: "ready",
+    }));
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        sessionAgentId: "manager-a",
+        principalKind: "manager",
+      }),
+      expect.objectContaining({
+        sessionAgentId: "worker-a",
+        principalKind: "worker",
+        ownerManagerAgentId: "manager-a",
+        workerAssignmentId: "assignment-1",
+        environmentStatus: "ready",
+      }),
+    ]);
+    expect(harness.execution.ensured).toEqual([
+      "manager-a",
+      "worker-a::assignment-1",
+    ]);
+    expect(harness.recycles).toEqual(["manager-a", "worker-a"]);
+    await harness.close();
+  });
+
+  it("recycles an existing idle worker before its first secure assignment", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+    );
+    harness.descriptors.set("worker-a", worker);
+    const projectDefault = await harness.service.createLocalSecureSecret({
+      displayAlias: "project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "PROJECT_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(
+      projectDefault.secretId,
+      { profileId: "profile-a", enabled: true },
+    );
+
+    await harness.service.startSecureSession("manager-a");
+    expect(harness.recycles).toEqual(["manager-a", "worker-a"]);
+    expect(harness.execution.ensured).toEqual(["manager-a"]);
+    const managerSnapshot = await harness.service.getSecureSessionSnapshot(
+      "manager-a",
+    );
+    const idleWorkerSnapshot = await harness.service.getSecureSessionSnapshot(
+      "worker-a",
+    );
+    expect(idleWorkerSnapshot).toEqual(
+      expect.objectContaining({
+        principalKind: "worker",
+        workerAssignmentId: null,
+        executionMode: "secure",
+        environmentStatus: "stopped",
+        leases: [
+          expect.objectContaining({
+            secretId: projectDefault.secretId,
+            grantSource: "project_default",
+            status: "active",
+          }),
+        ],
+      }),
+    );
+    expect(managerSnapshot.leases[0]?.leaseId).not.toBe(
+      idleWorkerSnapshot.leases[0]?.leaseId,
+    );
+    expect(harness.service.getSecureRuntimeBinding(worker)).toBeUndefined();
+
+    Object.assign(worker, {
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        managerId: "manager-a",
+        assignedAt: NOW,
+        outputTarget: { kind: "manager" },
+      },
+    });
+    await harness.service.advanceWorkerSecureAssignment(
+      "worker-a",
+      "assignment-1",
+    );
+    expect(harness.execution.ensured).toEqual([
+      "manager-a",
+      "worker-a::assignment-1",
+    ]);
+    expect(
+      (await harness.service.getSecureSessionSnapshot("worker-a")).leases
+        .filter((lease) => lease.grantSource === "project_default"),
+    ).toHaveLength(1);
+    expect(harness.service.getSecureRuntimeBinding(worker)).toBeDefined();
+    await harness.close();
+  });
+
+  it("rejects team start before mutation when an eligible worker is streaming", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    worker.status = "streaming";
+    harness.descriptors.set("worker-a", worker);
+
+    await expect(harness.service.startSecureSession("manager-a"))
+      .rejects.toThrow("SECURE_OPERATION_FAILED");
+    expect(harness.store.listSessionStates()).toEqual([]);
+    expect(harness.execution.ensured).toEqual([]);
+    expect(harness.recycles).toEqual([]);
+    await harness.close();
+  });
+
+  it("attaches project defaults once when a worker joins an active secure team", async () => {
+    const harness = createHarness();
+    const projectDefault = await harness.service.createLocalSecureSecret({
+      displayAlias: "late-project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{
+        deliveryKind: "environment",
+        targetName: "LATE_PROJECT_DEFAULT",
+      }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(
+      projectDefault.secretId,
+      { profileId: "profile-a", enabled: true },
+    );
+    await harness.service.startSecureSession("manager-a");
+
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+    );
+    harness.descriptors.set("worker-a", worker);
+    await expect(harness.service.prepareWorkerForSecureTeam("worker-a"))
+      .resolves.toBe(true);
+    const prepared = await harness.service.getSecureSessionSnapshot("worker-a");
+    expect(prepared).toEqual(expect.objectContaining({
+      environmentStatus: "stopped",
+      workerAssignmentId: null,
+      leases: [
+        expect.objectContaining({
+          secretId: projectDefault.secretId,
+          grantSource: "project_default",
+          status: "active",
+        }),
+      ],
+    }));
+
+    Object.assign(worker, {
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        managerId: "manager-a",
+        assignedAt: NOW,
+        outputTarget: { kind: "manager" },
+      },
+    });
+    await harness.service.advanceWorkerSecureAssignment(
+      "worker-a",
+      "assignment-1",
+    );
+    const assigned = await harness.service.getSecureSessionSnapshot("worker-a");
+    expect(assigned.leases.filter(
+      (lease) => lease.grantSource === "project_default",
+    )).toHaveLength(1);
+    expect(assigned.leases[0]?.leaseId).toBe(prepared.leases[0]?.leaseId);
+    expect(harness.service.getSecureRuntimeBinding(worker)).toBeDefined();
+    await harness.close();
+  });
+
+  it("stops every worker principal before stopping the manager team", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    harness.descriptors.set("worker-a", worker);
+    const started = await harness.service.startSecureSession("manager-a");
+
+    const stopped = await harness.service.stopSecureSession("manager-a", {
+      baseRevision: started.revision,
+      stopProcesses: true,
+    });
+
+    expect(stopped).toEqual(expect.objectContaining({
+      principalKind: "manager",
+      executionMode: "standard",
+      environmentStatus: "stopped",
+    }));
+    expect(harness.store.getSessionState("worker-a")).toEqual(
+      expect.objectContaining({
+        principalKind: "worker",
+        executionMode: "standard",
+        environmentStatus: "stopped",
+      }),
+    );
+    expect(harness.execution.destroyed).toEqual(expect.arrayContaining([
+      "worker-a::assignment-1",
+      "manager-a",
+    ]));
+    expect(harness.service.getSecureRuntimeBinding(worker)).toBeUndefined();
+    await harness.close();
+  });
+
+  it("stops one worker principal without stopping its manager or siblings", async () => {
+    const harness = createHarness();
+    const workerA = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-a",
+    );
+    const workerB = workerDescriptor(
+      "worker-b",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-b",
+    );
+    harness.descriptors.set("worker-a", workerA);
+    harness.descriptors.set("worker-b", workerB);
+    await harness.service.startSecureSession("manager-a");
+    await harness.service.requestSecureSecretAccess("worker-a", "tool-stop", {
+      displayAlias: "worker-stop-request",
+      exposures: [{ deliveryKind: "environment", targetName: "WORKER_STOP" }],
+      leaseKind: "task",
+      purposeSummary: "This request is cancelled when the worker is stopped",
+    });
+    const workerSnapshot = await harness.service.getSecureSessionSnapshot(
+      "worker-a",
+    );
+
+    const stopped = await harness.service.stopSecureSession("worker-a", {
+      baseRevision: workerSnapshot.revision,
+      stopProcesses: true,
+    });
+
+    expect(stopped).toEqual(expect.objectContaining({
+      sessionAgentId: "worker-a",
+      principalKind: "worker",
+      executionMode: "standard",
+      environmentStatus: "stopped",
+      pendingRequests: [],
+    }));
+    expect(harness.service.getSecureRuntimeBinding(workerA)).toBeUndefined();
+    expect(harness.service.getSecureRuntimeBinding(workerB)).toBeDefined();
+    expect(harness.service.isTeamSecureMode("manager-a")).toBe(true);
+    await harness.close();
+  });
+
+  it("keeps worker requests and output quarantine on the exact worker principal", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    harness.descriptors.set("worker-a", worker);
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "worker-alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "WORKER_ALPHA" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.startSecureSession("manager-a");
+
+    await harness.service.requestSecureSecretAccess("worker-a", "tool-worker", {
+      displayAlias: "missing-worker-secret",
+      exposures: [{ deliveryKind: "environment", targetName: "WORKER_MISSING" }],
+      leaseKind: "task",
+      purposeSummary: "Authenticate the worker task",
+    });
+    const managerBefore = await harness.service.getSecureSessionSnapshot("manager-a");
+    const workerBefore = await harness.service.getSecureSessionSnapshot("worker-a");
+    expect(managerBefore.pendingRequests).toEqual([]);
+    expect(workerBefore.pendingRequests).toEqual([
+      expect.objectContaining({
+        requestedByAgentId: "worker-a",
+        workerAssignmentId: "assignment-1",
+      }),
+    ]);
+
+    await harness.service.grantSecureSessionLease("worker-a", {
+      baseRevision: workerBefore.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "WORKER_ALPHA" }],
+      leaseKind: "task",
+    });
+    const binding = harness.service.getSecureRuntimeBinding(worker);
+    expect(binding).toBeDefined();
+    await binding!.executeBash({
+      command: "emit-alpha-canary",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+
+    expect(harness.execution.executed.at(-1)).toBe("worker-a::assignment-1");
+    expect(await harness.service.getSecureSessionSnapshot("worker-a")).toEqual(
+      expect.objectContaining({
+        outputState: "quarantined",
+        environmentStatus: "ready",
+      }),
+    );
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({ outputState: "clear" }),
+    );
+    await harness.close();
+  });
+
+  it("preserves task and timed authority across abort and assignment advance while invalidating stale authority", async () => {
+    let currentNow = NOW;
+    const harness = createHarness({ now: () => currentNow });
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    harness.descriptors.set("worker-a", worker);
+    const taskSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "worker-task",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "WORKER_TASK" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const timedSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "worker-timed",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "WORKER_TIMED" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const oneUseSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "worker-once",
+      encryptedMaterial: Buffer.from(`${ALPHA}-once`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "WORKER_ONCE" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.startSecureSession("manager-a");
+    const workerStart = await harness.service.getSecureSessionSnapshot("worker-a");
+    await harness.service.grantSecureSessionLeases("worker-a", {
+      baseRevision: workerStart.revision,
+      grants: [
+        {
+          secretId: taskSecret.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "WORKER_TASK" }],
+          leaseKind: "task",
+        },
+        {
+          secretId: timedSecret.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "WORKER_TIMED" }],
+          leaseKind: "timed",
+          durationSeconds: 900,
+        },
+        {
+          secretId: oneUseSecret.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "WORKER_ONCE" }],
+          leaseKind: "one_use",
+        },
+      ],
+    });
+    await harness.service.requestSecureSecretAccess("worker-a", "tool-stale", {
+      displayAlias: "stale-request",
+      exposures: [{ deliveryKind: "environment", targetName: "STALE_REQUEST" }],
+      leaseKind: "task",
+      purposeSummary: "Request belongs only to assignment one",
+    });
+    const beforeStaleGrant = await harness.service.getSecureSessionSnapshot(
+      "worker-a",
+    );
+    (worker as AgentDescriptor & {
+      workerParentContext: { assignmentId: string };
+    }).workerParentContext.assignmentId = "assignment-2";
+    await expect(harness.service.grantSecureSessionLease("worker-a", {
+      baseRevision: beforeStaleGrant.revision,
+      secretId: taskSecret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "WORKER_TASK" }],
+      leaseKind: "task",
+    })).rejects.toThrow("SECURE_OPERATION_FAILED");
+    (worker as AgentDescriptor & {
+      workerParentContext: { assignmentId: string };
+    }).workerParentContext.assignmentId = "assignment-1";
+
+    await harness.service.abortWorkerSecureAssignment(
+      "worker-a",
+      "assignment-1",
+    );
+    const oldAssignmentDestroyCount = harness.execution.destroyed.filter(
+      (taskId) => taskId === "worker-a::assignment-1",
+    ).length;
+    const aborted = await harness.service.getSecureSessionSnapshot("worker-a");
+    expect(aborted).toEqual(expect.objectContaining({
+      executionMode: "secure",
+      environmentStatus: "stopped",
+      workerAssignmentId: "assignment-1",
+      leases: expect.arrayContaining([
+        expect.objectContaining({ leaseKind: "task", status: "active" }),
+        expect.objectContaining({ leaseKind: "timed", status: "active" }),
+        expect.objectContaining({ leaseKind: "one_use", status: "active" }),
+      ]),
+    }));
+    expect(harness.service.getSecureRuntimeBinding(worker)).toBeUndefined();
+
+    (worker as AgentDescriptor & {
+      workerParentContext: {
+        assignmentId: string;
+        completedAt?: string;
+      };
+    }).workerParentContext.completedAt = currentNow;
+    expect(await harness.service.getSecureSessionSnapshot("worker-a")).toEqual(
+      expect.objectContaining({
+        workerAssignmentId: "assignment-1",
+        environmentStatus: "stopped",
+      }),
+    );
+    delete (worker as AgentDescriptor & {
+      workerParentContext?: { assignmentId: string };
+    }).workerParentContext;
+    await expect(harness.service.prepareWorkerForSecureTeam("worker-a"))
+      .resolves.toBe(true);
+    expect(harness.store.getSessionState("worker-a")).toEqual(
+      expect.objectContaining({ workerAssignmentId: "assignment-1" }),
+    );
+    Object.assign(worker, {
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment-2",
+        managerId: "manager-a",
+        assignedAt: currentNow,
+        outputTarget: { kind: "manager" },
+      },
+    });
+    currentNow = "2026-07-23T12:01:00.000Z";
+    await harness.service.advanceWorkerSecureAssignment(
+      "worker-a",
+      "assignment-2",
+    );
+    const advanced = await harness.service.getSecureSessionSnapshot("worker-a");
+    expect(advanced).toEqual(expect.objectContaining({
+      environmentStatus: "ready",
+      workerAssignmentId: "assignment-2",
+      pendingRequests: [],
+      leases: expect.arrayContaining([
+        expect.objectContaining({ leaseKind: "task", status: "active" }),
+        expect.objectContaining({ leaseKind: "timed", status: "active" }),
+        expect.objectContaining({ leaseKind: "one_use", status: "revoked" }),
+      ]),
+    }));
+    expect(harness.execution.destroyed.filter(
+      (taskId) => taskId === "worker-a::assignment-1",
+    )).toHaveLength(oldAssignmentDestroyCount);
+    expect(harness.execution.ensured.at(-1)).toBe("worker-a::assignment-2");
+    await harness.close();
+  });
+
+  it("retains a degraded worker principal when sandbox destruction is unconfirmed", async () => {
+    const harness = createHarness();
+    harness.descriptors.set(
+      "worker-a",
+      workerDescriptor(
+        "worker-a",
+        "manager-a",
+        "profile-a",
+        "/workspace-a",
+        "assignment-1",
+      ),
+    );
+    await harness.service.startSecureSession("manager-a");
+    harness.execution.destroyUnconfirmed.add("worker-a::assignment-1");
+
+    await expect(harness.service.teardownWorkerSecurePrincipal("worker-a"))
+      .rejects.toThrow("SECURE_OPERATION_FAILED");
+    expect(harness.store.getSessionState("worker-a")).toEqual(
+      expect.objectContaining({
+        principalKind: "worker",
+        executionMode: "secure",
+        environmentStatus: "degraded",
+        workerAssignmentId: "assignment-1",
+      }),
+    );
+    expect(
+      harness.service.getSecureRuntimeBinding(
+        harness.descriptors.get("worker-a")!,
+      ),
+    ).toBeUndefined();
+    const ensuresBeforeRecovery = harness.execution.ensured.length;
+    await expect(harness.service.prepareWorkerForSecureTeam("worker-a"))
+      .rejects.toThrow("SECURE_OPERATION_FAILED");
+    expect(harness.execution.ensured).toHaveLength(ensuresBeforeRecovery);
+
+    harness.execution.destroyUnconfirmed.delete("worker-a::assignment-1");
+    await expect(harness.service.prepareWorkerForSecureTeam("worker-a"))
+      .resolves.toBe(true);
+    expect(harness.execution.ensured).toHaveLength(ensuresBeforeRecovery + 1);
+    expect(harness.execution.ensured.at(-1)).toBe(
+      "worker-a::assignment-1",
+    );
+    expect(harness.store.getSessionState("worker-a")).toEqual(
+      expect.objectContaining({
+        environmentStatus: "ready",
+        workerAssignmentId: "assignment-1",
+      }),
+    );
+    await harness.close();
+  });
 });
 
 async function grant(
@@ -2724,6 +3266,7 @@ function createHarness(options: {
     probeBitwarden: async () => true,
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
+    listDescriptors: () => [...descriptors.values()],
     hasProfile: (profileId) => [...descriptors.values()].some(
       (descriptor) => descriptor.profileId === profileId,
     ),
@@ -2943,5 +3486,39 @@ function descriptor(agentId: string, profileId: string, cwd: string): AgentDescr
     sessionFile: `/tmp/${agentId}.jsonl`,
     profileId,
     sessionSurface: "builder",
+  } as AgentDescriptor;
+}
+
+function workerDescriptor(
+  agentId: string,
+  managerId: string,
+  profileId: string,
+  cwd: string,
+  assignmentId?: string,
+): AgentDescriptor {
+  return {
+    agentId,
+    managerId,
+    displayName: agentId,
+    role: "worker",
+    status: "idle",
+    createdAt: NOW,
+    updatedAt: NOW,
+    cwd,
+    model: { provider: "openai", modelId: "test" },
+    sessionFile: `/tmp/${agentId}.jsonl`,
+    profileId,
+    sessionSurface: "builder",
+    ...(assignmentId
+      ? {
+          workerParentContext: {
+            schemaVersion: 1,
+            assignmentId,
+            managerId,
+            assignedAt: NOW,
+            outputTarget: { kind: "manager" },
+          },
+        }
+      : {}),
   } as AgentDescriptor;
 }

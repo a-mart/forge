@@ -56,6 +56,17 @@ export interface StopSecureSessionInput {
   stopProcesses: true;
 }
 
+export interface TeardownWorkerSecurePrincipalOptions {
+  /**
+   * Lifecycle deletion removes the persisted authority row. Callers may keep a
+   * stopped row only when they need a public stopped snapshot during a larger
+   * transition.
+   */
+  deleteState?: boolean;
+  /** Internal lifecycle preparation keeps requests restorable until commit. */
+  preservePendingRequests?: boolean;
+}
+
 export type FulfillSecureAccessRequestInput = {
   baseRevision: number;
   displayAlias: string;

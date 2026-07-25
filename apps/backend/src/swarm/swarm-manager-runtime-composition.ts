@@ -673,6 +673,7 @@ export class SwarmManagerRuntimeComposition {
       clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
         this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
       runtimeRecoveryState: state.runtimeRecoveryState,
+      secureWorkers: this.options.secureSessions,
       modelCapacityBlocks: services.configuration.promptResources.modelCapacityBlocks,
       sessionProvisioner: services.provisioner,
       descriptorMutations: descriptors,
@@ -791,7 +792,7 @@ export class SwarmManagerRuntimeComposition {
         listDescriptors: () => state.descriptors.values(),
         requestUserChoice: (agentId, questions) => services.choices.requestUserChoice(agentId, questions),
         applyBaseManagerRuntimeRecyclePolicy: (agentId, reason) =>
-          lifecycle.applyManagerRuntimeRecyclePolicy(agentId, reason),
+          lifecycle.applyAgentRuntimeRecyclePolicy(agentId, reason),
         terminateDescriptor: messaging.terminateDescriptor,
         getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
         getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),

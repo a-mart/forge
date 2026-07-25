@@ -542,6 +542,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     return new SecureSessionsService({
       ...foundation,
       getDescriptor: (agentId) => this.descriptors.get(agentId),
+      listDescriptors: () => Array.from(this.descriptors.values()),
       hasProfile: (profileId) => this.profiles.has(profileId),
       isProfileArchived: (profileId) => Boolean(this.profiles.get(profileId)?.archivedAt),
       isSessionArchived: (agentId) => Boolean(this.descriptors.get(agentId)?.archivedAt),
@@ -1224,6 +1225,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
             "project_agent_input",
           ),
       },
+      secureWorkers: createSecureSessionLifecyclePort(
+        this.secureSessionsService,
+      ),
       getOrCreateRuntime: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
       appendProjectAgentConversation: (target, payload) =>
         this.inboundConversationAppender.appendProjectAgentConversation(target, payload),

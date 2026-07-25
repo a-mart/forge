@@ -4,7 +4,30 @@ import type { SecureSessionsService } from "./secure-sessions-service.js";
 
 export interface SecureSessionCoordinatorPort extends SecureSessionLifecyclePort {
   initializeForBoot(): Promise<SecureOrphanRecoveryResult>;
+  isTeamSecureMode(managerAgentId: string): boolean;
+  prepareWorkerForSecureTeam(workerAgentId: string): Promise<boolean>;
+  advanceWorkerSecureAssignment(
+    workerAgentId: string,
+    assignmentId: string,
+  ): Promise<void>;
+  abortWorkerSecureAssignment(
+    workerAgentId: string,
+    assignmentId: string,
+  ): Promise<void>;
+  teardownWorkerSecurePrincipal(
+    workerAgentId: string,
+    options?: { deleteState?: boolean },
+  ): Promise<void>;
 }
+
+export type SecureWorkerLifecyclePort = Pick<
+  SecureSessionCoordinatorPort,
+  | "isTeamSecureMode"
+  | "prepareWorkerForSecureTeam"
+  | "advanceWorkerSecureAssignment"
+  | "abortWorkerSecureAssignment"
+  | "teardownWorkerSecurePrincipal"
+>;
 
 /**
  * Keeps Secure Sessions lifecycle authority behind the coordinator's narrow
@@ -15,6 +38,16 @@ export function createSecureSessionLifecyclePort(
 ): SecureSessionCoordinatorPort {
   return {
     initializeForBoot: () => service.initializeSecureSessions(),
+    isTeamSecureMode: (managerAgentId) =>
+      service.isTeamSecureMode(managerAgentId),
+    prepareWorkerForSecureTeam: (workerAgentId) =>
+      service.prepareWorkerForSecureTeam(workerAgentId),
+    advanceWorkerSecureAssignment: (workerAgentId, assignmentId) =>
+      service.advanceWorkerSecureAssignment(workerAgentId, assignmentId),
+    abortWorkerSecureAssignment: (workerAgentId, assignmentId) =>
+      service.abortWorkerSecureAssignment(workerAgentId, assignmentId),
+    teardownWorkerSecurePrincipal: (workerAgentId, options) =>
+      service.teardownWorkerSecurePrincipal(workerAgentId, options),
     beginLifecycleFence: (profileId, sessionAgentIds) =>
       service.beginSecureSessionLifecycleFence(profileId, sessionAgentIds),
     cancelLifecycleFence: (fenceId) =>

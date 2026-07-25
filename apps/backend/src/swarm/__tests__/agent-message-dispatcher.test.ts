@@ -99,13 +99,22 @@ function createHarness() {
   const agentMessages: Array<Record<string, unknown>> = [];
   const observability: Array<Record<string, unknown>> = [];
   const debugLogs: Array<{ message: string; details?: unknown }> = [];
+  const secureWorkerCalls: Array<{
+    operation: string;
+    workerAgentId: string;
+    assignmentId?: string;
+  }> = [];
   let turnCounter = 0;
   let nonce = 0;
   let saveError: Error | undefined;
   let runtimeError: Error | undefined;
+  let runtimeCreationError: Error | undefined;
   let runtimeSendGate: Promise<void> | undefined;
   let runtimeCreationGate: Promise<void> | undefined;
   let ledgerPendingGate: Promise<void> | undefined;
+  let secureWorkerPrepared = false;
+  let secureAssignmentAdvanceError: Error | undefined;
+  let secureAssignmentAbortError: Error | undefined;
   let activeParent: ReturnType<
     AgentMessageDispatcherOptions<TestGate>["turns"]["getActiveWorkerParentContext"]
   > = {
@@ -199,9 +208,56 @@ function createHarness() {
       assertWorkerDeliveryAllowed: () => undefined,
       buildProjectAgentTurnGate: () => ({ allowed: true }),
     },
+    secureWorkers: {
+      isTeamSecureMode: () => secureWorkerPrepared,
+      prepareWorkerForSecureTeam: async (workerAgentId) => {
+        if (secureWorkerPrepared) {
+          order.push("secure:prepare");
+        }
+        secureWorkerCalls.push({
+          operation: "prepare",
+          workerAgentId,
+        });
+        return secureWorkerPrepared;
+      },
+      advanceWorkerSecureAssignment: async (
+        workerAgentId,
+        assignmentId,
+      ) => {
+        order.push("secure:advance");
+        secureWorkerCalls.push({
+          operation: "advance",
+          workerAgentId,
+          assignmentId,
+        });
+        if (secureAssignmentAdvanceError) {
+          throw secureAssignmentAdvanceError;
+        }
+      },
+      abortWorkerSecureAssignment: async (
+        workerAgentId,
+        assignmentId,
+      ) => {
+        secureWorkerCalls.push({
+          operation: "abort",
+          workerAgentId,
+          assignmentId,
+        });
+        if (secureAssignmentAbortError) {
+          throw secureAssignmentAbortError;
+        }
+      },
+      teardownWorkerSecurePrincipal: async (workerAgentId) => {
+        secureWorkerCalls.push({
+          operation: "teardown",
+          workerAgentId,
+        });
+      },
+    },
     getOrCreateRuntime: async (target) => {
       order.push("runtime:create");
       await runtimeCreationGate;
+      if (runtimeCreationError) throw runtimeCreationError;
       return {
         descriptor: target,
         sendMessage: vi.fn(async (input: string | RuntimeUserMessage) => {
@@ -241,12 +297,23 @@ function createHarness() {
     agentMessages,
     observability,
     debugLogs,
+    secureWorkerCalls,
     setActiveParent: (value: typeof activeParent) => { activeParent = value; },
     setRuntimeError: (value: Error | undefined) => { runtimeError = value; },
+    setRuntimeCreationError: (value: Error | undefined) => {
+      runtimeCreationError = value;
+    },
     setRuntimeSendGate: (value: Promise<void> | undefined) => { runtimeSendGate = value; },
     setRuntimeCreationGate: (value: Promise<void> | undefined) => { runtimeCreationGate = value; },
     setLedgerPendingGate: (value: Promise<void> | undefined) => { ledgerPendingGate = value; },
     setSaveError: (value: Error | undefined) => { saveError = value; },
+    setSecureWorkerPrepared: (value: boolean) => { secureWorkerPrepared = value; },
+    setSecureAssignmentAdvanceError: (value: Error | undefined) => {
+      secureAssignmentAdvanceError = value;
+    },
+    setSecureAssignmentAbortError: (value: Error | undefined) => {
+      secureAssignmentAbortError = value;
+    },
   };
 }
 
@@ -270,6 +337,96 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     }]);
     expect(harness.order.indexOf("store:save")).toBeLessThan(harness.order.indexOf("runtime:send"));
     expect(harness.ledgerPending[0]).toMatchObject({ turnId: "turn-1" });
+  });
+
+  it("prepares a secure worker before runtime creation and advances the persisted assignment before send", async () => {
+    const harness = createHarness();
+    harness.setSecureWorkerPrepared(true);
+
+    await harness.dispatcher.sendMessage(
+      "manager-1",
+      "worker-1",
+      "Do secure work",
+    );
+
+    expect(harness.secureWorkerCalls).toEqual([
+      { operation: "prepare", workerAgentId: "worker-1" },
+      {
+        operation: "advance",
+        workerAgentId: "worker-1",
+        assignmentId: "assignment:worker-1:nonce-1",
+      },
+    ]);
+    expect(harness.order.indexOf("secure:prepare")).toBeLessThan(
+      harness.order.indexOf("secure:advance"),
+    );
+    expect(harness.order.indexOf("secure:advance")).toBeLessThan(
+      harness.order.indexOf("runtime:create"),
+    );
+    expect(harness.order.indexOf("runtime:create")).toBeLessThan(
+      harness.order.indexOf("runtime:send"),
+    );
+    expect(harness.runtimeInputs).toHaveLength(1);
+  });
+
+  it("aborts a newly prepared secure assignment when runtime creation fails", async () => {
+    const harness = createHarness();
+    harness.setSecureWorkerPrepared(true);
+    harness.setRuntimeCreationError(new Error("runtime unavailable"));
+
+    await expect(
+      harness.dispatcher.sendMessage(
+        "manager-1",
+        "worker-1",
+        "Do secure work",
+      ),
+    ).rejects.toThrow("runtime unavailable");
+
+    expect(harness.secureWorkerCalls).toContainEqual({
+      operation: "abort",
+      workerAgentId: "worker-1",
+      assignmentId: "assignment:worker-1:nonce-1",
+    });
+    expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it("aborts a newly prepared secure assignment when its runtime delivery fails", async () => {
+    const harness = createHarness();
+    harness.setSecureWorkerPrepared(true);
+    harness.setRuntimeError(new Error("runtime rejected"));
+
+    await expect(
+      harness.dispatcher.sendMessage(
+        "manager-1",
+        "worker-1",
+        "Do secure work",
+      ),
+    ).rejects.toThrow("runtime rejected");
+
+    expect(harness.secureWorkerCalls).toContainEqual({
+      operation: "abort",
+      workerAgentId: "worker-1",
+      assignmentId: "assignment:worker-1:nonce-1",
+    });
+    expect(harness.secureWorkerCalls).not.toContainEqual({
+      operation: "teardown",
+      workerAgentId: "worker-1",
+    });
+  });
+
+  it("fails closed when aborting a prepared secure assignment cannot be confirmed", async () => {
+    const harness = createHarness();
+    harness.setSecureWorkerPrepared(true);
+    harness.setRuntimeError(new Error("runtime rejected"));
+    harness.setSecureAssignmentAbortError(new Error("destroy unconfirmed"));
+
+    await expect(
+      harness.dispatcher.sendMessage(
+        "manager-1",
+        "worker-1",
+        "Do secure work",
+      ),
+    ).rejects.toThrow("secure_worker_assignment_abort_failed");
   });
 
   it("keeps a contextless Builder assignment on the web transcript", async () => {
