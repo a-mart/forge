@@ -230,6 +230,8 @@ export class SwarmRuntimeController {
   >();
   private readonly runtimeAdmissionContext = new AsyncLocalStorage<ReadonlySet<string>>();
   private readonly secureRuntimeBindingsByRuntime = new Map<string, SecureRuntimeBinding>();
+  private readonly secureRuntimeBindingsByRuntimeObject =
+    new WeakMap<SwarmAgentRuntime, SecureRuntimeBinding>();
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -434,7 +436,7 @@ export class SwarmRuntimeController {
     }
 
     try {
-      return await this.runtimeFactory.createRuntimeForDescriptor(
+      const runtime = await this.runtimeFactory.createRuntimeForDescriptor(
         descriptor,
         systemPrompt,
         runtimeToken,
@@ -442,6 +444,13 @@ export class SwarmRuntimeController {
           ? { ...options, secureRuntimeBinding }
           : options,
       );
+      if (secureRuntimeBinding) {
+        this.secureRuntimeBindingsByRuntimeObject.set(
+          runtime,
+          secureRuntimeBinding,
+        );
+      }
+      return runtime;
     } catch (error) {
       this.invalidateSecureRuntimeBinding(descriptor.agentId, runtimeToken);
       this.clearRuntimeToken(descriptor.agentId, runtimeToken);
@@ -980,7 +989,7 @@ export class SwarmRuntimeController {
     runtime: SwarmAgentRuntime,
   ): boolean {
     if (this.runtimes.get(agentId) !== runtime) return false;
-    const binding = this.getSecureRuntimeBindingForCallback(agentId, undefined);
+    const binding = this.secureRuntimeBindingsByRuntimeObject.get(runtime);
     if (!binding) return false;
     try {
       return binding.guardValue(true) === true;

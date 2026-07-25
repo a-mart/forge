@@ -503,7 +503,7 @@ describe("SwarmRuntimeController", () => {
     expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
   });
 
-  it("ties secure runtime usability to the exact attached runtime", async () => {
+  it("does not certify an attached ordinary runtime with a replacement binding", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
     const { host, descriptors } = createRuntimeControllerHarness(config);
@@ -515,39 +515,54 @@ describe("SwarmRuntimeController", () => {
       status: "idle",
     });
     descriptors.set(worker.agentId, worker);
-    const binding = retainedSecureRuntimeBinding();
-    host.getSecureRuntimeBinding = () => binding;
-    const secureRuntime = { descriptor: worker } as unknown as SwarmAgentRuntime;
-    const otherRuntime = { descriptor: worker } as unknown as SwarmAgentRuntime;
+    const ordinaryRuntime = { descriptor: worker } as unknown as SwarmAgentRuntime;
+    const secureReplacement = { descriptor: worker } as unknown as SwarmAgentRuntime;
     const factory = (controller as unknown as {
       runtimeFactory: {
         createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
       };
     }).runtimeFactory;
-    factory.createRuntimeForDescriptor = vi.fn(async () => secureRuntime);
-    const token = controller.allocateRuntimeToken(worker.agentId);
+    factory.createRuntimeForDescriptor = vi.fn()
+      .mockResolvedValueOnce(ordinaryRuntime)
+      .mockResolvedValueOnce(secureReplacement);
+    const ordinaryToken = controller.allocateRuntimeToken(worker.agentId);
 
     await controller.createRuntimeForDescriptor(
       worker,
       "prompt",
-      token,
+      ordinaryToken,
+    );
+    controller.attachRuntime(worker.agentId, ordinaryRuntime);
+
+    const replacementBinding = retainedSecureRuntimeBinding();
+    host.getSecureRuntimeBinding = () => replacementBinding;
+    const replacementToken = controller.allocateRuntimeToken(worker.agentId);
+    await controller.createRuntimeForDescriptor(
+      worker,
+      "replacement prompt",
+      replacementToken,
       { secureRuntimeRequired: true },
     );
-    controller.attachRuntime(worker.agentId, secureRuntime);
 
     expect(controller.isSecureRuntimeBindingUsable(
       worker.agentId,
-      otherRuntime,
+      ordinaryRuntime,
     )).toBe(false);
     expect(controller.isSecureRuntimeBindingUsable(
       worker.agentId,
-      secureRuntime,
-    )).toBe(true);
+      secureReplacement,
+    )).toBe(false);
 
-    binding.invalidate?.();
+    controller.attachRuntime(worker.agentId, secureReplacement);
     expect(controller.isSecureRuntimeBindingUsable(
       worker.agentId,
-      secureRuntime,
+      secureReplacement,
+    )).toBe(true);
+
+    replacementBinding.invalidate?.();
+    expect(controller.isSecureRuntimeBindingUsable(
+      worker.agentId,
+      secureReplacement,
     )).toBe(false);
   });
 
