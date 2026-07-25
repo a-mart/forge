@@ -18,7 +18,7 @@ Core invariants:
 - The Collaboration UI keeps metadata for all configured backends but subscribes to detail for exactly one active channel/backend at a time.
 - Remote origins are managed independently for browser connections with `remoteProjectsEnabled`; the selected origin owns supported project-scoped surfaces.
 - Builder-only surfaces stay out of Collaboration channels unless explicitly designed for them. Remote Projects expose only their reviewed Builder allowlists.
-- Managed Browser host registration and IPC stay between Forge Desktop and its local Builder backend; they are not active-origin transport and are never forwarded to Remote Projects or Collaboration channels.
+- Managed Browser and External Chrome are local Forge Desktop hosts, not Skills or active-origin transport. Their webviews/extension relay, registrations, candidates, leases, and IPC stay on the local Builder connection and are never forwarded to Remote Projects or Collaboration channels.
 
 ## Local Builder, Remote Projects, and Collaboration channels
 
@@ -30,7 +30,7 @@ Core invariants:
 | Auth | No normal browser app session; provider credentials are separate | Collaboration Better Auth member/admin session | Same collaboration session |
 | Protocol | Builder HTTP/WS | Reviewed Builder HTTP/WS allowlists plus builder protocol handshake | `collab_*` protocol and collaboration routes |
 | Files/Git/terminals | Local active origin | Selected remote active origin, subject to policy | Not inferred from route presence |
-| Managed Browser | Forge Desktop host and Forge-owned webviews for the selected normal local manager | Local host is not forwarded; normal remote managers may expose tools but get `unavailable-host` without a host connected directly to that backend | No tools or host bridge |
+| Desktop browser hosts | Managed Browser webviews or explicitly attached External Chrome tabs for the selected normal local manager | Neither local host is forwarded; normal remote managers may expose tools but get `unavailable-host` without a host connected directly to that backend | No tools or host bridge |
 | Non-chat Settings/Stats/Archive/onboarding/Cortex | Local | Still local | Separate Collaboration settings where designed |
 | Specialists/skills | Builder target space and normal loading | Builder target space on the remote server | Collaboration target space and selected global state |
 | Data movement | Local | No clone or sync; state and execution remain remote | Channel history/content remain remote |
@@ -177,7 +177,7 @@ Remote origin flow is separate:
 2. The client records `instanceName`, Forge version, Builder protocol version, and capabilities. A newer unsupported protocol blocks attachment.
 3. The client probes `/api/collaboration/me`; an unauthenticated connection stays visible as sign-in required.
 4. When `capabilities.remoteBuild` is true, the client opens a Builder WebSocket and creates an origin store keyed by the connection ID.
-5. Selecting a remote profile/session routes chat and supported project HTTP/WS surfaces through that origin. Non-chat local-only surfaces continue to use the local backend. Managed Browser is not routed: its Electron host registration, webviews, partitions, and IPC stay on the local Builder connection.
+5. Selecting a remote profile/session routes chat and supported project HTTP/WS surfaces through that origin. Non-chat local-only surfaces continue to use the local backend. Desktop browser hosts are not routed: Managed Browser webviews/partitions and External Chrome registration/relay/candidates/leases/IPC stay on the local Builder connection.
 
 The current UI emits a 25 second `{ type: "ping" }` heartbeat on the collaboration WebSocket. Reverse proxies still need a sane tunnel timeout; HTTP health checks do not keep WebSocket tunnels alive.
 
@@ -265,8 +265,8 @@ Treat these as excluded from **Collaboration channels** unless a task explicitly
 - Forge CLI workflows
 - repo-root project resource mutation/trust flows
 - Builder terminal, archive, Source Control, and Files UI assumptions
-- Managed Browser tools, Electron host registration, webviews, partitions, and IPC
+- both Desktop browser hosts and their tools, Electron webviews/partitions, External Chrome registration/relay/candidates/leases, and IPC
 
-Do not apply that channel list wholesale to Remote Projects. Remote Projects deliberately exposes active-origin chat, Files, Git/Source Control, terminals, attachments, Session Audit, and model-availability surfaces through reviewed allowlists. Non-chat Settings, Stats, Archive, onboarding, Cortex, sidebar usage, sidebar ordering, and the Managed Browser host/workspace remain local. Remote normal managers can still have structurally planned browser tools; absent a Desktop host connected directly to the remote backend, those calls return `unavailable-host` rather than being forwarded to the viewing machine.
+Do not apply that channel list wholesale to Remote Projects. Remote Projects deliberately exposes active-origin chat, Files, Git/Source Control, terminals, attachments, Session Audit, and model-availability surfaces through reviewed allowlists. Non-chat Settings, Stats, Archive, onboarding, Cortex, sidebar usage, sidebar ordering, and both Desktop browser hosts/workspace remain local. Remote normal managers can still have structurally planned browser tools; absent a Desktop host connected directly to the remote backend, those calls return `unavailable-host` rather than being forwarded to the viewing machine.
 
 Backend routes for Builder-only systems may still exist in a collaboration process. Route presence is not product support. Member access is allowlist-only behind server policy, while unclassified routes remain admin-only. See [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md#5-supported-and-local-only-surfaces) for the product boundary and its live-revocation caveats.

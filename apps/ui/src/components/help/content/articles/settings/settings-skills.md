@@ -1,6 +1,6 @@
 Skills give agents reusable instructions and optional capabilities such as web search, image generation, and the separate `agent-browser` CLI workflow. The Skills page lets you browse installed skills, inspect their files, configure API keys and settings, and share or import user-created skills from links.
 
-Managed Browser is different: it is a Forge Desktop host capability for normal local Builder managers, not a Skill. It has no Skills toggle or environment variable, controls Forge-owned Electron webviews, and never attaches to your everyday Chrome profile.
+Managed Browser and External Chrome are different: both are local Forge Desktop host capabilities for normal local Builder managers, not Skills. Managed Browser controls Forge-owned Electron webviews. External Chrome setup and repair live in **Settings → External Chrome (Local Beta)** and operate only explicitly attached tabs. Neither host is forwarded to Remote Projects or Collaboration.
 
 ## Scope and skill browser
 
@@ -18,7 +18,7 @@ To configure a variable, paste the value into the input field and click **Save**
 
 ## Dedicated skill panels
 
-Some skills may expose dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls. The `agent-browser` Skill instead documents its external CLI prerequisites and browser lifecycle. Neither is an alias or configuration surface for Managed Browser.
+Some skills may expose dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls. The `agent-browser` Skill instead documents its external CLI prerequisites and browser lifecycle. It is not an alias or configuration surface for either Desktop browser host.
 
 ## How skills load
 

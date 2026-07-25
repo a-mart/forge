@@ -19,7 +19,7 @@ The `collaboration-server` runtime hosts two distinct product surfaces:
 - **Collaboration channels** are backed by manager sessions under the hidden `_collaboration` system profile and open in the Collaboration surface.
 - **Remote Projects** are normal Builder profiles and sessions stored and executed on that server. When both server policy and a browser connection preference are enabled, they appear beside local projects in the unified Builder sidebar. They are not channels or a third mode, and Forge does not clone or synchronize them locally.
 
-See [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md) for the two controls, operator API setup, supported surfaces, trusted-operator access model, session/cookie behavior, persistence, and current live-revocation limitations.
+See [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md) for the two controls, operator API setup, supported surfaces, trusted-operator access model, session/cookie behavior, persistence, and current live-revocation limitations. Managed Browser and External Chrome remain local Forge Desktop hosts—not Skills—and their webviews/extension relay, candidates, leases, and IPC are never forwarded into either Remote Projects or Collaboration channels.
 
 The deployable server is built from this repo with `Dockerfile` and `docker-compose.yml`. The compose service is `forge-collaboration-server`, listens inside the container on `47287`, and is published on host port `47387` by default. The container sets `FORGE_RUNTIME_TARGET=collaboration-server` and stores data under `/var/lib/forge`.
 

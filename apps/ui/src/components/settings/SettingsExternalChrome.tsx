@@ -147,7 +147,7 @@ export function SettingsExternalChrome() {
             <div className="space-y-1">
               <p className="font-semibold">Powerful browser permissions</p>
               <p className="text-muted-foreground">
-                External Chrome requests broad V1 permissions: all websites plus debugger, history, bookmarks, downloads, top-sites, tabs, sessions, navigation, scripting, storage, tab-group, notification, side-panel, and native-messaging. History, bookmarks, and top-sites remain declared for the accepted compatibility envelope but are not read by current Local Beta code. Selected-tab page content, downloads metadata, and authenticated actions can still be exposed during agent turns. Use a dedicated Chrome profile with only the accounts needed for Forge work; do not start with your everyday profile.
+                External Chrome requests broad V1 permissions: all websites plus debugger, history, bookmarks, downloads, top-sites, tabs, sessions, navigation, scripting, storage, tab-group, notification, side-panel, and native-messaging. History, bookmarks, top-sites, managed download events/artifacts, and download-open remain declared for the accepted compatibility envelope but are not used by current Local Beta code. Forge does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. Selected-tab page content, accessibility data, diagnostics, snapshots, arbitrary JavaScript, and authenticated actions can still be exposed during agent turns. Use a dedicated Chrome profile with only the accounts needed for Forge work; do not start with your everyday profile.
               </p>
             </div>
           </div>
