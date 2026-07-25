@@ -499,6 +499,67 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close()
   })
 
+  it('activates once only after every exact current stale generation prepares', async () => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const activations: string[] = []
+    const { runtime, client: oldA, root } = await connectedRuntime('instance_profile_a', () => Date.now(), expected)
+    runtime.configureExpectedRuntime(expected, async () => { activations.push('activate') })
+    const prepareA = await oldA.receive()
+    expect(prepareA).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
+
+    const oldB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(oldB, 'instance_profile_b')
+    const prepareB = await oldB.receive()
+    expect(prepareB).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
+    await oldA.send({ jsonrpc: '2.0', id: prepareA!.id, result: {
+      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
+    } })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(activations).toEqual([])
+
+    // A prepared acknowledgement belongs only to that exact generation. Its
+    // stale replacement must prepare independently while B remains blocked.
+    const replacementA = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(replacementA, 'instance_profile_a')
+    const replacementPrepareA = await replacementA.receive()
+    expect(replacementPrepareA).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
+    expect(activations).toEqual([])
+
+    // A disconnected generation is absence only when no durable checkpoint can
+    // still represent debugger authority. B's checkpoint prevents bypass.
+    await oldB.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
+      protocolVersion: 1, leaseId: 'blocked-profile-b', leaseEpoch: 1, state: 'claimed',
+      tabIds: [73], groupId: 4, childPolicy: 'manual',
+    } })
+    await waitForCheckpoint(root, (contents) => contents.includes('blocked-profile-b'))
+    oldB.close()
+    await replacementA.send({ jsonrpc: '2.0', id: replacementPrepareA!.id, result: {
+      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
+    } })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(activations).toEqual([])
+
+    const replacementB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(replacementB, 'instance_profile_b')
+    const replacementPrepareB = await replacementB.receive()
+    expect(replacementPrepareB).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
+    await replacementB.send({ jsonrpc: '2.0', id: replacementPrepareB!.id, result: {
+      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
+    } })
+
+    const [reloadA, reloadB] = await Promise.all([replacementA.receive(), replacementB.receive()])
+    expect(activations).toEqual(['activate'])
+    expect(reloadA).toMatchObject({ method: 'forge.runtime.reload' })
+    expect(reloadB).toMatchObject({ method: 'forge.runtime.reload' })
+    await Promise.all([
+      replacementA.send({ jsonrpc: '2.0', id: reloadA!.id, result: { protocolVersion: 1, payloadVersion: expected.payloadVersion, accepted: true } }),
+      replacementB.send({ jsonrpc: '2.0', id: reloadB!.id, result: { protocolVersion: 1, payloadVersion: expected.payloadVersion, accepted: true } }),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(activations).toEqual(['activate'])
+    runtime.deactivate(); oldA.close(); oldB.close(); replacementA.close(); replacementB.close()
+  })
+
   it('updates every stale profile independently and aggregates mixed generations safely', async () => {
     const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
     const { runtime, client: oldA, root } = await connectedRuntime('instance_profile_a', () => Date.now(), expected)

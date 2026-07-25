@@ -71,6 +71,8 @@ export interface ExternalChromeHostCoordinatorOptions {
   refreshIntervalMs?: number
   setInterval?: typeof setInterval
   clearInterval?: typeof clearInterval
+  /** Test-only fault seam at the durable transfer/authorization cleanup boundary. */
+  afterTakeoverTransfer?: () => void | Promise<void>
 }
 
 export class ExternalChromeHostCoordinator {
@@ -100,6 +102,7 @@ export class ExternalChromeHostCoordinator {
   private readonly takeoverAuthorizationPath: string
   private readonly schedule: typeof setInterval
   private readonly unschedule: typeof clearInterval
+  private readonly afterTakeoverTransfer?: () => void | Promise<void>
   private endpoint: ExternalChromeEndpointHandle | null = null
   private epoch: string | null = null
   private keyId: string | null = null
@@ -120,6 +123,7 @@ export class ExternalChromeHostCoordinator {
     this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS
     this.schedule = options.setInterval ?? setInterval
     this.unschedule = options.clearInterval ?? clearInterval
+    this.afterTakeoverTransfer = options.afterTakeoverTransfer
     this.access = options.access ?? createCurrentUserAccessController(this.platform, username)
     this.auth = new ExternalChromeAuthStore(options.dataRoot, this.platform, this.access)
     this.authority = options.authority ?? new ExternalChromeAuthorityStore(
@@ -178,16 +182,20 @@ export class ExternalChromeHostCoordinator {
         throw new Error('Current External Chrome authority must be quiesced before takeover')
       }
       const authorityOwner = 'owner' in authority ? authority.owner : undefined
-      if (!authorization || !registration.forgeConflict ||
-        authorization.dataDirHash !== registration.forgeConflict.dataDirHash ||
-        authorization.registrationIdentity !== registration.forgeConflict.identity ||
+      const transferEvidence = registration.forgeConflict ?? registration.completedForgeTransfer
+      if (!authorization || !transferEvidence ||
+        authorization.dataDirHash !== transferEvidence.dataDirHash ||
+        authorization.registrationIdentity !== transferEvidence.identity ||
         (authority.state === 'stale' && authorityOwner?.dataDirHash !== authorization.dataDirHash)) {
         throw new Error('External Chrome takeover authorization is missing or stale')
       }
-      // Consume the exact one-time authorization only after live authority has been
-      // ruled out. Every subsequent mutation revalidates the same Forge-owned record.
+      // The durable exact authorization remains retryable until registration has
+      // crossed its own idempotent transfer boundary. A restart can therefore
+      // finish an exact partial transfer, while foreign/drifted records still fail.
+      await this.registration.transferForgeOwnedConflict(transferEvidence)
+      await this.afterTakeoverTransfer?.()
       await fs.rm(this.takeoverAuthorizationPath, { force: true })
-      await this.registration.transferForgeOwnedConflict(registration.forgeConflict)
+      await this.registration.repair()
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
       return this.enableUnlocked(true)
@@ -381,9 +389,10 @@ export class ExternalChromeHostCoordinator {
       await this.writeTakeoverAuthorization(registration.forgeConflict)
     }
     const takeoverAuthorization = await this.readTakeoverAuthorization()
-    const exactTransfer = takeoverAuthorization !== null && registration.forgeConflict !== undefined &&
-      takeoverAuthorization.dataDirHash === registration.forgeConflict.dataDirHash &&
-      takeoverAuthorization.registrationIdentity === registration.forgeConflict.identity
+    const transferEvidence = registration.forgeConflict ?? registration.completedForgeTransfer
+    const exactTransfer = takeoverAuthorization !== null && transferEvidence !== undefined &&
+      takeoverAuthorization.dataDirHash === transferEvidence.dataDirHash &&
+      takeoverAuthorization.registrationIdentity === transferEvidence.identity
     const platform = this.platform === 'darwin' || this.platform === 'linux' || this.platform === 'win32'
       ? this.platform
       : 'unsupported'

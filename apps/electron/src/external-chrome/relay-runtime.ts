@@ -440,6 +440,8 @@ interface RuntimeInstanceState {
   connection: RuntimeConnection
   recovery: RuntimeRecovery
   updateAttempt: Promise<void> | null
+  preparedRuntimeKey: string | null
+  reloadAttempt: Promise<void> | null
 }
 
 export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
@@ -456,6 +458,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private activateExpectedRuntime: (() => Promise<void>) | null = null
   private readonly instanceStates = new Map<string, RuntimeInstanceState>()
   private readonly instanceGenerations = new Map<string, number>()
+  private updateBarrier: Promise<void> = Promise.resolve()
+  private runtimeStateRevision = 0
+  private observedStaleRuntimeKey: string | null = null
+  private activatedRuntimeKey: string | null = null
+  private failedActivationRuntimeKey: string | null = null
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
     this.checkpoints = new LeaseCheckpointStore(checkpointFile)
@@ -465,12 +472,22 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     runtime: { payloadVersion: string; sha256: string; shellAbi: number } | null,
     activate?: () => Promise<void>,
   ): void {
+    const previousKey = this.expectedRuntimeKey()
     this.expectedRuntime = runtime === null ? null : { ...runtime }
     this.activateExpectedRuntime = activate ?? null
+    const nextKey = this.expectedRuntimeKey()
+    if (previousKey !== nextKey) {
+      this.observedStaleRuntimeKey = null
+      this.activatedRuntimeKey = null
+      this.failedActivationRuntimeKey = null
+      for (const state of this.instanceStates.values()) state.preparedRuntimeKey = null
+    }
+    this.runtimeStateRevision += 1
     for (const [extensionInstanceId, state] of this.instanceStates) {
       if (this.runtimeMatchesExpected(state.connection.inventory)) state.recovery = 'ready'
       else this.beginRuntimeUpdate(extensionInstanceId, state)
     }
+    this.scheduleRuntimeUpdateBarrier()
   }
 
   recoveryStatus(): RuntimeRecovery {
@@ -495,6 +512,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.allConnections.clear()
     this.connections.clear()
     this.instanceStates.clear()
+    this.runtimeStateRevision += 1
     this.context?.secret.fill(0)
     this.context = null
     this.operationsQuiesced = true
@@ -974,13 +992,16 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   private beginRuntimeUpdate(extensionInstanceId: string, state: RuntimeInstanceState): void {
-    if (state.updateAttempt !== null) return
+    if (state.updateAttempt !== null || state.reloadAttempt !== null) return
     const inventory = state.connection.inventory
     if (!inventory) return
     if (this.expectedRuntime === null) {
       state.recovery = inventory.shellAbi === 1 ? 'manual-extension-reload' : 'incompatible-payload'
       return
     }
+    const runtimeKey = this.expectedRuntimeKey()
+    if (runtimeKey === null) return
+    this.observedStaleRuntimeKey = runtimeKey
     if (inventory.shellAbi !== this.expectedRuntime.shellAbi) {
       state.recovery = 'incompatible-payload'
       return
@@ -991,12 +1012,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       return
     }
     state.recovery = 'updating'
-    const expected = this.expectedRuntime
+    state.preparedRuntimeKey = null
+    const expected = { ...this.expectedRuntime }
     const generation = state.generation
     const connection = state.connection
     const current = (): boolean => {
       const latest = this.instanceStates.get(extensionInstanceId)
-      return latest?.generation === generation && latest.connection === connection
+      return latest?.generation === generation && latest.connection === connection && this.expectedRuntimeKey() === runtimeKey
     }
     const attempt = (async () => {
       const prepared = await connection.request('forge.runtime.prepareUpdate', {
@@ -1005,19 +1027,89 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       })
       if (prepared.payloadVersion !== expected.payloadVersion || prepared.quiesced !== true) throw new Error('prepareUpdate acknowledgement changed payload identity')
       if (!current()) return
-      await this.activateExpectedRuntime?.()
-      if (!current()) return
-      const reloaded = await connection.request('forge.runtime.reload', {
-        protocolVersion: 1, payloadVersion: expected.payloadVersion, sha256: expected.sha256,
-      })
-      if (reloaded.payloadVersion !== expected.payloadVersion || reloaded.accepted !== true) throw new Error('runtime.reload acknowledgement changed payload identity')
-      if (current()) state.recovery = 'reconnecting'
+      state.preparedRuntimeKey = runtimeKey
+      this.runtimeStateRevision += 1
+      if (this.activatedRuntimeKey === runtimeKey) this.beginRuntimeReload(extensionInstanceId, state, runtimeKey)
+      else this.scheduleRuntimeUpdateBarrier()
     })().catch(() => {
       if (current()) state.recovery = 'manual-extension-reload'
     }).finally(() => {
       if (current() && state.updateAttempt === attempt) state.updateAttempt = null
     })
     state.updateAttempt = attempt
+  }
+
+  private expectedRuntimeKey(): string | null {
+    return this.expectedRuntime === null
+      ? null
+      : `${this.expectedRuntime.shellAbi}:${this.expectedRuntime.payloadVersion}:${this.expectedRuntime.sha256}`
+  }
+
+  private scheduleRuntimeUpdateBarrier(): void {
+    const evaluation = this.updateBarrier.then(
+      () => this.evaluateRuntimeUpdateBarrier(),
+      () => this.evaluateRuntimeUpdateBarrier(),
+    )
+    this.updateBarrier = evaluation.then(() => undefined, () => undefined)
+  }
+
+  private async evaluateRuntimeUpdateBarrier(): Promise<void> {
+    const runtimeKey = this.expectedRuntimeKey()
+    if (runtimeKey === null || this.observedStaleRuntimeKey !== runtimeKey ||
+      this.activatedRuntimeKey === runtimeKey || this.failedActivationRuntimeKey === runtimeKey) return
+    const revision = this.runtimeStateRevision
+    const checkpoints = await this.checkpoints.all()
+    if (revision !== this.runtimeStateRevision || runtimeKey !== this.expectedRuntimeKey()) {
+      this.scheduleRuntimeUpdateBarrier()
+      return
+    }
+    // A disconnected profile with durable lease authority is not absence proof.
+    // Selector/native authority cannot move until that exact profile reconnects
+    // and prepares, or its checkpoint is explicitly released.
+    if (checkpoints.some((checkpoint) => checkpoint.releasedAt === undefined && !this.connections.has(checkpoint.extensionInstanceId))) return
+    const stale = [...this.instanceStates.entries()].filter(([, state]) => !this.runtimeMatchesExpected(state.connection.inventory))
+    if (stale.some(([, state]) => state.preparedRuntimeKey !== runtimeKey)) return
+
+    try {
+      await this.activateExpectedRuntime?.()
+    } catch {
+      if (runtimeKey === this.expectedRuntimeKey()) {
+        this.failedActivationRuntimeKey = runtimeKey
+        for (const [, state] of stale) {
+          if (state.preparedRuntimeKey === runtimeKey) state.recovery = 'manual-extension-reload'
+        }
+      }
+      return
+    }
+    if (runtimeKey !== this.expectedRuntimeKey()) return
+    this.activatedRuntimeKey = runtimeKey
+    for (const [extensionInstanceId, state] of this.instanceStates) {
+      if (state.preparedRuntimeKey === runtimeKey && !this.runtimeMatchesExpected(state.connection.inventory)) {
+        this.beginRuntimeReload(extensionInstanceId, state, runtimeKey)
+      }
+    }
+  }
+
+  private beginRuntimeReload(extensionInstanceId: string, state: RuntimeInstanceState, runtimeKey: string): void {
+    if (state.reloadAttempt !== null || this.expectedRuntime === null || this.activatedRuntimeKey !== runtimeKey) return
+    const expected = { ...this.expectedRuntime }
+    const generation = state.generation
+    const connection = state.connection
+    const current = (): boolean => {
+      const latest = this.instanceStates.get(extensionInstanceId)
+      return latest?.generation === generation && latest.connection === connection && this.expectedRuntimeKey() === runtimeKey
+    }
+    const attempt = connection.request('forge.runtime.reload', {
+      protocolVersion: 1, payloadVersion: expected.payloadVersion, sha256: expected.sha256,
+    }).then((reloaded) => {
+      if (reloaded.payloadVersion !== expected.payloadVersion || reloaded.accepted !== true) throw new Error('runtime.reload acknowledgement changed payload identity')
+      if (current()) state.recovery = 'reconnecting'
+    }).catch(() => {
+      if (current()) state.recovery = 'manual-extension-reload'
+    }).finally(() => {
+      if (current() && state.reloadAttempt === attempt) state.reloadAttempt = null
+    })
+    state.reloadAttempt = attempt
   }
 
   private async handshake(peer: FramedSocketPeer, context: RelayContext): Promise<void> {
@@ -1065,14 +1157,18 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
             connection,
             recovery: this.runtimeMatchesExpected(connection.inventory) ? 'ready' : 'reconnecting',
             updateAttempt: null,
+            preparedRuntimeKey: null,
+            reloadAttempt: null,
           }
           this.instanceStates.set(extensionInstanceId, state)
+          this.runtimeStateRevision += 1
           if (state.recovery === 'ready') {
             const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId) }, 0)
             reconciliation.unref?.()
           } else {
             this.beginRuntimeUpdate(extensionInstanceId, state)
           }
+          this.scheduleRuntimeUpdateBarrier()
         },
         async (connection, change) => {
           const extensionInstanceId = connection.inventory?.extensionInstanceId
@@ -1112,7 +1208,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           if (id && this.connections.get(id) === connection) {
             this.connections.delete(id)
             const state = this.instanceStates.get(id)
-            if (state?.connection === connection) this.instanceStates.delete(id)
+            if (state?.connection === connection) {
+              this.instanceStates.delete(id)
+              this.runtimeStateRevision += 1
+              this.scheduleRuntimeUpdateBarrier()
+            }
           }
         })
       this.allConnections.add(connection)

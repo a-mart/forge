@@ -181,7 +181,54 @@ describe('ExternalChromeHostCoordinator', () => {
     })
     await expect(second.takeover()).rejects.toThrow(/must be quiesced/u)
     await first.quiesce('desktop-update')
-    // A coordinator restart retains only bounded exact conflict authorization.
+    const secondPaths = resolveExternalChromeDataPaths(secondRoot.dataRoot, 'linux')
+    const authorizationPath = path.join(secondPaths.state, 'takeover-authorization.json')
+    const transferPath = path.join(secondPaths.state, 'registration-transfer.json')
+
+    // A failed transfer never consumes the exact durable authorization, so a
+    // fresh coordinator can retry after the process exits before mutation.
+    let failBeforeTransfer = true
+    const failingRegistration: ExternalChromeNativeRegistration = {
+      inspect: () => secondRegistration.inspect(),
+      repair: () => secondRegistration.repair(),
+      remove: () => secondRegistration.remove(),
+      transferForgeOwnedConflict: async (evidence) => {
+        if (failBeforeTransfer) {
+          failBeforeTransfer = false
+          throw new Error('synthetic failure before registration transfer')
+        }
+        return secondRegistration.transferForgeOwnedConflict(evidence)
+      },
+    }
+    second = new ExternalChromeHostCoordinator({
+      dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
+      instanceId: 'desktop_takeover_second_failed', access,
+      authority: new ExternalChromeAuthorityStore(secondRoot.dataRoot, 'linux', 'desktop_takeover_second_failed', 812, access, alive, Date.now, authorityFile),
+      endpoints: new FakeEndpoints(), registration: failingRegistration,
+      isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
+    })
+    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true, registration: 'conflict' })
+    await expect(second.takeover()).rejects.toThrow(/synthetic failure before/u)
+    await expect(readFile(authorizationPath, 'utf8')).resolves.toContain('registrationIdentity')
+    expect(await secondRegistration.inspect()).toMatchObject({ registration: 'conflict' })
+
+    // A crash after the exact global transfer but before authorization cleanup
+    // leaves a self-identifying transaction that the next process can finish.
+    second = new ExternalChromeHostCoordinator({
+      dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
+      instanceId: 'desktop_takeover_second_crash', access,
+      authority: new ExternalChromeAuthorityStore(secondRoot.dataRoot, 'linux', 'desktop_takeover_second_crash', 812, access, alive, Date.now, authorityFile),
+      endpoints: new FakeEndpoints(), registration: secondRegistration,
+      isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
+      afterTakeoverTransfer: () => { throw new Error('synthetic crash after transfer') },
+    })
+    await expect(second.takeover()).rejects.toThrow(/synthetic crash after/u)
+    await expect(readFile(authorizationPath, 'utf8')).resolves.toContain('registrationIdentity')
+    await expect(readFile(transferPath, 'utf8')).resolves.toContain('ownershipPath')
+    expect(await secondRegistration.inspect()).toMatchObject({
+      registration: 'owned', completedForgeTransfer: { identity: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+    })
+
     second = new ExternalChromeHostCoordinator({
       dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
       instanceId: 'desktop_takeover_second_restart', access,
@@ -189,8 +236,10 @@ describe('ExternalChromeHostCoordinator', () => {
       endpoints: new FakeEndpoints(), registration: secondRegistration,
       isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
     })
-    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true, registration: 'conflict' })
+    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true, registration: 'owned' })
     expect(await second.takeover()).toMatchObject({ state: 'online', authority: 'owned', registration: 'owned' })
+    await expect(readFile(authorizationPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(transferPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(second.takeover()).rejects.toThrow(/quiesced|authorization/u)
     await second.disable()
   })

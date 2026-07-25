@@ -31,6 +31,14 @@ interface RegistrationOwnership {
   manifestPath: string
 }
 
+interface RegistrationTransferTransaction {
+  schemaVersion: 1
+  identity: string
+  dataDirHash: string
+  ownershipPath: string
+  canonicalManifest: string
+}
+
 export interface ForgeRegistrationConflictEvidence {
   /** Opaque digest of the exact global target, old canonical manifest, and ownership record. */
   identity: string
@@ -43,6 +51,8 @@ export interface NativeRegistrationInspection {
   detail?: string
   /** Present only when the conflicting record is proven to be Forge-owned. */
   forgeConflict?: ForgeRegistrationConflictEvidence
+  /** Exact durable transaction proving the global target already moved here. */
+  completedForgeTransfer?: ForgeRegistrationConflictEvidence
 }
 
 export interface ExternalChromeNativeRegistration {
@@ -130,6 +140,7 @@ export class PlatformExecutableTrustVerifier implements ExecutableTrustVerifier 
 interface RegistrationPaths {
   canonicalManifest: string
   ownership: string
+  transfer: string
   executable: string
 }
 
@@ -164,7 +175,12 @@ abstract class OwnedNativeRegistration implements ExternalChromeNativeRegistrati
       return { registration: ownershipMatches ? 'needs-repair' : 'not-registered', trust }
     }
     if (manifestEquals(current, this.manifest)) {
-      return { registration: ownershipMatches ? 'owned' : 'needs-repair', trust }
+      const transfer = await this.readTransferTransaction()
+      return {
+        registration: ownershipMatches ? 'owned' : 'needs-repair',
+        trust,
+        ...(transfer ? { completedForgeTransfer: transferEvidence(transfer) } : {}),
+      }
     }
     const forgeConflict = ownershipMatches ? null : await this.proveForgeConflict(current)
     return {
@@ -188,20 +204,42 @@ abstract class OwnedNativeRegistration implements ExternalChromeNativeRegistrati
       registrationTarget: this.registrationTarget,
       manifestPath: this.paths.canonicalManifest,
     } satisfies RegistrationOwnership)
+    await fs.rm(this.paths.transfer, { force: true })
     return this.inspect()
   }
 
   async transferForgeOwnedConflict(evidence: ForgeRegistrationConflictEvidence): Promise<NativeRegistrationInspection> {
-    const before = await this.inspect()
-    if (before.registration !== 'conflict' || !before.forgeConflict ||
-      before.forgeConflict.identity !== evidence.identity || before.forgeConflict.dataDirHash !== evidence.dataDirHash) {
-      throw new Error('External Chrome registration transfer authorization is stale')
-    }
+    let transaction = await this.readTransferTransaction()
     const current = await this.readCurrent()
-    const old = current ? await this.proveForgeConflictRecord(current) : null
-    if (!old || old.evidence.identity !== evidence.identity || old.evidence.dataDirHash !== evidence.dataDirHash) {
-      throw new Error('External Chrome registration transfer authorization is stale')
+    if (transaction) {
+      if (!evidenceEquals(transferEvidence(transaction), evidence)) {
+        throw new Error('External Chrome registration transfer authorization is stale')
+      }
+      if (!current || (!manifestEquals(current, this.manifest) &&
+        !evidenceEquals((await this.proveForgeConflictRecord(current))?.evidence, evidence))) {
+        throw new Error('External Chrome registration transfer authorization is stale')
+      }
+    } else {
+      const before = await this.inspect()
+      if (before.registration !== 'conflict' || !evidenceEquals(before.forgeConflict, evidence)) {
+        throw new Error('External Chrome registration transfer authorization is stale')
+      }
+      const old = current ? await this.proveForgeConflictRecord(current) : null
+      if (!old || !evidenceEquals(old.evidence, evidence)) {
+        throw new Error('External Chrome registration transfer authorization is stale')
+      }
+      transaction = {
+        schemaVersion: 1,
+        identity: evidence.identity,
+        dataDirHash: evidence.dataDirHash,
+        ownershipPath: old.ownershipPath,
+        canonicalManifest: old.canonicalManifest,
+      }
+      // Persist exact retry authority before changing either the global target or
+      // its new ownership record. Every partial transfer is then resumable.
+      await writeJsonAtomic(this.paths.transfer, transaction)
     }
+
     await writeJsonAtomic(this.paths.canonicalManifest, this.manifest)
     await this.writeCurrent(this.manifest)
     await writeJsonAtomic(this.paths.ownership, {
@@ -210,11 +248,9 @@ abstract class OwnedNativeRegistration implements ExternalChromeNativeRegistrati
       registrationTarget: this.registrationTarget,
       manifestPath: this.paths.canonicalManifest,
     } satisfies RegistrationOwnership)
-    // Remove only the exact old Forge ownership/canonical records proven above.
-    // The global target already selects the new record, so a crash before cleanup
-    // remains Forge-owned and repairable rather than reverting to a foreign value.
-    if (old.ownershipPath !== this.paths.ownership) await fs.rm(old.ownershipPath, { force: true })
-    if (old.canonicalManifest !== this.paths.canonicalManifest) await fs.rm(old.canonicalManifest, { force: true })
+    // Remove only the exact old records captured before the global transfer.
+    if (transaction.ownershipPath !== this.paths.ownership) await fs.rm(transaction.ownershipPath, { force: true })
+    if (transaction.canonicalManifest !== this.paths.canonicalManifest) await fs.rm(transaction.canonicalManifest, { force: true })
     return this.inspect()
   }
 
@@ -232,6 +268,7 @@ abstract class OwnedNativeRegistration implements ExternalChromeNativeRegistrati
     await this.removeCurrent()
     await fs.rm(this.paths.canonicalManifest, { force: true })
     await fs.rm(this.paths.ownership, { force: true })
+    await fs.rm(this.paths.transfer, { force: true })
     return this.inspect()
   }
 
@@ -250,6 +287,24 @@ abstract class OwnedNativeRegistration implements ExternalChromeNativeRegistrati
   private async hasDriftedCurrent(): Promise<boolean> {
     const current = await this.readCurrent()
     return current !== null && !manifestEquals(current, this.manifest)
+  }
+
+  private async readTransferTransaction(): Promise<RegistrationTransferTransaction | null> {
+    const value = await readJson<RegistrationTransferTransaction>(this.paths.transfer)
+    if (!value || value.schemaVersion !== 1 || !/^[a-f0-9]{64}$/u.test(value.identity) ||
+      !/^[a-f0-9]{16}$/u.test(value.dataDirHash) || !path.isAbsolute(value.ownershipPath) ||
+      !path.isAbsolute(value.canonicalManifest) || Object.keys(value).sort().join(',') !==
+      'canonicalManifest,dataDirHash,identity,ownershipPath,schemaVersion') return null
+    const marker = `${path.sep}integrations${path.sep}external-chrome${path.sep}native-host-manifests${path.sep}`
+    const normalizedManifest = path.normalize(value.canonicalManifest)
+    const markerIndex = normalizedManifest.lastIndexOf(marker)
+    if (markerIndex <= 0) return null
+    const oldDataRoot = normalizedManifest.slice(0, markerIndex)
+    const oldPaths = resolveExternalChromeDataPaths(oldDataRoot, this.platform)
+    if (normalizedManifest !== path.join(oldPaths.nativeHostManifests, `${EXTERNAL_CHROME_NATIVE_HOST_NAME}.json`) ||
+      path.normalize(value.ownershipPath) !== path.join(oldPaths.state, 'registration.json') ||
+      dataDirectoryHash(oldDataRoot) !== value.dataDirHash) return null
+    return value
   }
 
   private async proveForgeConflict(current: NativeHostManifest): Promise<ForgeRegistrationConflictEvidence | null> {
@@ -303,6 +358,7 @@ export class PosixNativeRegistration extends OwnedNativeRegistration {
       {
         canonicalManifest: path.join(dataPaths.nativeHostManifests, `${EXTERNAL_CHROME_NATIVE_HOST_NAME}.json`),
         ownership: path.join(dataPaths.state, 'registration.json'),
+        transfer: path.join(dataPaths.state, 'registration-transfer.json'),
         executable: dataPaths.nativeHostExecutable,
       },
       path.join(options.registrationDirectory, `${EXTERNAL_CHROME_NATIVE_HOST_NAME}.json`),
@@ -375,6 +431,7 @@ export class WindowsNativeRegistration extends OwnedNativeRegistration {
       {
         canonicalManifest: path.join(dataPaths.nativeHostManifests, `${EXTERNAL_CHROME_NATIVE_HOST_NAME}.json`),
         ownership: path.join(dataPaths.state, 'registration.json'),
+        transfer: path.join(dataPaths.state, 'registration-transfer.json'),
         executable: dataPaths.nativeHostExecutable,
       },
       registryKey,
@@ -442,6 +499,17 @@ class UnsupportedNativeRegistration implements ExternalChromeNativeRegistration 
   remove(): Promise<NativeRegistrationInspection> {
     return this.inspect()
   }
+}
+
+function transferEvidence(transaction: RegistrationTransferTransaction): ForgeRegistrationConflictEvidence {
+  return { identity: transaction.identity, dataDirHash: transaction.dataDirHash }
+}
+
+function evidenceEquals(
+  left: ForgeRegistrationConflictEvidence | undefined,
+  right: ForgeRegistrationConflictEvidence,
+): boolean {
+  return left?.identity === right.identity && left.dataDirHash === right.dataDirHash
 }
 
 function manifestEquals(value: NativeHostManifest, expected: NativeHostManifest): boolean {

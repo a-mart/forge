@@ -67,10 +67,42 @@ describe('External Chrome native registration', () => {
     })
     await expect(second.transferForgeOwnedConflict({ identity: '0'.repeat(64), dataDirHash: conflict.forgeConflict!.dataDirHash }))
       .rejects.toThrow(/stale/u)
-    await expect(second.transferForgeOwnedConflict(conflict.forgeConflict!)).resolves.toMatchObject({ registration: 'owned' })
+    await expect(second.transferForgeOwnedConflict(conflict.forgeConflict!)).resolves.toMatchObject({
+      registration: 'owned', completedForgeTransfer: conflict.forgeConflict,
+    })
+    // A restart retry after the global target moved is idempotent until normal
+    // repair clears the durable transfer transaction.
+    await expect(second.transferForgeOwnedConflict(conflict.forgeConflict!)).resolves.toMatchObject({
+      registration: 'owned', completedForgeTransfer: conflict.forgeConflict,
+    })
+    expect(await second.repair()).toMatchObject({ registration: 'owned' })
+    expect(await second.inspect()).not.toHaveProperty('completedForgeTransfer')
     expect(await first.inspect()).toMatchObject({ registration: 'conflict' })
     await expect(readFile(path.join(resolveExternalChromeDataPaths(firstDataRoot, 'darwin').state, 'registration.json'), 'utf8'))
       .rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('blocks a drifted global target even when an exact transfer transaction survives', async () => {
+    const firstDataRoot = await root()
+    const secondDataRoot = await root()
+    const registrationDirectory = path.join(await root(), 'shared', 'NativeMessagingHosts')
+    await prepareExecutable(firstDataRoot, 'darwin')
+    await prepareExecutable(secondDataRoot, 'darwin')
+    const first = new PosixNativeRegistration({ platform: 'darwin', dataRoot: firstDataRoot, registrationDirectory, trustVerifier: trusted })
+    const second = new PosixNativeRegistration({ platform: 'darwin', dataRoot: secondDataRoot, registrationDirectory, trustVerifier: trusted })
+    await first.repair()
+    const conflict = (await second.inspect()).forgeConflict!
+    await second.transferForgeOwnedConflict(conflict)
+    await writeFile(path.join(registrationDirectory, `${EXTERNAL_CHROME_NATIVE_HOST_NAME}.json`), JSON.stringify({
+      name: EXTERNAL_CHROME_NATIVE_HOST_NAME,
+      description: 'foreign drift after transfer',
+      path: '/foreign/host',
+      type: 'stdio',
+      allowed_origins: [EXTERNAL_CHROME_EXTENSION_ORIGIN],
+    }))
+    expect(await second.inspect()).toMatchObject({ registration: 'needs-repair' })
+    expect(await second.inspect()).not.toHaveProperty('completedForgeTransfer')
+    await expect(second.transferForgeOwnedConflict(conflict)).rejects.toThrow(/stale/u)
   })
 
   it('refuses to overwrite an unowned registration target', async () => {
