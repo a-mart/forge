@@ -192,10 +192,11 @@ export class ExternalChromeHostCoordinator {
         (authority.state === 'stale' && authorityOwner?.dataDirHash !== authorization.dataDirHash)) {
         throw new Error('External Chrome takeover authorization is missing or stale')
       }
-      // A local durable lease from an interrupted prior authority remains the
-      // sole recovery handle. Do not transfer registration or rotate auth until
-      // that exact authority is released (normally this is an empty barrier).
-      await this.proveExactLifecycleReleaseUnlocked('authority-takeover')
+      // The authorized transfer may be what restores the native-host route to
+      // this data directory. Requiring a local lease release before that route
+      // and listener exist would be circular. The durable checkpoint is retained
+      // across transfer/auth rotation so only its exact instance can reconcile
+      // after the authenticated listener is published.
       // The durable exact authorization remains retryable until registration has
       // crossed its own idempotent transfer boundary. A restart can therefore
       // finish an exact partial transfer, while foreign/drifted records still fail.
@@ -227,19 +228,27 @@ export class ExternalChromeHostCoordinator {
       const authStatus = await this.auth.status()
       const wasEnabled = await this.readDesiredEnabled()
       const rotatesAuth = authStatus !== 'secure' || authorityBefore.state === 'stale'
+      const hasActiveCheckpoints = await this.relay.hasActiveLeaseCheckpoints()
+      const authorityOwner = 'owner' in authorityBefore ? authorityBefore.owner : undefined
+      const sameDataDirRecoveryAuthority = authorityBefore.state === 'none' ||
+        (authorityBefore.state === 'stale' && authorityOwner?.dataDirHash === this.dataDirHash)
+      const offlineCheckpointRecovery = this.endpoint === null && wasEnabled && hasActiveCheckpoints && sameDataDirRecoveryAuthority
       const invalidatesRuntime = this.repairDeployment !== undefined || rotatesAuth
-      if (invalidatesRuntime) {
+      if (invalidatesRuntime && !offlineCheckpointRecovery) {
         await this.proveExactLifecycleReleaseUnlocked(this.repairDeployment ? 'deployment-repair' : 'auth-rotation')
         await this.stopRuntime(false)
       }
+      // Staging is immutable and registration repair preserves this data dir's
+      // native-host route. When a crash left no listener, these are connectivity
+      // recovery steps rather than permission to discard the surviving lease.
       if (this.repairDeployment) await this.repairDeployment()
       if (rotatesAuth) {
         const rotated = await this.auth.rotate()
         rotated.key.fill(0)
       }
       await this.registration.repair()
-      if (wasEnabled) await this.enableUnlocked(true)
-      if (invalidatesRuntime) await this.clearLifecycleRecoveryUnlocked()
+      if (wasEnabled) await this.enableUnlocked(false)
+      if (invalidatesRuntime && !offlineCheckpointRecovery) await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
   }
@@ -355,17 +364,19 @@ export class ExternalChromeHostCoordinator {
     const before = await this.authority.inspect()
     const beforeOwner = 'owner' in before ? before.owner : undefined
     const crossDataDirOwner = beforeOwner?.dataDirHash !== undefined && beforeOwner.dataDirHash !== this.dataDirHash
+    const sameDataDirStaleAuthority = before.state === 'stale' && beforeOwner?.dataDirHash === this.dataDirHash
     const takeoverAuthorization = await this.readTakeoverAuthorization()
-    if (before.state === 'other-live' || (!allowTakeover && (crossDataDirOwner || before.state === 'stale' || takeoverAuthorization !== null))) return this.statusUnlocked()
+    if (before.state === 'other-live' || (!allowTakeover && (
+      crossDataDirOwner || (before.state === 'stale' && !sameDataDirStaleAuthority) || takeoverAuthorization !== null
+    ))) return this.statusUnlocked()
     if ((await this.inspectSetup()).pathState !== 'ready') {
       throw new Error('External Chrome unpacked extension deployment is missing or invalid')
     }
 
-    const authStatus = await this.auth.status()
-    if ((before.state === 'stale' || authStatus !== 'secure') && await this.relay.hasActiveLeaseCheckpoints()) {
-      await this.proveExactLifecycleReleaseUnlocked('auth-rotation')
-    }
-
+    // A startup claim has no live local connection to invalidate. Rotating or
+    // repairing its persisted authentication is required before the exact
+    // extension instance can reconnect and release a durable checkpoint. An
+    // explicit rotateAuthKey action still crosses the lifecycle barrier first.
     const expiresAt = this.expiry()
     const claim = await this.authority.claim(expiresAt)
     if (claim.state === 'other-live') return this.statusUnlocked()
@@ -446,7 +457,9 @@ export class ExternalChromeHostCoordinator {
       ? this.platform
       : 'unsupported'
     const trustAllowsEnable = registration.trust === 'trusted' || registration.trust === 'unsupported'
-    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale' && takeoverAuthorization === null
+    const sameDataDirStaleAuthority = authority.state === 'stale' && authorityOwner?.dataDirHash === this.dataDirHash
+    const authorityAvailable = authority.state !== 'other-live' &&
+      (authority.state !== 'stale' || sameDataDirStaleAuthority) && takeoverAuthorization === null
     const hasInstalledState = auth !== 'missing' || registration.registration !== 'not-registered' || state !== 'disabled'
     const markerRecovery = await this.readMarkerRecovery()
     const runtimeRecovery = this.relay.recoveryStatus()

@@ -443,7 +443,6 @@ export type ExternalChromeLifecycleBarrierReason =
   | 'deployment-repair'
   | 'auth-rotation'
   | 'deployment-rollback'
-  | 'authority-takeover'
 
 interface RuntimeInstanceState {
   generation: number

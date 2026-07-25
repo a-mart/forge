@@ -2,12 +2,16 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import type { Socket } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ExternalChromeRendezvousDocument } from '@forge/protocol'
+import { AuthenticatedRelayClient } from '../../../../native-messaging-host/src/relay-client.js'
+import { NodeSocketConnector } from '../../../../native-messaging-host/src/transport.js'
 import { ExternalChromeHostCoordinator } from '../coordinator.js'
 import { ExternalChromeDeployer } from '../deployer.js'
 import { ExternalChromeAuthorityStore, PosixCurrentUserAccessController } from '../auth-rendezvous.js'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
-import type { ExternalChromeEndpointAuthority, ExternalChromeEndpointHandle } from '../endpoint.js'
+import { NodeExternalChromeEndpointAuthority, type ExternalChromeEndpointAuthority, type ExternalChromeEndpointHandle } from '../endpoint.js'
 import { PosixNativeRegistration, type ExecutableTrustVerifier, type ExternalChromeNativeRegistration, type ForgeRegistrationConflictEvidence, type NativeRegistrationInspection } from '../registration.js'
 import { EXTERNAL_CHROME_EXTENSION_ID, EXTERNAL_CHROME_PUBLIC_KEY_SHA256, sha256 } from '../package-manifest.js'
 
@@ -102,7 +106,94 @@ class FakeEndpoints implements ExternalChromeEndpointAuthority {
   }
 }
 
+class TrackingRelayEndpoints implements ExternalChromeEndpointAuthority {
+  handles: Array<ExternalChromeEndpointHandle & { closed: boolean }> = []
+  accept: (socket: Socket) => void = (socket) => socket.destroy()
+
+  async listen(input: { runDirectory: string; platform: NodeJS.Platform; userScope: string; epoch: string }): Promise<ExternalChromeEndpointHandle> {
+    const delegate = new NodeExternalChromeEndpointAuthority(access, { accept: (socket) => this.accept(socket) })
+    const opened = await delegate.listen(input)
+    const handle = {
+      ...opened,
+      closed: false,
+      close: async () => {
+        if (handle.closed) return
+        handle.closed = true
+        await opened.close()
+      },
+    }
+    this.handles.push(handle)
+    return handle
+  }
+}
+
 const access = new PosixCurrentUserAccessController(process.getuid?.())
+const noSchedule = (() => ({ unref: () => undefined })) as unknown as typeof setInterval
+const noUnschedule = (() => undefined) as unknown as typeof clearInterval
+
+async function connectToCoordinator(dataRoot: string): Promise<AuthenticatedRelayClient> {
+  const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+  const rendezvous = JSON.parse(await readFile(paths.rendezvous, 'utf8')) as ExternalChromeRendezvousDocument
+  const secret = Buffer.from((await readFile(paths.authKey, 'utf8')).trim(), 'base64')
+  return AuthenticatedRelayClient.connect({
+    rendezvous: { read: async () => rendezvous },
+    secrets: { getSecret: async () => Buffer.from(secret) },
+    connector: new NodeSocketConnector(384 * 1_024),
+    expectedUserScope: rendezvous.userScope,
+    expectedExtensionOrigin: 'chrome-extension://fcchfcnadajoejfbiclihglkmbcfhajd/',
+    platform: 'linux', now: Date.now, maxAttempts: 1,
+  })
+}
+
+async function sendCoordinatorRuntimeHello(
+  client: AuthenticatedRelayClient,
+  extensionInstanceId: string,
+  payloadVersion: string,
+  payloadSha256: string,
+): Promise<void> {
+  await client.send({
+    jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
+      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
+      extensionId: EXTERNAL_CHROME_EXTENSION_ID, extensionInstanceId, chromeVersion: '125.0.0.0',
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.listCandidates', 'forge.browser.claim', 'forge.browser.create', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      maxMessageBytes: 262144,
+      operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
+        operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
+      })),
+      features: { resize: false, recording: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true, groups: true },
+    },
+  })
+  await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1 } })
+}
+
+async function lifecycleExtensionLoop(
+  client: AuthenticatedRelayClient,
+  requests: Array<{ method: string; params: Record<string, unknown> }>,
+  extensionInstanceId: string,
+): Promise<void> {
+  while (true) {
+    const message = await client.receive()
+    if (!message) return
+    if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
+    const params = message.params as Record<string, unknown>
+    requests.push({ method: message.method, params })
+    if (message.method === 'forge.browser.claim') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
+        extensionInstanceId, groupId: 9, childPolicy: params.childPolicy,
+        tabs: [{ windowId: 2, tabId: 40, groupId: 9, title: '', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true }],
+      } })
+    } else if (message.method === 'forge.runtime.prepareUpdate') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, payloadVersion: params.payloadVersion, quiesced: true,
+      } })
+    } else if (message.method === 'forge.browser.release') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: [40],
+      } })
+    }
+  }
+}
 
 describe('ExternalChromeHostCoordinator', () => {
   it('publishes a non-secret bounded rendezvous, quiesces, and permits clean takeover', async () => {
@@ -146,6 +237,87 @@ describe('ExternalChromeHostCoordinator', () => {
     await second.resumeIfEnabled()
     expect(await second.status()).toMatchObject({ state: 'online', authority: 'owned' })
     await second.disable()
+  })
+
+  it('restarts into an authenticated recovery listener and releases the exact durable lease on remove retry', async () => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const livePids = new Set([611])
+    const isProcessAlive = (pid: number): boolean => livePids.has(pid)
+    const authorityPath = path.join(dataRoot, '..', 'restart-authority.json')
+    const firstEndpoints = new TrackingRelayEndpoints()
+    const first = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 611, username: 'restart-user', uid: 611,
+      instanceId: 'desktop_restart_first', access,
+      authority: new ExternalChromeAuthorityStore(dataRoot, 'linux', 'desktop_restart_first', 611, access, isProcessAlive, Date.now, authorityPath),
+      endpoints: firstEndpoints, registration, isProcessAlive,
+      deploymentVerifier: deployer, setInterval: noSchedule, clearInterval: noUnschedule,
+    })
+    firstEndpoints.accept = (socket) => first.transport().accept(socket)
+    await first.enable()
+    const deployed = await deployer.verifyDeployment()
+    if (deployed.state !== 'ready') throw new Error('fixture deployment is not ready')
+    const firstAuth = await readFile(resolveExternalChromeDataPaths(dataRoot, 'linux').authKey, 'utf8')
+    const originalClient = await connectToCoordinator(dataRoot)
+    await sendCoordinatorRuntimeHello(
+      originalClient, 'instance_restart_exact', deployed.install.payloadVersion, deployed.install.payloadSha256,
+    )
+    const originalRequests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const originalLoop = lifecycleExtensionLoop(originalClient, originalRequests, 'instance_restart_exact')
+    await first.transport().claim({
+      extensionInstanceId: 'instance_restart_exact', sessionAgentId: 'session-restart', profileId: 'profile-restart',
+      leaseId: 'lease-restart-exact', leaseEpoch: 17, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    expect(await first.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_restart_exact', leaseId: 'lease-restart-exact', leaseEpoch: 17,
+    })])
+
+    // Simulate an involuntary process loss: transport and listener disappear,
+    // while desired-enabled, stale same-data-dir authority, auth, and checkpoint
+    // files survive exactly as they would across a Desktop crash.
+    await firstEndpoints.handles[0]!.close()
+    first.transport().deactivate()
+    livePids.delete(611)
+    await originalLoop
+
+    const restartedEndpoints = new TrackingRelayEndpoints()
+    const restarted = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 612, username: 'restart-user', uid: 611,
+      instanceId: 'desktop_restart_second', access,
+      authority: new ExternalChromeAuthorityStore(dataRoot, 'linux', 'desktop_restart_second', 612, access, isProcessAlive, Date.now, authorityPath),
+      endpoints: restartedEndpoints, registration, isProcessAlive,
+      deploymentVerifier: deployer, setInterval: noSchedule, clearInterval: noUnschedule,
+    })
+    restartedEndpoints.accept = (socket) => restarted.transport().accept(socket)
+    expect(await restarted.status()).toMatchObject({ state: 'offline', authority: 'stale', canEnable: true })
+    await expect(restarted.resumeIfEnabled()).resolves.toBeUndefined()
+    expect(await restarted.status()).toMatchObject({ state: 'online', authority: 'owned', recovery: 'reconnecting' })
+    expect(await readFile(resolveExternalChromeDataPaths(dataRoot, 'linux').authKey, 'utf8')).not.toBe(firstAuth)
+    expect(await restarted.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_restart_exact', leaseId: 'lease-restart-exact', leaseEpoch: 17,
+    })])
+
+    const reconnected = await connectToCoordinator(dataRoot)
+    await sendCoordinatorRuntimeHello(
+      reconnected, 'instance_restart_exact', deployed.install.payloadVersion, deployed.install.payloadSha256,
+    )
+    await reconnected.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
+      protocolVersion: 1, leaseId: 'lease-restart-exact', leaseEpoch: 17, state: 'claimed',
+      tabIds: [40], groupId: 9, childPolicy: 'manual',
+    } })
+    const retryRequests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const retryLoop = lifecycleExtensionLoop(reconnected, retryRequests, 'instance_restart_exact')
+    await expect(restarted.remove()).resolves.toMatchObject({
+      state: 'disabled', auth: 'missing', registration: 'not-registered', recovery: 'ready',
+    })
+    expect(retryRequests.map((request) => request.method)).toEqual([
+      'forge.runtime.prepareUpdate', 'forge.browser.release',
+    ])
+    expect(retryRequests[1]?.params).toMatchObject({
+      leaseId: 'lease-restart-exact', leaseEpoch: 17, reason: 'integration-remove',
+    })
+    expect(await restarted.transport().leaseCheckpoints()).toEqual([])
+    await retryLoop
   })
 
   it('persists exact Forge registration conflict evidence and transfers it only after quiesce', async () => {
@@ -237,7 +409,9 @@ describe('ExternalChromeHostCoordinator', () => {
       isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
     })
     expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true, registration: 'owned' })
+    const takeoverBarrier = vi.spyOn(second.transport(), 'quiesce')
     expect(await second.takeover()).toMatchObject({ state: 'online', authority: 'owned', registration: 'owned' })
+    expect(takeoverBarrier).not.toHaveBeenCalled()
     await expect(readFile(authorizationPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(transferPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(second.takeover()).rejects.toThrow(/quiesced|authorization/u)
@@ -261,6 +435,48 @@ describe('ExternalChromeHostCoordinator', () => {
     expect(await coordinator.remove()).toMatchObject({ state: 'disabled', auth: 'missing', registration: 'not-registered' })
     expect(registration.removes).toBe(1)
     expect(endpoints.handles[0]?.closed).toBe(true)
+  })
+
+  it('uses offline repair to restore a recovery listener without deleting active checkpoint evidence', async () => {
+    const { dataRoot, deployer } = await root()
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+    await mkdir(paths.state, { recursive: true })
+    await writeFile(path.join(paths.state, 'enabled.json'), `${JSON.stringify({ schemaVersion: 1, enabled: true })}\n`, { mode: 0o600 })
+    await writeFile(path.join(paths.state, 'leases.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      leases: [{
+        extensionInstanceId: 'instance_offline_repair', sessionAgentId: 'session-repair', profileId: 'profile-repair',
+        leaseId: 'lease-offline-repair', leaseEpoch: 8, tabIds: [52], groupId: 4, childPolicy: 'manual',
+        expiresAt: Date.now() + 60_000,
+      }],
+    })}\n`, { mode: 0o600 })
+    const endpoints = new FakeEndpoints()
+    const registration = new FakeRegistration()
+    let deploymentRepairs = 0
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 513, username: 'offline-repair-user', uid: 513,
+      instanceId: 'desktop_offline_repair', access, endpoints, registration, isProcessAlive: () => false,
+      repairDeployment: async () => { deploymentRepairs += 1 }, deploymentVerifier: deployer,
+      setInterval: noSchedule, clearInterval: noUnschedule,
+    })
+    const barrier = vi.spyOn(coordinator.transport(), 'quiesce')
+    await expect(coordinator.repair()).resolves.toMatchObject({
+      state: 'online', authority: 'owned', auth: 'secure', recovery: 'reconnecting',
+    })
+    expect(barrier).not.toHaveBeenCalled()
+    expect(deploymentRepairs).toBe(1)
+    expect(await coordinator.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_offline_repair', leaseId: 'lease-offline-repair', leaseEpoch: 8,
+    })])
+
+    // Once the listener exists, an explicit retry must cross the normal exact
+    // barrier before any live deployment/auth authority can be changed.
+    barrier.mockResolvedValueOnce(undefined)
+    await expect(coordinator.repair()).resolves.toMatchObject({ state: 'online' })
+    expect(barrier).toHaveBeenCalledWith('deployment-repair', expect.any(Number))
+    expect(deploymentRepairs).toBe(2)
+    barrier.mockResolvedValueOnce(undefined)
+    await coordinator.disable()
   })
 
   it('fails user lifecycle mutations closed before registration, auth, deployment, or authority changes and permits retry', async () => {
