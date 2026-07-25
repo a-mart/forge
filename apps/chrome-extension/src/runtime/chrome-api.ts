@@ -89,7 +89,7 @@ export interface ChromeApi {
   }
   scripting: {
     executeScript(injection: {
-      target: { tabId: number; allFrames?: boolean }
+      target: { tabId: number; allFrames?: boolean; frameIds?: number[] }
       files: string[]
       world?: 'ISOLATED' | 'MAIN'
     }): Promise<unknown[]>

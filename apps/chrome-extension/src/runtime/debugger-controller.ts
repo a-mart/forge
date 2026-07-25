@@ -163,6 +163,18 @@ export class DebuggerController {
     return this.trackers.get(tabId)
   }
 
+  async reconcileForRelease(tabId: number, extensionId: string): Promise<void> {
+    const target = (await this.debuggerApi.getTargets()).find((candidate) => candidate.tabId === tabId && candidate.attached === true)
+    if (target === undefined) {
+      this.states.set(tabId, 'UNATTACHED')
+      this.trackers.delete(tabId)
+      return
+    }
+    // Only positively adopt our own MV3 debugger attachment. Foreign ownership
+    // remains LOST and Chrome detach must explicitly fail/ack before authority clears.
+    this.states.set(tabId, target.extensionId === extensionId ? 'ATTACHED' : 'LOST')
+  }
+
   async attach(tabId: number): Promise<void> {
     if (this.state(tabId) !== 'UNATTACHED') throw new Error(`debugger is ${this.state(tabId)}`)
     this.states.set(tabId, 'ATTACHING')
@@ -260,10 +272,14 @@ export class DebuggerController {
     this.states.set(tabId, 'DETACHING')
     try {
       await this.debuggerApi.detach({ tabId })
-    } finally {
-      this.states.set(tabId, 'UNATTACHED')
-      this.trackers.delete(tabId)
+    } catch (error) {
+      // Chrome did not acknowledge debugger release. Retain our ownership model
+      // so callers can retry instead of admitting new work through stale authority.
+      this.states.set(tabId, state)
+      throw error
     }
+    this.states.set(tabId, 'UNATTACHED')
+    this.trackers.delete(tabId)
   }
 
   async detachAll(): Promise<void> {

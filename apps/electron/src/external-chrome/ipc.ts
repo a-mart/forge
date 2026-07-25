@@ -142,25 +142,43 @@ export function installExternalChromeIpc(options: {
   const leaseEpochs = new Map<string, number>()
   const key = (sessionAgentId: string, profileId: string): string => `${sessionAgentId}\u0000${profileId}`
   const transportForRecovery = options.coordinator.transport()
-  const recoveryReady = (typeof transportForRecovery.leaseCheckpoints === 'function'
-    ? transportForRecovery.leaseCheckpoints()
-    : Promise.resolve([])).then((checkpoints) => {
-    for (const checkpoint of checkpoints) {
-      leaseEpochs.set(checkpoint.extensionInstanceId, Math.max(leaseEpochs.get(checkpoint.extensionInstanceId) ?? 0, checkpoint.leaseEpoch))
-      if (checkpoint.sessionAgentId === '__local_pending__' || checkpoint.profileId === '__local_pending__') continue
-      const attachedAt = new Date(Math.max(0, checkpoint.expiresAt - 15 * 60_000)).toISOString()
-      leases.set(key(checkpoint.sessionAgentId, checkpoint.profileId), {
-        sessionAgentId: checkpoint.sessionAgentId, profileId: checkpoint.profileId,
-        extensionInstanceId: checkpoint.extensionInstanceId, profileAlias: 'Chrome profile',
-        groupId: checkpoint.groupId, childPolicy: checkpoint.childPolicy,
-        tabs: checkpoint.tabIds.map((tabId) => ({ windowId: 0, tabId, groupId: checkpoint.groupId, title: '', origin: '', active: false })),
-        state: 'recovering', attachedAt, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
-        expiresAt: checkpoint.expiresAt,
-      })
-    }
-  })
+  let reconciliation: Promise<void> = Promise.resolve()
+  const reconcileLeases = (): Promise<void> => {
+    const run = reconciliation.then(async () => {
+      if (typeof transportForRecovery.leaseCheckpoints !== 'function') return
+      const checkpoints = await transportForRecovery.leaseCheckpoints()
+      const durableKeys = new Set<string>()
+      for (const checkpoint of checkpoints) {
+        leaseEpochs.set(checkpoint.extensionInstanceId, Math.max(leaseEpochs.get(checkpoint.extensionInstanceId) ?? 0, checkpoint.leaseEpoch))
+        if (checkpoint.sessionAgentId === '__local_pending__' || checkpoint.profileId === '__local_pending__') continue
+        const attachmentKey = key(checkpoint.sessionAgentId, checkpoint.profileId)
+        durableKeys.add(attachmentKey)
+        const cached = leases.get(attachmentKey)
+        const sameAuthority = cached?.extensionInstanceId === checkpoint.extensionInstanceId &&
+          cached.leaseId === checkpoint.leaseId && cached.leaseEpoch === checkpoint.leaseEpoch
+        const attachedAt = sameAuthority ? cached.attachedAt : new Date(Math.max(0, checkpoint.expiresAt - 15 * 60_000)).toISOString()
+        const cachedTabs = sameAuthority ? new Map(cached.tabs.map((tab) => [tab.tabId, tab])) : new Map()
+        leases.set(attachmentKey, {
+          sessionAgentId: checkpoint.sessionAgentId, profileId: checkpoint.profileId,
+          extensionInstanceId: checkpoint.extensionInstanceId,
+          // Alias/title/origin are local-only presentation metadata. They may decorate
+          // matching durable authority, but can never create or retain that authority.
+          profileAlias: sameAuthority ? cached.profileAlias : 'Chrome profile',
+          groupId: checkpoint.groupId, childPolicy: checkpoint.childPolicy,
+          tabs: checkpoint.tabIds.map((tabId) => cachedTabs.get(tabId) ?? ({ windowId: 0, tabId, groupId: checkpoint.groupId, title: '', origin: '', active: false })),
+          state: 'recovering', attachedAt, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+          expiresAt: checkpoint.expiresAt,
+        })
+      }
+      for (const attachmentKey of leases.keys()) if (!durableKeys.has(attachmentKey)) leases.delete(attachmentKey)
+    })
+    reconciliation = run.catch(() => undefined)
+    return run
+  }
+  const recoveryReady = reconcileLeases()
   const status = async (sessionAgentId: string, profileId: string): Promise<ExternalChromeLocalStatus> => {
     await recoveryReady
+    await reconcileLeases()
     const coordinator = await options.coordinator.status()
     const transport = options.coordinator.transport()
     const instances = transport.inventory()
@@ -178,6 +196,10 @@ export function installExternalChromeIpc(options: {
     if (!request) return { ok: false, error: 'invalid-request' }
     try {
       await recoveryReady
+      // Relay checkpoints are the lifecycle authority. Refresh before every
+      // authority-sensitive operation so relay-created/adopted leases that appear
+      // after IPC installation remain visible and releasable.
+      await reconcileLeases()
       if (request.operation === 'status') return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
       const coordinator = await options.coordinator.status()
       if (coordinator.state !== 'online' || coordinator.setup.pathState !== 'ready') return { ok: false, error: 'setup-required' }

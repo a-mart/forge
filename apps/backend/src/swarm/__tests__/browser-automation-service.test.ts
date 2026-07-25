@@ -905,7 +905,7 @@ describe("BrowserAutomationService", () => {
     expect(replacement).toMatchObject({ hostId: "new-host", hostGeneration: 2 });
   });
 
-  it("loads and releases an unloaded persisted lease before first replacement registration becomes ready", async () => {
+  it("establishes a usable first recovered generation without requesting release from the not-yet-connected client", async () => {
     const { service } = await createService();
     const state = service.store.createEmpty("profile-1", "manager-1");
     state.hostKind = "external-chrome";
@@ -925,8 +925,10 @@ describe("BrowserAutomationService", () => {
       },
     });
     expect(replacement).toMatchObject({ hostId: "new-host", hostGeneration: 1 });
-    expect(requests).toEqual([expect.objectContaining({ hostId: "new-host", hostGeneration: 1 })]);
-    expect((await service.getSessionSnapshot("profile-1", "manager-1")).tabs).toEqual([]);
+    expect(requests).toEqual([]);
+    expect((await service.getSessionSnapshot("profile-1", "manager-1")).tabs).toEqual([
+      expect.objectContaining({ tabId: "ext.instance.41", hostKind: "external-chrome" }),
+    ]);
   });
 
   it("keeps replacement behind a hydration barrier during a recovery race", async () => {
@@ -940,6 +942,14 @@ describe("BrowserAutomationService", () => {
     let finishHydration!: () => void;
     const hydrationGate = new Promise<void>((resolve) => { finishHydration = resolve; });
     const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "old-socket",
+      registration: externalRegistration("old-host"),
+      sendRequest(request) {
+        requests.push(request);
+        queueMicrotask(() => service.acceptHostResponse("old-socket", response(request)));
+      },
+    });
     const registering = service.registerHostWithLifecycleRelease({
       connectionId: "new-socket",
       registration: externalRegistration("new-host"),
@@ -953,10 +963,10 @@ describe("BrowserAutomationService", () => {
       },
     });
     await Promise.resolve();
-    expect(service.broker.getConnectionSnapshot("external-chrome").connected).toBe(false);
+    expect(service.broker.getConnectionSnapshot("external-chrome")).toMatchObject({ connected: true, hostId: "old-host", hostGeneration: 1 });
     finishHydration();
-    await expect(registering).resolves.toMatchObject({ hostId: "new-host" });
-    expect(requests).toHaveLength(1);
+    await expect(registering).resolves.toMatchObject({ hostId: "new-host", hostGeneration: 2 });
+    expect(requests).toEqual([expect.objectContaining({ hostId: "old-host", hostGeneration: 1 })]);
   });
 
   it("persists session-scoped host selection and removes the external snapshot after acknowledged local detach", async () => {

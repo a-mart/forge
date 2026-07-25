@@ -135,6 +135,39 @@ describe('browser websocket transport', () => {
     expect(service.broker.isCurrentConnection('same-connection', 'host-1', 2)).toBe(true)
   })
 
+  it('registers and hydrates a recovered External Chrome generation without pre-connection lifecycle requests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-external-restart-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const persisted = service.store.createEmpty('profile-1', 'session-1')
+    persisted.hostKind = 'external-chrome'
+    persisted.tabs = [{ ...tabFor({ sessionAgentId: 'session-1', profileId: 'profile-1' } as BrowserAutomationRequest, 'ext.profile_a.7'), hostKind: 'external-chrome' }]
+    persisted.activeTabId = 'ext.profile_a.7'
+    persisted.defaultTabId = 'ext.profile_a.7'
+    await service.store.save(persisted)
+    const delivered: ServerEvent[] = []
+    const common = {
+      socket: {} as WebSocket,
+      connectionId: 'external-connection',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => undefined,
+      resolveProfileIdForAgent: () => undefined,
+      send: (_socket: WebSocket, event: ServerEvent) => delivered.push(event),
+      sendCritical: async (_socket: WebSocket, event: ServerEvent) => { delivered.push(event); return Buffer.byteLength(JSON.stringify(event)) },
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [await service.getHostHydrationSnapshot('profile-1', 'session-1', 'external-chrome')],
+    }
+    const external = {
+      ...registration('external-host'),
+      capabilities: { ...registration().capabilities, hostKind: 'external-chrome' as const, supportedOperations: ['status', 'open', 'navigate'] as const },
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'external-register', registration: external } })
+    expect(delivered).toEqual([expect.objectContaining({ type: 'browser_host_connected', requestId: 'external-register', host: expect.objectContaining({ hostGeneration: 1 }) })])
+    expect(delivered.some((event) => event.type === 'browser_automation_request')).toBe(false)
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'external-hydrate', hostKind: 'external-chrome', hostId: 'external-host', hostGeneration: 1 } })
+    expect(delivered.at(-1)).toMatchObject({ type: 'browser_host_hydration_chunk', requestId: 'external-hydrate', hostKind: 'external-chrome', hostGeneration: 1 })
+  })
+
   it('returns a correlated safe error when External Chrome replacement release fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-browser-host-replacement-'))
     roots.push(root)

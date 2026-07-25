@@ -984,6 +984,20 @@ export function isBrowserAutomationOperation(value: unknown): value is BrowserAu
   return typeof value === 'string' && (BROWSER_AUTOMATION_OPERATIONS as readonly string[]).includes(value)
 }
 
+/** Normalize a browser environment path without permitting URL authority ambiguity. */
+export function normalizeBrowserEnvironmentPath(
+  value: unknown,
+  operation: BrowserAutomationOperation = 'navigate',
+): string {
+  if (value === undefined || value === '') return '/'
+  const path = boundedString(operation, value, 'path', BROWSER_AUTOMATION_MAX_URL_LENGTH)
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || /[\u0000-\u001f\u007f]/u.test(path) ||
+    /%(?:2f|5c|40|3a|3f|23|25)/iu.test(path)) {
+    throw new BrowserAutomationContractError(operation, 'environment path must be an unambiguous absolute path')
+  }
+  return path
+}
+
 export function parseBrowserAutomationInput<Operation extends BrowserAutomationOperation>(
   operation: Operation,
   value: unknown,
@@ -1020,7 +1034,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       }
       if (input.environmentProtocol !== undefined && input.environmentProtocol !== 'http' && input.environmentProtocol !== 'https') throw new BrowserAutomationContractError(operation, 'environmentProtocol must be http or https')
       if (!hasPort && (input.environmentProtocol !== undefined || input.path !== undefined)) throw new BrowserAutomationContractError(operation, 'environmentProtocol and path require environmentPort')
-      const path = input.path === undefined ? undefined : boundedString(operation, input.path, 'path', BROWSER_AUTOMATION_MAX_URL_LENGTH, true)
+      const path = hasPort ? normalizeBrowserEnvironmentPath(input.path, operation) : undefined
       const readiness = input.readiness === undefined ? 'load' : input.readiness
       if (readiness !== 'load' && readiness !== 'domContentLoaded' && readiness !== 'none') throw new BrowserAutomationContractError(operation, 'readiness must be load, domContentLoaded, or none')
       return { ...target, ...(url === undefined ? {} : { url }), ...(environmentPort === undefined ? {} : { environmentPort }), ...(input.environmentProtocol === undefined ? {} : { environmentProtocol: input.environmentProtocol }), ...(path === undefined ? {} : { path }), readiness, timeoutMs: timeout(operation, input.timeoutMs) } as BrowserAutomationInputByOperation[Operation]

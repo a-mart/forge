@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { EXTERNAL_CHROME_MAX_ARRAY_ITEMS, EXTERNAL_CHROME_MAX_CANDIDATE_TABS, EXTERNAL_CHROME_MAX_LABEL_LENGTH } from '@forge/protocol'
+import { DebuggerController } from '../src/runtime/debugger-controller.js'
 import { LeaseError, LeaseManager } from '../src/runtime/lease-manager.js'
-import { externalChromeNavigationUrl } from '../src/payload/service-worker/index.js'
+import { externalChromeNavigationUrl, releaseLeaseDebuggerAuthority } from '../src/payload/service-worker/index.js'
 import { candidateOrigin, restrictedTargetReason } from '../src/runtime/restricted-target.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
 
@@ -188,7 +189,9 @@ describe('candidate picker and one-session leases', () => {
     await manager.claim({ leaseId: 'lease-expiring', leaseEpoch: 1, sessionAgentId: 'session', tabIds: [3], childPolicy: 'manual' })
     expect(await manager.expireIfNeeded()).toBeNull()
     now = 5_101
-    expect(await manager.expireIfNeeded()).toMatchObject({ leaseId: 'lease-expiring', tabIds: [3] })
+    expect(await manager.expireIfNeeded()).toMatchObject({ leaseId: 'lease-expiring', tabIds: [3], state: 'LOST' })
+    expect(manager.current()).toMatchObject({ leaseId: 'lease-expiring', state: 'LOST' })
+    expect(await manager.completeRelease('lease-expiring', 1)).toEqual([3])
     expect(manager.current()).toBeNull()
     expect(await chrome.tabs.get(3)).toMatchObject({ title: 'Synthetic app' })
   })
@@ -215,6 +218,48 @@ describe('candidate picker and one-session leases', () => {
     expect(manager.isOperationCurrent('lease-a', 1, operationEpoch)).toBe(false)
     expect(await manager.trustedHumanInput(999)).toBeNull()
   })
+
+  it('CAS-finalizes agent control without overwriting a newer human interruption', async () => {
+    const manager = new LeaseManager(fakeChrome({ tabs: structuredClone(normalTabs) }), 'm1-spike.1')
+    await manager.claim({ leaseId: 'lease-a', leaseEpoch: 1, sessionAgentId: 'session-a', tabIds: [3], childPolicy: 'manual' })
+    const epoch = await manager.beginAgentControl('lease-a', 1, 3)
+    await expect(manager.finishAgentControl('lease-a', 1, epoch)).resolves.toBe(true)
+    expect(manager.current()).toMatchObject({ state: 'LEASED_HUMAN', controlEpoch: epoch })
+    const interruptedEpoch = await manager.beginAgentControl('lease-a', 1, 3)
+    await manager.trustedHumanInput(3)
+    await expect(manager.finishAgentControl('lease-a', 1, interruptedEpoch)).resolves.toBe(false)
+    expect(manager.current()).toMatchObject({ state: 'LEASED_HUMAN', controlEpoch: interruptedEpoch + 1 })
+  })
+
+  it('retains multi-tab release authority after a partial detach failure and retries all tabs', async () => {
+    const failures = new Set([4])
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs), detachFailures: failures })
+    const manager = new LeaseManager(chrome, 'm1-spike.1')
+    const debuggers = new DebuggerController(chrome.debugger)
+    await manager.claim({ leaseId: 'lease-release', leaseEpoch: 2, sessionAgentId: 'session-a', tabIds: [3, 4], childPolicy: 'manual' })
+    await debuggers.attach(3)
+    await debuggers.attach(4)
+    await expect(releaseLeaseDebuggerAuthority(manager, debuggers, 'lease-release', 2)).rejects.toThrow('already detached')
+    expect(manager.current()).toMatchObject({ leaseId: 'lease-release', state: 'LOST', tabIds: [3, 4] })
+    expect(debuggers.state(3)).toBe('UNATTACHED')
+    expect(debuggers.state(4)).toBe('ATTACHED')
+    await expect(manager.claim({ leaseId: 'new', leaseEpoch: 3, sessionAgentId: 'session-b', tabIds: [3], childPolicy: 'manual' }))
+      .rejects.toMatchObject({ code: 'lease-lost' })
+
+    // MV3 suspension/restart recovers the retry tombstone and positively adopts
+    // only the debugger attachment still owned by this extension.
+    const recoveredManager = new LeaseManager(chrome, 'm1-spike.1')
+    await expect(recoveredManager.recover()).resolves.toMatchObject({ leaseId: 'lease-release', state: 'LOST', tabIds: [3, 4] })
+    const recoveredDebuggers = new DebuggerController(chrome.debugger)
+    await recoveredDebuggers.reconcileForRelease(3, chrome.runtime.id)
+    await recoveredDebuggers.reconcileForRelease(4, chrome.runtime.id)
+    expect(recoveredDebuggers.state(3)).toBe('UNATTACHED')
+    expect(recoveredDebuggers.state(4)).toBe('ATTACHED')
+    failures.clear()
+    await expect(releaseLeaseDebuggerAuthority(recoveredManager, recoveredDebuggers, 'lease-release', 2)).resolves.toEqual([3, 4])
+    expect(recoveredManager.current()).toBeNull()
+    expect(recoveredDebuggers.state(4)).toBe('UNATTACHED')
+  })
 })
 
 describe('External Chrome navigation target construction', () => {
@@ -223,6 +268,10 @@ describe('External Chrome navigation target construction', () => {
     expect(externalChromeNavigationUrl({ url: 'javascript:alert(1)' })).toBeNull()
     expect(externalChromeNavigationUrl({ environmentPort: 4173, environmentProtocol: 'https', path: '/ready?q=1' }))
       .toBe('https://127.0.0.1:4173/ready?q=1')
+    expect(externalChromeNavigationUrl({ environmentPort: 4173 })).toBe('http://127.0.0.1:4173/')
+    for (const path of ['@evil.test/', '//evil.test/', '/\\evil.test/', '/%2f%2fevil.test/', '/%5cevil.test/', '/%40evil.test/']) {
+      expect(externalChromeNavigationUrl({ environmentPort: 4173, path })).toBeNull()
+    }
   })
 })
 

@@ -68,6 +68,18 @@ describe('ManagerWsClient browser automation state', () => {
       focused: false, capabilities: externalRegistration.capabilities, connectedAt: new Date().toISOString(),
     } })
     await Promise.resolve()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    const hydrate = JSON.parse(send.mock.calls.at(-1)![0] as string)
+    expect(hydrate).toMatchObject({ type: 'browser_host_hydrate', hostKind: 'external-chrome', hostId: 'external-host', hostGeneration: 8 })
+    // A dropped recovery hydration retries the established generation rather
+    // than re-registering and accidentally triggering replacement release.
+    await vi.advanceTimersByTimeAsync(2_500)
+    const retriedHydrate = JSON.parse(send.mock.calls.at(-1)![0] as string)
+    expect(retriedHydrate).toMatchObject({ type: 'browser_host_hydrate', hostKind: 'external-chrome', hostGeneration: 8 })
+    expect(send.mock.calls.map(([payload]) => JSON.parse(payload as string).type).filter((type) => type === 'browser_host_register')).toHaveLength(1)
+    ingest({ type: 'browser_host_hydration_chunk', requestId: retriedHydrate.requestId, hostKind: 'external-chrome', hostId: 'external-host', hostGeneration: 8, chunkIndex: 0, chunkCount: 1, payloadBase64: btoa(JSON.stringify([{ ...snapshot(4), hostKind: 'external-chrome' }])) })
+    await Promise.resolve()
     expect(client.getState().browserHost.connected).toBe(false)
     expect(client.getState().browserHost.hostKind).not.toBe('external-chrome')
 

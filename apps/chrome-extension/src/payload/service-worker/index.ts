@@ -68,7 +68,7 @@ function payloadDirectory(): string {
   return match[1]
 }
 
-class Runtime implements ServiceWorkerPayload {
+export class Runtime implements ServiceWorkerPayload {
   private readonly chrome = installedChrome()
   private readonly leases = new LeaseManager(this.chrome, PAYLOAD_VERSION)
   private readonly debuggers = new DebuggerController(this.chrome.debugger)
@@ -106,11 +106,14 @@ class Runtime implements ServiceWorkerPayload {
     this.chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 })
     const recovered = await this.leases.recover()
     if (recovered !== null) {
-      try {
-        for (const tabId of recovered.tabIds) await this.attachTab(tabId)
-      } catch {
-        await this.debuggers.detachAll()
-        await this.leases.release(recovered.leaseId, recovered.leaseEpoch)
+      if (recovered.state === 'LOST') {
+        for (const tabId of recovered.tabIds) await this.debuggers.reconcileForRelease(tabId, this.chrome.runtime.id)
+      } else {
+        try {
+          for (const tabId of recovered.tabIds) await this.attachTab(tabId)
+        } catch {
+          await this.releaseDebuggerAuthority(recovered.leaseId, recovered.leaseEpoch).catch(() => undefined)
+        }
       }
     }
     this.native = new NativeRpcClient({
@@ -121,7 +124,8 @@ class Runtime implements ServiceWorkerPayload {
       onConnected: () => {
         void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM)
         const lease = this.leases.current()
-        if (lease !== null) this.notifyLocalLease(lease, 'claimed')
+        if (lease?.state === 'LOST') void this.retryRetainedRelease(lease)
+        else if (lease !== null) this.notifyLocalLease(lease, 'claimed')
       },
       onDisconnected: () => { this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: 0.1 }) },
       onRequest: (message) => this.handleDesktopRequest(message),
@@ -145,6 +149,7 @@ class Runtime implements ServiceWorkerPayload {
       case 'tab.removed': void this.handleTabRemoved(args[0]); return undefined
       case 'tab.created': void this.handleChildTab(args[0]); return undefined
       case 'tab.updated': void this.handleUpdatedTab(args); return undefined
+      case 'navigation.committed': void this.handleNavigationCommitted(args[0]); return undefined
       case 'alarm': {
         const alarm = args[0] as { name?: string } | undefined
         if (alarm?.name === HEARTBEAT_ALARM) {
@@ -231,8 +236,7 @@ class Runtime implements ServiceWorkerPayload {
     }
     if (typeof message.leaseId !== 'string' || !Number.isSafeInteger(message.leaseEpoch)) throw new LeaseError('lease-lost', 'release fields are invalid')
     const lease = this.leases.current()
-    const releasedTabIds = await this.leases.release(message.leaseId, message.leaseEpoch as number)
-    for (const tabId of releasedTabIds) await this.debuggers.detach(tabId)
+    const releasedTabIds = await this.releaseDebuggerAuthority(message.leaseId, message.leaseEpoch as number)
     if (lease !== null) {
       this.broadcastStatus(lease.tabIds, 'detached')
       this.notifyLocalLease(lease, 'released')
@@ -297,8 +301,7 @@ class Runtime implements ServiceWorkerPayload {
         }
       }
       case 'forge.browser.release': {
-        const releasedTabIds = await this.leases.release(request.params.leaseId, request.params.leaseEpoch)
-        for (const tabId of releasedTabIds) await this.debuggers.detach(tabId)
+        const releasedTabIds = await this.releaseDebuggerAuthority(request.params.leaseId, request.params.leaseEpoch)
         this.broadcastStatus(releasedTabIds, 'detached')
         return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, releasedTabIds }
       }
@@ -338,50 +341,56 @@ class Runtime implements ServiceWorkerPayload {
       }
     }
     const controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId)
-    this.broadcastStatus([params.tabId], 'agent')
-    const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
     try {
-      await this.debuggers.navigateAndWait(
-        params.tabId,
-        targetUrl,
-        input.readiness,
-        deadline,
-        () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
-      )
-    } catch (error) {
-      const interrupted = !this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)
-      const timedOut = Date.now() >= deadline || /timed out/u.test(error instanceof Error ? error.message : String(error))
+      this.broadcastStatus([params.tabId], 'agent')
+      const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
+      try {
+        await this.debuggers.navigateAndWait(
+          params.tabId,
+          targetUrl,
+          input.readiness,
+          deadline,
+          () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
+        )
+      } catch (error) {
+        const interrupted = !this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)
+        const timedOut = Date.now() >= deadline || /timed out/u.test(error instanceof Error ? error.message : String(error))
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: 'navigate', ok: false,
+          error: interrupted
+            ? { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true }
+            : timedOut
+              ? { code: 'timeout', message: `Navigation did not reach ${input.readiness} readiness.`, retryable: true }
+              : { code: 'navigation-failed', message: 'Chrome navigation failed.', retryable: true },
+        }
+      }
+      if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: 'navigate', ok: false,
+          error: { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true },
+        }
+      }
+      const tab = await this.chrome.tabs.get(params.tabId)
+      if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: 'navigate', ok: false,
+          error: { code: 'control-interrupted', message: 'Lease authority changed before navigation completed.', retryable: true },
+        }
+      }
+      const result: BrowserAutomationResultByOperation['navigate'] = {
+        tab: this.browserTabSnapshot(tab, lease.sessionAgentId), readiness: input.readiness,
+      }
       return {
         protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: 'navigate', ok: false,
-        error: interrupted
-          ? { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true }
-          : timedOut
-            ? { code: 'timeout', message: `Navigation did not reach ${input.readiness} readiness.`, retryable: true }
-            : { code: 'navigation-failed', message: 'Chrome navigation failed.', retryable: true },
+        tabId: params.tabId, operation: 'navigate', ok: true, result,
       }
-    }
-    if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
-      return {
-        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: 'navigate', ok: false,
-        error: { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true },
+    } finally {
+      if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) {
+        this.broadcastStatus([params.tabId], 'human')
       }
-    }
-    const tab = await this.chrome.tabs.get(params.tabId)
-    if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
-      return {
-        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: 'navigate', ok: false,
-        error: { code: 'control-interrupted', message: 'Lease authority changed before navigation completed.', retryable: true },
-      }
-    }
-    const result: BrowserAutomationResultByOperation['navigate'] = {
-      tab: this.browserTabSnapshot(tab, lease.sessionAgentId), readiness: input.readiness,
-    }
-    return {
-      protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-      tabId: params.tabId, operation: 'navigate', ok: true, result,
     }
   }
 
@@ -390,7 +399,7 @@ class Runtime implements ServiceWorkerPayload {
     return {
       hostKind: 'external-chrome', tabId: String(tab.id), sessionAgentId, profileId: this.extensionInstanceId,
       url: tab.url ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true,
-      canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: null,
+      canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'human', agentCursor: null,
       recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false,
       error: null, createdAt: now, updatedAt: now,
     }
@@ -550,6 +559,24 @@ class Runtime implements ServiceWorkerPayload {
     await this.includeChild(tab.id, tab.openerTabId)
   }
 
+  private async handleNavigationCommitted(value: unknown): Promise<void> {
+    if (typeof value !== 'object' || value === null) return
+    const details = value as { tabId?: unknown; frameId?: unknown }
+    if (!Number.isSafeInteger(details.tabId) || !Number.isSafeInteger(details.frameId)) return
+    const lease = this.leases.current()
+    if (lease === null || lease.state === 'LOST' || !lease.tabIds.includes(details.tabId as number)) return
+    try {
+      await this.chrome.scripting.executeScript({
+        target: { tabId: details.tabId as number, frameIds: [details.frameId as number] },
+        files: [`payloads/${this.directory}/content-script.js`],
+        world: 'ISOLATED',
+      })
+    } catch {
+      // A committed restricted/transient frame cannot expand scope. Root debugger
+      // loss is handled by debugger.detach; later committed leased frames retry.
+    }
+  }
+
   private async handleUpdatedTab(args: unknown[]): Promise<void> {
     const tabId = args[0]
     if (!Number.isSafeInteger(tabId)) return
@@ -593,12 +620,28 @@ class Runtime implements ServiceWorkerPayload {
     this.broadcastStatus(lease.tabIds, 'detached')
   }
 
+  private async retryRetainedRelease(lease: NonNullable<ReturnType<LeaseManager['current']>>): Promise<void> {
+    try { await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch) } catch { return }
+    this.broadcastStatus(lease.tabIds, 'detached')
+    this.notifyLocalLease(lease, 'released')
+  }
+
   private async expireLeaseIfNeeded(): Promise<void> {
     const lease = await this.leases.expireIfNeeded()
     if (lease === null) return
-    for (const tabId of lease.tabIds) await this.debuggers.detach(tabId)
+    try {
+      await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch)
+    } catch {
+      // Durable LOST authority is intentionally retained. The heartbeat retries
+      // until every debugger detach is acknowledged.
+      return
+    }
     this.broadcastStatus(lease.tabIds, 'detached')
     this.notifyLocalLease(lease, 'released')
+  }
+
+  private releaseDebuggerAuthority(leaseId: string, leaseEpoch: number): Promise<number[]> {
+    return releaseLeaseDebuggerAuthority(this.leases, this.debuggers, leaseId, leaseEpoch)
   }
 
   private async handleTransportLoss(): Promise<void> {
@@ -622,15 +665,46 @@ class Runtime implements ServiceWorkerPayload {
   }
 }
 
+export async function releaseLeaseDebuggerAuthority(
+  leases: LeaseManager,
+  debuggers: DebuggerController,
+  leaseId: string,
+  leaseEpoch: number,
+): Promise<number[]> {
+  const tabIds = await leases.beginRelease(leaseId, leaseEpoch)
+  const results = await Promise.allSettled(tabIds.map((tabId) => debuggers.detach(tabId)))
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+  if (failure) throw failure.reason
+  await leases.completeRelease(leaseId, leaseEpoch)
+  return tabIds
+}
+
+function safeEnvironmentPath(value: string | undefined): string {
+  if (value === undefined || value === '') return '/'
+  if (value.length > 16_384 || !value.startsWith('/') || value.startsWith('//') || value.includes('\\') ||
+    /[\u0000-\u001f\u007f]/u.test(value) || /%(?:2f|5c|40|3a|3f|23|25)/iu.test(value)) throw new Error('ambiguous environment path')
+  return value
+}
+
 export function externalChromeNavigationUrl(input: {
   url?: string
   environmentPort?: number
   environmentProtocol?: 'http' | 'https'
   path?: string
 }): string | null {
-  const url = input.url ?? (Number.isSafeInteger(input.environmentPort) && input.environmentPort! >= 1 && input.environmentPort! <= 65_535
-    ? `${input.environmentProtocol ?? 'http'}://127.0.0.1:${input.environmentPort}${input.path ?? ''}`
-    : '')
+  let url = input.url ?? ''
+  if (url === '' && Number.isSafeInteger(input.environmentPort) && input.environmentPort! >= 1 && input.environmentPort! <= 65_535) {
+    const protocol = input.environmentProtocol ?? 'http'
+    try {
+      const path = safeEnvironmentPath(input.path)
+      const base = new URL(`${protocol}://127.0.0.1:${input.environmentPort}/`)
+      const environmentUrl = new URL(path, base)
+      const effectivePort = environmentUrl.port || (environmentUrl.protocol === 'https:' ? '443' : '80')
+      if (environmentUrl.protocol !== `${protocol}:` || environmentUrl.hostname !== '127.0.0.1' ||
+        effectivePort !== String(input.environmentPort) || environmentUrl.username !== '' || environmentUrl.password !== '') return null
+      url = environmentUrl.href
+    } catch { return null }
+  }
   return restrictedTargetReason(url) === null ? url : null
 }
 

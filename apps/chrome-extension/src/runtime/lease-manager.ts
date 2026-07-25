@@ -319,6 +319,15 @@ export class LeaseManager {
     return this.active?.leaseId === leaseId && this.active.leaseEpoch === leaseEpoch && this.active.controlEpoch === controlEpoch && this.active.state === 'CONTROLLING_AGENT'
   }
 
+  finishAgentControl(leaseId: string, leaseEpoch: number, controlEpoch: number): Promise<boolean> {
+    return this.mutate(async () => {
+      if (!this.isOperationCurrent(leaseId, leaseEpoch, controlEpoch) || this.active === null) return false
+      this.active = { ...this.active, state: 'LEASED_HUMAN' }
+      await this.persist()
+      return true
+    })
+  }
+
   markLost(): Promise<void> {
     return this.mutate(async () => {
       if (this.active === null) return
@@ -327,10 +336,22 @@ export class LeaseManager {
     })
   }
 
-  release(leaseId: string, leaseEpoch: number): Promise<number[]> {
+  beginRelease(leaseId: string, leaseEpoch: number): Promise<number[]> {
     return this.mutate(async () => {
       if (this.active === null) return []
       if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot release a stale lease epoch')
+      if (this.active.state !== 'LOST') {
+        this.active = { ...this.active, state: 'LOST' }
+        await this.persist()
+      }
+      return [...this.active.tabIds]
+    })
+  }
+
+  completeRelease(leaseId: string, leaseEpoch: number): Promise<number[]> {
+    return this.mutate(async () => {
+      if (this.active === null) return []
+      if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot complete a stale lease epoch')
       const released = [...this.active.tabIds]
       this.active = null
       await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
@@ -338,13 +359,19 @@ export class LeaseManager {
     })
   }
 
+  /** Immediate state-only release for claim rollback before debugger authority exists. */
+  release(leaseId: string, leaseEpoch: number): Promise<number[]> {
+    return this.completeRelease(leaseId, leaseEpoch)
+  }
+
   expireIfNeeded(): Promise<LeaseRecord | null> {
     return this.mutate(async () => {
-      if (this.active === null || this.active.expiresAt > this.now()) return null
-      const expired = structuredClone(this.active)
-      this.active = null
-      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-      return expired
+      if (this.active === null || (this.active.state !== 'LOST' && this.active.expiresAt > this.now())) return null
+      if (this.active.state !== 'LOST') {
+        this.active = { ...this.active, state: 'LOST' }
+        await this.persist()
+      }
+      return structuredClone(this.active)
     })
   }
 
@@ -355,21 +382,24 @@ export class LeaseManager {
   private async recoverUnlocked(): Promise<LeaseRecord | null> {
     const stored = await this.chrome.storage.session.get(SESSION_LEASE_KEY)
     const lease = assertLeaseRecord(stored[SESSION_LEASE_KEY])
-    if (lease === null || lease.payloadVersion !== this.payloadVersion || lease.expiresAt <= this.now() || lease.state === 'LOST') {
+    if (lease === null || lease.payloadVersion !== this.payloadVersion) {
       await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
       this.active = null
       return null
     }
     try {
       const tabs = await Promise.all(lease.tabIds.map((tabId) => this.chrome.tabs.get(tabId)))
-      if (tabs.some((tab) => restrictedTargetReason(tab.url) !== null)) throw new Error('restricted')
+      if (lease.state !== 'LOST' && tabs.some((tab) => restrictedTargetReason(tab.url) !== null)) throw new Error('restricted')
     } catch {
+      // Missing tabs no longer retain debugger ownership. Other release failures
+      // remain represented by a valid LOST record and are retried by Runtime.
       await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
       this.active = null
       return null
     }
-    this.active = lease
-    return structuredClone(lease)
+    this.active = lease.expiresAt <= this.now() && lease.state !== 'LOST' ? { ...lease, state: 'LOST' } : lease
+    if (this.active !== lease) await this.persist()
+    return structuredClone(this.active)
   }
 
   private async persist(): Promise<void> {

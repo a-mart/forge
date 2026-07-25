@@ -358,6 +358,7 @@ export class ManagerWsClient {
     this.stopSecondaryBrowserHandshake()
     const registration = this.secondaryBrowserHostRegistration
     if (!registration || !isSocketOpen(this.socket)) return
+    const hostKind = resolveBrowserHostKind(registration.capabilities.hostKind)
     const epoch = this.secondaryBrowserHandshakeEpoch
     this.secondaryBrowserHandshakeTimer = setTimeout(() => {
       this.secondaryBrowserHandshakeTimer = null
@@ -366,14 +367,38 @@ export class ManagerWsClient {
         (requestId) => buildBrowserHostRegisterCommand(requestId, { ...registration, registeredAt: new Date().toISOString() }),
         { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
       ).then((host) => {
-        if (epoch === this.secondaryBrowserHandshakeEpoch && this.secondaryBrowserHostRegistration === registration) {
-          this.secondaryBrowserHostGeneration = host.hostGeneration
-        }
+        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+          host.hostId !== registration.hostId || host.hostGeneration === null || !isSocketOpen(this.socket)) return
+        this.secondaryBrowserHostGeneration = host.hostGeneration
+        this.runSecondaryBrowserHydration(epoch, registration, hostKind, host.hostGeneration)
       }).catch(() => {
         if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration || !isSocketOpen(this.socket)) return
         this.secondaryBrowserHandshakeTimer = setTimeout(() => this.restartSecondaryBrowserHandshake(), BROWSER_HANDSHAKE_RETRY_MS)
       })
     }, 0)
+  }
+
+  private runSecondaryBrowserHydration(
+    epoch: number,
+    registration: BrowserHostRegistration,
+    hostKind: BrowserHostKind,
+    hostGeneration: number,
+  ): void {
+    if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+      this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
+    this.browserHydrationChunks.clear()
+    void this.requestDispatcher.enqueueRequest(
+      'browser_host_hydrate',
+      (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, hostGeneration, hostKind),
+      { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+    ).catch(() => {
+      if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+        this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
+      this.secondaryBrowserHandshakeTimer = setTimeout(() => {
+        this.secondaryBrowserHandshakeTimer = null
+        this.runSecondaryBrowserHydration(epoch, registration, hostKind, hostGeneration)
+      }, BROWSER_HANDSHAKE_RETRY_MS)
+    })
   }
 
   private stopSecondaryBrowserHandshake(): void {
@@ -1392,6 +1417,14 @@ export class ManagerWsClient {
         this.secondaryBrowserHostGeneration = event.host.hostGeneration
         this.requestDispatcher.tracker.resolve('browser_host_register', event.requestId, event.host)
       }
+      return true
+    }
+    if (event.type === 'browser_host_hydration_chunk') {
+      if (event.hostKind !== hostKind || event.hostId !== registration.hostId ||
+        event.hostGeneration !== this.secondaryBrowserHostGeneration ||
+        this.requestDispatcher.tracker.getPendingRequestType(event.requestId) !== 'browser_host_hydrate') return false
+      const sessions = this.acceptBrowserHydrationChunk(event)
+      if (sessions !== null) this.requestDispatcher.tracker.resolve('browser_host_hydrate', event.requestId, sessions)
       return true
     }
     if (event.type !== 'browser_automation_request') return false

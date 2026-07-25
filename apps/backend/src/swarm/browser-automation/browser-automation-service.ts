@@ -123,17 +123,17 @@ export class BrowserAutomationService {
         }
       };
       if (current.connected) {
+        // A true replacement must drain every loaded/hydrated lease through the
+        // old exact generation before broker authority can change.
         await releaseAll();
         return this.registerHost(options);
       }
-      const registered = this.registerHost(options);
-      try {
-        await releaseAll();
-        return registered;
-      } catch (error) {
-        this.unregisterHost(options.connectionId, registered.hostId ?? undefined, registered.hostGeneration ?? undefined, hostKind);
-        throw error;
-      }
+      // Initial registration (including backend restart recovery) has no live old
+      // generation capable of accepting lifecycle requests. Establish the new
+      // correlated generation first; its subsequent hydration resumes/reconciles
+      // durable client authority without deadlocking on a request the registering
+      // secondary client cannot accept before browser_host_connected.
+      return this.registerHost(options);
     });
   }
 

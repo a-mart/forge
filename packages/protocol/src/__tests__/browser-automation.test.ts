@@ -87,6 +87,7 @@ describe('browser automation operation contract', () => {
     })
     expect(parseBrowserAutomationInput('navigate', { environmentPort: 3_000 })).toEqual({
       environmentPort: 3_000,
+      path: '/',
       readiness: 'load',
       timeoutMs: BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
     })
@@ -125,6 +126,12 @@ describe('browser automation operation contract', () => {
     ['navigate', {}],
     ['navigate', { url: 'https://forge.example', environmentPort: 4_000 }],
     ['navigate', { url: 'https://forge.example', environmentProtocol: 'https' }],
+    ['navigate', { environmentPort: 4_000, path: '@evil.test/' }],
+    ['navigate', { environmentPort: 4_000, path: '//evil.test/' }],
+    ['navigate', { environmentPort: 4_000, path: '/\\evil.test/' }],
+    ['navigate', { environmentPort: 4_000, path: '/%2f%2fevil.test/' }],
+    ['navigate', { environmentPort: 4_000, path: '/%5cevil.test/' }],
+    ['navigate', { environmentPort: 4_000, path: '/%40evil.test/' }],
     ['resize', { mode: 'fill', width: 800 }],
     ['resize', { mode: 'freeform', width: 1_000 }],
     ['resize', { mode: 'freeform', width: 3_840, height: 3_840 }],

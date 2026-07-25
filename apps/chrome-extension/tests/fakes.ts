@@ -20,18 +20,24 @@ export interface FakeChromeOptions {
   debuggerTargets?: ChromeDebuggerSession[]
 }
 
-export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attached: Set<number>; commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> } {
+export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
+  attached: Set<number>
+  commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }>
+  injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }>
+} {
   const tabs = options.tabs ?? []
   const groups = options.groups ?? []
   const session = options.session ?? new FakeStorage()
   const local = new FakeStorage()
   const attached = new Set<number>()
   const commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> = []
+  const injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }> = []
   let nextTabId = Math.max(0, ...tabs.map((tab) => tab.id ?? 0)) + 1
   let nextGroupId = Math.max(0, ...groups.map((group) => group.id)) + 1
   return {
     attached,
     commands,
+    injections,
     runtime: {
       id: 'fcchfcnadajoejfbiclihglkmbcfhajd',
       getURL: (value) => `chrome-extension://fcchfcnadajoejfbiclihglkmbcfhajd/${value}`,
@@ -78,7 +84,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attac
       getAll: async () => structuredClone(options.windows ?? [{ id: 1, focused: true, tabs }]),
     },
     storage: { local, session },
-    scripting: { executeScript: async () => [] },
+    scripting: { executeScript: async (injection) => { injections.push(structuredClone(injection)); return [] } },
     debugger: {
       getTargets: async () => structuredClone(options.debuggerTargets ?? tabs.flatMap((tab) => tab.id === undefined ? [] : [{ tabId: tab.id, attached: attached.has(tab.id), extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' }])),
       attach: async (target) => {

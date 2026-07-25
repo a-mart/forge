@@ -93,7 +93,7 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     expect(controller.state(7)).toBe('LOST')
   })
 
-  it('best-effort detaches every remaining tab after one debugger is already lost', async () => {
+  it('best-effort detaches every tab while retaining failed debugger ownership for retry', async () => {
     const failures = new Set<number>([7])
     const chrome = fakeChrome({ detachFailures: failures })
     const controller = new DebuggerController(chrome.debugger)
@@ -102,9 +102,12 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     chrome.attached.delete(7)
     controller.onDetach({ tabId: 7 }, 'replaced')
     await controller.detachAll()
-    expect(controller.state(7)).toBe('UNATTACHED')
+    expect(controller.state(7)).toBe('LOST')
     expect(controller.state(8)).toBe('UNATTACHED')
     expect(chrome.attached.has(8)).toBe(false)
+    failures.clear()
+    await controller.detach(7)
+    expect(controller.state(7)).toBe('UNATTACHED')
   })
 
   it('rejects CDP events from unknown child sessions', async () => {

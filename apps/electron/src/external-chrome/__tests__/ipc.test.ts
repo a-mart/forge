@@ -131,16 +131,56 @@ describe('trusted External Chrome IPC', () => {
     vi.useRealTimers()
   })
 
+  it('refreshes relay-created and adopted checkpoints after IPC installation for every lifecycle release', async () => {
+    const handlers = new Map<string, (event: IpcMainInvokeEvent, input: unknown) => Promise<any>>()
+    const ipcMain = { handle: vi.fn((channel: string, handler: any) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
+    const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
+    let checkpoints: any[] = []
+    const release = vi.fn(async (_instance: string, leaseId: string, leaseEpoch: number) => {
+      checkpoints = checkpoints.filter((checkpoint) => checkpoint.leaseId !== leaseId || checkpoint.leaseEpoch !== leaseEpoch)
+    })
+    const transport = {
+      leaseCheckpoints: vi.fn(async () => structuredClone(checkpoints)),
+      inventory: vi.fn(() => [{ extensionInstanceId: 'profile_a', profileAlias: 'Work', chromeVersion: '125', payloadVersion: '1', connectedAt: 'now' }]),
+      release,
+    }
+    const coordinator = { status: vi.fn(async () => ({ ...status, state: 'online' as const })), transport: vi.fn(() => transport) } as unknown as ExternalChromeHostCoordinator
+    installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
+    const invoke = handlers.get('forge:external-chrome-attach')!
+    const event = { sender: { id: 42 } } as unknown as IpcMainInvokeEvent
+    await invoke(event, { operation: 'status', sessionAgentId: 'session-a', profileId: 'profile-a' })
+
+    for (const [index, reason] of ['stop', 'archive', 'delete', 'detach'].entries()) {
+      checkpoints = [{
+        extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: `relay-after-install-${index}`,
+        leaseEpoch: 20 + index, tabIds: [7], groupId: 9, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
+      }]
+      await expect(invoke(event, { operation: 'status', sessionAgentId: 'session-a', profileId: 'profile-a' }))
+        .resolves.toMatchObject({ ok: true, status: { attachment: { tabs: [{ tabId: 7 }] } } })
+      const request = reason === 'detach'
+        ? { operation: 'detach', sessionAgentId: 'session-a', profileId: 'profile-a' }
+        : { operation: 'lifecycle-release', requestId: `external-chrome-release:${reason}:after-install-${index}`, hostId: 'external-host', hostGeneration: 8, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', reason }
+      await expect(invoke(event, request)).resolves.toMatchObject({ ok: true, status: { attachment: null } })
+    }
+    expect(release.mock.calls.map((call) => call.slice(1))).toEqual([
+      ['relay-after-install-0', 20, 'lifecycle-stop'],
+      ['relay-after-install-1', 21, 'lifecycle-archive'],
+      ['relay-after-install-2', 22, 'lifecycle-delete'],
+      ['relay-after-install-3', 23, 'detached-from-forge'],
+    ])
+  })
+
   it('reconciles IPC detach authority from durable relay checkpoints after Desktop restart', async () => {
     const handlers = new Map<string, (event: IpcMainInvokeEvent, input: unknown) => Promise<any>>()
     const ipcMain = { handle: vi.fn((channel: string, handler: any) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
     const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
-    const release = vi.fn(async () => undefined)
+    let checkpoints = [{
+      extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: 'lease-before-restart',
+      leaseEpoch: 8, tabIds: [7], groupId: 9, childPolicy: 'manual' as const, expiresAt: Date.now() + 60_000,
+    }]
+    const release = vi.fn(async () => { checkpoints = [] })
     const transport = {
-      leaseCheckpoints: vi.fn(async () => [{
-        extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: 'lease-before-restart',
-        leaseEpoch: 8, tabIds: [7], groupId: 9, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
-      }]),
+      leaseCheckpoints: vi.fn(async () => structuredClone(checkpoints)),
       inventory: vi.fn(() => [{ extensionInstanceId: 'profile_a', profileAlias: 'Work', chromeVersion: '125', payloadVersion: '1', connectedAt: 'now' }]),
       release,
     }
