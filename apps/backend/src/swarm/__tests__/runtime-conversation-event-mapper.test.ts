@@ -483,8 +483,8 @@ describe("RuntimeConversationEventMapper", () => {
             ok: true,
             result: {
               tabId: "tab-1",
-              url: "https://example.test/page",
-              title: "Example",
+              url: "https://SNAPSHOT_URL_SECRET.test/page",
+              title: "SNAPSHOT_TITLE_SECRET",
               visibleText: "PAGE_TEXT_SECRET",
               accessibility: { name: "A11Y_SECRET" },
               consoleEntries: [{ text: "CONSOLE_SECRET" }],
@@ -521,8 +521,9 @@ describe("RuntimeConversationEventMapper", () => {
     for (const projection of end) {
       expect(projection.text).toContain("serializedBytes");
       expect(projection.text).toContain("image/png");
-      expect(projection.text).toContain("https://example.test/page");
       expect(projection.text).not.toMatch(/SECRET|visibleText|accessibility|consoleEntries|networkEntries|remoteObject|interactiveElements|actionTimeline/);
+      expect(projection.text).not.toContain("SNAPSHOT_URL_SECRET");
+      expect(projection.text).not.toContain("SNAPSHOT_TITLE_SECRET");
       expect(projection.text).not.toContain(screenshotData);
       expect(projection.text).not.toContain("document.body.innerText");
       expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);

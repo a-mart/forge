@@ -323,7 +323,7 @@ export class BrowserAutomationService {
           // Electron owns physical visibility; durable reveal intent remains backend-owned.
           statusResult.panelRevealRequested = isPanelRevealPending(snapshot);
         }
-        const completedMetadata = extractSafeCompletionMetadata(response.result);
+        const completedMetadata = extractSafeCompletionMetadata(response.result, hostKind);
         await this.completeAction(snapshot, actionId, "succeeded", {
           ...completedMetadata,
           elapsedMs: response.elapsedMs,
@@ -1300,8 +1300,52 @@ function privacyBoundExternalResult(operation: unknown, result: Record<string, u
       readiness: result.readiness,
     };
   }
-  // External Chrome M3 has no other qualified operations. Returning an empty
-  // projection makes a dishonest host response fail normal result validation.
+  // M4 operation payloads retain live tool semantics, but only advertised keys
+  // cross the host boundary. Durable/event/audit projections are bounded later.
+  if (operation === "snapshot") {
+    return {
+      tabId: result.tabId,
+      url: result.url,
+      title: result.title,
+      loading: result.loading,
+      viewportSetting: result.viewportSetting,
+      viewport: result.viewport,
+      visibleText: result.visibleText,
+      interactiveElements: result.interactiveElements,
+      accessibility: result.accessibility,
+      consoleEntries: result.consoleEntries,
+      networkEntries: result.networkEntries,
+      actionTimeline: result.actionTimeline,
+      screenshot: result.screenshot,
+    };
+  }
+  if (operation === "click") return { tabId: result.tabId, point: result.point };
+  if (operation === "type") {
+    return { tabId: result.tabId, characters: result.characters, cleared: result.cleared };
+  }
+  if (operation === "press") return { tabId: result.tabId, key: result.key, modifiers: result.modifiers };
+  if (operation === "scroll") {
+    return {
+      tabId: result.tabId,
+      deltaX: result.deltaX,
+      deltaY: result.deltaY,
+      scrollX: result.scrollX,
+      scrollY: result.scrollY,
+    };
+  }
+  if (operation === "evaluate") {
+    return {
+      tabId: result.tabId,
+      ...(result.value !== undefined ? { value: result.value } : {}),
+      ...(result.remoteObject !== undefined ? { remoteObject: result.remoteObject } : {}),
+      serializedBytes: result.serializedBytes,
+    };
+  }
+  if (operation === "waitFor") {
+    return { tabId: result.tabId, matched: result.matched, elapsedMs: result.elapsedMs };
+  }
+  // Physical viewport and recording operations remain unqualified for External
+  // Chrome. An empty projection makes a dishonest response fail normal validation.
   return {};
 }
 
@@ -1538,15 +1582,21 @@ function failure(code: BrowserAutomationFailure["code"], message: string, retrya
   return { code, message, retryable };
 }
 
-function extractSafeCompletionMetadata(result: unknown): Partial<BrowserSafeActionSummary> {
+function extractSafeCompletionMetadata(
+  result: unknown,
+  hostKind: BrowserHostKind,
+): Partial<BrowserSafeActionSummary> {
   if (!result || typeof result !== "object") return {};
   const value = result as Record<string, unknown>;
   const tab = value.tab && typeof value.tab === "object" ? value.tab as Record<string, unknown> : undefined;
   const viewport = value.viewport && typeof value.viewport === "object" ? value.viewport as Record<string, unknown> : undefined;
+  const persistPageIdentity = hostKind !== "external-chrome";
   return {
     ...(typeof value.path === "string" ? { artifactPath: value.path } : {}),
-    ...(typeof value.url === "string" ? { url: value.url } : typeof tab?.url === "string" ? { url: tab.url } : {}),
-    ...(typeof value.title === "string" ? { title: value.title } : typeof tab?.title === "string" ? { title: tab.title } : {}),
+    ...(persistPageIdentity && typeof value.url === "string" ? { url: value.url }
+      : persistPageIdentity && typeof tab?.url === "string" ? { url: tab.url } : {}),
+    ...(persistPageIdentity && typeof value.title === "string" ? { title: value.title }
+      : persistPageIdentity && typeof tab?.title === "string" ? { title: tab.title } : {}),
     ...(typeof value.width === "number" && typeof value.height === "number"
       ? { dimensions: { width: value.width, height: value.height } }
       : typeof viewport?.width === "number" && typeof viewport?.height === "number"

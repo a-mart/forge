@@ -402,6 +402,8 @@ const BROWSER_AUDIT_OMITTED_KEYS = new Set([
   "name",
   "urlIncludes",
   "expression",
+  "url",
+  "title",
 ]);
 
 function shouldSanitizeCodexPluginScopedToolResult(

@@ -6,6 +6,8 @@ import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserHostRegistration,
+  BrowserAutomationResultByOperation,
+  BrowserSessionSnapshot,
   BrowserTabSnapshot,
 } from "@forge/protocol";
 import { BrowserAutomationService } from "../browser-automation/browser-automation-service.js";
@@ -340,7 +342,7 @@ describe("BrowserAutomationService", () => {
     });
   });
 
-  it("projects External Chrome responses before state, events, persistence, diagnostics, or tool results", async () => {
+  it("projects External Chrome tab selection metadata before state, events, persistence, diagnostics, or tool results", async () => {
     const { dataDir } = await createService();
     const changes: BrowserTabSnapshot[] = [];
     const privateUrl = "https://private.invalid/path?secret=yes";
@@ -415,6 +417,129 @@ describe("BrowserAutomationService", () => {
     expect(JSON.stringify(changes)).not.toMatch(/private|candidate|origin/i);
     expect(JSON.stringify(await guarded.getSessionSnapshot("profile-1", "manager-1"))).not.toMatch(/private|candidate|origin/i);
     expect(await readFile(guarded.store.getStatePath("profile-1", "manager-1"), "utf8")).not.toMatch(/private|candidate|origin/i);
+  });
+
+  it("returns every External Chrome M4 result live without leaking page payloads into backend projections", async () => {
+    const { dataDir } = await createService();
+    const changes: BrowserSessionSnapshot[] = [];
+    const diagnostics: unknown[] = [];
+    const service = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (snapshot) => changes.push(snapshot),
+      logDebug: (message, details) => diagnostics.push({ message, details }),
+    });
+    await seedExternalSession(service);
+
+    const snapshotUrl = "https://snapshot.private.invalid/path?token=SNAPSHOT_URL_SECRET";
+    const snapshotTitle = "SNAPSHOT_TITLE_SECRET";
+    const snapshotText = "SNAPSHOT_VISIBLE_TEXT_SECRET";
+    const screenshotData = "SNAPSHOT_PNG_SECRET";
+    const evaluateResult = "EVALUATE_RESULT_SECRET";
+    const typedText = "TYPED_TEXT_SECRET";
+    const evaluateSource = "globalThis.EVALUATE_SOURCE_SECRET";
+    const injectedPageContent = "INJECTED_PAGE_CONTENT_SECRET";
+    const injectedDiagnostics = "INJECTED_DIAGNOSTICS_SECRET";
+    const results = {
+      snapshot: {
+        tabId: "ext.instance.41",
+        url: snapshotUrl,
+        title: snapshotTitle,
+        loading: false,
+        viewportSetting: { mode: "fill" },
+        viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        visibleText: snapshotText,
+        interactiveElements: [{ tag: "button", role: "button", name: "PRIVATE_BUTTON", selector: "#private", x: 1, y: 2, width: 3, height: 4 }],
+        accessibility: { role: "document", name: "PRIVATE_ACCESSIBILITY" },
+        consoleEntries: [{ level: "log", text: "PRIVATE_CONSOLE", timestamp }],
+        networkEntries: [{ url: "https://network.private.invalid", method: "GET", status: 200, failed: false, timestamp }],
+        actionTimeline: [{ id: "action-1", action: "snapshot", status: "succeeded", startedAt: timestamp }],
+        screenshot: { mimeType: "image/png", data: screenshotData, width: 800, height: 600 },
+      },
+      click: { tabId: "ext.instance.41", point: { x: 12, y: 34 } },
+      type: { tabId: "ext.instance.41", characters: typedText.length, cleared: true },
+      press: { tabId: "ext.instance.41", key: "Enter", modifiers: ["Control"] },
+      scroll: { tabId: "ext.instance.41", deltaX: 0, deltaY: 120, scrollX: 4, scrollY: 240 },
+      evaluate: { tabId: "ext.instance.41", value: evaluateResult, remoteObject: { type: "string", description: evaluateResult }, serializedBytes: 22 },
+      waitFor: { tabId: "ext.instance.41", matched: true, elapsedMs: 17 },
+    } satisfies Pick<BrowserAutomationResultByOperation, "snapshot" | "click" | "type" | "press" | "scroll" | "evaluate" | "waitFor">;
+
+    service.registerHost({
+      connectionId: "external-m4",
+      registration: {
+        ...externalRegistration(),
+        capabilities: {
+          ...externalRegistration().capabilities,
+          supportedOperations: ["status", "open", "navigate", "snapshot", "click", "type", "press", "scroll", "evaluate", "waitFor"],
+        },
+      },
+      sendRequest(request) {
+        const operation = request.operation as keyof typeof results;
+        const result = results[operation];
+        const updatedTab = {
+          ...tab(request.sessionAgentId, request.profileId, request.tabId!),
+          hostKind: "external-chrome" as const,
+          url: snapshotUrl,
+          title: snapshotTitle,
+        };
+        queueMicrotask(() => service.acceptHostResponse("external-m4", {
+          requestId: request.requestId,
+          hostKind: request.hostKind,
+          sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId,
+          tabId: request.tabId,
+          hostId: request.hostId,
+          hostGeneration: request.hostGeneration,
+          operation: request.operation,
+          ok: true,
+          result: { ...result, pageContent: injectedPageContent, diagnostics: injectedDiagnostics },
+          updatedTab,
+          elapsedMs: 5,
+        }));
+      },
+    });
+
+    const liveResults = [
+      await service.invoke("manager-1", "profile-1", "snapshot", { hostKind: "external-chrome" }),
+      await service.invoke("manager-1", "profile-1", "click", { hostKind: "external-chrome", x: 12, y: 34, timeoutMs: 1_000 }),
+      await service.invoke("manager-1", "profile-1", "type", { hostKind: "external-chrome", text: typedText, clear: true, timeoutMs: 1_000 }),
+      await service.invoke("manager-1", "profile-1", "press", { hostKind: "external-chrome", key: "Enter", modifiers: ["Control"] }),
+      await service.invoke("manager-1", "profile-1", "scroll", { hostKind: "external-chrome", deltaY: 120 }),
+      await service.invoke("manager-1", "profile-1", "evaluate", { hostKind: "external-chrome", expression: evaluateSource, awaitPromise: true, returnByValue: true }),
+      await service.invoke("manager-1", "profile-1", "waitFor", { hostKind: "external-chrome", text: "PRIVATE_WAIT_TEXT", timeoutMs: 1_000 }),
+    ];
+
+    expect(liveResults).toEqual([
+      { ok: true, operation: "snapshot", result: results.snapshot },
+      { ok: true, operation: "click", result: results.click },
+      { ok: true, operation: "type", result: results.type },
+      { ok: true, operation: "press", result: results.press },
+      { ok: true, operation: "scroll", result: results.scroll },
+      { ok: true, operation: "evaluate", result: results.evaluate },
+      { ok: true, operation: "waitFor", result: results.waitFor },
+    ]);
+
+    const persisted = await readFile(service.store.getStatePath("profile-1", "manager-1"), "utf8");
+    const backendProjections = JSON.stringify({
+      persisted,
+      changes,
+      diagnostics,
+      snapshot: await service.getSessionSnapshot("profile-1", "manager-1"),
+    });
+    for (const secret of [
+      snapshotUrl, snapshotTitle, snapshotText, screenshotData, typedText, evaluateSource,
+      evaluateResult, injectedPageContent, injectedDiagnostics, "PRIVATE_BUTTON", "PRIVATE_ACCESSIBILITY",
+      "PRIVATE_CONSOLE", "network.private.invalid", "PRIVATE_WAIT_TEXT",
+    ]) {
+      expect(backendProjections).not.toContain(secret);
+    }
+    expect(await service.getSessionSnapshot("profile-1", "manager-1")).toMatchObject({
+      tabs: [expect.objectContaining({ tabId: "ext.instance.41", url: "", title: "" })],
+      recentActions: expect.arrayContaining([
+        expect.objectContaining({ operation: "snapshot", status: "succeeded", dimensions: { width: 800, height: 600 } }),
+        expect.objectContaining({ operation: "evaluate", status: "succeeded" }),
+      ]),
+    });
   });
 
   it("changes host and tab selection atomically so omitted-host calls follow a managed activation", async () => {
