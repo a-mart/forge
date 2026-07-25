@@ -4,7 +4,7 @@ import type {
   SessionPlanSnapshotEvent,
   WorkGraphSnapshot,
 } from '@forge/protocol'
-import type { AcceptedDeliveryMode } from '../types.js'
+import type { AcceptedDeliveryMode, AgentModelDescriptor } from '../types.js'
 import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
@@ -29,6 +29,7 @@ import {
   projectWorkGraphPlan,
   recordWorkGraphDispatchFailure,
   recordWorkGraphWorkerResult,
+  recordWorkGraphWorkerModelReroute,
   recordWorkGraphWorkerStarted,
   recoverInterruptedWorkGraphDispatches,
   type UpdateWorkGraphInput,
@@ -156,6 +157,20 @@ export class SessionPlanCoordinator {
           resolution,
         ),
       )
+    })
+  }
+
+  async recordWorkGraphWorkerModelReroute(
+    owner: SessionPlanOwner,
+    workerId: string,
+    model: AgentModelDescriptor,
+  ): Promise<void> {
+    await this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return
+      const graph = recordWorkGraphWorkerModelReroute(current.workGraph, workerId, model)
+      if (graph === current.workGraph) return
+      await this.writeGraph(owner, current.explanation, graph)
     })
   }
 

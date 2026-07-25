@@ -10,6 +10,7 @@ import {
   projectWorkGraphPlan,
   recordWorkGraphDispatchFailure,
   recordWorkGraphWorkerResult,
+  recordWorkGraphWorkerModelReroute,
   recordWorkGraphWorkerStarted,
   recoverInterruptedWorkGraphDispatches,
   resolveWorkGraphDispatch,
@@ -224,8 +225,11 @@ describe('progressive work graph scenarios', () => {
       nodeId: 'hard',
       requestedRoute: 'deep-reasoner',
     })
-    expect(retried.graph.nodes[0]?.route).toBe('deep-reasoner')
+    expect(retried.graph.nodes[0]?.route).toBe('auto')
     expect(retried.graph.nodes[0]?.attempts).toHaveLength(2)
+    expect(() => normalizeWorkGraphInput({
+      nodes: [inputNode(retried.graph.nodes[0]!, 'running')],
+    }, retried.graph)).not.toThrow()
   })
 
   it('keeps an escalated route on later retries instead of dropping to the original route', () => {
@@ -265,6 +269,61 @@ describe('progressive work graph scenarios', () => {
     }, secondFailed))
 
     expect(secondRetry.claims[0]?.requestedRoute).toBe('deep-reasoner')
+  })
+
+  it('preserves the legacy deep retry for a blocked pre-roster graph attempt', () => {
+    const legacyNode = node('legacy', 'Retry legacy work', {
+      effort: 'auto',
+      status: 'blocked',
+      route: undefined,
+      attempts: [{
+        id: 'legacy-attempt',
+        number: 1,
+        status: 'blocked',
+        startedAt: now(),
+        completedAt: now(),
+        behaviorMode: 'general',
+        executionPolicy: 'routine',
+      }],
+    })
+
+    expect(resolveWorkGraphDispatch(legacyNode)).toEqual({
+      behaviorMode: 'general',
+      requestedRoute: 'auto',
+      legacyExecutionPolicy: 'deep',
+    })
+  })
+
+  it('updates the active graph attempt when runtime availability fallback reroutes its model', () => {
+    const initial = claim(graphOf([node('runtime', 'Run the implementation')]))
+    const started = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'runtime',
+      initial.claims[0]!.attemptId,
+      'runtime-worker',
+      {
+        model: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.6-terra',
+          thinkingLevel: 'medium',
+        },
+      },
+    )
+    const rerouted = recordWorkGraphWorkerModelReroute(
+      started,
+      'runtime-worker',
+      {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-20250514',
+        thinkingLevel: 'high',
+      },
+    )
+
+    expect(rerouted.nodes[0]?.attempts[0]?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-20250514',
+      thinkingLevel: 'high',
+    })
   })
 
   it('honors an explicit route revision after a blocked attempt', () => {

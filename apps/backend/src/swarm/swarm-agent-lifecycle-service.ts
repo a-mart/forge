@@ -633,7 +633,9 @@ export class SwarmAgentLifecycleService {
         thinkingLevel: selectedDelegationRoute.reasoningLevel,
       };
       model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
-      model = this.resolveSpawnModelWithCapacityFallback(model);
+      const routePrimaryCapacityBlocked = Boolean(
+        this.getActiveModelCapacityBlock(model.provider, model.modelId),
+      );
 
       if (selectedDelegationRoute.availabilityFallback) {
         specialistFallbackModel = {
@@ -643,9 +645,10 @@ export class SwarmAgentLifecycleService {
         };
         specialistFallbackModel.thinkingLevel =
           normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
-        specialistFallbackModel =
-          this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
       }
+      model = routePrimaryCapacityBlocked && specialistFallbackModel
+        ? { ...specialistFallbackModel }
+        : this.resolveSpawnModelWithCapacityFallback(model);
 
       archetypeId = undefined;
       explicitSystemPrompt = undefined;
@@ -883,6 +886,9 @@ export class SwarmAgentLifecycleService {
       descriptor.delegationRosterRevision = selectedDelegationRoster.revision;
       descriptor.delegationRouteId = selectedDelegationRoute.routeId;
       descriptor.delegationRouteLabel = selectedDelegationRoute.label;
+      if (requestedLensId) {
+        descriptor.specialistLens = requestedLensId;
+      }
       descriptor.specialistId = `route:${selectedDelegationRoute.routeId}`;
       descriptor.specialistDisplayName = selectedDelegationRoute.label;
       descriptor.specialistColor = selectedDelegationRoute.color ?? "#7c3aed";

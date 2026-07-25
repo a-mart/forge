@@ -105,6 +105,27 @@ export function createWorkGraphResultRecorder(options: {
   };
 }
 
+export function createWorkGraphModelRerouteRecorder(options: {
+  descriptors: ReadonlyMap<string, AgentDescriptor>;
+  getPlans(): Pick<SessionPlanCoordinator, "recordWorkGraphWorkerModelReroute">;
+}): (worker: AgentDescriptor) => Promise<void> {
+  return async (worker) => {
+    if (worker.role !== "worker") return;
+    const manager = options.descriptors.get(worker.managerId);
+    if (
+      !manager
+      || manager.role !== "manager"
+      || !manager.profileId
+      || manager.sessionSurface === "collab"
+    ) return;
+    await options.getPlans().recordWorkGraphWorkerModelReroute(
+      { agentId: manager.agentId, profileId: manager.profileId },
+      worker.agentId,
+      worker.model,
+    );
+  };
+}
+
 export function buildWorkerResult(
   workerAgentId: string,
   history: ConversationEntryEvent[],

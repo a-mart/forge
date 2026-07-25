@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkerDescriptor } from "../../test-support/index.js";
+import { createAgentDescriptor, createWorkerDescriptor } from "../../test-support/index.js";
 import {
   WorkerResultCoordinator,
   buildWorkerResult,
+  createWorkGraphModelRerouteRecorder,
 } from "../worker-result-coordinator.js";
 import type {
   AgentDescriptor,
@@ -120,6 +121,35 @@ describe("WorkerResultCoordinator", () => {
 
     await expect(coordinator.deliverCompletedWorker(worker)).resolves.toBe("sent");
     expect(calls).toEqual(["graph", "delivery"]);
+  });
+
+  it("records runtime model reroutes against the owning Builder graph", async () => {
+    const worker = assignedWorker();
+    worker.model = {
+      provider: "openai-codex",
+      modelId: "gpt-5.6-terra",
+      thinkingLevel: "medium",
+    };
+    const manager = createAgentDescriptor({
+      agentId: worker.managerId,
+      role: "manager",
+      managerId: worker.managerId,
+      profileId: "profile-1",
+      status: "idle",
+    });
+    const recordWorkGraphWorkerModelReroute = vi.fn(async () => undefined);
+    const record = createWorkGraphModelRerouteRecorder({
+      descriptors: new Map([[manager.agentId, manager]]),
+      getPlans: () => ({ recordWorkGraphWorkerModelReroute }),
+    });
+
+    await record(worker);
+
+    expect(recordWorkGraphWorkerModelReroute).toHaveBeenCalledWith(
+      { agentId: manager.agentId, profileId: "profile-1" },
+      worker.agentId,
+      worker.model,
+    );
   });
 
   it("marks terminal system errors blocked", () => {

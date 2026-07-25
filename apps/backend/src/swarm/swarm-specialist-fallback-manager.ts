@@ -110,6 +110,7 @@ export interface SwarmSpecialistFallbackManagerOptions {
     resolvedSystemPrompt?: string | null
   ): Promise<void>;
   refreshSessionMetaStatsBySessionId(sessionAgentId: string): Promise<void>;
+  recordWorkGraphWorkerModelReroute?(descriptor: AgentDescriptor): Promise<void>;
   saveStore(): Promise<void>;
   patchDescriptor?(
     agentId: string,
@@ -304,6 +305,15 @@ export class SwarmSpecialistFallbackManager {
       const persistedSystemPrompt = replacementRuntime.getSystemPrompt?.() ?? runtimeSystemPrompt;
       await this.options.updateSessionMetaForWorkerDescriptor(reroutedDescriptor, persistedSystemPrompt);
       await this.options.refreshSessionMetaStatsBySessionId(reroutedDescriptor.managerId);
+      if (reroutedDescriptor.role === "worker") {
+        await this.options.recordWorkGraphWorkerModelReroute?.(reroutedDescriptor).catch((error) => {
+          this.options.logDebug("worker:specialist_fallback:work_graph_model_sync_error", {
+            agentId: reroutedDescriptor.agentId,
+            managerId: reroutedDescriptor.managerId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
 
       this.options.emitStatus(
         input.agentId,

@@ -267,7 +267,35 @@ describe('SessionPlanCoordinator', () => {
       'research',
       claims[0]!.attemptId,
       'research-worker',
+      {
+        model: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.6-terra',
+          thinkingLevel: 'medium',
+        },
+      },
     )
+    await harness.coordinator.recordWorkGraphWorkerModelReroute(
+      harness.owner,
+      'research-worker',
+      {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-20250514',
+        thinkingLevel: 'high',
+      },
+    )
+    const reroutedSnapshot = await harness.coordinator.getSnapshot(harness.owner)
+    expect(reroutedSnapshot.workGraph?.nodes.find((node) => node.id === 'research'))
+      .toMatchObject({
+        attempts: [{
+          workerId: 'research-worker',
+          model: {
+            provider: 'anthropic',
+            modelId: 'claude-sonnet-4-20250514',
+            thinkingLevel: 'high',
+          },
+        }],
+      })
     await expect(harness.coordinator.recordWorkGraphWorkerResult(
       harness.owner,
       'research-worker',

@@ -80,6 +80,19 @@ describe("SessionInteractionCoordinator", () => {
       plan: [{ step: "Research current behavior", status: "in_progress" }],
       workGraph: { maxConcurrency: 2, nodes: [] },
     });
+    harness.descriptors.set("graph-research-1", {
+      ...makeWorker("graph-research-1"),
+      delegationRouteId: "research-analyst",
+      delegationRouteLabel: "Research Analyst",
+      delegationRosterId: "balanced",
+      delegationRosterRevision: 3,
+      delegationCapabilityEscalationRouteId: "deep-reasoner",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.6-terra",
+        thinkingLevel: "medium",
+      },
+    });
 
     const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", input);
 
@@ -99,7 +112,18 @@ describe("SessionInteractionCoordinator", () => {
       "research",
       "attempt-1",
       "graph-research-1",
-      { model: { provider: "openai", modelId: "gpt-5" } },
+      {
+        resolvedRouteId: "research-analyst",
+        resolvedRouteLabel: "Research Analyst",
+        rosterId: "balanced",
+        rosterRevision: 3,
+        model: {
+          provider: "openai-codex",
+          modelId: "gpt-5.6-terra",
+          thinkingLevel: "medium",
+        },
+        capabilityEscalationRouteId: "deep-reasoner",
+      },
     );
     expect(result).toMatchObject({
       revision: 3,

@@ -1164,12 +1164,14 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
   private async appendCoordinationContext(target: AgentDescriptor, text: string): Promise<string> {
     if (
       !isSessionAgentDescriptor(target) ||
-      target.sessionSurface === "collab" ||
       normalizeArchetypeId(target.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
     ) {
       return text;
     }
     const withRoster = await this.options.delegation.appendToManagerInput(target, text);
+    if (target.sessionSurface === "collab") {
+      return withRoster;
+    }
     const withGoal = await this.options.goals.appendToManagerInput(target, withRoster);
     return this.options.plans.appendToManagerInput(target, withGoal);
   }

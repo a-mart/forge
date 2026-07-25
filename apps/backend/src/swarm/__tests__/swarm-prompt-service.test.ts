@@ -453,6 +453,33 @@ Custom project instruction: always mention the release train when summarizing de
     expect(Math.abs(delegationPrompt.length - handsOnPrompt.length)).toBeLessThan(500)
   });
 
+  it("replaces the legacy routing section in stale manager prompt overrides", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+      sessionSystemPrompt: `You are a customized manager.
+
+# Work routing
+For each substantive request, choose one route.
+
+Delegation remains the default for project-file mutations, sustained investigations, multi-step analysis, and substantial implementation. Manager direct project work is read-only.
+
+# Custom project policy
+Always preserve the user's release notes.`,
+    });
+    const prompt = await createPromptServiceForDescriptor(
+      config,
+      descriptor,
+    ).buildResolvedManagerPrompt(descriptor);
+
+    expect(prompt.match(/^# Work routing$/gm)).toHaveLength(1);
+    expect(prompt).toContain("Your posture is **Hands-on**.");
+    expect(prompt).not.toContain("Manager direct project work is read-only.");
+    expect(prompt).not.toContain("Delegation remains the default for project-file mutations");
+    expect(prompt).toContain("# Custom project policy");
+    expect(prompt).toContain("Always preserve the user's release notes.");
+  });
+
   it("keeps tool authority aligned with the selected manager posture", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
@@ -730,6 +757,32 @@ Custom project instruction: always mention the release train when summarizing de
 
     expect(prompt).toContain("End your turn with a concise result using this structure:");
     expect(prompt).not.toContain("Custom standard specialist prompt");
+  });
+
+  it("does not resolve a route attribution id as a custom specialist prompt", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "route-worker",
+        managerId: "manager",
+        profileId: "manager",
+        archetypeId: undefined,
+      }),
+      role: "worker" as const,
+      delegationRouteId: "research-analyst",
+      specialistId: "route:research-analyst",
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker, {
+      specialistRoster: [{
+        specialistId: "research-analyst",
+        promptBody: "This route id must not become a behavior prompt.",
+      }],
+    });
+
+    const prompt = await service.resolveSystemPromptForDescriptor(worker);
+
+    expect(prompt).toContain("End your turn with a concise result using this structure:");
+    expect(prompt).not.toContain("This route id must not become a behavior prompt.");
   });
 
   it("does not append repository reference inventory to workers owned by collaboration managers", async () => {
@@ -1084,6 +1137,31 @@ Custom project instruction: always mention the release train when summarizing de
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
     expect(systemSection?.source).toBe("project-agent-base + base-only");
     expect(systemSection?.content).toContain("Forge Project Agent Operating Contract");
+  });
+
+  it("gives a Hands-on Project Agent one non-contradictory routing posture", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "hands-on-project-agent",
+      managerPosture: "hands_on",
+      projectAgent: {
+        handle: "hands-on-agent",
+        whenToUse: "testing project-agent posture composition",
+      },
+    });
+
+    const resolved = await createPromptServiceForDescriptor(
+      config,
+      descriptor,
+    ).buildResolvedManagerPrompt(descriptor);
+
+    expect(resolved.match(/^# Work routing$/gm)).toHaveLength(1);
+    expect(resolved).toContain("Your posture is **Hands-on**.");
+    expect(resolved).toContain("Normally own one cohesive outcome directly");
+    expect(resolved).not.toContain(
+      "Delegate substantive implementation and investigation to appropriate workers",
+    );
+    expect(resolved).not.toContain("Manager direct project work is read-only.");
   });
 
   it("project-agent sessionSystemPrompt is composed as highest-precedence role instructions in preview", async () => {

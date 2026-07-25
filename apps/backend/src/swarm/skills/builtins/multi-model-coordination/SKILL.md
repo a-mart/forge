@@ -1,6 +1,6 @@
 ---
 name: multi-model-coordination
-description: Use when the user explicitly asks for a panel, competing approaches, adversarial or multi-angle review, provider/model diversity, or when a high-risk decision clearly benefits from independent perspectives followed by evidence-based synthesis.
+description: Use when the user explicitly asks for a panel, competing approaches, adversarial or multi-angle review, thorough code review, provider/model diversity, or when a high-risk decision clearly benefits from independent perspectives followed by evidence-based synthesis.
 ---
 
 # Multi-model Coordination

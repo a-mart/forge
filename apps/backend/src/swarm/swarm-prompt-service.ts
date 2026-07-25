@@ -103,6 +103,8 @@ You are a Forge Project Agent: a promoted peer manager session. Final/standalone
 
 Treat messages beginning with [workerResult] as terminal worker results that require same-turn disposition. Results are internal decision points, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker; otherwise end with exactly NO_REPLY. Use send_message_to_agent for peer/context replies.
 
+\${MANAGER_POSTURE}
+
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
 \${SPECIALIST_ROSTER}`;
@@ -317,13 +319,7 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
     const managerPostureBlock = buildManagerPostureBlock(descriptor.managerPosture);
-    // eslint-disable-next-line no-template-curly-in-string
-    if (prompt.includes("${MANAGER_POSTURE}")) {
-      // eslint-disable-next-line no-template-curly-in-string
-      prompt = prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
-    } else {
-      prompt = `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
-    }
+    prompt = composeManagerPosture(prompt, managerPostureBlock);
 
     const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
     if (projectAgentReferenceDocs.length > 0) {
@@ -469,7 +465,7 @@ export class SwarmPromptService {
 
     const requiredBehaviorPromptId = normalizeOptionalAgentId(descriptor.specialistLens)?.toLowerCase();
     const specialistId = requiredBehaviorPromptId ?? (
-      descriptor.specialistTier
+      descriptor.specialistTier || descriptor.delegationRouteId
         ? undefined
         : normalizeOptionalAgentId(
             descriptor.specialistId?.split(":")[1] ?? descriptor.specialistId
@@ -1207,6 +1203,35 @@ export class SwarmPromptService {
     skillLines.push("</available_skills>");
     return systemPrompt.trimEnd() + skillLines.join("\n");
   }
+}
+
+function composeManagerPosture(prompt: string, managerPostureBlock: string): string {
+  // eslint-disable-next-line no-template-curly-in-string
+  if (prompt.includes("${MANAGER_POSTURE}")) {
+    // eslint-disable-next-line no-template-curly-in-string
+    return prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
+  }
+
+  const isLegacyManagerPrompt = (
+    prompt.includes("Delegation remains the default for project-file mutations")
+    && prompt.includes("Manager direct project work is read-only")
+  );
+  const legacyHeading = isLegacyManagerPrompt
+    ? /^# Work routing[ \t]*$/m.exec(prompt)
+    : null;
+  if (!legacyHeading) {
+    return `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
+  }
+
+  const sectionStart = legacyHeading.index;
+  const afterHeading = sectionStart + legacyHeading[0].length;
+  const nextHeading = /\r?\n# [^\r\n]+/.exec(prompt.slice(afterHeading));
+  const sectionEnd = nextHeading
+    ? afterHeading + nextHeading.index
+    : prompt.length;
+  const before = prompt.slice(0, sectionStart).trimEnd();
+  const after = prompt.slice(sectionEnd).trimStart();
+  return [before, managerPostureBlock, after].filter(Boolean).join("\n\n");
 }
 
 function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {

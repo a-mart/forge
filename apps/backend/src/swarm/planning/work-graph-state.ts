@@ -256,7 +256,6 @@ export function claimReadyWorkGraphNodes(
     })
     return {
       ...node,
-      route: dispatch.requestedRoute,
       status: 'running' as const,
       attempts: [...node.attempts, attempt],
     }
@@ -318,6 +317,25 @@ export function recordWorkGraphWorkerStarted(
       ...resolution,
     }),
   }))
+}
+
+export function recordWorkGraphWorkerModelReroute(
+  graph: WorkGraphSnapshot,
+  workerId: string,
+  model: NonNullable<WorkGraphAttempt['model']>,
+): WorkGraphSnapshot {
+  for (const node of graph.nodes) {
+    const attempt = currentAttempt(node)
+    if (attempt?.workerId !== workerId || attempt.status !== 'running') continue
+    return updateAttempt(graph, node.id, attempt.id, (currentNode, currentAttemptValue) => ({
+      ...currentNode,
+      attempts: replaceAttempt(currentNode.attempts, currentAttemptValue.id, {
+        ...currentAttemptValue,
+        model: { ...model },
+      }),
+    }))
+  }
+  return graph
 }
 
 export function recordWorkGraphDispatchFailure(
@@ -465,7 +483,11 @@ export function resolveWorkGraphDispatch(node: WorkGraphNode): {
     : configuredRoute
   const legacyExecutionPolicy = node.effort && node.effort !== 'auto'
     ? node.effort
-    : undefined
+    : lastAttempt?.status === 'blocked'
+      && !lastAttempt.requestedRoute
+      && lastAttempt.executionPolicy
+      ? 'deep'
+      : undefined
   return {
     behaviorMode,
     requestedRoute,

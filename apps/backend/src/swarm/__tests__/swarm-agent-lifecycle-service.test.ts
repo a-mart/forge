@@ -20,7 +20,10 @@ import {
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "../manual-stop-notice.js";
 import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "../secure-sessions/runtime/secure-runtime-binding.js";
-import { resolveDelegationRosterSettings } from "../specialists/delegation-roster-store.js";
+import {
+  resolveDelegationRosterSettings,
+  saveDelegationRosterSettings,
+} from "../specialists/delegation-roster-store.js";
 
 const NOW = "2026-04-20T12:00:00.000Z";
 
@@ -2646,11 +2649,16 @@ describe("SwarmAgentLifecycleService", () => {
       const roster = settings.rosters[0]!;
       const expectedRoute = roster.routes.find((route) => route.routeId === "research-analyst")!;
       const descriptors = new Map([[manager.agentId, manager]]);
+      const resolveSystemPromptForDescriptor = vi.fn(async () => "composed researcher prompt");
+      const createRuntimeForDescriptor = vi.fn(async (descriptor: AgentDescriptor) =>
+        makeRuntimeStub({ descriptor }));
       const svc = new SwarmAgentLifecycleService(
         baseLifecycleOptions({
           dataDir,
           descriptors,
           assertManager: () => manager,
+          resolveSystemPromptForDescriptor,
+          createRuntimeForDescriptor,
           resolveSpecialistRosterForProfile: vi.fn(async () => [{
             specialistId: "researcher",
             displayName: "Researcher",
@@ -2675,6 +2683,7 @@ describe("SwarmAgentLifecycleService", () => {
         delegationRouteLabel: expectedRoute.label,
         delegationRosterId: "balanced",
         delegationRosterRevision: roster.revision,
+        specialistLens: "researcher",
         model: {
           provider: expectedRoute.provider,
           modelId: expectedRoute.modelId,
@@ -2684,6 +2693,16 @@ describe("SwarmAgentLifecycleService", () => {
       const internal = descriptors.get(spawned.agentId);
       expect(internal?.delegationCapabilityEscalationRouteId)
         .toBe(expectedRoute.capabilityEscalationRouteId);
+      expect(resolveSystemPromptForDescriptor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          delegationRouteId: "research-analyst",
+          specialistLens: "researcher",
+        }),
+      );
+      expect(createRuntimeForDescriptor).toHaveBeenCalledWith(
+        expect.objectContaining({ specialistLens: "researcher" }),
+        "composed researcher prompt",
+      );
       expect(spawned).not.toHaveProperty("delegationCapabilityEscalationRouteId");
       if (expectedRoute.availabilityFallback) {
         expect(internal?.delegationFallbackModel).toMatchObject({
@@ -2693,6 +2712,87 @@ describe("SwarmAgentLifecycleService", () => {
         });
         expect(spawned).not.toHaveProperty("delegationFallbackModel");
       }
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a route's configured availability fallback before the generic capacity chain", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-route-capacity-fallback-"));
+    try {
+      const settings = await resolveDelegationRosterSettings(dataDir);
+      const roster = settings.rosters[0]!;
+      const route = roster.routes[0]!;
+      const primary = {
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex-spark",
+        reasoningLevel: "medium" as const,
+      };
+      const configuredFallback = {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+        reasoningLevel: "high" as const,
+      };
+      await saveDelegationRosterSettings(dataDir, {
+        ...settings,
+        rosters: [{
+          ...roster,
+          defaultRouteId: route.routeId,
+          modeRoutes: {},
+          routes: [{
+            ...route,
+            ...primary,
+            availabilityFallback: configuredFallback,
+            capabilityEscalationRouteId: undefined,
+          }],
+        }],
+      });
+
+      const manager = createAgentDescriptor({
+        agentId: "capacity-manager",
+        role: "manager",
+        managerId: "capacity-manager",
+        profileId: "capacity-manager",
+        status: "idle",
+        cwd: "/proj",
+        delegationRosterId: roster.rosterId,
+        delegationRosterOrigin: "global_default",
+      });
+      const descriptors = new Map([[manager.agentId, manager]]);
+      const modelCapacityBlocks = new Map<string, {
+        provider: string;
+        modelId: string;
+        blockedUntilMs: number;
+      }>();
+      modelCapacityBlocks.set(
+        buildModelCapacityBlockKey(primary.provider, primary.modelId)!,
+        {
+          provider: primary.provider,
+          modelId: primary.modelId,
+          blockedUntilMs: Date.now() + 60_000,
+        },
+      );
+      const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+        dataDir,
+        descriptors,
+        modelCapacityBlocks,
+        assertManager: () => manager,
+      }));
+
+      const spawned = await svc.spawnAgent(manager.agentId, {
+        agentId: "capacity-worker",
+        route: route.routeId,
+      });
+
+      const expectedFallbackModel = {
+        provider: configuredFallback.provider,
+        modelId: configuredFallback.modelId,
+        thinkingLevel: configuredFallback.reasoningLevel,
+      };
+      expect(spawned.model).toEqual(expectedFallbackModel);
+      expect(spawned.model.modelId).not.toBe("gpt-5.5");
+      expect(descriptors.get(spawned.agentId)?.delegationFallbackModel)
+        .toEqual(expectedFallbackModel);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

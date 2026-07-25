@@ -203,29 +203,30 @@ export class SessionInteractionCoordinator {
       try {
         const delegation = resolveGraphDispatch(claim, descriptor.cwd);
         const spawned = await this.spawnAgent(callerAgentId, delegation);
+        const internalWorker = this.options.descriptors.get(spawned.agentId) ?? spawned;
         await this.options.plans.recordWorkGraphWorkerStarted(
           descriptor,
           claim.nodeId,
           claim.attemptId,
           spawned.agentId,
           {
-            ...(spawned.delegationRouteId
-              ? { resolvedRouteId: spawned.delegationRouteId }
+            ...(internalWorker.delegationRouteId
+              ? { resolvedRouteId: internalWorker.delegationRouteId }
               : {}),
-            ...(spawned.delegationRouteLabel
-              ? { resolvedRouteLabel: spawned.delegationRouteLabel }
+            ...(internalWorker.delegationRouteLabel
+              ? { resolvedRouteLabel: internalWorker.delegationRouteLabel }
               : {}),
-            ...(spawned.delegationRosterId
-              ? { rosterId: spawned.delegationRosterId }
+            ...(internalWorker.delegationRosterId
+              ? { rosterId: internalWorker.delegationRosterId }
               : {}),
-            ...(spawned.delegationRosterRevision
-              ? { rosterRevision: spawned.delegationRosterRevision }
+            ...(internalWorker.delegationRosterRevision
+              ? { rosterRevision: internalWorker.delegationRosterRevision }
               : {}),
-            model: { ...spawned.model },
-            ...(spawned.delegationCapabilityEscalationRouteId
+            model: { ...internalWorker.model },
+            ...(internalWorker.delegationCapabilityEscalationRouteId
               ? {
                   capabilityEscalationRouteId:
-                    spawned.delegationCapabilityEscalationRouteId,
+                    internalWorker.delegationCapabilityEscalationRouteId,
                 }
               : {}),
           },
