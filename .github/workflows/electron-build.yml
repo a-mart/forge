@@ -51,9 +51,11 @@ jobs:
         shell: bash
         env:
           BUILD_MODE: ${{ github.event_name == 'workflow_dispatch' && 'release' || 'validation' }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ secrets.FORGE_WINDOWS_SIGNER_SUBJECT }}
+          # Secrets are exposed only for workflow_dispatch release mode. Validation
+          # pushes (electron/*) must remain credential-free at the Actions layer.
+          WIN_CSC_LINK: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ github.event_name == 'workflow_dispatch' && secrets.FORGE_WINDOWS_SIGNER_SUBJECT || '' }}
         run: |
           set -euo pipefail
           echo "FORGE_SEA_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"
@@ -81,11 +83,18 @@ jobs:
         run: pnpm build
 
       - name: Package Electron
+        shell: bash
         env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ secrets.FORGE_WINDOWS_SIGNER_SUBJECT }}
-        run: pnpm package:electron
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          # Live signing secrets only for workflow_dispatch. Validation packaging
+          # then blanks WIN_CSC_*/CSC_* and disables identity auto-discovery.
+          WIN_CSC_LINK: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ github.event_name == 'workflow_dispatch' && secrets.FORGE_WINDOWS_SIGNER_SUBJECT || '' }}
+        run: |
+          set -euo pipefail
+          eval "$(node apps/electron/scripts/windows-ci-signing-env.mjs --export-shell)"
+          pnpm package:electron
 
       - name: Derive Electron version
         id: electron_version

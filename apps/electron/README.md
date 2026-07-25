@@ -175,7 +175,7 @@ Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The 
 | `FORGE_WINDOWS_SIGNER_SUBJECT` | Exact Authenticode signer certificate subject expected on the native host |
 | `FORGE_SEA_NODE` | Official Node 25.6.1 executable installed by `actions/setup-node` |
 
-`workflow_dispatch` is release mode and fails before packaging when credentials or the expected signer are absent. `electron/*` pushes set `FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`; they remain credential-free, but their native-host manifest is explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
+`workflow_dispatch` is release mode and fails before packaging when credentials or the expected signer are absent. `electron/*` pushes set `FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`; Actions does not expose `WIN_CSC_*` / signer secrets on those pushes, packaging blanks `WIN_CSC_*` plus `CSC_*` aliases, and `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder cannot auto-discover a signing identity. Validation native-host manifests stay explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
 
 ```bash
 FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
@@ -232,7 +232,7 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 ### Windows CI notes
 
 - `workflow_dispatch` is the fail-closed signed release build path and requires the Windows certificate/password plus `FORGE_WINDOWS_SIGNER_SUBJECT`
-- `electron/*` branch pushes are unsigned validation-only builds; their External Chrome package is deliberately non-deployable
+- `electron/*` branch pushes are unsigned validation-only builds: no signing secrets are injected, `CSC_*` aliases are blanked, identity auto-discovery is disabled, and the External Chrome package is deliberately non-deployable
 - The workflow does not publish a GitHub Release on its own
 - Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable
