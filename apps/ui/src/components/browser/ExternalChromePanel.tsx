@@ -148,7 +148,19 @@ function CandidatePicker(props: { windows: ExternalChromeCandidateWindow[]; inst
   </div>
 }
 
-function CapabilityNotice() { return <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">External Chrome M3 limits</strong><p className="mt-1">External tabs stay in Chrome and are never rendered as Electron views. Status, create/open, and navigation are available after attachment. Resize, screenshots/snapshots, recording, download artifacts, opening downloaded files, and dock/pop-out are not available until M4.</p></div> }
+function CapabilityNotice() {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground" data-testid="external-chrome-capability-notice">
+      <strong className="text-foreground">External Chrome capabilities</strong>
+      <p className="mt-1">
+        External tabs stay in Chrome and are never rendered as Electron views. After attachment, status, create/open,
+        navigation, snapshot, and interactions (click, type, press, scroll, evaluate, waitFor) are available.
+        Resize, recording, download artifacts, opening downloaded files, physical page capture/export, and dock/pop-out
+        are not available.
+      </p>
+    </div>
+  )
+}
 function Centered({ title, detail, action }: { title: string; detail: string; action?: React.ReactNode }) { return <section className="m-auto max-w-lg p-8 text-center" aria-label="External Chrome workspace"><Chrome className="mx-auto mb-3 size-10 text-muted-foreground" /><h2 className="font-medium">{title}</h2><p className="mt-2 text-sm text-muted-foreground">{detail}</p>{action ? <div className="mt-4">{action}</div> : null}</section> }
 function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'good' | 'warn' | 'bad' }) { return <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', tone === 'good' && 'border-emerald-500/40 bg-emerald-500/10', tone === 'warn' && 'border-amber-500/40 bg-amber-500/10', tone === 'bad' && 'border-destructive/40 bg-destructive/10 text-destructive')}>{children}</span> }
 function StateNotice({ error }: { error: ExternalChromeLocalError }) { const messages: Record<ExternalChromeLocalError, string> = { 'invalid-request': 'The local attachment request was rejected. Refresh and try again.', 'setup-required': 'External Chrome is disabled, offline, or needs setup/update in Settings.', 'attachment-required': 'Choose and confirm tabs before Forge can use External Chrome.', 'lease-conflict': 'This Chrome profile or selected tab is controlled by another Forge attachment. Detach it there first.', 'restricted-target': 'Chrome does not allow debugger attachment to this restricted page.', 'debugger-unavailable': 'Chrome debugger access is unavailable because another debugger or extension owns the tab.', 'chrome-policy-blocked': 'Chrome policy blocks debugger or extension access for this profile.', 'stale-or-lost': 'The extension connection or lease is stale/lost. Keep Chrome open; Forge is recovering. Detach and attach again if it does not reconnect.', 'extension-update-required': 'The connected extension is out of date. Update the unpacked extension from External Chrome settings.', 'operation-failed': 'The local Chrome operation failed without changing the confirmed attachment.' }; return <div role="alert" className="flex gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><AlertTriangle className="mt-0.5 size-4 shrink-0" />{messages[error]}</div> }

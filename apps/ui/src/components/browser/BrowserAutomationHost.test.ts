@@ -210,8 +210,15 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     expect(secondaryRegistration!.capabilities).toMatchObject({
       supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
       runtimeVersions: { extension: 'm4' },
-      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false },
+      features: {
+        resize: false, recording: false, capturePage: false,
+        downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
+      },
+      supportsCapturePage: false,
+      supportsRecording: false,
     })
+    expect(secondaryRegistration!.capabilities.supportedOperations).toContain('snapshot')
+    expect(secondaryRegistration!.capabilities.features?.capturePage).toBe(false)
     const response = await executeSecondary!(request)
     expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, phase: 'prepare', releaseId: 'release-1', reason: 'archive', tabId: 'ext.profile_a.7' }))
     expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true, result: { externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1' } } })
@@ -238,6 +245,28 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), registerSecondaryBrowserAutomationHost, reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
     await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve(); await Promise.resolve() })
     expect(registerSecondaryBrowserAutomationHost).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the M3 operation surface without inventing capturePage when Desktop omits supportedOperations', async () => {
+    installBridge()
+    window.electronBridge!.externalChrome = { localStatus: vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'legacy', connectedAt: now }], attachment: null,
+    } })) } as never
+    const state = createInitialManagerWsState('session-1')
+    let secondaryRegistration: BrowserHostRegistration | null = null
+    const client = {
+      registerBrowserAutomationHost: vi.fn(() => vi.fn()),
+      registerSecondaryBrowserAutomationHost: vi.fn((registration) => { secondaryRegistration = registration; return vi.fn() }),
+      reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve(); await Promise.resolve() })
+    expect(secondaryRegistration!.capabilities).toMatchObject({
+      supportedOperations: ['status', 'open', 'navigate'],
+      features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+      supportsCapturePage: false,
+    })
+    expect(secondaryRegistration!.capabilities.supportedOperations).not.toContain('snapshot')
   })
 
   it('publishes only the selected local projection and never renders a second host surface', async () => {

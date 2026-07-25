@@ -71,6 +71,17 @@ describe('ExternalChromePanel', () => {
     expect(container.textContent).toContain('External tabs stay in Chrome')
   })
 
+  it('states M4 snapshot/interaction support without claiming physical capture or deferred M3/M4 gates', async () => {
+    await render(bridge())
+    const notice = container.querySelector('[data-testid="external-chrome-capability-notice"]')
+    expect(notice?.textContent).toContain('External Chrome capabilities')
+    expect(notice?.textContent).toContain('snapshot')
+    expect(notice?.textContent).toContain('click, type, press, scroll, evaluate, waitFor')
+    expect(notice?.textContent).toContain('Resize, recording, download artifacts, opening downloaded files, physical page capture/export, and dock/pop-out are not available.')
+    expect(notice?.textContent).not.toMatch(/\bM3\b/)
+    expect(notice?.textContent).not.toMatch(/until M4|snapshots are not available|screenshots\/snapshots/i)
+  })
+
   it('does not carry a numeric tab selection across extension instances', async () => {
     const value = bridge()
     await render(value)

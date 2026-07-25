@@ -330,6 +330,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
           hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
           supportedOperations: externalRuntimeOperations, maxResponseBytes: 1024 * 1024,
           runtimeVersions: { chrome: 'external', extension: externalPayloadVersion },
+          // capturePage/supportsCapturePage are Managed Browser physical capture/export flags,
+          // not the typed snapshot operation advertised in supportedOperations.
           features: {
             resize: false, recording: false, capturePage: false, downloadEvents: false,
             downloadArtifacts: false, downloadOpen: false,
