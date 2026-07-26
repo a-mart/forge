@@ -92,7 +92,7 @@ export const updateWorkGraphToolSchema = Type.Object({
       minLength: 1,
       maxLength: 64,
       pattern: '^(auto|[a-z0-9][a-z0-9-]{0,63})$',
-      description: 'Execution route from the active roster. Prefer auto; name a route only when its current guidance clearly fits. Graph size and fan-in do not justify a stronger route.',
+      description: 'Execution route from the active roster. Auto uses the node kind baseline; name a route when its current guidance clearly fits. Graph size and fan-in do not justify a stronger route.',
     })),
   }, { additionalProperties: false }), {
     minItems: 1,
@@ -115,8 +115,7 @@ export function buildUpdateWorkGraphTool(
       'When risk warrants a distinct implement-then-independent-review handoff, encode that dependency here instead of combining update_plan with manual spawn_agent calls.',
       'For simple requests use no coordination tool; for a short visible checklist use update_plan.',
       'If one bounded planning investigation must happen before the graph is knowable, run and accept that delegation first; do not create speculative downstream nodes.',
-      'Forge automatically dispatches ready non-decision nodes and resolves route=auto from the node kind and active delegation roster.',
-      'Prefer route=auto. Name a route only when its current roster guidance clearly fits this outcome.',
+      'Forge automatically dispatches ready non-decision nodes. Follow the active roster guidance for route selection; graph size and fan-in do not justify a stronger executor.',
       'Worker success moves a node to awaiting_review; personally accept its result, then submit the complete graph with that node completed to release dependents.',
       'Use waiting decision nodes for user gates. Re-submit a blocked node as pending to retry it; Forge uses the prior route capability-escalation target when one was configured.',
     ].join(' '),

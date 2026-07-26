@@ -39,12 +39,17 @@ describe("delegation roster settings", () => {
       defaultRouteId: "fast-builder",
       modeRoutes: {
         general: "fast-builder",
-        plan: "deep-reasoner",
+        plan: "research-analyst",
         "correctness-review": "independent-critic",
         "design-review": "independent-critic",
         research: "research-analyst",
       },
     });
+    expect(settings.rosters[0]?.routes.find((route) => route.routeId === "deep-reasoner"))
+      .toMatchObject({
+        label: "Deep Executor",
+        useWhen: expect.stringContaining("cross-cutting implementation"),
+      });
     expect(settings.rosters[0]?.routes.map((route) => route.routeId)).toEqual([
       "quick-scout",
       "fast-builder",

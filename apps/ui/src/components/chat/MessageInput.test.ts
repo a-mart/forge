@@ -141,6 +141,10 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+  Element.prototype.setPointerCapture ??= vi.fn()
+  Element.prototype.releasePointerCapture ??= vi.fn()
+  Element.prototype.scrollIntoView ??= vi.fn()
   localStorageMock.clear()
   voiceInputMockState.transcribedText = null
   fetchCodexCatalogMock.mockReset()
@@ -491,17 +495,18 @@ describe('MessageInput', () => {
       expect(container.textContent).toContain('custom-model-v2 · Max')
     })
 
-    it('opens the existing Session Model dialog from the compact trigger', async () => {
+    it('opens a compact nested Session Model menu', async () => {
       renderMessageInput({ sessionModelPicker: basePicker })
       await flush()
 
       const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
-      fireEvent.click(trigger)
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       await flush()
 
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).toContain('Session Model')
-      expect(dialog?.textContent).toContain('Main uses the project default model')
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(getByRole(document.body, 'menu').textContent).toContain('Session model')
+      expect(getByRole(document.body, 'menuitem', { name: /Model.*GPT-5.5/ })).toBeTruthy()
+      expect(getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })).toBeTruthy()
       expect(trigger.getAttribute('aria-expanded')).toBe('true')
       expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(pickerApiClient)
     })
@@ -522,22 +527,17 @@ describe('MessageInput', () => {
       await flush()
 
       const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
-      fireEvent.click(trigger)
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       await flush()
 
-      const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
-      expect(dialog).toBeTruthy()
-      const reasoningSelect = Array.from(dialog!.querySelectorAll<HTMLSelectElement>('select'))
-        .find((select) => Array.from(select.options).some((option) => option.value === 'high'))
-      expect(reasoningSelect).toBeTruthy()
-      fireEvent.change(reasoningSelect!, { target: { value: 'high' } })
-      await flush()
-
-      const overrideButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Override')
-      expect(overrideButton).toBeTruthy()
-      expect(overrideButton!.disabled).toBe(false)
-      fireEvent.click(overrideButton!)
+      const reasoningTrigger = getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })
+      fireEvent.pointerMove(reasoningTrigger, {
+        pointerType: 'mouse',
+        clientX: 10,
+        clientY: 10,
+      })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'High' }))
       await flush()
 
       expect(onUpdate).toHaveBeenCalledWith(
@@ -550,33 +550,23 @@ describe('MessageInput', () => {
       expect(getTextarea().value).toBe('Keep this draft unsent')
     })
 
-    it.each([
-      ['Cancel', (_trigger: HTMLElement) => {
-        const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-          .find((button) => button.textContent === 'Cancel')
-        expect(cancel).toBeTruthy()
-        fireEvent.click(cancel!)
-      }],
-      ['Escape', () => {
-        fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
-      }],
-    ])('restores keyboard focus to the pill after closing with %s', async (_path, closeDialog) => {
+    it('restores keyboard focus to the pill after closing with Escape', async () => {
       renderMessageInput({ sessionModelPicker: basePicker })
       await flush()
 
       const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
       trigger.focus()
-      fireEvent.click(trigger)
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       await flush()
 
-      closeDialog(trigger)
+      fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
       await flush()
 
-      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
       expect(document.activeElement).toBe(trigger)
     })
 
-    it('wires Use Project Default through inherit and restores focus', async () => {
+    it('wires Use project default through inherit and restores focus', async () => {
       const onUpdate = vi.fn()
       renderMessageInput({
         sessionModelPicker: {
@@ -589,17 +579,17 @@ describe('MessageInput', () => {
 
       const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
       trigger.focus()
-      fireEvent.click(trigger)
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       await flush()
 
-      const reset = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Use Project Default')
-      expect(reset).toBeTruthy()
-      fireEvent.click(reset!)
+      const reset = getByRole(document.body, 'menuitem', {
+        name: /Use project default.*GPT-5.5/,
+      })
+      fireEvent.click(reset)
       await flush()
 
       expect(onUpdate).toHaveBeenCalledWith('manager-1', 'inherit')
-      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
       expect(document.activeElement).toBe(trigger)
     })
   })
@@ -628,7 +618,7 @@ describe('MessageInput', () => {
       renderMessageInput({ sessionCoordinationPicker: baseCoordinationPicker })
       await flush()
 
-      const trigger = getByLabelText(container, 'Coordination: Delegate, balanced')
+      const trigger = getByLabelText(container, 'Coordination: Delegation-first, balanced')
       expect(trigger).toBeInstanceOf(HTMLButtonElement)
       expect((trigger as HTMLButtonElement).type).toBe('button')
     })
@@ -642,7 +632,7 @@ describe('MessageInput', () => {
       })
       await flush()
 
-      const trigger = getByLabelText(container, 'Coordination: Delegate, balanced')
+      const trigger = getByLabelText(container, 'Coordination: Delegation-first, balanced')
       expect((trigger as HTMLButtonElement).disabled).toBe(true)
     })
   })

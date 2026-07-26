@@ -6,7 +6,7 @@ Forge keeps three decisions separate:
 - **Behavior mode** chooses a worker's role and output contract.
 - **Delegation route** chooses a model, reasoning level, and availability fallback from the selected roster.
 
-The manager-facing `spawn_agent` tool accepts `mode`, `route`, and a required concrete `initialMessage`. `route: auto` uses the selected roster's mapping for that behavior mode; a named route is appropriate only when its `useWhen` guidance clearly fits. Saved custom specialists remain available through `customSpecialist`. Older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
+The manager-facing `spawn_agent` tool accepts `mode`, `route`, and a required concrete `initialMessage`. `route: auto` uses the selected roster's baseline mapping for that behavior mode; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
 
 Work-graph nodes use the same `route: auto | routeId` choice. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest route.
 
@@ -38,7 +38,7 @@ A delegation roster is a selectable catalog of model-backed execution routes. It
 - an optional availability fallback; and
 - an optional capability-escalation route for a later attempt.
 
-Each roster maps behavior modes to automatic routes and has one general default. Most work should use `route: auto`; explicit route selection is the exception.
+Each roster maps behavior modes to automatic baseline routes and has one general default. Use `route: auto` when the baseline fits. Select a named route up front when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; use capability escalation only after an attempt supplies evidence that the selected route was inadequate.
 
 The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Roster changes affect only pending or future attempts.
 

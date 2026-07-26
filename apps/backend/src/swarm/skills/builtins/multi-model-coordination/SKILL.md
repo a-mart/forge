@@ -43,15 +43,15 @@ purpose and graph shape and ask before creating the graph.
 ## Scenario index
 
 - [Parallel exploration](references/parallel-exploration.md) — divide one domain into independent,
-  non-overlapping investigations.
+  non-overlapping questions.
 - [Adversarial review](references/adversarial-review.md) — test a proposal or implementation from
-  distinct failure-oriented lenses.
+  distinct failure-oriented lenses when the goal is to disprove or harden it.
 - [Competing solutions](references/competing-solutions.md) — develop multiple viable approaches to
-  the same problem, then select or combine them.
+  the same problem when the deliverable is a design choice.
 - [Research panel](references/research-panel.md) — investigate an uncertain question through
-  different source strategies or provider families.
+  different source strategies or provider families when the deliverable is an evidence-backed claim.
 - [Thorough code review](references/thorough-code-review.md) — review one change through
-  correctness, security, design, and operational lenses without duplicating ownership.
+  separate correctness, security, design, and operational risk surfaces.
 
 ## Synthesis packet
 

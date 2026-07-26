@@ -1,30 +1,28 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, GitBranch, Loader2 } from 'lucide-react'
 import type { ManagerPosture } from '@forge/protocol'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
 import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { fetchDelegationRosterSettings } from '@/components/settings/specialists-api'
 import { cn } from '@/lib/utils'
 import { resolveSessionModelPickerApiClient } from './session-model-picker-target'
 import type { SessionCoordinationPickerConfig } from './types'
 
-const INHERIT = '__inherit__'
+interface RosterOption {
+  rosterId: string
+  name: string
+}
 
 export function SessionCoordinationPicker({
   config,
@@ -32,46 +30,34 @@ export function SessionCoordinationPicker({
   config: SessionCoordinationPickerConfig
 }) {
   const [open, setOpen] = useState(false)
-  const [posture, setPosture] = useState<string>(INHERIT)
-  const [rosterId, setRosterId] = useState(INHERIT)
-  const [makePostureProjectDefault, setMakePostureProjectDefault] = useState(false)
-  const [makeRosterProjectDefault, setMakeRosterProjectDefault] = useState(false)
-  const [rosters, setRosters] = useState<Array<{ rosterId: string; name: string }>>([])
+  const [rosters, setRosters] = useState<RosterOption[]>([])
   const [globalRosterId, setGlobalRosterId] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const loadRevisionRef = useRef(0)
 
   useEffect(() => {
+    loadRevisionRef.current += 1
     setOpen(false)
+    setRosters([])
+    setGlobalRosterId('')
+    setError(null)
   }, [config.originId, config.sessionAgentId])
 
-  useEffect(() => {
-    if (!open) return
-    setPosture(
-      config.managerPostureOrigin === 'session_override'
-        ? config.managerPosture
-        : INHERIT,
-    )
-    setRosterId(
-      config.delegationRosterOrigin === 'session_override' && config.delegationRosterId
-        ? config.delegationRosterId
-        : INHERIT,
-    )
-    setMakePostureProjectDefault(false)
-    setMakeRosterProjectDefault(false)
-    setError(null)
-
+  const loadRosters = () => {
+    const revision = ++loadRevisionRef.current
     const client = resolveSessionModelPickerApiClient(config.httpClientRef)
     if (!client) {
       setError('Settings connection is unavailable.')
       return
     }
-    let cancelled = false
+
     setLoading(true)
-    fetchDelegationRosterSettings(client)
+    setError(null)
+    void fetchDelegationRosterSettings(client)
       .then((settings) => {
-        if (cancelled) return
+        if (loadRevisionRef.current !== revision) return
         setRosters(settings.rosters.map((roster) => ({
           rosterId: roster.rosterId,
           name: roster.name,
@@ -79,67 +65,84 @@ export function SessionCoordinationPicker({
         setGlobalRosterId(settings.defaultRosterId)
       })
       .catch((loadError) => {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : String(loadError))
-        }
+        if (loadRevisionRef.current !== revision) return
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (loadRevisionRef.current === revision) setLoading(false)
       })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    config.delegationRosterId,
-    config.delegationRosterOrigin,
-    config.httpClientRef,
-    config.managerPosture,
-    config.managerPostureOrigin,
-    open,
-  ])
+  }
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (nextOpen) loadRosters()
+  }
+
+  const projectPosture = config.projectDefaultManagerPosture ?? 'delegation_first'
+  const projectRosterId = config.projectDefaultDelegationRosterId ?? globalRosterId
+  const currentRosterId = config.delegationRosterId ?? projectRosterId
   const currentRosterLabel = useMemo(
-    () => rosters.find((roster) => roster.rosterId === config.delegationRosterId)?.name
-      ?? config.delegationRosterId
-      ?? 'Default roster',
-    [config.delegationRosterId, rosters],
+    () => rosterLabel(rosters, currentRosterId),
+    [currentRosterId, rosters],
   )
-  const postureLabel = config.managerPosture === 'hands_on' ? 'Hands-on' : 'Delegate'
+  const postureLabel = formatPosture(config.managerPosture)
 
-  const save = async () => {
+  const runUpdate = async (update: () => void | Promise<void>) => {
     setSaving(true)
     setError(null)
     try {
-      const projectUpdates = {
-        ...(makePostureProjectDefault && posture !== INHERIT
-          ? { managerPosture: posture as ManagerPosture }
-          : {}),
-        ...(makeRosterProjectDefault && rosterId !== INHERIT
-          ? { delegationRosterId: rosterId }
-          : {}),
-      }
-      if (Object.keys(projectUpdates).length > 0) {
-        await config.onUpdateProjectDefaults(config.profileId, projectUpdates)
-      }
-      await config.onUpdateSession(config.sessionAgentId, {
-        managerPosture: makePostureProjectDefault || posture === INHERIT
-          ? { mode: 'inherit' }
-          : { mode: 'override', value: posture as ManagerPosture },
-        delegationRoster: makeRosterProjectDefault || rosterId === INHERIT
-          ? { mode: 'inherit' }
-          : { mode: 'override', rosterId },
-      })
+      await update()
       setOpen(false)
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : String(updateError))
+      setOpen(true)
     } finally {
       setSaving(false)
     }
   }
 
+  const selectPosture = (value: string) => {
+    const posture = value as ManagerPosture
+    void runUpdate(() => config.onUpdateSession(config.sessionAgentId, {
+      managerPosture: posture === projectPosture
+        ? { mode: 'inherit' }
+        : { mode: 'override', value: posture },
+    }))
+  }
+
+  const selectRoster = (rosterId: string) => {
+    void runUpdate(() => config.onUpdateSession(config.sessionAgentId, {
+      delegationRoster: rosterId === projectRosterId
+        ? { mode: 'inherit' }
+        : { mode: 'override', rosterId },
+    }))
+  }
+
+  const makePostureProjectDefault = () => {
+    const posture = config.managerPosture
+    void runUpdate(async () => {
+      await config.onUpdateProjectDefaults(config.profileId, { managerPosture: posture })
+      await config.onUpdateSession(config.sessionAgentId, {
+        managerPosture: { mode: 'inherit' },
+      })
+    })
+  }
+
+  const makeRosterProjectDefault = () => {
+    if (!currentRosterId) return
+    void runUpdate(async () => {
+      await config.onUpdateProjectDefaults(config.profileId, {
+        delegationRosterId: currentRosterId,
+      })
+      await config.onUpdateSession(config.sessionAgentId, {
+        delegationRoster: { mode: 'inherit' },
+      })
+    })
+  }
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+      <DropdownMenuTrigger asChild>
         <button
           type="button"
           disabled={config.disabled}
@@ -156,112 +159,121 @@ export function SessionCoordinationPicker({
           <span className="truncate">{postureLabel}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
         </button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[min(92vw,380px)] space-y-4">
-        <PopoverHeader>
-          <PopoverTitle>Session coordination</PopoverTitle>
-          <PopoverDescription>
-            Choose who leads the work and which model routes are available to workers.
-          </PopoverDescription>
-        </PopoverHeader>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="flex items-center gap-2 text-xs text-muted-foreground">
+          Coordination
+          {(loading || saving) && <Loader2 className="ml-auto size-3 animate-spin" />}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
 
-        <div className="space-y-2">
-          <Label className="text-xs">Manager posture</Label>
-          <Select
-            value={posture}
-            onValueChange={(value) => {
-              setPosture(value)
-              setMakePostureProjectDefault(false)
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={INHERIT}>
-                Project default · {formatPosture(
-                  config.projectDefaultManagerPosture ?? 'delegation_first',
-                )}
-              </SelectItem>
-              <SelectItem value="delegation_first">Delegation-first</SelectItem>
-              <SelectItem value="hands_on">Hands-on</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Hands-on asks the manager to do bounded work itself, while retaining delegation for
-            parallelism, independence, or missing capability.
-          </p>
-          {posture !== INHERIT && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Checkbox
-                checked={makePostureProjectDefault}
-                onCheckedChange={(checked) => setMakePostureProjectDefault(checked === true)}
-              />
-              Use {formatPosture(posture as ManagerPosture)} by default for this project
-            </label>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label className="text-xs">Delegation roster</Label>
-          <Select
-            value={rosterId}
-            disabled={loading}
-            onValueChange={(value) => {
-              setRosterId(value)
-              setMakeRosterProjectDefault(false)
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={loading ? 'Loading rosters…' : 'Select roster'} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={INHERIT}>
-                Project default · {projectRosterLabel(
-                  rosters,
-                  config.projectDefaultDelegationRosterId ?? globalRosterId,
-                )}
-              </SelectItem>
-              {rosters.map((roster) => (
-                <SelectItem key={roster.rosterId} value={roster.rosterId}>
-                  {roster.name}
-                </SelectItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger disabled={saving}>
+            <span>Manager posture</span>
+            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+              {postureLabel}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-60">
+            <DropdownMenuRadioGroup
+              value={config.managerPosture}
+              onValueChange={selectPosture}
+            >
+              {(['delegation_first', 'hands_on'] as const).map((posture) => (
+                <DropdownMenuRadioItem key={posture} value={posture} disabled={saving}>
+                  <span>{formatPosture(posture)}</span>
+                  {posture === projectPosture && <DefaultSuffix />}
+                </DropdownMenuRadioItem>
               ))}
-            </SelectContent>
-          </Select>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Roster changes apply to future worker attempts. Running attempts keep their selected
-            model and fallback.
-          </p>
-          {rosterId !== INHERIT && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Checkbox
-                checked={makeRosterProjectDefault}
-                onCheckedChange={(checked) => setMakeRosterProjectDefault(checked === true)}
-              />
-              Use this roster by default for this project
-            </label>
-          )}
-        </div>
+            </DropdownMenuRadioGroup>
+            {config.managerPostureOrigin === 'session_override' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={saving}
+                  onSelect={() => void runUpdate(() => config.onUpdateSession(
+                    config.sessionAgentId,
+                    { managerPosture: { mode: 'inherit' } },
+                  ))}
+                >
+                  Use project default
+                </DropdownMenuItem>
+              </>
+            )}
+            {config.managerPosture !== projectPosture && (
+              <DropdownMenuItem disabled={saving} onSelect={makePostureProjectDefault}>
+                Make {postureLabel} project default
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Changing posture replaces the manager runtime before its next turn and may cause one
-          prompt-cache miss. It does not stop workers or alter an active graph.
-        </p>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger disabled={loading || saving || !!error}>
+            <span>Delegation roster</span>
+            <span className="ml-auto max-w-24 truncate text-xs text-muted-foreground">
+              {loading ? 'Loading…' : currentRosterLabel}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-64">
+            <DropdownMenuRadioGroup value={currentRosterId} onValueChange={selectRoster}>
+              {rosters.map((roster) => (
+                <DropdownMenuRadioItem
+                  key={roster.rosterId}
+                  value={roster.rosterId}
+                  disabled={saving}
+                >
+                  <span className="truncate">{roster.name}</span>
+                  {roster.rosterId === projectRosterId && <DefaultSuffix />}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            {config.delegationRosterOrigin === 'session_override' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={saving}
+                  onSelect={() => void runUpdate(() => config.onUpdateSession(
+                    config.sessionAgentId,
+                    { delegationRoster: { mode: 'inherit' } },
+                  ))}
+                >
+                  Use project default
+                </DropdownMenuItem>
+              </>
+            )}
+            {currentRosterId && currentRosterId !== projectRosterId && (
+              <DropdownMenuItem disabled={saving} onSelect={makeRosterProjectDefault}>
+                Make {currentRosterLabel} project default
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={(event) => {
+                event.preventDefault()
+                loadRosters()
+              }}
+            >
+              Could not load rosters · Retry
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={save} disabled={saving || loading} className="gap-1.5">
-            {saving && <Loader2 className="size-3.5 animate-spin" />}
-            Apply
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+function DefaultSuffix() {
+  return (
+    <span className="ml-auto text-[10px] text-muted-foreground">
+      Project default
+    </span>
   )
 }
 
@@ -269,11 +281,8 @@ function formatPosture(posture: ManagerPosture): string {
   return posture === 'hands_on' ? 'Hands-on' : 'Delegation-first'
 }
 
-function projectRosterLabel(
-  rosters: Array<{ rosterId: string; name: string }>,
-  rosterId: string,
-): string {
+function rosterLabel(rosters: RosterOption[], rosterId: string): string {
   return rosters.find((roster) => roster.rosterId === rosterId)?.name
     ?? rosterId
-    ?? 'Global default'
+    ?? 'Default roster'
 }

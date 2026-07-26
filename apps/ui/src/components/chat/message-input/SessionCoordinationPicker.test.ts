@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getAllByRole, getByRole } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, queryByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -58,8 +58,10 @@ function makeConfig(
     profileId: 'project-1',
     managerPosture: 'delegation_first',
     managerPostureOrigin: 'product_default',
+    projectDefaultManagerPosture: 'delegation_first',
     delegationRosterId: 'balanced',
     delegationRosterOrigin: 'global_default',
+    projectDefaultDelegationRosterId: 'balanced',
     onUpdateProjectDefaults: vi.fn(async () => {}),
     onUpdateSession: vi.fn(async () => {}),
     ...overrides,
@@ -75,9 +77,25 @@ function renderPicker(config: SessionCoordinationPickerConfig) {
 
 async function openPicker() {
   flushSync(() => {
-    fireEvent.click(getByRole(container, 'button', { name: /coordination:/i }))
+    fireEvent.pointerDown(getByRole(container, 'button', { name: /coordination:/i }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: 'mouse',
+    })
   })
   await flushAsyncWork()
+}
+
+async function openSubmenu(name: RegExp) {
+  const trigger = getByRole(document.body, 'menuitem', { name })
+  flushSync(() => {
+    fireEvent.pointerMove(trigger, {
+      pointerType: 'mouse',
+      clientX: 10,
+      clientY: 10,
+    })
+  })
+  await new Promise((resolve) => setTimeout(resolve, 150))
 }
 
 async function flushAsyncWork() {
@@ -85,48 +103,72 @@ async function flushAsyncWork() {
 }
 
 describe('SessionCoordinationPicker', () => {
-  it('inherits both controls without changing project defaults', async () => {
+  it('uses a compact menu with one posture item per value and marks the project default', async () => {
+    renderPicker(makeConfig())
+    await openPicker()
+
+    expect(getByRole(document.body, 'menu')).toBeTruthy()
+    expect(queryByRole(document.body, 'button', { name: 'Apply' })).toBeNull()
+    expect(document.body.textContent).not.toContain('prompt-cache miss')
+
+    await openSubmenu(/Manager posture/)
+    expect(getAllByRole(document.body, 'menuitemradio', {
+      name: /Delegation-first/,
+    })).toHaveLength(1)
+    expect(getByRole(document.body, 'menuitemradio', {
+      name: /Delegation-first.*Project default/,
+    })).toBeTruthy()
+  })
+
+  it('applies a session posture override immediately', async () => {
     const config = makeConfig()
     renderPicker(config)
     await openPicker()
+    await openSubmenu(/Manager posture/)
 
-    expect(document.body.textContent).toContain('may cause one prompt-cache miss')
-    expect(document.body.textContent).toContain('Running attempts keep their selected model')
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Apply' }))
+      fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'Hands-on' }))
     })
     await flushAsyncWork()
 
     expect(config.onUpdateProjectDefaults).not.toHaveBeenCalled()
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
-      managerPosture: { mode: 'inherit' },
-      delegationRoster: { mode: 'inherit' },
+      managerPosture: { mode: 'override', value: 'hands_on' },
     })
   })
 
-  it('can make Hands-on the project default without remembering an implicit session choice', async () => {
-    const config = makeConfig()
+  it('returns an overridden posture to the project default without duplicating values', async () => {
+    const config = makeConfig({
+      managerPosture: 'hands_on',
+      managerPostureOrigin: 'session_override',
+    })
     renderPicker(config)
     await openPicker()
+    await openSubmenu(/Manager posture/)
 
-    const [postureSelect] = getAllByRole(document.body, 'combobox')
     flushSync(() => {
-      fireEvent.pointerDown(postureSelect!, {
-        button: 0,
-        ctrlKey: false,
-        pointerType: 'mouse',
-      })
+      fireEvent.click(getByRole(document.body, 'menuitem', { name: 'Use project default' }))
     })
-    flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Hands-on' }))
+    await flushAsyncWork()
+
+    expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
+      managerPosture: { mode: 'inherit' },
     })
+  })
+
+  it('can make the current posture the project default and resume inheritance', async () => {
+    const config = makeConfig({
+      managerPosture: 'hands_on',
+      managerPostureOrigin: 'session_override',
+    })
+    renderPicker(config)
+    await openPicker()
+    await openSubmenu(/Manager posture/)
+
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'checkbox', {
-        name: /Use Hands-on by default for this project/i,
+      fireEvent.click(getByRole(document.body, 'menuitem', {
+        name: 'Make Hands-on project default',
       }))
-    })
-    flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Apply' }))
     })
     await flushAsyncWork()
 
@@ -135,28 +177,26 @@ describe('SessionCoordinationPicker', () => {
     })
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
       managerPosture: { mode: 'inherit' },
-      delegationRoster: { mode: 'inherit' },
     })
   })
 
-  it('keeps explicit session overrides scoped to the session', async () => {
-    const config = makeConfig({
-      managerPosture: 'hands_on',
-      managerPostureOrigin: 'session_override',
-      delegationRosterId: 'diverse',
-      delegationRosterOrigin: 'session_override',
-    })
+  it('selects a roster immediately and marks the project default once', async () => {
+    const config = makeConfig()
     renderPicker(config)
     await openPicker()
+    await openSubmenu(/Delegation roster/)
 
+    expect(getAllByRole(document.body, 'menuitemradio', {
+      name: /Balanced.*Project default/,
+    })).toHaveLength(1)
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Apply' }))
+      fireEvent.click(getByRole(document.body, 'menuitemradio', {
+        name: 'Provider Diverse',
+      }))
     })
     await flushAsyncWork()
 
-    expect(config.onUpdateProjectDefaults).not.toHaveBeenCalled()
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
-      managerPosture: { mode: 'override', value: 'hands_on' },
       delegationRoster: { mode: 'override', rosterId: 'diverse' },
     })
   })

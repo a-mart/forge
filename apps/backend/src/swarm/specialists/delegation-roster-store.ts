@@ -279,9 +279,9 @@ function buildMigratedDelegationRosterSettings(
   const routes = [
     routeFromTier(byTier.get("light"), "quick-scout", "Quick Scout", "Cheap lookups, file discovery, and bounded source gathering."),
     routeFromTier(byTier.get("fast"), "fast-builder", "Fast Builder", "Well-specified implementation and focused fixes with clear acceptance."),
-    routeFromTier(byTier.get("standard"), "research-analyst", "Research Analyst", "Source gathering, ordinary analysis, and balanced synthesis."),
+    routeFromTier(byTier.get("standard"), "research-analyst", "Research Analyst", "Ordinary planning, source gathering, analysis, and balanced synthesis."),
     routeFromTier(byTier.get("deep"), "independent-critic", "Independent Critic", "Correctness, regression, security, and design review where independent judgment matters."),
-    routeFromTier(byTier.get("max"), "deep-reasoner", "Deep Reasoner", "Difficult architecture, ambiguous remediation, and high-risk synthesis."),
+    routeFromTier(byTier.get("max"), "deep-reasoner", "Deep Executor", "Difficult architecture, cross-cutting implementation, ambiguous remediation, and high-risk synthesis."),
   ];
   routes[0]!.capabilityEscalationRouteId = "research-analyst";
   routes[1]!.capabilityEscalationRouteId = "deep-reasoner";
@@ -298,7 +298,7 @@ function buildMigratedDelegationRosterSettings(
       defaultRouteId: "fast-builder",
       modeRoutes: {
         general: "fast-builder",
-        plan: "deep-reasoner",
+        plan: "research-analyst",
         "correctness-review": "independent-critic",
         "design-review": "independent-critic",
         research: "research-analyst",

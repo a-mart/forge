@@ -21,11 +21,11 @@ Behavior describes the job; it does not choose model capability.
 
 A delegation roster is a selectable catalog of model routes. Each route has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional capability-escalation route.
 
-Each roster maps behavior modes to automatic routes. Managers normally use `route: auto` and choose a named route only when its guidance clearly fits. Graph size and fan-in are not reasons to select a stronger route.
+Each roster maps behavior modes to automatic baseline routes. `route: auto` uses the baseline for the selected mode; it does not infer task complexity. Managers choose a named route when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger route.
 
 The selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned route, model, fallback, and escalation target. Availability fallback handles provider/model unavailability. Capability escalation is a separate later attempt and never happens merely because a provider is rate-limited.
 
-Configure definitions and the global default in **Delegation Rosters**. Use the coordination control beside Send to select a session roster or optionally make it the project default.
+Configure definitions and the global default in **Delegation Rosters**. Use the compact coordination menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
 
 ## Global, project, and Collaboration scopes
 

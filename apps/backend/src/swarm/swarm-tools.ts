@@ -445,7 +445,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Delegate one concrete outcome to an independent worker. Choose a behavior mode for the output contract and normally leave route=auto so Forge selects from the active roster. Name a route only when its current roster guidance clearly fits. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
+        "Delegate one concrete outcome to an independent worker. Choose a behavior mode for the output contract and use route=auto for that mode's roster baseline, or name a route whose current guidance clearly fits. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
