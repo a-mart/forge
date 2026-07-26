@@ -28,6 +28,7 @@ import type {
   SecureSessionRequestConfig,
 } from '@/components/chat/secure-session/types'
 import { isSessionModelPickerEligible } from '@/components/chat/message-input/session-model-picker-eligibility'
+import { isSecureSessionRuntimeSupported } from '@/components/index-page/secure-session-runtime-eligibility'
 import { type MessageListHandle } from '@/components/chat/MessageList'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
@@ -133,13 +134,6 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
         agent.archetypeId === 'cortex' ||
         agent.sessionPurpose === 'cortex_review'),
   )
-}
-
-function isSecureSessionRuntimeSupported(
-  agent: AgentDescriptor | null | undefined,
-): boolean {
-  if (!agent || agent.externalThread) return false
-  return agent.model.provider !== 'claude-sdk' && agent.model.provider !== 'cursor-sdk'
 }
 
 type BuilderNavigationState =

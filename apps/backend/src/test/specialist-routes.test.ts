@@ -571,7 +571,7 @@ function validSpecialistPayload(): Record<string, unknown> {
     modelId: "gpt-5.5",
     provider: "openai-codex",
     reasoningLevel: "medium",
-    fallbackModelId: "claude-sonnet-4.5",
+    fallbackModelId: "claude-sonnet-5",
     fallbackProvider: "anthropic",
     fallbackReasoningLevel: "high",
     pinned: true,

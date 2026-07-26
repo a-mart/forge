@@ -86,6 +86,49 @@ describe("collaboration workspace service", () => {
     expect(workspace?.baseAi?.model.modelId).toBe(config.defaultModel.modelId);
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark", "high", "openai-codex", "gpt-5.5", "high"],
+    ["anthropic", "claude-sonnet-4-5-20250929", "medium", "anthropic", "claude-sonnet-5", "medium"],
+    ["claude-sdk", "claude-haiku-4.5", "low", "anthropic", "claude-sonnet-5", "low"],
+  ])("repairs persisted sunset workspace default %s/%s deterministically", async (
+    provider,
+    modelId,
+    thinkingLevel,
+    expectedProvider,
+    expectedModelId,
+    expectedThinkingLevel,
+  ) => {
+    const { config, dbHelpers, service } = await createWorkspaceHarness();
+    const now = new Date().toISOString();
+    dbHelpers.createWorkspace({
+      workspaceId: "workspace-1",
+      backingProfileId: COLLABORATION_PROFILE_ID,
+      displayName: "Workspace",
+      description: null,
+      aiDisplayName: null,
+      createdByUserId: null,
+      defaultModelProvider: provider,
+      defaultModelId: modelId,
+      defaultModelThinkingLevel: thinkingLevel,
+      defaultCwd: config.defaultCwd,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const workspace = await service.ensureDefaultWorkspace();
+
+    expect(workspace?.baseAi?.model).toEqual({
+      provider: expectedProvider,
+      modelId: expectedModelId,
+      thinkingLevel: expectedThinkingLevel,
+    });
+    expect(dbHelpers.getWorkspace("workspace-1")).toMatchObject({
+      defaultModelProvider: expectedProvider,
+      defaultModelId: expectedModelId,
+      defaultModelThinkingLevel: expectedThinkingLevel,
+    });
+  });
+
   it("exports initialized default helpers", () => {
     const defaults = workspaceDefaultsFromConfig({
       defaultModel: {

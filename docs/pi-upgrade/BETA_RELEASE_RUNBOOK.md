@@ -59,7 +59,7 @@ Start records the **actual TCP listener PID**, validates wrapper ancestry + nonc
 ## Packaging / Electron
 
 - Pi family (`pi-ai`, `pi-coding-agent`, `pi-agent-core`, `pi-tui`) is a hard singleton: skew fails closed.
-- Non-Pi multi-version deps (for example `@anthropic-ai/sdk` for Claude Agent SDK `^0.80.0` vs Pi `0.91.1`) are staged as nested installs. Flat staging must never warn-and-discard incompatible versions.
+- Non-Pi multi-version dependencies are staged as nested installs. Flat staging must never warn-and-discard incompatible versions.
 - Exported validators: `assertPiFamilySingletonManifests`, `validateStagedPiSingletonRuntime`, `validatePackagedRuntimePreflight`.
 
 ## Windows trust

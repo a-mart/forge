@@ -1057,7 +1057,7 @@ function createHarness() {
       PROFILE_A,
       "/workspace-a",
       "assignment-unsupported",
-      "claude-sdk",
+      "cursor-sdk",
     )],
     ["manager-b", managerDescriptor("manager-b", "profile-b", "/workspace-b")],
     ["worker-b1", workerDescriptor(

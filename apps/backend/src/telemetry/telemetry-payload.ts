@@ -218,7 +218,7 @@ export async function extractAuthMethodsConfigured(config: SwarmConfig): Promise
   try {
     const availability = await getManagedModelProviderCredentialAvailability(config)
     return Array.from(availability.entries())
-      .filter(([provider, isConfigured]) => isConfigured && provider !== "claude-sdk")
+      .filter(([, isConfigured]) => isConfigured)
       .map(([provider]) => provider)
       .sort()
   } catch {

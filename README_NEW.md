@@ -46,9 +46,7 @@ Download the installer from [**GitHub Releases**](https://github.com/a-mart/forg
 
 No dependencies required. The desktop app bundles everything and auto-updates.
 
-On first launch, sign in with your **OpenAI**, **Anthropic**, or **Claude SDK** account in Settings. Then create a project, point it at a directory, and start chatting.
-
-> Claude SDK uses Claude Code CLI OAuth and does not require an API key.
+On first launch, sign in with your **OpenAI** or **Anthropic** account in Settings. Then create a project, point it at a directory, and start chatting.
 
 ### From Source
 

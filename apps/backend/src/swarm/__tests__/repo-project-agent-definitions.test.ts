@@ -72,6 +72,63 @@ describe("repo project agent definitions", () => {
     expect(inventory.definitions[0].config.model).toEqual(inventory.items[0].recommendedModel);
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+  ])("rejects retired exact project-agent model %s/%s", async (provider, modelId) => {
+    const root = await makeTempDir("forge-repo-pa-retired-model-");
+    const definitionDir = join(root, "retired-model-agent");
+    await mkdir(definitionDir, { recursive: true });
+    await writeFile(
+      join(definitionDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        handle: "retired-model-agent",
+        whenToUse: "Legacy model",
+        model: { provider, modelId, thinkingLevel: "medium" },
+      }),
+      "utf-8",
+    );
+    await writeFile(join(definitionDir, "prompt.md"), "Do work.\n", "utf-8");
+
+    const inventory = await scanRepoProjectAgentDefinitions(root);
+
+    expect(inventory.items[0]).toMatchObject({
+      status: "invalid",
+      problems: [expect.objectContaining({ code: "model_retired" })],
+    });
+    expect(inventory.definitions).toHaveLength(0);
+  });
+
+  it("fails closed with remediation without rewriting a user-authored Claude SDK model", async () => {
+    const root = await makeTempDir("forge-repo-pa-claude-sdk-");
+    const definitionDir = join(root, "sdk-agent");
+    await mkdir(definitionDir, { recursive: true });
+    await writeFile(
+      join(definitionDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        handle: "sdk-agent",
+        whenToUse: "Legacy SDK model",
+        model: { provider: "claude-sdk", modelId: "claude-opus-4-7", thinkingLevel: "high" },
+      }),
+      "utf-8",
+    );
+    await writeFile(join(definitionDir, "prompt.md"), "Do work.\n", "utf-8");
+
+    const inventory = await scanRepoProjectAgentDefinitions(root);
+
+    expect(inventory.items[0]).toMatchObject({
+      status: "invalid",
+      recommendedModel: { provider: "claude-sdk", modelId: "claude-opus-4-7", thinkingLevel: "high" },
+      problems: [expect.objectContaining({
+        code: "model_retired",
+        message: expect.stringContaining("Choose a native Anthropic model"),
+      })],
+    });
+    expect(inventory.definitions).toHaveLength(0);
+  });
+
   it("includes invalid entries with diagnostics instead of failing the scan", async () => {
     const root = await makeTempDir("forge-repo-pa-invalid-");
     const validDir = join(root, "valid-agent");

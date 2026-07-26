@@ -142,7 +142,6 @@ beforeEach(() => {
           providerAvailability: {
             'openai-codex': true,
             'anthropic': true,
-            'claude-sdk': true,
             'xai': true,
           },
         }),
@@ -268,7 +267,7 @@ describe('IndexPage create project model selection', () => {
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
 
     // Exact model names from the catalog (not family display names)
-    const allProvidersAvailable = { 'openai-codex': true, 'anthropic': true, 'claude-sdk': true, 'xai': true }
+    const allProvidersAvailable = { 'openai-codex': true, 'anthropic': true, 'xai': true }
     const expectedRows = buildManagerModelRows('create', {}, allProvidersAvailable)
       .filter((r) => !r.unavailableReason)
       .map((r) => r.displayName)

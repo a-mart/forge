@@ -275,13 +275,37 @@ describe("SwarmAgentLifecycleService", () => {
     });
   });
 
-  it("resolveSpawnModelWithCapacityFallback reroutes to the next OpenAI Codex model when the primary is blocked", () => {
+  it("resolveSpawnModel rejects sunset model IDs and the removed Spark preset alias", () => {
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions());
+    const fallback = { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" };
+
+    expect(() => svc.resolveSpawnModel({
+      agentId: "spark-worker",
+      modelId: "gpt-5.3-codex-spark",
+    } satisfies SpawnAgentInput, fallback)).toThrow("retired model");
+    expect(() => svc.resolveSpawnModel({
+      agentId: "spark-alias-worker",
+      model: "pi-codex-spark",
+    } satisfies SpawnAgentInput, fallback)).toThrow("spawn_agent.model must be one of");
+
+    const anthropicFallback = { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "medium" };
+    expect(() => svc.resolveSpawnModel({
+      agentId: "sonnet-worker",
+      modelId: "claude-sonnet-4.5",
+    } satisfies SpawnAgentInput, anthropicFallback)).toThrow("retired model");
+    expect(() => svc.resolveSpawnModel({
+      agentId: "haiku-worker",
+      modelId: "claude-haiku-4-5-20251001",
+    } satisfies SpawnAgentInput, anthropicFallback)).toThrow("retired model");
+  });
+
+  it("resolveSpawnModelWithCapacityFallback reroutes between adjacent supported OpenAI Codex models", () => {
     const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
-    const key = buildModelCapacityBlockKey("openai-codex", "gpt-5.3-codex-spark");
+    const key = buildModelCapacityBlockKey("openai-codex", "gpt-5.6-sol");
     expect(key).toBeDefined();
     modelCapacityBlocks.set(key!, {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-5.6-sol",
       blockedUntilMs: Date.now() + 60_000
     });
 
@@ -293,10 +317,10 @@ describe("SwarmAgentLifecycleService", () => {
 
     const out = svc.resolveSpawnModelWithCapacityFallback({
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-5.6-sol",
       thinkingLevel: "medium"
     });
-    expect(out.modelId).toBe("gpt-5.5");
+    expect(out.modelId).toBe("gpt-5.6-terra");
   });
 
   it("resolveSpawnModelWithCapacityFallback normalizes Sol max/ultra when rerouting to GPT-5.6 variants", () => {
@@ -358,7 +382,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-1",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const svc = new SwarmAgentLifecycleService(
@@ -480,7 +504,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -545,7 +569,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-failure",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -615,7 +639,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-stale",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -675,7 +699,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-replaced",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -725,7 +749,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-before-attach",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
@@ -786,7 +810,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-concurrent-before-attach",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
@@ -832,7 +856,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
@@ -890,7 +914,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-all-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
@@ -948,7 +972,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-delete-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {
@@ -994,7 +1018,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-concurrent-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {

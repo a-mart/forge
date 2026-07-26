@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  assembleClaudePrompt,
+  assembleRuntimePrompt,
   buildMemoryComposite,
   discoverAgentsMd
-} from "../claude-prompt-assembler.js";
+} from "../runtime-prompt-assembler.js";
 
-describe("claude-prompt-assembler", () => {
+describe("runtime-prompt-assembler", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-04T12:34:56.000Z"));
@@ -79,7 +79,7 @@ describe("claude-prompt-assembler", () => {
     await writeFile(profileMemoryPath, "profile fact\n", "utf8");
     await writeFile(sessionMemoryPath, "session fact\n", "utf8");
 
-    const prompt = await assembleClaudePrompt({
+    const prompt = await assembleRuntimePrompt({
       basePrompt: "You are the manager.",
       profileMemoryPath,
       sessionMemoryPath,
@@ -124,7 +124,7 @@ describe("claude-prompt-assembler", () => {
   });
 
   it("does not inject the project-agent directory for workers", async () => {
-    const prompt = await assembleClaudePrompt({
+    const prompt = await assembleRuntimePrompt({
       basePrompt: "You are a worker.",
       role: "worker",
       agentId: "worker-1",

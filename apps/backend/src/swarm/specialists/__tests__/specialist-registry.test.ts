@@ -650,6 +650,39 @@ describe("specialist-registry", () => {
     expect(reloaded.find((config) => config.tier === "fast")?.modelId).toBe("updated-support-model");
   });
 
+  it("normalizes persisted Claude SDK tier models but rejects new SDK tier selections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(join(sharedDir, "tier-configs.json"), JSON.stringify({
+      tiers: [{
+        ...DEFAULT_TIER_CONFIGS.fast,
+        provider: "claude-sdk",
+        modelId: "claude-haiku-4.5",
+        reasoningLevel: "xhigh",
+        fallbackProvider: "claude-sdk",
+        fallbackModelId: "claude-opus-4-7",
+        fallbackReasoningLevel: "xhigh",
+      }],
+    }), "utf8");
+
+    const loaded = await resolveTierConfigs(dataDir);
+    expect(loaded.find((config) => config.tier === "fast")).toMatchObject({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      reasoningLevel: "high",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-opus-4-7",
+      fallbackReasoningLevel: "high",
+    });
+    await expect(saveTierConfigs(dataDir, [{
+      ...DEFAULT_TIER_CONFIGS.fast,
+      provider: "claude-sdk",
+      modelId: "claude-opus-4-7",
+    }])).rejects.toThrow("Claude SDK has been retired");
+  });
+
   it("coerces webSearch to false when saving a non-Grok specialist", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
@@ -1476,6 +1509,44 @@ describe("specialist-registry", () => {
       available: false,
       availabilityCode: "invalid_model",
       availabilityMessage: "Unknown fallbackModelId: nonexistent-model",
+    });
+  });
+
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+    ["claude-sdk", "claude-haiku-4-5-20251001"],
+  ])("marks specialist unavailable for retired exact model %s/%s", async (provider, modelId) => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    process.env.FORGE_DATA_DIR = dataDir;
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(
+      join(sharedDir, "retired-worker.md"),
+      [
+        "---",
+        "displayName: Retired Worker",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Legacy tasks",
+        `provider: ${provider}`,
+        `modelId: ${modelId}`,
+        "---",
+        "",
+        "Worker body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const roster = await resolveRoster("profile-a", dataDir);
+
+    expect(roster[0]).toMatchObject({
+      available: false,
+      availabilityCode: "invalid_model",
+      availabilityMessage: provider === "claude-sdk"
+        ? expect.stringContaining("Claude SDK has been retired")
+        : `Unknown modelId: ${modelId}`,
     });
   });
 

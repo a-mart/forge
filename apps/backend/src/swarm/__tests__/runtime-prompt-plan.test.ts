@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { planClaudeRuntimePrompt, planCursorSdkRuntimePrompt, planPiRuntimePrompt } from "../runtime/runtime-prompt-plan.js";
+import { planCursorSdkRuntimePrompt, planPiRuntimePrompt } from "../runtime/runtime-prompt-plan.js";
 import type { AgentDescriptor } from "../types.js";
 
 function descriptor(role: AgentDescriptor["role"]): Pick<AgentDescriptor, "role"> {
@@ -68,48 +68,8 @@ describe("runtime prompt planning", () => {
     });
   });
 
-  describe("planClaudeRuntimePrompt", () => {
-    it("keeps the base prompt unchanged and returns no startup override without recovery context", () => {
-      const plan = planClaudeRuntimePrompt({ systemPrompt: "Base Claude prompt" });
-
-      expect(plan.systemPrompt).toBe("Base Claude prompt");
-      expect(plan.startupSystemPromptOverride).toBeUndefined();
-      expect(plan.skipInitialSessionResume).toBeUndefined();
-    });
-
-    it("returns a startup-only override containing the base prompt and recovery block", () => {
-      const plan = planClaudeRuntimePrompt({
-        systemPrompt: "Base Claude prompt",
-        startupRecoveryContext: {
-          reason: "model_change",
-          blockText: "# Recovered Forge Conversation Context\nRecovered history",
-        },
-      });
-
-      expect(plan.systemPrompt).toBe("Base Claude prompt");
-      expect(plan.startupSystemPromptOverride).toBe(
-        "Base Claude prompt\n\n# Recovered Forge Conversation Context\nRecovered history"
-      );
-      expect(plan.skipInitialSessionResume).toBe(true);
-    });
-
-    it("preserves skipInitialSessionResume for an empty recovery context without adding an override", () => {
-      const plan = planClaudeRuntimePrompt({
-        systemPrompt: "Base Claude prompt",
-        startupRecoveryContext: {
-          reason: "model_change",
-          blockText: "",
-        },
-      });
-
-      expect(plan.systemPrompt).toBe("Base Claude prompt");
-      expect(plan.startupSystemPromptOverride).toBeUndefined();
-      expect(plan.skipInitialSessionResume).toBe(true);
-    });
-  });
-
   describe("planCursorSdkRuntimePrompt", () => {
-    it("mirrors Claude startup recovery override and skip-resume semantics", () => {
+    it("applies startup recovery override and skip-resume semantics", () => {
       const plan = planCursorSdkRuntimePrompt({
         systemPrompt: "Base Cursor prompt",
         startupRecoveryContext: {

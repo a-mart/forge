@@ -171,47 +171,7 @@ describe("buildModelChangeRecoveryContext", () => {
     expect(result.bodyText).not.toContain("secret output");
   });
 
-  it("prepends the Claude compaction summary when the source runtime is Claude SDK", () => {
-    const entries: ConversationEntryEvent[] = [
-      {
-        type: "conversation_message",
-        agentId: "manager-1",
-        role: "user",
-        text: "Continue the migration",
-        timestamp: "2026-04-07T10:00:00.000Z",
-        source: "user_input"
-      },
-      {
-        type: "conversation_message",
-        agentId: "manager-1",
-        role: "assistant",
-        text: "I am on it.",
-        timestamp: "2026-04-07T10:00:05.000Z",
-        source: "speak_to_user"
-      }
-    ];
-
-    const result = buildModelChangeRecoveryContext({
-      descriptor,
-      entries,
-      sourceModel: {
-        provider: "claude-sdk",
-        runtimeKind: "claude"
-      },
-      latestClaudeCompactionSummary: "## Current Objective\nKeep the migration non-destructive.",
-      existingPrompt: "Base system prompt",
-      modelContextWindow: 200_000
-    });
-
-    expect(result.claudeSummaryIncluded).toBe(true);
-    expect(result.claudeSummaryText).toContain("[Claude compaction summary]");
-    expect(result.claudeSummaryText).toContain("## Current Objective");
-    expect(result.bodyText.indexOf("[Claude compaction summary]")).toBeLessThan(
-      result.bodyText.indexOf("User: Continue the migration")
-    );
-  });
-
-  it("bounds output while keeping the Claude summary and newest transcript content", () => {
+  it("bounds output while keeping the newest canonical transcript content", () => {
     const entries: ConversationEntryEvent[] = Array.from({ length: 18 }, (_, index) => ({
       type: "conversation_message",
       agentId: "manager-1",
@@ -224,23 +184,15 @@ describe("buildModelChangeRecoveryContext", () => {
     const result = buildModelChangeRecoveryContext({
       descriptor,
       entries,
-      sourceModel: {
-        provider: "claude-sdk",
-        runtimeKind: "claude"
-      },
-      latestClaudeCompactionSummary: "## Summary\n" + "Older Claude context ".repeat(80),
       existingPrompt: "y".repeat(1_200),
       modelContextWindow: 6_000,
       hasPinnedContent: true
     });
 
     expect(result.blockText).toBeDefined();
-    expect(result.claudeSummaryIncluded).toBe(true);
     expect(result.truncated).toBe(true);
-    expect(result.bodyText).toContain("[Claude compaction summary]");
     expect(result.bodyText).toContain("Older recovered transcript omitted due to context budget");
     expect(result.bodyText).toContain("message 17");
-    expect(result.claudeSummaryText).toContain("Claude compaction summary truncated to fit context budget");
     expect(result.bodyText).not.toContain("message 0");
     expect(result.approxTokenCount).toBeLessThanOrEqual(Math.ceil(result.blockText!.length / 4));
   });

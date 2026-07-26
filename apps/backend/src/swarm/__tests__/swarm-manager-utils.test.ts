@@ -173,7 +173,8 @@ describe("buildModelCapacityBlockKey / resolveNextCapacityFallbackModelId", () =
   });
 
   it.each([
-    ["openai-codex", "gpt-5.3-codex-spark", "gpt-5.5"],
+    ["openai-codex", "gpt-5.3-codex-spark", undefined],
+    ["openai-codex", "gpt-5.6-sol", "gpt-5.6-terra"],
     ["openai-codex", "gpt-5.5", "gpt-5.4"],
     ["openai-codex", "gpt-5.4", undefined],
     ["anthropic", "gpt-5.5", undefined],
@@ -710,6 +711,21 @@ describe("resolveModel", () => {
     });
     expect(model).toMatchObject({ id: "gpt-5.5" });
     expect(model).not.toBe(fallback);
+  });
+
+  it("rejects retired models before registry lookup or default fallback", () => {
+    const registry = {
+      find: vi.fn(() => ({ id: "retired-upstream-hit" })),
+      getAll: vi.fn(() => [{ id: "unsafe-default" }]),
+    } as unknown as ModelRegistry;
+
+    expect(() => resolveModel(registry, {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      thinkingLevel: "medium",
+    })).toThrow("retired model");
+    expect(registry.find).not.toHaveBeenCalled();
+    expect(registry.getAll).not.toHaveBeenCalled();
   });
 
   it("falls back to getAll()[0] when find and catalog miss", () => {

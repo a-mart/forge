@@ -14,6 +14,7 @@ import {
   inferProviderFromModelId,
   isSwarmReasoningLevel,
   normalizeCursorSdkThinkingLevel,
+  normalizePersistedSwarmModelDescriptor,
   resolveModelDescriptorFromPreset,
   resolveRemovedSwarmModelPresetAlias,
 } from "../../model-presets.js";
@@ -26,6 +27,10 @@ import {
   getSharedSpecialistsDir,
 } from "../../specialists/specialist-paths.js";
 import { supportsSecureRuntimeProvider } from "../../secure-sessions/runtime/secure-runtime-provider-policy.js";
+import {
+  assertClaudeSdkProviderNotSelected,
+  CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE,
+} from "../../catalog/legacy-claude-sdk-model.js";
 
 const FRONTMATTER_BLOCK_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -544,7 +549,6 @@ export function generateTierLensRosterBlock(
 function compactProvider(provider: string): string {
   if (provider === "openai-codex") return "codex";
   if (provider === "cursor-sdk") return "cursor";
-  if (provider === "claude-sdk") return "claude-sdk";
   return provider;
 }
 
@@ -667,7 +671,7 @@ export async function resolveTierConfigs(dataDir: string): Promise<TierConfig[]>
         : [];
 
   for (const raw of rawConfigs) {
-    const config = parseTierConfig(raw);
+    const config = parseTierConfig(raw, true);
     if (config) {
       byTier.set(config.tier, config);
     }
@@ -1091,6 +1095,9 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
   }
 
   const provider = data.provider?.trim();
+  if (provider) {
+    assertClaudeSdkProviderNotSelected(provider, "provider");
+  }
   const reasoningLevel = data.reasoningLevel?.trim();
   if (reasoningLevel !== undefined && reasoningLevel.length > 0 && !isSwarmReasoningLevel(reasoningLevel)) {
     throw new Error("reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra");
@@ -1098,6 +1105,9 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
 
   const normalizedFallbackModelId = fallbackModelId && fallbackModelId.length > 0 ? fallbackModelId : undefined;
   const fallbackProvider = data.fallbackProvider?.trim();
+  if (fallbackProvider) {
+    assertClaudeSdkProviderNotSelected(fallbackProvider, "fallbackProvider");
+  }
 
   const fallbackReasoningLevel = data.fallbackReasoningLevel?.trim();
   if (
@@ -1229,7 +1239,7 @@ function cloneTierConfigs(configs: readonly TierConfig[]): TierConfig[] {
   return configs.map((config) => ({ ...config }));
 }
 
-function parseTierConfig(value: unknown): TierConfig | undefined {
+function parseTierConfig(value: unknown, persisted = false): TierConfig | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -1237,32 +1247,60 @@ function parseTierConfig(value: unknown): TierConfig | undefined {
   const raw = value as Record<string, unknown>;
   const tier = typeof raw.tier === "string" ? parseEffortTier(raw.tier) : undefined;
   const fallback = tier ? DEFAULT_TIER_CONFIGS[tier] : undefined;
-  const modelId = typeof raw.modelId === "string" ? raw.modelId.trim() : "";
-  const provider = typeof raw.provider === "string" ? raw.provider.trim() : "";
+  let modelId = typeof raw.modelId === "string" ? raw.modelId.trim() : "";
+  let provider = typeof raw.provider === "string" ? raw.provider.trim() : "";
   if (!tier || !fallback || !modelId || !provider) {
     return undefined;
   }
 
-  const reasoningLevel = typeof raw.reasoningLevel === "string"
+  let reasoningLevel = typeof raw.reasoningLevel === "string"
     ? normalizeLegacyReasoningLevel(raw.reasoningLevel)
     : undefined;
   if (reasoningLevel && !isSwarmReasoningLevel(reasoningLevel)) {
     return undefined;
   }
 
-  const fallbackModelId = typeof raw.fallbackModelId === "string" && raw.fallbackModelId.trim().length > 0
+  if (persisted) {
+    const normalizedModel = normalizePersistedSwarmModelDescriptor({ provider, modelId, thinkingLevel: reasoningLevel });
+    if (normalizedModel) {
+      provider = normalizedModel.provider;
+      modelId = normalizedModel.modelId;
+      if (reasoningLevel) reasoningLevel = normalizedModel.thinkingLevel;
+    }
+  } else {
+    assertClaudeSdkProviderNotSelected(provider, "tier config provider");
+  }
+
+  let fallbackModelId = typeof raw.fallbackModelId === "string" && raw.fallbackModelId.trim().length > 0
     ? raw.fallbackModelId.trim()
     : undefined;
-  const fallbackProvider = typeof raw.fallbackProvider === "string" && raw.fallbackProvider.trim().length > 0
+  let fallbackProvider = typeof raw.fallbackProvider === "string" && raw.fallbackProvider.trim().length > 0
     ? raw.fallbackProvider.trim()
     : fallbackModelId
       ? inferProviderFromModelId(fallbackModelId) ?? undefined
       : undefined;
-  const fallbackReasoningLevel = typeof raw.fallbackReasoningLevel === "string"
+  let fallbackReasoningLevel = typeof raw.fallbackReasoningLevel === "string"
     ? normalizeLegacyReasoningLevel(raw.fallbackReasoningLevel)
     : undefined;
   if (fallbackReasoningLevel && !isSwarmReasoningLevel(fallbackReasoningLevel)) {
     return undefined;
+  }
+
+  if (fallbackModelId && fallbackProvider) {
+    if (persisted) {
+      const normalizedFallback = normalizePersistedSwarmModelDescriptor({
+        provider: fallbackProvider,
+        modelId: fallbackModelId,
+        thinkingLevel: fallbackReasoningLevel,
+      });
+      if (normalizedFallback) {
+        fallbackProvider = normalizedFallback.provider;
+        fallbackModelId = normalizedFallback.modelId;
+        if (fallbackReasoningLevel) fallbackReasoningLevel = normalizedFallback.thinkingLevel;
+      }
+    } else {
+      assertClaudeSdkProviderNotSelected(fallbackProvider, "tier config fallbackProvider");
+    }
   }
 
   return {
@@ -1407,7 +1445,13 @@ function toResolvedSpecialistDefinition(options: {
   let availabilityCode: "ok" | "invalid_model" = "ok";
   let availabilityMessage: string | undefined;
 
-  if (!knownPrimaryModel) {
+  if (provider?.trim().toLowerCase() === "claude-sdk") {
+    availabilityCode = "invalid_model";
+    availabilityMessage = CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE;
+  } else if (fallbackProvider?.trim().toLowerCase() === "claude-sdk") {
+    availabilityCode = "invalid_model";
+    availabilityMessage = `Fallback unavailable: ${CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE}`;
+  } else if (!knownPrimaryModel) {
     availabilityCode = "invalid_model";
     availabilityMessage = `Unknown modelId: ${options.frontmatter.modelId}`;
   } else if (!knownFallbackModel && options.frontmatter.fallbackModelId) {

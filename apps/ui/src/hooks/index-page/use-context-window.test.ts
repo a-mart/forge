@@ -25,15 +25,15 @@ function makeAgent(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
     agentId: 'agent-1',
     managerId: 'agent-1',
-    displayName: 'Claude SDK Worker',
+    displayName: 'Anthropic Worker',
     role: 'worker',
     status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     cwd: '/tmp/project',
     model: {
-      provider: 'claude-sdk',
-      modelId: 'claude-sonnet-4-5-20250929',
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-5',
       thinkingLevel: 'medium',
     },
     sessionFile: '/tmp/project/session.jsonl',
@@ -62,8 +62,8 @@ describe('contextWindowForAgent', () => {
 
     expect(contextWindowForAgent(makeAgent())).toBe(200_000)
     expect(getCatalogContextWindowSpy).toHaveBeenCalledWith(
-      'claude-sonnet-4-5-20250929',
-      'claude-sdk',
+      'claude-sonnet-5',
+      'anthropic',
     )
   })
 })

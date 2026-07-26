@@ -12,7 +12,7 @@ Three things affect the quality and speed of what you get back:
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
 - **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose concrete models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first.
-- **Worker execution policies:** Support, Routine, and Deep each have a model and reasoning level under Settings > Delegation. Policies can use the Pi-proxied Anthropic provider, native Claude SDK provider, or native Cursor SDK provider independently.
+- **Worker execution policies:** Support, Routine, and Deep each have a model and reasoning level under Settings > Delegation. Policies can use the Anthropic or Cursor SDK provider independently.
 - **Fallback models:** Execution policies and direct custom specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
 
 ## Model-specific instructions

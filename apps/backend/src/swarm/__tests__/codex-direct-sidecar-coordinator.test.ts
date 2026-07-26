@@ -305,7 +305,7 @@ function createWorkerDescriptor(agentId: string, managerId: string): AgentDescri
   return {
     ...createSidecarDescriptor(agentId, managerId),
     displayName: "Worker",
-    model: { provider: "anthropic", modelId: "claude-sonnet-4-5", runtime: "pi" },
+    model: { provider: "anthropic", modelId: "claude-sonnet-5", runtime: "pi" },
     externalThread: undefined,
   };
 }

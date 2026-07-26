@@ -7,7 +7,6 @@ The Authentication pane manages model-provider credentials for the selected Buil
 - **xAI** — A masked API-key row for native Grok models.
 - **OpenRouter** — A masked API-key row for user-added OpenRouter models.
 - **Cursor SDK** — A masked key/token row for Composer 2.5 and Cursor Grok 4.5 sessions when those catalog models are visible. Shared secrets and environment configuration are also supported. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
-- **Claude SDK** — Not a Settings credential row. Run `claude login` to provide the external Claude Code CLI OAuth credentials used by this runtime.
 
 ## Configuring a provider
 
@@ -31,8 +30,8 @@ Provider auth changes propagate by recycling matching idle manager runtimes or d
 
 The current Anthropic and OpenAI pool cards add accounts through OAuth. Select **Add Account**, follow the browser authorization flow, then paste an authorization code or callback URL if prompted. OAuth tokens are stored and refreshed automatically. OpenAI's local credential card is read-only while Forge Auth broker mode is active.
 
-Claude SDK uses the external Claude Code CLI login instead: run `claude login` before selecting a Claude SDK model. If an in-app OAuth flow gets stuck, select **Clear** to reset it and try again.
+Claude models use the Anthropic credentials configured in Forge. Claude Code login credentials are not imported or converted. If an in-app OAuth flow gets stuck, select **Clear** to reset it and try again.
 
 ## Which credential do I need?
 
-You need at least one compatible provider credential to run agents. Choose Anthropic for its Claude models; OpenAI or Forge Auth broker mode for GPT/Codex; xAI for native Grok; OpenRouter for user-added OpenRouter models; or Cursor SDK for its visible catalog models. Use `claude login` when you want the native Claude SDK runtime. Availability still depends on model-catalog visibility and the selected manager or specialist surface.
+You need at least one compatible provider credential to run agents. Choose Anthropic for its Claude models; OpenAI or Forge Auth broker mode for GPT/Codex; xAI for native Grok; OpenRouter for user-added OpenRouter models; or Cursor SDK for its visible catalog models. Availability still depends on model-catalog visibility and the selected manager or specialist surface.

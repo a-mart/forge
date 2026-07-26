@@ -44,12 +44,6 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   settingsManagerApplyOverrides: vi.fn(),
 }));
 
-const claudeRuntimeMockState = vi.hoisted(() => ({
-  constructorArgs: [] as unknown[],
-  createMcpBridge: vi.fn(),
-  constructImpl: undefined as ((options: unknown) => unknown) | undefined,
-}));
-
 const cursorMcpMockState = vi.hoisted(() => ({
   createMcpBridge: vi.fn(async () => ({
     serverName: "forge-swarm-worker-1",
@@ -132,25 +126,12 @@ vi.mock("../session-file-guard.js", () => ({
   openSessionManagerWithSizeGuard: (...args: unknown[]) => sessionFileGuardMockState.openSessionManagerWithSizeGuard(...args),
 }));
 
-vi.mock("../claude-mcp-tool-bridge.js", () => ({
-  createClaudeMcpToolBridge: (...args: unknown[]) => claudeRuntimeMockState.createMcpBridge(...args),
-}));
-
-vi.mock("../claude-agent-runtime.js", () => ({
-  ClaudeAgentRuntime: class {
-    constructor(options: unknown) {
-      claudeRuntimeMockState.constructorArgs.push(options)
-      return claudeRuntimeMockState.constructImpl?.(options) as object | undefined
-    }
-  },
-}));
-
 vi.mock("../runtime/cursor-sdk/cursor-sdk-mcp-tool-bridge.js", () => ({
   createCursorSdkMcpToolBridge: (...args: unknown[]) => cursorMcpMockState.createMcpBridge(...args),
 }));
 
-vi.mock("../claude-prompt-assembler.js", () => ({
-  assembleClaudePrompt: vi.fn(async ({ basePrompt }: { basePrompt: string }) => basePrompt),
+vi.mock("../runtime-prompt-assembler.js", () => ({
+  assembleRuntimePrompt: vi.fn(async ({ basePrompt }: { basePrompt: string }) => basePrompt),
   discoverAgentsMd: vi.fn(async () => []),
 }));
 
@@ -168,8 +149,6 @@ vi.mock("../onboarding-state.js", () => ({
   getOnboardingSnapshot: vi.fn(async () => ({ status: "pending" })),
 }));
 
-import { ClaudeSdkUnavailableError, resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
-import { modelCatalogService } from "../model-catalog-service.js";
 import { savePins } from "../message-pins.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
@@ -351,7 +330,6 @@ function createFactory(
       trustedPiExtensionDirs: [],
       trustedPiSettingsPaths: [],
     }),
-    buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildCursorSdkRuntimeSystemPrompt:
       overrides.buildCursorSdkRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
     mergeRuntimeContextFiles: (base) => base,
@@ -434,30 +412,8 @@ function setupPiModel(provider = "openai-codex", modelId = "gpt-5.4-mini") {
   });
 }
 
-const providerRuntimeCases = [
-  {
-    runtimeName: "Claude SDK",
-    model: {
-      provider: "claude-sdk",
-      modelId: "claude-opus-4-6",
-      thinkingLevel: "high",
-    },
-    setupRuntimeMock: () => undefined,
-    getBridgeToolNames: () => {
-      const tools = claudeRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string }> | undefined;
-      return (tools ?? []).map((tool) => tool.name);
-    },
-  }
-] satisfies Array<{
-  runtimeName: string;
-  model: AgentDescriptor["model"];
-  setupRuntimeMock: () => void;
-  getBridgeToolNames: () => string[];
-}>;
-
 describe("RuntimeFactory", () => {
   beforeEach(() => {
-    resetClaudeSdkLoaderForTests();
     resetCursorSdkLoaderForTests();
     delete process.env.CURSOR_API_KEY;
     piAiMockState.getModel.mockReset();
@@ -476,14 +432,6 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.settingsManagerFromStorage.mockReset();
     piCodingAgentMockState.settingsManagerApplyOverrides.mockReset();
     delete process.env.FORGE_OPENAI_CODEX_TRANSPORT;
-    claudeRuntimeMockState.constructorArgs = [];
-    claudeRuntimeMockState.constructImpl = undefined;
-    claudeRuntimeMockState.createMcpBridge.mockReset();
-    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
-      serverName: "forge-test",
-      server: {},
-      allowedTools: [],
-    });
     cursorMcpMockState.createMcpBridge.mockReset();
     cursorMcpMockState.createMcpBridge.mockResolvedValue({
       serverName: "forge-swarm-worker-1",
@@ -508,6 +456,38 @@ describe("RuntimeFactory", () => {
     await expect(factory.createRuntimeForDescriptor(descriptor, "prompt")).rejects.toThrow(
       "Cursor ACP has been removed",
     );
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unmapped legacy Claude SDK descriptor before runtime dispatch", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: { provider: "claude-sdk", modelId: "claude-future-unknown", thinkingLevel: "high" },
+    });
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "prompt")).rejects.toThrow(
+      "Choose a native Anthropic model",
+    );
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+    expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+    ["anthropic", "claude-haiku-4-5-20251001"],
+    ["openrouter", "anthropic/claude-sonnet-4.5"],
+    ["openrouter", "~anthropic/claude-haiku-latest"],
+    ["openrouter", "openai/gpt-5.3-codex-spark"],
+  ])("rejects retired runtime model %s/%s before provider dispatch", async (provider, modelId) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: { provider, modelId, thinkingLevel: "medium" },
+    });
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "prompt")).rejects.toThrow("retired model");
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
@@ -802,37 +782,6 @@ describe("RuntimeFactory", () => {
     }));
   });
 
-  it("surfaces Claude SDK installation guidance when the native runtime is unavailable", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-
-    setClaudeSdkImporterForTests(
-      vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { code: "ERR_MODULE_NOT_FOUND" }))
-    );
-    claudeRuntimeMockState.constructImpl = () => {
-      throw new ClaudeSdkUnavailableError('Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.', {
-        code: 'ERR_MODULE_NOT_FOUND',
-      })
-    }
-
-    const factory = createFactory(rootDir);
-
-    await expect(
-      factory.createRuntimeForDescriptor(
-        createDescriptor(rootDir, {
-          model: {
-            provider: "claude-sdk",
-            modelId: "claude-opus-4-6",
-            thinkingLevel: "high",
-          },
-        }),
-        "system prompt"
-      )
-    ).rejects.toThrow(
-      'Install the Claude Agent SDK or switch this agent to the Pi-proxied anthropic/claude-opus-4-6 variant.'
-    );
-  });
-
   it("adds create_session tool for capable project agents in manager runtime tools", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
@@ -873,49 +822,6 @@ describe("RuntimeFactory", () => {
     expect(toolNames).toContain("create_session");
     expect(toolNames).not.toContain("create_project_agent");
   });
-
-  it.each(providerRuntimeCases)(
-    "passes Agent Creator tools through the $runtimeName MCP bridge provider path",
-    async ({ model, setupRuntimeMock, getBridgeToolNames }) => {
-      const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-      await mkdir(rootDir, { recursive: true });
-      setupRuntimeMock();
-
-      const descriptor = createManagerDescriptor(rootDir, {
-        model,
-        sessionPurpose: "agent_creator",
-      });
-      const factory = createFactory(rootDir);
-
-      await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1);
-
-      const toolNames = getBridgeToolNames();
-      expect(toolNames).toContain("create_project_agent");
-      expect(toolNames).toContain("speak_to_user");
-    }
-  );
-
-  it.each(providerRuntimeCases)(
-    "passes Cortex-filtered tools through the $runtimeName MCP bridge provider path",
-    async ({ model, setupRuntimeMock, getBridgeToolNames }) => {
-      const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-      await mkdir(rootDir, { recursive: true });
-      setupRuntimeMock();
-
-      const descriptor = createManagerDescriptor(rootDir, {
-        model,
-        archetypeId: "cortex",
-      });
-      const factory = createFactory(rootDir);
-
-      await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1);
-
-      const toolNames = getBridgeToolNames();
-      expect(toolNames).toContain("spawn_agent");
-      expect(toolNames).not.toContain("list_agents");
-      expect(toolNames).not.toContain("kill_agent");
-    }
-  );
 
   it("throws when the requested Pi model is unavailable instead of falling back", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
@@ -1880,45 +1786,6 @@ describe("RuntimeFactory", () => {
     expect(runtime.getSystemPrompt?.()).toBe("Base system prompt");
   });
 
-  it("passes startup-only recovery overrides to the Claude runtime while preserving the base prompt", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-
-    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
-      serverName: "forge-test",
-      server: {},
-      allowedTools: [],
-    });
-
-    const factory = createFactory(rootDir);
-    const startupRecoveryContext = {
-      reason: "model_change" as const,
-      blockText: "# Recovered Forge Conversation Context\nRecovered history"
-    };
-
-    await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
-        model: {
-          provider: "claude-sdk",
-          modelId: "claude-opus-4-6",
-          thinkingLevel: "high",
-        },
-      }),
-      "Base Claude prompt",
-      1,
-      { startupRecoveryContext }
-    );
-
-    const claudeOptions = claudeRuntimeMockState.constructorArgs.at(-1) as {
-      systemPrompt: string;
-      startupSystemPromptOverride?: string;
-      skipInitialSessionResume?: boolean;
-    };
-    expect(claudeOptions.systemPrompt).toBe("Base Claude prompt");
-    expect(claudeOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
-    expect(claudeOptions.skipInitialSessionResume).toBe(true);
-  });
-
   it("passes startup-only recovery overrides to the Cursor SDK runtime while preserving the base prompt", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
@@ -1982,197 +1849,6 @@ describe("RuntimeFactory", () => {
     expect(resume).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
     expect(runtime.getSystemPrompt?.()).toBe("Base Cursor prompt");
-  });
-
-  it("prepares and activates Claude Forge extension bindings with runtimeType claude and runtime token", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
-    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
-
-    const forgeExtensionHost = new ForgeExtensionHost({
-      dataDir: join(rootDir, "data"),
-      now: () => "2026-01-01T00:00:00.000Z",
-    });
-    const prepareSpy = vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings");
-    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
-
-    const factory = createFactory(rootDir, { forgeExtensionHost });
-    await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
-        model: {
-          provider: "claude-sdk",
-          modelId: "claude-opus-4-6",
-          thinkingLevel: "high",
-        },
-      }),
-      "system prompt",
-      17
-    );
-
-    expect(prepareSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeType: "claude",
-        runtimeToken: 17,
-      })
-    );
-    expect(activateSpy).toHaveBeenCalled();
-    expect(activateSpy.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        runtimeType: "claude",
-        bindingToken: "forge-runtime-17",
-      })
-    );
-  });
-
-  it("orders Claude Forge binding preparation, bridge creation, runtime construction, and activation", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
-    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
-
-    const sequence: string[] = [];
-    claudeRuntimeMockState.createMcpBridge.mockImplementation(async () => {
-      sequence.push("bridge");
-      return {
-        serverName: "forge-test",
-        server: {},
-        allowedTools: [],
-      };
-    });
-    claudeRuntimeMockState.constructImpl = () => {
-      sequence.push("construct");
-      return undefined;
-    };
-
-    const forgeExtensionHost = new ForgeExtensionHost({
-      dataDir: join(rootDir, "data"),
-      now: () => "2026-01-01T00:00:00.000Z",
-    });
-    const originalPrepare = forgeExtensionHost.prepareRuntimeBindings.bind(forgeExtensionHost);
-    vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings").mockImplementation(async (...args) => {
-      sequence.push("prepare");
-      return originalPrepare(...args);
-    });
-    const originalActivate = forgeExtensionHost.activateRuntimeBindings.bind(forgeExtensionHost);
-    vi.spyOn(forgeExtensionHost, "activateRuntimeBindings").mockImplementation((...args) => {
-      sequence.push("activate");
-      return originalActivate(...args);
-    });
-
-    const factory = createFactory(rootDir, { forgeExtensionHost });
-    await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
-        model: {
-          provider: "claude-sdk",
-          modelId: "claude-opus-4-6",
-          thinkingLevel: "high",
-        },
-      }),
-      "system prompt",
-      18
-    );
-
-    expect(sequence).toEqual(["prepare", "bridge", "construct", "activate"]);
-  });
-
-  it("does not activate Claude Forge extension bindings when runtime construction throws", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
-    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
-
-    const constructionError = new Error("claude runtime failed");
-    claudeRuntimeMockState.constructImpl = () => {
-      throw constructionError;
-    };
-
-    const forgeExtensionHost = new ForgeExtensionHost({
-      dataDir: join(rootDir, "data"),
-      now: () => "2026-01-01T00:00:00.000Z",
-    });
-    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
-    const factory = createFactory(rootDir, { forgeExtensionHost });
-
-    await expect(
-      factory.createRuntimeForDescriptor(
-        createDescriptor(rootDir, {
-          model: {
-            provider: "claude-sdk",
-            modelId: "claude-opus-4-6",
-            thinkingLevel: "high",
-          },
-        }),
-        "system prompt",
-        19
-      )
-    ).rejects.toBe(constructionError);
-
-    expect(claudeRuntimeMockState.createMcpBridge).toHaveBeenCalledTimes(1);
-    expect(claudeRuntimeMockState.constructorArgs).toHaveLength(1);
-    expect(activateSpy).not.toHaveBeenCalled();
-  });
-
-  it("passes Claude worker identity and runtime options unchanged into runtime construction", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-
-    const mcpServer = { name: "server" };
-    const allowedTools = ["send_message_to_agent", "speak_to_user"];
-    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
-      serverName: "forge-worker-test",
-      server: mcpServer,
-      allowedTools,
-    });
-    const getContextWindowSpy = vi
-      .spyOn(modelCatalogService, "getEffectiveContextWindow")
-      .mockReturnValueOnce(123456);
-    const memoryContextFile = {
-      path: join(rootDir, "worker-memory.md"),
-      content: "worker memory",
-    };
-    const factory = createFactory(rootDir, {
-      getMemoryRuntimeResources: async () => ({
-        memoryContextFile,
-        additionalSkillPaths: [],
-        skillMetadata: [],
-      }),
-    });
-    const descriptor = createDescriptor(rootDir, {
-      agentId: "worker-claude-1",
-      managerId: "manager-claude-1",
-      profileId: "profile-claude-1",
-      model: {
-        provider: "claude-sdk",
-        modelId: "claude-opus-4-6",
-        thinkingLevel: "high",
-      },
-    });
-
-    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 20);
-
-    const claudeOptions = claudeRuntimeMockState.constructorArgs.at(-1) as {
-      profileId: string;
-      sessionId: string;
-      workerId?: string;
-      dataDir: string;
-      mcpServers: Record<string, unknown>;
-      allowedTools: string[];
-      runtimeEnv: Record<string, string>;
-      modelContextWindow?: number;
-    };
-    expect(claudeOptions.profileId).toBe("profile-claude-1");
-    expect(claudeOptions.sessionId).toBe("manager-claude-1");
-    expect(claudeOptions.workerId).toBe("worker-claude-1");
-    expect(claudeOptions.dataDir).toBe(join(rootDir, "data"));
-    expect(claudeOptions.mcpServers).toEqual({ "forge-worker-test": mcpServer });
-    expect(claudeOptions.allowedTools).toBe(allowedTools);
-    expect(claudeOptions.runtimeEnv).toEqual({
-      SWARM_DATA_DIR: join(rootDir, "data"),
-      SWARM_MEMORY_FILE: memoryContextFile.path,
-    });
-    expect(claudeOptions.modelContextWindow).toBe(123456);
-    expect(getContextWindowSpy).toHaveBeenCalledWith("claude-opus-4-6", "claude-sdk");
   });
 
   it("supports Cursor SDK descriptors for manager creation", async () => {
@@ -2438,84 +2114,4 @@ describe("RuntimeFactory", () => {
     );
   });
 
-  it("wraps Forge-owned tools for Claude and Cursor SDK runtimes", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-
-    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
-    await writeFile(
-      join(rootDir, "data", "extensions", "rewrite.ts"),
-      'export default (forge) => { forge.on("tool:before", (event) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: "worker-rewritten" } }) : undefined) }\n',
-      "utf8"
-    );
-
-    const sendMessage = vi.fn(async (_sourceAgentId: string, targetAgentId: string) => ({
-      targetAgentId,
-      deliveryId: "delivery-1",
-      acceptedMode: "prompt",
-    }));
-    const factory = createFactory(rootDir, {
-      hostOverrides: {
-        sendMessage,
-      },
-    });
-
-    claudeRuntimeMockState.createMcpBridge.mockImplementation(async (tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>) => ({
-      serverName: "forge-test",
-      server: {},
-      allowedTools: tools.map((tool) => tool.name),
-      tools,
-    }));
-    process.env.CURSOR_API_KEY = "cursor-test-key";
-    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
-    cursorMcpMockState.createMcpBridge.mockImplementation(async (tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>) => ({
-      serverName: "forge-swarm-worker-1",
-      mcpServers: { "forge-swarm-worker-1": { type: "http", url: "http://127.0.0.1:1/mcp" } },
-      shutdown: vi.fn(async () => undefined),
-      tools,
-    }));
-    setCursorSdkImporterForTests(async () => ({
-      Agent: { create: vi.fn(async () => ({ agentId: "sdk-agent-1", close: vi.fn(), send: vi.fn() })), resume: vi.fn() },
-      Cursor: { models: { list: vi.fn() } },
-    }));
-
-    await factory.createRuntimeForDescriptor(
-      createManagerDescriptor(rootDir, {
-        model: {
-          provider: "claude-sdk",
-          modelId: "claude-opus-4-6",
-          thinkingLevel: "high",
-        },
-      }),
-      "system prompt",
-      1
-    );
-    const claudeTools = claudeRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
-    await claudeTools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-claude", {
-      targetAgentId: "worker-original",
-      message: "hello",
-    });
-
-    await factory.createRuntimeForDescriptor(
-      createManagerDescriptor(rootDir, {
-        model: {
-          provider: "cursor-sdk",
-          modelId: "composer-2.5",
-          thinkingLevel: "high",
-        },
-      }),
-      "system prompt",
-      2
-    );
-    const cursorTools = cursorMcpMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
-    await cursorTools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-cursor", {
-      targetAgentId: "worker-original",
-      message: "hello",
-    });
-
-    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual([
-      "worker-rewritten",
-      "worker-rewritten",
-    ]);
-  });
 });

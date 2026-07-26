@@ -96,8 +96,8 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
   const normalizedProvider = provider.trim().toLowerCase()
   const normalizedModelId = modelId.trim().toLowerCase()
 
-  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-sonnet-')) {
-    return 'sdk-sonnet'
+  if (isRetiredForgeModel(normalizedProvider, normalizedModelId)) {
+    return undefined
   }
 
   if (normalizedProvider === 'anthropic' && normalizedModelId.startsWith('claude-sonnet-')) {
@@ -109,15 +109,45 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
     return model.familyId
   }
 
-  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-')) {
-    return 'sdk-opus'
-  }
-
   if (normalizedProvider === 'xai' && normalizedModelId.startsWith('grok-')) {
     return 'pi-grok'
   }
 
   return undefined
+}
+
+const RETIRED_FORGE_MODELS = new Set([
+  'openai-codex/gpt-5.3-codex-spark',
+  'anthropic/claude-sonnet-4-5-20250929',
+  'anthropic/claude-haiku-4-5-20251001',
+  'anthropic/claude-sonnet-4.5',
+  'anthropic/claude-haiku-4.5',
+  'anthropic/claude-sonnet-4-5',
+  'anthropic/claude-haiku-4-5',
+  'openrouter/~anthropic/claude-haiku-latest',
+  'openrouter/anthropic/claude-sonnet-4.5',
+  'openrouter/anthropic/claude-haiku-4.5',
+  'openrouter/anthropic/claude-sonnet-4-5',
+  'openrouter/anthropic/claude-haiku-4-5',
+  'openrouter/anthropic/claude-sonnet-4-5-20250929',
+  'openrouter/anthropic/claude-haiku-4-5-20251001',
+  'openrouter/openai/gpt-5.3-codex-spark',
+])
+
+/** Whether a provider/model pair identifies one of Forge's explicitly retired models. */
+export function isRetiredForgeModel(provider: string, modelId: string): boolean {
+  const normalizedProvider = provider.trim().toLowerCase()
+  let normalizedModelId = modelId.trim().toLowerCase()
+  if (!normalizedProvider || !normalizedModelId) {
+    return false
+  }
+
+  const providerPrefix = `${normalizedProvider}/`
+  if (normalizedModelId.startsWith(providerPrefix)) {
+    normalizedModelId = normalizedModelId.slice(providerPrefix.length)
+  }
+
+  return RETIRED_FORGE_MODELS.has(`${normalizedProvider}/${normalizedModelId}`)
 }
 
 /** Get context window for a specific model ID. Returns undefined if unknown. */

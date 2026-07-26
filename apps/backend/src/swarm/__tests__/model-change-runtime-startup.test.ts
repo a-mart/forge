@@ -48,7 +48,7 @@ function customLine(customType: string, data: unknown, id: string): string {
 }
 
 describe("resolvePendingModelChangeRuntimeStartup", () => {
-  it("selects the latest matching pending request and builds recovery context from durable session data", async () => {
+  it("loads an old SDK continuity row without consuming SDK custom state", async () => {
     const root = await createTempDir("model-change-runtime-startup-");
     const sessionFile = join(root, "session.jsonl");
 
@@ -134,14 +134,9 @@ describe("resolvePendingModelChangeRuntimeStartup", () => {
       modelContextWindow: 200_000
     });
 
-    expect(result.policy).toBe("recovered");
+    expect(result.policy).toBe("skip_pi_to_pi");
     expect(result.request?.requestId).toBe("req-match");
-    expect(result.recoveryContext?.blockText).toContain("# Recovered Forge Conversation Context");
-    expect(result.recoveryContext?.blockText).toContain("[Claude compaction summary]");
-    expect(result.recoveryContext?.blockText).toContain("User: Continue the migration");
-    expect(result.recoveryContext?.blockText).toContain(
-      "Worker/Agent message (backend-specialist): Attached logs. [3 attachments omitted]"
-    );
+    expect(result.recoveryContext).toBeUndefined();
   });
 
   it("returns the pending request without recovery context for conservative pi-to-pi switches", async () => {
@@ -208,12 +203,12 @@ describe("resolvePendingModelChangeRuntimeStartup", () => {
       sourceModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
     });
-    const cursorToClaude = createModelChangeContinuityRequest({
-      requestId: "req-cursor-claude",
+    const cursorToAnthropic = createModelChangeContinuityRequest({
+      requestId: "req-cursor-anthropic",
       createdAt: "2026-04-08T00:00:03.000Z",
       sessionAgentId: "manager-1",
       sourceModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
-      targetModel: { provider: "claude-sdk", modelId: "claude-opus-4-6", thinkingLevel: "high" },
+      targetModel: { provider: "anthropic", modelId: "claude-opus-4-6", thinkingLevel: "high" },
     });
     const cursorToCursor = createModelChangeContinuityRequest({
       requestId: "req-cursor-cursor",
@@ -226,7 +221,7 @@ describe("resolvePendingModelChangeRuntimeStartup", () => {
     expect(shouldApplyModelChangeRecoveryContext(piToPi)).toBe(false);
     expect(shouldApplyModelChangeRecoveryContext(piToCursor)).toBe(true);
     expect(shouldApplyModelChangeRecoveryContext(cursorToPi)).toBe(true);
-    expect(shouldApplyModelChangeRecoveryContext(cursorToClaude)).toBe(true);
+    expect(shouldApplyModelChangeRecoveryContext(cursorToAnthropic)).toBe(true);
     expect(shouldApplyModelChangeRecoveryContext(cursorToCursor)).toBe(true);
   });
 });

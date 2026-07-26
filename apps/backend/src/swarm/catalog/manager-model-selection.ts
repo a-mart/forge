@@ -6,7 +6,7 @@ import {
   type ManagerModelSurface,
 } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../types.js";
-import { normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
+import { assertSwarmModelIdNotRetired, normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
 export function resolveExactManagerModelSelection(
@@ -27,6 +27,8 @@ export function resolveExactManagerModelSelection(
   if (!modelId) {
     throw new Error("modelSelection.modelId must be a non-empty string");
   }
+
+  assertSwarmModelIdNotRetired(provider, modelId, "modelSelection.modelId");
 
   const catalogModel = getCatalogModel(modelId, provider);
   if (!catalogModel || catalogModel.provider !== provider) {

@@ -47,7 +47,7 @@ Defaults:
 - Electron state: `/Users/adam/Library/Application Support/@forge/electron-secure-sessions`
 
 Do not copy the production repository `.env`. Provider credentials are retained from the copied
-Forge auth files; Claude SDK and direct Codex can still use host-global login state.
+Forge auth files; direct Codex can still use host-global login state.
 
 ## Validate and launch
 

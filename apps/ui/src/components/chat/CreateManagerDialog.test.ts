@@ -24,7 +24,6 @@ vi.mock('@/components/settings/models-api', () => ({
       // All managed-auth providers explicitly unavailable
       'openai-codex': false,
       'anthropic': false,
-      'claude-sdk': false,
       'xai': false,
     },
   }),

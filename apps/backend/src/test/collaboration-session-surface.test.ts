@@ -411,11 +411,11 @@ describe('collaboration session surface metadata', () => {
       },
     )
 
-    await manager.updateCollaborationSessionModel(sessionAgentId, 'sdk-opus')
+    await manager.updateCollaborationSessionModel(sessionAgentId, 'pi-opus')
 
     expect(manager.getAgent(sessionAgentId)).toMatchObject({
       model: {
-        provider: 'claude-sdk',
+        provider: 'anthropic',
         modelId: 'claude-opus-4-8',
         thinkingLevel: 'high',
       },

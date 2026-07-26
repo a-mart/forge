@@ -731,7 +731,7 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     const builderOpenAISession = createSession(root, "manager", { provider: "openai-codex", modelId: "gpt-5.5" });
     const builderAnthropicSession = createSession(root, "manager--anthropic", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4.5"
+      modelId: "claude-sonnet-5"
     });
     const collaborationOpenAISession = {
       ...createSession(root, "collab-channel", { provider: "openai-codex", modelId: "gpt-5.5" }),
@@ -765,7 +765,7 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     const root = await createTempRoot();
     const anthropicSession = createSession(root, "manager", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4.5"
+      modelId: "claude-sonnet-5"
     });
     const openAISession = createSession(root, "manager--openai", { provider: "openai-codex", modelId: "gpt-5.5" });
     const secretsEnvService = {
@@ -813,7 +813,7 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     const root = await createTempRoot();
     const anthropicSession = createSession(root, "manager", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4.5"
+      modelId: "claude-sonnet-5"
     });
     const openAISession = createSession(root, "manager--openai", { provider: "openai-codex", modelId: "gpt-5.5" });
     const credentialPoolService = {

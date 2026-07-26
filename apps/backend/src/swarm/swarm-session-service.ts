@@ -293,16 +293,6 @@ export class SwarmSessionService {
     await this.options.clearSessionPlan(descriptor);
 
     const runtime = this.options.runtimes.get(agentId);
-    if (runtime?.runtimeType === "claude") {
-      try {
-        await runtime.recycle();
-      } catch (error) {
-        this.options.logDebug("session:clear:claude_recycle_error", {
-          agentId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
     if (runtime) {
       await this.options.captureSessionRuntimePromptMeta(descriptor, runtime.getSystemPrompt?.());
     }

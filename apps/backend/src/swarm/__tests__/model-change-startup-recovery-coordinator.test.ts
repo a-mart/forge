@@ -113,8 +113,8 @@ function createRequest(options?: {
     createdAt: "2026-04-08T00:00:01.000Z",
     sessionAgentId: "manager-1",
     sourceModel: {
-      provider: options?.sourceProvider ?? "claude-sdk",
-      modelId: options?.sourceModelId ?? "claude-opus-4-6",
+      provider: options?.sourceProvider ?? "cursor-sdk",
+      modelId: options?.sourceModelId ?? "cursor-agent",
       thinkingLevel: "high"
     },
     targetModel: {

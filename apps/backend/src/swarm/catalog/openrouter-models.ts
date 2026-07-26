@@ -1,8 +1,9 @@
-import type {
-  ForgeInputMode,
-  ForgeReasoningLevel,
-  OpenRouterModelEntry,
-  OpenRouterModelsFile,
+import {
+  isRetiredForgeModel,
+  type ForgeInputMode,
+  type ForgeReasoningLevel,
+  type OpenRouterModelEntry,
+  type OpenRouterModelsFile,
 } from "@forge/protocol";
 import { readJsonFileIfExists, writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { getOpenRouterModelsPath } from "../data-paths.js";
@@ -152,6 +153,9 @@ export async function addOpenRouterModel(dataDir: string, entry: OpenRouterModel
   if (!normalizedEntry) {
     throw new Error(`Invalid OpenRouter model entry: ${entry.modelId}`);
   }
+  if (isRetiredForgeModel("openrouter", normalizedEntry.modelId)) {
+    throw new Error(`Retired OpenRouter model cannot be added: ${normalizedEntry.modelId}`);
+  }
 
   await withOpenRouterModelsWriteLock(async () => {
     const file = await readOpenRouterModels(dataDir);
@@ -179,7 +183,9 @@ export async function removeOpenRouterModel(dataDir: string, modelId: string): P
 
 export async function getOpenRouterModels(dataDir: string): Promise<OpenRouterModelEntry[]> {
   const file = await readOpenRouterModels(dataDir);
-  return Object.values(file.models).sort((left, right) => left.modelId.localeCompare(right.modelId));
+  return Object.values(file.models)
+    .filter((model) => !isRetiredForgeModel("openrouter", model.modelId))
+    .sort((left, right) => left.modelId.localeCompare(right.modelId));
 }
 
 async function withOpenRouterModelsWriteLock<T>(operation: () => Promise<T>): Promise<T> {

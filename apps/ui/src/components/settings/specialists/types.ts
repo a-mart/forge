@@ -66,7 +66,6 @@ export const REASONING_LEVEL_LABELS: Record<string, string> = {
 export const PROVIDER_LABELS: Record<string, string> = {
   'openai-codex': 'OpenAI Codex',
   'anthropic': 'Anthropic',
-  'claude-sdk': 'Claude SDK',
   'cursor-sdk': 'Cursor SDK',
   xai: 'xAI',
 }

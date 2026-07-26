@@ -1347,46 +1347,50 @@ Never use plain assistant text for user communication.`
   })
 
   it('creates managers with exact manager model selections using the selected model default reasoning', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test-exact-selection')
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const created = await manager.createManager('manager', {
-      name: 'SDK Opus 4.7 Manager',
+      name: 'Exact GPT-5.4 Manager',
       cwd: config.defaultCwd,
       modelSelection: {
-        provider: 'claude-sdk',
-        modelId: 'claude-opus-4-7',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.4',
       },
     })
 
     expect(created.model).toEqual({
-      provider: 'claude-sdk',
-      modelId: 'claude-opus-4-7',
-      thinkingLevel: 'high',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'xhigh',
     })
+    vi.unstubAllEnvs()
   })
 
   it('honors create_manager reasoningLevel for exact model selections when supported', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test-exact-reasoning')
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const created = await manager.createManager('manager', {
-      name: 'SDK Medium Reasoning Manager',
+      name: 'Exact Medium Reasoning Manager',
       cwd: config.defaultCwd,
       modelSelection: {
-        provider: 'claude-sdk',
-        modelId: 'claude-opus-4-7',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.4',
       },
       reasoningLevel: 'medium',
     })
 
     expect(created.model).toEqual({
-      provider: 'claude-sdk',
-      modelId: 'claude-opus-4-7',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'medium',
     })
+    vi.unstubAllEnvs()
   })
 
   it('honors create_manager reasoningLevel for model presets when supported', async () => {
@@ -1455,7 +1459,7 @@ Never use plain assistant text for user communication.`
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'create_manager.model must be one of pi-5.5|pi-5.6|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|pi-fable|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
+      'create_manager.model must be one of pi-5.5|pi-5.6|pi-5.4|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
     )
   })
 
@@ -1584,11 +1588,11 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updateManagerModel('manager', 'sdk-opus')
-    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.handleUserMessage('Switch the root session to Cursor first', { targetAgentId: 'manager' })
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Continuity Session' })
-    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from Claude.')
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from Cursor.')
 
     await manager.updateManagerModel('manager', 'pi-5.4')
 
@@ -1601,7 +1605,7 @@ Never use plain assistant text for user communication.`
     const recoveryOptions = manager.runtimeCreationOptionsByAgentId.get(sessionAgent.agentId)
     expect(recoveryOptions?.startupRecoveryContext?.reason).toBe('model_change')
     expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('# Recovered Forge Conversation Context')
-    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable context from Claude.')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable context from Cursor.')
     expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).not.toContain('# Recovered Forge Conversation Context')
 
     const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
@@ -1627,7 +1631,7 @@ Never use plain assistant text for user communication.`
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from an inactive session.')
 
     await manager.stopSession(sessionAgent.agentId)
-    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.updateManagerModel('manager', 'cursor-composer')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(beforeState.requests).toHaveLength(1)
@@ -1651,8 +1655,8 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updateManagerModel('manager', 'sdk-opus')
-    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.handleUserMessage('Switch the root session to Cursor first', { targetAgentId: 'manager' })
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Deferred Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Most recent durable context.')
@@ -1680,8 +1684,8 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updateManagerModel('manager', 'sdk-opus')
-    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.handleUserMessage('Switch the root session to Cursor first', { targetAgentId: 'manager' })
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Failing Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before failure.')
@@ -1708,8 +1712,8 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updateManagerModel('manager', 'sdk-opus')
-    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.handleUserMessage('Switch the root session to Cursor first', { targetAgentId: 'manager' })
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Ordered Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before ordered attach.')
@@ -1758,8 +1762,8 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updateManagerModel('manager', 'sdk-opus')
-    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.handleUserMessage('Switch the root session to Cursor first', { targetAgentId: 'manager' })
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Applied Write Failure Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before applied write failure.')

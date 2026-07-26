@@ -1,6 +1,6 @@
 import type { EffortTier, ManagerExactModelSelection, SpecialistTargetSpace, TierConfig } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
-import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
+import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel, assertSwarmModelIdNotRetired } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import type {
   RuntimeAcquisitionRequirements,
@@ -1692,6 +1692,7 @@ export class SwarmAgentLifecycleService {
 
     const requestedModelId = normalizeOptionalModelId(input.modelId);
     if (requestedModelId) {
+      assertSwarmModelIdNotRetired(descriptor.provider, requestedModelId, "spawn_agent.modelId");
       descriptor.modelId = requestedModelId;
     }
 

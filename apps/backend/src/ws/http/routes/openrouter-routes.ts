@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getModels } from "../../../swarm/pi/pi-ai-compat.js";
-import type {
-  AvailableOpenRouterModel,
-  ForgeInputMode,
-  ForgeReasoningLevel,
-  OpenRouterModelEntry,
-  OpenRouterModelsFile,
-  ServerEvent,
+import {
+  isRetiredForgeModel,
+  type AvailableOpenRouterModel,
+  type ForgeInputMode,
+  type ForgeReasoningLevel,
+  type OpenRouterModelEntry,
+  type OpenRouterModelsFile,
+  type ServerEvent,
 } from "@forge/protocol";
 import {
   getOpenRouterModels,
@@ -158,6 +159,10 @@ async function handleOpenRouterModelsRequest(
   if (request.method === "PUT") {
     if (!modelId) {
       sendJson(response, 400, { error: "modelId is required" });
+      return;
+    }
+    if (isRetiredForgeModel("openrouter", modelId)) {
+      sendJson(response, 410, { error: `OpenRouter model is retired: ${modelId}` });
       return;
     }
 
@@ -374,7 +379,9 @@ function mergeAvailableOpenRouterModels(
     }
   }
 
-  return sortAvailableOpenRouterModels(Array.from(merged.values()));
+  return sortAvailableOpenRouterModels(
+    Array.from(merged.values()).filter((model) => !isRetiredForgeModel("openrouter", model.modelId)),
+  );
 }
 
 async function fetchLiveOpenRouterModels(): Promise<AvailableOpenRouterModel[]> {

@@ -14,7 +14,11 @@ import {
 import { normalizeProjectAgentHandle, isReservedProjectAgentHandle } from "./agents/project-agent-registry.js";
 import { sanitizePathSegment } from "./data-paths.js";
 import { isEnoentError } from "../utils/fs-errors.js";
-import { normalizePersistedSwarmModelDescriptor } from "./model-presets.js";
+import {
+  normalizePersistedSwarmModelDescriptor,
+  resolveRemovedSwarmModelReplacementPreset,
+} from "./model-presets.js";
+import { CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE } from "./catalog/legacy-claude-sdk-model.js";
 
 const MAX_DEFINITIONS = 50;
 const MAX_DIRECTORY_ENTRIES = 200;
@@ -131,7 +135,9 @@ async function parseRepoProjectAgentDefinition(
   });
 
   const recommendedModel = isAgentModelDescriptor(config?.model)
-    ? normalizePersistedSwarmModelDescriptor(config.model) ?? config.model
+    ? config.model.provider.trim().toLowerCase() === "claude-sdk"
+      ? config.model
+      : normalizePersistedSwarmModelDescriptor(config.model) ?? config.model
     : undefined;
 
   const item: RepoProjectAgentInventoryItem & { signature?: string } = {
@@ -258,6 +264,21 @@ function validateConfig(config: RepoProjectAgentDefinitionConfig, problems: Proj
   }
   if (config.model !== undefined && !isAgentModelDescriptor(config.model)) {
     problems.push({ code: "model_invalid", message: "config.json model must include provider, modelId, and thinkingLevel strings when provided.", path: "config.json" });
+  } else if (config.model?.provider.trim().toLowerCase() === "claude-sdk") {
+    problems.push({
+      code: "model_retired",
+      message: `config.json model is unavailable: ${CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE}`,
+      path: "config.json",
+    });
+  } else if (
+    config.model !== undefined &&
+    resolveRemovedSwarmModelReplacementPreset(config.model.provider, config.model.modelId)
+  ) {
+    problems.push({
+      code: "model_retired",
+      message: `config.json model is retired: ${config.model.provider}/${config.model.modelId}`,
+      path: "config.json",
+    });
   }
 }
 

@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationCategory, CollaborationSkillSelectionInput, CollaborationSkillSelectionState } from "@forge/protocol";
 import {
+  assertSwarmModelIdNotRetired,
   inferSwarmModelPresetFromDescriptor,
+  normalizePersistedSwarmModelDescriptor,
   normalizeThinkingLevelForModelDescriptor,
+  parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
 } from "../swarm/model-presets.js";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
@@ -357,11 +360,14 @@ function toCategoryModelDescriptor(record: {
   defaultModelThinkingLevel: string | null;
 }): AgentModelDescriptor | null {
   if (record.defaultModelProvider && record.defaultModelId && record.defaultModelThinkingLevel) {
-    return normalizeCategoryModelDescriptor({
+    const persistedDescriptor = {
       provider: record.defaultModelProvider,
       modelId: record.defaultModelId,
       thinkingLevel: record.defaultModelThinkingLevel,
-    });
+    };
+    return normalizeCategoryModelDescriptor(
+      normalizePersistedSwarmModelDescriptor(persistedDescriptor) ?? persistedDescriptor,
+    );
   }
 
   return null;
@@ -403,7 +409,9 @@ function resolveUpdatedCategoryDefaults(
   const currentModel = toCategoryModelDescriptor(existing);
   const currentModelPreset = currentModel ? inferSwarmModelPresetFromDescriptor(currentModel) : undefined;
   const requestedModelDescriptor =
-    params.defaultModelId !== undefined ? resolveModelDescriptorFromPreset(params.defaultModelId) : undefined;
+    params.defaultModelId !== undefined
+      ? resolveModelDescriptorFromPreset(requireCategoryModelPreset(params.defaultModelId))
+      : undefined;
   const descriptor = requestedModelDescriptor ?? currentModel;
   if (!descriptor) {
     if (params.defaultReasoningLevel !== undefined) {
@@ -451,6 +459,8 @@ function resolveCategoryDefaultsInput(
       throw new Error("channelCreationDefaults.model must include provider, modelId, and thinkingLevel");
     }
 
+    assertSwarmModelIdNotRetired(model.provider, model.modelId, "channelCreationDefaults.model.modelId");
+
     const cwd = normalizeOptionalString(defaults.cwd);
     return {
       model: normalizeCategoryModelDescriptor({
@@ -466,13 +476,21 @@ function resolveCategoryDefaultsInput(
     return null;
   }
 
-  const descriptor = resolveModelDescriptorFromPreset(params.defaultModelId);
+  const descriptor = resolveModelDescriptorFromPreset(requireCategoryModelPreset(params.defaultModelId));
   return {
     model: {
       ...descriptor,
       thinkingLevel: normalizeReasoningLevelForDescriptor(descriptor, params.defaultReasoningLevel ?? descriptor.thinkingLevel),
     },
   };
+}
+
+function requireCategoryModelPreset(value: string): string {
+  const preset = parseSwarmModelPreset(value, "defaultModelId");
+  if (!preset) {
+    throw new Error("defaultModelId must identify a supported model preset");
+  }
+  return preset;
 }
 
 function nextCategoryPosition(categories: Array<{ position: number }>): number {

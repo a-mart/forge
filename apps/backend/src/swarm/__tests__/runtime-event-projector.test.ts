@@ -351,7 +351,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     );
   });
 
-  it.each(["openai-codex", "claude-sdk", "cursor-sdk"])(
+  it.each(["openai-codex", "anthropic", "cursor-sdk"])(
     "does not emit a false silent-manager warning for %s worker-result turns",
     async (provider) => {
       const { projector, deps, descriptors } = createHarness();
@@ -1572,7 +1572,7 @@ describe("RuntimeEventProjector", () => {
 
       vi.mocked(deps.getRuntime).mockReturnValue({
         ...piRuntime(manager),
-        runtimeType: "claude"
+        runtimeType: "cursor-sdk"
       } as SwarmAgentRuntime);
       await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd() });
       expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();

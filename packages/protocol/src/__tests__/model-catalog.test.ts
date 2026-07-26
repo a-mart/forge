@@ -20,6 +20,7 @@ import {
   isCatalogModelId,
   isCatalogModelManagerSupported,
   isCompactionModelSelectionSupported,
+  isRetiredForgeModel,
 } from '../model-catalog.js'
 
 const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
@@ -44,14 +45,6 @@ const EXPECTED_FAMILIES = {
   'pi-5.6': {
     provider: 'openai-codex',
     defaultModelId: 'gpt-5.6-sol',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-codex-spark': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.3-codex-spark',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -84,22 +77,6 @@ const EXPECTED_FAMILIES = {
   'pi-fable': {
     provider: 'anthropic',
     defaultModelId: 'claude-fable-5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'sdk-opus': {
-    provider: 'claude-sdk',
-    defaultModelId: 'claude-opus-4-8',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'sdk-sonnet': {
-    provider: 'claude-sdk',
-    defaultModelId: 'claude-sonnet-5',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -164,14 +141,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
-  'gpt-5.3-codex-spark': {
-    provider: 'openai-codex',
-    familyId: 'pi-codex-spark',
-    contextWindow: 128_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text'],
-  },
   'gpt-5.4': {
     provider: 'openai-codex',
     familyId: 'pi-5.4',
@@ -220,75 +189,11 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
-  'claude-sonnet-4-5-20250929': {
-    provider: 'anthropic',
-    familyId: 'pi-sonnet',
-    contextWindow: 1_000_000,
-    maxOutputTokens: 64_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
   'claude-fable-5': {
     provider: 'anthropic',
     familyId: 'pi-fable',
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-haiku-4-5-20251001': {
-    provider: 'anthropic',
-    familyId: 'pi-opus',
-    contextWindow: 200_000,
-    maxOutputTokens: 64_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-opus-4-8': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-opus',
-    contextWindow: 1_000_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-opus-4-7': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-opus',
-    contextWindow: 1_000_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-opus-4-6': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-opus',
-    contextWindow: 1_000_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-sonnet-5': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-sonnet',
-    contextWindow: 1_000_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-sonnet-4-5-20250929': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-sonnet',
-    contextWindow: 200_000,
-    maxOutputTokens: 64_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'claude-sdk/claude-haiku-4-5-20251001': {
-    provider: 'claude-sdk',
-    familyId: 'sdk-opus',
-    contextWindow: 200_000,
-    maxOutputTokens: 64_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
@@ -355,15 +260,17 @@ describe('model-catalog', () => {
     expect(Object.keys(FORGE_MODEL_CATALOG.providers)).toEqual([
       'openai-codex',
       'anthropic',
-      'claude-sdk',
       'xai',
       'openrouter',
       'cursor-sdk',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(27)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
+    expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
+    expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
+    expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-haiku-4-5-20251001')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -378,7 +285,9 @@ describe('model-catalog', () => {
       expect(getCatalogModel(modelId)).toMatchObject(expected)
     }
 
-    expect(getCatalogModel('gpt-5.3-codex-spark')?.inputModes).toEqual(['text'])
+    expect(getCatalogModel('gpt-5.3-codex-spark')).toBeUndefined()
+    expect(getCatalogModel('claude-sonnet-4-5-20250929', 'anthropic')).toBeUndefined()
+    expect(getCatalogModel('claude-haiku-4-5-20251001', 'anthropic')).toBeUndefined()
     expect(getCatalogModel('claude-fable-5')).toMatchObject({
       isFamilyDefault: true,
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -391,10 +300,6 @@ describe('model-catalog', () => {
     })
     expect(getCatalogModel('claude-fable-5')?.supportedReasoningLevels).not.toContain('none')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
-    expect(getCatalogProvider('claude-sdk')).toMatchObject({
-      availabilityMode: 'managed-auth',
-      piProjectionMode: 'none',
-    })
     expect(getCatalogProvider('openrouter')).toMatchObject({
       availabilityMode: 'external',
       piProjectionMode: 'custom-provider-merge',
@@ -553,14 +458,17 @@ describe('model-catalog', () => {
     expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-fable-5', 'anthropic')?.familyId).toBe('pi-fable')
-    expect(getCatalogFamilyForModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
-    expect(getCatalogFamilyForModel('claude-sonnet-5', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
-    expect(getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.displayName).toBe('Claude Sonnet 4.5 (SDK)')
-    expect(getCatalogModel('claude-sonnet-5', 'claude-sdk')?.displayName).toBe('Claude Sonnet 5 (SDK)')
-    expect(getCatalogModel('claude-sdk/claude-sonnet-4-5-20250929')?.provider).toBe('claude-sdk')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
     expect(getCatalogContextWindow('default', 'cursor-acp')).toBeUndefined()
+    expect(isRetiredForgeModel('openai-codex', 'gpt-5.3-codex-spark')).toBe(true)
+    expect(isRetiredForgeModel('anthropic', 'claude-sonnet-4.5')).toBe(true)
+    expect(isRetiredForgeModel('openrouter', '~anthropic/claude-haiku-latest')).toBe(true)
+    expect(isRetiredForgeModel('openrouter', 'openai/gpt-5.3-codex-spark')).toBe(true)
+    expect(isRetiredForgeModel('openrouter', 'openrouter/openai/gpt-5.3-codex-spark')).toBe(true)
+    expect(isRetiredForgeModel('anthropic', 'claude-sonnet-5')).toBe(false)
+    expect(isRetiredForgeModel('openrouter', 'anthropic/claude-sonnet-4.6')).toBe(false)
+    expect(isRetiredForgeModel('openrouter', 'openai/gpt-5.5')).toBe(false)
     expect(getCatalogModel('composer-2.5', 'cursor-sdk')).toMatchObject({
       catalogId: 'cursor-sdk/composer-2.5',
       provider: 'cursor-sdk',
@@ -580,12 +488,10 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.6-sol')).toBe('pi-5.6')
-    expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
-    expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-5')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
-    expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBe('pi-sonnet')
+    expect(inferCatalogFamily('anthropic', 'claude-sonnet-next')).toBe('pi-sonnet')
+    expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBeUndefined()
     expect(inferCatalogFamily('anthropic', 'claude-fable-5')).toBe('pi-fable')
-    expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-8')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
     expect(isCatalogModelId('default')).toBe(false)
@@ -594,25 +500,19 @@ describe('model-catalog', () => {
 
   it('derives manager-selectable exact model availability from family support, global enabled, and managerEnabled overrides', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
-    const sdkOpus47 = getCatalogModel('claude-opus-4-7', 'claude-sdk')
     const grok = getCatalogModel('grok-4', 'xai')
 
     expect(anthropicOpus47).toBeDefined()
-    expect(sdkOpus47).toBeDefined()
     expect(grok).toBeDefined()
 
-    if (!anthropicOpus47 || !sdkOpus47 || !grok) {
+    if (!anthropicOpus47 || !grok) {
       throw new Error('Expected manager model helper fixtures to exist in the catalog')
     }
 
     expect(isCatalogModelManagerSupported(anthropicOpus47, 'create')).toBe(true)
-    expect(isCatalogModelManagerSupported(sdkOpus47, 'change')).toBe(true)
     expect(getDefaultManagerEnabled(anthropicOpus47, 'create')).toBe(true)
-    expect(getDefaultManagerEnabled(sdkOpus47, 'change')).toBe(true)
     expect(getEffectiveManagerEnabled(anthropicOpus47, undefined, 'create')).toBe(true)
-    expect(getEffectiveManagerEnabled(sdkOpus47, undefined, 'change')).toBe(true)
     expect(getEffectiveManagerEnabled(anthropicOpus47, { managerEnabled: false }, 'create')).toBe(false)
-    expect(getEffectiveManagerEnabled(sdkOpus47, { enabled: false }, 'change')).toBe(false)
     expect(isCatalogModelManagerSupported(grok, 'create')).toBe(false)
     expect(getDefaultManagerEnabled(grok, 'create')).toBe(false)
     expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(false)
@@ -620,23 +520,19 @@ describe('model-catalog', () => {
 
   it('derives compaction eligibility from the dedicated provider allowlist instead of manager visibility', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
-    const sdkSonnet = getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')
     const grok = getCatalogModel('grok-4', 'xai')
 
     expect(anthropicOpus47).toBeDefined()
-    expect(sdkSonnet).toBeDefined()
     expect(grok).toBeDefined()
 
-    if (!anthropicOpus47 || !sdkSonnet || !grok) {
+    if (!anthropicOpus47 || !grok) {
       throw new Error('Expected compaction model helper fixtures to exist in the catalog')
     }
 
     expect(isCatalogModelCompactionSupported(anthropicOpus47)).toBe(true)
-    expect(isCatalogModelCompactionSupported(sdkSonnet)).toBe(false)
     expect(isCatalogModelCompactionSupported(grok)).toBe(false)
     expect(isCompactionModelSelectionSupported('claude-opus-4-7', 'anthropic')).toBe(true)
     expect(isCompactionModelSelectionSupported('grok-4', 'xai')).toBe(false)
-    expect(isCompactionModelSelectionSupported('claude-sonnet-4-5-20250929', 'claude-sdk')).toBe(false)
     expect(getEffectiveCompactionEnabled(anthropicOpus47, undefined)).toBe(true)
     expect(getEffectiveCompactionEnabled(grok, undefined)).toBe(false)
   })
@@ -645,13 +541,10 @@ describe('model-catalog', () => {
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-5.6',
-      'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
-      'sdk-opus',
-      'sdk-sonnet',
       'cursor-composer',
       'cursor-grok-45',
     ])
@@ -659,13 +552,10 @@ describe('model-catalog', () => {
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-5.6',
-      'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
-      'sdk-opus',
-      'sdk-sonnet',
       'cursor-composer',
       'cursor-grok-45',
     ])
@@ -673,13 +563,10 @@ describe('model-catalog', () => {
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-5.6',
-      'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
-      'sdk-opus',
-      'sdk-sonnet',
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
@@ -688,13 +575,10 @@ describe('model-catalog', () => {
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-5.6',
-      'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
-      'sdk-opus',
-      'sdk-sonnet',
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',

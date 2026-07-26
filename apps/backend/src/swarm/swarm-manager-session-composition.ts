@@ -14,7 +14,6 @@ import {
 } from "./project-agent-sharing-service.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { AgentDirectory } from "./agent-directory.js";
-import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { copySessionHistoryForFork } from "./session/conversation-timeline.js";
@@ -31,6 +30,8 @@ import {
 } from "./swarm-project-agent-service.js";
 import { SwarmSessionService, type SwarmSessionServiceOptions } from "./swarm-session-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "./types.js";
+
+const LEGACY_CLAUDE_RUNTIME_STATE_ENTRY_TYPE = "swarm_claude_session_state";
 
 export interface SwarmManagerSessionCompositionState {
   config: SwarmConfig;
@@ -135,7 +136,7 @@ export function createSwarmManagerSessionComposition(
         targetSessionFile,
         fromMessageId,
         omittedCustomTypes: [
-          CLAUDE_RUNTIME_STATE_ENTRY_TYPE,
+          LEGACY_CLAUDE_RUNTIME_STATE_ENTRY_TYPE,
           CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
           CURSOR_SDK_USAGE_ENTRY_TYPE,
         ],

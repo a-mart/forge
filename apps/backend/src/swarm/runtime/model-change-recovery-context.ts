@@ -3,8 +3,7 @@ import {
   isAssistantProgressConversationMessage,
   isUserVisibleAssistantConversationMessage,
 } from "@forge/protocol";
-import { normalizeOptionalString } from "../claude-utils.js";
-import type { ModelChangeContinuityModel } from "./model-change-continuity.js";
+import { normalizeOptionalString } from "../../utils/normalize.js";
 import type {
   AgentDescriptor,
   ConversationEntryEvent,
@@ -28,15 +27,10 @@ const RECOVERY_BLOCK_HEADER = [
 const RECOVERY_BLOCK_FOOTER = "```";
 const OMITTED_MARKER_PREFIX = "(Older recovered transcript omitted due to context budget.";
 const LATEST_ENTRY_TRUNCATED_MARKER = "[Latest recovered entry truncated to fit context budget.]";
-const CLAUDE_SUMMARY_HEADER = "[Claude compaction summary]";
-const CLAUDE_SUMMARY_TRUNCATED_MARKER = "[Claude compaction summary truncated to fit context budget.]";
-const MIN_TRANSCRIPT_SECTION_CHARS = 160;
 
 export interface BuildModelChangeRecoveryContextOptions {
   descriptor: Pick<AgentDescriptor, "agentId" | "role">;
   entries: ConversationEntryEvent[];
-  sourceModel?: Pick<ModelChangeContinuityModel, "provider" | "runtimeKind">;
-  latestClaudeCompactionSummary?: string;
   modelContextWindow?: number;
   existingPrompt?: string;
   hasPinnedContent?: boolean;
@@ -46,12 +40,10 @@ export interface ModelChangeRecoveryContextResult {
   blockText?: string;
   bodyText: string;
   transcriptText: string;
-  claudeSummaryText?: string;
   eligibleEntryCount: number;
   includedEntryCount: number;
   omittedEntryCount: number;
   truncated: boolean;
-  claudeSummaryIncluded: boolean;
   budgetChars: number;
   approxTokenCount: number;
 }
@@ -77,53 +69,28 @@ export function buildModelChangeRecoveryContext(
     return emptyRecoveryResult(budgetChars);
   }
 
-  let remainingBudgetChars = transcriptBudgetChars;
-  let claudeSummaryText: string | undefined;
-  let claudeSummaryIncluded = false;
-  let summaryTruncated = false;
-
-  if (shouldIncludeClaudeSummary(options.sourceModel)) {
-    const summarySection = fitClaudeSummaryToBudget(
-      normalizeOptionalString(options.latestClaudeCompactionSummary),
-      remainingBudgetChars,
-      eligibleEntries.length > 0
-    );
-    claudeSummaryText = summarySection.text;
-    claudeSummaryIncluded = summarySection.included;
-    summaryTruncated = summarySection.truncated;
-    remainingBudgetChars -= summarySection.usedChars;
-    if (claudeSummaryIncluded && eligibleEntries.length > 0) {
-      remainingBudgetChars = Math.max(0, remainingBudgetChars - 2);
-    }
-  }
-
   const transcriptLines = eligibleEntries.map((entry) => entry.line);
-  const transcriptBody = fitTranscriptToBudget(transcriptLines, remainingBudgetChars);
+  const transcriptBody = fitTranscriptToBudget(transcriptLines, transcriptBudgetChars);
 
-  const sections = [claudeSummaryText, transcriptBody.text].filter((value): value is string => typeof value === "string" && value.length > 0);
-  if (sections.length === 0) {
+  if (!transcriptBody.text) {
     return {
       ...emptyRecoveryResult(budgetChars),
       eligibleEntryCount: eligibleEntries.length,
       omittedEntryCount: eligibleEntries.length,
-      truncated: summaryTruncated || eligibleEntries.length > 0,
-      claudeSummaryText,
-      claudeSummaryIncluded
+      truncated: eligibleEntries.length > 0,
     };
   }
 
-  const bodyText = sections.join("\n\n");
+  const bodyText = transcriptBody.text;
   const blockText = `${RECOVERY_BLOCK_HEADER}\n${bodyText}\n${RECOVERY_BLOCK_FOOTER}`;
   return {
     blockText,
     bodyText,
     transcriptText: transcriptBody.text,
-    claudeSummaryText,
     eligibleEntryCount: eligibleEntries.length,
     includedEntryCount: transcriptBody.includedEntryCount,
     omittedEntryCount: transcriptBody.omittedEntryCount,
-    truncated: summaryTruncated || transcriptBody.truncated || (eligibleEntries.length > 0 && transcriptBody.text.length === 0),
-    claudeSummaryIncluded,
+    truncated: transcriptBody.truncated,
     budgetChars,
     approxTokenCount: estimateTokens(blockText)
   };
@@ -134,25 +101,13 @@ function emptyRecoveryResult(budgetChars: number): ModelChangeRecoveryContextRes
     blockText: undefined,
     bodyText: "",
     transcriptText: "",
-    claudeSummaryText: undefined,
     eligibleEntryCount: 0,
     includedEntryCount: 0,
     omittedEntryCount: 0,
     truncated: false,
-    claudeSummaryIncluded: false,
     budgetChars,
     approxTokenCount: 0
   };
-}
-
-function shouldIncludeClaudeSummary(
-  sourceModel: Pick<ModelChangeContinuityModel, "provider" | "runtimeKind"> | undefined
-): boolean {
-  if (!sourceModel) {
-    return false;
-  }
-
-  return sourceModel.runtimeKind === "claude" || sourceModel.provider.trim().toLowerCase() === "claude-sdk";
 }
 
 function collectRenderableEntries(
@@ -304,52 +259,6 @@ function buildAgentMessageAttachmentPlaceholder(attachmentCount: number | undefi
   return normalizedCount === 1
     ? "[1 attachment omitted]"
     : `[${normalizedCount} attachments omitted]`;
-}
-
-function fitClaudeSummaryToBudget(
-  summary: string | undefined,
-  availableChars: number,
-  preserveTranscriptBudget: boolean
-): { text?: string; usedChars: number; included: boolean; truncated: boolean } {
-  if (!summary || availableChars <= CLAUDE_SUMMARY_HEADER.length + 1) {
-    return { text: undefined, usedChars: 0, included: false, truncated: false };
-  }
-
-  const reservedTranscriptChars = preserveTranscriptBudget
-    ? Math.min(MIN_TRANSCRIPT_SECTION_CHARS, Math.max(0, Math.floor(availableChars * 0.4)))
-    : 0;
-  const summaryBudget = preserveTranscriptBudget
-    ? Math.max(0, Math.min(availableChars - reservedTranscriptChars, Math.floor(availableChars * 0.6)))
-    : availableChars;
-  const summaryHeaderPrefix = `${CLAUDE_SUMMARY_HEADER}\n`;
-  if (summaryBudget <= summaryHeaderPrefix.length) {
-    return { text: undefined, usedChars: 0, included: false, truncated: false };
-  }
-
-  const marker = `\n${CLAUDE_SUMMARY_TRUNCATED_MARKER}`;
-  let bodyBudget = summaryBudget - summaryHeaderPrefix.length;
-  let truncated = false;
-
-  if (summary.length > bodyBudget && bodyBudget > marker.length + 4) {
-    bodyBudget -= marker.length;
-    truncated = true;
-  }
-
-  const boundedSummary = truncateToBudget(summary, bodyBudget);
-  if (!boundedSummary) {
-    return { text: undefined, usedChars: 0, included: false, truncated: false };
-  }
-
-  const text = truncated
-    ? `${summaryHeaderPrefix}${boundedSummary}${marker}`
-    : `${summaryHeaderPrefix}${boundedSummary}`;
-
-  return {
-    text,
-    usedChars: text.length,
-    included: true,
-    truncated: truncated || boundedSummary.length < summary.length
-  };
 }
 
 function fitTranscriptToBudget(

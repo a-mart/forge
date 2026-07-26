@@ -212,14 +212,14 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const overridden = await manager.spawnAgent('manager', {
       agentId: 'Override Worker',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-terra',
       reasoningLevel: 'medium',
     })
 
     expect(overridden.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      modelId: 'gpt-5.6-terra',
       thinkingLevel: 'medium',
     })
   })
@@ -260,53 +260,53 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const overridden = await manager.spawnAgent('manager', {
       agentId: 'Fallback Override Worker',
-      modelId: 'gpt-5.3-codex-spark',
+      modelId: 'gpt-5.4-mini',
       reasoningLevel: 'low',
     })
 
     expect(overridden.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      modelId: 'gpt-5.4-mini',
       thinkingLevel: 'low',
     })
   })
-  it('reroutes spawn_agent model from spark to codex when spark is temporarily quota-blocked', async () => {
+  it('reroutes spawn_agent model from GPT-5.6 Sol to Terra when Sol is temporarily quota-blocked', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const sparkWorker = await manager.spawnAgent('manager', {
-      agentId: 'Spark Block Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+    const solWorker = await manager.spawnAgent('manager', {
+      agentId: 'Sol Block Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+    await (manager as any).handleRuntimeError(solWorker.agentId, {
       phase: 'prompt_dispatch',
       message: 'You have hit your ChatGPT usage limit (pro plan). Try again in ~4307 min.',
     })
 
     const rerouted = await manager.spawnAgent('manager', {
-      agentId: 'Spark Fallback Worker',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      agentId: 'Sol Fallback Worker',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.5')
+    expect(rerouted.model.modelId).toBe('gpt-5.6-terra')
   })
 
-  it('reroutes spawn_agent model from spark to codex when worker message_end stopReason is error', async () => {
+  it('reroutes spawn_agent model from GPT-5.6 Sol to Terra when worker message_end stopReason is error', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const sparkWorker = await manager.spawnAgent('manager', {
-      agentId: 'Spark Message End Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+    const solWorker = await manager.spawnAgent('manager', {
+      agentId: 'Sol Message End Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    await (manager as any).handleRuntimeSessionEvent(sparkWorker.agentId, {
+    await (manager as any).handleRuntimeSessionEvent(solWorker.agentId, {
       type: 'message_end',
       message: {
         role: 'assistant',
@@ -317,46 +317,46 @@ describe("SwarmManager spawn_agent preset routing", () => {
     })
 
     const rerouted = await manager.spawnAgent('manager', {
-      agentId: 'Spark Message End Fallback Worker',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      agentId: 'Sol Message End Fallback Worker',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.5')
+    expect(rerouted.model.modelId).toBe('gpt-5.6-terra')
   })
 
-  it('reroutes spawn_agent model from spark to gpt-5.4 when spark and codex are blocked', async () => {
+  it('reroutes spawn_agent model from Sol to Luna when Sol and Terra are blocked', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const sparkWorker = await manager.spawnAgent('manager', {
-      agentId: 'Spark Block Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+    const solWorker = await manager.spawnAgent('manager', {
+      agentId: 'Sol Block Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
-    const codexWorker = await manager.spawnAgent('manager', {
-      agentId: 'Codex Block Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.5',
+    const terraWorker = await manager.spawnAgent('manager', {
+      agentId: 'Terra Block Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-terra',
     })
 
-    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+    await (manager as any).handleRuntimeError(solWorker.agentId, {
       phase: 'prompt_start',
       message: 'You have hit your ChatGPT usage limit (pro plan). Try again in 120 min.',
     })
-    await (manager as any).handleRuntimeError(codexWorker.agentId, {
+    await (manager as any).handleRuntimeError(terraWorker.agentId, {
       phase: 'prompt_dispatch',
       message: 'Rate limit exceeded for requests per minute. Try again in 30 min.',
     })
 
     const rerouted = await manager.spawnAgent('manager', {
-      agentId: 'Spark Escalation Worker',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      agentId: 'Sol Escalation Worker',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.4')
+    expect(rerouted.model.modelId).toBe('gpt-5.6-luna')
   })
 
   it('does not reroute spawn_agent model for non-quota runtime errors', async () => {
@@ -364,24 +364,24 @@ describe("SwarmManager spawn_agent preset routing", () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const sparkWorker = await manager.spawnAgent('manager', {
-      agentId: 'Spark Non Quota Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+    const solWorker = await manager.spawnAgent('manager', {
+      agentId: 'Sol Non Quota Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+    await (manager as any).handleRuntimeError(solWorker.agentId, {
       phase: 'prompt_dispatch',
       message: 'Network socket disconnected before secure TLS connection was established.',
     })
 
     const followup = await manager.spawnAgent('manager', {
-      agentId: 'Spark Non Quota Followup',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      agentId: 'Sol Non Quota Followup',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    expect(followup.model.modelId).toBe('gpt-5.3-codex-spark')
+    expect(followup.model.modelId).toBe('gpt-5.6-sol')
   })
 
   it('does not apply quota rerouting outside prompt_dispatch/prompt_start phases', async () => {
@@ -389,24 +389,24 @@ describe("SwarmManager spawn_agent preset routing", () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const sparkWorker = await manager.spawnAgent('manager', {
-      agentId: 'Spark Steer Delivery Source',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+    const solWorker = await manager.spawnAgent('manager', {
+      agentId: 'Sol Steer Delivery Source',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+    await (manager as any).handleRuntimeError(solWorker.agentId, {
       phase: 'steer_delivery',
       message: 'You have hit your ChatGPT usage limit (pro plan). Try again in 30 min.',
     })
 
     const followup = await manager.spawnAgent('manager', {
-      agentId: 'Spark Steer Delivery Followup',
-      model: 'pi-codex',
-      modelId: 'gpt-5.3-codex-spark',
+      agentId: 'Sol Steer Delivery Followup',
+      model: 'pi-5.6',
+      modelId: 'gpt-5.6-sol',
     })
 
-    expect(followup.model.modelId).toBe('gpt-5.3-codex-spark')
+    expect(followup.model.modelId).toBe('gpt-5.6-sol')
   })
 
   it('rejects invalid spawn_agent model presets with a clear error', async () => {
@@ -420,7 +420,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-5.6|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|pi-fable|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
+      'spawn_agent.model must be one of pi-5.5|pi-5.6|pi-5.4|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
       )
   })
 

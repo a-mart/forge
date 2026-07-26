@@ -169,7 +169,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
       emitConversationMessage
     },
     promptService: {
-      buildClaudeRuntimeSystemPrompt: vi.fn(async (_d, sp) => sp),
       buildCursorSdkRuntimeSystemPrompt: vi.fn(async (_d, sp) => sp)
     },
     secretsEnvService: {

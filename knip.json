@@ -57,7 +57,6 @@
         "src/swarm/scripts/{feedback-global-summary,feedback-review-queue,feedback-session-digest,feedback-target-context}.ts"
       ],
       "ignoreDependencies": [
-        "@anthropic-ai/claude-agent-sdk",
         "@cursor/sdk"
       ]
     },

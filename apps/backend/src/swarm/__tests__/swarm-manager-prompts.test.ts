@@ -531,10 +531,10 @@ describe('SwarmManager', () => {
     expect(systemPrompt).not.toContain('# Model-Specific Instructions')
   })
 
-  it('does not include built-in model-specific instructions for Claude SDK managers in prompt preview', async () => {
+  it('does not include built-in model-specific instructions for native Anthropic managers in prompt preview', async () => {
     const config = await makeTempConfig()
     config.defaultModel = {
-      provider: 'claude-sdk',
+      provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
     }
@@ -1319,7 +1319,7 @@ describe('SwarmManager', () => {
       descriptors: Map<string, AgentDescriptor>
       configurationCoordinator: {
         prompts: {
-          buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
+          buildCursorSdkRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
         }
       }
     }
@@ -1330,12 +1330,12 @@ describe('SwarmManager', () => {
     const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
     expect(resources.additionalSkillPaths).toContain(profileSkillFile)
 
-    const claudePrompt = await state.configurationCoordinator.prompts.buildClaudeRuntimeSystemPrompt(
+    const cursorPrompt = await state.configurationCoordinator.prompts.buildCursorSdkRuntimeSystemPrompt(
       descriptor!,
       'Base prompt',
     )
-    expect(claudePrompt).toContain('<name>legacy-profile-skill</name>')
-    expect(claudePrompt).toContain(profileSkillFile)
+    expect(cursorPrompt).toContain('<name>legacy-profile-skill</name>')
+    expect(cursorPrompt).toContain(profileSkillFile)
   })
 
   it('omits built-in GPT-5 model-specific instructions from the default manager prompt', async () => {

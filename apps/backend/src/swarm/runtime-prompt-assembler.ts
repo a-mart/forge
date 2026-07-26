@@ -1,13 +1,13 @@
 import { dirname, join, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
-import { isEnoentError } from "./claude-utils.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 const CLAUDE_CONTEXT_FILE_NAME = "CLAUDE.md";
 const MANAGER_MEMORY_HEADER = "# Manager Memory (shared across all sessions — read-only reference)";
 const SESSION_MEMORY_HEADER = "# Session Memory (this session's working memory — your writes go here)";
 
-export interface ClaudePromptAssemblerOptions {
+export interface RuntimePromptAssemblerOptions {
   // Base prompt (archetype or specialist)
   basePrompt: string;
 
@@ -41,7 +41,7 @@ interface LoadedContextFile {
   content: string;
 }
 
-export async function assembleClaudePrompt(options: ClaudePromptAssemblerOptions): Promise<string> {
+export async function assembleRuntimePrompt(options: RuntimePromptAssemblerOptions): Promise<string> {
   const sections: string[] = [];
   const trimmedBasePrompt = options.basePrompt.trim();
   if (trimmedBasePrompt.length > 0) {
@@ -223,7 +223,7 @@ function buildSkillsBlock(skills: Array<{ name: string; description: string; loc
   return lines.join("\n");
 }
 
-function resolveAssemblerCwd(options: ClaudePromptAssemblerOptions): string {
+function resolveAssemblerCwd(options: RuntimePromptAssemblerOptions): string {
   const explicitCwd = normalizeOptionalPath(options.cwd);
   if (explicitCwd) {
     return explicitCwd;

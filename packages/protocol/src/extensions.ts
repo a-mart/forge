@@ -45,7 +45,7 @@ export interface AgentRuntimeExtensionSnapshot {
 }
 
 export type ForgeScope = 'global' | 'profile' | 'project-local'
-export type ForgeRuntimeType = 'pi' | 'claude' | 'codex' | 'cursor-sdk'
+export type ForgeRuntimeType = 'pi' | 'codex' | 'cursor-sdk'
 
 export interface ForgeDiscoveredExtensionMetadata {
   displayName: string

@@ -6,7 +6,6 @@ Open **Settings** (gear icon in the sidebar) and go to **Authentication**. Confi
 
 - **Anthropic** and **OpenAI** use the current OAuth account-pool cards.
 - **xAI**, **OpenRouter**, and **Cursor SDK** use masked key/token rows.
-- **Claude SDK** uses external Claude Code CLI OAuth; run `claude login` first.
 
 Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models.
 

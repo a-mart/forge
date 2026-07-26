@@ -273,10 +273,10 @@ beforeEach(() => {
       supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
     },
     {
-      presetId: 'sdk-sonnet',
-      displayName: 'Claude SDK Sonnet',
-      provider: 'claude-sdk',
-      modelId: 'claude-sonnet-4-5-20250929',
+      presetId: 'cursor-composer',
+      displayName: 'Cursor Composer',
+      provider: 'cursor-sdk',
+      modelId: 'claude-sonnet-5',
       defaultReasoningLevel: 'high',
       supportedReasoningLevels: ['low', 'medium', 'high'],
     },
@@ -360,7 +360,7 @@ describe('SettingsGeneral', () => {
       expect(container.textContent).toContain('5 minutes')
     })
 
-    it('filters unsupported xAI and native SDK models out of compaction model choices', async () => {
+    it('filters unsupported xAI and Cursor SDK models out of compaction model choices', async () => {
       renderGeneral()
       await flush()
       await flush()
@@ -374,7 +374,7 @@ describe('SettingsGeneral', () => {
       await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.5' })).toBeTruthy())
 
       expect(queryByRole(document.body, 'option', { name: 'Grok 4' })).toBeNull()
-      expect(queryByRole(document.body, 'option', { name: 'Claude SDK Sonnet' })).toBeNull()
+      expect(queryByRole(document.body, 'option', { name: 'Cursor Composer' })).toBeNull()
     })
 
     it('uses model-specific reasoning metadata for GPT-5.6 compaction variants', async () => {

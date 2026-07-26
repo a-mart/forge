@@ -4,6 +4,8 @@ import type { CollaborationChannel, CollaborationSkillSelectionInput, Collaborat
 import { getSessionContextDir } from "../swarm/data-paths.js";
 import {
   inferSwarmModelPresetFromDescriptor,
+  normalizePersistedSwarmModelDescriptor,
+  normalizePersistedSwarmModelPresetValue,
   normalizeThinkingLevelForModelDescriptor,
   resolveModelDescriptorFromPreset,
 } from "../swarm/model-presets.js";
@@ -760,23 +762,36 @@ function resolveChannelModel(
   workspaceId: string,
 ): AgentModelDescriptor {
   if (category?.defaultModelProvider && category.defaultModelId && category.defaultModelThinkingLevel) {
-    return normalizeChannelModelDescriptor({
+    const persistedCategoryModel = {
       provider: category.defaultModelProvider,
       modelId: category.defaultModelId,
       thinkingLevel: category.defaultModelThinkingLevel,
-    });
+    };
+    return normalizeChannelModelDescriptor(
+      normalizePersistedSwarmModelDescriptor(persistedCategoryModel) ?? persistedCategoryModel,
+    );
   }
 
   if (category?.defaultModelId) {
-    return resolveModelDescriptorFromPreset(category.defaultModelId);
+    const persistedPreset = normalizePersistedSwarmModelPresetValue(category.defaultModelId);
+    if (!persistedPreset) {
+      throw new CollaborationChannelServiceError(
+        "orphaned_workspace",
+        `Collaboration category has unsupported default model preset ${category.defaultModelId}`,
+      );
+    }
+    return resolveModelDescriptorFromPreset(persistedPreset);
   }
 
   if (workspace.defaultModelProvider && workspace.defaultModelId && workspace.defaultModelThinkingLevel) {
-    return normalizeChannelModelDescriptor({
+    const persistedWorkspaceModel = {
       provider: workspace.defaultModelProvider,
       modelId: workspace.defaultModelId,
       thinkingLevel: workspace.defaultModelThinkingLevel,
-    });
+    };
+    return normalizeChannelModelDescriptor(
+      normalizePersistedSwarmModelDescriptor(persistedWorkspaceModel) ?? persistedWorkspaceModel,
+    );
   }
 
   throw new CollaborationChannelServiceError(

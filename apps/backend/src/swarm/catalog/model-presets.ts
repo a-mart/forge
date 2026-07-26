@@ -2,12 +2,24 @@ import { getSpawnPresetFamilies, type ModelPresetInfo } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "../types.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import {
+  assertClaudeSdkProviderNotSelected,
+  CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE,
+  isLegacyClaudeSdkPreset,
+  mapLegacyClaudeSdkModel,
+} from "./legacy-claude-sdk-model.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-5.5";
 
 const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "codex-app": "pi-5.5",
   "cursor-acp": "cursor-composer",
+};
+
+const PERSISTED_ONLY_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "pi-codex-spark": "pi-5.5",
+  "sdk-opus": "pi-opus",
+  "sdk-sonnet": "pi-sonnet",
 };
 
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
@@ -17,6 +29,24 @@ const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
 
 const REMOVED_MODEL_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex/gpt-5.3-codex": "pi-5.5",
+  "openai-codex/gpt-5.3-codex-spark": "pi-5.5",
+  "anthropic/claude-sonnet-4-5-20250929": "pi-sonnet",
+  "anthropic/claude-haiku-4-5-20251001": "pi-sonnet",
+  "anthropic/claude-sonnet-4.5": "pi-sonnet",
+  "anthropic/claude-haiku-4.5": "pi-sonnet",
+  "anthropic/claude-sonnet-4-5": "pi-sonnet",
+  "anthropic/claude-haiku-4-5": "pi-sonnet",
+};
+
+const RETIRED_MODEL_REJECTION_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "openrouter/~anthropic/claude-haiku-latest": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4.5": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4.5": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4-5": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4-5": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4-5-20250929": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4-5-20251001": "pi-sonnet",
+  "openrouter/openai/gpt-5.3-codex-spark": "pi-5.5",
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
@@ -41,6 +71,10 @@ export function isSwarmReasoningLevel(value: unknown): value is SwarmReasoningLe
 export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmModelPreset | undefined {
   if (value === undefined) {
     return undefined;
+  }
+
+  if (isLegacyClaudeSdkPreset(value)) {
+    throw new Error(`${fieldName}: ${CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE}`);
   }
 
   const normalizedPreset = normalizeSwarmModelPresetValue(value);
@@ -147,6 +181,50 @@ export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelP
   return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
 }
 
+export function normalizePersistedSwarmModelPresetValue(value: string): SwarmModelPreset | undefined {
+  const normalizedPreset = value.trim().toLowerCase();
+  return normalizeSwarmModelPresetValue(normalizedPreset) ?? PERSISTED_ONLY_PRESET_REPLACEMENTS[normalizedPreset];
+}
+
+export function resolveRemovedSwarmModelReplacementPreset(
+  provider: string,
+  modelId: string,
+): SwarmModelPreset | undefined {
+  return resolveModelReplacementFromMap(REMOVED_MODEL_REPLACEMENTS, provider, modelId)
+    ?? resolveModelReplacementFromMap(RETIRED_MODEL_REJECTION_REPLACEMENTS, provider, modelId);
+}
+
+function resolveModelReplacementFromMap(
+  replacements: Record<string, SwarmModelPreset>,
+  provider: string,
+  modelId: string,
+): SwarmModelPreset | undefined {
+  const normalizedProvider = provider.trim().toLowerCase();
+  let normalizedModelId = modelId.trim().toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
+
+  const providerPrefix = `${normalizedProvider}/`;
+  if (normalizedModelId.startsWith(providerPrefix)) {
+    normalizedModelId = normalizedModelId.slice(providerPrefix.length);
+  }
+
+  return replacements[`${normalizedProvider}/${normalizedModelId}`];
+}
+
+export function assertSwarmModelIdNotRetired(provider: string, modelId: string, fieldName: string): void {
+  assertClaudeSdkProviderNotSelected(provider, fieldName);
+  const replacementPreset = resolveRemovedSwarmModelReplacementPreset(provider, modelId);
+  if (!replacementPreset) {
+    return;
+  }
+
+  throw new Error(
+    `${fieldName} refers to retired model ${provider.trim()}/${modelId.trim()}; use ${replacementPreset} instead`,
+  );
+}
+
 export function normalizePersistedSwarmModelDescriptor(
   descriptor: (Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string }) | undefined,
 ): AgentModelDescriptor | undefined {
@@ -154,10 +232,24 @@ export function normalizePersistedSwarmModelDescriptor(
     return undefined;
   }
 
+  const legacyClaudeSdkMapping = mapLegacyClaudeSdkModel(descriptor);
+  if (legacyClaudeSdkMapping.kind === "mapped") {
+    const mappedDescriptor = {
+      provider: legacyClaudeSdkMapping.provider,
+      modelId: legacyClaudeSdkMapping.modelId,
+      thinkingLevel: descriptor.thinkingLevel,
+    };
+    return {
+      ...mappedDescriptor,
+      thinkingLevel: normalizeThinkingLevelForModelDescriptor(mappedDescriptor),
+    };
+  }
+
   const provider = descriptor.provider.trim().toLowerCase();
   const modelId = descriptor.modelId.trim().toLowerCase();
   const replacementPreset =
-    REMOVED_MODEL_REPLACEMENTS[`${provider}/${modelId}`] ?? REMOVED_PROVIDER_REPLACEMENTS[provider];
+    resolveModelReplacementFromMap(REMOVED_MODEL_REPLACEMENTS, provider, modelId)
+    ?? REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
     return {
       provider: descriptor.provider,

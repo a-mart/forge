@@ -146,6 +146,30 @@ describe("ProfileBootReconciler", () => {
     expect(root.modelOrigin).toBe("profile_default");
   });
 
+  it("normalizes known SDK descriptors on load and leaves unknown SDK models unavailable", () => {
+    const known = makeManager("known", "known", {
+      model: { provider: "claude-sdk", modelId: "claude-opus-4-7", thinkingLevel: "xhigh" },
+      modelOrigin: "session_override",
+    });
+    const unknown = makeWorker("unknown", "known", {
+      model: { provider: "claude-sdk", modelId: "claude-future-unknown", thinkingLevel: "high" },
+    });
+    const harness = createHarness({ descriptors: [known, unknown] });
+
+    expect(harness.reconciler.reconcileProfilesOnBoot()).toBe(true);
+    expect(known.model).toEqual({
+      provider: "anthropic",
+      modelId: "claude-opus-4-7",
+      thinkingLevel: "high",
+    });
+    expect(known.modelOrigin).toBe("session_override");
+    expect(unknown.model).toEqual({
+      provider: "claude-sdk",
+      modelId: "claude-future-unknown",
+      thinkingLevel: "high",
+    });
+  });
+
   it("deletes profiles that have neither their configured default nor a root manager", () => {
     const orphan = makeProfile("orphan", { defaultSessionAgentId: "missing" });
     const harness = createHarness({ profiles: [orphan] });
