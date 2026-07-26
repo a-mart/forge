@@ -137,7 +137,7 @@ describe("createCompactionSettingsRoutes", () => {
     const response = await fetch(`${server.baseUrl}/api/settings/compaction`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" } }),
+      body: JSON.stringify({ model: { provider: "claude-sdk", modelId: "claude-sonnet-5" } }),
     });
     const body = (await response.json()) as { error: string };
 

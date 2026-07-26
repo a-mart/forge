@@ -18,7 +18,7 @@ function descriptor(patch: Partial<AgentDescriptor> = {}): AgentDescriptor {
     createdAt: "2026-07-22T00:00:00.000Z",
     updatedAt: "2026-07-22T00:00:00.000Z",
     cwd: "/repo",
-    model: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" },
+    model: { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "medium" },
     sessionFile: "/data/session.jsonl",
     profileId: "profile-1",
     sessionSurface: "builder",

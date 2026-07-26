@@ -37,7 +37,7 @@ function makeDescriptor(baseDir: string): AgentDescriptor {
     cwd: baseDir,
     model: {
       provider: "claude-sdk",
-      modelId: "claude-sonnet-4.5",
+      modelId: "claude-sonnet-5",
       thinkingLevel: "medium"
     },
     sessionFile: join(baseDir, "profiles", "profile-1", "sessions", "claude-manager", "session.jsonl")
@@ -687,7 +687,7 @@ describe("ClaudeAgentRuntime", () => {
     const descriptor = makeDescriptor(tempDir);
     descriptor.model = {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5-20250929",
+      modelId: "claude-sonnet-5",
       thinkingLevel: "xhigh"
     };
     await mkdir(dirname(descriptor.sessionFile), { recursive: true });

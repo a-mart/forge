@@ -511,6 +511,27 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+    ["anthropic", "claude-haiku-4-5-20251001"],
+    ["claude-sdk", "claude-sonnet-4.5"],
+    ["claude-sdk", "claude-haiku-4-5"],
+    ["openrouter", "anthropic/claude-sonnet-4.5"],
+    ["openrouter", "~anthropic/claude-haiku-latest"],
+    ["openrouter", "openai/gpt-5.3-codex-spark"],
+  ])("rejects retired runtime model %s/%s before provider dispatch", async (provider, modelId) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: { provider, modelId, thinkingLevel: "medium" },
+    });
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "prompt")).rejects.toThrow("retired model");
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+    expect(claudeRuntimeMockState.constructorArgs).toHaveLength(0);
+  });
+
   it("rejects external-thread sidecar descriptors before runtime provider dispatch", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     const factory = createFactory(rootDir);

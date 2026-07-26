@@ -33,7 +33,7 @@ function makeAgent(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
     cwd: '/tmp/project',
     model: {
       provider: 'claude-sdk',
-      modelId: 'claude-sonnet-4-5-20250929',
+      modelId: 'claude-sonnet-5',
       thinkingLevel: 'medium',
     },
     sessionFile: '/tmp/project/session.jsonl',
@@ -62,7 +62,7 @@ describe('contextWindowForAgent', () => {
 
     expect(contextWindowForAgent(makeAgent())).toBe(200_000)
     expect(getCatalogContextWindowSpy).toHaveBeenCalledWith(
-      'claude-sonnet-4-5-20250929',
+      'claude-sonnet-5',
       'claude-sdk',
     )
   })

@@ -276,7 +276,7 @@ beforeEach(() => {
       presetId: 'sdk-sonnet',
       displayName: 'Claude SDK Sonnet',
       provider: 'claude-sdk',
-      modelId: 'claude-sonnet-4-5-20250929',
+      modelId: 'claude-sonnet-5',
       defaultReasoningLevel: 'high',
       supportedReasoningLevels: ['low', 'medium', 'high'],
     },

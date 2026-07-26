@@ -182,7 +182,7 @@ describe("CompactionSettingsService", () => {
       `${JSON.stringify(
         {
           version: 1,
-          model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" },
+          model: { provider: "claude-sdk", modelId: "claude-sonnet-5" },
           reasoningLevel: "high",
           timeoutMs: 300_000,
           updatedAt: "2026-06-24T12:00:00.000Z",
@@ -196,7 +196,7 @@ describe("CompactionSettingsService", () => {
     await service.load();
     const view = await service.getSettingsView();
 
-    expect(view.settings.model).toEqual({ provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" });
+    expect(view.settings.model).toEqual({ provider: "claude-sdk", modelId: "claude-sonnet-5" });
     expect(view.availability).toEqual({
       providerConfigured: true,
       modelValid: false,
@@ -302,7 +302,7 @@ describe("CompactionSettingsService", () => {
     await service.load();
 
     await expect(
-      service.update({ model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" } }),
+      service.update({ model: { provider: "claude-sdk", modelId: "claude-sonnet-5" } }),
     ).rejects.toThrow("Native SDK providers are not supported for compaction");
   });
 

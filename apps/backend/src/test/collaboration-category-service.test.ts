@@ -171,6 +171,28 @@ describe("collaboration category service", () => {
     expect(changedModel.channelCreationDefaults?.model.thinkingLevel).toBe(codexDefaultReasoning);
   });
 
+  it("rejects sunset preset aliases and retired exact category model defaults", async () => {
+    const { service, workspace } = await createCategoryHarness();
+
+    expect(() => service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Retired Spark preset",
+      defaultModelId: "pi-codex-spark",
+    })).toThrow("defaultModelId must be one of");
+
+    for (const model of [
+      { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "low" },
+      { provider: "anthropic", modelId: "claude-sonnet-4.5", thinkingLevel: "medium" },
+      { provider: "claude-sdk", modelId: "claude-haiku-4-5-20251001", thinkingLevel: "low" },
+    ]) {
+      expect(() => service.createCategory({
+        workspaceId: workspace.workspaceId,
+        name: `Retired ${model.modelId}`,
+        channelCreationDefaults: { model },
+      })).toThrow("retired model");
+    }
+  });
+
   it("preserves GPT-5.6 max reasoning as the category default", async () => {
     const { service, workspace } = await createCategoryHarness();
 

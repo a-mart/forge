@@ -195,7 +195,7 @@ async function makeTempConfig(port = 8901): Promise<SwarmConfig> {
     managerDisplayName: "Manager",
     defaultModel: {
       provider: "claude-sdk",
-      modelId: "claude-sonnet-4.5",
+      modelId: "claude-sonnet-5",
       thinkingLevel: "medium"
     },
     defaultCwd: root,

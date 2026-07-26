@@ -72,6 +72,35 @@ describe("repo project agent definitions", () => {
     expect(inventory.definitions[0].config.model).toEqual(inventory.items[0].recommendedModel);
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+    ["claude-sdk", "claude-haiku-4.5"],
+  ])("rejects retired exact project-agent model %s/%s", async (provider, modelId) => {
+    const root = await makeTempDir("forge-repo-pa-retired-model-");
+    const definitionDir = join(root, "retired-model-agent");
+    await mkdir(definitionDir, { recursive: true });
+    await writeFile(
+      join(definitionDir, "config.json"),
+      JSON.stringify({
+        version: 1,
+        handle: "retired-model-agent",
+        whenToUse: "Legacy model",
+        model: { provider, modelId, thinkingLevel: "medium" },
+      }),
+      "utf-8",
+    );
+    await writeFile(join(definitionDir, "prompt.md"), "Do work.\n", "utf-8");
+
+    const inventory = await scanRepoProjectAgentDefinitions(root);
+
+    expect(inventory.items[0]).toMatchObject({
+      status: "invalid",
+      problems: [expect.objectContaining({ code: "model_retired" })],
+    });
+    expect(inventory.definitions).toHaveLength(0);
+  });
+
   it("includes invalid entries with diagnostics instead of failing the scan", async () => {
     const root = await makeTempDir("forge-repo-pa-invalid-");
     const validDir = join(root, "valid-agent");

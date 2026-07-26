@@ -22,6 +22,7 @@ import type {
 } from "../types.js";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compatibility.js";
+import { assertSwarmModelIdNotRetired } from "../model-presets.js";
 import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
 import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
@@ -105,6 +106,11 @@ export class RuntimeFactory {
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     assertForgeRuntimeEligibleDescriptor(descriptor, "create runtime");
+    assertSwarmModelIdNotRetired(
+      descriptor.model.provider,
+      descriptor.model.modelId,
+      "runtime model",
+    );
     const secureRuntimeBinding =
       options?.secureRuntimeBinding ??
       await this.resolveSecureRuntimeBinding(descriptor, runtimeToken);

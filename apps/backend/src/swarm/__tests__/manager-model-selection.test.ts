@@ -136,6 +136,25 @@ describe("manager model selection", () => {
     ).toThrow("Model Claude Opus 4.7 is disabled for manager agents");
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark", "pi-5.5"],
+    ["anthropic", "claude-sonnet-4-5-20250929", "pi-sonnet"],
+    ["anthropic", "claude-haiku-4.5", "pi-sonnet"],
+    ["claude-sdk", "claude-sonnet-4.5", "sdk-sonnet"],
+    ["claude-sdk", "claude-sdk/claude-haiku-4-5-20251001", "sdk-sonnet"],
+    ["openrouter", "openai/gpt-5.3-codex-spark", "pi-5.5"],
+  ])("rejects retired exact manager selection %s/%s", async (provider, modelId, replacementPreset) => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(() =>
+      resolveExactManagerModelSelection(
+        { provider, modelId },
+        { surface: "change", providerAvailability: new Map([[provider, true]]) },
+      )
+    ).toThrow(`use ${replacementPreset} instead`);
+  });
+
   it("keeps pi-opus preset resolution on the catalog default", async () => {
     expect(resolveModelDescriptorFromPreset("pi-opus")).toEqual({
       provider: "anthropic",

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationWorkspace } from "@forge/protocol";
+import { normalizePersistedSwarmModelDescriptor } from "../swarm/model-presets.js";
 import type { ManagerProfile, SwarmConfig } from "../swarm/types.js";
 import type {
   CollaborationDbHelpers,
@@ -187,11 +188,24 @@ function resolveWorkspaceDefaults(
   config: SwarmConfig | null,
 ): CollaborationWorkspaceDefaultsRecord {
   const configDefaults = config ? workspaceDefaultsFromConfig(config) : null;
+  const defaultModelProvider =
+    normalizeOptionalDefault(workspace.defaultModelProvider) ?? configDefaults?.defaultModelProvider ?? null;
+  const defaultModelId = normalizeOptionalDefault(workspace.defaultModelId) ?? configDefaults?.defaultModelId ?? null;
+  const defaultModelThinkingLevel =
+    normalizeOptionalDefault(workspace.defaultModelThinkingLevel) ?? configDefaults?.defaultModelThinkingLevel ?? null;
+  const normalizedModel =
+    defaultModelProvider && defaultModelId && defaultModelThinkingLevel
+      ? normalizePersistedSwarmModelDescriptor({
+          provider: defaultModelProvider,
+          modelId: defaultModelId,
+          thinkingLevel: defaultModelThinkingLevel,
+        })
+      : undefined;
+
   return {
-    defaultModelProvider: normalizeOptionalDefault(workspace.defaultModelProvider) ?? configDefaults?.defaultModelProvider ?? null,
-    defaultModelId: normalizeOptionalDefault(workspace.defaultModelId) ?? configDefaults?.defaultModelId ?? null,
-    defaultModelThinkingLevel:
-      normalizeOptionalDefault(workspace.defaultModelThinkingLevel) ?? configDefaults?.defaultModelThinkingLevel ?? null,
+    defaultModelProvider: normalizedModel?.provider ?? defaultModelProvider,
+    defaultModelId: normalizedModel?.modelId ?? defaultModelId,
+    defaultModelThinkingLevel: normalizedModel?.thinkingLevel ?? defaultModelThinkingLevel,
     defaultCwd: normalizeOptionalDefault(workspace.defaultCwd) ?? configDefaults?.defaultCwd ?? null,
   };
 }

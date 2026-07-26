@@ -10,6 +10,10 @@ const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "cursor-acp": "cursor-composer",
 };
 
+const PERSISTED_ONLY_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "pi-codex-spark": "pi-5.5",
+};
+
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex-app-server": "pi-5.5",
   "cursor-acp": "cursor-composer",
@@ -17,6 +21,30 @@ const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
 
 const REMOVED_MODEL_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex/gpt-5.3-codex": "pi-5.5",
+  "openai-codex/gpt-5.3-codex-spark": "pi-5.5",
+  "anthropic/claude-sonnet-4-5-20250929": "pi-sonnet",
+  "anthropic/claude-haiku-4-5-20251001": "pi-sonnet",
+  "anthropic/claude-sonnet-4.5": "pi-sonnet",
+  "anthropic/claude-haiku-4.5": "pi-sonnet",
+  "anthropic/claude-sonnet-4-5": "pi-sonnet",
+  "anthropic/claude-haiku-4-5": "pi-sonnet",
+  "claude-sdk/claude-sonnet-4-5-20250929": "sdk-sonnet",
+  "claude-sdk/claude-haiku-4-5-20251001": "sdk-sonnet",
+  "claude-sdk/claude-sonnet-4.5": "sdk-sonnet",
+  "claude-sdk/claude-haiku-4.5": "sdk-sonnet",
+  "claude-sdk/claude-sonnet-4-5": "sdk-sonnet",
+  "claude-sdk/claude-haiku-4-5": "sdk-sonnet",
+};
+
+const RETIRED_MODEL_REJECTION_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "openrouter/~anthropic/claude-haiku-latest": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4.5": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4.5": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4-5": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4-5": "pi-sonnet",
+  "openrouter/anthropic/claude-sonnet-4-5-20250929": "pi-sonnet",
+  "openrouter/anthropic/claude-haiku-4-5-20251001": "pi-sonnet",
+  "openrouter/openai/gpt-5.3-codex-spark": "pi-5.5",
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
@@ -147,6 +175,49 @@ export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelP
   return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
 }
 
+export function normalizePersistedSwarmModelPresetValue(value: string): SwarmModelPreset | undefined {
+  const normalizedPreset = value.trim().toLowerCase();
+  return normalizeSwarmModelPresetValue(normalizedPreset) ?? PERSISTED_ONLY_PRESET_REPLACEMENTS[normalizedPreset];
+}
+
+export function resolveRemovedSwarmModelReplacementPreset(
+  provider: string,
+  modelId: string,
+): SwarmModelPreset | undefined {
+  return resolveModelReplacementFromMap(REMOVED_MODEL_REPLACEMENTS, provider, modelId)
+    ?? resolveModelReplacementFromMap(RETIRED_MODEL_REJECTION_REPLACEMENTS, provider, modelId);
+}
+
+function resolveModelReplacementFromMap(
+  replacements: Record<string, SwarmModelPreset>,
+  provider: string,
+  modelId: string,
+): SwarmModelPreset | undefined {
+  const normalizedProvider = provider.trim().toLowerCase();
+  let normalizedModelId = modelId.trim().toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
+
+  const providerPrefix = `${normalizedProvider}/`;
+  if (normalizedModelId.startsWith(providerPrefix)) {
+    normalizedModelId = normalizedModelId.slice(providerPrefix.length);
+  }
+
+  return replacements[`${normalizedProvider}/${normalizedModelId}`];
+}
+
+export function assertSwarmModelIdNotRetired(provider: string, modelId: string, fieldName: string): void {
+  const replacementPreset = resolveRemovedSwarmModelReplacementPreset(provider, modelId);
+  if (!replacementPreset) {
+    return;
+  }
+
+  throw new Error(
+    `${fieldName} refers to retired model ${provider.trim()}/${modelId.trim()}; use ${replacementPreset} instead`,
+  );
+}
+
 export function normalizePersistedSwarmModelDescriptor(
   descriptor: (Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string }) | undefined,
 ): AgentModelDescriptor | undefined {
@@ -157,7 +228,8 @@ export function normalizePersistedSwarmModelDescriptor(
   const provider = descriptor.provider.trim().toLowerCase();
   const modelId = descriptor.modelId.trim().toLowerCase();
   const replacementPreset =
-    REMOVED_MODEL_REPLACEMENTS[`${provider}/${modelId}`] ?? REMOVED_PROVIDER_REPLACEMENTS[provider];
+    resolveModelReplacementFromMap(REMOVED_MODEL_REPLACEMENTS, provider, modelId)
+    ?? REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
     return {
       provider: descriptor.provider,

@@ -7,6 +7,7 @@ import {
   getSpecialistFamilies,
   inferCatalogFamily,
   inferCatalogProvider,
+  isRetiredForgeModel,
   type ForgeModelCatalog,
   type ForgeModelDefinition,
   type ForgeProviderDefinition,
@@ -60,11 +61,19 @@ export class ModelCatalogService {
   }
 
   getOpenRouterModels(): OpenRouterModelEntry[] {
-    return Object.values(this.openRouterModels).sort((left, right) => left.modelId.localeCompare(right.modelId));
+    return Object.values(this.openRouterModels)
+      .filter((model) => !isRetiredForgeModel("openrouter", model.modelId))
+      .sort((left, right) => left.modelId.localeCompare(right.modelId));
   }
 
   isKnownModelId(modelId: string, provider?: string): boolean {
     const normalizedModelId = modelId.trim();
+    if (provider && isRetiredForgeModel(provider, normalizedModelId)) {
+      return false;
+    }
+    if (isRetiredForgeModel("openrouter", normalizedModelId)) {
+      return false;
+    }
     return getCatalogModel(normalizedModelId, provider) !== undefined || normalizedModelId in this.openRouterModels;
   }
 
@@ -79,7 +88,9 @@ export class ModelCatalogService {
       return catalogProvider;
     }
 
-    return normalizedModelId in this.openRouterModels ? "openrouter" : null;
+    return normalizedModelId in this.openRouterModels && !isRetiredForgeModel("openrouter", normalizedModelId)
+      ? "openrouter"
+      : null;
   }
 
   inferFamily(descriptor: Pick<AgentModelDescriptor, "provider" | "modelId">): string | undefined {
@@ -201,7 +212,7 @@ export class ModelCatalogService {
       return this.overrides[getOverrideKey(model)]?.enabled ?? model.enabledByDefault;
     }
 
-    return normalizedModelId in this.openRouterModels;
+    return normalizedModelId in this.openRouterModels && !isRetiredForgeModel("openrouter", normalizedModelId);
   }
 
   getOverride(modelId: string, provider?: string): ModelOverrideEntry | undefined {
@@ -215,7 +226,9 @@ export class ModelCatalogService {
   }
 
   getAllModelIds(): string[] {
-    return [...new Set([...Object.keys(this.catalog.models), ...Object.keys(this.openRouterModels)])];
+    const openRouterModelIds = Object.keys(this.openRouterModels)
+      .filter((modelId) => !isRetiredForgeModel("openrouter", modelId));
+    return [...new Set([...Object.keys(this.catalog.models), ...openRouterModelIds])];
   }
 
   getAllProviders(): ForgeProviderDefinition[] {

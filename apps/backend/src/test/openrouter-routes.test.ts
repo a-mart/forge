@@ -98,6 +98,14 @@ describe("openrouter-routes", () => {
       };
 
       expect(payload.models.length).toBeGreaterThan(0);
+      expect(payload.models.map((model) => model.modelId)).not.toEqual(
+        expect.arrayContaining([
+          "anthropic/claude-sonnet-4.5",
+          "anthropic/claude-haiku-4.5",
+          "~anthropic/claude-haiku-latest",
+          "openai/gpt-5.3-codex-spark",
+        ]),
+      );
       const claude = payload.models.find((model) => model.modelId === TEST_OPENROUTER_MODEL_ID);
       expect(claude).toMatchObject({
         modelId: TEST_OPENROUTER_MODEL_ID,
@@ -138,10 +146,27 @@ describe("openrouter-routes", () => {
         max_completion_tokens: 202_752,
       },
     };
+    const retiredLiveModel = {
+      id: "openai/gpt-5.3-codex-spark",
+      name: "OpenAI: GPT-5.3 Codex Spark",
+      context_length: 128_000,
+      max_completion_tokens: 128_000,
+      pricing: {
+        prompt: 0.000001,
+        completion: 0.000002,
+      },
+      supported_parameters: ["reasoning", "tools"],
+      architecture: {
+        modality: "text->text",
+      },
+      top_provider: {
+        max_completion_tokens: 128_000,
+      },
+    };
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url === "https://openrouter.ai/api/v1/models") {
-        return new Response(JSON.stringify({ data: [liveModel] }), {
+        return new Response(JSON.stringify({ data: [liveModel, retiredLiveModel] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -172,6 +197,7 @@ describe("openrouter-routes", () => {
           supportsTools: true,
         }),
       );
+      expect(firstPayload.models.map((model) => model.modelId)).not.toContain("openai/gpt-5.3-codex-spark");
 
       const secondResponse = await fetch(`http://${config.host}:${config.port}/api/settings/openrouter/available-models`);
       expect(secondResponse.status).toBe(200);
@@ -446,6 +472,24 @@ describe("openrouter-routes", () => {
     const { config, server } = await startServer();
 
     try {
+      const retiredAddResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent("anthropic/claude-haiku-4.5")}`,
+        { method: "PUT" },
+      );
+      expect(retiredAddResponse.status).toBe(410);
+      await expect(retiredAddResponse.json()).resolves.toMatchObject({
+        error: "OpenRouter model is retired: anthropic/claude-haiku-4.5",
+      });
+
+      const retiredSparkAddResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent("openai/gpt-5.3-codex-spark")}`,
+        { method: "PUT" },
+      );
+      expect(retiredSparkAddResponse.status).toBe(410);
+      await expect(retiredSparkAddResponse.json()).resolves.toMatchObject({
+        error: "OpenRouter model is retired: openai/gpt-5.3-codex-spark",
+      });
+
       const unknownAddResponse = await fetch(
         `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent("does/not-exist")}`,
         { method: "PUT" },

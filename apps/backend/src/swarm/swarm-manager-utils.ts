@@ -15,6 +15,7 @@ import {
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
 import { formatConversationReplyTargetMetadata } from "./conversation-reply.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import { assertSwarmModelIdNotRetired } from "./model-presets.js";
 import {
   isConversationBinaryAttachment,
   isConversationImageAttachment,
@@ -69,7 +70,7 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.4"];
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"];
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 
@@ -907,6 +908,8 @@ export function resolveExactModel(
   modelRegistry: ModelRegistry,
   descriptor: AgentModelDescriptor
 ): Model<Api> | undefined {
+  assertSwarmModelIdNotRetired(descriptor.provider, descriptor.modelId, "runtime model");
+
   const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
   if (direct) {
     return direct;

@@ -222,7 +222,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark", fallbackReasoningLevel: "medium" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5", fallbackReasoningLevel: "medium" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -241,7 +241,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
     const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
     expect(resolved?.provider).toBe("openai-codex");
-    expect(resolved?.modelId).toBe("gpt-5.3-codex-spark");
+    expect(resolved?.modelId).toBe("gpt-5.5");
   });
 
   it("currently infers fallback provider from fallbackModelId even when roster carries fallbackProvider", async () => {
@@ -464,7 +464,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -718,7 +718,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -865,7 +865,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (model) => model,
       resolveSystemPromptForDescriptor: vi.fn(async () => "fallback-system"),
@@ -957,7 +957,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -1031,7 +1031,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     const replacement = new FakeRuntime(
       {
         ...worker,
-        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+        model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" }
       },
       "sys2"
     );
@@ -1061,7 +1061,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -1150,7 +1150,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     const replacement = new FakeRuntime(
       {
         ...worker,
-        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+        model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" }
       },
       "sys2"
     );
@@ -1186,7 +1186,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => rerouteUpdatedAt,
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -1391,7 +1391,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -1430,7 +1430,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     const replacement = new FakeRuntime(
       {
         ...worker,
-        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+        model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" }
       },
       "sys2"
     );
@@ -1491,7 +1491,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
-        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+        { specialistId: "backend", fallbackModelId: "gpt-5.5" }
       ]),
       resolveSpawnModelWithCapacityFallback: (m) => m,
       resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
@@ -1524,7 +1524,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     const replacement = new FakeRuntime(
       {
         ...worker,
-        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+        model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" }
       },
       "sys2"
     );

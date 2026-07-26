@@ -66,7 +66,11 @@ describe("model-catalog-projection", () => {
     expect(projectionPath).toBe(join(dataDir, "shared", "cache", "generated", "pi-models.json"));
 
     const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
-      providers: Record<string, { api?: string; models?: Array<{ id: string; api?: string; cost?: unknown }> }>;
+      providers: Record<string, {
+        api?: string;
+        models?: Array<{ id: string; api?: string; cost?: unknown }>;
+        modelOverrides?: Record<string, unknown>;
+      }>;
     };
 
     const upstreamXaiModelIds = getModels("xai")
@@ -81,6 +85,18 @@ describe("model-catalog-projection", () => {
     const upstreamGrok4Fast = getModels("xai").find((model) => model.id === "grok-4-fast");
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
     expect(projection.providers.openrouter).toBeUndefined();
+
+    const projectedIds = Object.values(projection.providers).flatMap((provider) => [
+      ...(provider.models?.map((model) => model.id) ?? []),
+      ...Object.keys(provider.modelOverrides ?? {}),
+    ]);
+    for (const retiredModelId of [
+      "gpt-5.3-codex-spark",
+      "claude-sonnet-4-5-20250929",
+      "claude-haiku-4-5-20251001",
+    ]) {
+      expect(projectedIds).not.toContain(retiredModelId);
+    }
 
     const registry = new (ModelRegistry as unknown as new (...args: unknown[]) => unknown)(authStorageStub as any, projectionPath) as {
       getError: () => unknown;

@@ -15,7 +15,7 @@ function createDescriptor(overrides?: Partial<AgentDescriptor>): AgentDescriptor
     cwd: "/tmp/project",
     model: {
       provider: "claude-sdk",
-      modelId: "claude-sonnet-4.5",
+      modelId: "claude-sonnet-5",
       thinkingLevel: "medium"
     },
     sessionFile: "/tmp/project/session.jsonl",

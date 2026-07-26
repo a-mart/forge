@@ -1479,6 +1479,42 @@ describe("specialist-registry", () => {
     });
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.3-codex-spark"],
+    ["anthropic", "claude-sonnet-4-5-20250929"],
+    ["claude-sdk", "claude-haiku-4-5-20251001"],
+  ])("marks specialist unavailable for retired exact model %s/%s", async (provider, modelId) => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    process.env.FORGE_DATA_DIR = dataDir;
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(
+      join(sharedDir, "retired-worker.md"),
+      [
+        "---",
+        "displayName: Retired Worker",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Legacy tasks",
+        `provider: ${provider}`,
+        `modelId: ${modelId}`,
+        "---",
+        "",
+        "Worker body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const roster = await resolveRoster("profile-a", dataDir);
+
+    expect(roster[0]).toMatchObject({
+      available: false,
+      availabilityCode: "invalid_model",
+      availabilityMessage: `Unknown modelId: ${modelId}`,
+    });
+  });
+
   it("generates policy rows with the configured primary and fallback model", () => {
     const markdown = generateRosterBlock([], [{
       ...DEFAULT_TIER_CONFIGS.fast,

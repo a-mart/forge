@@ -41,6 +41,12 @@ The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@C
 
 `cursor-sdk` is a native provider backed by `@cursor/sdk`. The curated models are `composer-2.5` (Composer 2.5) and provider-scoped Cursor Grok 4.5 variants (`grok-4.5`, `grok-4.5-fast`). The static Forge mapping was curated from live Cursor SDK discovery: Cursor Grok 4.5 uses SDK model id `grok-4.5`, Forge maps reasoning levels to Cursor's `effort` param (`low`/`medium`/`high`), and Forge represents the fast pool with `fast=true` via the `grok-4.5-fast` catalog variant. Composer 2.5 is marked non-reasoning because discovery exposed only a `fast` toggle, not controllable reasoning effort. Runtime containment is provider-local and fail-closed with a Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures may retry once before output, auth/permission/cancel/user-state failures are projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is recorded in session custom entries and rolls up into dashboard stats, token analytics, and telemetry provider inference.
 
+## Retired model policy
+
+GPT-5.3 Codex Spark, Claude Sonnet 4.5, and Claude Haiku 4.5 are retired. They are absent from catalog, selector, preset, specialist, and generated projection surfaces. New requests using their canonical IDs, known dotted/dashed aliases, provider-scoped forms, or the removed `pi-codex-spark` preset are rejected before runtime provider dispatch.
+
+Persisted descriptors are migrated deterministically during hydration and restart: Spark becomes `openai-codex/gpt-5.5`, Anthropic Sonnet 4.5 and Haiku 4.5 become `anthropic/claude-sonnet-5`, and Claude SDK Sonnet 4.5 and Haiku 4.5 become `claude-sdk/claude-sonnet-5`. The existing reasoning level is clamped to the replacement model's supported levels. OpenRouter references are not migrated across providers; they fail closed and require an explicit new selection. Historical transcript entries remain unchanged for replay and analytics; they cannot select the runtime model. Unmigrated descriptors reaching runtime dispatch fail closed instead of falling through to an upstream registry hit or arbitrary default.
+
 ## Override semantics
 
 Local overrides are intentionally narrow and safe.

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertSwarmModelIdNotRetired,
   getModelPresetInfoList,
   inferProviderFromModelId,
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
+  normalizePersistedSwarmModelPresetValue,
   normalizeSwarmModelDescriptor,
   normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
@@ -107,7 +109,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-5.6", "pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-5.6", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -217,37 +219,82 @@ describe("model-presets", () => {
     })).toBe("low");
   });
 
-  it("maps removed full GPT-5.3 Codex descriptors to GPT-5.5 without exposing the legacy pi-codex alias", () => {
+  it("removes sunset models and aliases from new selections while deterministically migrating persisted descriptors", () => {
     const presets = getModelPresetInfoList();
     expect(presets.find((preset) => preset.presetId === "pi-codex")).toBeUndefined();
+    expect(presets.find((preset) => preset.presetId === "pi-codex-spark")).toBeUndefined();
     expect(presets.find((preset) => preset.presetId === "pi-5.5")).toMatchObject({
       provider: "openai-codex",
       modelId: "gpt-5.5",
       displayName: "GPT-5.5",
       defaultReasoningLevel: "xhigh",
     });
-    expect(presets.find((preset) => preset.presetId === "pi-codex-spark")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.3-codex-spark",
-      displayName: "GPT-5.3 Codex Spark",
-      defaultReasoningLevel: "low",
-    });
-    expect(presets.filter((preset) => preset.provider === "openai-codex" && preset.modelId === "gpt-5.5")).toHaveLength(1);
+    expect(() => parseSwarmModelPreset("pi-codex-spark", "model")).toThrow("model must be one of");
+    expect(normalizePersistedSwarmModelPresetValue("pi-codex-spark")).toBe("pi-5.5");
+
+    expect([
+      normalizePersistedSwarmModelDescriptor({
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex-spark",
+        thinkingLevel: "high",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-5-20250929",
+        thinkingLevel: "medium",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "anthropic",
+        modelId: "claude-haiku-4.5",
+        thinkingLevel: "low",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "claude-sdk",
+        modelId: "claude-sonnet-4-5-20250929",
+        thinkingLevel: "medium",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "claude-sdk",
+        modelId: "claude-sdk/claude-haiku-4-5-20251001",
+        thinkingLevel: "low",
+      }),
+    ]).toEqual([
+      { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" },
+      { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "medium" },
+      { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "low" },
+      { provider: "claude-sdk", modelId: "claude-sonnet-5", thinkingLevel: "medium" },
+      { provider: "claude-sdk", modelId: "claude-sonnet-5", thinkingLevel: "low" },
+    ]);
+
     expect(normalizePersistedSwarmModelDescriptor({
-      provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
-      thinkingLevel: "high",
+      provider: "openrouter",
+      modelId: "anthropic/claude-sonnet-4.5",
+      thinkingLevel: "medium",
     })).toEqual({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      thinkingLevel: "high",
+      provider: "openrouter",
+      modelId: "anthropic/claude-sonnet-4.5",
+      thinkingLevel: "medium",
     });
+
+    for (const [provider, modelId] of [
+      ["openai-codex", "gpt-5.3-codex-spark"],
+      ["anthropic", "claude-sonnet-4-5-20250929"],
+      ["anthropic", "claude-haiku-4-5-20251001"],
+      ["claude-sdk", "claude-sonnet-4.5"],
+      ["claude-sdk", "claude-haiku-4.5"],
+      ["openrouter", "anthropic/claude-sonnet-4.5"],
+      ["openrouter", "~anthropic/claude-haiku-latest"],
+      ["openrouter", "openai/gpt-5.3-codex-spark"],
+    ] as const) {
+      expect(modelCatalogService.isKnownModelId(modelId, provider)).toBe(false);
+      expect(() => assertSwarmModelIdNotRetired(provider, modelId, "modelId")).toThrow("retired model");
+    }
+
     expect(resolveModelDescriptorFromPreset("pi-codex")).toEqual({
       provider: "openai-codex",
       modelId: "gpt-5.5",
       thinkingLevel: "xhigh",
     });
-    expect(modelCatalogService.isKnownModelId("gpt-5.3-codex", "openai-codex")).toBe(false);
   });
 
   it("maps removed Cursor ACP descriptors and aliases to Cursor SDK Composer", () => {
@@ -354,27 +401,19 @@ describe("model-presets", () => {
 
     expect(inferSwarmModelPresetFromDescriptor({
       provider: "claude-sdk",
-      modelId: "claude-sonnet-4-5-20250929",
-    })).toBe("sdk-sonnet");
-
-    expect(inferSwarmModelPresetFromDescriptor({
-      provider: "claude-sdk",
       modelId: "claude-sonnet-5",
     })).toBe("sdk-sonnet");
 
     expect(presets.find((preset) => preset.presetId === "sdk-opus")?.variants?.map((variant) => variant.modelId)).toEqual([
       "claude-opus-4-7",
       "claude-opus-4-6",
-      "claude-haiku-4-5-20251001",
     ]);
 
     expect(presets.find((preset) => preset.presetId === "sdk-sonnet")).toMatchObject({
       provider: "claude-sdk",
       modelId: "claude-sonnet-5",
     });
-    expect(presets.find((preset) => preset.presetId === "sdk-sonnet")?.variants?.map((variant) => variant.modelId)).toEqual([
-      "claude-sonnet-4-5-20250929",
-    ]);
+    expect(presets.find((preset) => preset.presetId === "sdk-sonnet")?.variants).toBeUndefined();
   });
 
   it("exposes Anthropic Sonnet presets with the expected defaults", () => {
@@ -383,11 +422,6 @@ describe("model-presets", () => {
     expect(inferSwarmModelPresetFromDescriptor({
       provider: "anthropic",
       modelId: "claude-sonnet-5",
-    })).toBe("pi-sonnet");
-
-    expect(inferSwarmModelPresetFromDescriptor({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5-20250929",
     })).toBe("pi-sonnet");
 
     expect(resolveModelDescriptorFromPreset("pi-sonnet")).toEqual({
@@ -400,9 +434,7 @@ describe("model-presets", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-5",
     });
-    expect(presets.find((preset) => preset.presetId === "pi-sonnet")?.variants?.map((variant) => variant.modelId)).toEqual([
-      "claude-sonnet-4-5-20250929",
-    ]);
+    expect(presets.find((preset) => preset.presetId === "pi-sonnet")?.variants).toBeUndefined();
   });
 
   it("omits deprecated variants that are not present in the catalog", () => {
