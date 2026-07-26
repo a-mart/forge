@@ -96,7 +96,7 @@ index 2bec7263fdbb2d5ab96dae74b5ae430656641385..90383f317bcb208dede6ddeebcb1ba36
          const normalizedError = error instanceof Error ? error : new Error(String(error));
          this.errors.push(normalizedError);
 diff --git a/dist/core/model-registry.js b/dist/core/model-registry.js
-index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df61beeffb 100644
+index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088e21d05c2 100644
 --- a/dist/core/model-registry.js
 +++ b/dist/core/model-registry.js
 @@ -262,6 +262,7 @@ export const clearApiKeyCache = clearConfigValueCache;
@@ -107,7 +107,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
      providerRequestConfigs = new Map();
      modelRequestHeaders = new Map();
      configModelOverrides = new Map();
-@@ -310,15 +311,38 @@ export class ModelRegistry {
+@@ -310,15 +311,41 @@ export class ModelRegistry {
              // Keep built-in models even if custom models failed to load
          }
          const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
@@ -115,6 +115,9 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
 -        // Let OAuth providers modify their models (e.g., update baseUrl)
 +        const combined = this.mergeCustomModels(builtInModels, customModels);
 +        this.modelsWithoutOAuth = structuredClone(combined);
++        this.applyOAuthModelTransforms();
++    }
++    applyOAuthModelTransforms() {
 +        this.models = structuredClone(this.modelsWithoutOAuth);
 +        // Let OAuth providers modify their models (e.g., update baseUrl), unless a
 +        // higher-priority runtime API key is currently effective for that provider.
@@ -151,7 +154,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
      }
      /** Load built-in models and apply provider/model overrides */
      loadBuiltInModels(overrides, modelOverrides) {
-@@ -552,11 +576,19 @@ export class ModelRegistry {
+@@ -552,11 +579,19 @@ export class ModelRegistry {
       */
      async getApiKeyAndHeaders(model) {
          try {
@@ -173,7 +176,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
                      ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
                      : undefined);
              const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`, providerEnv);
-@@ -624,10 +656,16 @@ export class ModelRegistry {
+@@ -624,10 +659,16 @@ export class ModelRegistry {
       * Get API key for a provider.
       */
      async getApiKeyForProvider(provider) {
@@ -191,7 +194,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
          const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
          return providerApiKey
              ? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
-@@ -638,7 +676,7 @@ export class ModelRegistry {
+@@ -638,7 +679,7 @@ export class ModelRegistry {
       */
      isUsingOAuth(model) {
          const cred = this.authStorage.get(model.provider);
@@ -200,3 +203,49 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df
      }
      /**
       * Register a provider dynamically (from extensions).
+@@ -725,8 +766,10 @@ export class ModelRegistry {
+         }
+         this.storeProviderRequestConfig(providerName, config);
+         if (config.models && config.models.length > 0) {
+-            // Full replacement: remove existing models for this provider
+-            this.models = this.models.filter((m) => m.provider !== providerName);
++            // Full replacement: mutate the non-OAuth baseline, then derive effective
++            // routing from it so request-time credential synchronization cannot restore
++            // stale built-in endpoints over dynamically registered models.
++            this.modelsWithoutOAuth = this.modelsWithoutOAuth.filter((m) => m.provider !== providerName);
+             // Parse and add new models
+             for (const modelDef of config.models) {
+                 const api = modelDef.api || config.api;
+@@ -750,19 +793,12 @@ export class ModelRegistry {
+                     headers: undefined,
+                     compat: modelDef.compat,
+                 });
+-                this.models.push(model);
+-            }
+-            // Apply OAuth modifyModels if credentials exist (e.g., to update baseUrl)
+-            if (config.oauth?.modifyModels) {
+-                const cred = this.authStorage.get(providerName);
+-                if (cred?.type === "oauth") {
+-                    this.models = config.oauth.modifyModels(this.models, cred);
+-                }
++                this.modelsWithoutOAuth.push(model);
+             }
+         }
+         else if (config.baseUrl || config.headers) {
+-            // Override-only: update baseUrl for existing models. Request headers are resolved per request.
+-            this.models = this.models.map((m) => {
++            // Override-only: update the non-OAuth baseline. Request headers are resolved per request.
++            this.modelsWithoutOAuth = this.modelsWithoutOAuth.map((m) => {
+                 if (m.provider !== providerName)
+                     return m;
+                 return {
+@@ -771,6 +807,9 @@ export class ModelRegistry {
+                 };
+             });
+         }
++        // Rebuild from the canonical + models.json + dynamic-provider baseline before
++        // applying OAuth transforms. Endpoint routing and provider keys then stay paired.
++        this.applyOAuthModelTransforms();
+     }
+ }
+ //# sourceMappingURL=model-registry.js.map
