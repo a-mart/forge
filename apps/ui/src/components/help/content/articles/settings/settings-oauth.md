@@ -32,7 +32,7 @@ Forge refreshes stored xAI OAuth tokens when needed. If refresh or a retry no lo
 
 ## Troubleshooting
 
-- **Authorization URL does not open** — use **Copy URL**, or select and copy it manually if clipboard access is unavailable.
+- **Authorization URL does not open** — use **Copy URL**. If clipboard access is unavailable, use your browser’s copy-link action on **Open authorization URL**.
 - **Callback submission fails** — paste the complete callback URL from the current attempt. Retry if Forge prompts again.
 - **Device login expires** — start a new login to get a new code.
 - **Authentication later fails** — retry, then reauthorize if automatic refresh cannot recover.
