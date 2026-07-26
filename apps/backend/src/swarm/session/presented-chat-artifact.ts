@@ -16,10 +16,8 @@ import { CONVERSATION_ENTRY_TYPE } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { backfillConversationMessageEntryId } from "./conversation-entry-id.js";
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from "./session-file-guard.js";
-import { MAX_READ_FILE_CONTENT_BYTES, resolveEffectiveAgentWorkspaceCwd } from "../../ws/ws-file-access.js";
+import { MAX_READ_FILE_CONTENT_BYTES } from "../../ws/ws-file-access.js";
 import { resolveReadFileContentType } from "../../ws/http-utils.js";
-import { GitCli } from "../../versioning/git-cli.js";
-import { parseWorktreeListPorcelain, resolveGitCommonDirectory } from "../../versioning/git-source-control-helpers.js";
 
 // Keep document reads aligned with the existing 2 MiB text/file-reader budget. Images retain a
 // separate 4 MiB budget and capable clients can move those bytes over a one-use HTTP ticket.
@@ -29,7 +27,7 @@ if (MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES !== MAX_READ_FILE_CONTENT_BYTES) {
   throw new Error("Chat artifact and generic file-reader text limits must remain aligned");
 }
 
-export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch" | "ticket_capacity_exceeded";
+export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch" | "ticket_capacity_exceeded";
 export class ChatArtifactError extends Error { constructor(public readonly code: ChatArtifactErrorCode) { super(code); } }
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
@@ -125,81 +123,24 @@ export interface PresentedArtifactTargetResolutionHooks {
   /** Test-only path-semantics seam; production always uses the host platform. */
   platform?: NodeJS.Platform;
   realpath?: (target: string) => Promise<string>;
-  listRegisteredWorktrees?: (cwd: string) => Promise<Array<{ path: string; isPrunable: boolean; isBare?: boolean }>>;
-  resolveGitRepositoryIdentity?: (canonicalCwd: string) => Promise<string | undefined>;
-}
-
-export interface PresentedArtifactWorkspaceSnapshot {
-  transcriptCwd: string;
-  effectiveProjectCwd: string;
-}
-
-async function listRegisteredWorktrees(cwd: string) {
-  const result = await new GitCli({ cwd }).run(["worktree", "list", "--porcelain", "-z"], { allowFailure: true });
-  return result.exitCode === 0 ? parseWorktreeListPorcelain(result.stdout) : [];
-}
-
-async function resolveGitRepositoryIdentity(canonicalCwd: string): Promise<string | undefined> {
-  return (await resolveGitCommonDirectory(new GitCli({ cwd: canonicalCwd }), canonicalCwd)) ?? undefined;
-}
-
-function isCanonicalPathWithinRoot(target: string, root: string, platform: NodeJS.Platform): boolean {
-  const api = platform === "win32" ? path.win32 : path.posix;
-  const relative = api.relative(root, target);
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${api.sep}`) && !api.isAbsolute(relative));
 }
 
 /**
- * Resolve a transcript-presented target against server-derived file-browser project context.
- * The request cannot select a source owner or worktree: Git registration is discovered from the
- * effective CWD, and every root and the target are canonicalized before containment is checked.
+ * Resolve a transcript-presented absolute path to its canonical local target. Artifact authority
+ * comes from the presenting assistant message, not from the agent's current workspace location.
  */
 export async function resolveCanonicalPresentedArtifactTarget(
-  workspace: PresentedArtifactWorkspaceSnapshot,
   target: string,
   hooks: PresentedArtifactTargetResolutionHooks = {},
 ): Promise<string> {
   const platform = hooks.platform ?? process.platform;
   const resolveRealpath = hooks.realpath ?? (async (value: string) => realpath(value));
-  const resolveRepositoryIdentity = hooks.resolveGitRepositoryIdentity ?? resolveGitRepositoryIdentity;
-
-  const canonicalTarget = await (async () => {
-    try { return canonicalizeChatArtifactPathForPlatform(await resolveRealpath(target), platform); }
-    catch (error: unknown) {
-      if ((error as { code?: string })?.code === "ENOENT") fail("file_not_found");
-      if (error instanceof ChatArtifactError) throw error;
-      return fail("transcript_read_failed");
-    }
-  })();
-
-  const roots: string[] = [];
-  const resolveAccessibleRoot = async (candidate: string): Promise<string | undefined> => {
-    try { return canonicalizeChatArtifactPathForPlatform(await resolveRealpath(candidate), platform); }
-    catch { return undefined; }
-  };
-  const addRoot = (canonicalRoot: string | undefined) => {
-    if (canonicalRoot && !roots.some(root => samePath(root, canonicalRoot, platform))) roots.push(canonicalRoot);
-  };
-  const canonicalTranscriptCwd = await resolveAccessibleRoot(workspace.transcriptCwd);
-  const canonicalEffectiveCwd = await resolveAccessibleRoot(workspace.effectiveProjectCwd);
-  addRoot(canonicalTranscriptCwd);
-  addRoot(canonicalEffectiveCwd);
-
-  if (canonicalEffectiveCwd) {
-    const expectedRepositoryIdentity = await resolveRepositoryIdentity(canonicalEffectiveCwd).catch(() => undefined);
-    const worktrees = await (hooks.listRegisteredWorktrees ?? listRegisteredWorktrees)(canonicalEffectiveCwd).catch(() => []);
-    for (const worktree of worktrees) {
-      if (!expectedRepositoryIdentity || worktree.isPrunable || worktree.isBare) continue;
-      const canonicalRoot = await resolveAccessibleRoot(worktree.path);
-      if (!canonicalRoot) continue;
-      const candidateRepositoryIdentity = await resolveRepositoryIdentity(canonicalRoot).catch(() => undefined);
-      if (!candidateRepositoryIdentity || !samePath(candidateRepositoryIdentity, expectedRepositoryIdentity, platform)) continue;
-      addRoot(canonicalRoot);
-    }
+  try { return canonicalizeChatArtifactPathForPlatform(await resolveRealpath(target), platform); }
+  catch (error: unknown) {
+    if ((error as { code?: string })?.code === "ENOENT") fail("file_not_found");
+    if (error instanceof ChatArtifactError) throw error;
+    return fail("transcript_read_failed");
   }
-
-  if (!roots.some(root => isCanonicalPathWithinRoot(canonicalTarget, root, platform))) fail("path_outside_workspace");
-  return canonicalTarget;
 }
 type StableStat = { dev: number | bigint; ino: number | bigint; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean };
 export function stableFileIdentity(stat: StableStat) {
@@ -515,18 +456,11 @@ export async function readPresentedChatArtifact(
   const previewBytes = validatePreviewBytes(raw.previewBytes);
   const pathValue = raw.path as string; const transcriptAgentId = raw.transcriptAgentId as string; const messageId = raw.messageId as string;
   const target = canonicalizeChatArtifactPath(pathValue); const descriptor = resolveActiveBuilderTranscriptDescriptor(source, transcriptAgentId.trim());
-  const workspace: PresentedArtifactWorkspaceSnapshot = {
-    transcriptCwd: descriptor.cwd,
-    effectiveProjectCwd: (() => {
-      try { return resolveEffectiveAgentWorkspaceCwd(source, descriptor.agentId); }
-      catch { return fail("path_outside_workspace"); }
-    })(),
-  };
   const sessionFile = descriptor.sessionFile;
   const message = await findUniquePresentedConversationMessage(sessionFile, messageId.trim(), options?.transcriptRead);
   if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
   if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
-  const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(workspace, target, options?.targetResolution);
+  const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(target, options?.targetResolution);
   if (raw.imageTransport === "http_ticket" && resolveReadFileContentType(authorizedTarget).startsWith("image/")) {
     const ticketStore = options?.ticketStore;
     if (!ticketStore) throw new ChatArtifactError("invalid_request");
@@ -541,4 +475,4 @@ export async function readPresentedChatArtifact(
   return { ...result, path: pathValue } as ChatArtifactReadResponse;
 }
 
-export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity", "ticket_binding_mismatch"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found", "ticket_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (code === "ticket_expired") return 410; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "ticket_capacity_exceeded") return 429; if (code === "stable_identity_unsupported") return 501; return 500; }
+export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "ineligible_message", "unsafe_file_identity", "ticket_binding_mismatch"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found", "ticket_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (code === "ticket_expired") return 410; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "ticket_capacity_exceeded") return 429; if (code === "stable_identity_unsupported") return 501; return 500; }

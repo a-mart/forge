@@ -33,6 +33,7 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
+  Reflect.deleteProperty(window, 'electronBridge')
   Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT')
 })
 
@@ -128,6 +129,48 @@ describe('ArtifactPanel transcript-authorized reads', () => {
     renderPanel(imageArtifact({ path: '/tmp/report.txt', fileName: 'report.txt', href: 'swarm-file:///tmp/report.txt' }))
     await waitFor(() => expect(document.body.textContent).toContain('Showing a bounded preview of 2,097,152 bytes.'))
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ previewBytes: 512 * 1024, imageTransport: 'http_ticket' })
+  })
+
+  it('keeps an absolute path outside the workspace openable in the editor and desktop folder', async () => {
+    const externalPath = '/Users/adam/RedAlertEnhancements/reference/alpha bounds.png.txt'
+    const revealInFolder = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: { windowRole: 'main', backendWsUrl: 'ws://127.0.0.1/socket', revealInFolder },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      path: externalPath, contentType: 'application/octet-stream', content: 'external artifact',
+    }), { status: 200 })))
+
+    renderPanel(imageArtifact({ path: externalPath, fileName: 'alpha bounds.png.txt', href: `swarm-file://${externalPath}` }))
+
+    await waitFor(() => expect(document.body.textContent).toContain('external artifact'))
+    const editorLink = document.querySelector<HTMLAnchorElement>('a[href^="vscode-insiders://file"]')
+    expect(editorLink?.getAttribute('href')).toBe('vscode-insiders://file/Users/adam/RedAlertEnhancements/reference/alpha%20bounds.png.txt')
+    const revealButton = document.querySelector<HTMLButtonElement>('button[aria-label="Show in folder"]')
+    expect(revealButton).not.toBeNull()
+    act(() => revealButton?.click())
+    expect(revealInFolder).toHaveBeenCalledWith(externalPath)
+  })
+
+  it('recognizes forward-slash Windows absolute paths for desktop folder reveal', async () => {
+    const externalPath = 'D:/external-project/reference/result.txt'
+    const revealInFolder = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: { windowRole: 'main', backendWsUrl: 'ws://127.0.0.1/socket', revealInFolder },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      path: externalPath, contentType: 'application/octet-stream', content: 'windows artifact',
+    }), { status: 200 })))
+
+    renderPanel(imageArtifact({ path: externalPath, fileName: 'result.txt', href: `swarm-file:///${externalPath}` }))
+
+    await waitFor(() => expect(document.body.textContent).toContain('windows artifact'))
+    const revealButton = document.querySelector<HTMLButtonElement>('button[aria-label="Show in folder"]')
+    expect(revealButton).not.toBeNull()
+    act(() => revealButton?.click())
+    expect(revealInFolder).toHaveBeenCalledWith(externalPath)
   })
 
   it('surfaces secure denial without falling back to the legacy read-file route', async () => {

@@ -28,7 +28,8 @@ function createSendableSocket() {
 describe("WS chat artifact API proxy", () => {
   it("binds transcript ownership to the subscription and rejects extra ownership fields", async () => {
     const tempRoot = process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir(); const dataDir = await mkdtemp(join(tempRoot, "artifact-ws-")); roots.push(dataDir);
-    const profileId = "profile"; const agentId = "manager"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId); await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true }); const file = join(dataDir, "outside.txt"); await writeFile(file, "ok");
+    const profileId = "profile"; const agentId = "manager"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId); await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true });
+    const outsideRoot = await mkdtemp(join(tempRoot, "artifact-ws-outside-")); roots.push(outsideRoot); const file = join(outsideRoot, "outside.txt"); await writeFile(file, "ok");
     await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[x](swarm-file://${file})`, timestamp: new Date().toISOString() } }) + "\n");
     const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile, cwd: dataDir };
     const swarmManager: any = { getAgent: (id: string) => id === agentId ? descriptor : undefined, listProfiles: () => [{ profileId }], getConfig: () => ({ paths: { dataDir } }) };

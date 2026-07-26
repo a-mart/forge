@@ -6,7 +6,7 @@ Click a file reference in a chat message, or toggle the panel with the **sidebar
 
 ## What it shows
 
-The panel loads the file content from the agent's working directory and displays it based on file type:
+The panel loads the file at the absolute path referenced in the chat message and displays it based on file type:
 
 - **Markdown files** (.md, .mdx) render with full formatting, including Mermaid diagrams.
 - **Images** (PNG, JPG, GIF, WebP, SVG) display inline.

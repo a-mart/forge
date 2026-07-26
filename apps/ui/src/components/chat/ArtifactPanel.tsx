@@ -333,7 +333,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
 
               {isElectron() && window.electronBridge?.revealInFolder && (() => {
                 const pathToReveal = displayPath || artifact?.path || ''
-                const isAbsolute = pathToReveal.startsWith('/') || /^[a-zA-Z]:\\/.test(pathToReveal)
+                const isAbsolute = pathToReveal.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(pathToReveal)
                 if (!pathToReveal || !isAbsolute) return null
                 return (
                   <button
