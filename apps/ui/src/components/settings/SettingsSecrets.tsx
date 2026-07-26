@@ -8,6 +8,7 @@ import {
   fetchSecureSessionReadiness,
   isSecureMaterialEntryAvailable,
   secureSecretsErrorMessage,
+  testSecureSecretProvider,
   unlockSecureMaterialEntry,
   type SecureSecretsCatalog,
   type SecureSessionReadiness,
@@ -161,12 +162,35 @@ function BuilderSecretsSettings({
         )
         return
       }
-      setPrivateEntryUnlockMessage('Private storage is unlocked.')
+      const localProvider = catalog.providers.find(
+        (provider) => provider.kind === 'local_keychain' && provider.enabled,
+      )
+      if (!localProvider) {
+        setPrivateEntryUnlockMessage('Private storage is unlocked.')
+      } else {
+        try {
+          const result = await testSecureSecretProvider(
+            apiClient,
+            localProvider.providerId,
+          )
+          setPrivateEntryUnlockMessage(
+            result.code === 'ok'
+              ? 'Private storage is unlocked and the local vault is ready.'
+              : result.code === 'local_secret_decrypt_failed'
+                ? 'Private storage is unlocked, but some saved values need attention. Use Test vault below to recover them.'
+                : 'Private storage is unlocked, but the local vault could not be verified. Use Test vault below to retry.',
+          )
+        } catch {
+          setPrivateEntryUnlockMessage(
+            'Private storage is unlocked, but the local vault could not be verified. Use Test vault below to retry.',
+          )
+        }
+      }
       await refresh()
     } finally {
       setUnlockingPrivateEntry(false)
     }
-  }, [refresh])
+  }, [apiClient, catalog.providers, refresh])
 
   return (
     <div className="space-y-6">

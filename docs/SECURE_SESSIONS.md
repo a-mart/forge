@@ -441,6 +441,12 @@ bounded fixed execution/source codes and configured automatic-grant state. It ne
 secret values, ciphertext, provider responses, raw stderr, credentials, provider
 locators, or catalog aliases.
 
+If private storage is locked, **Unlock private storage** requests operating-system
+credential access and verifies the local vault in the same action. Starting Team Secure
+Mode performs the same unlock preflight when the current project's automatic grants
+depend on the local vault. **Test vault** remains available for manual retries and
+migration recovery; it is not a required routine step after unlocking.
+
 When a Forge data directory is copied to another machine, aliases, bindings, scopes,
 and automatic-grant policy can remain useful, but local-vault ciphertext and the
 encrypted Bitwarden machine-account token remain bound to the original operating

@@ -119,6 +119,7 @@ describe('SecureSessionPicker', () => {
     expect(document.body.textContent).toContain('deploy-token')
     expect(document.body.textContent).toContain('Project default')
     expect(document.body.textContent).toContain('Environment variable DEPLOY_TOKEN')
+    expect(document.body.textContent).not.toContain('Grant secrets')
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', { name: 'Revoke' }))
@@ -363,6 +364,105 @@ describe('SecureSessionPicker', () => {
     expect(getByRole(document.body, 'heading', { name: 'Grant secrets' })).toBeTruthy()
   })
 
+  it('does not open a grant dialog when project defaults were granted during startup', async () => {
+    const startedSnapshot = {
+      sessionAgentId: 'manager-1',
+      principalKind: 'manager' as const,
+      revision: 2,
+      executionMode: 'secure' as const,
+      environmentStatus: 'ready' as const,
+      leases: [{
+        leaseId: 'lease-default',
+        secretId: 'secret-1',
+        displayAlias: 'deploy-token',
+        policy: { kind: 'task' as const },
+        status: 'active' as const,
+        bindings: [{ kind: 'env' as const, variable: 'DEPLOY_TOKEN' }],
+        grantSource: 'project_default' as const,
+      }],
+      pendingRequests: [],
+      projectDefaults: [{
+        secretId: 'secret-1',
+        displayAlias: 'deploy-token',
+        state: 'active' as const,
+        statusCode: 'ok' as const,
+      }],
+      updatedAt: '2026-07-23T12:00:01.000Z',
+    }
+    const onStart = vi.fn(async () => startedSnapshot)
+    renderPicker(makeConfig({
+      onStart,
+      snapshot: {
+        ...startedSnapshot,
+        revision: 1,
+        executionMode: 'standard',
+        environmentStatus: 'stopped',
+        leases: [],
+        projectDefaults: [{
+          ...startedSnapshot.projectDefaults[0],
+          state: 'configured',
+        }],
+      },
+    }))
+
+    openPicker(/start a secure session/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Start secure session' }))
+    })
+    await onStart.mock.results[0]?.value
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(document.body.querySelector('[data-slot="dialog-content"]')).toBeNull()
+  })
+
+  it('reopens secure status when a project default still needs recovery after startup', async () => {
+    const unavailableDefault = {
+      secretId: 'secret-1',
+      displayAlias: 'deploy-token',
+      state: 'unavailable' as const,
+      statusCode: 'source_unavailable' as const,
+    }
+    const startedSnapshot = {
+      sessionAgentId: 'manager-1',
+      principalKind: 'manager' as const,
+      revision: 2,
+      executionMode: 'secure' as const,
+      environmentStatus: 'ready' as const,
+      leases: [],
+      pendingRequests: [],
+      projectDefaults: [unavailableDefault],
+      updatedAt: '2026-07-23T12:00:01.000Z',
+    }
+    const onStart = vi.fn(async () => startedSnapshot)
+    const onReviewProjectSecrets = vi.fn()
+    renderPicker(makeConfig({
+      onStart,
+      onReviewProjectSecrets,
+      snapshot: {
+        ...startedSnapshot,
+        revision: 1,
+        executionMode: 'standard',
+        environmentStatus: 'stopped',
+      },
+    }))
+
+    openPicker(/start a secure session/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Start secure session' }))
+    })
+    await onStart.mock.results[0]?.value
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(document.body.querySelector('[data-slot="dialog-content"]')).toBeNull()
+    const defaults = getByRole(document.body, 'region', {
+      name: 'Project default status',
+    })
+    expect(defaults.textContent).toContain('deploy-tokenUnavailable')
+    expect(getByRole(defaults, 'button', {
+      name: 'Review project secrets',
+    })).toBeTruthy()
+  })
+
   it('does not reopen a grant dialog when a start finishes after the selected session changes', async () => {
     let resolveStart: ((value: boolean) => void) | undefined
     const onStart = vi.fn(() => new Promise<boolean>((resolve) => {
@@ -408,7 +508,44 @@ describe('SecureSessionPicker', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
-  it('routes an empty grant dialog directly to project secrets', async () => {
+  it('keeps secure status open when startup fails so recovery is not hidden', async () => {
+    const onStart = vi.fn(async () => false)
+    renderPicker(makeConfig({
+      onStart,
+      snapshot: {
+        sessionAgentId: 'manager-1',
+        principalKind: 'manager',
+        revision: 1,
+        executionMode: 'standard',
+        environmentStatus: 'stopped',
+        leases: [],
+        pendingRequests: [],
+        projectDefaults: [{
+          secretId: 'secret-1',
+          displayAlias: 'deploy-token',
+          state: 'unavailable',
+          statusCode: 'source_unavailable',
+        }],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
+      onReviewProjectSecrets: vi.fn(),
+    }))
+
+    openPicker(/start a secure session/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Start secure session' }))
+    })
+    await onStart.mock.results[0]?.value
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const defaults = getByRole(document.body, 'region', {
+      name: 'Project default status',
+    })
+    expect(defaults.textContent).toContain('deploy-tokenUnavailable')
+    expect(document.body.querySelector('[data-slot="dialog-content"]')).toBeNull()
+  })
+
+  it('routes an empty vault directly to project secrets without opening a grant dialog', () => {
     const onReviewProjectSecrets = vi.fn()
     renderPicker(makeConfig({
       secrets: [],
@@ -417,15 +554,27 @@ describe('SecureSessionPicker', () => {
 
     openPicker(/secure session ready/i)
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add project secret' }))
     })
 
-    expect(document.body.textContent).toContain(
-      'No unleased saved secrets are available yet.',
-    )
+    expect(onReviewProjectSecrets).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('routes unavailable saved secrets to project settings without an empty grant dialog', () => {
+    const onReviewProjectSecrets = vi.fn()
+    renderPicker(makeConfig({
+      secrets: [{
+        ...availableSecret,
+        available: false,
+      }],
+      onReviewProjectSecrets,
+    }))
+
+    openPicker(/secure session ready/i)
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', {
-        name: 'Add a project secret',
+        name: 'Review unavailable secrets',
       }))
     })
 

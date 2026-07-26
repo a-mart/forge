@@ -3323,23 +3323,22 @@ export class SecureSessionsService {
           sourceLocator: secret.sourceLocator,
           encryptedMaterial: secret.encryptedMaterial ?? undefined,
         });
-        if (resolution.refreshedEncryptedMaterial) {
-          try {
-            if (secret.encryptedMaterial) {
-              store.rotateEncryptedSecretMaterial({
-                secretId,
-                expectedEncryptedMaterial: secret.encryptedMaterial,
-                encryptedMaterial: resolution.refreshedEncryptedMaterial,
-              });
-            }
-          } catch (error) {
-            resolution.material.release();
-            throw error;
-          } finally {
-            resolution.refreshedEncryptedMaterial.fill(0);
+        try {
+          if (resolution.refreshedEncryptedMaterial && secret.encryptedMaterial) {
+            store.rotateEncryptedSecretMaterial({
+              secretId,
+              expectedEncryptedMaterial: secret.encryptedMaterial,
+              encryptedMaterial: resolution.refreshedEncryptedMaterial,
+            });
           }
+          this.markProviderResolutionSucceeded(store, provider);
+          return resolution.material;
+        } catch (error) {
+          resolution.material.release();
+          throw error;
+        } finally {
+          resolution.refreshedEncryptedMaterial?.fill(0);
         }
-        return resolution.material;
       }
       const config = store.getProviderBackendConfig(provider.providerId);
       if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
@@ -3349,21 +3348,22 @@ export class SecureSessionsService {
         encryptedCredential: config.encryptedAccessToken,
         endpointOrigin: config.serverOrigin,
       });
-      if (resolution.refreshedEncryptedCredential) {
-        try {
+      try {
+        if (resolution.refreshedEncryptedCredential) {
           store.rotateProviderBackendCredential({
             providerId: provider.providerId,
             expectedEncryptedAccessToken: config.encryptedAccessToken,
             encryptedAccessToken: resolution.refreshedEncryptedCredential,
           });
-        } catch (error) {
-          resolution.material.release();
-          throw error;
-        } finally {
-          resolution.refreshedEncryptedCredential.fill(0);
         }
+        this.markProviderResolutionSucceeded(store, provider);
+        return resolution.material;
+      } catch (error) {
+        resolution.material.release();
+        throw error;
+      } finally {
+        resolution.refreshedEncryptedCredential?.fill(0);
       }
-      return resolution.material;
     } catch (error) {
       const next = providerStatusForError(error);
       store.updateProviderStatus({
@@ -3377,6 +3377,27 @@ export class SecureSessionsService {
     } finally {
       secret.encryptedMaterial?.fill(0);
       providerCredential?.fill(0);
+    }
+  }
+
+  private markProviderResolutionSucceeded(
+    store: SecureSessionStore,
+    provider: SecureSessionProvider,
+  ): void {
+    if (
+      provider.status === "available"
+      && provider.lastStatusCode === "ok"
+    ) {
+      return;
+    }
+    const updated = store.updateProviderStatus({
+      providerId: provider.providerId,
+      status: "available",
+      lastStatusCode: "ok",
+      lastVerifiedAt: this.now(),
+    });
+    if (updated) {
+      this.emitCatalog(store);
     }
   }
 

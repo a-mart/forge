@@ -80,6 +80,7 @@ import {
   stopSecureSession,
   toSecureSecretOptions,
   toSecureSessionSnapshotView,
+  unlockLocalProjectDefaultsIfNeeded,
 } from '@/lib/secure-sessions-api'
 import type { SecureSecretsCatalog } from '@/lib/secure-secrets-api'
 import { hydrateSessionWorkers } from './worker-hydration'
@@ -1042,23 +1043,34 @@ export function BuilderSurface({
     const client = clientRef.current
     if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return false
     try {
-      applySecureMutationResult(client, await startSecureSession(
+      const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
+        secureCatalog,
+        secureSessionSnapshot?.profileId ?? activeAgent?.profileId,
+      )
+      if (!localVaultReady) {
+        throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
+      }
+      const snapshot = await startSecureSession(
         apiClient,
         activeAgentId,
         secureSessionSnapshot?.revision,
-      ))
-      return true
+      )
+      applySecureMutationResult(client, snapshot)
+      return toSecureSessionSnapshotView(snapshot)
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
       return false
     }
   }, [
+    activeAgent?.profileId,
     activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
+    secureCatalog,
+    secureSessionSnapshot?.profileId,
     secureSessionSnapshot?.revision,
   ])
 
@@ -1078,6 +1090,13 @@ export function BuilderSurface({
     ) return false
 
     try {
+      const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
+        secureCatalog,
+        managerSnapshot.profileId,
+      )
+      if (!localVaultReady) {
+        throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
+      }
       applySecureMutationResult(client, await applySecureSessionProjectDefaults(
         apiClient,
         managerAgentId,
@@ -1106,6 +1125,7 @@ export function BuilderSurface({
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
+    secureCatalog,
   ])
 
   const handleReviewProjectSecrets = useCallback(() => {
