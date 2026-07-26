@@ -132,7 +132,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron stage:exter
 FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron test:external-chrome-package
 ```
 
-`stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or signature-policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies the native-host signature metadata. Validation mode explicitly allows an unverified validation signature only for this smoke; the deployed release path rejects it.
+`stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or signature-policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies the native-host signature metadata. Validation mode explicitly allows an unverified validation signature only for non-publishable staging, package-content, and installer validation; runtime deployment and the release path reject it.
 
 The opt-in extension fixture can exercise a temporary isolated Chrome profile, but it is not a replacement for a headed Chrome/Desktop/native-registration run. Do not run live registration or load an everyday Chrome profile during routine CI/docs validation. Unit tests, builds, staging, and package-content smoke do not by themselves qualify headed Chrome, native registration, the current platform, installer contents, or the release SEA/signing path.
 
@@ -290,7 +290,7 @@ The root `pnpm dev:electron` workflow also uses backend port `47287`; only its U
 
 ## Platform Notes
 
-The desktop app is tested and supported on:
+Current package targets and qualification boundaries are:
 
 - **macOS** 12+ (Apple Silicon is exercised locally; Intel requires separate native qualification before claiming support evidence)
 - **Windows** 10+ (x64)
