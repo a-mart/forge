@@ -103,6 +103,25 @@ export class NodeNativeProcessFacade implements NativeProcessFacade {
   }
 }
 
+export class DevelopmentExecutableTrustVerifier implements ExecutableTrustVerifier {
+  constructor(
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly uid: number | undefined = process.getuid?.(),
+  ) {}
+
+  async verify(executable: string): Promise<ExternalChromeTrustState> {
+    try {
+      const stat = await fs.lstat(executable)
+      if (!stat.isFile() || stat.isSymbolicLink()) return 'untrusted'
+      if (this.platform !== 'win32' && (stat.mode & 0o111) === 0) return 'untrusted'
+      if (this.uid !== undefined && stat.uid !== this.uid) return 'untrusted'
+      return 'trusted'
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'untrusted'
+    }
+  }
+}
+
 export class PlatformExecutableTrustVerifier implements ExecutableTrustVerifier {
   constructor(
     private readonly platform: NodeJS.Platform,
@@ -465,14 +484,20 @@ export function createExternalChromeNativeRegistration(options: {
   dataRoot: string
   platform?: NodeJS.Platform
   homeDirectory?: string
+  /** Trust only the user-owned executable already hash-validated by the dev deployer. */
+  allowDevelopmentHost?: boolean
 }): ExternalChromeNativeRegistration {
   const platform = options.platform ?? process.platform
   const homeDirectory = options.homeDirectory ?? os.homedir()
+  const trustVerifier = options.allowDevelopmentHost && (platform === 'darwin' || platform === 'linux')
+    ? new DevelopmentExecutableTrustVerifier(platform)
+    : undefined
   if (platform === 'darwin') {
     return new PosixNativeRegistration({
       platform,
       dataRoot: options.dataRoot,
       registrationDirectory: path.join(homeDirectory, 'Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts'),
+      ...(trustVerifier ? { trustVerifier } : {}),
     })
   }
   if (platform === 'linux') {
@@ -480,9 +505,13 @@ export function createExternalChromeNativeRegistration(options: {
       platform,
       dataRoot: options.dataRoot,
       registrationDirectory: path.join(homeDirectory, '.config', 'google-chrome', 'NativeMessagingHosts'),
+      ...(trustVerifier ? { trustVerifier } : {}),
     })
   }
-  if (platform === 'win32') return new WindowsNativeRegistration({ dataRoot: options.dataRoot })
+  if (platform === 'win32') return new WindowsNativeRegistration({
+    dataRoot: options.dataRoot,
+    ...(trustVerifier ? { trustVerifier } : {}),
+  })
   return new UnsupportedNativeRegistration()
 }
 

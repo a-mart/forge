@@ -89,6 +89,8 @@ export interface ExternalChromeDeployerOptions {
   lock?: DeploymentLock
   sharingRetry?: (operation: () => Promise<void>, error: NodeJS.ErrnoException, attempt: number) => Promise<boolean>
   afterPhase?: (phase: DeploymentPhase) => void | Promise<void>
+  /** Development-only opt-in for the explicit Node shebang host; release remains the default. */
+  allowDevelopmentHost?: boolean
 }
 
 export interface DeploymentLock {
@@ -215,7 +217,7 @@ export class ExternalChromeDeployer {
     const release = await this.lock.acquire(this.paths.lock)
     try {
       await this.recoverUnlocked()
-      const manifest = await readExternalChromePackageManifest(path.join(this.options.resourcesRoot, 'package-manifest.json'))
+      const manifest = await this.readPackageManifest(path.join(this.options.resourcesRoot, 'package-manifest.json'))
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, this.options.resourcesRoot)
       const record = installRecordFromManifest(manifest)
@@ -278,7 +280,7 @@ export class ExternalChromeDeployer {
     const release = await this.lock.acquire(this.paths.lock)
     try {
       await this.recoverUnlocked()
-      const manifest = await readExternalChromePackageManifest(path.join(resourcesRoot, 'package-manifest.json'))
+      const manifest = await this.readPackageManifest(path.join(resourcesRoot, 'package-manifest.json'))
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, resourcesRoot)
       await this.phase('validated', manifest)
@@ -516,6 +518,10 @@ export class ExternalChromeDeployer {
     } catch {
       return false
     }
+  }
+
+  private readPackageManifest(file: string): Promise<ExternalChromePackageManifest> {
+    return readExternalChromePackageManifest(file, { allowDevelopmentHost: this.options.allowDevelopmentHost })
   }
 
   private async validatePackagedResources(manifest: ExternalChromePackageManifest, resourcesRoot: string): Promise<void> {
@@ -928,7 +934,7 @@ export class ExternalChromeDeployer {
         typeof value.nativeSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.nativeSha256)) return null
       const root = path.join(this.paths.deployment, value.directory)
       assertPathInside(this.paths.deployment, root)
-      const manifest = await readExternalChromePackageManifest(path.join(root, 'package-manifest.json'))
+      const manifest = await this.readPackageManifest(path.join(root, 'package-manifest.json'))
       if (manifest.extension.payloadSha256 !== value.payloadSha256 || manifest.nativeHost.sha256 !== value.nativeSha256) return null
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, root)
