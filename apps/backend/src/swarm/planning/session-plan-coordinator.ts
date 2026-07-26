@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import type {
-  PlanSummaryEvent,
-  SessionPlanSnapshotEvent,
-  WorkGraphSnapshot,
+import {
+  normalizePlanSummaryEntries,
+  type PlanSummaryEvent,
+  type SessionPlanSnapshotEvent,
+  type WorkGraphSnapshot,
 } from '@forge/protocol'
 import type { AcceptedDeliveryMode } from '../types.js'
 import {
@@ -325,50 +326,55 @@ export class SessionPlanCoordinator {
 
   private recordPlanCardTransition(
     owner: SessionPlanOwner,
-    outgoing: SessionPlanState,
     snapshot: SessionPlanState,
   ): void {
+    const id = snapshot.planSummaryId
+    if (!id || snapshot.plan.length === 0) return
+
     const latestById = new Map<string, PlanSummaryEvent>()
-    for (const event of this.options.getPlanSummaries(owner.agentId)) {
+    for (const event of normalizePlanSummaryEntries(this.options.getPlanSummaries(owner.agentId))) {
       latestById.set(event.id, event)
     }
-    let active = Array.from(latestById.values()).reverse().find((event) => event.state === 'active')
-    const replacingCompletedPlan = shouldCreateCompletedPlanSummary(outgoing, snapshot.plan)
+    const existing = latestById.get(id)
+    const state = snapshot.plan.every((step) => step.status === 'completed')
+      ? 'completed'
+      : 'active'
+    if (existing && !(existing.state === 'active' && state === 'completed')) return
 
-    const needsAnchor = snapshot.plan.length > 0 && (
-      outgoing.plan.length === 0
-      || replacingCompletedPlan
-      || (!active && outgoing.plan.some((step) => step.status !== 'completed'))
-    )
-    if (needsAnchor) {
-      active = {
-        type: 'plan_summary',
-        id: randomUUID(),
+    this.options.emitPlanSummary({
+      ...(existing ?? {
+        type: 'plan_summary' as const,
+        id,
         agentId: owner.agentId,
         timestamp: this.options.now(),
-        state: 'active',
-        revision: snapshot.revision,
-        updatedAt: snapshot.updatedAt!,
-        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-        plan: snapshot.plan.map((step) => ({ ...step })),
-        ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
-        ...(snapshot.workGraph ? { workGraph: cloneWorkGraph(snapshot.workGraph) } : {}),
-      }
-      this.options.emitPlanSummary(active)
-    }
+      }),
+      state,
+      revision: snapshot.revision,
+      updatedAt: snapshot.updatedAt!,
+      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+      plan: snapshot.plan.map((step) => ({ ...step })),
+      ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
+      ...(snapshot.workGraph ? { workGraph: cloneWorkGraph(snapshot.workGraph) } : {}),
+    })
+  }
 
-    if (active && snapshot.plan.length > 0 && snapshot.plan.every((step) => step.status === 'completed')) {
-      this.options.emitPlanSummary({
-        ...active,
-        state: 'completed',
-        revision: snapshot.revision,
-        updatedAt: snapshot.updatedAt!,
-        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-        plan: snapshot.plan.map((step) => ({ ...step })),
-        ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
-        ...(snapshot.workGraph ? { workGraph: cloneWorkGraph(snapshot.workGraph) } : {}),
-      })
+  private resolvePlanSummaryId(
+    owner: SessionPlanOwner,
+    current: SessionPlanState,
+    nextPlan: SessionPlanWriteInput['plan'],
+  ): string | undefined {
+    if (nextPlan.length === 0) return undefined
+    if (current.plan.length === 0 || shouldCreateCompletedPlanSummary(current, nextPlan)) {
+      return randomUUID()
     }
+    if (current.planSummaryId) return current.planSummaryId
+
+    const summaries = normalizePlanSummaryEntries(this.options.getPlanSummaries(owner.agentId))
+    const currentIsCompleted = current.plan.every((step) => step.status === 'completed')
+    const recovered = [...summaries].reverse().find((event) => (
+      currentIsCompleted ? event.state !== 'active' : event.state === 'active'
+    ))
+    return recovered?.id ?? randomUUID()
   }
 
   private createStore(owner: SessionPlanOwner): SessionPlanStore {
@@ -437,13 +443,18 @@ export class SessionPlanCoordinator {
     input: SessionPlanWriteInput,
   ): Promise<SessionPlanState> {
     const tracker = this.createUsageTracker(owner)
+    const current = await this.getState(owner)
+    const planSummaryId = this.resolvePlanSummaryId(owner, current, input.plan)
     const { snapshot } = await this.createStore(owner).updateWithOutgoingState(
-      input,
+      {
+        ...input,
+        ...(planSummaryId ? { planSummaryId } : {}),
+      },
       async ({ outgoing, snapshot: next }) => {
         await tracker.recordPlanTransition(outgoing, next).catch((error) => {
           this.logUsageError('plan_usage:transition:error', owner, error)
         })
-        this.recordPlanCardTransition(owner, outgoing, next)
+        this.recordPlanCardTransition(owner, next)
       },
     )
     this.statesByAgentId.set(owner.agentId, snapshot)

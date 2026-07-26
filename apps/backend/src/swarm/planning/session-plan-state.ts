@@ -17,6 +17,8 @@ export const MAX_PLAN_EXPLANATION_LENGTH = 2_000
 
 export interface SessionPlanState extends SessionPlanSnapshot {
   schemaVersion: typeof SESSION_PLAN_SCHEMA_VERSION
+  /** Durable identity of the transcript card for the current plan lifecycle. */
+  planSummaryId?: string
 }
 
 export interface SessionPlanWriteInput {
@@ -24,6 +26,7 @@ export interface SessionPlanWriteInput {
   plan: PlanStep[]
   coordinationMode?: 'plan' | 'graph'
   workGraph?: WorkGraphSnapshot
+  planSummaryId?: string
 }
 
 export class SessionPlanValidationError extends Error {
@@ -90,6 +93,7 @@ export function normalizeSessionPlanState(value: unknown): SessionPlanState {
     throw new SessionPlanValidationError('updatedAt must be an ISO timestamp.')
   }
 
+  const planSummaryId = normalizeOptionalText(state.planSummaryId, 'planSummaryId', 256)
   const coordinationMode = state.coordinationMode
   if (coordinationMode !== undefined && coordinationMode !== 'plan' && coordinationMode !== 'graph') {
     throw new SessionPlanValidationError('coordinationMode must be plan or graph when provided.')
@@ -122,6 +126,7 @@ export function normalizeSessionPlanState(value: unknown): SessionPlanState {
     revision: revision as number,
     updatedAt: state.updatedAt,
     ...normalized,
+    ...(planSummaryId ? { planSummaryId } : {}),
     ...(coordinationMode ? { coordinationMode } : {}),
     ...(workGraph ? { workGraph, plan: projectWorkGraphPlan(workGraph) } : {}),
   }

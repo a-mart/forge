@@ -361,7 +361,6 @@ export class ConversationProjector {
 
   emitPlanSummary(event: PlanSummaryEvent): void {
     this.emitConversationEntry(event);
-    collapsePlanSummaryUpdates(this.deps.conversationEntriesByAgentId.get(event.agentId));
     this.deps.emitServerEvent("plan_summary", event satisfies ServerEvent);
   }
 
@@ -455,7 +454,11 @@ export class ConversationProjector {
         : (this.deps.conversationEntriesByAgentId.get(historyAgentId) ?? []);
 
     history.push(event);
-    trimConversationHistory(history, resolveManagerContextId(descriptor, historyAgentId));
+    trimConversationHistory(
+      history,
+      resolveManagerContextId(descriptor, historyAgentId),
+      { normalizePlanSummaries: event.type === "plan_summary" }
+    );
     this.deps.conversationEntriesByAgentId.set(historyAgentId, history);
     if (options?.routingReceipt && descriptor?.sessionFile) {
       this.appendRoutingReceiptBestEffort(descriptor.sessionFile, options.routingReceipt);
@@ -552,7 +555,6 @@ export class ConversationProjector {
             fastPathUsed: validation.fastPathUsed,
           });
         }
-        collapsePlanSummaryUpdates(validatedCachedEntries);
         trimConversationHistory(
           validatedCachedEntries,
           resolveManagerContextId(descriptor, descriptor.agentId)
@@ -694,7 +696,6 @@ export class ConversationProjector {
       }
       diagnostics.fsReadOps += readOps;
       diagnostics.fsReadBytes += scannedBytes;
-      collapsePlanSummaryUpdates(entriesForAgent);
       trimConversationHistory(entriesForAgent, resolveManagerContextId(descriptor, descriptor.agentId));
 
       this.deps.logDebug("history:load:ready", {
@@ -1118,21 +1119,4 @@ function decrementCounter(counter: Map<string, number>, key: string): boolean {
   }
 
   return true;
-}
-
-function collapsePlanSummaryUpdates(entries: ConversationEntryEvent[] | undefined): void {
-  if (!entries) return;
-  const firstIndexById = new Map<string, number>();
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (entry?.type !== "plan_summary") continue;
-    const firstIndex = firstIndexById.get(entry.id);
-    if (firstIndex === undefined) {
-      firstIndexById.set(entry.id, index);
-      continue;
-    }
-    entries[firstIndex] = entry;
-    entries.splice(index, 1);
-    index -= 1;
-  }
 }

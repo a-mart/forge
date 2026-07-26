@@ -2423,13 +2423,14 @@ Never use plain assistant text for user communication.`
       config.paths.dataDir,
       'manager',
       'manager',
-    ))).resolves.toEqual([{
+    ))).resolves.toEqual([expect.objectContaining({
       schemaVersion: 1,
       revision: 1,
       updatedAt: expect.any(String),
       explanation: 'Implementation is ready for validation.',
       plan: [{ step: 'Run validation', status: 'in_progress' }],
-    }])
+      planSummaryId: expect.any(String),
+    })])
     await manager.handleUserMessage('start fresh', { targetAgentId: 'manager' })
 
     const clearedRuntimeText = runtime?.sendCalls.at(-1)?.message as string
@@ -2459,6 +2460,52 @@ Never use plain assistant text for user communication.`
     expect(JSON.parse(contextLine!.slice('[workingPlan] '.length))).toEqual({
       revision: 1,
       plan: [{ step: 'Resume after restart', status: 'in_progress' }],
+    })
+  })
+
+  it('rehydrates work graph and active goal context through compaction and restart', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createGoal('manager', 'goal-continuity', {
+      objective: 'Preserve the durable objective',
+    })
+    await manager.updateWorkGraph('manager', 'graph-continuity', {
+      explanation: 'A user decision gates the next graph outcome.',
+      nodes: [{
+        id: 'decision',
+        title: 'Confirm the next outcome',
+        task: 'Wait for the user decision before continuing.',
+        kind: 'decision',
+        status: 'waiting',
+      }],
+    })
+
+    await manager.compactAgentContext('manager')
+    const compactInstructions = manager.runtimeByAgentId.get('manager')?.compactCalls.at(-1) as string
+    expect(compactInstructions).toContain('[workingPlan] {"revision":1')
+    expect(compactInstructions).toContain('"coordinationMode":"graph"')
+    expect(compactInstructions).toContain('"id":"decision"')
+    expect(compactInstructions).toContain('[activeGoal] {"revision":1')
+    expect(compactInstructions).toContain('"objective":"Preserve the durable objective"')
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    await rebooted.handleUserMessage('Continue from durable state.', { targetAgentId: 'manager' })
+    const runtimeText = rebooted.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
+    expect(runtimeText).toContain('[workingPlan] {"revision":1')
+    expect(runtimeText).toContain('"coordinationMode":"graph"')
+    expect(runtimeText).toContain('"id":"decision"')
+    expect(runtimeText).toContain('[activeGoal] {"revision":2')
+    expect(runtimeText).toContain('"objective":"Preserve the durable objective"')
+    await expect(rebooted.getSessionPlanSnapshot('manager')).resolves.toMatchObject({
+      revision: 1,
+      coordinationMode: 'graph',
+      workGraph: { nodes: [{ id: 'decision', status: 'waiting' }] },
+    })
+    await expect(rebooted.getSessionGoalSnapshot('manager')).resolves.toMatchObject({
+      revision: 2,
+      goal: { objective: 'Preserve the durable objective', status: 'active' },
     })
   })
 

@@ -239,6 +239,42 @@ describe('MessageList plan summaries', () => {
     expect(container.textContent).toContain('The first plan is complete.')
   })
 
+  it('collapses a distinct stale active anchor without hiding completed history', () => {
+    const completed = (id: string, revision: number, explanation: string) => ({
+      type: 'plan_summary' as const,
+      id,
+      agentId: 'session-1',
+      timestamp: now,
+      state: 'completed' as const,
+      revision,
+      updatedAt: now,
+      explanation,
+      plan: [{ step: explanation, status: 'completed' as const }],
+    })
+    render([
+      completed('historical', 1, 'Historical plan'),
+      {
+        type: 'plan_summary',
+        id: 'polluted-active',
+        agentId: 'session-1',
+        timestamp: now,
+        state: 'active',
+        revision: 2,
+        updatedAt: now,
+        explanation: 'Stale duplicate',
+        plan: [{ step: 'Current plan', status: 'in_progress' }],
+      },
+      completed('current', 3, 'Current plan complete'),
+      completed('next-historical', 4, 'Another completed plan'),
+    ])
+
+    expect(container.querySelectorAll('section[aria-label="Completed plan"]')).toHaveLength(3)
+    expect(container.textContent).not.toContain('Stale duplicate')
+    expect(container.textContent).toContain('Historical plan')
+    expect(container.textContent).toContain('Current plan complete')
+    expect(container.textContent).toContain('Another completed plan')
+  })
+
   it('keeps one inline row at its original position while an anchored plan updates', () => {
     render([
       {
