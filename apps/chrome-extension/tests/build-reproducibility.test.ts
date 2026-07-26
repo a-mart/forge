@@ -62,11 +62,25 @@ describe('deterministic MV3 package', () => {
         const content = await readFile(path.join(first, 'extension/payloads', String(selector.payloadDirectory), file))
         expect(createHash('sha256').update(content).digest('hex')).toBe(expectedHash)
       }
+      const payloadWorker = await readFile(path.join(first, 'extension/payloads', String(selector.payloadDirectory), 'service-worker.js'), 'utf8')
+      expect(payloadWorker).not.toContain('var import_meta = {}')
+      expect(payloadWorker).toContain('payload directory does not match runtime version and hash')
       const workerBootstrap = await readFile(path.join(first, 'extension/shell/service-worker-bootstrap.js'), 'utf8')
       expect(workerBootstrap).toContain('importScripts(payloadUrl)')
+      expect(workerBootstrap).toContain(JSON.stringify(selector.payloadDirectory))
+      expect(workerBootstrap).toContain('selected payload does not match the installed shell')
+      expect(workerBootstrap).toContain('directory: selector.payloadDirectory, sha256: selector.payloadSha256')
       expect(workerBootstrap).not.toMatch(/\b(?:eval|Function)\s*\(|blob:|https?:\/\//)
-      const packageManifest = JSON.parse(await readFile(path.join(first, 'package-manifest.json'), 'utf8')) as Record<string, unknown>
+      const packageManifest = JSON.parse(await readFile(path.join(first, 'package-manifest.json'), 'utf8')) as {
+        extension: { shellFiles: Record<string, string>; payloadFiles: Record<string, string> }
+        capabilities: Record<string, boolean>
+      }
       expect(packageManifest).toMatchObject({ capabilities: { desktopIntegration: false, testSideLoadOnly: true, resize: false, recording: false, downloadArtifacts: false, downloadOpen: false } })
+      expect(Object.keys(packageManifest.extension.shellFiles).sort()).toEqual([
+        'manifest.json', 'shell/service-worker-bootstrap.js', 'shell/side-panel-bootstrap.js',
+        'shell/side-panel.css', 'shell/side-panel.html',
+      ])
+      expect(packageManifest.extension.payloadFiles).toEqual(payloadFiles)
       for (const relative of firstFiles) {
         expect((await stat(path.join(first, relative))).mode & 0o777).toBe(0o644)
       }

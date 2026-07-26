@@ -34,21 +34,25 @@ async function root(): Promise<{ dataRoot: string; deployer: ExternalChromeDeplo
   const publicKey = (await readFile(new URL('../../../../chrome-extension/identity/production-public-key.b64', import.meta.url), 'utf8')).trim()
   const manifestJson = `${JSON.stringify({ manifest_version: 3, key: publicKey })}\n`
   const shell = 'shell\n'
-  const payload = 'payload\n'
+  const payloadContents = {
+    'content-script.js': Buffer.from('content payload\n'),
+    'service-worker.js': Buffer.from('service worker payload\n'),
+    'side-panel.js': Buffer.from('side panel payload\n'),
+  }
   const native = Buffer.from('native')
-  const payloadSha256 = treeSha256({ 'worker.js': Buffer.from(payload) })
+  const payloadSha256 = treeSha256(payloadContents)
   const payloadDirectory = `1.0.0-${payloadSha256}`
   const shellFiles = {
     'manifest.json': sha256(Buffer.from(manifestJson)),
     'shell/bootstrap.js': sha256(Buffer.from(shell)),
   }
-  const payloadFiles = { 'worker.js': sha256(Buffer.from(payload)) }
+  const payloadFiles = Object.fromEntries(Object.entries(payloadContents).map(([file, bytes]) => [file, sha256(bytes)]))
   await mkdir(path.join(resourcesRoot, 'extension-shell', 'shell'), { recursive: true })
   await mkdir(path.join(resourcesRoot, 'payload', payloadDirectory), { recursive: true })
   await mkdir(path.join(resourcesRoot, 'native-host', 'linux-x64'), { recursive: true })
   await writeFile(path.join(resourcesRoot, 'extension-shell', 'manifest.json'), manifestJson)
   await writeFile(path.join(resourcesRoot, 'extension-shell', 'shell/bootstrap.js'), shell)
-  await writeFile(path.join(resourcesRoot, 'payload', payloadDirectory, 'worker.js'), payload)
+  await Promise.all(Object.entries(payloadContents).map(([file, bytes]) => writeFile(path.join(resourcesRoot, 'payload', payloadDirectory, file), bytes)))
   await writeFile(path.join(resourcesRoot, 'native-host', 'linux-x64', 'forge-external-chrome-native-host'), native)
   const manifest = {
     schemaVersion: 1, packageVersion: '1.0.0',
@@ -657,7 +661,7 @@ describe('ExternalChromeHostCoordinator', () => {
     await assertMismatch()
     await deployer.deploy()
     const selector = JSON.parse(await readFile(path.join(paths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string }
-    await writeFile(path.join(paths.payloads, selector.payloadDirectory, 'worker.js'), 'corrupt')
+    await writeFile(path.join(paths.payloads, selector.payloadDirectory, 'service-worker.js'), 'corrupt')
     await assertMismatch()
     await deployer.deploy()
     await writeFile(paths.installState, '{"schemaVersion":1,"unexpected":true}')

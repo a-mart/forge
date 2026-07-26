@@ -277,13 +277,15 @@ describe('SettingsExternalChrome', () => {
     ['updating', 'New claims and browser operations are paused.'],
     ['reconnecting', 'requires a new authenticated hello'],
     ['rolled-back', 'last verified compatible payload'],
-    ['manual-extension-reload', 'Compatible connected profiles otherwise auto-reload'],
+    ['manual-extension-reload', 'click Reload for Forge'],
     ['incompatible-payload', 'Managed Browser is still available'],
     ['authority-owned-by-other-data-dir', 'does not transfer Chrome profiles or tabs'],
   ] as const)('renders truthful %s recovery guidance', async (recovery, guidance) => {
     await render(createBridge(coordinatorStatus({ recovery })))
-    expect(screen.getByTestId('external-chrome-recovery').textContent).toContain(recovery)
-    expect(screen.getByTestId('external-chrome-recovery').textContent).toContain(guidance)
+    const recoveryText = screen.getByTestId('external-chrome-recovery').textContent ?? ''
+    expect(recoveryText).toContain(recovery)
+    expect(recoveryText).toContain(guidance)
+    expect(recoveryText).not.toContain('Forge External Chrome')
   })
 
   it('does not expose coordinator actions outside Forge Desktop', async () => {
