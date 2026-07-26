@@ -557,6 +557,63 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("heals stale local-vault health when a project default resolves successfully", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "recovered-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{
+        deliveryKind: "environment",
+        targetName: "RECOVERED_DEFAULT",
+      }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    harness.store.updateProviderStatus({
+      providerId: "forge-local-keychain",
+      status: "unreachable",
+      lastStatusCode: "source_unreachable",
+      lastVerifiedAt: NOW,
+    });
+
+    expect(await harness.service.listSecureSecrets()).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        available: false,
+      }),
+    ]);
+
+    await expect(harness.service.startSecureSession("manager-a")).resolves
+      .toEqual(expect.objectContaining({
+        leases: [expect.objectContaining({
+          secretId: secret.secretId,
+          status: "active",
+          grantSource: "project_default",
+        })],
+        projectDefaults: [expect.objectContaining({
+          secretId: secret.secretId,
+          state: "active",
+          statusCode: "ok",
+        })],
+      }));
+    await expect(harness.service.listSecureSecretProviders()).resolves.toEqual([
+      expect.objectContaining({
+        providerId: "forge-local-keychain",
+        status: "available",
+        lastStatusCode: "ok",
+      }),
+    ]);
+    expect(await harness.service.listSecureSecrets()).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        available: true,
+      }),
+    ]);
+    await harness.close();
+  });
+
   it("reports secure execution readiness with fixed codes and sanitizes probe failures", async () => {
     const unavailable = createHarness({
       probeAvailability: {

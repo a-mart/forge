@@ -7,7 +7,11 @@ import type {
   SecureSecretOption,
   SecureSessionSnapshotView,
 } from '@/components/chat/secure-session/types'
-import { fetchSecureSecretsCatalog, type SecureSecretsCatalog } from './secure-secrets-api'
+import {
+  fetchSecureSecretsCatalog,
+  unlockSecureMaterialEntry,
+  type SecureSecretsCatalog,
+} from './secure-secrets-api'
 import type {
   ApplySecureSessionProjectDefaultsRequest,
   GrantSecureSecretLeaseRequest,
@@ -101,6 +105,38 @@ export async function fetchSecureSessionCatalog(
 ): Promise<SecureSecretsCatalog> {
   assertBuilderTarget(apiClient)
   return fetchSecureSecretsCatalog(apiClient)
+}
+
+export async function unlockLocalProjectDefaultsIfNeeded(
+  catalog: SecureSecretsCatalog | null,
+  profileId: string | null | undefined,
+): Promise<boolean> {
+  if (!catalog || !profileId) return true
+  const localProviderIds = new Set(
+    catalog.providers
+      .filter((provider) => provider.kind === 'local_keychain' && provider.enabled)
+      .map((provider) => provider.providerId),
+  )
+  if (localProviderIds.size === 0) return true
+
+  const explicitDefaultSecretIds = new Set(
+    catalog.projectDefaults
+      .filter((projectDefault) => projectDefault.profileId === profileId)
+      .map((projectDefault) => projectDefault.secretId),
+  )
+  const requiresLocalVault = catalog.secrets.some((secret) =>
+    localProviderIds.has(secret.providerId)
+    && (
+      explicitDefaultSecretIds.has(secret.secretId)
+      || secret.automaticGrantPolicy?.kind === 'all_projects'
+      || (
+        secret.automaticGrantPolicy?.kind === 'projects'
+        && secret.automaticGrantPolicy.profileIds.includes(profileId)
+      )
+    ))
+  return requiresLocalVault
+    ? unlockSecureMaterialEntry()
+    : true
 }
 
 export async function fetchSecureSessionSnapshot(
