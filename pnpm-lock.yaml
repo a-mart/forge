@@ -22,7 +22,7 @@ patchedDependencies:
     hash: 6dc8c41d0d4a0f32f703eddb46d581d46cd77f271e08f1d96d904419c24b76b4
     path: patches/@earendil-works__pi-ai@0.80.6.patch
   '@earendil-works/pi-coding-agent@0.80.6':
-    hash: 550fdbe4e3d4176098df499854244d42b74db0551f0ab2c73dc2005a1c45b98f
+    hash: 5eb4d1fd707ee41f6d152aa29fded44ec305d8b7156f65cac46307ff56d0c4d3
     path: patches/@earendil-works__pi-coding-agent@0.80.6.patch
   nitro-nightly@3.0.1-20260223-102354-c0b46421:
     hash: fbc2f8ac638ee617758b47695237f1451580555a8333f46b404f0290e09badb0
@@ -76,7 +76,7 @@ importers:
         version: 0.80.6(patch_hash=6dc8c41d0d4a0f32f703eddb46d581d46cd77f271e08f1d96d904419c24b76b4)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.6
-        version: 0.80.6(patch_hash=550fdbe4e3d4176098df499854244d42b74db0551f0ab2c73dc2005a1c45b98f)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
+        version: 0.80.6(patch_hash=5eb4d1fd707ee41f6d152aa29fded44ec305d8b7156f65cac46307ff56d0c4d3)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
       '@forge/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -9020,7 +9020,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.80.6(patch_hash=550fdbe4e3d4176098df499854244d42b74db0551f0ab2c73dc2005a1c45b98f)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)':
+  '@earendil-works/pi-coding-agent@0.80.6(patch_hash=5eb4d1fd707ee41f6d152aa29fded44ec305d8b7156f65cac46307ff56d0c4d3)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.80.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
       '@earendil-works/pi-ai': 0.80.6(patch_hash=6dc8c41d0d4a0f32f703eddb46d581d46cd77f271e08f1d96d904419c24b76b4)(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)

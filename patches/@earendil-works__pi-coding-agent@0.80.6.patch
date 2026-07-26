@@ -63,26 +63,117 @@ index a208774c956e3039c47ca54ce1f2f362ce3e4db3..d70e43f4a4a5758cd44cde9970a3ba07
          }
      }
      /**
+diff --git a/dist/core/auth-storage.d.ts b/dist/core/auth-storage.d.ts
+index 12938fb01385a0e59a46698ae04ccf37c2d4f670..c26a12564dcd926f9ff2f4beb1b680deb180b6d1 100644
+--- a/dist/core/auth-storage.d.ts
++++ b/dist/core/auth-storage.d.ts
+@@ -68,6 +68,10 @@ export declare class AuthStorage {
+      * Remove a runtime API key override.
+      */
+     removeRuntimeApiKey(provider: string): void;
++    /**
++     * Check whether a runtime API key override is currently effective.
++     */
++    hasRuntimeApiKey(provider: string): boolean;
+     private recordError;
+     private parseStorageData;
+     /**
+diff --git a/dist/core/auth-storage.js b/dist/core/auth-storage.js
+index 2bec7263fdbb2d5ab96dae74b5ae430656641385..90383f317bcb208dede6ddeebcb1ba369db6e3da 100644
+--- a/dist/core/auth-storage.js
++++ b/dist/core/auth-storage.js
+@@ -178,6 +178,12 @@ export class AuthStorage {
+     removeRuntimeApiKey(provider) {
+         this.runtimeOverrides.delete(provider);
+     }
++    /**
++     * Check whether a runtime API key override is currently effective.
++     */
++    hasRuntimeApiKey(provider) {
++        return Boolean(this.runtimeOverrides.get(provider));
++    }
+     recordError(error) {
+         const normalizedError = error instanceof Error ? error : new Error(String(error));
+         this.errors.push(normalizedError);
 diff --git a/dist/core/model-registry.js b/dist/core/model-registry.js
-index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..98e79343e91dbd5575c96f8ec695ee51938809aa 100644
+index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..ce847b32f95aedbbabd6f260a6e8d7df61beeffb 100644
 --- a/dist/core/model-registry.js
 +++ b/dist/core/model-registry.js
-@@ -554,9 +554,13 @@ export class ModelRegistry {
+@@ -262,6 +262,7 @@ export const clearApiKeyCache = clearConfigValueCache;
+  */
+ export class ModelRegistry {
+     models = [];
++    modelsWithoutOAuth = [];
+     providerRequestConfigs = new Map();
+     modelRequestHeaders = new Map();
+     configModelOverrides = new Map();
+@@ -310,15 +311,38 @@ export class ModelRegistry {
+             // Keep built-in models even if custom models failed to load
+         }
+         const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
+-        let combined = this.mergeCustomModels(builtInModels, customModels);
+-        // Let OAuth providers modify their models (e.g., update baseUrl)
++        const combined = this.mergeCustomModels(builtInModels, customModels);
++        this.modelsWithoutOAuth = structuredClone(combined);
++        this.models = structuredClone(this.modelsWithoutOAuth);
++        // Let OAuth providers modify their models (e.g., update baseUrl), unless a
++        // higher-priority runtime API key is currently effective for that provider.
+         for (const oauthProvider of this.authStorage.getOAuthProviders()) {
+             const cred = this.authStorage.get(oauthProvider.id);
+-            if (cred?.type === "oauth" && oauthProvider.modifyModels) {
+-                combined = oauthProvider.modifyModels(combined, cred);
++            if (!this.authStorage.hasRuntimeApiKey(oauthProvider.id) && cred?.type === "oauth" && oauthProvider.modifyModels) {
++                this.models = oauthProvider.modifyModels(this.models, cred);
+             }
+         }
+-        this.models = combined;
++    }
++    synchronizeModelForEffectiveCredential(model) {
++        const baseline = this.modelsWithoutOAuth.find((candidate) => candidate.provider === model.provider && candidate.id === model.id);
++        if (!baseline) {
++            return;
++        }
++        let effective = baseline;
++        if (!this.authStorage.hasRuntimeApiKey(model.provider)) {
++            const cred = this.authStorage.get(model.provider);
++            const oauthProvider = this.authStorage.getOAuthProviders().find((candidate) => candidate.id === model.provider);
++            if (cred?.type === "oauth" && oauthProvider?.modifyModels) {
++                effective = oauthProvider.modifyModels([baseline], cred)[0] ?? baseline;
++            }
++        }
++        if (effective === model) {
++            return;
++        }
++        for (const key of Object.keys(model)) {
++            delete model[key];
++        }
++        Object.assign(model, structuredClone(effective));
+     }
+     /** Load built-in models and apply provider/model overrides */
+     loadBuiltInModels(overrides, modelOverrides) {
+@@ -552,11 +576,19 @@ export class ModelRegistry {
+      */
+     async getApiKeyAndHeaders(model) {
          try {
++            // Routing and auth must be derived from the same effective credential. In
++            // particular, a runtime API key must undo an OAuth proxy model rewrite.
++            this.synchronizeModelForEffectiveCredential(model);
              const providerConfig = this.providerRequestConfigs.get(model.provider);
              const providerEnv = this.authStorage.getProviderEnv(model.provider);
+-            const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 +            // A persisted auth.json entry owns the provider credential slot. If an OAuth
-+            // refresh fails, do not silently replace that credential with models.json auth;
-+            // OAuth providers may already have rewritten the model to a subscription proxy.
++            // refresh fails, do not silently replace that credential with lower-priority auth.
 +            const hasStoredCredential = this.authStorage.has(model.provider);
-             const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
++            const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, {
++                includeFallback: !hasStoredCredential,
++            });
              const apiKey = apiKeyFromAuthStorage ??
 -                (providerConfig?.apiKey
 +                (!hasStoredCredential && providerConfig?.apiKey
                      ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
                      : undefined);
              const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`, providerEnv);
-@@ -624,10 +628,16 @@ export class ModelRegistry {
+@@ -624,10 +656,16 @@ export class ModelRegistry {
       * Get API key for a provider.
       */
      async getApiKeyForProvider(provider) {
@@ -100,3 +191,12 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..98e79343e91dbd5575c96f8ec695ee51
          const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
          return providerApiKey
              ? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
+@@ -638,7 +676,7 @@ export class ModelRegistry {
+      */
+     isUsingOAuth(model) {
+         const cred = this.authStorage.get(model.provider);
+-        return cred?.type === "oauth";
++        return !this.authStorage.hasRuntimeApiKey(model.provider) && cred?.type === "oauth";
+     }
+     /**
+      * Register a provider dynamically (from extensions).

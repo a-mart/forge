@@ -130,6 +130,57 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(requests.some((request) => request.url.startsWith(XAI_OAUTH_BASE_URL))).toBe(false);
   });
 
+  it("reroutes stored OAuth models to api.x.ai when a runtime API key override becomes effective", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-xai-oauth-runtime-override-"));
+    const projectionPath = join(root, "pi-models.json");
+    await writeFile(projectionPath, JSON.stringify(buildPiModelsProjection()), "utf8");
+
+    const authStorage = AuthStorage.inMemory({
+      xai: {
+        type: "oauth",
+        access: "stored-oauth-access-token",
+        refresh: "stored-oauth-refresh-token",
+        expires: Date.now() + 60_000,
+      },
+    });
+    const registry = ModelRegistry.create(authStorage, projectionPath);
+    const model = registry.getAll().find((candidate) => candidate.provider === "xai");
+    expect(model?.baseUrl).toBe(XAI_OAUTH_BASE_URL);
+    expect(model?.headers?.["X-XAI-Token-Auth"]).toBe("xai-grok-cli");
+
+    // Install the highest-precedence credential after the proxy-routed model has
+    // already been selected. The request boundary must atomically restore routing.
+    authStorage.setRuntimeApiKey("xai", "runtime-xai-api-key");
+    const resolvedAuth = await registry.getApiKeyAndHeaders(model!);
+    expect(resolvedAuth).toMatchObject({ ok: true, apiKey: "runtime-xai-api-key" });
+    expect(registry.isUsingOAuth(model!)).toBe(false);
+    expect(model?.baseUrl).toBe(XAI_API_BASE_URL);
+    expect(model?.headers?.["X-XAI-Token-Auth"]).toBeUndefined();
+
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return new Response("data: [DONE]\\n\\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }));
+
+    if (!resolvedAuth.ok || !resolvedAuth.apiKey) {
+      throw new Error("Expected the xAI runtime API key override to resolve");
+    }
+    for await (const event of streamOpenAIResponses(model as any, { messages: [] } as any, {
+      apiKey: resolvedAuth.apiKey,
+    })) {
+      void event;
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer runtime-xai-api-key");
+    expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+  });
+
   it("sends API keys to api.x.ai while OAuth uses the CLI proxy bearer contract", async () => {
     const requests: Request[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
