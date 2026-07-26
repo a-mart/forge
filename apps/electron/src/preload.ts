@@ -72,6 +72,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
       getStreamDeckPluginStatus: () => ipcRenderer.invoke('get-stream-deck-plugin-status'),
       installStreamDeckPlugin: () => ipcRenderer.invoke('install-stream-deck-plugin'),
+      openStreamDeck: () => ipcRenderer.invoke('open-stream-deck'),
       secureVault: {
         status: (): Promise<SecureVaultRendererResponse> =>
           ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'status' }),

@@ -22,7 +22,7 @@ export type UpdateStatus =
   | { type: 'downloaded'; version?: string }
   | { type: 'error'; message?: string }
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
-export interface StreamDeckPluginStatus { supported: boolean; bundled: boolean; streamDeckInstalled: boolean; pluginVersion: string }
+export interface StreamDeckPluginStatus { supported: boolean; isPackaged: boolean; bundled: boolean; streamDeckInstalled: boolean; pluginVersion: string }
 export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
 export type ExternalChromeLocalError = 'invalid-request' | 'setup-required' | 'attachment-required' | 'lease-conflict' | 'restricted-target' | 'debugger-unavailable' | 'chrome-policy-blocked' | 'stale-or-lost' | 'extension-update-required' | 'operation-failed'
 export interface ExternalChromeRuntimeInstance {
@@ -128,6 +128,7 @@ export interface ElectronBridge {
   revealInFolder?(filePath: string): Promise<void>; installCli?(): Promise<CliInstallResult>; verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
   getStreamDeckPluginStatus?(): Promise<StreamDeckPluginStatus>
   installStreamDeckPlugin?(): Promise<{ success: boolean; message: string }>
+  openStreamDeck?(): Promise<{ success: boolean; message: string }>
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>; setSleepBlockerSettings?(patch: { enabled?: boolean; gracePeriodMinutes?: number }): Promise<SleepBlockerStatus | null>
   onSleepBlockerStatus?(callback: (status: SleepBlockerStatus) => void): () => void
 }

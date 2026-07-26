@@ -29,7 +29,7 @@ import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
 import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
-import { getStreamDeckPluginStatus, resolveStreamDeckPluginPath } from './stream-deck-install.js'
+import { getStreamDeckPluginStatus, resolveStreamDeckAppPath, resolveStreamDeckPluginPath } from './stream-deck-install.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -694,6 +694,17 @@ if (!hasSingleInstanceLock) {
     return error
       ? { success: false, message: error }
       : { success: true, message: 'Stream Deck opened the Forge plugin installer.' }
+  })
+
+  ipcMain.handle('open-stream-deck', async (): Promise<{ success: boolean; message: string }> => {
+    const streamDeckAppPath = resolveStreamDeckAppPath(process.platform)
+    if (!streamDeckAppPath) {
+      return { success: false, message: 'Elgato Stream Deck is not installed.' }
+    }
+    const error = await shell.openPath(streamDeckAppPath)
+    return error
+      ? { success: false, message: error }
+      : { success: true, message: 'Opened Elgato Stream Deck.' }
   })
 
   app.whenReady().then(async () => {

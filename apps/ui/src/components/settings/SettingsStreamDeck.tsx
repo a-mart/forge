@@ -75,12 +75,32 @@ export function SettingsStreamDeck({ apiClient }: { apiClient: SettingsApiClient
     const bridge = window.electronBridge
     if (!bridge?.installStreamDeckPlugin) return
     setBusy('install')
-    const result = await bridge.installStreamDeckPlugin()
-    setMessage(result.message)
-    setBusy(null)
+    try {
+      const result = await bridge.installStreamDeckPlugin()
+      setMessage(result.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const openStreamDeck = async () => {
+    const bridge = window.electronBridge
+    if (!bridge?.openStreamDeck) return
+    setBusy('open-stream-deck')
+    try {
+      const result = await bridge.openStreamDeck()
+      setMessage(result.message)
+    } finally {
+      setBusy(null)
+    }
   }
 
   const activeDevices = snapshot.devices.filter((device) => !device.revokedAt)
+  // Older preload bridges do not expose isPackaged; they only occur in source runs.
+  const isDevelopmentBuild = plugin !== null && plugin.isPackaged !== true
+  const installerDescription = isDevelopmentBuild
+    ? 'This development build prepares a real Stream Deck installer before Forge starts, so you can test the same direct-install flow as a release.'
+    : 'Forge Desktop bundles the signed direct-distribution package. Stream Deck will ask you to confirm installation and add the layouts for supported devices.'
 
   return (
     <div className="space-y-7">
@@ -112,16 +132,30 @@ export function SettingsStreamDeck({ apiClient }: { apiClient: SettingsApiClient
 
       <SettingsSection
         label="Install the native plugin"
-        description="Forge Desktop bundles the signed direct-distribution package. Stream Deck will ask you to confirm installation and add the layouts for supported devices."
-        cta={plugin?.bundled ? (
-          <Button className="gap-2" onClick={() => void install()} disabled={busy === 'install'}>
-            {busy === 'install' ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-            Install / Update
-          </Button>
+        description={installerDescription}
+        cta={plugin?.streamDeckInstalled || plugin?.bundled ? (
+          <div className="flex flex-wrap gap-2">
+            {plugin?.streamDeckInstalled ? <Button variant="outline" className="gap-2" onClick={() => void openStreamDeck()} disabled={busy === 'open-stream-deck'}>
+              {busy === 'open-stream-deck' ? <Loader2 className="size-4 animate-spin" /> : <Radio className="size-4" />}
+              Open Stream Deck
+            </Button> : null}
+            {plugin?.bundled ? <Button className="gap-2" onClick={() => void install()} disabled={busy === 'install'}>
+              {busy === 'install' ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              Install / Update
+            </Button> : null}
+          </div>
         ) : null}
       >
         <div className="grid gap-3 sm:grid-cols-3">
-          <StatusTile label="Forge bundle" ok={plugin?.bundled ?? false} detail={plugin?.bundled ? `v${plugin.pluginVersion} ready` : 'Available in packaged Forge'} />
+          <StatusTile
+            label={isDevelopmentBuild ? 'Test installer' : 'Forge bundle'}
+            ok={plugin?.bundled ?? false}
+            detail={plugin?.bundled
+              ? `v${plugin.pluginVersion} ready`
+              : isDevelopmentBuild
+                ? 'Restart pnpm dev:electron to prepare it'
+                : 'Available in packaged Forge'}
+          />
           <StatusTile label="Stream Deck" ok={plugin?.streamDeckInstalled ?? false} detail={plugin?.streamDeckInstalled ? 'App detected' : 'Install Elgato Stream Deck first'} />
           <StatusTile label="Paired devices" ok={activeDevices.length > 0} detail={`${activeDevices.length} active`} />
         </div>
@@ -132,7 +166,10 @@ export function SettingsStreamDeck({ apiClient }: { apiClient: SettingsApiClient
         description="A six-digit code appears across the Forge keys. Approve only when it matches the code in front of you."
       >
         {snapshot.pendingRequests.length === 0 ? (
-          <EmptyState text="Open Stream Deck after installing the plugin. New pairing requests appear here automatically." />
+          <EmptyState text={isDevelopmentBuild
+            ? 'Install the test plugin, open Stream Deck, and switch to the Forge Command Center keys. They will show a six-digit code; return here and pair the matching request.'
+            : 'Open Stream Deck after installing the plugin. New pairing requests appear here automatically.'}
+          />
         ) : snapshot.pendingRequests.map((request) => (
           <div key={request.requestId} className="flex flex-col gap-4 rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 sm:flex-row sm:items-center">
             <div className="min-w-0 flex-1">
