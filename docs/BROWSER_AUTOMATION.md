@@ -115,7 +115,9 @@ Recordings and completed browser recording artifacts are Managed Browser-only. E
 
 Forge Desktop stages and verifies compatible extension/native-host updates. Compatible connected Chrome profiles are asked to reload automatically after update or rollback. Do not make manual reload part of the normal update routine.
 
-Only when Settings reports **Manual extension reload required** should you open `chrome://extensions`, compare the versions/hashes shown by Forge, and click **Reload** on the Forge extension in each affected profile. If Chrome was closed during an update, reopen it and check Settings before taking action.
+During local `pnpm dev:electron` work, rebuilt shell, payload, or native-host content can keep the same Desktop package version. The next Desktop restart verifies and atomically activates that new development content at the same stable Load unpacked path. If the previous extension worker is broken or unconnected, it cannot authenticate to complete auto-reload; after Desktop restarts and updates the files, one manual **Reload** in `chrome://extensions` may therefore be required. Packaged release deployments do not use this development exception and reject changed content under an already-installed package version.
+
+Outside that development fallback, only when Settings reports **Manual extension reload required** should you open `chrome://extensions`, compare the versions/hashes shown by Forge, and click **Reload** on the Forge extension in each affected profile. If Chrome was closed during an update, reopen it and check Settings before taking action.
 
 ### Repair, takeover, rollback, and removal
 

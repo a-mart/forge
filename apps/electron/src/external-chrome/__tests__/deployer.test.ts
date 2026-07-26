@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExternalChromeDeployer, FileDeploymentLock, type DeployerFileSystem, type DeploymentPhase } from '../deployer.js'
+import { ExternalChromeDeploymentRecovery } from '../recovery.js'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
 import { EXTERNAL_CHROME_EXTENSION_ID, EXTERNAL_CHROME_PUBLIC_KEY_SHA256, sha256 } from '../package-manifest.js'
 
@@ -106,6 +107,77 @@ describe('ExternalChromeDeployer', () => {
     const selector = JSON.parse(await fs.readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string; payloadFiles: Record<string, string> }
     const workerPath = path.join(deployer.paths.extension, 'payloads', selector.payloadDirectory, 'service-worker.js')
     expect(sha256(await fs.readFile(workerPath))).toBe(selector.payloadFiles['service-worker.js'])
+  })
+
+  it('activates same-version development content at startup while preserving the stable path and rollback pair', async () => {
+    const first = await fixture('1.0.0', 'dev-payload-A', 'linux', 'x64', 'dev-bootstrap-A', 'dev-native-A')
+    first.manifest.nativeHost.signature = {
+      scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null,
+    }
+    await fs.writeFile(path.join(first.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(first.manifest)}\n`)
+    const installedA = new ExternalChromeDeployer({
+      dataRoot: first.dataRoot, resourcesRoot: first.resourcesRoot, desktopVersion: '0.22.5',
+      platform: 'linux', architecture: 'x64', allowDevelopmentHost: true,
+    })
+    await new ExternalChromeDeploymentRecovery(installedA).deployAtStartup({ development: true })
+    const stablePath = installedA.paths.extension
+    const selectorA = JSON.parse(await fs.readFile(path.join(stablePath, 'current.json'), 'utf8'))
+
+    const second = await fixture('1.0.0', 'dev-payload-B', 'linux', 'x64', 'dev-bootstrap-B', 'dev-native-B')
+    second.manifest.nativeHost.signature = {
+      scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null,
+    }
+    await fs.writeFile(path.join(second.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(second.manifest)}\n`)
+    const installedB = new ExternalChromeDeployer({
+      dataRoot: first.dataRoot, resourcesRoot: second.resourcesRoot, desktopVersion: '0.22.5',
+      platform: 'linux', architecture: 'x64', allowDevelopmentHost: true,
+    })
+    await new ExternalChromeDeploymentRecovery(installedB).deployAtStartup({ development: true })
+
+    expect(installedB.paths.extension).toBe(stablePath)
+    const selectorB = JSON.parse(await fs.readFile(path.join(stablePath, 'current.json'), 'utf8')) as {
+      payloadSha256: string; payloadDirectory: string; payloadFiles: Record<string, string>
+    }
+    expect(selectorB.payloadSha256).toBe(second.manifest.extension.payloadSha256)
+    expect(selectorB.payloadSha256).not.toBe(selectorA.payloadSha256)
+    expect(await fs.readFile(path.join(stablePath, 'shell/bootstrap.js'), 'utf8')).toBe('dev-bootstrap-B\n')
+    const workerB = path.join(stablePath, 'payloads', selectorB.payloadDirectory, 'service-worker.js')
+    expect(await fs.readFile(workerB, 'utf8')).toBe('dev-payload-B\n')
+    expect(sha256(await fs.readFile(workerB))).toBe(selectorB.payloadFiles['service-worker.js'])
+    expect(await fs.readFile(installedB.paths.nativeHostExecutable, 'utf8')).toBe('dev-native-B')
+
+    const previousShell = path.join(installedB.paths.integrationRoot, 'extension.previous')
+    expect(await fs.readFile(path.join(previousShell, 'shell/bootstrap.js'), 'utf8')).toBe('dev-bootstrap-A\n')
+    expect(JSON.parse(await fs.readFile(path.join(previousShell, 'current.json'), 'utf8'))).toMatchObject({
+      payloadSha256: selectorA.payloadSha256,
+    })
+    expect(await fs.readFile(`${installedB.paths.nativeHostExecutable}.previous`, 'utf8')).toBe('dev-native-A')
+    expect(await installedB.canRollback()).toBe(true)
+    expect(await installedB.verifyDeployment()).toMatchObject({
+      state: 'ready', install: {
+        packageVersion: '1.0.0', shellSha256: second.manifest.extension.shellSha256,
+        payloadSha256: second.manifest.extension.payloadSha256, nativeSha256: second.manifest.nativeHost.sha256,
+      },
+    })
+  })
+
+  it('rejects changed same-version content under release policy without replacing the active tree', async () => {
+    const first = await fixture('1.0.0', 'release-payload-A', process.platform, process.arch, 'release-shell-A', 'release-native-A')
+    const installed = new ExternalChromeDeployer({ dataRoot: first.dataRoot, resourcesRoot: first.resourcesRoot, desktopVersion: '0.22.5' })
+    await new ExternalChromeDeploymentRecovery(installed).deployAtStartup({ development: false })
+    const beforeSelector = await fs.readFile(path.join(installed.paths.extension, 'current.json'), 'utf8')
+
+    const mutation = await fixture('1.0.0', 'release-payload-B', process.platform, process.arch, 'release-shell-B', 'release-native-B')
+    const rejected = new ExternalChromeDeployer({ dataRoot: first.dataRoot, resourcesRoot: mutation.resourcesRoot, desktopVersion: '0.22.5' })
+    await expect(new ExternalChromeDeploymentRecovery(rejected).deployAtStartup({ development: false }))
+      .rejects.toThrow('release policy rejects changed content')
+    expect(await fs.readFile(path.join(rejected.paths.extension, 'current.json'), 'utf8')).toBe(beforeSelector)
+    expect(await fs.readFile(path.join(rejected.paths.extension, 'shell/bootstrap.js'), 'utf8')).toBe('release-shell-A\n')
+    expect(await fs.readFile(rejected.paths.nativeHostExecutable, 'utf8')).toBe('release-native-A')
+    expect(await rejected.pendingDeployment()).toBeNull()
+    expect(await rejected.verifyDeployment()).toMatchObject({
+      state: 'ready', install: { shellSha256: first.manifest.extension.shellSha256 },
+    })
   })
 
   it('uses a custom backend data root, is idempotent, and retains current plus N-1 for rollback', async () => {

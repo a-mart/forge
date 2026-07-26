@@ -1549,12 +1549,7 @@ async function deployExternalChrome(resources: ExternalChromeResourceLocation): 
     ...(resources.development ? { allowDevelopmentHost: true } : {}),
   })
   try {
-    await new ExternalChromeDeploymentRecovery(deployer).run()
-    const installed = await deployer.verifyDeployment()
-    await deployer.stage()
-    // Initial install has no running selector/native authority to preserve. Updates
-    // remain staged until an authenticated runtime prepare/quiesce acknowledgement.
-    if (installed.state === 'missing') await deployer.activateStaged()
+    await new ExternalChromeDeploymentRecovery(deployer).deployAtStartup({ development: resources.development })
   } catch (error) {
     // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
     console.warn('[external-chrome] Resource deployment failed', error instanceof Error ? error.message : String(error))
