@@ -3,6 +3,12 @@ import { WebSocket } from "ws";
 import { warnWsThrottled } from "./ws-log-throttle.js";
 
 export const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
+/**
+ * Sidebar catalogs legitimately grow beyond the general event budget on long-lived
+ * installations. Keep the tighter cap for conversations, artifacts, and request
+ * responses while allowing the two replaceable catalog snapshots additional room.
+ */
+export const MAX_WS_CATALOG_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 export const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
 
 /**
@@ -100,11 +106,15 @@ export function sendWsEvent(options: {
   }
 
   const eventBytes = Buffer.byteLength(serialized, "utf8");
-  if (eventBytes > MAX_WS_EVENT_BYTES) {
+  const maxEventBytes =
+    event.type === "agents_snapshot" || event.type === "profiles_snapshot"
+      ? MAX_WS_CATALOG_SNAPSHOT_BYTES
+      : MAX_WS_EVENT_BYTES;
+  if (eventBytes > maxEventBytes) {
     console.warn("[swarm] ws:drop_event:oversized", {
       eventType: event.type,
       eventBytes,
-      maxEventBytes: MAX_WS_EVENT_BYTES
+      maxEventBytes
     });
     return null;
   }
