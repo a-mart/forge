@@ -45,6 +45,7 @@ export const SECURE_RUNNER_BUILD_COMMAND =
 
 function readinessActions(
   readiness: SecureSessionReadiness | null,
+  privateEntrySupported: boolean,
   privateEntryAvailable: boolean,
   providers: SecureSecretProviderSummary[],
 ): string[] {
@@ -56,8 +57,10 @@ function readinessActions(
   } else if (readiness?.code === 'unsupported_platform') {
     actions.push('Use a supported local Builder platform for Secure Bash.')
   }
-  if (!privateEntryAvailable) {
+  if (!privateEntrySupported) {
     actions.push('Open Forge Desktop with operating-system secure storage available.')
+  } else if (!privateEntryAvailable) {
+    actions.push('Unlock operating-system private storage here, then continue without restarting Forge.')
   }
   if (providers.some((provider) => provider.status === 'locked')) {
     actions.push('Unlock the affected secret source, then test it again.')
@@ -97,24 +100,37 @@ function StatusBadge({
 export function SecureSessionsReadinessPanel({
   readiness,
   loading,
+  privateEntrySupported,
   privateEntryAvailable,
+  unlockingPrivateEntry,
+  privateEntryUnlockMessage,
   providers,
   configuredProjectDefaultCount,
   onRefresh,
+  onUnlockPrivateEntry,
 }: {
   readiness: SecureSessionReadiness | null
   loading: boolean
+  privateEntrySupported: boolean
   privateEntryAvailable: boolean
+  unlockingPrivateEntry: boolean
+  privateEntryUnlockMessage: string | null
   providers: SecureSecretProviderSummary[]
   configuredProjectDefaultCount?: number
   onRefresh: () => void | Promise<void>
+  onUnlockPrivateEntry: () => void | Promise<void>
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [buildCopyState, setBuildCopyState] =
     useState<'idle' | 'copied' | 'failed'>('idle')
   const actions = loading
     ? []
-    : readinessActions(readiness, privateEntryAvailable, providers)
+    : readinessActions(
+        readiness,
+        privateEntrySupported,
+        privateEntryAvailable,
+        providers,
+      )
 
   const copyDiagnostics = async () => {
     setCopyState('idle')
@@ -159,6 +175,21 @@ export function SecureSessionsReadinessPanel({
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          {privateEntrySupported && !privateEntryAvailable ? (
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              disabled={loading || unlockingPrivateEntry}
+              onClick={() => void onUnlockPrivateEntry()}
+            >
+              {unlockingPrivateEntry
+                ? <Loader2 className="size-3.5 animate-spin" />
+                : <ShieldCheck className="size-3.5" />}
+              Unlock private storage
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -195,7 +226,13 @@ export function SecureSessionsReadinessPanel({
         <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-2.5">
           <span className="text-muted-foreground">Private entry</span>
           <StatusBadge ready={!loading && privateEntryAvailable}>
-            {loading ? 'Checking' : privateEntryAvailable ? 'Available' : 'Unavailable'}
+            {loading
+              ? 'Checking'
+              : privateEntryAvailable
+                ? 'Available'
+                : privateEntrySupported
+                  ? 'Locked'
+                  : 'Unavailable'}
           </StatusBadge>
         </div>
         {providers.map((provider) => (
@@ -270,6 +307,16 @@ export function SecureSessionsReadinessPanel({
           {copyState === 'copied'
             ? 'Safe diagnostics copied.'
             : 'Safe diagnostics could not be copied.'}
+        </p>
+      ) : null}
+      {privateEntryUnlockMessage ? (
+        <p
+          role="status"
+          className={privateEntryAvailable
+            ? 'text-xs text-emerald-700 dark:text-emerald-300'
+            : 'text-xs text-amber-700 dark:text-amber-300'}
+        >
+          {privateEntryUnlockMessage}
         </p>
       ) : null}
     </section>

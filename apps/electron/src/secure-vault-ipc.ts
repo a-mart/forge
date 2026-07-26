@@ -22,6 +22,12 @@ export type SecureVaultErrorCode =
   | 'SECURE_VAULT_ENCRYPT_FAILED'
   | 'SECURE_VAULT_DECRYPT_FAILED'
 
+type SecureVaultAvailableResult = { available: true }
+type SecureVaultPayloadResult = {
+  payload: string
+  reEncryptedPayload?: string
+}
+
 export type SecureVaultRequest =
   | {
       type: typeof SECURE_VAULT_REQUEST_TYPE
@@ -41,7 +47,7 @@ export type SecureVaultResponse =
       type: typeof SECURE_VAULT_RESPONSE_TYPE
       requestId: string
       ok: true
-      result: { available: true } | { payload: string }
+      result: SecureVaultAvailableResult | SecureVaultPayloadResult
     }
   | {
       type: typeof SECURE_VAULT_RESPONSE_TYPE
@@ -55,15 +61,24 @@ export type SecureVaultRendererResponse =
   | { ok: true; encryptedPayloadBase64: string }
   | { ok: false; errorCode: SecureVaultErrorCode }
 
-interface SafeStoragePort {
-  isEncryptionAvailable(): boolean
+export interface SafeStoragePort {
+  isAsyncEncryptionAvailable(): Promise<boolean>
   getSelectedStorageBackend?(): string
-  encryptString(plainText: string): Buffer
-  decryptString(encrypted: Buffer): string
+  encryptStringAsync(plainText: string): Promise<Buffer>
+  decryptStringAsync(encrypted: Buffer): Promise<{
+    shouldReEncrypt: boolean
+    result: string
+  }>
 }
 
 interface IpcMainPort {
-  handle(channel: string, listener: (event: unknown, request: unknown) => SecureVaultRendererResponse): void
+  handle(
+    channel: string,
+    listener: (
+      event: unknown,
+      request: unknown,
+    ) => SecureVaultRendererResponse | Promise<SecureVaultRendererResponse>,
+  ): void
   removeHandler(channel: string): void
 }
 
@@ -83,25 +98,206 @@ type DecodedPayload =
   | { ok: true; bytes: Buffer }
   | { ok: false; errorCode: SecureVaultErrorCode }
 
-type EncryptPayloadResult =
-  | { ok: true; result: { payload: string } }
+type PayloadOperationResult =
+  | { ok: true; result: SecureVaultPayloadResult }
   | { ok: false; errorCode: SecureVaultErrorCode }
 
-export function createSecureVaultRequestHandler(options: {
+type SecureVaultAvailability =
+  | { available: true }
+  | {
+      available: false
+      errorCode:
+        | 'SECURE_VAULT_STORAGE_UNAVAILABLE'
+        | 'SECURE_VAULT_INSECURE_STORAGE'
+    }
+
+export interface SecureVaultController {
+  status(): SecureVaultAvailability
+  unlock(): Promise<SecureVaultAvailability>
+  encryptPayload(payload: string): Promise<PayloadOperationResult>
+  decryptPayload(payload: string): Promise<PayloadOperationResult>
+}
+
+/**
+ * Owns Electron safeStorage access for both renderer entry and backend use.
+ *
+ * `status()` deliberately remains passive: it never initializes the async
+ * encryptor—or calls the synchronous availability API—and therefore never
+ * opens or blocks on a native credential prompt merely because Settings
+ * refreshed. `unlock()` is the only availability probe that may initialize the
+ * provider. Encrypt/decrypt use Electron's non-blocking API after that explicit
+ * unlock succeeds.
+ */
+export function createSecureVaultController(options: {
   safeStorage: SafeStoragePort
   platform: NodeJS.Platform
+}): SecureVaultController {
+  let unlockInFlight: Promise<SecureVaultAvailability> | null = null
+  let unlockedAvailability: SecureVaultAvailability | null = null
+  const status = (): SecureVaultAvailability => {
+    return unlockedAvailability ?? {
+      available: false,
+      errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+    }
+  }
+
+  const unlock = (): Promise<SecureVaultAvailability> => {
+    if (unlockInFlight) {
+      return unlockInFlight
+    }
+    unlockInFlight = (async () => {
+      try {
+        const available = await options.safeStorage.isAsyncEncryptionAvailable()
+        if (!available) {
+          unlockedAvailability = null
+          return {
+            available: false,
+            errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+          }
+        }
+        const availability = getUnlockedSecureVaultAvailability(options)
+        unlockedAvailability = availability
+        return availability
+      } catch {
+        unlockedAvailability = null
+        return {
+          available: false,
+          errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+        }
+      } finally {
+        unlockInFlight = null
+      }
+    })()
+    return unlockInFlight
+  }
+
+  return {
+    status,
+    unlock,
+    encryptPayload: async (plainPayload) => {
+      const decoded = decodeCanonicalBase64(
+        plainPayload,
+        SECURE_VAULT_MAX_PLAINTEXT_BYTES,
+      )
+      if (!decoded.ok) {
+        return { ok: false, errorCode: decoded.errorCode }
+      }
+      if (decoded.bytes.byteLength === 0) {
+        decoded.bytes.fill(0)
+        return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
+      }
+
+      try {
+        const availability = status()
+        if (!availability.available) {
+          return { ok: false, errorCode: availability.errorCode }
+        }
+
+        const encrypted = await options.safeStorage.encryptStringAsync(plainPayload)
+        if (!Buffer.isBuffer(encrypted) || encrypted.byteLength === 0) {
+          return { ok: false, errorCode: 'SECURE_VAULT_ENCRYPT_FAILED' }
+        }
+        if (encrypted.byteLength > SECURE_VAULT_MAX_CIPHERTEXT_BYTES) {
+          encrypted.fill(0)
+          return { ok: false, errorCode: 'SECURE_VAULT_PAYLOAD_TOO_LARGE' }
+        }
+
+        try {
+          return {
+            ok: true,
+            result: { payload: encrypted.toString('base64') },
+          }
+        } finally {
+          encrypted.fill(0)
+        }
+      } catch {
+        unlockedAvailability = null
+        return { ok: false, errorCode: 'SECURE_VAULT_ENCRYPT_FAILED' }
+      } finally {
+        decoded.bytes.fill(0)
+      }
+    },
+    decryptPayload: async (encryptedPayload) => {
+      const decoded = decodeCanonicalBase64(
+        encryptedPayload,
+        SECURE_VAULT_MAX_CIPHERTEXT_BYTES,
+      )
+      if (!decoded.ok) {
+        return { ok: false, errorCode: decoded.errorCode }
+      }
+      if (decoded.bytes.byteLength === 0) {
+        decoded.bytes.fill(0)
+        return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
+      }
+
+      try {
+        const availability = status()
+        if (!availability.available) {
+          return { ok: false, errorCode: availability.errorCode }
+        }
+
+        const decrypted = await options.safeStorage.decryptStringAsync(decoded.bytes)
+        const validatedPlainPayload = decodeCanonicalBase64(
+          decrypted.result,
+          SECURE_VAULT_MAX_PLAINTEXT_BYTES,
+        )
+        if (!validatedPlainPayload.ok || validatedPlainPayload.bytes.byteLength === 0) {
+          if (validatedPlainPayload.ok) validatedPlainPayload.bytes.fill(0)
+          return { ok: false, errorCode: 'SECURE_VAULT_DECRYPT_FAILED' }
+        }
+        validatedPlainPayload.bytes.fill(0)
+
+        if (!decrypted.shouldReEncrypt) {
+          return {
+            ok: true,
+            result: { payload: decrypted.result },
+          }
+        }
+
+        const reEncrypted = await options.safeStorage.encryptStringAsync(decrypted.result)
+        if (
+          !Buffer.isBuffer(reEncrypted)
+          || reEncrypted.byteLength === 0
+          || reEncrypted.byteLength > SECURE_VAULT_MAX_CIPHERTEXT_BYTES
+        ) {
+          reEncrypted?.fill(0)
+          return { ok: false, errorCode: 'SECURE_VAULT_DECRYPT_FAILED' }
+        }
+        try {
+          return {
+            ok: true,
+            result: {
+              payload: decrypted.result,
+              reEncryptedPayload: reEncrypted.toString('base64'),
+            },
+          }
+        } finally {
+          reEncrypted.fill(0)
+        }
+      } catch {
+        unlockedAvailability = null
+        return { ok: false, errorCode: 'SECURE_VAULT_DECRYPT_FAILED' }
+      } finally {
+        decoded.bytes.fill(0)
+      }
+    },
+  }
+}
+
+export function createSecureVaultRequestHandler(options: {
+  controller: SecureVaultController
 }): {
-  handle(message: unknown): SecureVaultResponse | null
+  handle(message: unknown): Promise<SecureVaultResponse | null>
   dispose(): void
 } {
   const responseCacheKey = randomBytes(32)
   const encryptResponseCache = new Map<string, {
     payloadTag: string
-    response: SecureVaultResponse
+    response: Promise<SecureVaultResponse>
   }>()
 
   return {
-    handle(message: unknown): SecureVaultResponse | null {
+    async handle(message: unknown): Promise<SecureVaultResponse | null> {
       const parsed = parseSecureVaultRequest(message)
       if (!parsed.ok) {
         return parsed.requestId
@@ -121,23 +317,30 @@ export function createSecureVaultRequestHandler(options: {
         if (createPayloadTag(responseCacheKey, request.payload) !== cached.payloadTag) {
           return createErrorResponse(request.requestId, 'SECURE_VAULT_INVALID_REQUEST')
         }
-        return cached.response
+        return await cached.response
       }
 
-      const response = handleRequest(request, options)
-      if (request.operation === 'encrypt' && response.ok) {
-        encryptResponseCache.set(request.requestId, {
-          payloadTag: createPayloadTag(responseCacheKey, request.payload),
-          response,
-        })
-        if (encryptResponseCache.size > SECURE_VAULT_ENCRYPT_RESPONSE_CACHE_SIZE) {
-          const oldestRequestId = encryptResponseCache.keys().next().value
-          if (typeof oldestRequestId === 'string') {
-            encryptResponseCache.delete(oldestRequestId)
-          }
+      const responsePromise = handleRequest(request, options.controller)
+      if (request.operation !== 'encrypt') {
+        return await responsePromise
+      }
+
+      const cacheEntry = {
+        payloadTag: createPayloadTag(responseCacheKey, request.payload),
+        response: responsePromise,
+      }
+      encryptResponseCache.set(request.requestId, cacheEntry)
+      if (encryptResponseCache.size > SECURE_VAULT_ENCRYPT_RESPONSE_CACHE_SIZE) {
+        const oldestRequestId = encryptResponseCache.keys().next().value
+        if (typeof oldestRequestId === 'string') {
+          encryptResponseCache.delete(oldestRequestId)
         }
       }
 
+      const response = await responsePromise
+      if (!response.ok && encryptResponseCache.get(request.requestId) === cacheEntry) {
+        encryptResponseCache.delete(request.requestId)
+      }
       return response
     },
     dispose(): void {
@@ -149,26 +352,31 @@ export function createSecureVaultRequestHandler(options: {
 
 export function installSecureVaultChildBridge(options: {
   child: ChildProcess
-  safeStorage: SafeStoragePort
-  platform: NodeJS.Platform
+  controller: SecureVaultController
 }): () => void {
   const child = options.child as unknown as ChildProcessPort
-  const handler = createSecureVaultRequestHandler(options)
+  const handler = createSecureVaultRequestHandler({
+    controller: options.controller,
+  })
   let disposed = false
 
   const onMessage = (message: unknown): void => {
-    const response = handler.handle(message)
-    if (!response || !child.connected) {
-      return
-    }
-
-    try {
-      child.send(response, () => {
-        // The caller owns the request timeout and can retry the same requestId.
+    void handler.handle(message)
+      .then((response) => {
+        if (!response || disposed || !child.connected) {
+          return
+        }
+        try {
+          child.send(response, () => {
+            // The caller owns the request timeout and can retry the same requestId.
+          })
+        } catch {
+          // Never include transport or safeStorage errors in logs or reply payloads.
+        }
       })
-    } catch {
-      // Never include transport or safeStorage errors in logs or reply payloads.
-    }
+      .catch(() => {
+        // Never let an unexpected controller failure become an unhandled rejection.
+      })
   }
 
   const dispose = (): void => {
@@ -193,11 +401,10 @@ export function installSecureVaultChildBridge(options: {
 
 export function installSecureVaultRendererIpc(options: {
   ipcMain: IpcMainPort
-  safeStorage: SafeStoragePort
-  platform: NodeJS.Platform
+  controller: SecureVaultController
   isTrustedSender: (event: unknown) => boolean
 }): () => void {
-  options.ipcMain.handle(SECURE_VAULT_RENDERER_CHANNEL, (event, request) => {
+  options.ipcMain.handle(SECURE_VAULT_RENDERER_CHANNEL, async (event, request) => {
     if (!options.isTrustedSender(event) || !isRecord(request)) {
       return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
     }
@@ -206,16 +413,26 @@ export function installSecureVaultRendererIpc(options: {
       if (Object.keys(request).length !== 1) {
         return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
       }
-      const availability = getSecureVaultAvailability(options)
+      const availability = options.controller.status()
+      return availability.available
+        ? { ok: true, available: true }
+        : { ok: false, errorCode: availability.errorCode }
+    }
+
+    if (request.operation === 'unlock') {
+      if (Object.keys(request).length !== 1) {
+        return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
+      }
+      const availability = await options.controller.unlock()
       return availability.available
         ? { ok: true, available: true }
         : { ok: false, errorCode: availability.errorCode }
     }
 
     if (
-      request.operation !== 'encrypt' ||
-      typeof request.value !== 'string' ||
-      Object.keys(request).length !== 2
+      request.operation !== 'encrypt'
+      || typeof request.value !== 'string'
+      || Object.keys(request).length !== 2
     ) {
       return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
     }
@@ -229,13 +446,11 @@ export function installSecureVaultRendererIpc(options: {
         return { ok: false, errorCode: 'SECURE_VAULT_PAYLOAD_TOO_LARGE' }
       }
 
-      const response = encryptPayload(plainTextBytes.toString('base64'), options)
+      const response = await options.controller.encryptPayload(
+        plainTextBytes.toString('base64'),
+      )
       if (!response.ok) {
         return { ok: false, errorCode: response.errorCode }
-      }
-
-      if (!('payload' in response.result)) {
-        return { ok: false, errorCode: 'SECURE_VAULT_ENCRYPT_FAILED' }
       }
 
       return {
@@ -252,15 +467,12 @@ export function installSecureVaultRendererIpc(options: {
   }
 }
 
-function handleRequest(
+async function handleRequest(
   request: SecureVaultRequest,
-  options: {
-    safeStorage: SafeStoragePort
-    platform: NodeJS.Platform
-  },
-): SecureVaultResponse {
+  controller: SecureVaultController,
+): Promise<SecureVaultResponse> {
   if (request.operation === 'status') {
-    const availability = getSecureVaultAvailability(options)
+    const availability = controller.status()
     return availability.available
       ? {
           type: SECURE_VAULT_RESPONSE_TYPE,
@@ -271,127 +483,55 @@ function handleRequest(
       : createErrorResponse(request.requestId, availability.errorCode)
   }
 
-  if (request.operation === 'encrypt') {
-    const response = encryptPayload(request.payload ?? '', options)
-    if (!response.ok) {
-      return createErrorResponse(request.requestId, response.errorCode)
-    }
-    return {
-      type: SECURE_VAULT_RESPONSE_TYPE,
-      requestId: request.requestId,
-      ok: true,
-      result: response.result,
-    }
+  const response = request.operation === 'encrypt'
+    ? await controller.encryptPayload(request.payload)
+    : await controller.decryptPayload(request.payload)
+  if (!response.ok) {
+    return createErrorResponse(request.requestId, response.errorCode)
   }
-
-  return decryptPayload(request.requestId, request.payload ?? '', options)
+  return {
+    type: SECURE_VAULT_RESPONSE_TYPE,
+    requestId: request.requestId,
+    ok: true,
+    result: response.result,
+  }
 }
 
-function encryptPayload(
-  plainPayload: string,
+function getUnlockedSecureVaultAvailability(
   options: {
-    safeStorage: SafeStoragePort
+    safeStorage: Pick<SafeStoragePort, 'getSelectedStorageBackend'>
     platform: NodeJS.Platform
   },
-): EncryptPayloadResult {
-  const decoded = decodeCanonicalBase64(plainPayload, SECURE_VAULT_MAX_PLAINTEXT_BYTES)
-  if (!decoded.ok) {
-    return { ok: false, errorCode: decoded.errorCode }
-  }
-  if (decoded.bytes.byteLength === 0) {
-    return { ok: false, errorCode: 'SECURE_VAULT_INVALID_REQUEST' }
-  }
-
+): SecureVaultAvailability {
   try {
-    const availability = getSecureVaultAvailability(options)
-    if (!availability.available) {
-      return { ok: false, errorCode: availability.errorCode }
-    }
-
-    const encrypted = options.safeStorage.encryptString(plainPayload)
-    if (!Buffer.isBuffer(encrypted) || encrypted.byteLength === 0) {
-      return { ok: false, errorCode: 'SECURE_VAULT_ENCRYPT_FAILED' }
-    }
-    if (encrypted.byteLength > SECURE_VAULT_MAX_CIPHERTEXT_BYTES) {
-      return { ok: false, errorCode: 'SECURE_VAULT_PAYLOAD_TOO_LARGE' }
-    }
-
-    return {
-      ok: true,
-      result: { payload: encrypted.toString('base64') },
-    }
-  } catch {
-    return { ok: false, errorCode: 'SECURE_VAULT_ENCRYPT_FAILED' }
-  } finally {
-    decoded.bytes.fill(0)
-  }
-}
-
-function decryptPayload(
-  requestId: string,
-  encryptedPayload: string,
-  options: {
-    safeStorage: SafeStoragePort
-    platform: NodeJS.Platform
-  },
-): SecureVaultResponse {
-  const decoded = decodeCanonicalBase64(encryptedPayload, SECURE_VAULT_MAX_CIPHERTEXT_BYTES)
-  if (!decoded.ok) {
-    return createErrorResponse(requestId, decoded.errorCode)
-  }
-  if (decoded.bytes.byteLength === 0) {
-    return createErrorResponse(requestId, 'SECURE_VAULT_INVALID_REQUEST')
-  }
-
-  try {
-    const availability = getSecureVaultAvailability(options)
-    if (!availability.available) {
-      return createErrorResponse(requestId, availability.errorCode)
-    }
-
-    const plainPayload = options.safeStorage.decryptString(decoded.bytes)
-    const validatedPlainPayload = decodeCanonicalBase64(plainPayload, SECURE_VAULT_MAX_PLAINTEXT_BYTES)
-    if (!validatedPlainPayload.ok) {
-      return createErrorResponse(requestId, 'SECURE_VAULT_DECRYPT_FAILED')
-    }
-    validatedPlainPayload.bytes.fill(0)
-
-    return {
-      type: SECURE_VAULT_RESPONSE_TYPE,
-      requestId,
-      ok: true,
-      result: { payload: plainPayload },
-    }
-  } catch {
-    return createErrorResponse(requestId, 'SECURE_VAULT_DECRYPT_FAILED')
-  } finally {
-    decoded.bytes.fill(0)
-  }
-}
-
-function getSecureVaultAvailability(options: {
-  safeStorage: SafeStoragePort
-  platform: NodeJS.Platform
-}):
-  | { available: true }
-  | { available: false; errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' | 'SECURE_VAULT_INSECURE_STORAGE' } {
-  try {
-    if (!options.safeStorage.isEncryptionAvailable()) {
-      return { available: false, errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' }
-    }
-
     if (options.platform === 'linux') {
       if (typeof options.safeStorage.getSelectedStorageBackend !== 'function') {
-        return { available: false, errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' }
+        return {
+          available: false,
+          errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+        }
       }
-      if (options.safeStorage.getSelectedStorageBackend() === 'basic_text') {
-        return { available: false, errorCode: 'SECURE_VAULT_INSECURE_STORAGE' }
+      const backend = options.safeStorage.getSelectedStorageBackend()
+      if (backend === 'basic_text') {
+        return {
+          available: false,
+          errorCode: 'SECURE_VAULT_INSECURE_STORAGE',
+        }
+      }
+      if (backend === 'unknown') {
+        return {
+          available: false,
+          errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+        }
       }
     }
 
     return { available: true }
   } catch {
-    return { available: false, errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' }
+    return {
+      available: false,
+      errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE',
+    }
   }
 }
 
@@ -440,10 +580,10 @@ function parseSecureVaultRequest(value: unknown): ParsedRequest {
 
 function parseRequestId(value: unknown): string | null {
   if (
-    typeof value !== 'string' ||
-    value.length === 0 ||
-    value.length > SECURE_VAULT_MAX_REQUEST_ID_LENGTH ||
-    !SECURE_VAULT_REQUEST_ID_PATTERN.test(value)
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > SECURE_VAULT_MAX_REQUEST_ID_LENGTH
+    || !SECURE_VAULT_REQUEST_ID_PATTERN.test(value)
   ) {
     return null
   }

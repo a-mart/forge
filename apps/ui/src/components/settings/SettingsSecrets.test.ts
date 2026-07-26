@@ -31,6 +31,7 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   disconnectSecureSecretProvider: vi.fn(),
   isSecureMaterialEntryAvailable: vi.fn(() => true),
   checkSecureMaterialEntryAvailability: vi.fn(async () => true),
+  unlockSecureMaterialEntry: vi.fn(async () => true),
 }))
 
 vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
@@ -65,6 +66,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.isSecureMaterialEntryAvailable(),
     checkSecureMaterialEntryAvailability: () =>
       secureSecretsApiMock.checkSecureMaterialEntryAvailability(),
+    unlockSecureMaterialEntry: () =>
+      secureSecretsApiMock.unlockSecureMaterialEntry(),
   }
 })
 
@@ -151,6 +154,9 @@ beforeEach(() => {
     value: { writeText: clipboardWriteText },
   })
   secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(true)
+  secureSecretsApiMock.isSecureMaterialEntryAvailable.mockReturnValue(true)
+  secureSecretsApiMock.unlockSecureMaterialEntry.mockReset()
+  secureSecretsApiMock.unlockSecureMaterialEntry.mockResolvedValue(true)
   secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
     available: true,
     code: 'available',
@@ -238,6 +244,48 @@ describe('SettingsSecrets', () => {
     activateTab('Advanced delivery')
     expect(container.textContent).toContain('Delivery never grants task access by itself')
     expect(container.textContent).toContain('generated environment delivery')
+  })
+
+  it('unlocks private storage in place and supports cancel then retry', async () => {
+    secureSecretsApiMock.checkSecureMaterialEntryAvailability
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    secureSecretsApiMock.unlockSecureMaterialEntry
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    render()
+
+    const unlockButton = await waitFor(() => {
+      const button = getByRole(
+        container,
+        'button',
+        { name: 'Unlock private storage' },
+      ) as HTMLButtonElement
+      expect(button.disabled).toBe(false)
+      return button
+    })
+    fireEvent.click(unlockButton)
+    await waitFor(() => {
+      expect(secureSecretsApiMock.unlockSecureMaterialEntry).toHaveBeenCalledTimes(1)
+    })
+    await expect(
+      secureSecretsApiMock.unlockSecureMaterialEntry.mock.results[0]?.value,
+    ).resolves.toBe(false)
+    await waitFor(() => {
+      expect(container.textContent).toContain('Private storage is still locked')
+    })
+    expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(getByRole(container, 'button', {
+      name: 'Unlock private storage',
+    }))
+    await waitFor(() => {
+      expect(container.textContent).toContain('Private storage is unlocked.')
+      expect(queryByRole(container, 'button', {
+        name: 'Unlock private storage',
+      })).toBeNull()
+    })
+    expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
   })
 
   it('shows fixed readiness actions and copies only bounded safe diagnostics', async () => {
@@ -565,18 +613,32 @@ describe('SettingsSecrets', () => {
     })
   })
 
-  it('disables local material entry when desktop secure storage is unavailable', async () => {
+  it('shows supported private storage as locked and disables material entry until unlock', async () => {
     secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(false)
     render()
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Secure operating-system storage is unavailable')
+      expect(container.textContent).toContain('Private storage is locked')
+      expect(container.textContent).toContain('Unlock private storage')
     })
     activateTab('Secrets')
     expect((getByLabelText(container, 'Private value') as HTMLInputElement).disabled).toBe(true)
     expect(
       (getByRole(container, 'button', { name: 'Save local secret' }) as HTMLButtonElement).disabled,
     ).toBe(true)
+  })
+
+  it('keeps the unavailable state for desktops without a private storage bridge', async () => {
+    secureSecretsApiMock.isSecureMaterialEntryAvailable.mockReturnValue(false)
+    secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(false)
+    render()
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Secure operating-system storage is unavailable')
+      expect(queryByRole(container, 'button', {
+        name: 'Unlock private storage',
+      })).toBeNull()
+    })
   })
 
   it('imports a Bitwarden secret reference and clears the provider locator immediately', async () => {

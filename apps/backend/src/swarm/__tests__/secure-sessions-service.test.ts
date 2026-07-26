@@ -30,6 +30,46 @@ const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
 
 describe("SecureSessionsService", () => {
+  it("persists local key rotation without revoking the newly active lease", async () => {
+    const harness = createHarness({
+      rotatedLocalCiphertext: "current-local-ciphertext",
+    });
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "rotating_secret",
+      encryptedMaterial: Buffer.from("legacy-local-ciphertext").toString("base64"),
+      scope: { kind: "instance" },
+    });
+    const catalogBeforeGrant = harness.store.getCatalogState();
+
+    const started = await harness.service.startSecureSession("manager-a");
+    const binding = secret.bindings[0]!;
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{
+        deliveryKind: binding.deliveryKind,
+        ...(binding.targetName ? { targetName: binding.targetName } : {}),
+        ...(binding.targetPath ? { targetPath: binding.targetPath } : {}),
+        ...(binding.fileMode ? { fileMode: binding.fileMode } : {}),
+      }],
+      leaseKind: "task",
+    });
+
+    const encrypted = harness.store.getEncryptedSecret(secret.secretId);
+    expect(encrypted?.encryptedMaterial).toEqual(
+      Buffer.from("current-local-ciphertext"),
+    );
+    expect(harness.store.getCatalogState()).toEqual(catalogBeforeGrant);
+    expect(harness.store.getSnapshot("manager-a").leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "active",
+      }),
+    ]);
+    encrypted?.encryptedMaterial?.fill(0);
+    await harness.close();
+  });
+
   it("creates a stable automatic delivery for secrets saved without bindings", async () => {
     const harness = createHarness();
     const created = await harness.service.createLocalSecureSecret({
@@ -4004,6 +4044,7 @@ function createHarness(options: {
   recoveryFailures?: number;
   recycleThrows?: boolean;
   recycleDisposition?: "recycled" | "deferred" | "none";
+  rotatedLocalCiphertext?: string;
 } = {}) {
   const database = new Database(":memory:");
   database.pragma("foreign_keys = ON");
@@ -4061,6 +4102,13 @@ function createHarness(options: {
         material,
         sourceVersion: null,
         resolvedAt: NOW,
+        ...(options.rotatedLocalCiphertext
+          ? {
+              refreshedEncryptedMaterial: Buffer.from(
+                options.rotatedLocalCiphertext,
+              ),
+            }
+          : {}),
       };
     },
   };
@@ -4113,7 +4161,9 @@ function createHarness(options: {
       return { available: true };
     },
     async encrypt(bytes) { return Buffer.from(bytes); },
-    async decrypt(bytes) { return new HostOnlySecret(bytes); },
+    async decrypt(bytes) {
+      return { material: new HostOnlySecret(bytes) };
+    },
     dispose() {},
   };
   const service = new SecureSessionsService({

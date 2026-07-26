@@ -22,7 +22,11 @@ import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
 import { isDockManagedBrowserShortcut, isManagedBrowserPopoutAvailable } from './browser/managed-browser-platform.js'
 import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 import { LifecycleLog } from './lifecycle-log.js'
-import { installSecureVaultChildBridge, installSecureVaultRendererIpc } from './secure-vault-ipc.js'
+import {
+  createSecureVaultController,
+  installSecureVaultChildBridge,
+  installSecureVaultRendererIpc,
+} from './secure-vault-ipc.js'
 import { applyElectronStartupOverrides } from './startup-overrides.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
@@ -97,6 +101,10 @@ let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv
 let pendingCommandCenterDeepLink: string | null = findCommandCenterDeepLinkInArgs(process.argv)
 const lifecycleLog = new LifecycleLog({
   getLogPath: () => path.join(app.getPath('userData'), LIFECYCLE_LOG_FILENAME),
+})
+const secureVaultController = createSecureVaultController({
+  safeStorage,
+  platform: process.platform,
 })
 const handledTerminationSignals = new Set<NodeJS.Signals>()
 const externalChromeUpdateQuiesceHook: UpdateQuiesceHook = {
@@ -285,8 +293,7 @@ class BackendSupervisor {
       }
       installSecureVaultChildBridge({
         child,
-        safeStorage,
-        platform: process.platform,
+        controller: secureVaultController,
       })
       lifecycleLog.record('backend_spawned', { isRestart, pid: child.pid ?? null })
       this.attachOutputCapture(child)
@@ -670,8 +677,7 @@ if (!hasSingleInstanceLock) {
 
   installSecureVaultRendererIpc({
     ipcMain,
-    safeStorage,
-    platform: process.platform,
+    controller: secureVaultController,
     isTrustedSender: isTrustedMainRenderer,
   })
 

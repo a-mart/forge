@@ -93,7 +93,7 @@ interface SecureSessionsServiceOptions {
       encryptedCredential?: Uint8Array;
       endpointOrigin?: string | null;
       signal?: AbortSignal;
-    }): Promise<void>;
+    }): Promise<{ refreshedEncryptedCredential?: Buffer } | void>;
   };
   probeBitwarden: () => Promise<boolean>;
   execution: SecureExecutionBackend;
@@ -728,33 +728,39 @@ export class SecureSessionsService {
     try {
       return await this.withAuthorityMutation(async () => {
         const store = await this.store();
-        await this.options.bitwardenSource.testConnection({
+        const testedCredential = await this.options.bitwardenSource.testConnection({
           encryptedCredential: encryptedAccessToken,
           endpointOrigin: serverOrigin,
         });
-        const provider = store.upsertProvider({
-          providerId,
-          kind: "bitwarden_secrets_manager",
-          displayName: bounded(input.displayName, 256),
-          enabled: true,
-          status: "available",
-          lastStatusCode: "ok",
-        });
         try {
-          const config = store.upsertProviderBackendConfig({
+          const credentialToStore =
+            testedCredential?.refreshedEncryptedCredential ?? encryptedAccessToken;
+          const provider = store.upsertProvider({
             providerId,
-            serverOrigin,
-            organizationId: optionalBounded(input.organizationId, 256),
-            projectId: optionalBounded(input.projectId, 256),
-            encryptedAccessToken,
+            kind: "bitwarden_secrets_manager",
+            displayName: bounded(input.displayName, 256),
+            enabled: true,
+            status: "available",
+            lastStatusCode: "ok",
           });
-          config.encryptedAccessToken.fill(0);
-        } catch (error) {
-          store.deleteProvider(providerId);
-          throw error;
+          try {
+            const config = store.upsertProviderBackendConfig({
+              providerId,
+              serverOrigin,
+              organizationId: optionalBounded(input.organizationId, 256),
+              projectId: optionalBounded(input.projectId, 256),
+              encryptedAccessToken: credentialToStore,
+            });
+            config.encryptedAccessToken.fill(0);
+          } catch (error) {
+            store.deleteProvider(providerId);
+            throw error;
+          }
+          this.emitCatalog(store);
+          return toProviderSummary(provider);
+        } finally {
+          testedCredential?.refreshedEncryptedCredential?.fill(0);
         }
-        this.emitCatalog(store);
-        return toProviderSummary(provider);
       });
     } catch (error) {
       throw this.publicError(error);
@@ -790,7 +796,21 @@ export class SecureSessionsService {
                 sourceLocator: encrypted.sourceLocator,
                 encryptedMaterial: encrypted.encryptedMaterial ?? undefined,
               });
-              resolution.material.release();
+              try {
+                if (
+                  resolution.refreshedEncryptedMaterial
+                  && encrypted.encryptedMaterial
+                ) {
+                  store.rotateEncryptedSecretMaterial({
+                    secretId: encrypted.secretId,
+                    expectedEncryptedMaterial: encrypted.encryptedMaterial,
+                    encryptedMaterial: resolution.refreshedEncryptedMaterial,
+                  });
+                }
+              } finally {
+                resolution.refreshedEncryptedMaterial?.fill(0);
+                resolution.material.release();
+              }
             } catch (error) {
               firstError ??= error;
               affectedSecrets.push({
@@ -809,10 +829,22 @@ export class SecureSessionsService {
           const config = store.getProviderBackendConfig(providerId);
           if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
           try {
-            await this.options.bitwardenSource.testConnection({
+            const testedCredential = await this.options.bitwardenSource.testConnection({
               encryptedCredential: config.encryptedAccessToken,
               endpointOrigin: config.serverOrigin,
             });
+            try {
+              if (testedCredential?.refreshedEncryptedCredential) {
+                store.rotateProviderBackendCredential({
+                  providerId,
+                  expectedEncryptedAccessToken: config.encryptedAccessToken,
+                  encryptedAccessToken:
+                    testedCredential.refreshedEncryptedCredential,
+                });
+              }
+            } finally {
+              testedCredential?.refreshedEncryptedCredential?.fill(0);
+            }
           } finally {
             config.encryptedAccessToken.fill(0);
           }
@@ -854,27 +886,33 @@ export class SecureSessionsService {
         if (!config) throw new SecureSessionsServiceError("SECURE_PROVIDER_AUTH_REQUIRED");
         config.encryptedAccessToken.fill(0);
 
-        await this.options.bitwardenSource.testConnection({
+        const testedCredential = await this.options.bitwardenSource.testConnection({
           encryptedCredential: encryptedAccessToken,
           endpointOrigin: config.serverOrigin,
         });
+        const credentialToStore =
+          testedCredential?.refreshedEncryptedCredential ?? encryptedAccessToken;
 
-        const secretIds = store.listSecrets(providerId).map((secret) => secret.secretId);
-        this.assertSecretMutationLifecycleAvailable(store, secretIds);
-        const initiallyAffected = this.captureAffectedLeases(store, secretIds);
-        return await this.withSessionMutations(initiallyAffected.sessionIds, async () => {
-          const affected = this.captureAffectedLeases(store, secretIds);
-          const updated = store.replaceProviderBackendCredential({
-            providerId,
-            encryptedAccessToken,
-            lastVerifiedAt: this.now(),
+        try {
+          const secretIds = store.listSecrets(providerId).map((secret) => secret.secretId);
+          this.assertSecretMutationLifecycleAvailable(store, secretIds);
+          const initiallyAffected = this.captureAffectedLeases(store, secretIds);
+          return await this.withSessionMutations(initiallyAffected.sessionIds, async () => {
+            const affected = this.captureAffectedLeases(store, secretIds);
+            const updated = store.replaceProviderBackendCredential({
+              providerId,
+              encryptedAccessToken: credentialToStore,
+              lastVerifiedAt: this.now(),
+            });
+            this.releaseLeases(affected.leaseIds);
+            await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+            this.emitCatalog(store);
+            this.emitSessionSnapshots(store, affected.sessionIds);
+            return toProviderSummary(updated);
           });
-          this.releaseLeases(affected.leaseIds);
-          await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
-          this.emitCatalog(store);
-          this.emitSessionSnapshots(store, affected.sessionIds);
-          return toProviderSummary(updated);
-        });
+        } finally {
+          testedCredential?.refreshedEncryptedCredential?.fill(0);
+        }
       });
     } catch (error) {
       throw this.publicError(error);
@@ -3285,6 +3323,22 @@ export class SecureSessionsService {
           sourceLocator: secret.sourceLocator,
           encryptedMaterial: secret.encryptedMaterial ?? undefined,
         });
+        if (resolution.refreshedEncryptedMaterial) {
+          try {
+            if (secret.encryptedMaterial) {
+              store.rotateEncryptedSecretMaterial({
+                secretId,
+                expectedEncryptedMaterial: secret.encryptedMaterial,
+                encryptedMaterial: resolution.refreshedEncryptedMaterial,
+              });
+            }
+          } catch (error) {
+            resolution.material.release();
+            throw error;
+          } finally {
+            resolution.refreshedEncryptedMaterial.fill(0);
+          }
+        }
         return resolution.material;
       }
       const config = store.getProviderBackendConfig(provider.providerId);
@@ -3295,6 +3349,20 @@ export class SecureSessionsService {
         encryptedCredential: config.encryptedAccessToken,
         endpointOrigin: config.serverOrigin,
       });
+      if (resolution.refreshedEncryptedCredential) {
+        try {
+          store.rotateProviderBackendCredential({
+            providerId: provider.providerId,
+            expectedEncryptedAccessToken: config.encryptedAccessToken,
+            encryptedAccessToken: resolution.refreshedEncryptedCredential,
+          });
+        } catch (error) {
+          resolution.material.release();
+          throw error;
+        } finally {
+          resolution.refreshedEncryptedCredential.fill(0);
+        }
+      }
       return resolution.material;
     } catch (error) {
       const next = providerStatusForError(error);

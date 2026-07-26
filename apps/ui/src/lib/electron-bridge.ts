@@ -23,6 +23,24 @@ export type UpdateStatus =
   | { type: 'error'; message?: string }
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
 export interface StreamDeckPluginStatus { supported: boolean; isPackaged: boolean; bundled: boolean; streamDeckInstalled: boolean; pluginVersion: string }
+export type SecureVaultBridgeResult =
+  | { ok: true; available: true }
+  | { ok: true; encryptedPayloadBase64: string }
+  | {
+      ok: false
+      errorCode:
+        | 'SECURE_VAULT_INVALID_REQUEST'
+        | 'SECURE_VAULT_PAYLOAD_TOO_LARGE'
+        | 'SECURE_VAULT_STORAGE_UNAVAILABLE'
+        | 'SECURE_VAULT_INSECURE_STORAGE'
+        | 'SECURE_VAULT_ENCRYPT_FAILED'
+        | 'SECURE_VAULT_DECRYPT_FAILED'
+    }
+export interface SecureVaultBridge {
+  status(): Promise<SecureVaultBridgeResult>
+  unlock(): Promise<SecureVaultBridgeResult>
+  encryptLocalValue(value: string): Promise<SecureVaultBridgeResult>
+}
 export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
 export type ExternalChromeLocalError = 'invalid-request' | 'setup-required' | 'attachment-required' | 'lease-conflict' | 'restricted-target' | 'debugger-unavailable' | 'chrome-policy-blocked' | 'stale-or-lost' | 'extension-update-required' | 'operation-failed'
 export interface ExternalChromeRuntimeInstance {
@@ -130,6 +148,7 @@ export interface ElectronBridge {
   installStreamDeckPlugin?(): Promise<{ success: boolean; message: string }>
   openStreamDeck?(): Promise<{ success: boolean; message: string }>
   focusMainWindow?(): Promise<void>
+  secureVault?: SecureVaultBridge
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>; setSleepBlockerSettings?(patch: { enabled?: boolean; gracePeriodMinutes?: number }): Promise<SleepBlockerStatus | null>
   onSleepBlockerStatus?(callback: (status: SleepBlockerStatus) => void): () => void
 }

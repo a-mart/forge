@@ -125,6 +125,74 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
+  it("rotates ciphertext with CAS without changing catalog policy state", () => {
+    const { database, store } = createMemoryStore();
+    store.upsertProvider({
+      providerId: "local",
+      kind: "local_keychain",
+      displayName: "Local keychain",
+    });
+    store.createSecret({
+      secretId: "local-secret",
+      providerId: "local",
+      displayAlias: "local-token",
+      scopeKind: "instance",
+      retention: "saved",
+      sourceLocator: "local:local-secret",
+      encryptedMaterial: Buffer.from("legacy-local-ciphertext"),
+    });
+    store.upsertProvider({
+      providerId: "bws",
+      kind: "bitwarden_secrets_manager",
+      displayName: "Bitwarden",
+    });
+    const createdConfig = store.upsertProviderBackendConfig({
+      providerId: "bws",
+      serverOrigin: "https://vault.example.test",
+      organizationId: null,
+      projectId: null,
+      encryptedAccessToken: Buffer.from("legacy-provider-ciphertext"),
+    });
+    createdConfig.encryptedAccessToken.fill(0);
+    const catalogBefore = store.getCatalogState();
+    const auditBefore = store.listAudit();
+
+    expect(store.rotateEncryptedSecretMaterial({
+      secretId: "local-secret",
+      expectedEncryptedMaterial: Buffer.from("legacy-local-ciphertext"),
+      encryptedMaterial: Buffer.from("current-local-ciphertext"),
+    })).toBe(true);
+    expect(store.rotateEncryptedSecretMaterial({
+      secretId: "local-secret",
+      expectedEncryptedMaterial: Buffer.from("legacy-local-ciphertext"),
+      encryptedMaterial: Buffer.from("stale-write"),
+    })).toBe(false);
+    expect(store.rotateProviderBackendCredential({
+      providerId: "bws",
+      expectedEncryptedAccessToken: Buffer.from("legacy-provider-ciphertext"),
+      encryptedAccessToken: Buffer.from("current-provider-ciphertext"),
+    })).toBe(true);
+    expect(store.rotateProviderBackendCredential({
+      providerId: "bws",
+      expectedEncryptedAccessToken: Buffer.from("legacy-provider-ciphertext"),
+      encryptedAccessToken: Buffer.from("stale-write"),
+    })).toBe(false);
+
+    const local = store.getEncryptedSecret("local-secret");
+    const config = store.getProviderBackendConfig("bws");
+    expect(local?.encryptedMaterial).toEqual(
+      Buffer.from("current-local-ciphertext"),
+    );
+    expect(config?.encryptedAccessToken).toEqual(
+      Buffer.from("current-provider-ciphertext"),
+    );
+    expect(store.getCatalogState()).toEqual(catalogBefore);
+    expect(store.listAudit()).toEqual(auditBefore);
+    local?.encryptedMaterial?.fill(0);
+    config?.encryptedAccessToken.fill(0);
+    database.close();
+  });
+
   it("atomically replaces only a Bitwarden credential while revoking its leases", () => {
     const { database, store } = createMemoryStore();
     store.upsertProvider({

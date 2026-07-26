@@ -282,6 +282,42 @@ export class SecureSessionStore {
     }
   }
 
+  /**
+   * Re-seals a provider credential after Electron reports OS key rotation.
+   *
+   * This is cryptographic maintenance rather than a policy mutation, so it
+   * intentionally does not revoke leases, bump the catalog, or alter
+   * user-visible timestamps. The expected ciphertext makes the write
+   * race-safe with a concurrent user credential update.
+   */
+  rotateProviderBackendCredential(input: {
+    providerId: string;
+    expectedEncryptedAccessToken: Buffer;
+    encryptedAccessToken: Buffer;
+  }): boolean {
+    assertId(input.providerId, "provider ID");
+    const expected = normalizeEncryptedBuffer(
+      input.expectedEncryptedAccessToken,
+      "expected encrypted access token"
+    );
+    const replacement = normalizeEncryptedBuffer(
+      input.encryptedAccessToken,
+      "encrypted access token"
+    );
+    try {
+      return this.database.prepare(`
+        UPDATE secure_session_provider
+        SET encrypted_access_token = ?
+        WHERE provider_id = ?
+          AND kind = 'bitwarden_secrets_manager'
+          AND encrypted_access_token = ?
+      `).run(replacement, input.providerId, expected).changes === 1;
+    } finally {
+      expected.fill(0);
+      replacement.fill(0);
+    }
+  }
+
   upsertProvider(input: UpsertSecureSessionProviderInput): SecureSessionProvider {
     assertId(input.providerId, "provider ID");
     assertEnum(input.kind, SECURE_SESSION_PROVIDER_KINDS, "provider kind");
@@ -476,6 +512,42 @@ export class SecureSessionStore {
             : Buffer.from(row.encrypted_material)
         }
       : null;
+  }
+
+  /**
+   * Re-seals local material without turning OS key rotation into a secret
+   * policy change. The compare-and-swap preserves a newer concurrent edit.
+   */
+  rotateEncryptedSecretMaterial(input: {
+    secretId: string;
+    expectedEncryptedMaterial: Buffer;
+    encryptedMaterial: Buffer;
+  }): boolean {
+    assertId(input.secretId, "secret ID");
+    const expected = normalizeEncryptedBuffer(
+      input.expectedEncryptedMaterial,
+      "expected encrypted material"
+    );
+    const replacement = normalizeEncryptedBuffer(
+      input.encryptedMaterial,
+      "encrypted material"
+    );
+    try {
+      return this.database.prepare(`
+        UPDATE secure_session_secret
+        SET encrypted_material = ?
+        WHERE secret_id = ?
+          AND provider_id IN (
+            SELECT provider_id
+            FROM secure_session_provider
+            WHERE kind = 'local_keychain'
+          )
+          AND encrypted_material = ?
+      `).run(replacement, input.secretId, expected).changes === 1;
+    } finally {
+      expected.fill(0);
+      replacement.fill(0);
+    }
   }
 
   createSecret(input: CreateSecureSessionSecretInput): SecureSessionSecret {

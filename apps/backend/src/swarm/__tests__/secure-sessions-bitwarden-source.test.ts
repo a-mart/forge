@@ -217,7 +217,9 @@ describe("BitwardenBwsSecretSource", () => {
     const cipher: SecureVaultCipher = {
       status: async () => ({ available: true }),
       encrypt: async () => Buffer.from("encrypted"),
-      decrypt: async () => new HostOnlySecret(Buffer.from("machine-token")),
+      decrypt: async () => ({
+        material: new HostOnlySecret(Buffer.from("machine-token")),
+      }),
     };
     const client: BitwardenSecretsClient = {
       testConnection: async () => undefined,
@@ -256,7 +258,7 @@ describe("BitwardenBwsSecretSource", () => {
     const cipher: SecureVaultCipher = {
       status: async () => ({ available: true }),
       encrypt: async () => Buffer.from("encrypted"),
-      decrypt: async () => credential,
+      decrypt: async () => ({ material: credential }),
     };
     let observedToken: string | undefined;
     const client: BitwardenSecretsClient = {

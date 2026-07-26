@@ -13,6 +13,7 @@ import {
   reconnectBitwardenProvider,
   secureSecretsErrorMessage,
   testSecureSecretProvider,
+  unlockSecureMaterialEntry,
   updateSecureSecret,
   updateSecureSecretAutomaticGrant,
   updateSecureSecretProjectDefault,
@@ -74,6 +75,7 @@ function installSecureVault(
       secureControlToken: 'test-secure-control-token-that-is-long-enough',
       secureVault: {
         status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+        unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
         encryptLocalValue,
       },
     },
@@ -91,6 +93,10 @@ afterEach(() => {
 
 describe('secure secrets API', () => {
   it('reports the real desktop vault status rather than bridge presence alone', async () => {
+    const unlock = vi.fn(async () => ({
+      ok: true as const,
+      available: true as const,
+    }))
     Object.defineProperty(window, 'electronBridge', {
       configurable: true,
       value: {
@@ -100,12 +106,16 @@ describe('secure secrets API', () => {
             ok: false as const,
             errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' as const,
           })),
+          unlock,
           encryptLocalValue: vi.fn(),
         },
       },
     })
 
     await expect(checkSecureMaterialEntryAvailability()).resolves.toBe(false)
+    expect(unlock).not.toHaveBeenCalled()
+    await expect(unlockSecureMaterialEntry()).resolves.toBe(true)
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
   it('loads provider and secret metadata with no-store requests', async () => {

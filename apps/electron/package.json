@@ -18,6 +18,7 @@
     "test:browser-popout-product": "pnpm build && node ./scripts/managed-browser-popout-product-smoke.mjs",
     "test:browser-package": "pnpm build && node ./scripts/browser-package-content-smoke.mjs",
     "test:external-chrome-package": "node ./scripts/external-chrome-package-content-smoke.mjs",
+    "test:secure-vault-async": "node ./scripts/secure-vault-async-smoke.mjs",
     "stage:external-chrome": "node ./scripts/stage-external-chrome.mjs",
     "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
     "prepare:dev-external-chrome": "node ./scripts/prepare-external-chrome-dev.mjs",

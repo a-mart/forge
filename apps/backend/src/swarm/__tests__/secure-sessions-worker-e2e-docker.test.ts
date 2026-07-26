@@ -488,7 +488,7 @@ async function createDockerHarness() {
       return Buffer.from(bytes);
     },
     async decrypt(bytes) {
-      return new HostOnlySecret(bytes);
+      return { material: new HostOnlySecret(bytes) };
     },
     dispose() {},
   };
@@ -502,7 +502,7 @@ async function createDockerHarness() {
         throw new Error("missing encrypted fixture material");
       }
       return {
-        material: await cipher.decrypt(input.encryptedMaterial),
+        material: (await cipher.decrypt(input.encryptedMaterial)).material,
         sourceVersion: null,
         resolvedAt: NOW,
       };

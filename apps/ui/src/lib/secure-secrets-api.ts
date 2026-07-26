@@ -75,6 +75,10 @@ interface SecureVaultPrivateBridge {
     | { ok: true; available: true }
     | { ok: false; errorCode: SecureVaultErrorCode }
   >
+  unlock(): Promise<
+    | { ok: true; available: true }
+    | { ok: false; errorCode: SecureVaultErrorCode }
+  >
   encryptLocalValue(value: string): Promise<
     | { ok: true; encryptedPayloadBase64: string }
     | { ok: false; errorCode: SecureVaultErrorCode }
@@ -136,6 +140,21 @@ export async function checkSecureMaterialEntryAvailability(): Promise<boolean> {
   try {
     const status = await bridge.status()
     return status.ok && status.available
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Explicitly asks Forge Desktop to initialize or unlock operating-system
+ * private storage. Passive readiness checks never call this method.
+ */
+export async function unlockSecureMaterialEntry(): Promise<boolean> {
+  const bridge = getPrivateBridge()
+  if (!bridge) return false
+  try {
+    const result = await bridge.unlock()
+    return result.ok && result.available
   } catch {
     return false
   }
@@ -369,7 +388,9 @@ function getPrivateBridge(): SecureVaultPrivateBridge | null {
       | { secureVault?: SecureVaultPrivateBridge }
       | undefined
   )?.secureVault
-  return typeof bridge?.encryptLocalValue === 'function' && typeof bridge.status === 'function'
+  return typeof bridge?.encryptLocalValue === 'function'
+    && typeof bridge.status === 'function'
+    && typeof bridge.unlock === 'function'
     ? bridge
     : null
 }

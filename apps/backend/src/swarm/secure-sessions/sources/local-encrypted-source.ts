@@ -17,11 +17,14 @@ export class LocalEncryptedSecretSource implements SecureSecretSource {
     if (!input.encryptedMaterial || input.encryptedMaterial.byteLength === 0) {
       throw new SecureSourceError("SECURE_SOURCE_NOT_FOUND");
     }
-    const material = await this.cipher.decrypt(input.encryptedMaterial);
+    const decrypted = await this.cipher.decrypt(input.encryptedMaterial);
     return {
-      material,
+      material: decrypted.material,
       sourceVersion: null,
       resolvedAt: new Date().toISOString(),
+      ...(decrypted.reEncryptedCiphertext
+        ? { refreshedEncryptedMaterial: decrypted.reEncryptedCiphertext }
+        : {}),
     };
   }
 }

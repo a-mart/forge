@@ -261,22 +261,28 @@ export class BitwardenBwsSecretSource {
     encryptedCredential?: Uint8Array;
     endpointOrigin?: string | null;
     signal?: AbortSignal;
-  }): Promise<void> {
+  }): Promise<{ refreshedEncryptedCredential: Buffer } | undefined> {
     if (!input.encryptedCredential?.byteLength) {
       throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
     }
 
-    const accessToken = await this.cipher.decrypt(input.encryptedCredential);
+    const decrypted = await this.cipher.decrypt(input.encryptedCredential);
     try {
-      await accessToken.withBytes(async (tokenBytes) => {
+      await decrypted.material.withBytes(async (tokenBytes) => {
         await this.client.testConnection({
           accessToken: tokenBytes,
           endpointOrigin: input.endpointOrigin,
           signal: input.signal,
         });
       });
+      return decrypted.reEncryptedCiphertext
+        ? { refreshedEncryptedCredential: decrypted.reEncryptedCiphertext }
+        : undefined;
+    } catch (error) {
+      decrypted.reEncryptedCiphertext?.fill(0);
+      throw error;
     } finally {
-      accessToken.release();
+      decrypted.material.release();
     }
   }
 
@@ -290,9 +296,9 @@ export class BitwardenBwsSecretSource {
       throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
     }
 
-    const accessToken = await this.cipher.decrypt(input.encryptedCredential);
+    const decrypted = await this.cipher.decrypt(input.encryptedCredential);
     try {
-      return await accessToken.withBytes(async (tokenBytes) => {
+      return await decrypted.material.withBytes(async (tokenBytes) => {
         const record = await this.client.getSecret({
           secretId: input.sourceLocator,
           accessToken: tokenBytes,
@@ -303,10 +309,19 @@ export class BitwardenBwsSecretSource {
           material: record.material,
           sourceVersion: record.revisionDate ?? null,
           resolvedAt: new Date().toISOString(),
+          ...(decrypted.reEncryptedCiphertext
+            ? {
+                refreshedEncryptedCredential:
+                  decrypted.reEncryptedCiphertext,
+              }
+            : {}),
         };
       });
+    } catch (error) {
+      decrypted.reEncryptedCiphertext?.fill(0);
+      throw error;
     } finally {
-      accessToken.release();
+      decrypted.material.release();
     }
   }
 }

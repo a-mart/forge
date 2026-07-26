@@ -6,7 +6,9 @@ import {
   checkSecureMaterialEntryAvailability,
   fetchSecureSecretsCatalog,
   fetchSecureSessionReadiness,
+  isSecureMaterialEntryAvailable,
   secureSecretsErrorMessage,
+  unlockSecureMaterialEntry,
   type SecureSecretsCatalog,
   type SecureSessionReadiness,
 } from '@/lib/secure-secrets-api'
@@ -62,6 +64,10 @@ function BuilderSecretsSettings({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [materialEntryAvailable, setMaterialEntryAvailable] = useState(false)
+  const [unlockingPrivateEntry, setUnlockingPrivateEntry] = useState(false)
+  const [privateEntryUnlockMessage, setPrivateEntryUnlockMessage] =
+    useState<string | null>(null)
+  const materialEntrySupported = isSecureMaterialEntryAvailable()
   const [readiness, setReadiness] = useState<SecureSessionReadiness | null>(null)
   const projectProfiles = useMemo(
     () => profiles.filter((profile) =>
@@ -144,6 +150,24 @@ function BuilderSecretsSettings({
     setError(secureSecretsErrorMessage(nextError))
   }, [])
 
+  const handleUnlockPrivateEntry = useCallback(async () => {
+    setUnlockingPrivateEntry(true)
+    setPrivateEntryUnlockMessage(null)
+    try {
+      const unlocked = await unlockSecureMaterialEntry()
+      if (!unlocked) {
+        setPrivateEntryUnlockMessage(
+          'Private storage is still locked. Unlock it in the system prompt, then try again.',
+        )
+        return
+      }
+      setPrivateEntryUnlockMessage('Private storage is unlocked.')
+      await refresh()
+    } finally {
+      setUnlockingPrivateEntry(false)
+    }
+  }, [refresh])
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -176,7 +200,10 @@ function BuilderSecretsSettings({
       <SecureSessionsReadinessPanel
         readiness={readiness}
         loading={loading}
+        privateEntrySupported={materialEntrySupported}
         privateEntryAvailable={materialEntryAvailable}
+        unlockingPrivateEntry={unlockingPrivateEntry}
+        privateEntryUnlockMessage={privateEntryUnlockMessage}
         providers={catalog.providers}
         configuredProjectDefaultCount={contextualProfileId
           ? new Set([
@@ -197,6 +224,7 @@ function BuilderSecretsSettings({
             ]).size
           : undefined}
         onRefresh={refresh}
+        onUnlockPrivateEntry={handleUnlockPrivateEntry}
       />
 
       {loading && catalog.providers.length === 0 && catalog.secrets.length === 0 ? (
@@ -222,6 +250,7 @@ function BuilderSecretsSettings({
             <SecretSourcesPanel
               apiClient={apiClient}
               providers={catalog.providers}
+              materialEntrySupported={materialEntrySupported}
               materialEntryAvailable={materialEntryAvailable}
               onChanged={handleChanged}
               onError={handleError}

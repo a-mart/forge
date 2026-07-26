@@ -329,6 +329,7 @@ describe('Secure Sessions API', () => {
         secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
           encryptLocalValue,
         },
       },
@@ -384,6 +385,7 @@ describe('Secure Sessions API', () => {
         secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
           encryptLocalValue: vi.fn(async () => ({
             ok: true as const,
             encryptedPayloadBase64: 'ephemeral-ciphertext',
@@ -441,6 +443,7 @@ describe('Secure Sessions API', () => {
         secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
           encryptLocalValue: vi.fn(async () => ({
             ok: true as const,
             encryptedPayloadBase64: 'conflicting-ciphertext',
@@ -494,6 +497,7 @@ describe('Secure Sessions API', () => {
         secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
           encryptLocalValue,
         },
       },

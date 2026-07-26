@@ -27,6 +27,7 @@ import { SourceStatusBadge } from './secret-ui'
 interface SecretSourcesPanelProps {
   apiClient: SettingsApiClient
   providers: SecureSecretProviderSummary[]
+  materialEntrySupported: boolean
   materialEntryAvailable: boolean
   onChanged: (message: string) => Promise<void>
   onError: (error: unknown) => void
@@ -35,6 +36,7 @@ interface SecretSourcesPanelProps {
 export function SecretSourcesPanel({
   apiClient,
   providers,
+  materialEntrySupported,
   materialEntryAvailable,
   onChanged,
   onError,
@@ -66,7 +68,9 @@ export function SecretSourcesPanel({
   )
   const localStatus: SecureSecretSourceStatus = materialEntryAvailable
     ? localProvider?.status ?? 'available'
-    : 'disabled'
+    : materialEntrySupported
+      ? 'locked'
+      : 'disabled'
 
   const connectBitwarden = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -275,8 +279,9 @@ export function SecretSourcesPanel({
           </div>
           {!materialEntryAvailable ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-700 dark:text-amber-300">
-              Secure operating-system storage is unavailable in this desktop session. Existing
-              metadata remains readable, but private material cannot be added or rotated.
+              {materialEntrySupported
+                ? 'Private storage is locked. Unlock it above to add, rotate, or test local values without restarting Forge.'
+                : 'Secure operating-system storage is unavailable in this desktop session. Existing metadata remains readable, but private material cannot be added or rotated.'}
             </p>
           ) : null}
           {localProvider ? (

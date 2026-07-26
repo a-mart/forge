@@ -77,6 +77,8 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       secureVault: {
         status: (): Promise<SecureVaultRendererResponse> =>
           ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'status' }),
+        unlock: (): Promise<SecureVaultRendererResponse> =>
+          ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'unlock' }),
         encryptLocalValue: (value: string): Promise<SecureVaultRendererResponse> =>
           ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'encrypt', value }),
       },

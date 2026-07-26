@@ -33,11 +33,38 @@ describe("ElectronSafeStorageClient", () => {
       ok: true,
       result: { payload: Buffer.from("opaque").toString("base64") },
     });
-    const material = await decrypt;
-    await expect(material.withBytes((bytes) => bytes.toString("utf8"))).resolves.toBe("opaque");
-    expect(() => JSON.stringify(material)).toThrow("SECURE_SECRET_SERIALIZATION_BLOCKED");
-    material.release();
-    await expect(material.withBytes(() => undefined)).rejects.toThrow("SECURE_SECRET_RELEASED");
+    const decrypted = await decrypt;
+    await expect(
+      decrypted.material.withBytes((bytes) => bytes.toString("utf8")),
+    ).resolves.toBe("opaque");
+    expect(() => JSON.stringify(decrypted.material)).toThrow(
+      "SECURE_SECRET_SERIALIZATION_BLOCKED",
+    );
+    decrypted.material.release();
+    await expect(
+      decrypted.material.withBytes(() => undefined),
+    ).rejects.toThrow("SECURE_SECRET_RELEASED");
+    client.dispose();
+  });
+
+  it("returns bounded replacement ciphertext when Electron rotates its key", async () => {
+    const transport = new FakeTransport();
+    const client = new ElectronSafeStorageClient(transport as never, 100);
+    const decrypt = client.decrypt(Buffer.from("legacy"), "decrypt-rotation");
+    transport.emit("message", {
+      type: "secure_vault_response",
+      requestId: "decrypt-rotation",
+      ok: true,
+      result: {
+        payload: Buffer.from("opaque").toString("base64"),
+        reEncryptedPayload: Buffer.from("current").toString("base64"),
+      },
+    });
+
+    const decrypted = await decrypt;
+    expect(decrypted.reEncryptedCiphertext).toEqual(Buffer.from("current"));
+    decrypted.material.release();
+    decrypted.reEncryptedCiphertext?.fill(0);
     client.dispose();
   });
 

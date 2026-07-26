@@ -69,6 +69,16 @@ export interface SecureSecretResolution {
   readonly material: HostOnlySecret;
   readonly sourceVersion: string | null;
   readonly resolvedAt: string;
+  /**
+   * Fresh Electron safeStorage ciphertext produced after OS key rotation.
+   * The caller owns this buffer and must persist or wipe it before returning.
+   */
+  readonly refreshedEncryptedMaterial?: Buffer;
+  /**
+   * Fresh ciphertext for the provider credential used during resolution.
+   * The caller owns this buffer and must persist or wipe it before returning.
+   */
+  readonly refreshedEncryptedCredential?: Buffer;
 }
 
 export interface SecureSecretSource {

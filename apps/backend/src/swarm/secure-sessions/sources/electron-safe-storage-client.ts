@@ -4,6 +4,8 @@ import { HostOnlySecret, SecureSourceError } from "./host-only-secret.js";
 const REQUEST_TYPE = "secure_vault_request";
 const RESPONSE_TYPE = "secure_vault_response";
 const DEFAULT_TIMEOUT_MS = 5_000;
+const MAX_PLAINTEXT_BYTES = 256 * 1024;
+const MAX_CIPHERTEXT_BYTES = 512 * 1024;
 
 type SecureVaultOperation = "status" | "encrypt" | "decrypt";
 
@@ -12,7 +14,9 @@ type SecureVaultResponse =
       type: typeof RESPONSE_TYPE;
       requestId: string;
       ok: true;
-      result: { available: true } | { payload: string };
+      result:
+        | { available: true }
+        | { payload: string; reEncryptedPayload?: string };
     }
   | {
       type: typeof RESPONSE_TYPE;
@@ -24,7 +28,15 @@ type SecureVaultResponse =
 export interface SecureVaultCipher {
   status(): Promise<{ available: true }>;
   encrypt(bytes: Uint8Array, requestId?: string): Promise<Buffer>;
-  decrypt(ciphertext: Uint8Array, requestId?: string): Promise<HostOnlySecret>;
+  decrypt(
+    ciphertext: Uint8Array,
+    requestId?: string,
+  ): Promise<SecureVaultDecryption>;
+}
+
+export interface SecureVaultDecryption {
+  readonly material: HostOnlySecret;
+  readonly reEncryptedCiphertext?: Buffer;
 }
 
 interface PendingRequest {
@@ -62,19 +74,36 @@ export class ElectronSafeStorageClient implements SecureVaultCipher {
   async encrypt(bytes: Uint8Array, requestId = randomUUID()): Promise<Buffer> {
     const response = await this.request("encrypt", Buffer.from(bytes).toString("base64"), requestId);
     if (!response.ok) throw mapVaultError(response.errorCode);
-    return decodePayload(response.result);
+    return decodePayload(response.result, MAX_CIPHERTEXT_BYTES);
   }
 
-  async decrypt(ciphertext: Uint8Array, requestId = randomUUID()): Promise<HostOnlySecret> {
+  async decrypt(
+    ciphertext: Uint8Array,
+    requestId = randomUUID(),
+  ): Promise<SecureVaultDecryption> {
     const response = await this.request(
       "decrypt",
       Buffer.from(ciphertext).toString("base64"),
       requestId,
     );
     if (!response.ok) throw mapVaultError(response.errorCode);
-    const bytes = decodePayload(response.result);
+    const bytes = decodePayload(response.result, MAX_PLAINTEXT_BYTES);
+    let reEncryptedCiphertext: Buffer | undefined;
     try {
-      return new HostOnlySecret(bytes);
+      reEncryptedCiphertext = "reEncryptedPayload" in response.result
+        && response.result.reEncryptedPayload !== undefined
+        ? decodeCanonicalPayload(
+            response.result.reEncryptedPayload,
+            MAX_CIPHERTEXT_BYTES,
+          )
+        : undefined;
+      return {
+        material: new HostOnlySecret(bytes),
+        ...(reEncryptedCiphertext ? { reEncryptedCiphertext } : {}),
+      };
+    } catch (error) {
+      reEncryptedCiphertext?.fill(0);
+      throw error;
     } finally {
       bytes.fill(0);
     }
@@ -182,12 +211,26 @@ function parseResponse(value: unknown): SecureVaultResponse | null {
         result: { available: true },
       };
     }
-    if (typeof record.payload === "string" && Object.keys(record).length === 1) {
+    if (
+      typeof record.payload === "string"
+      && (
+        Object.keys(record).length === 1
+        || (
+          Object.keys(record).length === 2
+          && typeof record.reEncryptedPayload === "string"
+        )
+      )
+    ) {
       return {
         type: RESPONSE_TYPE,
         requestId: response.requestId,
         ok: true,
-        result: { payload: record.payload },
+        result: {
+          payload: record.payload,
+          ...(typeof record.reEncryptedPayload === "string"
+            ? { reEncryptedPayload: record.reEncryptedPayload }
+            : {}),
+        },
       };
     }
     return null;
@@ -202,11 +245,29 @@ function parseResponse(value: unknown): SecureVaultResponse | null {
   };
 }
 
-function decodePayload(result: { available: true } | { payload: string }): Buffer {
-  if (!("payload" in result) || !isCanonicalBase64(result.payload)) {
+function decodePayload(
+  result: { available: true } | { payload: string },
+  maxBytes: number,
+): Buffer {
+  if (!("payload" in result)) {
     throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
   }
-  return Buffer.from(result.payload, "base64");
+  return decodeCanonicalPayload(result.payload, maxBytes);
+}
+
+function decodeCanonicalPayload(value: string, maxBytes: number): Buffer {
+  if (
+    value.length > Math.ceil(maxBytes / 3) * 4
+    || !isCanonicalBase64(value)
+  ) {
+    throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.byteLength > maxBytes) {
+    decoded.fill(0);
+    throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
+  }
+  return decoded;
 }
 
 function isCanonicalBase64(value: string): boolean {

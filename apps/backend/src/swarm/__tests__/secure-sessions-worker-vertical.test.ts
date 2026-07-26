@@ -1090,7 +1090,7 @@ function createHarness() {
       return Buffer.from(bytes);
     },
     async decrypt(bytes) {
-      return new HostOnlySecret(bytes);
+      return { material: new HostOnlySecret(bytes) };
     },
     dispose() {},
   };
