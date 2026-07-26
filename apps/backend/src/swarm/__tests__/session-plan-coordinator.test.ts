@@ -76,6 +76,54 @@ describe('SessionPlanCoordinator', () => {
       })
   })
 
+  it('keeps one durable graph-card identity when saturated history evicts the active anchor', async () => {
+    const harness = await createHarness()
+    const graphNode = {
+      id: 'saturated-graph',
+      title: 'Saturated graph node',
+      task: 'Preserve this graph across saturated history.',
+      kind: 'implementation' as const,
+      status: 'pending' as const,
+    }
+    await harness.coordinator.updateWorkGraph(harness.owner, { nodes: [graphNode] })
+    const authoritativeId = harness.timelineSummaries[0]!.id
+
+    // Model the 2,000-entry history cap evicting the transcript projection. The
+    // identity must come from durable plan state, not the evictable row.
+    harness.timelineSummaries.splice(0)
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      explanation: 'Revision after saturation.',
+      nodes: [graphNode],
+    })
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      explanation: 'Another revision of the same graph.',
+      nodes: [graphNode],
+    })
+
+    expect(harness.timelineSummaries).toHaveLength(1)
+    expect(harness.timelineSummaries[0]).toMatchObject({
+      id: authoritativeId,
+      state: 'active',
+      revision: 2,
+      coordinationMode: 'graph',
+      workGraph: { nodes: [{ id: 'saturated-graph' }] },
+    })
+
+    const rebooted = await createHarness(harness.dataDir)
+    await rebooted.coordinator.preload([rebooted.owner])
+    await rebooted.coordinator.updateWorkGraph(rebooted.owner, {
+      nodes: [{ ...graphNode, status: 'completed' }],
+    })
+    expect(rebooted.timelineSummaries).toEqual([
+      expect.objectContaining({
+        id: authoritativeId,
+        state: 'completed',
+        revision: 4,
+        coordinationMode: 'graph',
+      }),
+    ])
+  })
+
   it('serializes overlapping replacements into one new active summary', async () => {
     const harness = await createHarness()
     await harness.coordinator.update(harness.owner, {

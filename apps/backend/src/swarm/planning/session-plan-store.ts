@@ -70,6 +70,7 @@ export class SessionPlanStore {
         updatedAt: (this.options.now ?? (() => new Date()))().toISOString(),
         ...(input.explanation ? { explanation: input.explanation } : {}),
         plan: input.plan.map((step) => ({ ...step })),
+        ...(input.planSummaryId ? { planSummaryId: input.planSummaryId } : {}),
         ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
         ...(input.workGraph ? {
           workGraph: {

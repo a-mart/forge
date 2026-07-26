@@ -3,7 +3,11 @@ import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
 import { routeModelCacheObservationsForState } from '../model-cache-visualization-state.js'
 import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
-import type { SecureSessionSnapshot, ServerEvent } from '@forge/protocol'
+import {
+  normalizePlanSummaryEntries,
+  type SecureSessionSnapshot,
+  type ServerEvent,
+} from '@forge/protocol'
 
 /**
  * Bootstrap event types coalesced into a single state update during subscribe bootstrap.
@@ -247,12 +251,17 @@ export function handleConversationEvent(
         if (existingIndex >= 0) {
           const nextMessages = [...context.state.messages]
           nextMessages[existingIndex] = event
-          context.updateState({ messages: nextMessages })
+          context.updateState({ messages: normalizePlanSummaryEntries(nextMessages) })
           return true
         }
       }
 
-      context.updateState({ messages: [...context.state.messages, event] })
+      const nextMessages = [...context.state.messages, event]
+      context.updateState({
+        messages: event.type === 'plan_summary'
+          ? normalizePlanSummaryEntries(nextMessages)
+          : nextMessages,
+      })
       return true
     }
 
@@ -425,7 +434,9 @@ export function handleConversationEvent(
         })
       }
       context.updateState({
-        messages: mergeBootstrapEntries(messages, context.state.messages),
+        messages: normalizePlanSummaryEntries(
+          mergeBootstrapEntries(messages, context.state.messages),
+        ),
         activityMessages: isPage
           ? mergeBootstrapEntries(activityMessages, context.state.activityMessages)
           : clampConversationHistory(mergeBootstrapEntries(activityMessages, context.state.activityMessages)),

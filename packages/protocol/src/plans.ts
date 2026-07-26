@@ -101,3 +101,62 @@ export interface PlanSummaryEvent extends SessionPlanSnapshot {
   /** Missing on legacy records and therefore treated as completed. */
   state?: 'active' | 'completed'
 }
+
+/**
+ * Collapses revisions of the same plan card and repairs legacy/polluted histories
+ * that contain more than one active anchor. Completed cards are boundaries, so
+ * distinct historical completed plans remain intact.
+ */
+export function normalizePlanSummaryEntries<Entry extends { type: string }>(
+  entries: readonly Entry[],
+): Entry[] {
+  const slots: Array<{ id: string; event: PlanSummaryEvent }> = []
+  const slotById = new Map<string, number>()
+
+  for (const entry of entries) {
+    if (entry.type !== 'plan_summary') continue
+    const event = entry as unknown as PlanSummaryEvent
+    const existing = slotById.get(event.id)
+    if (existing === undefined) {
+      slotById.set(event.id, slots.length)
+      slots.push({ id: event.id, event })
+    } else {
+      slots[existing] = { id: event.id, event }
+    }
+  }
+
+  const supersededActiveIds = new Set<string>()
+  let activeIds: string[] = []
+  for (const slot of slots) {
+    if (slot.event.state === 'active') {
+      activeIds.push(slot.id)
+      continue
+    }
+
+    for (const activeId of activeIds) supersededActiveIds.add(activeId)
+    activeIds = []
+  }
+  for (const activeId of activeIds.slice(0, -1)) supersededActiveIds.add(activeId)
+
+  const canonicalById = new Map(
+    slots
+      .filter((slot) => !supersededActiveIds.has(slot.id))
+      .map((slot) => [slot.id, slot.event] as const),
+  )
+  const emittedIds = new Set<string>()
+  const normalized: Entry[] = []
+  for (const entry of entries) {
+    if (entry.type !== 'plan_summary') {
+      normalized.push(entry)
+      continue
+    }
+
+    const event = entry as unknown as PlanSummaryEvent
+    const canonical = canonicalById.get(event.id)
+    if (!canonical || emittedIds.has(event.id)) continue
+    emittedIds.add(event.id)
+    normalized.push(canonical as unknown as Entry)
+  }
+
+  return normalized
+}

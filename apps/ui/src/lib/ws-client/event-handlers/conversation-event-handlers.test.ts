@@ -58,7 +58,10 @@ function makeMessage(id: string, text: string): ConversationMessageEvent {
   }
 }
 
-function makePlanSummary(id = 'summary-1'): PlanSummaryEvent {
+function makePlanSummary(
+  id = 'summary-1',
+  overrides: Partial<PlanSummaryEvent> = {},
+): PlanSummaryEvent {
   return {
     type: 'plan_summary',
     id,
@@ -67,6 +70,7 @@ function makePlanSummary(id = 'summary-1'): PlanSummaryEvent {
     revision: 2,
     updatedAt: '2026-07-13T00:59:00.000Z',
     plan: [{ step: 'Finish the first plan', status: 'completed' }],
+    ...overrides,
   }
 }
 
@@ -137,6 +141,50 @@ describe('handleConversationEvent conversation history merge', () => {
     })
 
     expect(next.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([liveSummary])
+  })
+
+  it('collapses polluted live active ids into one current card', () => {
+    const stale = makePlanSummary('stale', {
+      state: 'active',
+      revision: 1,
+      plan: [{ step: 'Current work', status: 'in_progress' }],
+    })
+    const current = makePlanSummary('current', {
+      state: 'active',
+      revision: 2,
+      plan: [{ step: 'Current work', status: 'in_progress' }],
+    })
+
+    const staleState = runHandler(createInitialManagerWsState('manager'), stale)
+    const activeState = runHandler(staleState, current)
+    expect(activeState.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([current])
+
+    const completed = makePlanSummary('current', { state: 'completed', revision: 3 })
+    const completedState = runHandler(activeState, completed)
+    expect(completedState.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([completed])
+  })
+
+  it('normalizes polluted replay while preserving distinct completed cards', () => {
+    const historical = makePlanSummary('historical', { revision: 1 })
+    const stale = makePlanSummary('stale', {
+      state: 'active',
+      revision: 2,
+      plan: [{ step: 'Current work', status: 'in_progress' }],
+    })
+    const current = makePlanSummary('current', { state: 'completed', revision: 4 })
+    const nextHistorical = makePlanSummary('next-historical', { revision: 5 })
+
+    const next = runHandler(createInitialManagerWsState('manager'), {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [historical, stale, current, nextHistorical],
+    })
+
+    expect(next.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([
+      historical,
+      current,
+      nextHistorical,
+    ])
   })
 
   it('converges live and replayed activity by stable item id', () => {
