@@ -11,6 +11,17 @@ export class LaunchArgumentError extends Error {
 
 const WINDOWS_PARENT_WINDOW = /^--parent-window=(0|[1-9][0-9]*)$/u
 
+export function resolveNativeHostExecutable(
+  argv: readonly string[],
+  sea: boolean,
+  processExecutable: string,
+): string {
+  if (sea) return processExecutable
+  const script = argv[1]
+  if (!script) throw new LaunchArgumentError('native host executable path is unavailable')
+  return path.resolve(script)
+}
+
 export function normalizeNativeHostLaunchArguments(
   argv: readonly string[],
   sea: boolean,

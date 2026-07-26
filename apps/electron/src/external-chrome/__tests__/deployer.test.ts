@@ -81,6 +81,26 @@ afterEach(async () => {
 })
 
 describe('ExternalChromeDeployer', () => {
+  it('deploys a development host only with the explicit dev policy and exposes the stable unpacked folder', async () => {
+    const dev = await fixture('1.0.0')
+    dev.manifest.nativeHost.signature = {
+      scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null,
+    }
+    await fs.writeFile(path.join(dev.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(dev.manifest)}\n`)
+
+    await expect(new ExternalChromeDeployer({
+      dataRoot: dev.dataRoot, resourcesRoot: dev.resourcesRoot, desktopVersion: '0.22.5',
+    }).deploy()).rejects.toThrow('not release-verified')
+
+    const deployer = new ExternalChromeDeployer({
+      dataRoot: dev.dataRoot, resourcesRoot: dev.resourcesRoot, desktopVersion: '0.22.5', allowDevelopmentHost: true,
+    })
+    await deployer.deploy()
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    expect(deployer.paths.extension).toBe(path.join(dev.dataRoot, 'integrations', 'external-chrome', 'extension'))
+    expect((await fs.lstat(deployer.paths.extension)).isDirectory()).toBe(true)
+  })
+
   it('uses a custom backend data root, is idempotent, and retains current plus N-1 for rollback', async () => {
     const first = await fixture('1.0.0')
     const deployer = new ExternalChromeDeployer({ dataRoot: first.dataRoot, resourcesRoot: first.resourcesRoot, desktopVersion: '0.22.5' })

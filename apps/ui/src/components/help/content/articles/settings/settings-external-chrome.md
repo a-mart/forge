@@ -14,20 +14,22 @@ Use a dedicated Chrome profile containing only the accounts needed for Forge wor
 
 ## Load the unpacked extension
 
+Settings → External Chrome (Local Beta) is setup-first: the validated Load unpacked folder, copy/reveal controls, connection status, and Enable/Repair actions are above the fold. Chrome setup steps, permissions detail, version inventory, and destructive actions sit behind progressive disclosure.
+
 Set up the integration once per Chrome profile and Forge data directory:
 
 1. Open the intended dedicated Chrome profile.
 2. Manually enter `chrome://extensions` in Chrome.
 3. Turn on **Developer mode**.
-4. In Forge, open **Settings → External Chrome (Local Beta)** and confirm **Validated Load unpacked folder** is **ready**.
+4. In Forge, open **Settings → External Chrome (Local Beta)** and confirm the **Load unpacked folder** badge is **ready**.
 5. Click **Load unpacked** in Chrome and choose the exact folder shown by Forge. This is the stable folder for that Forge data directory; do not choose its parent or a payload subfolder.
 6. Confirm Chrome shows extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`. If it differs, remove that extension and do not enable the integration.
-7. Compare the packaged/deployed identity and native-host state, then confirm **Enable**.
+7. Confirm **Enable**. Open **Permissions & diagnostics** only when you need inventory, ownership detail, rollback, takeover, or remove.
 8. Repeat in every additional Chrome profile, and repeat when using another Forge data directory.
 
 Forge does not open Chrome settings pages, enumerate profiles, or install the extension automatically.
 
-Compatible connected profiles auto-reload after a Forge update or rollback. Use Chrome's manual **Reload** only when Settings reports **Manual extension reload required**. When that status appears, compare versions/hashes, open `chrome://extensions`, and reload Forge External Chrome in each affected profile.
+Compatible connected profiles auto-reload after a Forge update or rollback. Use Chrome's manual **Reload** only when Settings reports **Manual extension reload required**. When that status appears, compare versions/hashes under Permissions & diagnostics, open `chrome://extensions`, and reload Forge External Chrome in each affected profile.
 
 ## Attach and detach
 

@@ -56,6 +56,8 @@ export interface ExternalChromeHostCoordinatorOptions {
   dataRoot: string
   desktopVersion?: string
   packagedManifestPath?: string
+  /** Development-only opt-in for resources prepared by the explicit Node host toolchain. */
+  allowDevelopmentHost?: boolean
   rollbackController?: ExternalChromeRollbackController
   repairDeployment?: () => Promise<unknown>
   deploymentVerifier?: ExternalChromeDeploymentVerifier
@@ -96,6 +98,7 @@ export class ExternalChromeHostCoordinator {
   private readonly paths: ExternalChromeDataPaths
   private readonly desktopVersion?: string
   private readonly packagedManifestPath?: string
+  private readonly allowDevelopmentHost: boolean
   private readonly rollbackController?: ExternalChromeRollbackController
   private readonly repairDeployment?: () => Promise<unknown>
   private readonly deploymentVerifier?: ExternalChromeDeploymentVerifier
@@ -145,9 +148,11 @@ export class ExternalChromeHostCoordinator {
     this.registration = options.registration ?? createExternalChromeNativeRegistration({
       dataRoot: options.dataRoot,
       platform: this.platform,
+      ...(options.allowDevelopmentHost ? { allowDevelopmentHost: true } : {}),
     })
     this.desktopVersion = options.desktopVersion
     this.packagedManifestPath = options.packagedManifestPath
+    this.allowDevelopmentHost = options.allowDevelopmentHost === true
     this.rollbackController = options.rollbackController
     this.repairDeployment = options.repairDeployment
     this.deploymentVerifier = options.deploymentVerifier
@@ -516,7 +521,9 @@ export class ExternalChromeHostCoordinator {
   private async readPackagedInventory(): Promise<ExternalChromeBuildInventory | null> {
     if (!this.packagedManifestPath) return null
     try {
-      return inventoryFromManifest(await readExternalChromePackageManifest(this.packagedManifestPath), this.desktopVersion)
+      return inventoryFromManifest(await readExternalChromePackageManifest(this.packagedManifestPath, {
+        allowDevelopmentHost: this.allowDevelopmentHost,
+      }), this.desktopVersion)
     } catch {
       return null
     }

@@ -1,10 +1,11 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EXTERNAL_CHROME_EXTENSION_ORIGIN, EXTERNAL_CHROME_NATIVE_HOST_NAME } from '@forge/protocol'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
 import {
+  DevelopmentExecutableTrustVerifier,
   PlatformExecutableTrustVerifier,
   PosixNativeRegistration,
   WindowsNativeRegistration,
@@ -121,6 +122,22 @@ describe('External Chrome native registration', () => {
     expect(await registration.inspect()).toMatchObject({ registration: 'conflict' })
     await expect(registration.repair()).rejects.toThrow(/another installation/u)
     await expect(registration.remove()).rejects.toThrow(/without Forge ownership/u)
+  })
+
+  it('trusts an unsigned development host only when it is a user-owned executable regular file', async () => {
+    const dataRoot = await root()
+    await prepareExecutable(dataRoot, 'darwin')
+    const executable = resolveExternalChromeDataPaths(dataRoot, 'darwin').nativeHostExecutable
+    const uid = process.getuid?.()
+    const verifier = new DevelopmentExecutableTrustVerifier('darwin', uid)
+    expect(await verifier.verify(executable)).toBe('trusted')
+    await chmod(executable, 0o644)
+    expect(await verifier.verify(executable)).toBe('untrusted')
+    await chmod(executable, 0o755)
+    if (uid !== undefined) {
+      expect(await new DevelopmentExecutableTrustVerifier('darwin', uid + 1).verify(executable)).toBe('untrusted')
+    }
+    expect(await verifier.verify(`${executable}.missing`)).toBe('missing')
   })
 
   it('reports deterministic platform signature states through an injected process facade', async () => {

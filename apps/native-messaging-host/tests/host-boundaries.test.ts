@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import {
   EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES,
@@ -13,7 +14,7 @@ import {
 } from '../src/constants.js'
 import { NativeMessageDecoder } from '../src/framing.js'
 import { runNativeHost } from '../src/host.js'
-import { normalizeNativeHostLaunchArguments, validateChromeLaunchArguments } from '../src/launch.js'
+import { normalizeNativeHostLaunchArguments, resolveNativeHostExecutable, validateChromeLaunchArguments } from '../src/launch.js'
 import { DesktopUnavailableError, validateRendezvous, type RendezvousDocument } from '../src/transport.js'
 
 function capture(): { stream: PassThrough; chunks: Buffer[] } {
@@ -37,6 +38,15 @@ const VALID_RENDEZVOUS: RendezvousDocument = {
 }
 
 describe('native host trust and process boundaries', () => {
+  it('discovers installed resources beside the SEA or shebang script executable', () => {
+    const deployedHost = path.resolve('/forge-data', 'integrations', 'external-chrome', 'native-host', 'forge-external-chrome-native-host')
+    expect(resolveNativeHostExecutable(['/usr/bin/node', deployedHost, HOST_EXTENSION_ORIGIN], false, '/usr/bin/node'))
+      .toBe(deployedHost)
+    expect(resolveNativeHostExecutable(['/Applications/ForgeHost', HOST_EXTENSION_ORIGIN], true, '/Applications/ForgeHost'))
+      .toBe('/Applications/ForgeHost')
+    expect(() => resolveNativeHostExecutable(['/usr/bin/node'], false, '/usr/bin/node')).toThrow(/unavailable/u)
+  })
+
   it('normalizes ordinary JS, legacy SEA, and Node 25 SEA launch shapes precisely', () => {
     expect(normalizeNativeHostLaunchArguments(
       [process.execPath, 'host.cjs', HOST_EXTENSION_ORIGIN],

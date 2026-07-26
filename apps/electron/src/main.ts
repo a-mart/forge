@@ -27,6 +27,7 @@ import { applyElectronStartupOverrides } from './startup-overrides.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
+import { resolveExternalChromeResources, type ExternalChromeResourceLocation } from './external-chrome/resources.js'
 import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
 import { getStreamDeckPluginStatus, resolveStreamDeckAppPath, resolveStreamDeckPluginPath } from './stream-deck-install.js'
@@ -742,13 +743,17 @@ if (!hasSingleInstanceLock) {
       return
     }
 
-    externalChromeDeployer = await deployPackagedExternalChrome()
+    const externalChromeResources = resolveExternalChromeResources({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      developmentAppRoot: path.resolve(__dirname, '..'),
+    })
+    externalChromeDeployer = await deployExternalChrome(externalChromeResources)
     externalChromeCoordinator = new ExternalChromeHostCoordinator({
       dataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
       desktopVersion: app.getVersion(),
-      ...(app.isPackaged ? {
-        packagedManifestPath: path.join(process.resourcesPath, 'external-chrome', 'package-manifest.json'),
-      } : {}),
+      packagedManifestPath: path.join(externalChromeResources.root, 'package-manifest.json'),
+      ...(externalChromeResources.development ? { allowDevelopmentHost: true } : {}),
       ...(externalChromeDeployer ? {
         rollbackController: externalChromeDeployer,
         repairDeployment: () => externalChromeDeployer!.stage(),
@@ -1525,8 +1530,7 @@ function resolveDefaultBackendPort(): number {
   return DEFAULT_BACKEND_PORT
 }
 
-async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | null> {
-  if (!app.isPackaged) return null
+async function deployExternalChrome(resources: ExternalChromeResourceLocation): Promise<ExternalChromeDeployer | null> {
   const dataRoot = backendSupervisor.bootstrap.dataDir
   if (!dataRoot) {
     console.warn('[external-chrome] Backend did not report a canonical data root; deployment skipped for compatibility')
@@ -1534,8 +1538,9 @@ async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | 
   }
   const deployer = new ExternalChromeDeployer({
     dataRoot,
-    resourcesRoot: path.join(process.resourcesPath, 'external-chrome'),
+    resourcesRoot: resources.root,
     desktopVersion: app.getVersion(),
+    ...(resources.development ? { allowDevelopmentHost: true } : {}),
   })
   try {
     await new ExternalChromeDeploymentRecovery(deployer).run()
@@ -1546,7 +1551,7 @@ async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | 
     if (installed.state === 'missing') await deployer.activateStaged()
   } catch (error) {
     // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
-    console.warn('[external-chrome] Packaged resource deployment failed', error instanceof Error ? error.message : String(error))
+    console.warn('[external-chrome] Resource deployment failed', error instanceof Error ? error.message : String(error))
   }
   return deployer
 }

@@ -24,6 +24,7 @@ troubleshoot-*.md
 data/
 apps/electron/.stage/
 apps/electron/.dev-native/
+apps/electron/.dev-external-chrome/
 apps/electron/release/
 .swarm/
 

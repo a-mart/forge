@@ -115,17 +115,47 @@ async function render(bridge?: ExternalChromeBridge) {
   if (bridge) await waitFor(() => expect(bridge.status).toHaveBeenCalledTimes(1))
 }
 
+async function openDisclosure(id: 'setup' | 'advanced'): Promise<void> {
+  await click(screen.getByTestId(`external-chrome-disclosure-${id}`))
+}
+
 describe('SettingsExternalChrome', () => {
-  it('shows the no-store/security/profile/auto-reload ceremony and copies only coordinator-projected values', async () => {
+  it('presents a compact setup-first surface with folder copy/reveal and primary status actions', async () => {
     const bridge = createBridge()
     await render(bridge)
 
-    expect(document.body.textContent).toContain('Unpacked extension — not from the Chrome Web Store')
-    expect(document.body.textContent).toContain('Chrome 125+')
-    expect(document.body.textContent).toContain('Developer Mode')
-    expect(document.body.textContent).toContain('Compatible connected profiles auto-reload')
+    expect(document.body.textContent).toContain('Load unpacked folder')
+    expect(document.body.textContent).toContain('Connection')
+    expect(screen.getByRole('button', { name: 'Enable' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Repair native host' })).toBeTruthy()
+    expect(screen.getByTestId('external-chrome-load-path').textContent).toBe(LOAD_PATH)
+    expect(screen.getByTestId('external-chrome-extension-id').textContent).toBe('fcchfcnadajoejfbiclihglkmbcfhajd')
+
+    // Large always-visible warning blocks and setup inventory are gone.
+    expect(document.body.textContent).not.toContain('Unpacked extension — not from the Chrome Web Store')
+    expect(document.body.textContent).not.toContain('Powerful browser permissions')
+    expect(document.body.textContent).not.toContain('Version and integrity inventory')
+    expect(document.body.textContent).not.toContain(`sha256:${HASH_A}`)
+    expect(document.body.textContent).not.toContain('chrome://extensions')
+    expect(document.body.textContent).not.toContain('setup milestone')
+
+    // Setup steps and diagnostics live behind progressive disclosure.
+    expect(screen.getByTestId('external-chrome-disclosure-setup')).toBeTruthy()
+    expect(screen.getByTestId('external-chrome-disclosure-advanced')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Roll back' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove integration' })).toBeNull()
+
+    await openDisclosure('setup')
+    expect(document.body.textContent).toContain('chrome://extensions')
+    expect(document.body.textContent).toContain('Developer mode')
+    expect(document.body.textContent).toContain('dedicated Chrome profile')
     expect(document.body.textContent).toContain('Manual extension reload required')
-    expect(document.body.textContent).toContain('Powerful browser permissions')
+    expect(document.body.textContent).toContain('Detach leaves user tabs open')
+    expect(document.body.textContent).toContain('per Chrome profile')
+    expect(document.body.textContent).toContain('Forge data directory')
+
+    await openDisclosure('advanced')
+    expect(document.body.textContent).toContain('Unpacked Local Beta — not from the Chrome Web Store')
     expect(document.body.textContent).toContain('broad declared V1 permission set')
     expect(document.body.textContent).toContain('optional authority to open downloaded files')
     expect(document.body.textContent).toContain('does not read history, bookmarks, or top sites or open downloaded files')
@@ -134,17 +164,10 @@ describe('SettingsExternalChrome', () => {
     expect(document.body.textContent).toContain('does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites')
     expect(document.body.textContent).toContain('Leased-tab page content')
     expect(document.body.textContent).toContain('arbitrary JavaScript')
-    expect(document.body.textContent).toContain('dedicated Chrome profile')
-    expect(document.body.textContent).toContain('per Chrome profile')
-    expect(document.body.textContent).toContain('Forge data directory')
-    expect(document.body.textContent).toContain('chrome://extensions')
-    expect(document.body.textContent).toContain('Developer mode')
-    expect(document.body.textContent).toContain('Detach leaves user tabs open')
-    expect(screen.getByTestId('external-chrome-load-path').textContent).toBe(LOAD_PATH)
-    expect(screen.getByTestId('external-chrome-extension-id').textContent).toBe('fcchfcnadajoejfbiclihglkmbcfhajd')
     expect(document.body.textContent).toContain(`sha256:${HASH_A}`)
     expect(document.body.textContent).toContain('Not reported until an authenticated extension connection exists')
-    expect(document.body.textContent).not.toContain('setup milestone')
+    expect(screen.getByRole('button', { name: 'Roll back' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Remove integration' })).toBeTruthy()
 
     await click(screen.getByRole('button', { name: 'Copy path' }))
     await click(screen.getByRole('button', { name: 'Copy ID' }))
@@ -163,16 +186,31 @@ describe('SettingsExternalChrome', () => {
     const bridge = createBridge(status)
     await render(bridge)
 
-    const cases = [
+    const primaryCases = [
       ['Enable', 'Enable', bridge.enable],
       ['Disable', 'Disable', bridge.disable],
       ['Repair native host', 'Repair', bridge.repair],
+    ] as const
+
+    for (const [buttonName, confirmName, method] of primaryCases) {
+      const actionButton = screen.getByRole('button', { name: buttonName }) as HTMLButtonElement
+      await waitFor(() => expect(actionButton.disabled).toBe(false))
+      await click(actionButton)
+      const dialog = await screen.findByRole('alertdialog')
+      await click(within(dialog).getByRole('button', { name: confirmName }))
+      await waitFor(() => expect(method).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    }
+
+    await openDisclosure('advanced')
+
+    const advancedCases = [
       ['Roll back', 'Roll back', bridge.rollback],
       ['Take over stale owner', 'Confirm takeover', bridge.takeover],
       ['Remove integration', 'Remove integration', bridge.remove],
     ] as const
 
-    for (const [buttonName, confirmName, method] of cases) {
+    for (const [buttonName, confirmName, method] of advancedCases) {
       const actionButton = screen.getByRole('button', { name: buttonName }) as HTMLButtonElement
       await waitFor(() => expect(actionButton.disabled).toBe(false))
       await click(actionButton)
@@ -214,11 +252,15 @@ describe('SettingsExternalChrome', () => {
     expect(document.body.textContent).toContain('does not take over Chrome profiles or tabs')
     expect(document.body.textContent).toContain('failed integrity, identity, compatibility, or path validation')
     expect(document.body.textContent).toContain('Load unpacked folder not ready')
-    expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
-    for (const name of ['Enable', 'Disable', 'Repair native host', 'Roll back', 'Take over stale owner', 'Remove integration']) {
+    for (const name of ['Enable', 'Disable', 'Repair native host']) {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true)
     }
     expect(screen.queryByRole('button', { name: 'Reveal folder' })).toBeNull()
+
+    await openDisclosure('advanced')
+    for (const name of ['Roll back', 'Take over stale owner', 'Remove integration']) {
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true)
+    }
   })
 
   it('defensively blocks enable when corrupt deployment status is inconsistent', async () => {
@@ -228,7 +270,7 @@ describe('SettingsExternalChrome', () => {
     }))
     await render(bridge)
     expect((screen.getByRole('button', { name: 'Enable' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
+    expect(document.body.textContent).toContain('Load unpacked folder not ready')
   })
 
   it.each([

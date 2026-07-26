@@ -30,8 +30,8 @@ export interface ExternalChromePackageManifest {
     required: true
     signature: {
       scheme: string
-      mode: 'release'
-      verified: true
+      mode: 'release' | 'development'
+      verified: boolean
       signer: string | null
       teamId: string | null
     }
@@ -45,11 +45,21 @@ export interface ExternalChromePackageManifest {
 const SHA256 = /^[a-f0-9]{64}$/
 const SAFE_FILE = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/
 
-export async function readExternalChromePackageManifest(file: string): Promise<ExternalChromePackageManifest> {
-  return parseExternalChromePackageManifest(JSON.parse(await readFile(file, 'utf8')))
+export interface ExternalChromeManifestPolicy {
+  allowDevelopmentHost?: boolean
 }
 
-export function parseExternalChromePackageManifest(value: unknown): ExternalChromePackageManifest {
+export async function readExternalChromePackageManifest(
+  file: string,
+  policy: ExternalChromeManifestPolicy = {},
+): Promise<ExternalChromePackageManifest> {
+  return parseExternalChromePackageManifest(JSON.parse(await readFile(file, 'utf8')), policy)
+}
+
+export function parseExternalChromePackageManifest(
+  value: unknown,
+  policy: ExternalChromeManifestPolicy = {},
+): ExternalChromePackageManifest {
   const root = object(value, 'package manifest')
   exactKeys(root, ['schemaVersion', 'packageVersion', 'extension', 'nativeHost', 'compatibility'], 'package manifest')
   if (root.schemaVersion !== 1) throw new Error('Unsupported External Chrome package manifest schema')
@@ -86,17 +96,22 @@ export function parseExternalChromePackageManifest(value: unknown): ExternalChro
   const signature = object(nativeHost.signature, 'nativeHost.signature')
   exactKeys(signature, ['scheme', 'mode', 'verified', 'signer', 'teamId'], 'nativeHost.signature')
   string(signature.scheme, 'nativeHost.signature.scheme')
-  if (signature.mode !== 'release' || signature.verified !== true) {
+  const releaseSignature = signature.mode === 'release' && signature.verified === true
+  const developmentSignature = policy.allowDevelopmentHost === true &&
+    (nativeHost.platform === 'darwin' || nativeHost.platform === 'linux') &&
+    signature.mode === 'development' && signature.verified === false &&
+    signature.scheme === 'node-shebang' && signature.signer === null && signature.teamId === null
+  if (!releaseSignature && !developmentSignature) {
     throw new Error('External Chrome native executable signature was not release-verified at packaging')
   }
   nullableString(signature.signer, 'nativeHost.signature.signer')
   nullableString(signature.teamId, 'nativeHost.signature.teamId')
-  if (nativeHost.platform === 'darwin') {
+  if (releaseSignature && nativeHost.platform === 'darwin') {
     if (!(signature.signer as string | null)?.startsWith('Developer ID Application: ') || signature.teamId === null) {
       throw new Error('External Chrome macOS native executable is missing its Developer ID identity/team')
     }
   }
-  if (nativeHost.platform === 'win32' && signature.signer === null) {
+  if (releaseSignature && nativeHost.platform === 'win32' && signature.signer === null) {
     throw new Error('External Chrome Windows native executable is missing its Authenticode signer')
   }
   const protocol = object(nativeHost.protocol, 'nativeHost.protocol')
