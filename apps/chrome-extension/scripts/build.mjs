@@ -22,6 +22,7 @@ async function bundle(entry, outfile, options = {}) {
     charset: 'utf8',
     entryPoints: [entry],
     format: options.format ?? 'esm',
+    ...(options.define === undefined ? {} : { define: options.define }),
     ...(options.globalName === undefined ? {} : { globalName: options.globalName }),
     legalComments: 'none',
     logLevel: 'silent',
@@ -42,8 +43,6 @@ await Promise.all([mkdir(path.join(extensionRoot, 'shell'), { recursive: true })
 await verifyIdentity(sourceRoot)
 
 await Promise.all([
-  bundle('src/shell/service-worker-bootstrap.ts', path.join(extensionRoot, 'shell/service-worker-bootstrap.js'), { format: 'iife' }),
-  bundle('src/shell/side-panel-bootstrap.ts', path.join(extensionRoot, 'shell/side-panel-bootstrap.js')),
   bundle('src/payload/service-worker/index.ts', path.join(temporaryPayload, 'service-worker.js'), { format: 'iife', globalName: 'ForgeExternalChromePayload' }),
   bundle('src/payload/content-script/index.ts', path.join(temporaryPayload, 'content-script.js'), { format: 'iife' }),
   bundle('src/payload/side-panel/index.ts', path.join(temporaryPayload, 'side-panel.js')),
@@ -57,6 +56,15 @@ const payloadDirectory = `${payloadVersion}-${payloadSha256}`
 const finalPayload = path.join(extensionRoot, 'payloads', payloadDirectory)
 await mkdir(path.dirname(finalPayload), { recursive: true })
 await rename(temporaryPayload, finalPayload)
+
+// MV3 service workers may import a new classic script URL only while installing.
+// Binding the selected directory into the shell forces Chrome to reinstall the
+// bootstrap whenever payload bytes (and therefore the immutable URL) change.
+const shellDefine = { FORGE_PAYLOAD_DIRECTORY: JSON.stringify(payloadDirectory) }
+await Promise.all([
+  bundle('src/shell/service-worker-bootstrap.ts', path.join(extensionRoot, 'shell/service-worker-bootstrap.js'), { format: 'iife', define: shellDefine }),
+  bundle('src/shell/side-panel-bootstrap.ts', path.join(extensionRoot, 'shell/side-panel-bootstrap.js'), { define: shellDefine }),
+])
 
 const manifest = JSON.parse(await readFile(path.join(sourceRoot, 'manifest.shell.json'), 'utf8'))
 await writeFile(path.join(extensionRoot, 'manifest.json'), stableJson(manifest), { mode: 0o644 })

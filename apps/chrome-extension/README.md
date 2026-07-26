@@ -6,9 +6,10 @@ Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md
 
 ## Identity and package model
 
-The committed public key pins extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`. Chrome 125 is the manifest minimum. A small immutable shell selects a versioned local payload from `current.json`:
+The committed public key pins extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`. Chrome 125 is the manifest minimum. A small deterministic shell selects a versioned local payload from `current.json`:
 
 - the classic service-worker bootstrap registers every top-level Chrome listener synchronously;
+- each built shell is bound to its exact payload directory so a new payload URL forces Chrome to install the updated worker rather than trying to late-import a script absent from the activated worker's script map;
 - the shell verifies the SHA-256 inventory for every selected payload file before execution;
 - the service worker uses `importScripts` only after verification;
 - the side panel performs the same full verification before importing its payload; and

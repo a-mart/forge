@@ -4,6 +4,7 @@ import {
   collectKnownWorkerIds,
   inferManagerAliasIds,
   isProtectedManagerContextEntry,
+  normalizePlanSummaryEntries,
   isUserVisibleAssistantConversationMessage
 } from "@forge/protocol";
 
@@ -76,8 +77,19 @@ export function isProtectedManagerContextHistoryEntry(
 
 export function trimConversationHistory(
   entries: ConversationEntryEvent[],
-  managerId?: string
+  managerId?: string,
+  options: { normalizePlanSummaries?: boolean } = {}
 ): void {
+  if (options.normalizePlanSummaries !== false) {
+    const normalizedEntries = normalizePlanSummaryEntries(entries);
+    if (
+      normalizedEntries.length !== entries.length ||
+      normalizedEntries.some((entry, index) => entry !== entries[index])
+    ) {
+      entries.splice(0, entries.length, ...normalizedEntries);
+    }
+  }
+
   const overflow = entries.length - MAX_CONVERSATION_HISTORY;
   if (overflow <= 0) {
     return;
@@ -114,9 +126,19 @@ function collectRetentionTrimIndexes(
   activePendingChoiceIds: ReadonlySet<string>
 ): number[] {
   const removableIndexes: number[] = [];
-  const addTier = (predicate: (entry: ConversationEntryEvent) => boolean) => {
+  const addTier = (
+    predicate: (entry: ConversationEntryEvent) => boolean,
+    allowAuthoritativeActivePlan = false
+  ) => {
     for (let index = 0; index < entries.length && removableIndexes.length < overflow; index += 1) {
       if (removableIndexes.includes(index)) {
+        continue;
+      }
+
+      if (
+        !allowAuthoritativeActivePlan &&
+        isAuthoritativeActivePlanSummaryEntry(entries[index])
+      ) {
         continue;
       }
 
@@ -142,6 +164,7 @@ function collectRetentionTrimIndexes(
   addTier(isAnsweredOrCancelledChoiceRequestEntry);
   addTier((entry) => isProtectedTranscriptEntry(entry) && !isChoiceRequestEntry(entry));
   addTier((entry) => isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds));
+  addTier(isAuthoritativeActivePlanSummaryEntry, true);
 
   return removableIndexes;
 }
@@ -168,11 +191,15 @@ export function selectBootstrapConversationHistory(options: {
     includeDiagnosticEntries = true,
     isWithinBudget,
   } = options;
+  const normalizedHistory = normalizePlanSummaryEntries(fullHistory);
   const selectableHistory = includeDiagnosticEntries
-    ? fullHistory
-    : fullHistory.filter((entry) => !isBootstrapDiagnosticEntry(entry));
+    ? normalizedHistory
+    : normalizedHistory.filter((entry) => !isBootstrapDiagnosticEntry(entry));
   const countedHistory = requestedMessageCount !== undefined
-    ? selectableHistory.slice(-requestedMessageCount)
+    ? retainAuthoritativeActivePlanSummary(
+        selectableHistory.slice(-requestedMessageCount),
+        selectableHistory
+      )
     : selectableHistory;
   const requestedHistory = upsertPendingChoiceRequests(countedHistory, pendingChoiceRequests);
 
@@ -193,6 +220,7 @@ export function selectBootstrapConversationHistory(options: {
   const pendingChoiceEntries = requestedHistory.filter((entry) =>
     isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds)
   );
+  const activePlanSummaryEntries = requestedHistory.filter(isAuthoritativeActivePlanSummaryEntry);
   const stalePendingChoiceEntries = requestedHistory.filter((entry) =>
     isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds)
   );
@@ -204,6 +232,7 @@ export function selectBootstrapConversationHistory(options: {
       isBootstrapTranscriptEntry(entry) &&
       !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
       !isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+      !isAuthoritativeActivePlanSummaryEntry(entry) &&
       !isProtectedTranscriptEntry(entry)
   );
   const activityEntries = requestedHistory.filter(isBootstrapActivityEntry);
@@ -221,7 +250,7 @@ export function selectBootstrapConversationHistory(options: {
 
   const selectedTranscriptEntries = selectBootstrapTranscriptEntriesWithinBudget(
     requestedHistory,
-    pendingChoiceEntries,
+    [...pendingChoiceEntries, ...activePlanSummaryEntries],
     visibleTranscriptEntries,
     remainingTranscriptEntries,
     isWithinBudget
@@ -414,6 +443,24 @@ function selectBootstrapEntriesWithinBudget(
   }
 
   return candidateEntries.slice(candidateEntries.length - low);
+}
+
+function retainAuthoritativeActivePlanSummary(
+  countedHistory: ConversationEntryEvent[],
+  fullHistory: ConversationEntryEvent[]
+): ConversationEntryEvent[] {
+  const activePlanSummary = [...fullHistory].reverse().find(isAuthoritativeActivePlanSummaryEntry);
+  if (!activePlanSummary || countedHistory.includes(activePlanSummary)) return countedHistory;
+
+  const selected = new Set(countedHistory);
+  selected.add(activePlanSummary);
+  return fullHistory.filter((entry) => selected.has(entry));
+}
+
+function isAuthoritativeActivePlanSummaryEntry(
+  entry: ConversationEntryEvent
+): entry is Extract<ConversationEntryEvent, { type: "plan_summary" }> {
+  return entry.type === "plan_summary" && entry.state === "active";
 }
 
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {

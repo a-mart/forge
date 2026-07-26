@@ -16,7 +16,7 @@ import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import type { ConversationHistoryMutation } from '@/lib/ws-state'
 import { cn } from '@/lib/utils'
-import { isProjectAgentExchange, type AgentDescriptor, type AgentStatus, type ChoiceAnswer, type CodexElicitationPersistScope, type CodexElicitationRequestEvent, type ConversationEntry, type ConversationReplyTargetInput, type ProjectAgentInfo, type SessionPlanSnapshotEvent } from '@forge/protocol'
+import { isProjectAgentExchange, normalizePlanSummaryEntries, type AgentDescriptor, type AgentStatus, type ChoiceAnswer, type CodexElicitationPersistScope, type CodexElicitationRequestEvent, type ConversationEntry, type ConversationReplyTargetInput, type ProjectAgentInfo, type SessionPlanSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
@@ -218,7 +218,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
   const choiceEntriesByChoiceId = new Map<string, ChoiceRequestDisplayEntry>()
 
-  for (const [index, message] of messages.entries()) {
+  for (const [index, message] of normalizePlanSummaryEntries(messages).entries()) {
     if (message.type === 'conversation_message') {
       const targetId = resolveConversationMessageTargetId(message)
       displayEntries.push({

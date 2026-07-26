@@ -958,8 +958,45 @@ describe('sendSubscriptionBootstrap', () => {
         getSessionPlanSnapshot: async (agentId: string) => ({
           ...createPlanSnapshotEvent(agentId),
           revision: 7,
+          coordinationMode: 'graph' as const,
+          plan: [{ step: 'Preserve graph work', status: 'in_progress' as const }],
+          workGraph: {
+            maxConcurrency: 2,
+            nodes: [{
+              id: 'preserve',
+              title: 'Preserve graph work',
+              task: 'Keep the authoritative graph available after bootstrap.',
+              kind: 'implementation' as const,
+              status: 'running' as const,
+              dependsOn: [],
+              effort: 'deep' as const,
+              attempts: [{
+                id: 'attempt-1',
+                number: 1,
+                status: 'running' as const,
+                startedAt: '2026-07-12T00:00:00.000Z',
+                workerId: 'worker-1',
+                behaviorMode: 'general' as const,
+                executionPolicy: 'deep' as const,
+              }],
+            }],
+          },
         }),
-        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => ({
+          ...createGoalSnapshotEvent(agentId),
+          revision: 3,
+          goal: {
+            id: 'goal-1',
+            objective: 'Preserve durable goal context',
+            status: 'active' as const,
+            createdAt: '2026-07-12T00:00:00.000Z',
+            updatedAt: '2026-07-12T00:00:00.000Z',
+            activeElapsedMs: 1_000,
+            turnCount: 2,
+            usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15 },
+            usageCoverage: 'complete' as const,
+          },
+        }),
       } as any,
       terminalService: null,
       unreadTracker: null,
@@ -1000,12 +1037,15 @@ describe('sendSubscriptionBootstrap', () => {
       type: 'session_plan_snapshot',
       sessionAgentId: 'manager-1',
       revision: 7,
-      plan: [],
+      coordinationMode: 'graph',
+      plan: [{ step: 'Preserve graph work', status: 'in_progress' }],
+      workGraph: { nodes: [{ id: 'preserve', status: 'running' }] },
     })
     expect(sentEvents[7]).toMatchObject({
       type: 'session_goal_snapshot',
       sessionAgentId: 'manager-1',
-      goal: null,
+      revision: 3,
+      goal: { objective: 'Preserve durable goal context', status: 'active' },
     })
   })
 

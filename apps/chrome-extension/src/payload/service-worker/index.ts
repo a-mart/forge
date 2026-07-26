@@ -14,7 +14,7 @@ import { LeaseError, LeaseManager } from '../../runtime/lease-manager.js'
 import { restrictedTargetReason } from '../../runtime/restricted-target.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
 import { ExternalChromeOperationExecutor } from '../../runtime/operation-executor.js'
-import type { ServiceWorkerPayload, ShellEventName } from '../../shell/service-worker-bootstrap.js'
+import type { ServiceWorkerPayload, ShellEventName, VerifiedPayloadIdentity } from '../../shell/service-worker-bootstrap.js'
 import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
 
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
@@ -65,12 +65,10 @@ function selectedTab(tab: ChromeTab): Record<string, unknown> {
   }
 }
 
-function payloadIdentity(): { directory: string; sha256: string } {
-  const match = /\/payloads\/([^/]+)\/service-worker\.js(?:\?|$)/.exec(import.meta.url)
-  if (match === null || !match[1].startsWith(`${PAYLOAD_VERSION}-`)) throw new Error('payload directory does not match runtime version')
-  const sha256 = match[1].slice(PAYLOAD_VERSION.length + 1)
-  if (!/^[a-f0-9]{64}$/u.test(sha256)) throw new Error('payload directory has no immutable SHA-256 identity')
-  return { directory: match[1], sha256 }
+function validatePayloadIdentity(identity: VerifiedPayloadIdentity): VerifiedPayloadIdentity {
+  if (!/^[a-f0-9]{64}$/u.test(identity.sha256)) throw new Error('payload has no immutable SHA-256 identity')
+  if (identity.directory !== `${PAYLOAD_VERSION}-${identity.sha256}`) throw new Error('payload directory does not match runtime version and hash')
+  return identity
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -103,8 +101,8 @@ export class Runtime implements ServiceWorkerPayload {
   private acceptingOperations = true
   private readonly authorityOperations = new Set<Promise<void>>()
 
-  async initialize(): Promise<void> {
-    const identity = payloadIdentity()
+  async initialize(verifiedIdentity: VerifiedPayloadIdentity): Promise<void> {
+    const identity = validatePayloadIdentity(verifiedIdentity)
     this.directory = identity.directory
     this.payloadSha256 = identity.sha256
     const stored = await this.chrome.storage.local.get(INSTANCE_KEY)
@@ -983,8 +981,8 @@ export function externalChromeNavigationUrl(input: {
   return restrictedTargetReason(url) === null ? url : null
 }
 
-export async function activateServiceWorker(): Promise<ServiceWorkerPayload> {
+export async function activateServiceWorker(identity: VerifiedPayloadIdentity): Promise<ServiceWorkerPayload> {
   const runtime = new Runtime()
-  await runtime.initialize()
+  await runtime.initialize(identity)
   return runtime
 }

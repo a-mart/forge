@@ -36,12 +36,16 @@ async function fixture(
   const payloadFiles: Record<string, string> = {}
   const manifestJson = `${JSON.stringify({ manifest_version: 3, key: publicKey })}\n`
   const shell = `${shellText}\n`
-  const payload = `${payloadText}\n`
+  const payloadContents = {
+    'content-script.js': Buffer.from(`content-${payloadText}\n`),
+    'service-worker.js': Buffer.from(`${payloadText}\n`),
+    'side-panel.js': Buffer.from(`panel-${payloadText}\n`),
+  }
   const native = Buffer.from(nativeText)
   shellFiles['manifest.json'] = sha256(Buffer.from(manifestJson))
   shellFiles['shell/bootstrap.js'] = sha256(Buffer.from(shell))
-  payloadFiles['worker.js'] = sha256(Buffer.from(payload))
-  const payloadSha256 = treeSha256({ 'worker.js': Buffer.from(payload) })
+  for (const [file, bytes] of Object.entries(payloadContents)) payloadFiles[file] = sha256(bytes)
+  const payloadSha256 = treeSha256(payloadContents)
   const payloadDirectory = `${version}-${payloadSha256}`
   const executable = platform === 'win32' ? 'forge-external-chrome-native-host.exe' : 'forge-external-chrome-native-host'
   await fs.mkdir(path.join(resourcesRoot, 'extension-shell', 'shell'), { recursive: true })
@@ -49,7 +53,7 @@ async function fixture(
   await fs.mkdir(path.join(resourcesRoot, 'native-host', `${platform}-${arch}`), { recursive: true })
   await fs.writeFile(path.join(resourcesRoot, 'extension-shell', 'manifest.json'), manifestJson)
   await fs.writeFile(path.join(resourcesRoot, 'extension-shell', 'shell/bootstrap.js'), shell)
-  await fs.writeFile(path.join(resourcesRoot, 'payload', payloadDirectory, 'worker.js'), payload)
+  await Promise.all(Object.entries(payloadContents).map(([file, bytes]) => fs.writeFile(path.join(resourcesRoot, 'payload', payloadDirectory, file), bytes)))
   await fs.writeFile(path.join(resourcesRoot, 'native-host', `${platform}-${arch}`, executable), native)
   const manifest = {
     schemaVersion: 1,
@@ -99,6 +103,9 @@ describe('ExternalChromeDeployer', () => {
     expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
     expect(deployer.paths.extension).toBe(path.join(dev.dataRoot, 'integrations', 'external-chrome', 'extension'))
     expect((await fs.lstat(deployer.paths.extension)).isDirectory()).toBe(true)
+    const selector = JSON.parse(await fs.readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string; payloadFiles: Record<string, string> }
+    const workerPath = path.join(deployer.paths.extension, 'payloads', selector.payloadDirectory, 'service-worker.js')
+    expect(sha256(await fs.readFile(workerPath))).toBe(selector.payloadFiles['service-worker.js'])
   })
 
   it('uses a custom backend data root, is idempotent, and retains current plus N-1 for rollback', async () => {
@@ -203,7 +210,7 @@ describe('ExternalChromeDeployer', () => {
 
   it('rejects corrupt input, unknown files, identity mismatches, traversal, and symlinks', async () => {
     const corrupt = await fixture()
-    await fs.appendFile(path.join(corrupt.resourcesRoot, 'payload', corrupt.manifest.extension.payloadDirectory, 'worker.js'), 'corrupt')
+    await fs.appendFile(path.join(corrupt.resourcesRoot, 'payload', corrupt.manifest.extension.payloadDirectory, 'service-worker.js'), 'corrupt')
     await expect(new ExternalChromeDeployer({ dataRoot: path.resolve(corrupt.dataRoot), resourcesRoot: corrupt.resourcesRoot, desktopVersion: '0.22.5' }).deploy())
       .rejects.toThrow('hash mismatch')
 
@@ -249,7 +256,7 @@ describe('ExternalChromeDeployer', () => {
     await new ExternalChromeDeployer({ dataRoot: path.resolve(first.dataRoot), resourcesRoot: second.resourcesRoot, desktopVersion: '0.22.5' }).deploy()
     const outside = path.join(first.root, 'outside')
     await fs.mkdir(outside)
-    await fs.writeFile(path.join(outside, 'worker.js'), 'outside')
+    await fs.writeFile(path.join(outside, 'service-worker.js'), 'outside')
     let outsideTouched = false
     const guardedFs = {
       ...fs,
@@ -271,7 +278,11 @@ describe('ExternalChromeDeployer', () => {
     })
     const malicious = {
       schemaVersion: 1, shellAbi: 1, payloadVersion: '1.0.0', payloadSha256: 'a'.repeat(64),
-      payloadDirectory: '../../outside', payloadFiles: { 'worker.js': sha256(Buffer.from('outside')) },
+      payloadDirectory: '../../outside', payloadFiles: {
+        'content-script.js': sha256(Buffer.from('outside')),
+        'service-worker.js': sha256(Buffer.from('outside')),
+        'side-panel.js': sha256(Buffer.from('outside')),
+      },
     }
     await fs.writeFile(path.join(guarded.paths.extension, 'current.json'), JSON.stringify(malicious))
     expect(await guarded.verifyDeployment()).toEqual({ state: 'mismatch' })

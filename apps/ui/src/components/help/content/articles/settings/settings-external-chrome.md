@@ -29,7 +29,7 @@ Set up the integration once per Chrome profile and Forge data directory:
 
 Forge does not open Chrome settings pages, enumerate profiles, or install the extension automatically.
 
-Compatible connected profiles auto-reload after a Forge update or rollback. Use Chrome's manual **Reload** only when Settings reports **Manual extension reload required**. When that status appears, compare versions/hashes under Permissions & diagnostics, open `chrome://extensions`, and reload Forge External Chrome in each affected profile.
+Compatible connected profiles auto-reload after a Forge update or rollback. Use Chrome's manual **Reload** only when Settings reports **Manual extension reload required**. When that status appears, compare versions/hashes under Permissions & diagnostics, open `chrome://extensions`, and reload the Forge extension in each affected profile.
 
 ## Attach and detach
 
