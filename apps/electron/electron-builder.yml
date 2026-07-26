@@ -49,6 +49,10 @@ extraResources:
     to: external-chrome
     filter:
       - '**/*'
+  - from: .stage/stream-deck
+    to: stream-deck
+    filter:
+      - '**/*'
 protocols:
   - name: Forge Skill Import
     schemes:

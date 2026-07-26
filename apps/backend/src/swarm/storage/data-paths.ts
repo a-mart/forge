@@ -475,6 +475,10 @@ export function getCliAccessFilePath(dataDir: string): string {
   return join(getSharedAuthDir(dataDir), "cli-access.json");
 }
 
+export function getStreamDeckAccessFilePath(dataDir: string): string {
+  return join(getSharedAuthDir(dataDir), "stream-deck-access.json");
+}
+
 export function getLegacyCliAccessFilePath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "cli-access.json");
 }

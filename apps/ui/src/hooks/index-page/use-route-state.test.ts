@@ -108,6 +108,41 @@ describe('useRouteState — archive view', () => {
   })
 })
 
+describe('useRouteState — Stream Deck workspace deep links', () => {
+  it('preserves a validated panel target on chat routes', () => {
+    const parsed = parseRouteStateFromLocation('/', {
+      agent: 'forge--s2',
+      surface: 'builder',
+      deckPanel: 'git',
+    })
+
+    expect(parsed).toEqual({
+      view: 'chat',
+      agentId: 'forge--s2',
+      surface: 'builder',
+      channel: undefined,
+      collab: undefined,
+      origin: undefined,
+      deckPanel: 'git',
+    })
+    expect(toRouteSearch(parsed)).toEqual({
+      agent: 'forge--s2',
+      deckPanel: 'git',
+    })
+  })
+
+  it('drops unknown panel targets instead of routing arbitrary UI state', () => {
+    expect(parseRouteStateFromLocation('/', {
+      agent: 'forge',
+      deckPanel: 'settings',
+    })).toMatchObject({
+      view: 'chat',
+      agentId: 'forge',
+      deckPanel: undefined,
+    })
+  })
+})
+
 describe('useRouteState — settings surface', () => {
   it('defaults settings to builder surface when surface param is absent', () => {
     const navigate = vi.fn()

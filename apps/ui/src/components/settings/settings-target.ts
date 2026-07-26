@@ -30,6 +30,7 @@ export type SettingsTab =
   | 'extensions'
   | 'external-chrome'
   | 'cli-access'
+  | 'stream-deck'
   | 'observability'
   | 'collaboration'
   | 'about'
@@ -65,6 +66,7 @@ const BUILDER_TABS: SettingsTab[] = [
   'extensions',
   'external-chrome',
   'cli-access',
+  'stream-deck',
   'observability',
   'collaboration',
   'about',

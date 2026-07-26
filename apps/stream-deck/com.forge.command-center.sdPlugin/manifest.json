@@ -1,0 +1,216 @@
+{
+  "Name": "Forge Command Center",
+  "Version": "0.2.0.0",
+  "Author": "Forge",
+  "Description": "A live, agentic command surface for Forge sessions, workers, attention, views, and statistics.",
+  "Icon": "imgs/plugin",
+  "Category": "Forge Command Center",
+  "CategoryIcon": "imgs/category",
+  "UUID": "com.forge.command-center",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.4"
+  },
+  "Nodejs": {
+    "Version": "24"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Profiles": [
+    {
+      "Name": "profiles/Forge Command Center XL",
+      "DeviceType": 2,
+      "AutoInstall": true,
+      "DontAutoSwitchWhenInstalled": false,
+      "Readonly": false
+    },
+    {
+      "Name": "profiles/Forge Command Center",
+      "DeviceType": 0,
+      "AutoInstall": true,
+      "DontAutoSwitchWhenInstalled": false,
+      "Readonly": false
+    }
+  ],
+  "Actions": [
+    {
+      "Name": "Forge Pulse",
+      "UUID": "com.forge.command-center.pulse",
+      "Icon": "imgs/action",
+      "Tooltip": "Live Forge health, activity, unread, and question pulse",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/action",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Dynamic Session",
+      "UUID": "com.forge.command-center.session",
+      "Icon": "imgs/session",
+      "Tooltip": "Auto-ranked recent or fixed Forge session with live state",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/session",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Attention Beacon",
+      "UUID": "com.forge.command-center.attention",
+      "Icon": "imgs/attention",
+      "Tooltip": "Flashes when Forge needs a choice or has unread output",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/attention",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Worker Radar",
+      "UUID": "com.forge.command-center.workers",
+      "Icon": "imgs/workers",
+      "Tooltip": "Live worker swarm activity for the focused session",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/workers",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Context Core",
+      "UUID": "com.forge.command-center.context",
+      "Icon": "imgs/context",
+      "Tooltip": "Context-window gauge; hold to smart compact",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/context",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Forge Statistic",
+      "UUID": "com.forge.command-center.stats",
+      "Icon": "imgs/stats",
+      "Tooltip": "Live token, cache, commit, or code statistic",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/stats",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Open Forge View",
+      "UUID": "com.forge.command-center.view",
+      "Icon": "imgs/view",
+      "Tooltip": "Open Chat, Source Control, Managed Browser, Terminal, or Statistics",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/view",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Quick Mission",
+      "UUID": "com.forge.command-center.mission",
+      "Icon": "imgs/mission",
+      "Tooltip": "Send a configured mission to the attention or selected session",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/mission",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "Session Control",
+      "UUID": "com.forge.command-center.control",
+      "Icon": "imgs/control",
+      "Tooltip": "Hold to stop/resume, compact, or mark a session read",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/control",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "Name": "New Forge Session",
+      "UUID": "com.forge.command-center.new-session",
+      "Icon": "imgs/new-session",
+      "Tooltip": "Hold to create and open a new session from a profile",
+      "PropertyInspectorPath": "ui/inspector.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/new-session",
+          "TitleAlignment": "bottom",
+          "FontSize": 10
+        }
+      ]
+    }
+  ]
+}

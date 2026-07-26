@@ -20,6 +20,7 @@ import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsExternalChrome } from '@/components/settings/SettingsExternalChrome'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
+import { SettingsStreamDeck } from '@/components/settings/SettingsStreamDeck'
 import { SettingsObservability } from '@/components/settings/SettingsObservability'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
@@ -209,6 +210,7 @@ export function SettingsPanel({
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'external-chrome' && target.kind === 'builder' && <SettingsExternalChrome />}
       {activeTab === 'cli-access' && <SettingsCliAccess wsUrl={wsUrl} apiClient={apiClient} />}
+      {activeTab === 'stream-deck' && <SettingsStreamDeck apiClient={apiClient} />}
       {activeTab === 'observability' && <SettingsObservability apiClient={apiClient} />}
       {activeTab === 'collaboration' && (
         <SettingsCollaboration

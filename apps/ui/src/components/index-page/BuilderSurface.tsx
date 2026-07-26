@@ -53,6 +53,7 @@ import {
   type ActiveSurface,
   type ActiveView,
   type AppRouteState,
+  type DeckPanel,
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
@@ -146,6 +147,7 @@ type BuilderNavigationState =
       agentId: string
       /** Target origin; omitted = stay on the currently active origin. */
       origin?: OriginId
+      deckPanel?: DeckPanel
     }
   | Extract<AppRouteState, { view: 'settings' }>
   | { view: 'stats'; statsTab?: StatsTab }
@@ -245,6 +247,7 @@ export function BuilderSurface({
   const archiveHydrationRequestedRef = useRef(false)
   const browserHostRef = useRef<BrowserAutomationHostHandle | null>(null)
   const handledBrowserRevealRef = useRef<string | null>(null)
+  const handledDeckPanelRef = useRef<string | null>(null)
   const [browserWorkspaceMode, setBrowserWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(
     window.electronBridge?.browserWorkspace?.capability.popoutAvailable ? 'docked' : 'unavailable',
   )
@@ -712,6 +715,37 @@ export function BuilderSurface({
   const browserSessionSnapshot = browserSessionAgentId
     ? localState.browserSessions[browserSessionAgentId] ?? null
     : null
+
+  useEffect(() => {
+    if (routeState.view !== 'chat' || !routeState.deckPanel || !activeAgentId) return
+    if (routeState.deckPanel === 'terminal' && !terminalSessionAgentId) return
+    const requestKey = `${activeAgentId}:${routeState.deckPanel}`
+    if (handledDeckPanelRef.current === requestKey) return
+    handledDeckPanelRef.current = requestKey
+
+    if (routeState.deckPanel === 'git') {
+      panels.handleOpenDiffViewerInline()
+    } else if (routeState.deckPanel === 'browser') {
+      panels.handleOpenBrowserFromReveal()
+      if (browserWorkspaceMode === 'popped-out' || browserWorkspaceMode === 'opening') {
+        void browserHostRef.current?.bringToFront()
+      }
+    } else {
+      if (state.terminals.length === 0) {
+        void terminalPanel.createTerminal()
+      } else {
+        terminalPanel.expandPanel()
+      }
+    }
+  }, [
+    activeAgentId,
+    browserWorkspaceMode,
+    panels,
+    routeState,
+    state.terminals.length,
+    terminalSessionAgentId,
+    terminalPanel,
+  ])
 
   useEffect(() => {
     const request = localState.browserPanelRevealRequest

@@ -8,8 +8,9 @@ export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 export type ActiveView = 'chat' | 'settings' | 'stats' | 'archive'
 export type ActiveSurface = 'builder' | 'collab'
 export type StatsTab = 'overview' | 'tokens'
+export type DeckPanel = 'git' | 'browser' | 'terminal'
 export type AppRouteState =
-  | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string; origin?: string }
+  | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string; origin?: string; deckPanel?: DeckPanel }
   | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; settingsProfileId?: string; collabApiBaseUrl?: string; skillImportUrl?: string }
   | { view: 'stats'; statsTab?: StatsTab }
   | { view: 'archive'; surface: ActiveSurface }
@@ -22,6 +23,7 @@ type AppRouteSearch = {
   collab?: string
   /** Remote origin (connection id) whose builder surface is active; absent = local. */
   origin?: string
+  deckPanel?: string
   statsTab?: string
   settingsTab?: string
   /** Project context for Settings pages that support project-scoped defaults. */
@@ -89,6 +91,9 @@ export function parseRouteStateFromLocation(
   const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
   const collab = typeof routeSearch.collab === 'string' ? routeSearch.collab : undefined
   const origin = typeof routeSearch.origin === 'string' ? routeSearch.origin : undefined
+  const deckPanel = typeof routeSearch.deckPanel === 'string' && ['git', 'browser', 'terminal'].includes(routeSearch.deckPanel)
+    ? (routeSearch.deckPanel as DeckPanel)
+    : undefined
 
   if (view === 'settings') {
     const skillImportUrl = typeof routeSearch.skillImportUrl === 'string' ? routeSearch.skillImportUrl : undefined
@@ -127,6 +132,7 @@ export function parseRouteStateFromLocation(
       channel: channel || undefined,
       collab: collab || undefined,
       origin: origin || undefined,
+      deckPanel,
     }
   }
 
@@ -139,6 +145,7 @@ export function parseRouteStateFromLocation(
       channel: channel || undefined,
       collab: collab || undefined,
       origin: origin || undefined,
+      deckPanel,
     }
   }
   return pathState
@@ -176,6 +183,7 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
     channel: routeState.channel,
     collab: routeState.collab,
     origin: routeState.origin,
+    deckPanel: routeState.deckPanel,
   }
 }
 
@@ -239,6 +247,9 @@ export function toRouteSearch(
   if (routeState.origin) {
     search.origin = routeState.origin
   }
+  if (routeState.deckPanel) {
+    search.deckPanel = routeState.deckPanel
+  }
 
   return search
 }
@@ -261,7 +272,7 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   }
 
   if (left.view === 'chat' && right.view === 'chat') {
-    return left.agentId === right.agentId && left.surface === right.surface && left.channel === right.channel && left.collab === right.collab && left.origin === right.origin
+    return left.agentId === right.agentId && left.surface === right.surface && left.channel === right.channel && left.collab === right.collab && left.origin === right.origin && left.deckPanel === right.deckPanel
   }
 
   return false

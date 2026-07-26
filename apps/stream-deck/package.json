@@ -1,0 +1,28 @@
+{
+  "name": "@forge/stream-deck",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "validate": "streamdeck validate com.forge.command-center.sdPlugin",
+    "link": "streamdeck link com.forge.command-center.sdPlugin",
+    "pack": "streamdeck pack com.forge.command-center.sdPlugin --force"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "2.1.0",
+    "@forge/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.7.4",
+    "@rollup/plugin-commonjs": "^29.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-typescript": "12.3.0",
+    "@types/node": "^24.0.0",
+    "rollup": "4.62.2",
+    "tslib": "^2.8.1",
+    "typescript": "~5.9.3"
+  }
+}

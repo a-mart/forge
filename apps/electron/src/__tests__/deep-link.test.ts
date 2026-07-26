@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from '../deep-link.js'
+import {
+  buildCommandCenterRouteUrl,
+  buildSkillImportRouteUrl,
+  findSkillImportUrlInArgs,
+  parseCommandCenterDeepLink,
+  parseSkillImportDeepLink,
+  shouldRegisterExternalDeepLinkProtocol,
+} from '../deep-link.js'
 
 describe('skill import deep links', () => {
   it('extracts an HTTPS share URL from forge://skill-import links', () => {
@@ -41,5 +48,19 @@ describe('skill import deep links', () => {
     })).toBe(false)
     expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: {} })).toBe(false)
     expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: { FORGE_REGISTER_DEV_PROTOCOL: '1' } })).toBe(true)
+  })
+})
+
+describe('Command Center deep links', () => {
+  it('projects only allowlisted Stream Deck destinations into the renderer URL', () => {
+    const link = 'forge://open?agent=manager--s2&surface=builder&deckPanel=terminal&evil=file%3A%2F%2Fsecret'
+    expect(parseCommandCenterDeepLink(link)?.get('agent')).toBe('manager--s2')
+    expect(buildCommandCenterRouteUrl('app://forge/index.html', link)).toBe(
+      'app://forge/index.html?agent=manager--s2&surface=builder&deckPanel=terminal',
+    )
+  })
+
+  it('rejects other forge hosts', () => {
+    expect(parseCommandCenterDeepLink('forge://skill-import?agent=manager')).toBeNull()
   })
 })

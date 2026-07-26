@@ -6,7 +6,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel, type UpdateQuiesceHook } from './auto-updater.js'
 import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult } from './cli-install.js'
-import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from './deep-link.js'
+import { buildCommandCenterRouteUrl, buildSkillImportRouteUrl, findCommandCenterDeepLinkInArgs, findSkillImportUrlInArgs, parseCommandCenterDeepLink, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from './deep-link.js'
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { sendSleepBlockerStatusToWindow } from './sleep-blocker-status-ipc.js'
@@ -29,6 +29,7 @@ import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
 import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
+import { getStreamDeckPluginStatus, resolveStreamDeckPluginPath } from './stream-deck-install.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -92,6 +93,7 @@ let externalChromeCoordinator: ExternalChromeHostCoordinator | null = null
 let externalChromeDeployer: ExternalChromeDeployer | null = null
 const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
+let pendingCommandCenterDeepLink: string | null = findCommandCenterDeepLinkInArgs(process.argv)
 const lifecycleLog = new LifecycleLog({
   getLogPath: () => path.join(app.getPath('userData'), LIFECYCLE_LOG_FILENAME),
 })
@@ -562,6 +564,11 @@ if (!hasSingleInstanceLock) {
       openSkillImportUrl(skillImportUrl)
       return
     }
+    const commandCenterLink = findCommandCenterDeepLinkInArgs(argv)
+    if (commandCenterLink) {
+      openCommandCenterDeepLink(commandCenterLink)
+      return
+    }
 
     focusMainWindow()
   })
@@ -571,7 +578,9 @@ if (!hasSingleInstanceLock) {
     const skillImportUrl = parseSkillImportDeepLink(url)
     if (skillImportUrl) {
       openSkillImportUrl(skillImportUrl)
+      return
     }
+    if (parseCommandCenterDeepLink(url)) openCommandCenterDeepLink(url)
   })
 
   ipcMain.on(BACKEND_READY_CHANNEL, (event) => {
@@ -663,6 +672,28 @@ if (!hasSingleInstanceLock) {
     safeStorage,
     platform: process.platform,
     isTrustedSender: isTrustedMainRenderer,
+  })
+
+  ipcMain.handle('get-stream-deck-plugin-status', () => getStreamDeckPluginStatus({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    platform: process.platform,
+  }))
+
+  ipcMain.handle('install-stream-deck-plugin', async (): Promise<{ success: boolean; message: string }> => {
+    const installerPath = resolveStreamDeckPluginPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    })
+    if (!existsSync(installerPath)) {
+      return { success: false, message: 'The bundled Stream Deck plugin installer is missing.' }
+    }
+    const error = await shell.openPath(installerPath)
+    return error
+      ? { success: false, message: error }
+      : { success: true, message: 'Stream Deck opened the Forge plugin installer.' }
   })
 
   app.whenReady().then(async () => {
@@ -1115,6 +1146,15 @@ function openSkillImportUrl(skillImportUrl: string): void {
   void mainWindow.loadURL(resolveRendererUrl(skillImportUrl))
 }
 
+function openCommandCenterDeepLink(deepLink: string): void {
+  pendingCommandCenterDeepLink = deepLink
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  focusMainWindow()
+  pendingCommandCenterDeepLink = null
+  const baseUrl = app.isPackaged ? resolvePackagedRendererUrl() : electronDevServerUrl
+  void mainWindow.loadURL(buildCommandCenterRouteUrl(baseUrl, deepLink))
+}
+
 function handlePotentialSkillImportDeepLink(url: string): boolean {
   const skillImportUrl = parseSkillImportDeepLink(url)
   if (!skillImportUrl) {
@@ -1290,8 +1330,11 @@ function createApplicationMenu(): void {
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {
   const skillImportUrl = pendingSkillImportUrl
+  const commandCenterDeepLink = pendingCommandCenterDeepLink
   pendingSkillImportUrl = null
-  await window.loadURL(resolveRendererUrl(skillImportUrl ?? undefined))
+  pendingCommandCenterDeepLink = null
+  const base = resolveRendererUrl(skillImportUrl ?? undefined)
+  await window.loadURL(commandCenterDeepLink ? buildCommandCenterRouteUrl(base, commandCenterDeepLink) : base)
 }
 
 function resolveRendererUrl(skillImportUrl?: string): string {

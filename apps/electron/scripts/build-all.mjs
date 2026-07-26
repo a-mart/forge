@@ -23,6 +23,8 @@ const uiWorkspaceDir = path.join(repoRoot, 'apps', 'ui')
 const uiBuildOutputDir = path.join(uiWorkspaceDir, '.output')
 const uiPublicOutputDir = path.join(uiBuildOutputDir, 'public')
 const cliWorkspaceDir = path.join(repoRoot, 'packages', 'cli')
+const streamDeckWorkspaceDir = path.join(repoRoot, 'apps', 'stream-deck')
+const streamDeckArtifactPath = path.join(streamDeckWorkspaceDir, 'com.forge.command-center.streamDeckPlugin')
 const cliBuiltEntry = path.join(cliWorkspaceDir, 'dist', 'cli.js')
 const stageDir = path.join(electronDir, '.stage')
 const releaseDir = path.join(electronDir, 'release')
@@ -36,6 +38,7 @@ const cliStagedEntry = path.join(cliStageDir, 'cli.js')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const browserRuntimeDir = path.join(stageDir, 'browser-runtime')
 const externalChromeStageDir = path.join(stageDir, 'external-chrome')
+const streamDeckStageDir = path.join(stageDir, 'stream-deck')
 const stagedNativeRuntimeSmokeScript = path.join(scriptDir, 'staged-native-runtime-smoke.mjs')
 const stagedPlaywrightCoreDir = path.join(browserRuntimeDir, 'playwright-core')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
@@ -157,6 +160,9 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/chrome-extension', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/external-chrome-native-host', 'build'])
   await run(externalChromeRelease.seaNode, [path.join(repoRoot, 'apps', 'native-messaging-host', 'scripts', 'package-current.mjs')])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/stream-deck', 'run', 'build'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/stream-deck', 'run', 'validate'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/stream-deck', 'run', 'pack'])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
 
   await stageBundledBackend()
@@ -166,6 +172,7 @@ async function main() {
   await stageExternalChromeResources({ outputRoot: externalChromeStageDir, requireExecutable: true })
   await run(process.execPath, [path.join(electronDir, 'scripts', 'external-chrome-package-content-smoke.mjs'), externalChromeStageDir])
   await stageCliArtifact()
+  await stageStreamDeckArtifact()
 
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
@@ -173,12 +180,19 @@ async function main() {
   await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
   await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
   await assertExists(cliStagedEntry, 'staged CLI entry')
+  await assertExists(path.join(streamDeckStageDir, path.basename(streamDeckArtifactPath)), 'staged Stream Deck plugin installer')
   await assertExists(path.join(stagedPlaywrightCoreDir, 'lib', 'coreBundle.js'), 'staged Playwright injected runtime')
   await assertExists(path.join(browserRuntimeDir, 'THIRD_PARTY_NOTICES.md'), 'staged browser third-party notice')
   await assertExists(path.join(externalChromeStageDir, 'package-manifest.json'), 'staged External Chrome package manifest')
 
   await validatePackagedRuntimePreflight()
   await validateStagedCliPreflight()
+}
+
+async function stageStreamDeckArtifact() {
+  await mkdir(streamDeckStageDir, { recursive: true })
+  await cp(streamDeckArtifactPath, path.join(streamDeckStageDir, path.basename(streamDeckArtifactPath)))
+  console.log(`[electron/build-all] Staged Stream Deck plugin installer`)
 }
 
 export async function stageBundledBackend() {

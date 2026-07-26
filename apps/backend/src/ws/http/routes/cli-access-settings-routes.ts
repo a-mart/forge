@@ -60,10 +60,11 @@ export function createCliAccessSettingsRoutes(options: {
  *    desktop shell while preserving the direct-loopback/no-proxy checks above.
  *  - Block everything else with 403 and no Access-Control-Allow-Origin.
  */
-function applySameOriginGate(
+export function applySameOriginGate(
   request: IncomingMessage,
   response: ServerResponse,
   methods: string,
+  subject = "CLI key management",
 ): boolean {
   const origin = request.headers.origin;
 
@@ -74,14 +75,14 @@ function applySameOriginGate(
   // or trust them for authorization.
   if (hasProxyForwardingHeaders(request)) {
     sendJson(response, 403, {
-      error: { code: "forbidden_origin", message: "CLI key management requires a direct local connection", status: 403 },
+      error: { code: "forbidden_origin", message: `${subject} requires a direct local connection`, status: 403 },
     });
     return false;
   }
 
   if (!isLoopbackAddress(request.socket.remoteAddress)) {
     sendJson(response, 403, {
-      error: { code: "forbidden_origin", message: "CLI key management is allowed only from local clients", status: 403 },
+      error: { code: "forbidden_origin", message: `${subject} is allowed only from local clients`, status: 403 },
     });
     return false;
   }
@@ -93,7 +94,7 @@ function applySameOriginGate(
 
   if (!isSameOrigin(origin, request) && !isTrustedElectronPackagedRendererOrigin(origin) && !isTrustedElectronDevRendererOrigin(origin)) {
     sendJson(response, 403, {
-      error: { code: "forbidden_origin", message: "Cross-origin requests are not allowed for CLI key management", status: 403 },
+      error: { code: "forbidden_origin", message: `Cross-origin requests are not allowed for ${subject.toLowerCase()}`, status: 403 },
     });
     return false;
   }
