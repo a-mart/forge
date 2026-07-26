@@ -56,6 +56,7 @@ import {
   type DeckPanel,
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
+import { resolveStreamDeckNavigationRoute } from '@/hooks/index-page/stream-deck-navigation'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { activateRemoteUpdateAwarenessProject } from '@/components/settings/remote-update-awareness-api'
 import { getActiveLocalRemoteUpdateSnapshot } from '@/components/index-page/remote-update-awareness'
@@ -226,6 +227,7 @@ export function BuilderSurface({
         agentId: nextRouteState.agentId,
         surface: 'builder',
         origin: resolvedOrigin === LOCAL_ORIGIN_ID ? undefined : resolvedOrigin,
+        deckPanel: nextRouteState.deckPanel,
       }, replace)
       return
     }
@@ -248,6 +250,7 @@ export function BuilderSurface({
   const browserHostRef = useRef<BrowserAutomationHostHandle | null>(null)
   const handledBrowserRevealRef = useRef<string | null>(null)
   const handledDeckPanelRef = useRef<string | null>(null)
+  const handledStreamDeckNavigationRef = useRef<string | null>(null)
   const [browserWorkspaceMode, setBrowserWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(
     window.electronBridge?.browserWorkspace?.capability.popoutAvailable ? 'docked' : 'unavailable',
   )
@@ -717,9 +720,29 @@ export function BuilderSurface({
     : null
 
   useEffect(() => {
+    const request = localState.streamDeckNavigationRequest
+    if (!request || handledStreamDeckNavigationRef.current === request.requestId) return
+    if (window.electronBridge?.windowRole !== 'main') return
+    handledStreamDeckNavigationRef.current = request.requestId
+    void window.electronBridge.focusMainWindow?.()
+    const nextRoute = resolveStreamDeckNavigationRoute(request, activeAgentId)
+    if (nextRoute) navigateToOuterRoute(nextRoute)
+  }, [
+    activeAgentId,
+    localState.streamDeckNavigationRequest,
+    navigateToOuterRoute,
+  ])
+
+  useEffect(() => {
     if (routeState.view !== 'chat' || !routeState.deckPanel || !activeAgentId) return
     if (routeState.deckPanel === 'terminal' && !terminalSessionAgentId) return
-    const requestKey = `${activeAgentId}:${routeState.deckPanel}`
+    const streamDeckRequest = localState.streamDeckNavigationRequest
+    const streamDeckRequestId =
+      streamDeckRequest?.sessionAgentId === activeAgentId &&
+      streamDeckRequest.surface === routeState.deckPanel
+        ? streamDeckRequest.requestId
+        : 'route'
+    const requestKey = `${activeAgentId}:${routeState.deckPanel}:${streamDeckRequestId}`
     if (handledDeckPanelRef.current === requestKey) return
     handledDeckPanelRef.current = requestKey
 
@@ -741,6 +764,7 @@ export function BuilderSurface({
     activeAgentId,
     browserWorkspaceMode,
     panels,
+    localState.streamDeckNavigationRequest,
     routeState,
     state.terminals.length,
     terminalSessionAgentId,

@@ -130,6 +130,7 @@ import type {
   SecureSecretCatalogChangedEvent,
   SecureSessionSnapshotEvent,
 } from './secure-sessions.js'
+import type { StreamDeckNavigationRequestedEvent } from './stream-deck.js'
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
@@ -190,6 +191,7 @@ export type ServerEvent =
   | RemoteUpdateAwarenessProjectClearedEvent
   | SecureSessionSnapshotEvent
   | SecureSecretCatalogChangedEvent
+  | StreamDeckNavigationRequestedEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent

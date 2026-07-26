@@ -8,7 +8,6 @@ import type {
 } from './types.js'
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:47287'
-const DEFAULT_UI_URL = 'forge://open'
 
 export class ForgeClient {
   constructor(private readonly getSettings: () => Promise<ForgeGlobalSettings>) {}
@@ -49,20 +48,6 @@ export class ForgeClient {
       method: 'POST',
       body: JSON.stringify({ claimSecret }),
     })
-  }
-
-  async open(sessionAgentId: string | null, view: string): Promise<string> {
-    const settings = await this.getSettings()
-    const url = new URL(normalizeUiUrl(settings.uiUrl))
-    if (view === 'stats' || view === 'tokens') {
-      url.searchParams.set('view', 'stats')
-      if (view === 'tokens') url.searchParams.set('statsTab', 'tokens')
-    } else {
-      if (sessionAgentId) url.searchParams.set('agent', sessionAgentId)
-      url.searchParams.set('surface', 'builder')
-      if (view !== 'chat') url.searchParams.set('deckPanel', view)
-    }
-    return url.toString()
   }
 
   private async request<T>(
@@ -108,8 +93,4 @@ export class ForgeHttpError extends Error {
 
 function normalizeBaseUrl(value: string | undefined): string {
   return value?.trim().replace(/\/+$/, '') || DEFAULT_BASE_URL
-}
-
-function normalizeUiUrl(value: string | undefined): string {
-  return value?.trim() || DEFAULT_UI_URL
 }

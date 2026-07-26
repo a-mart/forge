@@ -33,7 +33,7 @@ export function getStreamDeckPluginStatus(options: {
     isPackaged: options.isPackaged,
     bundled: existsSync(installerPath),
     streamDeckInstalled: resolveStreamDeckAppPath(options.platform) !== null,
-    pluginVersion: '0.2.0',
+    pluginVersion: '0.2.1',
   }
 }
 

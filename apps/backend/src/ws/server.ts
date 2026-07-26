@@ -699,6 +699,7 @@ export class SwarmWebSocketServer {
             swarmManager: this.swarmManager,
             unreadTracker: this.unreadTracker,
             statsService: this.statsService,
+            broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
             onUnreadChanged: (sessionAgentId, count) =>
               this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, count),
           })

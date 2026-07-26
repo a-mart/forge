@@ -22,6 +22,10 @@ export function handleSystemEvent(
       context.updateState({ restartRecovery: event.snapshot })
       return true
 
+    case 'stream_deck_navigation_requested':
+      context.updateState({ streamDeckNavigationRequest: event })
+      return true
+
     default:
       return false
   }

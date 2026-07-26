@@ -28,7 +28,8 @@ property-inspector settings for development and non-default local instances.
 | 3 | Source Control, Managed Browser, Terminal, Statistics, Tokens, Chat, New Session, Status Mission |
 | 4 | Ship Check Mission, Stop/Resume, Smart Compact, Mark Read |
 
-Question, unread, running-session, and active-worker states animate. Sessions are ranked by
+Only unresolved choice requests animate; normal running, unread, worker, and statistic states remain
+still and glanceable. Sessions are ranked by
 pending choice, error, unread output, active work, then recency. Controls that can change session
 state require a 650 ms hold. Delete and clear operations are intentionally not exposed.
 

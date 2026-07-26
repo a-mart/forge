@@ -129,6 +129,7 @@ export interface ElectronBridge {
   getStreamDeckPluginStatus?(): Promise<StreamDeckPluginStatus>
   installStreamDeckPlugin?(): Promise<{ success: boolean; message: string }>
   openStreamDeck?(): Promise<{ success: boolean; message: string }>
+  focusMainWindow?(): Promise<void>
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>; setSleepBlockerSettings?(patch: { enabled?: boolean; gracePeriodMinutes?: number }): Promise<SleepBlockerStatus | null>
   onSleepBlockerStatus?(callback: (status: SleepBlockerStatus) => void): () => void
 }

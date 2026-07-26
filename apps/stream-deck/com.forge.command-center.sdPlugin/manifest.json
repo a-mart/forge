@@ -1,6 +1,6 @@
 {
   "Name": "Forge Command Center",
-  "Version": "0.2.0.0",
+  "Version": "0.2.1.0",
   "Author": "Forge",
   "Description": "A live, agentic command surface for Forge sessions, workers, attention, views, and statistics.",
   "Icon": "imgs/plugin",

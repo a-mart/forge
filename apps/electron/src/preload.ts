@@ -73,6 +73,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       getStreamDeckPluginStatus: () => ipcRenderer.invoke('get-stream-deck-plugin-status'),
       installStreamDeckPlugin: () => ipcRenderer.invoke('install-stream-deck-plugin'),
       openStreamDeck: () => ipcRenderer.invoke('open-stream-deck'),
+      focusMainWindow: (): Promise<void> => ipcRenderer.invoke('focus-main-window'),
       secureVault: {
         status: (): Promise<SecureVaultRendererResponse> =>
           ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'status' }),

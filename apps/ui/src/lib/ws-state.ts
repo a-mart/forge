@@ -16,6 +16,7 @@ import type {
   TerminalDescriptor,
   CodexElicitationRequestEvent,
   BuilderTimelineChannelView,
+  StreamDeckNavigationRequestedEvent,
 } from '@forge/protocol'
 import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
 import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
@@ -136,6 +137,8 @@ export interface ManagerWsState {
   browserHostHydrated: boolean
   /** Durable unacknowledged intent projected onto the current authoritative host generation. */
   browserPanelRevealRequest: BrowserPanelRevealRequest | null
+  /** Latest authenticated local Stream Deck request for the desktop shell. */
+  streamDeckNavigationRequest: StreamDeckNavigationRequestedEvent | null
   /** Metadata is retained during reconnect but marked stale until bootstrap. */
   browserMetadataStale: boolean
 }
@@ -205,6 +208,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     browserSessions: {},
     browserHostHydrated: false,
     browserPanelRevealRequest: null,
+    streamDeckNavigationRequest: null,
     browserMetadataStale: false,
   }
 }

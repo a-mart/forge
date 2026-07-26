@@ -19,7 +19,6 @@ export type {
 export interface ForgeGlobalSettings {
   [key: string]: string | number | boolean | undefined
   baseUrl?: string
-  uiUrl?: string
   accessToken?: string
   apiKey?: string
   pollIntervalMs?: number

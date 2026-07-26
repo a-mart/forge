@@ -16,6 +16,7 @@ const DEFAULT_POLL_MS = 1_500
 export class ForgeDeckController {
   private readonly visible = new Map<string, VisibleForgeAction>()
   private readonly pressedAt = new Map<string, number>()
+  private readonly renderedImages = new Map<string, string>()
   private readonly client = new ForgeClient(
     async () => streamDeck.settings.getGlobalSettings<ForgeGlobalSettings>(),
   )
@@ -69,6 +70,7 @@ export class ForgeDeckController {
   unregister(actionId: string): void {
     this.visible.delete(actionId)
     this.pressedAt.delete(actionId)
+    this.renderedImages.delete(actionId)
   }
 
   keyDown(actionId: string): void {
@@ -83,6 +85,7 @@ export class ForgeDeckController {
 
     try {
       await this.execute(visible, heldMs)
+      streamDeck.logger.info(`Forge action succeeded: ${visible.kind}`)
       await visible.action.showOk()
       this.schedulePoll(150)
     } catch (error) {
@@ -108,15 +111,15 @@ export class ForgeDeckController {
     }
 
     if (visible.kind === 'view') {
-      await streamDeck.system.openUrl(await this.client.open(session?.agentId ?? null, visible.settings.view ?? 'git'))
+      await this.navigate(session?.agentId ?? null, visible.settings.view ?? 'git')
       return
     }
     if (visible.kind === 'stats') {
-      await streamDeck.system.openUrl(await this.client.open(session?.agentId ?? null, 'stats'))
+      await this.navigate(session?.agentId ?? null, 'stats')
       return
     }
     if (visible.kind === 'pulse' || visible.kind === 'session' || visible.kind === 'attention' || visible.kind === 'workers') {
-      await streamDeck.system.openUrl(await this.client.open(session?.agentId ?? null, 'chat'))
+      await this.navigate(session?.agentId ?? null, 'chat')
       return
     }
     if (visible.kind === 'mission') {
@@ -161,9 +164,21 @@ export class ForgeDeckController {
         ...(visible.settings.label?.trim() ? { label: visible.settings.label.trim() } : {}),
       })
       if (response.ok && response.sessionAgentId) {
-        await streamDeck.system.openUrl(await this.client.open(response.sessionAgentId, 'chat'))
+        await this.navigate(response.sessionAgentId, 'chat')
       }
     }
+  }
+
+  private async navigate(
+    sessionAgentId: string | null,
+    surface: NonNullable<ForgeActionSettings['view']>,
+  ): Promise<void> {
+    await this.perform({
+      requestId: requestId(),
+      type: 'navigate',
+      surface,
+      ...(sessionAgentId ? { sessionAgentId } : {}),
+    })
   }
 
   private async perform(action: StreamDeckActionRequest) {
@@ -211,20 +226,17 @@ export class ForgeDeckController {
 
   private async render(entry: VisibleForgeAction): Promise<void> {
     const svg = !this.credentialAvailable
-      ? renderPairingKey(entry.kind, this.pairing?.code ?? null, this.frame)
+      ? renderPairingKey(entry.kind, this.pairing?.code ?? null)
       : renderKey(entry.kind, this.snapshot, entry.settings, this.frame, this.connected)
-    await entry.action.setImage(`data:image/svg+xml;charset=utf8,${encodeURIComponent(svg)}`)
+    const image = `data:image/svg+xml;charset=utf8,${encodeURIComponent(svg)}`
+    if (this.renderedImages.get(entry.id) === image) return
+    await entry.action.setImage(image)
+    this.renderedImages.set(entry.id, image)
   }
 
   private hasAnimatedState(): boolean {
-    if (this.pairing) return true
     if (!this.snapshot || this.visible.size === 0) return false
-    return (
-      this.snapshot.summary.pendingChoiceCount > 0 ||
-      this.snapshot.summary.unreadCount > 0 ||
-      this.snapshot.summary.runningSessionCount > 0 ||
-      this.snapshot.summary.activeWorkerCount > 0
-    )
+    return this.snapshot.summary.pendingChoiceCount > 0
   }
 
   private async ensurePairing(): Promise<void> {
@@ -239,7 +251,7 @@ export class ForgeDeckController {
         const created = await this.client.createPairing({
           deviceId,
           deviceName: 'Forge Command Center',
-          pluginVersion: '0.2.0.0',
+          pluginVersion: '0.2.1.0',
         })
         this.pairing = {
           requestId: created.requestId,

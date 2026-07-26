@@ -25,33 +25,45 @@ export function renderKey(
   frame: number,
   connected: boolean,
 ): string {
-  if (!connected || !snapshot) return offlineKey(kind, frame)
+  if (!connected || !snapshot) return offlineKey(kind, 0)
   const session = resolveSession(snapshot, settings)
+  const animatedFrame = shouldAnimateKey(kind, snapshot, settings) ? frame : 0
   switch (kind) {
     case 'pulse':
-      return pulseKey(snapshot, frame)
+      return pulseKey(snapshot, animatedFrame)
     case 'session':
-      return sessionKey(session, frame)
+      return sessionKey(session, animatedFrame)
     case 'attention':
-      return attentionKey(snapshot, session, frame)
+      return attentionKey(snapshot, session, animatedFrame)
     case 'workers':
-      return workersKey(snapshot, session, frame)
+      return workersKey(snapshot, session, animatedFrame)
     case 'context':
-      return contextKey(session, frame)
+      return contextKey(session, animatedFrame)
     case 'stats':
-      return statsKey(snapshot, settings, frame)
+      return statsKey(snapshot, settings, animatedFrame)
     case 'view':
-      return viewKey(settings.view ?? 'git', session, frame)
+      return viewKey(settings.view ?? 'git', session, animatedFrame)
     case 'mission':
-      return missionKey(settings, session, frame)
+      return missionKey(settings, session, animatedFrame)
     case 'control':
-      return controlKey(settings, session, frame)
+      return controlKey(settings, session, animatedFrame)
     case 'new-session':
-      return newSessionKey(snapshot, settings, frame)
+      return newSessionKey(snapshot, settings, animatedFrame)
   }
 }
 
-export function renderPairingKey(kind: ForgeActionKind, code: string | null, frame: number): string {
+export function shouldAnimateKey(
+  kind: ForgeActionKind,
+  snapshot: StreamDeckSnapshot,
+  settings: ForgeActionSettings,
+): boolean {
+  if (snapshot.summary.pendingChoiceCount <= 0) return false
+  if (kind === 'pulse' || kind === 'attention') return true
+  return kind === 'session' && (resolveSession(snapshot, settings)?.pendingChoiceCount ?? 0) > 0
+}
+
+export function renderPairingKey(kind: ForgeActionKind, code: string | null): string {
+  const frame = 0
   const display = code ? `${code.slice(0, 3)} ${code.slice(3)}` : 'OPEN FORGE'
   return shell(`
     <circle cx="72" cy="57" r="33" fill="${COLORS.violet}" fill-opacity=".14" stroke="${COLORS.violet}" stroke-width="4" stroke-dasharray="${8 + frame % 8} 7" filter="url(#g)"/>
@@ -174,7 +186,7 @@ function contextKey(session: StreamDeckSessionSummary | null, frame: number): st
     <circle cx="72" cy="62" r="40" fill="none" stroke="${accent}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${percent * 2.51} ${circumference}" transform="rotate(-90 72 62)" filter="url(#g)"/>
     <text x="72" y="70" text-anchor="middle" fill="${COLORS.white}" font-family="system-ui" font-size="25" font-weight="900">${percent}%</text>
     <text x="72" y="117" text-anchor="middle" fill="${COLORS.white}" font-family="system-ui" font-size="12" font-weight="900">CONTEXT CORE</text>
-    <text x="72" y="132" text-anchor="middle" fill="${accent}" font-family="system-ui" font-size="9">PRESS TO COMPACT</text>
+    <text x="72" y="132" text-anchor="middle" fill="${accent}" font-family="system-ui" font-size="9">HOLD 0.7s TO COMPACT</text>
   `, accent, frame, percent >= 85)
 }
 
@@ -238,7 +250,7 @@ function controlKey(settings: ForgeActionSettings, session: StreamDeckSessionSum
     <circle cx="72" cy="61" r="36" fill="${accent}" fill-opacity=".13" stroke="${accent}" stroke-width="4" filter="url(#g)"/>
     <text x="72" y="73" text-anchor="middle" fill="${COLORS.white}" font-family="system-ui" font-size="34" font-weight="900">${glyph}</text>
     <text x="72" y="119" text-anchor="middle" fill="${COLORS.white}" font-family="system-ui" font-size="11" font-weight="900">${label}</text>
-    <text x="72" y="133" text-anchor="middle" fill="${accent}" font-family="system-ui" font-size="8">HOLD TO EXECUTE</text>
+    <text x="72" y="133" text-anchor="middle" fill="${accent}" font-family="system-ui" font-size="8">HOLD 0.7s TO EXECUTE</text>
   `, accent, frame)
 }
 
@@ -248,7 +260,7 @@ function newSessionKey(snapshot: StreamDeckSnapshot, settings: ForgeActionSettin
     <circle cx="72" cy="61" r="35" fill="${COLORS.green}" fill-opacity=".11" stroke="${COLORS.green}" stroke-width="4"/>
     <path d="M72 42v38M53 61h38" stroke="${COLORS.white}" stroke-width="7" stroke-linecap="round" filter="url(#g)"/>
     <text x="72" y="117" text-anchor="middle" fill="${COLORS.white}" font-family="system-ui" font-size="11" font-weight="900">NEW SESSION</text>
-    <text x="72" y="132" text-anchor="middle" fill="${COLORS.green}" font-family="system-ui" font-size="8">${escape(truncate(profile?.displayName ?? 'PROFILE', 18))}</text>
+    <text x="72" y="133" text-anchor="middle" fill="${COLORS.green}" font-family="system-ui" font-size="7">HOLD 0.7s · ${escape(truncate(profile?.displayName ?? 'PROFILE', 10))}</text>
   `, COLORS.green, frame)
 }
 

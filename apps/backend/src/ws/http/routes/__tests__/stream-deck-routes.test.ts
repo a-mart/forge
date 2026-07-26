@@ -3,6 +3,7 @@ import type { AgentDescriptor, ManagerProfile } from "../../../../swarm/types.js
 import {
   buildStreamDeckSnapshot,
   compareSessionAttention,
+  executeStreamDeckAction,
   parseStreamDeckAction,
 } from "../stream-deck-routes.js";
 
@@ -85,6 +86,7 @@ describe("Stream Deck routes", () => {
           code: { linesAdded: 420, linesDeleted: 17, commits: 4 },
         }),
       },
+      broadcastEvent: vi.fn(),
     };
 
     const snapshot = await buildStreamDeckSnapshot(options as never, null);
@@ -114,6 +116,21 @@ describe("Stream Deck routes", () => {
 
   it("accepts typed safe actions and rejects malformed or oversized prompts", () => {
     expect(parseStreamDeckAction({
+      requestId: "deck-nav",
+      type: "navigate",
+      sessionAgentId: "forge--s2",
+      surface: "browser",
+    })).toEqual({
+      ok: true,
+      action: {
+        requestId: "deck-nav",
+        type: "navigate",
+        sessionAgentId: "forge--s2",
+        surface: "browser",
+      },
+    });
+
+    expect(parseStreamDeckAction({
       requestId: "deck-1",
       type: "smart_compact",
       sessionAgentId: "forge--s2",
@@ -138,6 +155,36 @@ describe("Stream Deck routes", () => {
       sessionAgentId: "forge--s2",
       text: "x".repeat(8_001),
     })).toMatchObject({ ok: false, error: { code: "invalid_action" } });
+  });
+
+  it("broadcasts authenticated navigation into the connected Forge UI", async () => {
+    const broadcastEvent = vi.fn();
+    const agent = manager("forge--s2", {});
+    const result = await executeStreamDeckAction({
+      swarmManager: {
+        listAgents: () => [agent],
+        getAgent: (agentId: string) => agentId === agent.agentId ? agent : undefined,
+      },
+      broadcastEvent,
+    } as never, {
+      requestId: "deck-nav",
+      type: "navigate",
+      sessionAgentId: agent.agentId,
+      surface: "terminal",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      requestId: "deck-nav",
+      type: "navigate",
+      sessionAgentId: agent.agentId,
+    });
+    expect(broadcastEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "stream_deck_navigation_requested",
+      requestId: "deck-nav",
+      sessionAgentId: agent.agentId,
+      surface: "terminal",
+    }));
   });
 });
 

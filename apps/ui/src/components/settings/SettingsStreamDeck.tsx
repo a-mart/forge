@@ -121,7 +121,7 @@ export function SettingsStreamDeck({ apiClient }: { apiClient: SettingsApiClient
             </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <Feature icon={<Radio className="size-3" />} label="Live state" />
-              <Feature icon={<Sparkles className="size-3" />} label="Animated attention" />
+              <Feature icon={<Sparkles className="size-3" />} label="Question-only motion" />
               <Feature icon={<ShieldCheck className="size-3" />} label="Scoped pairing" />
             </div>
           </div>

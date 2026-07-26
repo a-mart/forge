@@ -37,8 +37,6 @@
     <div class="card-title">Connection <span id="status" class="status"><span class="dot"></span>Not tested</span></div>
     <label for="baseUrl">Forge API</label>
     <input id="baseUrl" value="http://127.0.0.1:47287" autocomplete="off">
-    <label for="uiUrl">Forge UI</label>
-    <input id="uiUrl" value="forge://open" autocomplete="off">
     <label>Secure pairing</label>
     <div id="pairing" style="border:1px solid #354263;border-radius:9px;padding:10px;background:#080d19;color:#ffd166;font:800 15px ui-monospace,monospace">Open Forge → Settings → Stream Deck</div>
     <label for="pollIntervalMs">Refresh</label>
@@ -91,7 +89,7 @@
   <script>
     let socket, uiUUID, pluginUUID, actionUUID, actionContext, actionSettings = {}, globalSettings = {}, saveTimer;
     const $ = id => document.getElementById(id);
-    const globalIds = ['baseUrl','uiUrl','pollIntervalMs'];
+    const globalIds = ['baseUrl','pollIntervalMs'];
     const actionIds = ['targetMode','slot','targetAgentId','view','label','prompt','control','targetProfileId'];
 
     function connectElgatoStreamDeckSocket(port, uuid, registerEvent, info, actionInfo) {
@@ -127,7 +125,6 @@
 
     function hydrateGlobals() {
       $('baseUrl').value = globalSettings.baseUrl || 'http://127.0.0.1:47287';
-      $('uiUrl').value = globalSettings.uiUrl || 'forge://open';
       $('pairing').textContent = globalSettings.accessToken
         ? 'PAIRED · dedicated Forge credential'
         : globalSettings.pairingCode
@@ -176,7 +173,6 @@
       return {
         ...globalSettings,
         baseUrl: $('baseUrl').value.trim(),
-        uiUrl: $('uiUrl').value.trim(),
         pollIntervalMs: Number($('pollIntervalMs').value)
       };
     }

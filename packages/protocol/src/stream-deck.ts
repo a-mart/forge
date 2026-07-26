@@ -1,6 +1,6 @@
 import type { AgentStatus } from './agents.js'
 
-export const STREAM_DECK_PROTOCOL_VERSION = 1
+export const STREAM_DECK_PROTOCOL_VERSION = 2
 
 export const STREAM_DECK_ACCESS_SCOPES = ['snapshot:read', 'actions:write'] as const
 export type StreamDeckAccessScope = (typeof STREAM_DECK_ACCESS_SCOPES)[number]
@@ -58,6 +58,7 @@ export interface StreamDeckSettingsSnapshot {
 }
 
 export const STREAM_DECK_ACTION_TYPES = [
+  'navigate',
   'send_prompt',
   'toggle_session',
   'stop_session',
@@ -68,6 +69,17 @@ export const STREAM_DECK_ACTION_TYPES = [
 ] as const
 
 export type StreamDeckActionType = (typeof STREAM_DECK_ACTION_TYPES)[number]
+
+export const STREAM_DECK_SURFACES = [
+  'chat',
+  'git',
+  'browser',
+  'terminal',
+  'stats',
+  'tokens',
+] as const
+
+export type StreamDeckSurface = (typeof STREAM_DECK_SURFACES)[number]
 
 export interface StreamDeckProfileSummary {
   profileId: string
@@ -131,6 +143,11 @@ interface StreamDeckActionBase {
 
 export type StreamDeckActionRequest =
   | (StreamDeckActionBase & {
+      type: 'navigate'
+      surface: StreamDeckSurface
+      sessionAgentId?: string
+    })
+  | (StreamDeckActionBase & {
       type: 'send_prompt'
       sessionAgentId: string
       text: string
@@ -145,6 +162,14 @@ export type StreamDeckActionRequest =
       profileId: string
       label?: string
     })
+
+export interface StreamDeckNavigationRequestedEvent {
+  type: 'stream_deck_navigation_requested'
+  requestId: string
+  surface: StreamDeckSurface
+  sessionAgentId?: string
+  requestedAt: string
+}
 
 export type StreamDeckActionResponse =
   | {

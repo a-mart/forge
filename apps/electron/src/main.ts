@@ -707,6 +707,10 @@ if (!hasSingleInstanceLock) {
       : { success: true, message: 'Opened Elgato Stream Deck.' }
   })
 
+  ipcMain.handle('focus-main-window', (): void => {
+    focusMainWindow()
+  })
+
   app.whenReady().then(async () => {
     lifecycleLog.record('electron_started', {
       isPackaged: app.isPackaged,

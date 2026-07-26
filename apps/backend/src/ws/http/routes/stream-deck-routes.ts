@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   STREAM_DECK_ACTION_TYPES,
   STREAM_DECK_PROTOCOL_VERSION,
+  STREAM_DECK_SURFACES,
+  type ServerEvent,
   type StatsSnapshot,
   type StreamDeckActionRequest,
   type StreamDeckActionResponse,
@@ -66,6 +68,7 @@ export function createStreamDeckRoutes(options: {
   unreadTracker: Pick<UnreadTracker, "getSnapshot" | "markRead">;
   statsService: Pick<StatsService, "getSnapshot">;
   onUnreadChanged?: (sessionAgentId: string, count: number) => void;
+  broadcastEvent: (event: ServerEvent) => void;
 }): HttpRoute[] {
   if (!isBuilderRuntimeTarget(options.runtimeTarget)) {
     return [];
@@ -271,10 +274,30 @@ async function handleStreamDeckAction(
   }
 }
 
-async function executeStreamDeckAction(
+export async function executeStreamDeckAction(
   options: Parameters<typeof createStreamDeckRoutes>[0],
   action: StreamDeckActionRequest,
 ): Promise<StreamDeckActionResponse> {
+  if (action.type === "navigate") {
+    if (action.sessionAgentId) {
+      requireSession(options.swarmManager, action.sessionAgentId);
+    }
+    options.broadcastEvent({
+      type: "stream_deck_navigation_requested",
+      requestId: action.requestId,
+      surface: action.surface,
+      ...(action.sessionAgentId ? { sessionAgentId: action.sessionAgentId } : {}),
+      requestedAt: new Date().toISOString(),
+    });
+    return {
+      ok: true,
+      requestId: action.requestId,
+      type: action.type,
+      ...(action.sessionAgentId ? { sessionAgentId: action.sessionAgentId } : {}),
+      message: `Requested ${action.surface} in Forge`,
+    };
+  }
+
   if (action.type === "create_session") {
     const profile = options.swarmManager.listProfiles().find((candidate) => candidate.profileId === action.profileId);
     if (!profile || profile.archivedAt) {
@@ -368,6 +391,25 @@ export function parseStreamDeckAction(
   }
 
   const sessionAgentId = normalizeIdentifier(body.sessionAgentId);
+  if (type === "navigate") {
+    const surface = normalizeIdentifier(body.surface);
+    if (!surface || !STREAM_DECK_SURFACES.includes(surface as (typeof STREAM_DECK_SURFACES)[number])) {
+      return { ok: false, error: actionError(requestId, "invalid_action", "A valid surface is required") };
+    }
+    if (!sessionAgentId && surface !== "stats" && surface !== "tokens") {
+      return { ok: false, error: actionError(requestId, "invalid_action", "sessionAgentId is required") };
+    }
+    return {
+      ok: true,
+      action: {
+        requestId,
+        type,
+        surface: surface as (typeof STREAM_DECK_SURFACES)[number],
+        ...(sessionAgentId ? { sessionAgentId } : {}),
+      },
+    };
+  }
+
   if (!sessionAgentId) {
     return { ok: false, error: actionError(requestId, "invalid_action", "sessionAgentId is required") };
   }
