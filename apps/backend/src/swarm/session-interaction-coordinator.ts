@@ -600,7 +600,7 @@ function resolveGraphDispatch(claim: WorkGraphDispatchClaim, cwd: string): Spawn
     ...(claim.legacyExecutionPolicy
       ? { executionPolicy: claim.legacyExecutionPolicy }
       : {}),
-    planStep: claim.title,
+    planStep: claim.nodeId,
     cwd,
   }).spawnInput;
 }

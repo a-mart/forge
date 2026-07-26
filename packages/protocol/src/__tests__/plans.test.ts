@@ -22,12 +22,13 @@ describe('plan protocol', () => {
       updatedAt: '2026-07-12T00:00:00.000Z',
       explanation: 'Implementation is ready for verification.',
       plan: [
-        { step: 'Inspect the current behavior', status: 'completed' },
-        { step: 'Run focused verification', status: 'in_progress' },
+        { id: 'inspect', step: 'Inspect the current behavior', status: 'completed' },
+        { id: 'verify', step: 'Run focused verification', status: 'in_progress' },
       ],
     } satisfies SessionPlanSnapshotEvent
 
     expect(event.plan).toHaveLength(2)
+    expect(event.plan[1]?.id).toBe('verify')
     expect(event.plan[1]?.status).toBe('in_progress')
   })
 

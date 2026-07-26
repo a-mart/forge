@@ -92,7 +92,7 @@ export const updateWorkGraphToolSchema = Type.Object({
       minLength: 1,
       maxLength: 64,
       pattern: '^(auto|[a-z0-9][a-z0-9-]{0,63})$',
-      description: 'Execution route from the active roster. Auto uses the node kind baseline; name a route when its current guidance clearly fits. Graph size and fan-in do not justify a stronger route.',
+      description: 'Deliberate execution-route override from the active roster. Omit for the node-kind baseline; name a route only when its current guidance clearly fits. Graph size and fan-in do not justify a stronger route.',
     })),
   }, { additionalProperties: false }), {
     minItems: 1,

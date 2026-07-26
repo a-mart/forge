@@ -6,9 +6,9 @@ Forge keeps three decisions separate:
 - **Behavior mode** chooses a worker's role and output contract.
 - **Delegation route** chooses a model, reasoning level, and availability fallback from the selected roster.
 
-The manager-facing `spawn_agent` tool accepts `mode`, `route`, and a required concrete `initialMessage`. `route: auto` uses the selected roster's baseline mapping for that behavior mode; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
+The manager-facing `spawn_agent` tool accepts `mode`, an optional `route`, and a required concrete `initialMessage`. Omitting `route` uses the selected roster's baseline mapping for that behavior mode; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Explicit `route: auto`, older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
 
-Work-graph nodes use the same `route: auto | routeId` choice. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest route.
+Work-graph nodes use the same optional named-route override. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest route.
 
 ## Manager Posture
 
@@ -38,7 +38,7 @@ A delegation roster is a selectable catalog of model-backed execution routes. It
 - an optional availability fallback; and
 - an optional capability-escalation route for a later attempt.
 
-Each roster maps behavior modes to automatic baseline routes and has one general default. Use `route: auto` when the baseline fits. Select a named route up front when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; use capability escalation only after an attempt supplies evidence that the selected route was inadequate.
+Each roster maps behavior modes to baseline routes and has one general default. The manager normally omits `route` and lets that mapping apply. It names a route up front only when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; capability escalation is reserved for a later attempt after evidence that the selected route was inadequate.
 
 The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Roster changes affect only pending or future attempts.
 
@@ -113,7 +113,7 @@ Forge uses four editable builtin prompts for non-general behavior modes:
 - `code-reviewer-2` (`defaultTier: deep`, Builder and Collaboration)
 - `researcher` (`defaultTier: standard`, Builder and Collaboration)
 
-General workers use the worker archetype prompt. The legacy `architect` prompt remains readable for existing descriptors, but new architecture work uses `mode: general` with `route: auto` or a clearly matching named route. Codex Plugin delegation is a dedicated contextual tool and server-owned authorization path, not a normal behavior mode or custom specialist.
+General workers use the worker archetype prompt. The legacy `architect` prompt remains readable for existing descriptors, but new architecture work uses `mode: general` with `route` omitted or a clearly matching named route. Codex Plugin delegation is a dedicated contextual tool and server-owned authorization path, not a normal behavior mode or custom specialist.
 
 Older builtin handles and tier/lens inputs are still rewritten internally for compatibility. They are not exposed in the current manager tool schema.
 

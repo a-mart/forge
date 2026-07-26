@@ -12,6 +12,7 @@ import {
 
 export const SESSION_PLAN_SCHEMA_VERSION = 1
 export const MAX_PLAN_STEPS = 20
+export const MAX_PLAN_STEP_ID_LENGTH = 64
 export const MAX_PLAN_STEP_LENGTH = 500
 export const MAX_PLAN_EXPLANATION_LENGTH = 2_000
 
@@ -64,6 +65,10 @@ export function normalizeSessionPlanInput(value: unknown): {
   }
 
   const plan = input.plan.map((step, index) => normalizePlanStep(step, index))
+  const ids = plan.flatMap((step) => step.id ? [step.id] : [])
+  if (new Set(ids).size !== ids.length) {
+    throw new SessionPlanValidationError('plan step ids must be unique.')
+  }
 
   return {
     ...(explanation ? { explanation } : {}),
@@ -132,7 +137,13 @@ function normalizePlanStep(value: unknown, index: number): PlanStep {
     throw new SessionPlanValidationError(`plan[${index}] must be an object.`)
   }
 
-  const item = value as { step?: unknown; status?: unknown }
+  const item = value as { id?: unknown; step?: unknown; status?: unknown }
+  const id = normalizeOptionalText(item.id, `plan[${index}].id`, MAX_PLAN_STEP_ID_LENGTH)
+  if (id && !/^[a-z0-9][a-z0-9_-]*$/.test(id)) {
+    throw new SessionPlanValidationError(
+      `plan[${index}].id must use lowercase letters, digits, hyphens, or underscores.`,
+    )
+  }
   const step = normalizeRequiredText(item.step, `plan[${index}].step`, MAX_PLAN_STEP_LENGTH)
   if (
     typeof item.status !== 'string'
@@ -143,7 +154,11 @@ function normalizePlanStep(value: unknown, index: number): PlanStep {
     )
   }
 
-  return { step, status: item.status as PlanStep['status'] }
+  return {
+    ...(id ? { id } : {}),
+    step,
+    status: item.status as PlanStep['status'],
+  }
 }
 
 function normalizeRequiredText(value: unknown, field: string, maxLength: number): string {

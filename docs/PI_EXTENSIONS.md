@@ -378,7 +378,7 @@ Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. Thi
 
 ## Model Catalog Integration
 
-Forge's model catalog system handles provider-specific behaviors and API protocol mappings. Current research work uses the `research` behavior mode with `route: auto` or a named route from the active delegation roster, plus whatever search or documentation capabilities are available to that worker.
+Forge's model catalog system handles provider-specific behaviors and API protocol mappings. Current research work uses the `research` behavior mode with the roster baseline (omit `route`) or a clearly matching named route, plus whatever search or documentation capabilities are available to that worker.
 
 `apps/backend/src/swarm/model-catalog-request-behaviors.ts` covers request-time provider quirks. xAI native web/X search is not a current production capability; if it returns, it should be documented as a future or experimental adapter path rather than a built-in behavior.
 

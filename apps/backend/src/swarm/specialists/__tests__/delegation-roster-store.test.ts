@@ -154,6 +154,8 @@ describe("delegation roster settings", () => {
 
     expect(context).toMatch(/^\[delegationRoster\] /);
     expect(context).toContain('"id":"balanced"');
+    expect(context).toContain('"baselines":"general=');
+    expect(context).not.toContain('"auto":');
     expect(context).toContain('"useWhen"');
     expect(context).toContain('"executor"');
     expect(context).not.toContain("availabilityFallback");

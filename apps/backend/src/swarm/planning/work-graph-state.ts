@@ -179,6 +179,7 @@ export function projectWorkGraphPlan(graph: WorkGraphSnapshot): PlanStep[] {
   return graph.nodes
     .filter((node) => node.status !== 'cancelled')
     .map((node) => ({
+      id: node.id,
       step: node.title,
       status: node.status === 'completed'
         ? 'completed'

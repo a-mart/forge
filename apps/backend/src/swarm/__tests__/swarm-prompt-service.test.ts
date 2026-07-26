@@ -43,11 +43,10 @@ afterEach(async () => {
 });
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
-  expect(prompt).toContain("Worker results require same-turn disposition");
-  expect(prompt).toContain("they are not automatic user update triggers");
-  expect(prompt).toContain("Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.");
-  expect(prompt).toContain("otherwise end with exactly `NO_REPLY`");
-  expect(prompt).toContain("After `speak_to_user` fully delivers a response, end the provider cycle with exactly `NO_REPLY`");
+  expect(prompt).toContain("Worker results require disposition but are not automatic user updates");
+  expect(prompt).toContain("Direct request or accepted closeout: normal final text");
+  expect(prompt).toContain("Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`");
+  expect(prompt).toContain("Never duplicate a reply through two paths");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
   expect(prompt).not.toContain("an accepted outcome/material blocker reached from an internal callback");
 }
@@ -235,13 +234,13 @@ Never use plain assistant text for user communication.`;
     );
     expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
     expect(prompt).toContain(
-      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+      "Direct request or accepted closeout: normal final text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
+      "Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`"
     );
-    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
-    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
+    expect(prompt).not.toMatch(/Telegram|channelId|threadTs|explicit-target/i);
+    expect(prompt).toContain("use `NO_REPLY` to skip an unanswered direct request");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")
@@ -303,13 +302,13 @@ Custom project instruction: always mention the release train when summarizing de
     expect(prompt).toContain("Never use plain assistant text for user communication.");
     expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
     expect(prompt).toContain(
-      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+      "Direct request or accepted closeout: normal final text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
+      "Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`"
     );
-    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
-    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
+    expect(prompt).not.toMatch(/Telegram|channelId|threadTs|explicit-target/i);
+    expect(prompt).toContain("use `NO_REPLY` to skip an unanswered direct request");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")
@@ -418,7 +417,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("never owns scheduler state or graph mutation")
     expect(resolved).toContain("Do not impose a mandatory planner, implementer, reviewer, or synthesis chain")
     expect(resolved).toContain("Graph size and fan-in do not justify a stronger executor")
-    expect(resolved).toContain("pass that step's exact text as `planStep`")
+    expect(resolved).toContain("pass its stable `id` as `planStepId`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
     expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")
     expect(resolved).toContain("a goal may span multiple plans")
@@ -1129,9 +1128,9 @@ Always preserve the user's release notes.`,
     expect(resolved.indexOf("# User-Facing Visualizations")).toBeLessThan(
       resolved.indexOf("# Non-Negotiable Forge Routing Contract")
     );
-    expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
+    expect(resolved).toContain("Direct web request or accepted closeout");
     expectCurrentProjectAgentRoutingFooter(resolved);
-    expect(resolved.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(resolved.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
@@ -1395,7 +1394,7 @@ Always preserve the user's release notes.`,
     expect(resolved).toContain("Repo reference body");
     expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
     expectCurrentProjectAgentRoutingFooter(resolved);
-    expect(resolved.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(resolved.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
   });
@@ -1509,7 +1508,7 @@ Always preserve the user's release notes.`,
     expect(finalPrompt).toContain("Local reference body");
     expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
     expectCurrentProjectAgentRoutingFooter(finalPrompt);
-    expect(finalPrompt.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(finalPrompt.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
   });
 
   it("getSwarmContextFiles walks parent directories and returns nearest-first ordering", async () => {

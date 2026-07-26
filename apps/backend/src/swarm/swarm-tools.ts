@@ -13,6 +13,7 @@ import {
   type RequestedDeliveryMode,
   type SpawnAgentInput
 } from "./types.js";
+import { MAX_PLAN_STEP_ID_LENGTH } from "./planning/session-plan-state.js";
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
 import { buildUpdateWorkGraphTool } from "./planning/update-work-graph-tool.js";
 import { buildGoalTools } from "./goals/goal-tools.js";
@@ -70,6 +71,15 @@ const knowledgeEntryTypeSchema = Type.Union([
   Type.Literal("gotcha"),
   Type.Literal("pointer")
 ]);
+
+function planStepIdSchema(description: string) {
+  return Type.String({
+    minLength: 1,
+    maxLength: MAX_PLAN_STEP_ID_LENGTH,
+    pattern: "^[a-z0-9][a-z0-9_-]*$",
+    description,
+  });
+}
 
 const workerBehaviorModeSchema = Type.Union(
   WORKER_BEHAVIOR_MODES.map((mode) => Type.Literal(mode)),
@@ -307,21 +317,21 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "send_message_to_agent",
       label: "Send Message To Agent",
       description:
-        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass that step's exact text in planStep.",
+        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass its stable id in planStepId.",
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
         delivery: Type.Optional(deliveryModeSchema),
-        planStep: Type.Optional(Type.String({
-          description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
-        }))
+        planStepId: Type.Optional(planStepIdSchema(
+          "Stable id of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
+        ))
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
           targetAgentId: string;
           message: string;
           delivery?: RequestedDeliveryMode;
-          planStep?: string;
+          planStepId?: string;
         };
 
         const receipt = await host.sendMessage(
@@ -335,7 +345,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               toolCallId: _toolCallId,
               toolName: "send_message_to_agent",
             },
-            ...(parsed.planStep ? { planStep: parsed.planStep } : {}),
+            ...(parsed.planStepId ? { planStep: parsed.planStepId } : {}),
           }
         );
         recordToolSideEffect(host, descriptor, {
@@ -348,7 +358,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             targetAgentId: parsed.targetAgentId,
             acceptedMode: receipt.acceptedMode,
             deliveryId: receipt.deliveryId,
-            planStep: parsed.planStep,
+            planStepId: parsed.planStepId,
           },
         });
 
@@ -445,23 +455,21 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Delegate one concrete outcome to an independent worker. Choose a behavior mode for the output contract and use route=auto for that mode's roster baseline, or name a route whose current guidance clearly fits. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
+        "Delegate one concrete outcome to an independent worker. Choose a behavior mode for the output contract. Omit route to use that mode's roster baseline; name a route only when its current guidance clearly fits. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
             "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically."
         }),
-        planStep: Type.Optional(
-          Type.String({
-            description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
-          })
-        ),
+        planStepId: Type.Optional(planStepIdSchema(
+          "Stable id of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
+        )),
         mode: Type.Optional(workerBehaviorModeSchema),
         route: Type.Optional(Type.String({
           minLength: 1,
           maxLength: 64,
           pattern: "^(auto|[a-z0-9][a-z0-9-]{0,63})$",
-          description: "Execution route from the active roster. Defaults to auto.",
+          description: "Deliberate execution-route override from the active roster. Omit for the mode's baseline route.",
         })),
         customSpecialist: Type.Optional(
           Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and route." })
@@ -472,7 +480,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       async execute(_toolCallId, params) {
         const parsed = params as {
           agentId: string;
-          planStep?: string;
+          planStepId?: string;
           mode?: "general" | "plan" | "correctness-review" | "design-review" | "research";
           route?: string;
           customSpecialist?: string;
@@ -482,6 +490,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
         const resolvedDelegation = resolveManagerDelegation(parsed);
         const spawnInput = resolvedDelegation.spawnInput;
+        if (parsed.planStepId) spawnInput.planStep = parsed.planStepId;
 
         let spawned: AgentDescriptor;
         try {
@@ -497,7 +506,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
           metadata: {
             spawnedAgentId: spawned.agentId,
-            planStep: spawnInput.planStep,
+            planStepId: parsed.planStepId,
             specialist: spawnInput.specialist,
             tier: spawnInput.tier,
             lens: spawnInput.lens,
@@ -528,17 +537,17 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         "Delegate a task using the server-owned Codex Plugin selector context attached to the current user turn. Selectors and scope are never accepted from the model; ask the user to tag @Codex again when no current context is available.",
       parameters: Type.Object({
         initialMessage: Type.String({ description: "Concrete read-only task for the selected Codex Plugin context." }),
-        planStep: Type.Optional(
-          Type.String({ description: "Exact text of the current plan step this worker assignment supports." }),
-        ),
+        planStepId: Type.Optional(planStepIdSchema(
+          "Stable id of the current plan step this worker assignment supports."
+        )),
       }),
       async execute(_toolCallId, params) {
-        const parsed = params as { initialMessage: string; planStep?: string };
+        const parsed = params as { initialMessage: string; planStepId?: string };
         const spawnInput: SpawnAgentInput = {
           agentId: CODEX_PLUGIN_SPECIALIST_ID,
           specialist: CODEX_PLUGIN_SPECIALIST_ID,
           initialMessage: parsed.initialMessage,
-          planStep: parsed.planStep,
+          planStep: parsed.planStepId,
         };
         const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
         recordToolSideEffect(host, descriptor, {
@@ -550,7 +559,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           metadata: {
             spawnedAgentId: spawned.agentId,
             specialist: CODEX_PLUGIN_SPECIALIST_ID,
-            planStep: parsed.planStep,
+            planStepId: parsed.planStepId,
           },
         });
         return {
@@ -634,7 +643,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "speak_to_user",
       label: "Speak To User",
       description:
-        "Publish a user-visible manager message to the current web session. Do not use merely because a normal Builder turn contains a worker result; normal web/session closeouts use final assistant text. The optional target may only explicitly select web delivery.",
+        "Publish an explicit routed or proactive manager message to the current web session. Normal direct requests and closeouts use final assistant text. The optional target may only explicitly select web delivery.",
       parameters: Type.Object({
         text: Type.String({ description: "Message content to show to the user." }),
         target: Type.Optional(speakToUserTargetSchema)

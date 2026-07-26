@@ -191,8 +191,8 @@ export class SessionPlanUsageTracker {
 
       for (const step of snapshot.plan) {
         if (step.status !== 'completed') continue
-        const stepKey = createStepKey(run.planRunId, step.step)
-        const outgoingStep = outgoing.plan.find((candidate) => candidate.step === step.step)
+        const stepKey = resolveRunStepKey(run, step)
+        const outgoingStep = outgoing.plan.find((candidate) => samePlanStep(candidate, step))
         if (outgoingStep?.status === 'completed' || completedStepKeys.has(stepKey)) continue
 
         const receipt = await this.buildStepCompletedReceipt(
@@ -218,7 +218,7 @@ export class SessionPlanUsageTracker {
           planRevision: snapshot.revision,
           completedAt: snapshot.updatedAt ?? now,
           steps: snapshot.plan.map((step) => ({
-            stepKey: createStepKey(run.planRunId, step.step),
+            stepKey: resolveRunStepKey(run, step),
             step: step.step,
           })),
         }
@@ -231,18 +231,22 @@ export class SessionPlanUsageTracker {
     state: SessionPlanState,
     requestedStep: string,
   ): Promise<PlanStepAssignment> {
-    const stepText = requestedStep.trim()
-    if (!stepText) throw new Error('planStep must be non-empty when provided.')
+    const identifier = requestedStep.trim()
+    if (!identifier) throw new Error('planStep must be non-empty when provided.')
 
-    const matches = state.plan.filter((step) => step.step === stepText)
+    const idMatches = state.plan.filter((step) => step.id === identifier)
+    const matches = idMatches.length > 0
+      ? idMatches
+      : state.plan.filter((step) => step.step === identifier)
     if (matches.length === 0) {
-      throw new Error(`planStep must exactly match a current plan step: "${stepText}".`)
+      throw new Error(`planStep must exactly match a current plan step id or legacy text: "${identifier}".`)
     }
     if (matches.length > 1) {
-      throw new Error(`planStep is ambiguous because the current plan contains duplicate text: "${stepText}".`)
+      throw new Error(`planStep is ambiguous because the current plan contains duplicate text: "${identifier}".`)
     }
-    if (matches[0]?.status === 'completed') {
-      throw new Error(`planStep cannot reference a completed plan step: "${stepText}".`)
+    const matched = matches[0]!
+    if (matched.status === 'completed') {
+      throw new Error(`planStep cannot reference a completed plan step: "${identifier}".`)
     }
 
     return withPlanUsageLock(this.filePath, async () => {
@@ -256,8 +260,8 @@ export class SessionPlanUsageTracker {
       }
       return {
         planRunId: run.planRunId,
-        stepKey: createStepKey(run.planRunId, stepText),
-        step: stepText,
+        stepKey: resolveRunStepKey(run, matched),
+        step: matched.step,
       }
     })
   }
@@ -325,7 +329,7 @@ export class SessionPlanUsageTracker {
       startedAt,
       recovered,
       steps: state.plan.map((step) => ({
-        stepKey: createStepKey(planRunId, step.step),
+        stepKey: createStepKey(planRunId, planStepIdentity(step)),
         step: step.step,
       })),
     }
@@ -341,7 +345,7 @@ export class SessionPlanUsageTracker {
     step: PlanStep,
     completedAt: string,
   ): Promise<StepCompletedRecord> {
-    const stepKey = createStepKey(run.planRunId, step.step)
+    const stepKey = resolveRunStepKey(run, step)
     const assignments = workerAssignments(records, run.planRunId)
     const scan = await this.scanWorkerUsage(run.startedAt, completedAt)
     const knownStepKeys = new Set(assignments.map((assignment) => assignment.stepKey))
@@ -634,6 +638,21 @@ function createStepKey(planRunId: string, step: string): string {
   return createHash('sha256').update(`${planRunId}\0${step}`).digest('hex').slice(0, 16)
 }
 
+function planStepIdentity(step: PlanStep): string {
+  return step.id ?? step.step
+}
+
+function resolveRunStepKey(run: PlanStartedRecord, step: PlanStep): string {
+  const identityKey = createStepKey(run.planRunId, planStepIdentity(step))
+  if (run.steps.some((candidate) => candidate.stepKey === identityKey)) return identityKey
+  const legacyTextMatches = run.steps.filter((candidate) => candidate.step === step.step)
+  return legacyTextMatches.length === 1 ? legacyTextMatches[0]!.stepKey : identityKey
+}
+
+function samePlanStep(left: PlanStep, right: PlanStep): boolean {
+  return left.id && right.id ? left.id === right.id : left.step === right.step
+}
+
 function isCompletePlan(plan: readonly PlanStep[]): boolean {
   return plan.length > 0 && plan.every((step) => step.status === 'completed')
 }
@@ -642,7 +661,10 @@ function plansDiffer(left: readonly PlanStep[], right: readonly PlanStep[]): boo
   if (left.length !== right.length) return true
   return left.some((step, index) => {
     const other = right[index]
-    return !other || step.step !== other.step || step.status !== other.status
+    return !other
+      || step.id !== other.id
+      || step.step !== other.step
+      || step.status !== other.status
   })
 }
 

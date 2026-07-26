@@ -103,7 +103,7 @@ describe("SessionInteractionCoordinator", () => {
         route: "auto",
         behaviorMode: "research",
         lens: "researcher",
-        planStep: "Research current behavior",
+        planStep: "research",
         initialMessage: expect.stringContaining("Accepted dependency results"),
       }),
     );

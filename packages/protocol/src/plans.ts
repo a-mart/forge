@@ -6,6 +6,8 @@ export const PLAN_STEP_STATUSES = ['pending', 'in_progress', 'completed'] as con
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number]
 
 export interface PlanStep {
+  /** Stable within a working plan. Missing only on legacy persisted snapshots. */
+  id?: string
   step: string
   status: PlanStepStatus
 }

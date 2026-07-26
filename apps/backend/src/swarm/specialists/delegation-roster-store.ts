@@ -141,7 +141,7 @@ export function formatDelegationRosterModelContext(roster: DelegationRoster): st
     id: roster.rosterId,
     revision: roster.revision,
     name: roster.name,
-    auto: modeRoutes,
+    baselines: modeRoutes,
     routes,
   })}`;
 }

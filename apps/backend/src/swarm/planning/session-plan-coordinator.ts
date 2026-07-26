@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  PlanStep,
   PlanSummaryEvent,
   SessionPlanSnapshotEvent,
   WorkGraphSnapshot,
@@ -83,9 +84,14 @@ export class SessionPlanCoordinator {
   ): Promise<SessionPlanUpdateReceipt> {
     return this.withMutationLock(owner, async () => {
       const normalized = normalizeSessionPlanInput(input)
-      const snapshot = await this.write(owner, normalized)
+      const current = await this.getState(owner)
+      const reconciled = {
+        ...normalized,
+        plan: reconcilePlanStepIds(normalized.plan, current.plan),
+      }
+      const snapshot = await this.write(owner, reconciled)
       const result = this.toUpdateResult(owner, snapshot)
-      return { input: normalized, result }
+      return { input: reconciled, result }
     })
   }
 
@@ -519,4 +525,37 @@ function isEmptyState(state: SessionPlanState): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function reconcilePlanStepIds(
+  next: readonly PlanStep[],
+  current: readonly PlanStep[],
+): PlanStep[] {
+  const reusableByText = new Map<string, string>()
+  const ambiguousText = new Set<string>()
+  for (const step of current) {
+    if (!step.id) continue
+    if (reusableByText.has(step.step)) {
+      reusableByText.delete(step.step)
+      ambiguousText.add(step.step)
+    } else if (!ambiguousText.has(step.step)) {
+      reusableByText.set(step.step, step.id)
+    }
+  }
+
+  const used = new Set(next.flatMap((step) => step.id ? [step.id] : []))
+  return next.map((step) => {
+    if (step.id) return { ...step }
+    const reusable = reusableByText.get(step.step)
+    if (reusable && !used.has(reusable)) {
+      used.add(reusable)
+      return { ...step, id: reusable }
+    }
+    let id: string
+    do {
+      id = `step-${randomUUID()}`
+    } while (used.has(id))
+    used.add(id)
+    return { ...step, id }
+  })
 }

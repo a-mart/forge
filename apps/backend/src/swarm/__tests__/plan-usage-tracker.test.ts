@@ -163,7 +163,7 @@ describe('plan token usage accounting', () => {
       .toEqual([10, 15])
   })
 
-  it('requires exact, non-completed current plan text for an assignment', async () => {
+  it('prefers stable ids while retaining exact legacy text for assignments', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'forge-plan-validate-'))
     const tracker = new SessionPlanUsageTracker({
       dataDir,
@@ -172,14 +172,50 @@ describe('plan token usage accounting', () => {
       randomId: () => 'run-3',
     })
     const current = state(1, '2026-07-13T00:00:00.000Z', [
-      { step: 'Already done', status: 'completed' },
-      { step: 'Exact active text', status: 'in_progress' },
+      { id: 'done', step: 'Already done', status: 'completed' },
+      { id: 'active', step: 'Exact active text', status: 'in_progress' },
     ])
 
     await expect(tracker.resolveAssignment(current, 'Different text'))
       .rejects.toThrow('must exactly match a current plan step')
-    await expect(tracker.resolveAssignment(current, 'Already done'))
+    await expect(tracker.resolveAssignment(current, 'done'))
       .rejects.toThrow('cannot reference a completed plan step')
+    await expect(tracker.resolveAssignment(current, 'active')).resolves.toMatchObject({
+      step: 'Exact active text',
+    })
+    await expect(tracker.resolveAssignment(current, 'Exact active text')).resolves.toMatchObject({
+      step: 'Exact active text',
+    })
+  })
+
+  it('keeps one accounting key when an active legacy step gains an id', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-plan-id-upgrade-'))
+    const tracker = new SessionPlanUsageTracker({
+      dataDir,
+      profileId: 'profile-1',
+      sessionAgentId: 'session-1',
+      randomId: () => 'run-id-upgrade',
+    })
+    const legacy = state(1, '2026-07-13T00:00:00.000Z', [
+      { step: 'Continue the work', status: 'in_progress' },
+    ])
+    await tracker.recordPlanTransition(state(0, null, []), legacy)
+
+    const upgraded = state(2, '2026-07-13T00:01:00.000Z', [
+      { id: 'continue-work', step: 'Continue the work', status: 'in_progress' },
+    ])
+    const assignment = await tracker.resolveAssignment(upgraded, 'continue-work')
+    const started = (await readRecords(tracker.filePath))
+      .find((record) => record.type === 'plan_started')
+
+    expect(assignment.stepKey).toBe(started.steps[0].stepKey)
+
+    await tracker.recordPlanTransition(upgraded, state(3, '2026-07-13T00:02:00.000Z', [
+      { id: 'continue-work', step: 'Continue the work', status: 'completed' },
+    ]))
+    const completed = (await readRecords(tracker.filePath))
+      .find((record) => record.type === 'step_completed')
+    expect(completed.stepKey).toBe(started.steps[0].stepKey)
   })
 
   it('closes an incomplete accounting run when the plan is cleared', async () => {

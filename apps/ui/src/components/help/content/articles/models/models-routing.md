@@ -1,4 +1,4 @@
-Forge separates manager ownership, worker behavior, and worker model selection. The manager decides whether delegation helps, chooses a behavior mode for delegated work, and normally lets the selected roster resolve `route: auto`. Forge then pins the route, model, reasoning, fallback, and saved prompt for that attempt.
+Forge separates manager ownership, worker behavior, and worker model selection. The manager decides whether delegation helps, chooses a behavior mode for delegated work, and normally omits `route` so the selected roster applies its baseline. Forge then pins the route, model, reasoning, fallback, and saved prompt for that attempt.
 
 ## Manager model
 
@@ -16,7 +16,7 @@ Set a project default or use the coordination control beside Send for a session 
 
 Behavior mode controls the output contract: General, Plan, Correctness Review, Design Review, or Research. A delegation roster controls model capability and cost. Each roster contains named routes with concise use/avoid guidance and automatic mappings from behavior modes.
 
-`route: auto` uses the roster's baseline mapping for the selected behavior mode; it does not infer task complexity. A manager names a route when its current guidance clearly fits an obviously cheaper or stronger executor. Capability escalation is a separate later-attempt decision after evidence that the selected route was inadequate. Graph size, fan-in, planning, research, or review alone does not justify a stronger executor.
+Omitting `route` uses the roster's baseline mapping for the selected behavior mode; it does not infer task complexity. A manager names a route when its current guidance clearly fits an obviously cheaper or stronger executor. Capability escalation is a separate later-attempt decision after evidence that the selected route was inadequate. Graph size, fan-in, planning, research, or review alone does not justify a stronger executor.
 
 The roster selection order is global default → project default → session override. The manager receives the selected roster as compact dynamic context, outside the stable system-prompt prefix. Switching rosters therefore does not require a manager runtime replacement. Running attempts stay pinned; only future attempts see the new roster.
 

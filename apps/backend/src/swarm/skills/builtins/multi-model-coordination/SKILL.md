@@ -31,8 +31,8 @@ purpose and graph shape and ask before creating the graph.
 1. Read exactly one best-fit scenario reference.
 2. Treat its graph as a topology example, not a fixed template. Keep the smallest useful graph.
 3. Give parallel nodes distinct questions, lenses, evidence requirements, or solution constraints.
-4. Prefer `route: auto`. Select named routes only from the active `[delegationRoster]`; never invent
-   model or route ids.
+4. Omit `route` for the active roster's baseline. Select named routes only when their current
+   `[delegationRoster]` guidance clearly fits; never invent model or route ids.
 5. Keep contributors independent until their leaf results are accepted. Do not reveal other
    contributors' conclusions in their initial tasks.
 6. The manager owns acceptance and normally owns synthesis for two to four bounded results. Add a

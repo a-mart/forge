@@ -10,7 +10,7 @@ The manager chooses the output contract that fits the task: General, Plan, Corre
 
 ## Delegation rosters
 
-A roster is a selectable catalog of named model routes. Each route contains concise use/avoid guidance, a primary model and reasoning level, an optional availability fallback, and an optional capability-escalation route. A roster maps each behavior mode to an automatic baseline route. `route: auto` uses that baseline; it does not infer task complexity. The manager names a route when its current guidance clearly fits an obviously cheaper or stronger executor.
+A roster is a selectable catalog of named model routes. Each route contains concise use/avoid guidance, a primary model and reasoning level, an optional availability fallback, and an optional capability-escalation route. A roster maps each behavior mode to a baseline route. The manager normally omits `route` and lets that mapping apply; it names a route only when the current guidance clearly fits an obviously cheaper or stronger executor.
 
 Rosters contain no worker personas, tools, permissions, ownership, or graph topology. Those concerns remain in behavior modes, specialists, and the work graph.
 

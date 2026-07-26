@@ -462,7 +462,7 @@ export function generateTierLensRosterBlock(
   const lines = [
     "Delegate workers with a behavior `mode` and an execution `route`.",
     "",
-    "Forge appends the active `[delegationRoster]` to manager-bound turns. `route=auto` uses the roster's baseline for the selected behavior mode; it is not a task-complexity classifier. Name a route when its current guidance clearly fits an obviously cheaper or stronger executor.",
+    "Forge appends the active `[delegationRoster]` to manager-bound turns. Omit `route` to use the roster's baseline for the selected behavior mode; this is not a task-complexity classifier. Name a route only when its current guidance clearly fits an obviously cheaper or stronger executor.",
   ];
 
   // Shipped mode handles contribute prompts only; their persisted model fields
@@ -501,7 +501,7 @@ export function generateTierLensRosterBlock(
     "Routing guidance:",
     "- Behavior mode controls the worker's operating contract; route controls only executor selection.",
     "- Availability fallback is automatic and does not mean capability escalation.",
-    "- Choose an explicit route before dispatch when the roster guidance clearly matches. Use capability escalation only when evidence from an attempt shows the baseline was inadequate.",
+    "- Omit `route` for the baseline. Name one before dispatch only when its roster guidance clearly matches. Use capability escalation only when evidence from an attempt shows the baseline was inadequate.",
     "- Outside a work graph, escalation requires a fresh delegation on the stronger route; messaging the same worker does not change its pinned executor.",
     "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
     "- Do not choose stronger routes merely because work is large, planned, reviewed, or graph-shaped.",

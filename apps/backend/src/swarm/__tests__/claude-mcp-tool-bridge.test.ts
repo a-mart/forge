@@ -349,16 +349,15 @@ describe("claude-mcp-tool-bridge", () => {
       getRegisteredTool(registeredTools, "send_message_to_agent").shape.safeParse({
         targetAgentId: "worker-1",
         message: "hello",
-        planStep: "Implement backend"
+        planStepId: "implement-backend"
       }).success
     ).toBe(true);
     expect(
       getRegisteredTool(registeredTools, "spawn_agent").shape.safeParse({
         agentId: "worker-1",
-        planStep: "Implement backend",
+        planStepId: "implement-backend",
         initialMessage: "Implement the backend change.",
         mode: "general",
-        executionPolicy: "routine"
       }).success
     ).toBe(true);
     expect(
@@ -441,7 +440,7 @@ describe("claude-mcp-tool-bridge", () => {
       targetAgentId: "worker-1",
       message: "please investigate",
       delivery: "steer",
-      planStep: "Investigate the failure"
+      planStepId: "investigate-failure"
     });
 
     expect(host.sendMessage).toHaveBeenCalledWith(
@@ -455,7 +454,7 @@ describe("claude-mcp-tool-bridge", () => {
           toolCallId: expect.any(String),
           toolName: "send_message_to_agent",
         },
-        planStep: "Investigate the failure",
+        planStep: "investigate-failure",
       },
     );
     expect(result.content[0].text).toContain("Queued message for worker-1");
@@ -469,20 +468,20 @@ describe("claude-mcp-tool-bridge", () => {
 
     await invokeTool(registeredTools, "spawn_agent", {
       agentId: "backend-worker",
-      planStep: "Implement backend",
+      planStepId: "implement-backend",
       initialMessage: "Implement the backend change.",
       mode: "general",
-      route: "auto"
+      route: "deep-reasoner"
     });
 
     expect(host.spawnAgent).toHaveBeenCalledWith(
       manager.agentId,
       expect.objectContaining({
         agentId: "backend-worker",
-        planStep: "Implement backend",
+        planStep: "implement-backend",
         initialMessage: "Implement the backend change.",
         behaviorMode: "general",
-        route: "auto"
+        route: "deep-reasoner"
       })
     );
   });

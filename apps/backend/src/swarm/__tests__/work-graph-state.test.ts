@@ -24,7 +24,7 @@ describe('progressive work graph scenarios', () => {
       node('implement', 'Implement the focused change', { kind: 'implementation' }),
     ])
     expect(projectWorkGraphPlan(graph)).toEqual([
-      { step: 'Implement the focused change', status: 'pending' },
+      { id: 'implement', step: 'Implement the focused change', status: 'pending' },
     ])
     expect(graph).not.toHaveProperty('plan')
   })
