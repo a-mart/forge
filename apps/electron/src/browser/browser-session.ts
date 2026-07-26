@@ -64,7 +64,7 @@ export class BrowserSessionRegistry {
     await Promise.all(
       [...this.sessions.values()].map(async (browserSession) => {
         await browserSession.clearStorageData({
-          storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers'],
+          storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers'],
         })
         await browserSession.clearCache()
       }),

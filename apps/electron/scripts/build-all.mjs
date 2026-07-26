@@ -7,6 +7,7 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 import { prepareElectronBetterSqlite3Binding } from './prepare-dev-native.mjs'
+import { verifyElectronRuntime } from './verify-electron-runtime.mjs'
 import { stageExternalChromeResources } from './stage-external-chrome.mjs'
 import { assertReleaseEnvironment } from '../../native-messaging-host/scripts/release-signing.mjs'
 
@@ -35,6 +36,7 @@ const cliStagedEntry = path.join(cliStageDir, 'cli.js')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const browserRuntimeDir = path.join(stageDir, 'browser-runtime')
 const externalChromeStageDir = path.join(stageDir, 'external-chrome')
+const stagedNativeRuntimeSmokeScript = path.join(scriptDir, 'staged-native-runtime-smoke.mjs')
 const stagedPlaywrightCoreDir = path.join(browserRuntimeDir, 'playwright-core')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
 const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
@@ -141,6 +143,7 @@ export async function cleanReleaseDir(targetDir = releaseDir) {
 }
 
 async function main() {
+  await verifyElectronRuntime()
   const externalChromeRelease = await assertReleaseEnvironment()
   await cleanReleaseDir()
   await rm(stageDir, { recursive: true, force: true })
@@ -178,7 +181,7 @@ async function main() {
   await validateStagedCliPreflight()
 }
 
-async function stageBundledBackend() {
+export async function stageBundledBackend() {
   await mkdir(path.dirname(backendStageBundlePath), { recursive: true })
 
   const metafile = await esbuild({
@@ -296,7 +299,7 @@ export async function validatePackagedRuntimePreflight() {
   }
 
   validateBackendMetafileHasNoEmbeddedPiAiImplementation()
-  await validateStagedBetterSqlite3Runtime()
+  await validateStagedElectronNativeRuntime()
   await validateStagedCursorSdkRuntime(stagedRequire)
   await validateStagedPiSingletonRuntime(stagedRequire)
   await assertStagedPiPackageRelativeAssets()
@@ -341,40 +344,38 @@ async function stageElectronBetterSqlite3Binding() {
   console.log(`[electron/build-all] Staged Electron better-sqlite3 binding at ${path.relative(electronDir, stagedBindingPath)}`)
 }
 
-async function validateStagedBetterSqlite3Runtime() {
+async function validateStagedElectronNativeRuntime() {
   const electronRequire = createRequire(path.join(electronDir, 'package.json'))
   const electronExecutable = electronRequire('electron')
-  const smokeSource = [
-    "const Database = require('better-sqlite3')",
-    "const database = new Database(':memory:')",
-    "const row = database.prepare('SELECT 1 AS value').get()",
-    'database.close()',
-    "if (row?.value !== 1) throw new Error('Unexpected SQLite smoke result')",
-  ].join(';')
-
-  const child = spawn(electronExecutable, ['-e', smokeSource], {
+  const child = spawn(electronExecutable, [stagedNativeRuntimeSmokeScript], {
     cwd: backendStageDir,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    timeout: 15_000,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      FORGE_STAGED_NODE_MODULES: backendStageNodeModulesDir,
+    },
+    timeout: 30_000,
   })
 
-  await new Promise((resolve, reject) => {
+  const report = await new Promise((resolve, reject) => {
+    let stdout = ''
     let stderr = ''
+    child.stdout?.on('data', (chunk) => { stdout += chunk.toString() })
     child.stderr?.on('data', (chunk) => { stderr += chunk.toString() })
     child.once('error', reject)
     child.once('exit', (code, signal) => {
       if (code === 0) {
-        resolve()
+        resolve(stdout.trim())
         return
       }
       reject(new Error(
-        `Packaged-runtime preflight failed: staged better-sqlite3 Electron smoke exited with code=${String(code)} signal=${String(signal)}${stderr ? `: ${stderr.trim()}` : ''}`,
+        `Packaged-runtime preflight failed: staged native Electron smoke exited with code=${String(code)} signal=${String(signal)}${stderr ? `: ${stderr.trim()}` : ''}`,
       ))
     })
   })
 
-  console.log('[electron/build-all] Packaged-runtime preflight verified staged better-sqlite3 with Electron-as-Node')
+  console.log(`[electron/build-all] Packaged-runtime preflight verified staged native modules with Electron-as-Node: ${report}`)
 }
 
 export async function stageBrowserRuntime() {

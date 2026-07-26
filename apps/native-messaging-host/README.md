@@ -47,13 +47,14 @@ The release sequence is fail-closed:
 
 1. build the bundled host and deterministic SEA inputs with code cache and startup snapshots disabled;
 2. generate the current target/architecture executable with the pinned official Node;
-3. smoke the generated executable;
-4. sign it using the release platform's configured signer;
-5. verify the observed signer against the exact expected identity/subject;
-6. smoke it again after signing; and
-7. only then hash it into `dist/package-manifest.json` for Electron staging.
+3. ad-hoc sign macOS output so the kernel can execute the validation artifact;
+4. smoke the generated executable;
+5. in release mode, replace the ad-hoc signature with the platform's configured signer;
+6. verify the observed signer against the exact expected identity/subject;
+7. smoke it again after signing; and
+8. only then hash it into `dist/package-manifest.json` for Electron staging.
 
-macOS release mode requires the exact configured `Developer ID Application` identity and Apple team. Windows release mode requires Authenticode and the exact configured certificate subject. Electron packaging preserves the pre-signed host bytes, then rechecks the packaged hash and signature after its own signing hooks.
+The macOS ad-hoc signature is only an execution prerequisite and remains explicitly unverified in validation metadata. macOS release mode replaces it and requires the exact configured `Developer ID Application` identity and Apple team. Windows release mode requires Authenticode and the exact configured certificate subject. Electron packaging preserves the pre-signed host bytes, then rechecks the packaged hash and signature after its own signing hooks.
 
 A successful build or validation-mode SEA does not by itself qualify headed Chrome, live native registration, a target platform, installer behavior, or distribution. Those remain separate release gates in the [Electron guide](../electron/README.md#external-chrome-packaging-and-validation).
 

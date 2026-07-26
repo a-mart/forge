@@ -13,7 +13,7 @@ import {
 } from '../src/constants.js'
 import { NativeMessageDecoder } from '../src/framing.js'
 import { runNativeHost } from '../src/host.js'
-import { validateChromeLaunchArguments } from '../src/launch.js'
+import { normalizeNativeHostLaunchArguments, validateChromeLaunchArguments } from '../src/launch.js'
 import { DesktopUnavailableError, validateRendezvous, type RendezvousDocument } from '../src/transport.js'
 
 function capture(): { stream: PassThrough; chunks: Buffer[] } {
@@ -37,6 +37,40 @@ const VALID_RENDEZVOUS: RendezvousDocument = {
 }
 
 describe('native host trust and process boundaries', () => {
+  it('normalizes ordinary JS, legacy SEA, and Node 25 SEA launch shapes precisely', () => {
+    expect(normalizeNativeHostLaunchArguments(
+      [process.execPath, 'host.cjs', HOST_EXTENSION_ORIGIN],
+      false,
+      process.execPath,
+    )).toEqual([HOST_EXTENSION_ORIGIN])
+    expect(normalizeNativeHostLaunchArguments(
+      [process.execPath, HOST_EXTENSION_ORIGIN],
+      true,
+      process.execPath,
+    )).toEqual([HOST_EXTENSION_ORIGIN])
+    expect(normalizeNativeHostLaunchArguments(
+      [process.execPath, process.execPath, HOST_EXTENSION_ORIGIN],
+      true,
+      process.execPath,
+    )).toEqual([HOST_EXTENSION_ORIGIN])
+    const windowsArguments = normalizeNativeHostLaunchArguments(
+      [process.execPath, process.execPath, HOST_EXTENSION_ORIGIN, '--parent-window=42'],
+      true,
+      process.execPath,
+    )
+    expect(windowsArguments).toEqual([HOST_EXTENSION_ORIGIN, '--parent-window=42'])
+    expect(() => validateChromeLaunchArguments(windowsArguments, HOST_EXTENSION_ORIGIN, 'win32')).not.toThrow()
+
+    const unexpectedSeaMetadata = 'sea-config.current.json'
+    const unexpected = normalizeNativeHostLaunchArguments(
+      [process.execPath, unexpectedSeaMetadata, HOST_EXTENSION_ORIGIN],
+      true,
+      process.execPath,
+    )
+    expect(unexpected).toEqual([unexpectedSeaMetadata, HOST_EXTENSION_ORIGIN])
+    expect(() => validateChromeLaunchArguments(unexpected, HOST_EXTENSION_ORIGIN, 'darwin')).toThrow(/pinned/u)
+  })
+
   it('pins the exact extension origin and platform launch shape', () => {
     expect(() => validateChromeLaunchArguments([HOST_EXTENSION_ORIGIN], HOST_EXTENSION_ORIGIN, 'darwin')).not.toThrow()
     expect(() => validateChromeLaunchArguments(['chrome-extension://wrong/'], HOST_EXTENSION_ORIGIN, 'darwin')).toThrow(/pinned/u)

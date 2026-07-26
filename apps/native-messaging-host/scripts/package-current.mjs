@@ -4,7 +4,11 @@ import { endianness } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { assertSeaToolchain, prepareReleaseExecutable } from './release-signing.mjs'
+import {
+  assertSeaToolchain,
+  prepareExecutableForInitialSmoke,
+  prepareReleaseExecutable,
+} from './release-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const configPath = path.join(root, 'sea-config.json')
@@ -33,6 +37,19 @@ function smoke(executable, arguments_) {
   if (payloadLength !== output.byteLength - 4) throw new Error('host smoke emitted malformed or extra stdout bytes')
   const message = JSON.parse(output.subarray(4).toString('utf8'))
   if (message?.type !== 'desktop-unavailable') throw new Error('host smoke emitted an unexpected response')
+}
+
+export async function prepareAndSmokeExecutable(executable, arguments_, {
+  platform = process.platform,
+  runCommand,
+  smokeExecutable = smoke,
+  prepareRelease = prepareReleaseExecutable,
+} = {}) {
+  await prepareExecutableForInitialSmoke(executable, { platform, runCommand })
+  smokeExecutable(executable, arguments_)
+  const signature = await prepareRelease(executable, { platform, runCommand })
+  smokeExecutable(executable, arguments_)
+  return signature
 }
 
 export async function packageCurrent() {
@@ -80,11 +97,10 @@ export async function packageCurrent() {
   }
   if (process.platform !== 'win32') await chmod(executablePath, 0o755)
 
-  // Prove the generated host before signing, then sign before calculating the
-  // authoritative package hash. The second smoke proves signing preserved SEA startup.
-  smoke(executablePath, platformArguments)
-  const signature = await prepareReleaseExecutable(executablePath)
-  smoke(executablePath, platformArguments)
+  // macOS refuses to execute the unsigned --build-sea output, so give it an
+  // ad-hoc signature before the first smoke. Release mode replaces that signature
+  // with the required verified platform identity before the authoritative hash.
+  const signature = await prepareAndSmokeExecutable(executablePath, platformArguments)
 
   const manifest = {
     schemaVersion: 1,

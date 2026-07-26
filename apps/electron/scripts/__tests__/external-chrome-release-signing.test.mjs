@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   assertReleaseEnvironment,
   assertSeaToolchain,
+  prepareExecutableForInitialSmoke,
   prepareReleaseExecutable,
   verifyReleaseSignature,
 } from '../../../native-messaging-host/scripts/release-signing.mjs'
+import { prepareAndSmokeExecutable } from '../../../native-messaging-host/scripts/package-current.mjs'
 
 const roots = []
 
@@ -41,6 +43,36 @@ describe('External Chrome release signing policy', () => {
       nodeVersion: '25.6.1', execPath: '/other/node',
       env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: '/official/node' },
     })).toThrow('must run with FORGE_SEA_NODE')
+  })
+
+  it('ad-hoc signs macOS SEA output before its first validation smoke', async () => {
+    const { executable } = await executableFixture()
+    const events = []
+    const runCommand = vi.fn(async (_command, args) => {
+      events.push(args.includes('--sign') ? `sign:${args[args.indexOf('--sign') + 1]}` : 'verify')
+      return { stdout: '', stderr: '' }
+    })
+    const prepareRelease = vi.fn(async () => {
+      events.push('prepare-release')
+      return { scheme: 'developer-id', mode: 'validation', verified: false, signer: null, teamId: null }
+    })
+    const smokeExecutable = vi.fn(() => events.push('smoke'))
+
+    const signature = await prepareAndSmokeExecutable(executable, ['chrome-extension://fixture/'], {
+      platform: 'darwin', runCommand, prepareRelease, smokeExecutable,
+    })
+
+    expect(events).toEqual(['sign:-', 'verify', 'smoke', 'prepare-release', 'smoke'])
+    expect(runCommand.mock.calls[0]).toEqual([
+      '/usr/bin/codesign', ['--force', '--sign', '-', executable],
+    ])
+    expect(signature).toMatchObject({ mode: 'validation', verified: false })
+  })
+
+  it('does not alter non-macOS SEA output before the first smoke', async () => {
+    const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    await prepareExecutableForInitialSmoke('host.exe', { platform: 'win32', runCommand })
+    expect(runCommand).not.toHaveBeenCalled()
   })
 
   it('signs macOS before staging and verifies the exact Developer ID identity and team', async () => {

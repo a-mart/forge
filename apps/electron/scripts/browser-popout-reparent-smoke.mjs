@@ -7,6 +7,7 @@ import path from 'node:path'
 const electronDir = path.resolve(import.meta.dirname, '..')
 const require = createRequire(path.join(electronDir, 'package.json'))
 const electron = require('electron')
+const expectedElectronVersion = require('electron/package.json').version
 const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-popout-fixture-'))
 try {
   const env = { ...process.env, FORGE_BROWSER_POPOUT_FIXTURE_ROOT: root }
@@ -34,7 +35,11 @@ try {
     throw new Error(`Electron WebContentsView pop-out fixture failed (code=${code})\n${stdout}\n${stderr}`)
   }
   const report = JSON.parse(reportLine.slice(prefix.length))
-  if (report.passed !== true || !/^37\.10\./.test(report.electron) || report.continuity?.sameWebContentsId !== true) {
+  if (
+    report.passed !== true ||
+    report.electron !== expectedElectronVersion ||
+    report.continuity?.sameWebContentsId !== true
+  ) {
     throw new Error(`Electron WebContentsView pop-out fixture returned an invalid report: ${JSON.stringify(report)}`)
   }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)

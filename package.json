@@ -58,6 +58,7 @@
       "@tanstack/router-generator>zod": "3.25.76",
       "@tanstack/router-plugin>zod": "3.25.76",
       "@tanstack/start-plugin-core>zod": "3.25.76",
+      "@electron/rebuild>node-abi": "4.33.0",
       "@earendil-works/pi-ai": "0.80.6",
       "@earendil-works/pi-agent-core": "0.80.6",
       "@earendil-works/pi-coding-agent": "0.80.6",
