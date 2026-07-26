@@ -43,7 +43,7 @@ The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@C
 
 ## xAI authentication routing
 
-API-key-backed xAI models keep the standard `api.x.ai` endpoint. When the stored xAI credential is OAuth, the Pi model registry rewrites only xAI models to `cli-chat-proxy.grok.com`; non-xAI models and checked-in catalog metadata remain unchanged. The public Grok CLI client/proxy contract is provider-coupled and operationally experimental. Revalidate browser and device login, refresh behavior, and proxy routing whenever Pi or the xAI adapter is upgraded.
+API-key-backed xAI models keep the standard `api.x.ai` endpoint, including when `XAI_API_KEY` is the only configured xAI credential. When the stored xAI credential is OAuth, the Pi model registry rewrites only xAI models to `cli-chat-proxy.grok.com`; non-xAI models and checked-in catalog metadata remain unchanged. If stored OAuth refresh fails, request auth remains unavailable for the proxy-routed model: the registry does not select or send `XAI_API_KEY` to the OAuth proxy. The public Grok CLI client/proxy contract is provider-coupled and operationally experimental. Revalidate browser and device login, refresh behavior, and proxy routing whenever Pi or the xAI adapter is upgraded.
 
 ## Retired model policy
 
