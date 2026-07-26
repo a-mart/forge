@@ -107,7 +107,9 @@ Treat messages beginning with [workerResult] as terminal evidence requiring same
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
-\${SPECIALIST_ROSTER}`;
+<!-- forge:manager-coordination:start -->
+\${SPECIALIST_ROSTER}
+<!-- forge:manager-coordination:end -->`;
 const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 - Use a diagram only when it makes an important relationship materially easier to understand than prose or a short list.
 - Prefer the smallest diagram that answers the question. Keep one abstraction level, short labels, one dominant direction, and minimal cross-links.
@@ -303,8 +305,12 @@ export class SwarmPromptService {
     ]);
 
     const delegationBlock = specialistRegistry.generateRosterBlock(roster, tierConfigs);
+    const projectAgentDirectoryEntries = await this.resolveProjectAgentDirectoryEntries(
+      profileId,
+      descriptor,
+    );
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
-      await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
+      projectAgentDirectoryEntries,
     );
     const createSessionCapabilityNote =
       descriptor.projectAgent?.capabilities?.includes("create_session")
@@ -313,7 +319,11 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
     const managerPostureBlock = buildManagerPostureBlock(descriptor.managerPosture);
-    prompt = composeManagerPosture(prompt, managerPostureBlock);
+    prompt = composeManagerPosture(
+      prompt,
+      managerPostureBlock,
+      descriptor.managerPosture === "hands_on",
+    );
 
     const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
     if (projectAgentReferenceDocs.length > 0) {
@@ -324,6 +334,14 @@ export class SwarmPromptService {
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
       // eslint-disable-next-line no-template-curly-in-string
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
+    } else if (descriptor.managerPosture === "hands_on") {
+      const projectAgentContext = [
+        projectAgentDirectoryEntries.length > 0 ? projectAgentDirectoryBlock : "",
+        createSessionCapabilityNote.trim(),
+      ].filter(Boolean).join("\n");
+      if (projectAgentContext) {
+        prompt = `${prompt.trimEnd()}\n\n${projectAgentContext}`;
+      }
     } else {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
@@ -1199,33 +1217,62 @@ export class SwarmPromptService {
   }
 }
 
-function composeManagerPosture(prompt: string, managerPostureBlock: string): string {
+const MANAGER_COORDINATION_START = "<!-- forge:manager-coordination:start -->";
+const MANAGER_COORDINATION_END = "<!-- forge:manager-coordination:end -->";
+
+function composeManagerPosture(
+  prompt: string,
+  managerPostureBlock: string,
+  handsOn: boolean,
+): string {
+  let composed: string;
   // eslint-disable-next-line no-template-curly-in-string
   if (prompt.includes("${MANAGER_POSTURE}")) {
     // eslint-disable-next-line no-template-curly-in-string
-    return prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
+    composed = prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
+  } else {
+    const isLegacyManagerPrompt = (
+      prompt.includes("Delegation remains the default for project-file mutations")
+      && prompt.includes("Manager direct project work is read-only")
+    );
+    const legacyHeading = isLegacyManagerPrompt
+      ? /^# Work routing[ \t]*$/m.exec(prompt)
+      : null;
+    if (!legacyHeading) {
+      composed = `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
+    } else {
+      const sectionStart = legacyHeading.index;
+      const afterHeading = sectionStart + legacyHeading[0].length;
+      const nextHeading = /\r?\n# [^\r\n]+/.exec(prompt.slice(afterHeading));
+      const sectionEnd = nextHeading
+        ? afterHeading + nextHeading.index
+        : prompt.length;
+      const before = prompt.slice(0, sectionStart).trimEnd();
+      const after = prompt.slice(sectionEnd).trimStart();
+      composed = [before, managerPostureBlock, after].filter(Boolean).join("\n\n");
+    }
   }
 
-  const isLegacyManagerPrompt = (
-    prompt.includes("Delegation remains the default for project-file mutations")
-    && prompt.includes("Manager direct project work is read-only")
-  );
-  const legacyHeading = isLegacyManagerPrompt
-    ? /^# Work routing[ \t]*$/m.exec(prompt)
-    : null;
-  if (!legacyHeading) {
-    return `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
+  const coordinationStart = composed.indexOf(MANAGER_COORDINATION_START);
+  const coordinationEnd = composed.indexOf(MANAGER_COORDINATION_END);
+  if (
+    coordinationStart < 0
+    || coordinationEnd < coordinationStart
+  ) {
+    return composed;
   }
 
-  const sectionStart = legacyHeading.index;
-  const afterHeading = sectionStart + legacyHeading[0].length;
-  const nextHeading = /\r?\n# [^\r\n]+/.exec(prompt.slice(afterHeading));
-  const sectionEnd = nextHeading
-    ? afterHeading + nextHeading.index
-    : prompt.length;
-  const before = prompt.slice(0, sectionStart).trimEnd();
-  const after = prompt.slice(sectionEnd).trimStart();
-  return [before, managerPostureBlock, after].filter(Boolean).join("\n\n");
+  const before = composed.slice(0, coordinationStart).trimEnd();
+  const coordination = handsOn
+    ? ""
+    : composed.slice(
+        coordinationStart + MANAGER_COORDINATION_START.length,
+        coordinationEnd,
+      ).trim();
+  const after = composed.slice(
+    coordinationEnd + MANAGER_COORDINATION_END.length,
+  ).trimStart();
+  return [before, coordination, after].filter(Boolean).join("\n\n");
 }
 
 function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {

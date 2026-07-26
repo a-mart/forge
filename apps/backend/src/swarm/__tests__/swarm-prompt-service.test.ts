@@ -444,14 +444,29 @@ Custom project instruction: always mention the release train when summarizing de
 
     expect(delegationPrompt).toContain("Your posture is **Delegation-first**.")
     expect(delegationPrompt).toContain("Manager direct project work is read-only.")
+    expect(delegationPrompt).toContain(
+      "Follow the active Work routing posture when deciding whether you or a worker owns implementation and investigation.",
+    );
+    expect(delegationPrompt).toContain("# Delegation protocol")
+    expect(delegationPrompt).toContain("## Working plans")
     expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
     expect(handsOnPrompt).toContain("Normally own one cohesive outcome directly")
     expect(handsOnPrompt).toContain("This posture changes preference, not authority")
+    expect(handsOnPrompt).toContain("## Optional coordination")
+    expect(handsOnPrompt).toContain("One bounded worker remains Direct")
+    expect(handsOnPrompt).not.toContain("# Delegation protocol")
+    expect(handsOnPrompt).not.toContain("## Working plans")
+    expect(handsOnPrompt).not.toContain("Delegate workers with a behavior")
+    expect(handsOnPrompt).not.toContain(
+      "Workers should own substantial implementation and investigation",
+    );
     expect(delegationPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
     expect(handsOnPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
     expect(delegationPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
     expect(handsOnPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
-    expect(Math.abs(delegationPrompt.length - handsOnPrompt.length)).toBeLessThan(500)
+    expect(delegationPrompt).not.toContain("forge:manager-coordination")
+    expect(handsOnPrompt).not.toContain("forge:manager-coordination")
+    expect(delegationPrompt.length - handsOnPrompt.length).toBeGreaterThan(2_000)
   });
 
   it("replaces the legacy routing section in stale manager prompt overrides", async () => {
@@ -1148,6 +1163,7 @@ Always preserve the user's release notes.`,
       projectAgent: {
         handle: "hands-on-agent",
         whenToUse: "testing project-agent posture composition",
+        capabilities: ["create_session"],
       },
     });
 
@@ -1163,6 +1179,11 @@ Always preserve the user's release notes.`,
       "Delegate substantive implementation and investigation to appropriate workers",
     );
     expect(resolved).not.toContain("Manager direct project work is read-only.");
+    expect(resolved).not.toContain("Delegate workers with a behavior");
+    expect(resolved).not.toContain("## Working plans");
+    expect(resolved).toContain(
+      "This project agent can create new manager sessions via create_session.",
+    );
   });
 
   it("project-agent sessionSystemPrompt is composed as highest-precedence role instructions in preview", async () => {

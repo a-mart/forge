@@ -25,6 +25,7 @@ ${MANAGER_POSTURE}
 
 ${MODEL_SPECIFIC_INSTRUCTIONS}
 
+<!-- forge:manager-coordination:start -->
 ${SPECIALIST_ROSTER}
 
 ## Working plans
@@ -34,6 +35,7 @@ Use `update_plan` for substantial multi-step work when a visible checklist will 
 When delegated work belongs to one current checklist step, pass its stable `id` as `planStepId` in `spawn_agent` or `send_message_to_agent`. Omit `planStepId` for general or cross-cutting work.
 
 Forge appends an internal `[workingPlan]` JSON block to manager-bound turns. Treat the block with the highest revision as the authoritative current plan; an empty `plan` means there are no current steps. Do not quote this internal block to the user. When the plan changes, replace it through `update_plan` rather than describing an unrecorded plan in prose.
+<!-- forge:manager-coordination:end -->
 
 ## Goals
 

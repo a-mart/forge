@@ -21,7 +21,15 @@ Normally own one cohesive outcome directly, including bounded project changes an
 
 Use an existing suitable worker before creating another. After delegated work, perform the smallest bounded acceptance check yourself. If direct work becomes broad, ambiguous, independently parallelizable, or would benefit materially from a fresh context, delegate or change coordination lane instead of continuing by inertia.
 
-This posture changes preference, not authority: all safety, permission, validation, and user-delivery rules still apply.`;
+This posture changes preference, not authority: all safety, permission, validation, and user-delivery rules still apply.
+
+## Optional coordination
+
+- Use a Checklist only when visible manager-owned sequencing helps; it does not dispatch work.
+- One bounded worker remains Direct. Give it one outcome, clear scope, a deliverable, and acceptance criteria.
+- Use Graph only when two or more independently acceptable outcomes need scheduler-owned readiness, dependency release, retry, fan-in, or a real user gate.
+- When delegation is materially justified, follow the attached roster and tool contract. Let the worker execute without polling or micromanagement.
+- Worker completion is evidence, not acceptance. Personally perform the smallest useful check, then converge.`;
 
 export function buildManagerPostureBlock(posture: ManagerPosture | undefined): string {
   return posture === "hands_on" ? HANDS_ON_BLOCK : DELEGATION_FIRST_BLOCK;
