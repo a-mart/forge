@@ -41,6 +41,10 @@ The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@C
 
 `cursor-sdk` is a native provider backed by `@cursor/sdk`. The curated models are `composer-2.5` (Composer 2.5) and provider-scoped Cursor Grok 4.5 variants (`grok-4.5`, `grok-4.5-fast`). The static Forge mapping was curated from live Cursor SDK discovery: Cursor Grok 4.5 uses SDK model id `grok-4.5`, Forge maps reasoning levels to Cursor's `effort` param (`low`/`medium`/`high`), and Forge represents the fast pool with `fast=true` via the `grok-4.5-fast` catalog variant. Composer 2.5 is marked non-reasoning because discovery exposed only a `fast` toggle, not controllable reasoning effort. Runtime containment is provider-local and fail-closed with a Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures may retry once before output, auth/permission/cancel/user-state failures are projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is recorded in session custom entries and rolls up into dashboard stats, token analytics, and telemetry provider inference.
 
+## xAI authentication routing
+
+API-key-backed xAI models keep the standard `api.x.ai` endpoint. When the stored xAI credential is OAuth, the Pi model registry rewrites only xAI models to `cli-chat-proxy.grok.com`; non-xAI models and checked-in catalog metadata remain unchanged. The public Grok CLI client/proxy contract is provider-coupled and operationally experimental. Revalidate browser and device login, refresh behavior, and proxy routing whenever Pi or the xAI adapter is upgraded.
+
 ## Retired model policy
 
 GPT-5.3 Codex Spark, Claude Sonnet 4.5, and Claude Haiku 4.5 are retired. They are absent from catalog, selector, preset, specialist, and generated projection surfaces. New requests using their canonical IDs, known dotted/dashed aliases, provider-scoped forms, or the removed `pi-codex-spark` preset are rejected before runtime provider dispatch.

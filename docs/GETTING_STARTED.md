@@ -32,11 +32,13 @@ You'll see a short welcome form from Cortex, Forge's learning system. It asks fo
 
 To run agents, configure at least one supported model provider. Go to **Settings → Authentication**.
 
-The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**, and masked key/token rows for **xAI**, **OpenRouter**, and **Cursor SDK**. Status and auth-type badges appear only on applicable cards.
+The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**. **xAI** has one direct, non-pooled credential row where you choose either an API key or OAuth; configuring one replaces the other. **OpenRouter** and **Cursor SDK** remain masked key/token-only rows. Status and auth-type badges appear only on applicable cards.
 
 > Forge no longer includes the Claude Agent SDK runtime. Existing known SDK model selections load as native Anthropic selections, but Claude Code login credentials do not transfer. Configure Anthropic in Forge before continuing those sessions. Unknown SDK selections remain unavailable until you choose a native Anthropic model; canonical Forge history remains viewable and external Claude Code data is untouched.
 
 Choose providers based on the models and runtimes you need. Anthropic covers Claude models, OpenAI covers GPT and Codex, xAI covers native Grok models, OpenRouter credentials support user-added OpenRouter models, and Cursor SDK credentials support its catalog models when visible. Existing local OpenAI or Anthropic credentials may still be reflected in provider status, but the current Settings cards add OAuth accounts rather than presenting a general API-key entry flow.
+
+For xAI, either paste an API key and select **Save**, or select **Login with OAuth**. For browser login, use **Open authorization URL** or **Copy URL**; if the local callback cannot reach Forge, paste the full callback URL from that login attempt. For a remote or headless backend, choose the device option when prompted, open the verification URL elsewhere, and enter the displayed code. Completing OAuth replaces a stored xAI API key, and saving a key replaces stored xAI OAuth.
 
 Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-lived leases instead of local OpenAI credentials. For v1 setup, your broker administrator creates a one-time setup link for your name/email. Paste that link into **Settings → Authentication → OpenAI → Forge Auth broker** and redeem it. Forge sends the invite id/secret to the broker from the backend, stores only the returned broker runtime token in secrets, and masks broker status in the UI. Manual broker URL/token entry is still available under advanced setup for older deployments, but setup links are the normal path.
 
@@ -44,7 +46,7 @@ When broker mode is active, local OpenAI OAuth/API-key and pool credentials stay
 
 After adding or changing provider credentials, Forge recycles matching idle manager runtimes or defers the recycle until busy runtimes are idle, so the common case does not require recreating sessions or restarting the backend.
 
-If you use pooled OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired pooled credentials show up as `auth_error` instead of looking healthy.
+If you use pooled OpenAI or Anthropic OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired OpenAI or Anthropic pooled credentials show up as `auth_error` instead of looking healthy.
 
 You can fine-tune the app under **Settings → Appearance**. It supports Light, Dark, and System mode, appearance templates, editable accent/background/foreground colors, and UI/code font choices. Changes are drafted first, then saved with **Apply**. The browser renderer keeps those preferences locally in browser storage, so they do not travel with server-side profile config.
 

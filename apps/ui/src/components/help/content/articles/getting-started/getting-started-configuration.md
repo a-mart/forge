@@ -5,9 +5,12 @@ Forge needs an LLM provider to run agents. Everything else is optional but worth
 Open **Settings** (gear icon in the sidebar) and go to **Authentication**. Configure at least one provider that supports the agents and models you want:
 
 - **Anthropic** and **OpenAI** use the current OAuth account-pool cards.
-- **xAI**, **OpenRouter**, and **Cursor SDK** use masked key/token rows.
+- **xAI** uses one direct, non-pooled row for either an API key or OAuth. Configuring one replaces the other.
+- **OpenRouter** and **Cursor SDK** use masked key/token-only rows.
 
-Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models.
+For xAI browser OAuth, use **Open authorization URL** or **Copy URL**, then paste the full callback URL if the local callback cannot reach Forge. For a remote or headless backend, choose the device path and enter the displayed code at the verification URL. **Cancel** stops the current attempt, while **Clear** only dismisses completed or failed flow state; neither removes saved auth. Use **Remove** to delete the credential stored on that Forge backend.
+
+Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models. Native Grok can appear in specialist and spawn choices when xAI auth is configured and the models are visible, but not in normal manager create, change, or override selectors.
 
 ## Choose your model
 
