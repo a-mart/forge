@@ -1,5 +1,7 @@
 const FORGE_PROTOCOL = 'forge:'
 const SKILL_IMPORT_HOST = 'skill-import'
+const COMMAND_CENTER_HOST = 'open'
+const COMMAND_CENTER_KEYS = new Set(['agent', 'surface', 'deckPanel', 'view', 'statsTab'])
 
 export function findSkillImportUrlInArgs(args: readonly string[]): string | null {
   for (const arg of args) {
@@ -9,6 +11,32 @@ export function findSkillImportUrlInArgs(args: readonly string[]): string | null
     }
   }
   return null
+}
+
+export function findCommandCenterDeepLinkInArgs(args: readonly string[]): string | null {
+  for (const arg of args) {
+    if (parseCommandCenterDeepLink(arg)) return arg
+  }
+  return null
+}
+
+export function parseCommandCenterDeepLink(rawUrl: string): URLSearchParams | null {
+  let parsed: URL
+  try { parsed = new URL(rawUrl) } catch { return null }
+  if (parsed.protocol !== FORGE_PROTOCOL || parsed.hostname !== COMMAND_CENTER_HOST) return null
+  const params = new URLSearchParams()
+  for (const [key, value] of parsed.searchParams) {
+    if (COMMAND_CENTER_KEYS.has(key) && value.length <= 200) params.set(key, value)
+  }
+  return params
+}
+
+export function buildCommandCenterRouteUrl(rendererBaseUrl: string, deepLink: string): string {
+  const params = parseCommandCenterDeepLink(deepLink)
+  if (!params) return rendererBaseUrl
+  const target = new URL(rendererBaseUrl)
+  for (const [key, value] of params) target.searchParams.set(key, value)
+  return target.toString()
 }
 
 export function parseSkillImportDeepLink(rawUrl: string): string | null {

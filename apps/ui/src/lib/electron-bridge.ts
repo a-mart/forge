@@ -17,6 +17,7 @@ export type UpdateStatus =
   | { type: 'downloaded'; version?: string }
   | { type: 'error'; message?: string }
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
+export interface StreamDeckPluginStatus { supported: boolean; bundled: boolean; streamDeckInstalled: boolean; pluginVersion: string }
 
 export type ElectronWindowRole = 'main' | 'managed-browser-popout'
 export type ManagedBrowserWorkspaceMode = 'docked' | 'opening' | 'popped-out' | 'docking' | 'unavailable'
@@ -93,6 +94,8 @@ export interface ElectronBridge {
   getBetaChannel?(): Promise<boolean>; setBetaChannel?(enabled: boolean): Promise<void>
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
   revealInFolder?(filePath: string): Promise<void>; installCli?(): Promise<CliInstallResult>; verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
+  getStreamDeckPluginStatus?(): Promise<StreamDeckPluginStatus>
+  installStreamDeckPlugin?(): Promise<{ success: boolean; message: string }>
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>; setSleepBlockerSettings?(patch: { enabled?: boolean; gracePeriodMinutes?: number }): Promise<SleepBlockerStatus | null>
   onSleepBlockerStatus?(callback: (status: SleepBlockerStatus) => void): () => void
 }

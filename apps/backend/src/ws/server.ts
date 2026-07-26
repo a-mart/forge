@@ -47,6 +47,7 @@ import { BuilderSidebarOrderService } from "../swarm/builder-sidebar-order-servi
 import { CompactionSettingsService } from "../swarm/compaction-settings-service.js";
 import { KnowledgeV2SettingsService } from "../swarm/knowledge-v2-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
+import { StreamDeckAccessService } from "../swarm/stream-deck-access-service.js";
 import {
   NotificationSettingsService,
   isCliOriginatedSession,
@@ -74,6 +75,8 @@ import { createChatArtifactRoutes } from "./http/routes/chat-artifact-routes.js"
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
 import { createCliRoutes } from "./http/routes/cli-routes.js";
+import { createStreamDeckRoutes } from "./http/routes/stream-deck-routes.js";
+import { createStreamDeckPairingRoutes } from "./http/routes/stream-deck-pairing-routes.js";
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCompactionSettingsRoutes } from "./http/routes/compaction-settings-routes.js";
@@ -155,6 +158,7 @@ export class SwarmWebSocketServer {
   private readonly wsHandler: WsHandler;
   private readonly cliWsHandler: CliWsHandler;
   private readonly cliAccessService: CliAccessService;
+  private readonly streamDeckAccessService: StreamDeckAccessService;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
@@ -471,6 +475,7 @@ export class SwarmWebSocketServer {
     collaborationSettingsService?: CollaborationSettingsService;
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
+    streamDeckAccessService?: StreamDeckAccessService;
     notificationSettingsService?: NotificationSettingsService;
     remoteBuildSettingsService?: RemoteBuildSettingsService;
     builderSidebarOrderService?: BuilderSidebarOrderService;
@@ -503,6 +508,9 @@ export class SwarmWebSocketServer {
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),
+    });
+    this.streamDeckAccessService = options.streamDeckAccessService ?? new StreamDeckAccessService({
+      dataDir: this.swarmManager.getConfig().paths.dataDir,
     });
     this.notificationSettingsService =
       options.notificationSettingsService ??
@@ -645,6 +653,22 @@ export class SwarmWebSocketServer {
             swarmManager: this.swarmManager,
           })
         : []),
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+          ? createStreamDeckRoutes({
+            cliAccessService: this.cliAccessService,
+            streamDeckAccessService: this.streamDeckAccessService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+            swarmManager: this.swarmManager,
+            unreadTracker: this.unreadTracker,
+            statsService: this.statsService,
+            onUnreadChanged: (sessionAgentId, count) =>
+              this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, count),
+          })
+        : []),
+      ...createStreamDeckPairingRoutes({
+        streamDeckAccessService: this.streamDeckAccessService,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+      }),
       ...createCliAccessSettingsRoutes({
         cliAccessService: this.cliAccessService,
         runtimeTarget: this.swarmManager.getConfig().runtimeTarget,

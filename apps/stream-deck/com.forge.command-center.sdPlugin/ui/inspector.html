@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Forge Command Center</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --cyan:#39e7ff; --violet:#9b6cff; --ember:#ff6b35; --green:#55f59a; --muted:#8491ad; }
+    * { box-sizing: border-box; }
+    body { margin:0; padding:12px; color:#f5fbff; background:radial-gradient(circle at 80% 0,#192648 0,transparent 45%),#080b13; font-size:12px; }
+    header { display:flex; gap:10px; align-items:center; padding:6px 2px 14px; }
+    .mark { width:38px; height:38px; display:grid; place-items:center; border:1px solid var(--cyan); border-radius:11px; color:var(--cyan); font-size:21px; font-weight:900; box-shadow:0 0 16px #39e7ff44; }
+    h1 { margin:0; font-size:15px; letter-spacing:.07em; }
+    header p { margin:2px 0 0; color:var(--muted); font-size:10px; }
+    .card { margin:0 0 10px; padding:11px; border:1px solid #263150; border-radius:12px; background:#0d1322d9; box-shadow:0 8px 24px #0005; }
+    .card-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:9px; color:var(--cyan); font-weight:800; letter-spacing:.08em; font-size:10px; text-transform:uppercase; }
+    .status { display:inline-flex; align-items:center; gap:5px; text-transform:none; letter-spacing:0; color:var(--muted); }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+    .status.ok { color:var(--green); }.status.ok .dot { background:var(--green); box-shadow:0 0 8px var(--green); }
+    .status.bad { color:#ff6d89; }.status.bad .dot { background:#ff4668; }
+    label { display:block; margin:9px 0 4px; color:#b7c2da; font-size:10px; font-weight:650; }
+    input, select, textarea { width:100%; border:1px solid #354263; border-radius:7px; padding:7px 8px; background:#080d19; color:#f5fbff; outline:none; font:inherit; }
+    input:focus, select:focus, textarea:focus { border-color:var(--cyan); box-shadow:0 0 0 2px #39e7ff22; }
+    textarea { min-height:78px; resize:vertical; line-height:1.4; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    button { width:100%; margin-top:10px; border:1px solid var(--cyan); border-radius:8px; padding:8px; color:#071018; background:linear-gradient(135deg,var(--cyan),#7ff5ff); font-weight:850; cursor:pointer; }
+    button:active { transform:translateY(1px); }
+    .hint { margin:7px 0 0; color:var(--muted); font-size:9px; line-height:1.4; }
+    .hidden { display:none; }
+    .danger-note { color:#ffb2c1; }
+  </style>
+</head>
+<body>
+  <header><div class="mark">F</div><div><h1>FORGE COMMAND CENTER</h1><p>Live agentic control surface</p></div></header>
+
+  <section class="card">
+    <div class="card-title">Connection <span id="status" class="status"><span class="dot"></span>Not tested</span></div>
+    <label for="baseUrl">Forge API</label>
+    <input id="baseUrl" value="http://127.0.0.1:47287" autocomplete="off">
+    <label for="uiUrl">Forge UI</label>
+    <input id="uiUrl" value="forge://open" autocomplete="off">
+    <label>Secure pairing</label>
+    <div id="pairing" style="border:1px solid #354263;border-radius:9px;padding:10px;background:#080d19;color:#ffd166;font:800 15px ui-monospace,monospace">Open Forge → Settings → Stream Deck</div>
+    <label for="pollIntervalMs">Refresh</label>
+    <select id="pollIntervalMs"><option value="750">0.75 sec</option><option value="1500" selected>1.5 sec</option><option value="3000">3 sec</option><option value="5000">5 sec</option></select>
+    <button id="test" type="button">TEST FORGE LINK</button>
+    <p class="hint">Forge issues this device a dedicated, revocable token. It cannot authenticate the Forge CLI, and the token is never shown here.</p>
+  </section>
+
+  <section id="targetCard" class="card">
+    <div class="card-title">Dynamic target</div>
+    <label for="targetMode">Session source</label>
+    <select id="targetMode"><option value="attention">Needs attention / most recent</option><option value="slot">Dynamic recent slot</option><option value="fixed">Fixed session</option></select>
+    <div id="slotRow"><label for="slot">Recent slot</label><select id="slot"><option value="0">#1 — highest attention</option><option value="1">#2</option><option value="2">#3</option><option value="3">#4</option><option value="4">#5</option><option value="5">#6</option><option value="6">#7</option><option value="7">#8</option></select></div>
+    <div id="fixedRow" class="hidden"><label for="targetAgentId">Fixed session</label><select id="targetAgentId"><option value="">Connect to load sessions</option></select></div>
+  </section>
+
+  <section id="viewCard" class="card hidden">
+    <div class="card-title">Destination</div>
+    <label for="view">Forge surface</label>
+    <select id="view"><option value="chat">Chat</option><option value="git">Source Control / Git</option><option value="browser">Managed Browser</option><option value="terminal">Terminal</option><option value="stats">Statistics overview</option><option value="tokens">Token analytics</option></select>
+  </section>
+
+  <section id="statsCard" class="card hidden">
+    <div class="card-title">Live statistic</div>
+    <label for="metric">Metric</label>
+    <select id="metric"><option value="tokens">Tokens today</option><option value="cache">Cache hit rate</option><option value="commits">Commits</option><option value="lines">Lines added</option></select>
+  </section>
+
+  <section id="missionCard" class="card hidden">
+    <div class="card-title">Mission payload</div>
+    <label for="label">Key label</label><input id="label" maxlength="30" placeholder="e.g. SHIP CHECK">
+    <label for="prompt">Prompt to send</label><textarea id="prompt" maxlength="8000" placeholder="Review the current work, run the focused checks, and report only blockers."></textarea>
+    <p class="hint">The prompt is sent to the dynamically resolved session with normal Forge delivery semantics.</p>
+  </section>
+
+  <section id="controlCard" class="card hidden">
+    <div class="card-title">Guarded control</div>
+    <label for="control">Hold action</label>
+    <select id="control"><option value="toggle">Stop / resume session</option><option value="compact">Smart compact context</option><option value="mark_read">Mark output read</option></select>
+    <p class="hint danger-note">The key must be held for 650 ms. Destructive delete and clear operations are intentionally not exposed.</p>
+  </section>
+
+  <section id="newSessionCard" class="card hidden">
+    <div class="card-title">Session launch</div>
+    <label for="targetProfileId">Forge profile</label><select id="targetProfileId"><option value="">Connect to load profiles</option></select>
+    <label for="newLabel">Optional session label</label><input id="newLabel" maxlength="120" placeholder="Deck mission">
+    <p class="hint">Hold to create the session and open it. The profile’s model, cwd, and instructions remain authoritative.</p>
+  </section>
+
+  <script>
+    let socket, uiUUID, pluginUUID, actionUUID, actionContext, actionSettings = {}, globalSettings = {}, saveTimer;
+    const $ = id => document.getElementById(id);
+    const globalIds = ['baseUrl','uiUrl','pollIntervalMs'];
+    const actionIds = ['targetMode','slot','targetAgentId','view','label','prompt','control','targetProfileId'];
+
+    function connectElgatoStreamDeckSocket(port, uuid, registerEvent, info, actionInfo) {
+      uiUUID = uuid;
+      pluginUUID = JSON.parse(info).plugin.uuid;
+      const parsed = JSON.parse(actionInfo);
+      actionUUID = parsed.action;
+      actionContext = parsed.context;
+      actionSettings = parsed.payload?.settings || {};
+      socket = new WebSocket(`ws://127.0.0.1:${port}`);
+      socket.onopen = () => {
+        send({ event: registerEvent, uuid: uiUUID });
+        send({ event: 'getGlobalSettings', context: pluginUUID });
+        hydrateAction();
+        showRelevantCards();
+      };
+      socket.onmessage = event => {
+        const message = JSON.parse(event.data);
+        if (message.event === 'didReceiveGlobalSettings') {
+          globalSettings = message.payload?.settings || {};
+          hydrateGlobals();
+          void testConnection(false);
+        } else if (message.event === 'didReceiveSettings') {
+          actionSettings = message.payload?.settings || {};
+          hydrateAction();
+        }
+      };
+    }
+
+    function send(message) {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+    }
+
+    function hydrateGlobals() {
+      $('baseUrl').value = globalSettings.baseUrl || 'http://127.0.0.1:47287';
+      $('uiUrl').value = globalSettings.uiUrl || 'forge://open';
+      $('pairing').textContent = globalSettings.accessToken
+        ? 'PAIRED · dedicated Forge credential'
+        : globalSettings.pairingCode
+          ? `CODE ${String(globalSettings.pairingCode).slice(0,3)} ${String(globalSettings.pairingCode).slice(3)}`
+          : 'Waiting for Forge…';
+      $('pollIntervalMs').value = String(globalSettings.pollIntervalMs || 1500);
+    }
+
+    function hydrateAction() {
+      $('targetMode').value = actionSettings.targetMode || (actionUUID?.endsWith('.session') ? 'slot' : 'attention');
+      $('slot').value = String(actionSettings.slot || 0);
+      $('view').value = actionSettings.view || 'git';
+      $('label').value = actionSettings.label || '';
+      $('newLabel').value = actionSettings.label || '';
+      $('prompt').value = actionSettings.prompt || '';
+      $('control').value = actionSettings.control || 'toggle';
+      updateTargetRows();
+    }
+
+    function showRelevantCards() {
+      const suffix = actionUUID?.split('.').pop();
+      $('targetCard').classList.toggle('hidden', ['pulse','attention','stats','new-session'].includes(suffix));
+      $('viewCard').classList.toggle('hidden', suffix !== 'view');
+      $('statsCard').classList.toggle('hidden', suffix !== 'stats');
+      $('missionCard').classList.toggle('hidden', suffix !== 'mission');
+      $('controlCard').classList.toggle('hidden', !['control','context'].includes(suffix));
+      $('newSessionCard').classList.toggle('hidden', suffix !== 'new-session');
+      if (suffix === 'context') {
+        $('control').value = 'compact';
+        $('control').disabled = true;
+      }
+    }
+
+    function updateTargetRows() {
+      const mode = $('targetMode').value;
+      $('slotRow').classList.toggle('hidden', mode !== 'slot');
+      $('fixedRow').classList.toggle('hidden', mode !== 'fixed');
+    }
+
+    function queueSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 180);
+    }
+
+    function collectGlobalSettings() {
+      return {
+        ...globalSettings,
+        baseUrl: $('baseUrl').value.trim(),
+        uiUrl: $('uiUrl').value.trim(),
+        pollIntervalMs: Number($('pollIntervalMs').value)
+      };
+    }
+
+    function save() {
+      globalSettings = collectGlobalSettings();
+      actionSettings = {
+        ...actionSettings,
+        targetMode: $('targetMode').value,
+        slot: Number($('slot').value),
+        targetAgentId: $('targetAgentId').value,
+        view: $('view').value,
+        label: actionUUID?.endsWith('.new-session') ? $('newLabel').value.trim() : $('label').value.trim(),
+        prompt: $('prompt').value.trim(),
+        control: $('control').value,
+        targetProfileId: $('targetProfileId').value
+      };
+      if (actionUUID?.endsWith('.stats')) actionSettings.label = $('metric').value;
+      send({ event:'setGlobalSettings', context:pluginUUID, payload:globalSettings });
+      send({ event:'setSettings', context:actionContext, payload:actionSettings });
+    }
+
+    async function testConnection(persist = true) {
+      const status = $('status');
+      status.className = 'status';
+      status.innerHTML = '<span class="dot"></span>Testing…';
+      if (persist) save();
+      try {
+        const settings = collectGlobalSettings();
+        const base = settings.baseUrl.replace(/\\/+$/,'');
+        const response = await fetch(`${base}/api/stream-deck/snapshot`, {
+          headers: { authorization: `Bearer ${globalSettings.accessToken || globalSettings.apiKey || ''}` }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        handleConnectionResult({
+          ok: true,
+          snapshot: await response.json()
+        });
+      } catch (error) {
+        handleConnectionResult({
+          ok: false,
+          message: error.message || 'Unavailable'
+        });
+      }
+    }
+
+    function handleConnectionResult(result) {
+      const status = $('status');
+      if (result.ok && result.snapshot) {
+        loadTargets(result.snapshot);
+        status.className = 'status ok';
+        status.innerHTML = `<span class="dot"></span>${result.snapshot.summary.sessionCount} sessions · ${result.snapshot.summary.activeWorkerCount} active`;
+      } else {
+        status.className = 'status bad';
+        status.innerHTML = `<span class="dot"></span>${result.message || 'Unavailable'}`;
+      }
+    }
+
+    function loadTargets(snapshot) {
+      const sessionSelect = $('targetAgentId');
+      sessionSelect.innerHTML = snapshot.sessions.map(session =>
+        `<option value="${escapeHtml(session.agentId)}">${escapeHtml(session.profileName)} · ${escapeHtml(session.label)} · ${escapeHtml(session.status)}</option>`
+      ).join('') || '<option value="">No sessions</option>';
+      sessionSelect.value = actionSettings.targetAgentId || sessionSelect.options[0]?.value || '';
+      const profileSelect = $('targetProfileId');
+      profileSelect.innerHTML = snapshot.profiles.map(profile =>
+        `<option value="${escapeHtml(profile.profileId)}">${escapeHtml(profile.displayName)} · ${profile.sessionCount} sessions</option>`
+      ).join('') || '<option value="">No profiles</option>';
+      profileSelect.value = actionSettings.targetProfileId || profileSelect.options[0]?.value || '';
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    [...globalIds, ...actionIds, 'metric', 'newLabel'].forEach(id => {
+      $(id).addEventListener('input', queueSave);
+      $(id).addEventListener('change', () => { updateTargetRows(); queueSave(); });
+    });
+    $('test').addEventListener('click', testConnection);
+  </script>
+</body>
+</html>

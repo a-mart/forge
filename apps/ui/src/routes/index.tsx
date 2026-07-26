@@ -46,6 +46,7 @@ type RouteSearch = {
   channel?: string
   collab?: string
   origin?: string
+  deckPanel?: string
   statsTab?: string
   settingsTab?: string
   collabApiBaseUrl?: string
@@ -419,6 +420,9 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.origin) {
       params.set('origin', search.origin)
     }
+    if (search?.deckPanel) {
+      params.set('deckPanel', search.deckPanel)
+    }
     if (search?.statsTab) {
       params.set('statsTab', search.statsTab)
     }
@@ -471,6 +475,7 @@ export function parseWindowRouteSearch(search: string): RouteSearch {
     channel: params.get('channel') ?? undefined,
     collab: params.get('collab') ?? undefined,
     origin: params.get('origin') ?? undefined,
+    deckPanel: params.get('deckPanel') ?? undefined,
     statsTab: params.get('statsTab') ?? undefined,
     settingsTab: params.get('settingsTab') ?? undefined,
     collabApiBaseUrl: params.get('collabApiBaseUrl') ?? undefined,

@@ -61,6 +61,8 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
         error?: string
       }> => ipcRenderer.invoke('install-cli'),
       verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
+      getStreamDeckPluginStatus: () => ipcRenderer.invoke('get-stream-deck-plugin-status'),
+      installStreamDeckPlugin: () => ipcRenderer.invoke('install-stream-deck-plugin'),
       onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
         const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => callback(status)
         ipcRenderer.on('update-status', handler)
