@@ -1,4 +1,10 @@
+/**
+ * Providers that must never receive Secure Sessions grants or runtime setup.
+ * `claude-sdk` is retained only as an unsupported compatibility tombstone for
+ * unknown persisted legacy descriptors that remain unavailable after retirement.
+ */
 const UNSUPPORTED_SECURE_RUNTIME_PROVIDERS = new Set([
+  "claude-sdk",
   "cursor-sdk",
   "cursor-acp",
 ]);
