@@ -115,7 +115,7 @@ Recordings and completed browser recording artifacts are Managed Browser-only. E
 
 Forge Desktop stages and verifies compatible extension/native-host updates. Compatible connected Chrome profiles are asked to reload automatically after update or rollback. Do not make manual reload part of the normal update routine.
 
-Only when Settings reports **Manual extension reload required** should you open `chrome://extensions`, compare the versions/hashes shown by Forge, and click **Reload** on Forge External Chrome in each affected profile. If Chrome was closed during an update, reopen it and check Settings before taking action.
+Only when Settings reports **Manual extension reload required** should you open `chrome://extensions`, compare the versions/hashes shown by Forge, and click **Reload** on the Forge extension in each affected profile. If Chrome was closed during an update, reopen it and check Settings before taking action.
 
 ### Repair, takeover, rollback, and removal
 

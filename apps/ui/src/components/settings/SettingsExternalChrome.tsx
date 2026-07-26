@@ -415,7 +415,7 @@ function recoveryGuidance(recovery: ExternalChromeCoordinatorStatus['recovery'])
     updating: 'New claims and browser operations are paused.',
     reconnecting: 'Forge requires a new authenticated hello before re-enabling operations.',
     'rolled-back': 'Rolled back to the last verified compatible payload.',
-    'manual-extension-reload': 'Open chrome://extensions and click Reload for Forge External Chrome. Compatible connected profiles otherwise auto-reload after update or rollback.',
+    'manual-extension-reload': 'Open chrome://extensions and click Reload for Forge. Compatible connected profiles otherwise auto-reload after update or rollback.',
     'incompatible-payload': 'The current and previous payloads are incompatible. External Chrome remains detached; Managed Browser is still available.',
     'authority-owned-by-other-data-dir': 'Another Forge data directory owns coordinator and native-host authority. Quiesce that authority, then confirm takeover. This does not transfer Chrome profiles or tabs.',
   }
