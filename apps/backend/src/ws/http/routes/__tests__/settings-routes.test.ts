@@ -16,6 +16,7 @@ import { SwarmWebSocketServer } from '../../../server.js'
 const oauthMockState = vi.hoisted(() => ({
   anthropicLogin: vi.fn(),
   openaiLogin: vi.fn(),
+  xaiLogin: vi.fn(),
 }))
 
 vi.mock('@earendil-works/pi-ai/oauth', () => ({
@@ -29,6 +30,11 @@ vi.mock('@earendil-works/pi-ai/oauth', () => ({
     usesCallbackServer: false,
     login: (callbacks: unknown) => oauthMockState.openaiLogin(callbacks),
   },
+  xaiOAuthProvider: {
+    name: 'xAI',
+    usesCallbackServer: true,
+    login: (callbacks: unknown) => oauthMockState.xaiLogin(callbacks),
+  },
 }))
 
 interface TestServer {
@@ -41,6 +47,7 @@ const activeServers: TestServer[] = []
 afterEach(async () => {
   oauthMockState.anthropicLogin.mockReset()
   oauthMockState.openaiLogin.mockReset()
+  oauthMockState.xaiLogin.mockReset()
   vi.restoreAllMocks()
   await Promise.all(activeServers.splice(0).map((server) => server.close()))
 })
@@ -658,6 +665,39 @@ describe('settings routes', () => {
     expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(2, 'anthropic')
     expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(3, 'anthropic')
     expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(4, 'anthropic')
+  })
+
+  it('supports direct single-slot xAI OAuth without enabling xAI credential pooling', async () => {
+    oauthMockState.xaiLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onAuth({ url: 'https://auth.x.ai/oauth2/authorize', instructions: 'Authorize xAI.' })
+      callbacks.onDeviceCode({
+        userCode: 'ABCD-EFGH',
+        verificationUri: 'https://auth.x.ai/device',
+        intervalSeconds: 5,
+        expiresInSeconds: 900,
+      })
+      return { access: 'xai-access-token', refresh: 'xai-refresh-token', expires: 4_000_000_000_000 }
+    })
+    const swarmManager = {
+      updateSettingsAuthCredential: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => ({ strategy: 'fill_first', credentials: [] })),
+    }
+    const server = await createSettingsRouteTestServer(swarmManager)
+
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/login/xai`, { method: 'POST' })
+    expect(response.status).toBe(200)
+    const events = await readSseEvents(response)
+    expect(events.map((event) => event.event)).toEqual(expect.arrayContaining(['auth_url', 'device_code', 'complete']))
+    expect(swarmManager.updateSettingsAuthCredential).toHaveBeenCalledWith('xai', {
+      type: 'oauth',
+      access: 'xai-access-token',
+      refresh: 'xai-refresh-token',
+      expires: 4_000_000_000_000,
+    })
+
+    const accountsResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai/accounts`)
+    expect(accountsResponse.status).toBe(400)
+    expect(swarmManager.listCredentialPool).not.toHaveBeenCalled()
   })
 
   it('rejects unsupported pooled-auth providers before invoking pool mutations', async () => {

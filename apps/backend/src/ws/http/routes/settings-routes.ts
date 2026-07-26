@@ -1,6 +1,7 @@
 import {
   anthropicOAuthProvider,
   openaiCodexOAuthProvider,
+  xaiOAuthProvider,
   type OAuthCredentials,
   type OAuthProviderInterface
 } from "@earendil-works/pi-ai/oauth";
@@ -19,6 +20,7 @@ import type {
   SettingsAuthLoginEventName,
   SettingsAuthLoginEventPayload,
   SettingsAuthLoginProviderId,
+  PooledSettingsAuthProviderId,
   SettingsAuthMutationResponse,
   SettingsAuthResponse,
   SettingsEnvMutationResponse,
@@ -50,7 +52,6 @@ const OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR_CODE = "central_broker_mode_active
 const OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR = "Switch OpenAI auth source back to local before editing local OpenAI credentials.";
 const SETTINGS_NOTIFICATIONS_METHODS = "GET, PUT, OPTIONS";
 
-type PooledSettingsAuthProviderId = SettingsAuthLoginProviderId;
 type InvalidateProviderUsage = (...providers: string[]) => Promise<void>;
 
 interface SettingsAuthLoginFlow {
@@ -68,7 +69,8 @@ interface SettingsAuthLoginFlow {
 
 const SETTINGS_AUTH_LOGIN_PROVIDERS: Record<SettingsAuthLoginProviderId, OAuthProviderInterface> = {
   anthropic: anthropicOAuthProvider,
-  "openai-codex": openaiCodexOAuthProvider
+  "openai-codex": openaiCodexOAuthProvider,
+  xai: xaiOAuthProvider
 };
 
 export interface SettingsRouteBundle {
@@ -877,7 +879,11 @@ async function handleSettingsAuthLoginHttpRequest(
     }
 
     const payload = parseSettingsAuthLoginRespondBody(await readJsonBody(request));
-    const flow = activeSettingsAuthLoginFlows.get(providerId) ?? findActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId);
+    const flow = activeSettingsAuthLoginFlows.get(providerId) ?? (
+      isPooledSettingsAuthProviderId(providerId)
+        ? findActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId)
+        : undefined
+    );
     if (!flow) {
       sendJson(response, 409, { error: "No active OAuth login flow for provider" });
       return;
@@ -910,7 +916,10 @@ async function handleSettingsAuthLoginHttpRequest(
     return;
   }
 
-  if (activeSettingsAuthLoginFlows.has(providerId) || hasActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId)) {
+  if (
+    activeSettingsAuthLoginFlows.has(providerId) ||
+    (isPooledSettingsAuthProviderId(providerId) && hasActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId))
+  ) {
     sendJson(response, 409, { error: "OAuth login already in progress for provider" });
     return;
   }
@@ -1064,16 +1073,13 @@ async function resolvePooledSettingsAuthProvider(
   rawProvider: string
 ): Promise<{ providerId: PooledSettingsAuthProviderId; pool: CredentialPoolState } | undefined> {
   const provider = rawProvider.trim().toLowerCase();
-  if (!provider) {
+  const providerId = resolvePooledSettingsAuthProviderId(provider);
+  if (!providerId) {
     return undefined;
   }
 
   try {
-    const pool = await swarmManager.listCredentialPool(provider);
-    const providerId = resolveSettingsAuthLoginProviderId(provider);
-    if (!providerId) {
-      return undefined;
-    }
+    const pool = await swarmManager.listCredentialPool(providerId);
 
     return {
       providerId,
@@ -1142,6 +1148,8 @@ function getSettingsAuthProviderLabel(provider: string): string {
       return "Anthropic";
     case "openai-codex":
       return "OpenAI Codex";
+    case "xai":
+      return "xAI";
     default:
       return provider;
   }
@@ -1297,9 +1305,18 @@ function parseSettingsAuthLoginRespondBody(value: unknown): { value: string; req
 
 function resolveSettingsAuthLoginProviderId(rawProvider: string): SettingsAuthLoginProviderId | undefined {
   const normalized = rawProvider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "openai-codex") {
+  if (normalized === "anthropic" || normalized === "openai-codex" || normalized === "xai") {
     return normalized;
   }
 
   return undefined;
+}
+
+function isPooledSettingsAuthProviderId(provider: SettingsAuthLoginProviderId): provider is PooledSettingsAuthProviderId {
+  return provider === "anthropic" || provider === "openai-codex";
+}
+
+function resolvePooledSettingsAuthProviderId(rawProvider: string): PooledSettingsAuthProviderId | undefined {
+  const provider = resolveSettingsAuthLoginProviderId(rawProvider);
+  return provider && isPooledSettingsAuthProviderId(provider) ? provider : undefined;
 }

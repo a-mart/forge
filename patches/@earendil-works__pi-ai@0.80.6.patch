@@ -1,114 +1,8 @@
-diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 1111111..2222222 100644
---- a/dist/api/openai-responses-shared.js
-+++ b/dist/api/openai-responses-shared.js
-@@ -104,19 +104,42 @@
-         else if (msg.role === "assistant") {
-             const output = [];
-             const assistantMsg = msg;
-+            // Silent turns (no tool calls, no non-whitespace text) carry zero
-+            // information, and replaying them teaches the model that empty
-+            // responses are its own normal behavior — a self-reinforcing loop
-+            // measured at up to 100% empty-turn probability in contaminated
-+            // sessions. Drop the whole message (including its reasoning items)
-+            // from replay; the session file keeps the historical record.
-+            const isSilentAssistantTurn = !msg.content.some((block) => block.type === "toolCall" ||
-+                (block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0));
-+            if (isSilentAssistantTurn) {
-+                continue;
-+            }
-             const isDifferentModel = assistantMsg.model !== model.id &&
-                 assistantMsg.provider === model.provider &&
-                 assistantMsg.api === model.api;
-             let textBlockIndex = 0;
-+            let hasAssistantMessage = false;
-+            let hasToolCalls = false;
-+            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
-+            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
-             for (const block of msg.content) {
-                 if (block.type === "thinking") {
--                    if (block.thinkingSignature) {
-+                    // xAI's Responses-compatible endpoint rejects historical reasoning items even
-+                    // when the rest of the assistant/tool-call turn is valid. Keep replaying them
-+                    // for providers that accept OpenAI Responses reasoning history.
-+                    if (block.thinkingSignature && shouldReplayHistoricalReasoning) {
-                         const reasoningItem = JSON.parse(block.thinkingSignature);
-                         output.push(reasoningItem);
-                     }
-                 }
-                 else if (block.type === "text") {
-                     const textBlock = block;
-+                    const assistantText = sanitizeSurrogates(textBlock.text);
-+                    // Never replay an empty assistant text item to any Responses model.
-+                    if (assistantText.trim().length === 0) {
-+                        continue;
-+                    }
-                     const parsedSignature = parseTextSignature(textBlock.textSignature);
-                     const fallbackMessageId = textBlockIndex === 0 ? `msg_pi_${msgIndex}` : `msg_pi_${msgIndex}_${textBlockIndex}`;
-                     textBlockIndex++;
-@@ -131,11 +154,12 @@
-                     output.push({
-                         type: "message",
-                         role: "assistant",
--                        content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
-+                        content: [{ type: "output_text", text: assistantText, annotations: [] }],
-                         status: "completed",
-                         id: msgId,
-                         phase: parsedSignature?.phase,
-                     });
-+                    hasAssistantMessage = true;
-                 }
-                 else if (block.type === "toolCall") {
-                     const toolCall = block;
-@@ -154,8 +178,23 @@
-                         name: toolCall.name,
-                         arguments: JSON.stringify(toolCall.arguments),
-                     });
-+                    hasToolCalls = true;
-                 }
-             }
-+            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
-+            // the assistant message item entirely. Mirror the chat-completions fix by inserting
-+            // a non-empty placeholder assistant message before the function_call items when the
-+            // turn has tools but no text. xAI-scoped: Codex accepts tool-only turns natively.
-+            if (isXaiResponsesModel && hasToolCalls && !hasAssistantMessage) {
-+                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
-+                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
-+                    type: "message",
-+                    role: "assistant",
-+                    content: [{ type: "output_text", text: " ", annotations: [] }],
-+                    status: "completed",
-+                    id: `msg_${msgIndex}`,
-+                });
-+            }
-             if (output.length === 0)
-                 continue;
-             messages.push(...output);
-diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index 1111111..2222222 100644
---- a/dist/api/openai-completions.js
-+++ b/dist/api/openai-completions.js
-@@ -811,6 +811,15 @@
-                 assistantMsg.reasoning_content === undefined) {
-                 assistantMsg.reasoning_content = "";
-             }
-+            // xAI rejects content:null/"" on tool-call messages; OpenAI/Anthropic/Google accept
-+            // it (pi's upstream default is null and works for them). Scope the placeholder to xAI
-+            // so other providers keep clean null content instead of a synthetic blank assistant
-+            // text item, which would otherwise seed the same empty-turn imitation loop on replay.
-+            const isXaiCompletionsModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
-+            if (isXaiCompletionsModel && assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
-+                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
-+                assistantMsg.content = " ";
-+            }
-             // Skip assistant messages that have no content and no tool calls.
-             // Some providers require "either content or tool_calls, but not none".
-             // Other providers also don't accept empty assistant messages.
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index 1111111..2222222 100644
+index 803c76af791714b0a9a8246c5aaa1837585db7a3..6a80ce52b4bf5f2d4adf4dc8757f3cfac2ebf51d 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
-@@ -173,13 +173,22 @@
+@@ -173,13 +173,22 @@ export const stream = (model, context, options) => {
              }
              if (transport !== "sse" && !websocketDisabledForSession) {
                  let websocketStarted = false;
@@ -134,7 +28,7 @@ index 1111111..2222222 100644
                          if (options?.signal?.aborted) {
                              throw new Error("Request was aborted");
                          }
-@@ -201,17 +210,30 @@
+@@ -201,17 +210,30 @@ export const stream = (model, context, options) => {
                          if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
                              throw error;
                          }
@@ -167,7 +61,7 @@ index 1111111..2222222 100644
                          recordWebSocketSseFallback(options?.sessionId);
                          break;
                      }
-@@ -778,7 +800,49 @@
+@@ -778,7 +800,49 @@ async function connectWebSocket(url, headers, signal, connectTimeoutMs = DEFAULT
          }
      });
  }
@@ -218,7 +112,7 @@ index 1111111..2222222 100644
      if (!sessionId) {
          const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
          return {
-@@ -1057,25 +1121,28 @@
+@@ -1057,25 +1121,28 @@ function buildCachedWebSocketRequestBody(entry, body) {
          input: delta,
      };
  }
@@ -252,7 +146,7 @@ index 1111111..2222222 100644
      const stats = options?.sessionId ? getOrCreateWebSocketDebugStats(options.sessionId) : undefined;
      if (stats) {
          stats.requests++;
-@@ -1101,7 +1168,7 @@
+@@ -1101,7 +1168,7 @@ async function processWebSocketStream(url, body, headers, output, stream, model,
      }
      try {
          socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
@@ -261,3 +155,509 @@ index 1111111..2222222 100644
              serviceTier: options?.serviceTier,
              resolveServiceTier: resolveCodexServiceTier,
              applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index d764beb5583673bbe9f3ad35b751be79857fef4b..3c9c4c4daece63bdba8ebfce79d783350ee6576a 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -811,6 +811,15 @@ export function convertMessages(model, context, compat) {
+                 assistantMsg.reasoning_content === undefined) {
+                 assistantMsg.reasoning_content = "";
+             }
++            // xAI rejects content:null/"" on tool-call messages; OpenAI/Anthropic/Google accept
++            // it (pi's upstream default is null and works for them). Scope the placeholder to xAI
++            // so other providers keep clean null content instead of a synthetic blank assistant
++            // text item, which would otherwise seed the same empty-turn imitation loop on replay.
++            const isXaiCompletionsModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
++            if (isXaiCompletionsModel && assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
++                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
++                assistantMsg.content = " ";
++            }
+             // Skip assistant messages that have no content and no tool calls.
+             // Some providers require "either content or tool_calls, but not none".
+             // Other providers also don't accept empty assistant messages.
+diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+index cd76bb3e3a06a10dd028a41e250fc6d8ae700d00..feb710c5ef51e453d3d0c2331566618da35fc535 100644
+--- a/dist/api/openai-responses-shared.js
++++ b/dist/api/openai-responses-shared.js
+@@ -104,19 +104,42 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+         else if (msg.role === "assistant") {
+             const output = [];
+             const assistantMsg = msg;
++            // Silent turns (no tool calls, no non-whitespace text) carry zero
++            // information, and replaying them teaches the model that empty
++            // responses are its own normal behavior — a self-reinforcing loop
++            // measured at up to 100% empty-turn probability in contaminated
++            // sessions. Drop the whole message (including its reasoning items)
++            // from replay; the session file keeps the historical record.
++            const isSilentAssistantTurn = !msg.content.some((block) => block.type === "toolCall" ||
++                (block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0));
++            if (isSilentAssistantTurn) {
++                continue;
++            }
+             const isDifferentModel = assistantMsg.model !== model.id &&
+                 assistantMsg.provider === model.provider &&
+                 assistantMsg.api === model.api;
+             let textBlockIndex = 0;
++            let hasAssistantMessage = false;
++            let hasToolCalls = false;
++            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
++            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
+             for (const block of msg.content) {
+                 if (block.type === "thinking") {
+-                    if (block.thinkingSignature) {
++                    // xAI's Responses-compatible endpoint rejects historical reasoning items even
++                    // when the rest of the assistant/tool-call turn is valid. Keep replaying them
++                    // for providers that accept OpenAI Responses reasoning history.
++                    if (block.thinkingSignature && shouldReplayHistoricalReasoning) {
+                         const reasoningItem = JSON.parse(block.thinkingSignature);
+                         output.push(reasoningItem);
+                     }
+                 }
+                 else if (block.type === "text") {
+                     const textBlock = block;
++                    const assistantText = sanitizeSurrogates(textBlock.text);
++                    // Never replay an empty assistant text item to any Responses model.
++                    if (assistantText.trim().length === 0) {
++                        continue;
++                    }
+                     const parsedSignature = parseTextSignature(textBlock.textSignature);
+                     const fallbackMessageId = textBlockIndex === 0 ? `msg_pi_${msgIndex}` : `msg_pi_${msgIndex}_${textBlockIndex}`;
+                     textBlockIndex++;
+@@ -131,11 +154,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                     output.push({
+                         type: "message",
+                         role: "assistant",
+-                        content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
++                        content: [{ type: "output_text", text: assistantText, annotations: [] }],
+                         status: "completed",
+                         id: msgId,
+                         phase: parsedSignature?.phase,
+                     });
++                    hasAssistantMessage = true;
+                 }
+                 else if (block.type === "toolCall") {
+                     const toolCall = block;
+@@ -154,8 +178,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                         name: toolCall.name,
+                         arguments: JSON.stringify(toolCall.arguments),
+                     });
++                    hasToolCalls = true;
+                 }
+             }
++            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
++            // the assistant message item entirely. Mirror the chat-completions fix by inserting
++            // a non-empty placeholder assistant message before the function_call items when the
++            // turn has tools but no text. xAI-scoped: Codex accepts tool-only turns natively.
++            if (isXaiResponsesModel && hasToolCalls && !hasAssistantMessage) {
++                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
++                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
++                    type: "message",
++                    role: "assistant",
++                    content: [{ type: "output_text", text: " ", annotations: [] }],
++                    status: "completed",
++                    id: `msg_${msgIndex}`,
++                });
++            }
+             if (output.length === 0)
+                 continue;
+             messages.push(...output);
+diff --git a/dist/utils/oauth/index.d.ts b/dist/utils/oauth/index.d.ts
+index f68eecebd8a481ec21fd244af22bf56b8d8f5f89..6548334e4cd24fab43ea36ff171ee40d7c078eb6 100644
+--- a/dist/utils/oauth/index.d.ts
++++ b/dist/utils/oauth/index.d.ts
+@@ -10,6 +10,7 @@ export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from ".
+ export * from "./device-code.ts";
+ export { getGitHubCopilotBaseUrl, githubCopilotOAuthProvider, loginGitHubCopilot, normalizeDomain, refreshGitHubCopilotToken, } from "./github-copilot.ts";
+ export { loginOpenAICodex, loginOpenAICodexDeviceCode, OPENAI_CODEX_BROWSER_LOGIN_METHOD, OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, openaiCodexOAuthProvider, refreshOpenAICodexToken, } from "./openai-codex.ts";
++export { refreshXaiToken, xaiOAuthProvider } from "./xai.ts";
+ export * from "./types.ts";
+ import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
+ /**
+diff --git a/dist/utils/oauth/index.js b/dist/utils/oauth/index.js
+index ae045477994713c7f5382f2adbcab1a63b45242f..fac9b82779a6af4570229840c35d1e5c662f989d 100644
+--- a/dist/utils/oauth/index.js
++++ b/dist/utils/oauth/index.js
+@@ -13,6 +13,8 @@ export * from "./device-code.js";
+ export { getGitHubCopilotBaseUrl, githubCopilotOAuthProvider, loginGitHubCopilot, normalizeDomain, refreshGitHubCopilotToken, } from "./github-copilot.js";
+ // OpenAI Codex (ChatGPT OAuth)
+ export { loginOpenAICodex, loginOpenAICodexDeviceCode, OPENAI_CODEX_BROWSER_LOGIN_METHOD, OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, openaiCodexOAuthProvider, refreshOpenAICodexToken, } from "./openai-codex.js";
++// xAI (Grok OAuth)
++export { refreshXaiToken, xaiOAuthProvider } from "./xai.js";
+ export * from "./types.js";
+ // ============================================================================
+ // Provider Registry
+@@ -20,10 +22,12 @@ export * from "./types.js";
+ import { anthropicOAuthProvider } from "./anthropic.js";
+ import { githubCopilotOAuthProvider } from "./github-copilot.js";
+ import { openaiCodexOAuthProvider } from "./openai-codex.js";
++import { xaiOAuthProvider } from "./xai.js";
+ const BUILT_IN_OAUTH_PROVIDERS = [
+     anthropicOAuthProvider,
+     githubCopilotOAuthProvider,
+     openaiCodexOAuthProvider,
++    xaiOAuthProvider,
+ ];
+ const oauthProviderRegistry = new Map(BUILT_IN_OAUTH_PROVIDERS.map((provider) => [provider.id, provider]));
+ /**
+diff --git a/dist/utils/oauth/xai.d.ts b/dist/utils/oauth/xai.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1a7f1bfcb4f79640d3ea88a1cdd63a34b8e0ba7a
+--- /dev/null
++++ b/dist/utils/oauth/xai.d.ts
+@@ -0,0 +1,5 @@
++import type { OAuthCredentials, OAuthProviderInterface } from "./types.ts";
++/** Refresh xAI credentials, preserving the current refresh token when the server does not rotate it. */
++export declare function refreshXaiToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
++/** xAI Authorization Code + S256 PKCE and device-code OAuth provider. */
++export declare const xaiOAuthProvider: OAuthProviderInterface;
+diff --git a/dist/utils/oauth/xai.js b/dist/utils/oauth/xai.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..00d13a63a11a7147bf29d622008e5680d81b280c
+--- /dev/null
++++ b/dist/utils/oauth/xai.js
+@@ -0,0 +1,345 @@
++import { pollOAuthDeviceCodeFlow } from "./device-code.js";
++
++const ISSUER = "https://auth.x.ai";
++const AUTHORIZE_URL = `${ISSUER}/oauth2/authorize`;
++const DEVICE_URL = `${ISSUER}/oauth2/device/code`;
++const TOKEN_URL = `${ISSUER}/oauth2/token`;
++const CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
++const SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
++const REDIRECT_HOST = "127.0.0.1";
++const REDIRECT_PORT = 56121;
++const REDIRECT_PATH = "/callback";
++const CLI_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
++const REFRESH_SKEW_MS = 2 * 60 * 1000;
++const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
++
++function cancelled(signal) {
++    if (signal?.aborted)
++        throw new Error("Login cancelled");
++}
++function safeMessage(operation, response) {
++    return `xAI OAuth ${operation} failed (${response.status})`;
++}
++async function postForm(url, body, signal) {
++    cancelled(signal);
++    let response;
++    try {
++        response = await fetch(url, {
++            method: "POST",
++            headers: {
++                Accept: "application/json",
++                "Content-Type": "application/x-www-form-urlencoded",
++                "X-Grok-Client-Surface": "cli",
++            },
++            body: new URLSearchParams(body),
++            redirect: "error",
++            signal,
++        });
++    }
++    catch (error) {
++        if (signal?.aborted)
++            throw new Error("Login cancelled");
++        throw new Error(`xAI OAuth request failed: ${error instanceof Error ? error.message : "network error"}`);
++    }
++    return response;
++}
++function parseTokenPayload(value, fallbackRefresh = "") {
++    if (!value || typeof value !== "object" || Array.isArray(value))
++        throw new Error("xAI OAuth token response was invalid");
++    const access = typeof value.access_token === "string" ? value.access_token : "";
++    const refresh = typeof value.refresh_token === "string" && value.refresh_token ? value.refresh_token : fallbackRefresh;
++    if (!access || !refresh)
++        throw new Error("xAI OAuth token response was missing required fields");
++    const expiresIn = typeof value.expires_in === "number" && Number.isFinite(value.expires_in) && value.expires_in > 0
++        ? value.expires_in
++        : 3600;
++    return {
++        access,
++        refresh,
++        expires: Date.now() + expiresIn * 1000 - REFRESH_SKEW_MS,
++    };
++}
++async function readTokenResponse(response, operation, fallbackRefresh = "") {
++    if (!response.ok)
++        throw new Error(safeMessage(operation, response));
++    let payload;
++    try {
++        payload = await response.json();
++    }
++    catch {
++        throw new Error("xAI OAuth token response was invalid");
++    }
++    return parseTokenPayload(payload, fallbackRefresh);
++}
++async function createPkce() {
++    const cryptoModule = await import("node:crypto");
++    const verifier = cryptoModule.randomBytes(32).toString("base64url");
++    const challenge = cryptoModule.createHash("sha256").update(verifier).digest("base64url");
++    const state = cryptoModule.randomBytes(24).toString("base64url");
++    return { verifier, challenge, state };
++}
++function parseCallbackInput(input) {
++    const value = input.trim();
++    if (!value)
++        return {};
++    try {
++        const url = new URL(value);
++        return {
++            code: url.searchParams.get("code") ?? undefined,
++            state: url.searchParams.get("state") ?? undefined,
++            error: url.searchParams.get("error") ?? undefined,
++        };
++    }
++    catch {
++        return {};
++    }
++}
++async function startCallbackServer(expectedState, signal) {
++    const { createServer } = await import("node:http");
++    let resolveCallback;
++    let rejectCallback;
++    const callbackPromise = new Promise((resolve, reject) => {
++        resolveCallback = resolve;
++        rejectCallback = reject;
++    });
++    const handleRequest = (request, response) => {
++        const url = new URL(request.url || "/", `http://${REDIRECT_HOST}`);
++        if (request.method !== "GET" || url.pathname !== REDIRECT_PATH) {
++            response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
++            response.end("Not found");
++            return;
++        }
++        const result = {
++            code: url.searchParams.get("code") ?? undefined,
++            state: url.searchParams.get("state") ?? undefined,
++            error: url.searchParams.get("error") ?? undefined,
++        };
++        if (result.state !== expectedState) {
++            response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
++            response.end("xAI authorization state mismatch. Return to Forge and try again.");
++            return;
++        }
++        resolveCallback(result);
++        response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
++        response.end(result.error ? "xAI authorization failed. You may close this tab." : "xAI authorization received. You may close this tab.");
++    };
++    const listen = (port) => new Promise((resolve, reject) => {
++        const candidate = createServer(handleRequest);
++        const onError = (error) => reject(error);
++        candidate.once("error", onError);
++        candidate.listen(port, REDIRECT_HOST, () => {
++            candidate.off("error", onError);
++            resolve(candidate);
++        });
++    });
++    let server;
++    try {
++        server = await listen(REDIRECT_PORT);
++    }
++    catch {
++        server = await listen(0);
++    }
++    const address = server.address();
++    if (!address || typeof address === "string") {
++        server.close();
++        throw new Error("xAI OAuth callback server did not start");
++    }
++    const close = () => server.close();
++    const onAbort = () => rejectCallback(new Error("Login cancelled"));
++    signal?.addEventListener("abort", onAbort, { once: true });
++    return {
++        redirectUri: `http://${REDIRECT_HOST}:${address.port}${REDIRECT_PATH}`,
++        resolveCallback,
++        wait: async () => {
++            try {
++                return await callbackPromise;
++            }
++            finally {
++                signal?.removeEventListener("abort", onAbort);
++                close();
++            }
++        },
++        close,
++    };
++}
++async function loginBrowser(callbacks) {
++    const { verifier, challenge, state } = await createPkce();
++    const server = await startCallbackServer(state, callbacks.signal);
++    try {
++        const authorizeUrl = new URL(AUTHORIZE_URL);
++        authorizeUrl.search = new URLSearchParams({
++            response_type: "code",
++            client_id: CLIENT_ID,
++            redirect_uri: server.redirectUri,
++            scope: SCOPE,
++            code_challenge: challenge,
++            code_challenge_method: "S256",
++            state,
++        }).toString();
++        callbacks.onAuth({
++            url: authorizeUrl.toString(),
++            instructions: "Open this URL to authorize xAI. If the callback cannot reach Forge, paste the complete redirect URL (including code and state).",
++        });
++        callbacks.onProgress?.("Waiting for xAI authorization...");
++        if (callbacks.onManualCodeInput) {
++            void (async () => {
++                while (!callbacks.signal?.aborted) {
++                    let input;
++                    try {
++                        input = await callbacks.onManualCodeInput();
++                    }
++                    catch {
++                        return;
++                    }
++                    if (!input) {
++                        return;
++                    }
++                    const parsed = parseCallbackInput(input);
++                    if (parsed.code && parsed.state === state) {
++                        server.resolveCallback(parsed);
++                        return;
++                    }
++                    callbacks.onProgress?.("The pasted xAI callback was invalid or did not match this login. Paste the complete redirect URL from this attempt.");
++                }
++            })();
++        }
++        const result = await server.wait();
++        cancelled(callbacks.signal);
++        if (result.error)
++            throw new Error("xAI authorization was denied");
++        if (!result.code || result.state !== state)
++            throw new Error("xAI authorization callback was invalid");
++        callbacks.onProgress?.("Exchanging xAI authorization code...");
++        const response = await postForm(TOKEN_URL, {
++            grant_type: "authorization_code",
++            client_id: CLIENT_ID,
++            code: result.code,
++            code_verifier: verifier,
++            redirect_uri: server.redirectUri,
++        }, callbacks.signal);
++        return readTokenResponse(response, "code exchange");
++    }
++    finally {
++        server.close();
++    }
++}
++async function loginDevice(callbacks) {
++    callbacks.onProgress?.("Starting xAI device authorization...");
++    const response = await postForm(DEVICE_URL, {
++        client_id: CLIENT_ID,
++        scope: SCOPE,
++    }, callbacks.signal);
++    if (!response.ok)
++        throw new Error(safeMessage("device authorization", response));
++    let payload;
++    try {
++        payload = await response.json();
++    }
++    catch {
++        throw new Error("xAI device authorization response was invalid");
++    }
++    const deviceCode = typeof payload?.device_code === "string" ? payload.device_code : "";
++    const userCode = typeof payload?.user_code === "string" ? payload.user_code : "";
++    const verificationUri = typeof payload?.verification_uri === "string" ? payload.verification_uri : "";
++    const expiresInSeconds = typeof payload?.expires_in === "number" ? payload.expires_in : 900;
++    const intervalSeconds = typeof payload?.interval === "number" ? payload.interval : 5;
++    let verificationUrl;
++    try {
++        verificationUrl = new URL(verificationUri);
++    }
++    catch {
++        throw new Error("xAI device authorization response was invalid");
++    }
++    if (!deviceCode || !userCode || ![ISSUER, "https://accounts.x.ai"].includes(verificationUrl.origin) || verificationUrl.username || verificationUrl.password)
++        throw new Error("xAI device authorization response was invalid");
++    callbacks.onDeviceCode({ userCode, verificationUri, expiresInSeconds, intervalSeconds });
++    callbacks.onProgress?.("Waiting for xAI device authorization...");
++    const tokenPayload = await pollOAuthDeviceCodeFlow({
++        intervalSeconds,
++        expiresInSeconds,
++        waitBeforeFirstPoll: true,
++        signal: callbacks.signal,
++        poll: async () => {
++            const tokenResponse = await postForm(TOKEN_URL, {
++                grant_type: DEVICE_GRANT_TYPE,
++                device_code: deviceCode,
++                client_id: CLIENT_ID,
++            }, callbacks.signal);
++            if (tokenResponse.ok) {
++                let data;
++                try {
++                    data = await tokenResponse.json();
++                }
++                catch {
++                    return { status: "failed", message: "xAI device token response was invalid" };
++                }
++                return { status: "complete", value: parseTokenPayload(data) };
++            }
++            let errorCode;
++            try {
++                const errorPayload = await tokenResponse.json();
++                errorCode = typeof errorPayload?.error === "string" ? errorPayload.error : undefined;
++            }
++            catch {
++                errorCode = undefined;
++            }
++            if (errorCode === "authorization_pending")
++                return { status: "pending" };
++            if (errorCode === "slow_down")
++                return { status: "slow_down" };
++            if (errorCode === "access_denied" || errorCode === "authorization_denied")
++                return { status: "failed", message: "xAI device authorization was denied" };
++            if (errorCode === "expired_token")
++                return { status: "failed", message: "xAI device authorization expired" };
++            return { status: "failed", message: safeMessage("device token request", tokenResponse) };
++        },
++    });
++    return tokenPayload;
++}
++export async function refreshXaiToken(credentials) {
++    if (!credentials.refresh)
++        throw new Error("xAI OAuth credentials cannot be refreshed; sign in again");
++    const response = await postForm(TOKEN_URL, {
++        grant_type: "refresh_token",
++        refresh_token: credentials.refresh,
++        client_id: CLIENT_ID,
++    });
++    return readTokenResponse(response, "token refresh", credentials.refresh);
++}
++export const xaiOAuthProvider = {
++    id: "xai",
++    name: "xAI (Grok)",
++    usesCallbackServer: true,
++    async login(callbacks) {
++        cancelled(callbacks.signal);
++        const method = await callbacks.onSelect({
++            message: "Choose an xAI login method:",
++            options: [
++                { id: "browser", label: "Browser login" },
++                { id: "device", label: "Device code (remote/headless)" },
++            ],
++        });
++        if (!method)
++            throw new Error("Login cancelled");
++        if (method === "device")
++            return loginDevice(callbacks);
++        if (method === "browser")
++            return loginBrowser(callbacks);
++        throw new Error("Unsupported xAI login method");
++    },
++    refreshToken(credentials) {
++        return refreshXaiToken(credentials);
++    },
++    getApiKey(credentials) {
++        return credentials.access;
++    },
++    modifyModels(models) {
++        return models.map((model) => model.provider === "xai"
++            ? {
++                ...model,
++                baseUrl: CLI_PROXY_BASE_URL,
++                headers: { ...model.headers, "X-XAI-Token-Auth": "xai-grok-cli" },
++            }
++            : model);
++    },
++};

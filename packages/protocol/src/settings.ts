@@ -109,7 +109,8 @@ export interface SettingsAuthMutationResponse extends SettingsAuthResponse {
   ok: true
 }
 
-export type SettingsAuthLoginProviderId = Extract<SettingsAuthProviderId, 'anthropic' | 'openai-codex'>
+export type SettingsAuthLoginProviderId = Extract<SettingsAuthProviderId, 'anthropic' | 'openai-codex' | 'xai'>
+export type PooledSettingsAuthProviderId = Extract<SettingsAuthProviderId, 'anthropic' | 'openai-codex'>
 
 export type SettingsAuthLoginEventName = 'auth_url' | 'device_code' | 'prompt' | 'select' | 'progress' | 'complete' | 'error'
 

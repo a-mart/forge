@@ -56,10 +56,11 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
     oauthSupported: true,
   },
   xai: {
-    label: 'xAI API key',
-    description: 'Used by pi-grok and xAI-backed managers/workers.',
+    label: 'xAI',
+    description: 'Native xAI credentials enable Grok for specialist and spawn usage, but Grok is excluded from normal manager create/change selectors.',
     placeholder: 'xai-...',
     helpUrl: 'https://console.x.ai/',
+    oauthSupported: true,
   },
   openrouter: {
     label: 'OpenRouter API key',
@@ -102,7 +103,7 @@ function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId
 }
 
 function normalizeSettingsAuthLoginProviderId(value: unknown): SettingsAuthLoginProviderId | undefined {
-  if (value === 'anthropic' || value === 'openai-codex') return value
+  if (value === 'anthropic' || value === 'openai-codex' || value === 'xai') return value
   return undefined
 }
 

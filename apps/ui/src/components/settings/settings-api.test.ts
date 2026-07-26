@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchServerVersion,
   fetchSkillsList,
+  SETTINGS_AUTH_PROVIDER_META,
   removePooledCredential,
   resetPooledCredentialCooldown,
   SETTINGS_AUTH_CHANGED_EVENT,
@@ -82,6 +83,30 @@ describe('settings-api auth changed events', () => {
     }, new AbortController().signal)
 
     expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('describes xAI credentials as specialist/spawn-only for Grok', () => {
+    expect(SETTINGS_AUTH_PROVIDER_META.xai.description).toBe(
+      'Native xAI credentials enable Grok for specialist and spawn usage, but Grok is excluded from normal manager create/change selectors.',
+    )
+  })
+
+  it('accepts xAI as a direct OAuth completion provider', async () => {
+    const onComplete = vi.fn()
+    const client = createMockClient(mockSseResponse([
+      'event: complete\n',
+      'data: {"provider":"xai","status":"connected"}\n\n',
+    ]))
+
+    await startSettingsAuthOAuthLoginStream(client, 'xai', {
+      onAuthUrl: vi.fn(),
+      onPrompt: vi.fn(),
+      onProgress: vi.fn(),
+      onComplete,
+      onError: vi.fn(),
+    }, new AbortController().signal)
+
+    expect(onComplete).toHaveBeenCalledWith({ provider: 'xai', status: 'connected' })
   })
 
   it('parses direct OAuth device-code and select events', async () => {

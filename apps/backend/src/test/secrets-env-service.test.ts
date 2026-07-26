@@ -160,6 +160,39 @@ describe('SecretsEnvService path migration', () => {
     expect(pool.credentials).toHaveLength(1)
   })
 
+  it('keeps xAI in one credential slot while API key and OAuth saves replace each other', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-xai-single-slot-'))
+    const paths = buildPaths(root)
+    const service = createService(paths)
+
+    await service.updateSettingsAuthCredential('xai', {
+      type: 'oauth',
+      access: 'xai-oauth-access',
+      refresh: 'xai-oauth-refresh',
+      expires: Date.now() + 60_000,
+    } as any)
+    await service.updateSettingsAuth({ xai: 'xai-api-key' })
+
+    const authStorage = AuthStorage.create(paths.sharedAuthFile)
+    expect(authStorage.get('xai')).toMatchObject({ type: 'api_key', key: 'xai-api-key' })
+
+    await service.updateSettingsAuthCredential('xai', {
+      type: 'oauth',
+      access: 'replacement-oauth-access',
+      refresh: 'replacement-oauth-refresh',
+      expires: Date.now() + 60_000,
+    } as any)
+
+    expect(AuthStorage.create(paths.sharedAuthFile).get('xai')).toMatchObject({
+      type: 'oauth',
+      access: 'replacement-oauth-access',
+      refresh: 'replacement-oauth-refresh',
+    })
+    await expect(service.getCredentialPoolService().listPool('xai')).rejects.toThrow(
+      "Credential pooling is only supported for 'openai-codex', 'anthropic'",
+    )
+  })
+
   it('reports managed model provider availability from canonical secrets/auth plus process env fallback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-availability-test-'))
     const paths = buildPaths(root)

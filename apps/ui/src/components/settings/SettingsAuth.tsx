@@ -3,6 +3,7 @@ import { useHelpContext } from '@/components/help/help-hooks'
 import {
   AlertTriangle,
   Check,
+  Clipboard,
   ExternalLink,
   Eye,
   EyeOff,
@@ -66,6 +67,45 @@ function AuthStatusBadge({ configured }: { configured: boolean }) {
   )
 }
 
+function CopyOAuthUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
+
+  const handleCopy = async () => {
+    setCopyError(null)
+    const writeText = navigator.clipboard?.writeText
+    if (typeof writeText !== 'function') {
+      setCopied(false)
+      setCopyError('Clipboard access is unavailable. Select and copy the URL manually.')
+      return
+    }
+    try {
+      await writeText.call(navigator.clipboard, url)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1_500)
+    } catch {
+      setCopied(false)
+      setCopyError('Could not copy the URL. Select and copy it manually.')
+    }
+  }
+
+  return (
+    <div className="inline-flex flex-col items-start gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 gap-1 px-2 text-[11px]"
+        onClick={() => void handleCopy()}
+      >
+        {copied ? <Check className="size-3" /> : <Clipboard className="size-3" />}
+        {copied ? 'Copied' : 'Copy URL'}
+      </Button>
+      {copyError ? <p className="max-w-[16rem] text-[11px] text-destructive">{copyError}</p> : null}
+    </div>
+  )
+}
+
 function AuthProviderRow({
   provider,
   authStatus,
@@ -121,7 +161,8 @@ function AuthProviderRow({
           <p className="mt-1 text-[11px] text-muted-foreground">{metadata.description}</p>
           {authStatus.configured ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Stored credential: <code className="font-mono">{authStatus.maskedValue ?? '********'}</code>
+              Stored {authStatus.authType === 'oauth' ? 'OAuth credential' : 'API key'}:{' '}
+              <code className="font-mono">{authStatus.maskedValue ?? '********'}</code>
             </p>
           ) : (
             <p className="mt-1 text-[11px] text-muted-foreground">No credential stored yet.</p>
@@ -229,15 +270,18 @@ function AuthProviderRow({
             </div>
 
             {oauthFlow.authUrl ? (
-              <a
-                href={oauthFlow.authUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
-              >
-                Open authorization URL
-                <ExternalLink className="size-3" />
-              </a>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={oauthFlow.authUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
+                >
+                  Open authorization URL
+                  <ExternalLink className="size-3" />
+                </a>
+                <CopyOAuthUrlButton url={oauthFlow.authUrl} />
+              </div>
             ) : null}
 
             {oauthFlow.instructions ? (
@@ -310,6 +354,14 @@ function AuthProviderRow({
 
             {oauthFlow.errorMessage ? (
               <p className="text-[11px] text-destructive">{oauthFlow.errorMessage}</p>
+            ) : null}
+
+            {oauthInProgress ? (
+              <div className="flex justify-end">
+                <Button type="button" variant="ghost" size="sm" onClick={onResetOAuth}>
+                  Cancel
+                </Button>
+              </div>
             ) : null}
 
             {(oauthFlow.status === 'complete' || oauthFlow.status === 'error') && !oauthInProgress ? (
@@ -665,7 +717,7 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
   return (
     <div className="flex flex-col gap-8">
       <SettingsSection
-        label="API Keys"
+        label="Authentication"
         description={
           target.kind === 'collab'
             ? 'Stored on the connected Collab backend. These credentials are not copied from your local Builder.'
