@@ -53,7 +53,7 @@ Download the native installer for your platform from [GitHub Releases](https://g
 | Platform | Download | Notes |
 |----------|----------|-------|
 | **macOS** (Apple Silicon) | `Forge-<version>.dmg` | Signed and notarized |
-| **Windows** (x64) | `Forge-Setup-<version>.exe` | Unsigned (SmartScreen warning expected) |
+| **Windows** (x64) | `Forge-Setup-<version>.exe` | Signed; SmartScreen may still warn until reputation is established |
 | **Linux** | `Forge-<version>.AppImage` | |
 
 No Node.js or pnpm required. The desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features.
