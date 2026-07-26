@@ -28,13 +28,19 @@ describe('External Chrome development resource staging', () => {
     const extensionRoot = path.join(root, 'extension')
     const publicKey = (await readFile(new URL('../../../chrome-extension/identity/production-public-key.b64', import.meta.url), 'utf8')).trim()
     const shell = Buffer.from(`${JSON.stringify({ manifest_version: 3, key: publicKey })}\n`)
-    const payload = Buffer.from('payload\n')
-    const payloadDirectory = `dev-${treeHash({ 'worker.js': payload })}`
+    const payloadContents = {
+      'content-script.js': Buffer.from('content payload\n'),
+      'service-worker.js': Buffer.from('service worker payload\n'),
+      'side-panel.js': Buffer.from('side panel payload\n'),
+    }
+    const payloadSha256 = treeHash(payloadContents)
+    const payloadDirectory = `dev-${payloadSha256}`
+    const payloadFiles = Object.fromEntries(Object.entries(payloadContents).map(([file, bytes]) => [file, sha256(bytes)]))
     await mkdir(path.join(extensionRoot, 'payloads', payloadDirectory), { recursive: true })
     await writeFile(path.join(extensionRoot, 'manifest.json'), shell)
-    await writeFile(path.join(extensionRoot, 'payloads', payloadDirectory, 'worker.js'), payload)
+    await Promise.all(Object.entries(payloadContents).map(([file, bytes]) => writeFile(path.join(extensionRoot, 'payloads', payloadDirectory, file), bytes)))
     await writeFile(path.join(extensionRoot, 'current.json'), JSON.stringify({
-      schemaVersion: 1, shellAbi: 1, payloadVersion: 'dev', payloadSha256: treeHash({ 'worker.js': payload }), payloadDirectory,
+      schemaVersion: 1, shellAbi: 1, payloadVersion: 'dev', payloadSha256, payloadDirectory, payloadFiles,
     }))
     const extensionManifestPath = path.join(root, 'extension-package.json')
     await writeFile(extensionManifestPath, JSON.stringify({
@@ -43,10 +49,11 @@ describe('External Chrome development resource staging', () => {
         publicKeySha256: '522752d0309e495182b876bac125709358fd32fd1d105bcd5fce42966eb25b93',
         minimumChromeVersion: '125', shellAbi: 1,
         shellSha256: treeHash({ 'manifest.json': shell }), payloadVersion: 'dev',
-        payloadSha256: treeHash({ 'worker.js': payload }),
+        payloadSha256, payloadDirectory,
+        shellFiles: { 'manifest.json': sha256(shell) }, payloadFiles,
         fileHashes: {
           'manifest.json': sha256(shell),
-          [`payloads/${payloadDirectory}/worker.js`]: sha256(payload),
+          ...Object.fromEntries(Object.entries(payloadFiles).map(([file, digest]) => [`payloads/${payloadDirectory}/${file}`, digest])),
           'current.json': sha256(Buffer.from('ignored')),
         },
       },
@@ -86,6 +93,10 @@ describe('External Chrome development resource staging', () => {
     await deployer.deploy()
     expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
     expect(deployer.paths.extension).toBe(path.join(dataRoot, 'integrations', 'external-chrome', 'extension'))
+    const deployedSelector = JSON.parse(await readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8'))
+    const workerPath = path.join(deployer.paths.extension, 'payloads', deployedSelector.payloadDirectory, 'service-worker.js')
+    expect(await readFile(workerPath)).toEqual(payloadContents['service-worker.js'])
+    expect(sha256(await readFile(workerPath))).toBe(deployedSelector.payloadFiles['service-worker.js'])
   })
 
   it('fails closed on Windows rather than producing an unusable Chrome launcher', async () => {

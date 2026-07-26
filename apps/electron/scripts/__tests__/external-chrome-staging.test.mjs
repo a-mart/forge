@@ -7,29 +7,52 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { stageExternalChromeResources } from '../stage-external-chrome.mjs'
 import { verifyPackagedExternalChromeResources } from '../external-chrome-package-content-smoke.mjs'
 import { restorePreSignedWindowsResources } from '../electron-builder-external-chrome.mjs'
+import { ExternalChromeDeployer } from '../../src/external-chrome/deployer.js'
 
 const roots = []
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const treeHash = (files) => {
+  const digest = createHash('sha256')
+  for (const [file, bytes] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    digest.update(`${file}\0${bytes.byteLength}\0`).update(bytes)
+  }
+  return digest.digest('hex')
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'external-stage-'))
   roots.push(root)
   const extensionPackageRoot = path.join(root, 'extension-dist')
   const extension = path.join(extensionPackageRoot, 'extension')
-  const payloadSha = 'a'.repeat(64)
-  const payloadDirectory = `1.0.0-${payloadSha}`
-  const shell = Buffer.from('shell')
-  const payload = Buffer.from('payload')
+  const publicKey = (await readFile(new URL('../../../chrome-extension/identity/production-public-key.b64', import.meta.url), 'utf8')).trim()
+  const shell = Buffer.from(`${JSON.stringify({ manifest_version: 3, key: publicKey })}\n`)
+  const payloadContents = {
+    'content-script.js': Buffer.from('content payload'),
+    'service-worker.js': Buffer.from('service worker payload'),
+    'side-panel.js': Buffer.from('side panel payload'),
+  }
+  const payloadFiles = Object.fromEntries(Object.entries(payloadContents).map(([file, bytes]) => [file, hash(bytes)]))
+  const payloadSha = createHash('sha256')
+  for (const [file, bytes] of Object.entries(payloadContents)) payloadSha.update(`${file}\0${bytes.byteLength}\0`).update(bytes)
+  const payloadSha256 = payloadSha.digest('hex')
+  const payloadDirectory = `1.0.0-${payloadSha256}`
   await mkdir(path.join(extension, 'shell'), { recursive: true })
   await mkdir(path.join(extension, 'payloads', payloadDirectory), { recursive: true })
   await writeFile(path.join(extension, 'manifest.json'), shell)
-  await writeFile(path.join(extension, 'payloads', payloadDirectory, 'worker.js'), payload)
-  await writeFile(path.join(extension, 'current.json'), JSON.stringify({ payloadDirectory }))
+  await Promise.all(Object.entries(payloadContents).map(([file, bytes]) => writeFile(path.join(extension, 'payloads', payloadDirectory, file), bytes)))
+  await writeFile(path.join(extension, 'current.json'), JSON.stringify({
+    schemaVersion: 1, shellAbi: 1, payloadVersion: '1.0.0', payloadSha256, payloadDirectory, payloadFiles,
+  }))
   await writeFile(path.join(extensionPackageRoot, 'package-manifest.json'), JSON.stringify({
     extension: {
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', publicKeySha256: '522752d0309e495182b876bac125709358fd32fd1d105bcd5fce42966eb25b93',
-      minimumChromeVersion: '125', shellAbi: 1, shellSha256: hash(shell), payloadVersion: '1.0.0', payloadSha256: payloadSha,
-      fileHashes: { 'manifest.json': hash(shell), [`payloads/${payloadDirectory}/worker.js`]: hash(payload), 'current.json': hash(Buffer.from('ignored')) },
+      minimumChromeVersion: '125', shellAbi: 1, shellSha256: treeHash({ 'manifest.json': shell }), payloadVersion: '1.0.0', payloadSha256, payloadDirectory,
+      shellFiles: { 'manifest.json': hash(shell) }, payloadFiles,
+      fileHashes: {
+        'manifest.json': hash(shell),
+        ...Object.fromEntries(Object.entries(payloadFiles).map(([file, digest]) => [`payloads/${payloadDirectory}/${file}`, digest])),
+        'current.json': hash(Buffer.from('ignored')),
+      },
     },
     nativeProtocol: { min: 1, max: 1, maxMessageBytes: 1048576 },
   }))
@@ -65,9 +88,29 @@ describe('External Chrome packaged staging', () => {
     expect(first.sha256).toBe(second.sha256)
     expect(firstBytes).toEqual(secondBytes)
     expect(first.manifest.nativeHost).toMatchObject({ platform: process.platform, architecture: process.arch, required: true })
+    const workerPath = path.join(outputRoot, 'payload', first.manifest.extension.payloadDirectory, 'service-worker.js')
+    expect(hash(await readFile(workerPath))).toBe(first.manifest.extension.payloadFiles['service-worker.js'])
     execFileSync(process.execPath, [path.resolve(import.meta.dirname, '..', 'external-chrome-package-content-smoke.mjs'), outputRoot], {
       env: { ...process.env, FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation' },
     })
+
+    const deployableManifest = JSON.parse(await readFile(path.join(outputRoot, 'package-manifest.json'), 'utf8'))
+    deployableManifest.nativeHost.signature = {
+      scheme: process.platform === 'darwin' ? 'developer-id' : process.platform === 'win32' ? 'authenticode' : 'packaged-resource-hash',
+      mode: 'release', verified: true,
+      signer: process.platform === 'darwin' ? 'Developer ID Application: Fixture (TEAM123456)' : process.platform === 'win32' ? 'CN=Forge Fixture' : null,
+      teamId: process.platform === 'darwin' ? 'TEAM123456' : null,
+    }
+    await writeFile(path.join(outputRoot, 'package-manifest.json'), JSON.stringify(deployableManifest))
+    const deployer = new ExternalChromeDeployer({
+      dataRoot: path.join(input.root, 'forge-data'), resourcesRoot: outputRoot,
+      desktopVersion: '0.22.5', platform: process.platform, architecture: process.arch,
+    })
+    await deployer.deploy()
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    const selector = JSON.parse(await readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8'))
+    const deployedWorker = path.join(deployer.paths.extension, 'payloads', selector.payloadDirectory, 'service-worker.js')
+    expect(hash(await readFile(deployedWorker))).toBe(selector.payloadFiles['service-worker.js'])
   })
 
   it('fails post-package smoke on mutation and restores the pre-signed Windows resource tree', async () => {

@@ -8,8 +8,22 @@ export async function createPackageManifest({ packageRoot, sourceRoot, payloadVe
   const extensionRoot = path.join(packageRoot, 'extension')
   const files = await sortedFiles(extensionRoot)
   const fileHashes = Object.fromEntries(await Promise.all(files.map(async (relative) => [relative, sha256(await readFile(path.join(extensionRoot, relative)))])))
-  const shellFiles = files.filter((relative) => !relative.startsWith('payloads/') && relative !== 'current.json')
-  const shellHash = await hashTree(extensionRoot, shellFiles)
+  const payloadPrefix = `payloads/${payloadDirectory}/`
+  const shellFileNames = files.filter((relative) => !relative.startsWith('payloads/') && relative !== 'current.json')
+  const payloadFileNames = files.filter((relative) => relative.startsWith(payloadPrefix))
+  const unexpectedPayloadFiles = files.filter((relative) => relative.startsWith('payloads/') && !relative.startsWith(payloadPrefix))
+  const shellFiles = Object.fromEntries(shellFileNames.map((relative) => [relative, fileHashes[relative]]))
+  const payloadFiles = Object.fromEntries(payloadFileNames.map((relative) => [relative.slice(payloadPrefix.length), fileHashes[relative]]))
+  const expectedPayloadFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  if (unexpectedPayloadFiles.length > 0 || Object.keys(payloadFiles).sort().join('\0') !== expectedPayloadFiles.join('\0')) {
+    throw new Error('extension payload inventory does not match the shell ABI')
+  }
+  const selector = JSON.parse(await readFile(path.join(extensionRoot, 'current.json'), 'utf8'))
+  if (
+    selector.payloadVersion !== payloadVersion || selector.payloadSha256 !== payloadSha256 || selector.payloadDirectory !== payloadDirectory
+    || stableJson(selector.payloadFiles) !== stableJson(payloadFiles)
+  ) throw new Error('extension selector and package payload inventory disagree')
+  const shellHash = await hashTree(extensionRoot, shellFileNames)
   const identity = await verifyIdentity(sourceRoot)
   return {
     schemaVersion: 1,
@@ -22,6 +36,8 @@ export async function createPackageManifest({ packageRoot, sourceRoot, payloadVe
       payloadVersion,
       payloadSha256,
       payloadDirectory,
+      shellFiles,
+      payloadFiles,
       fileHashes,
       treeSha256: await hashTree(extensionRoot, files),
     },

@@ -44,7 +44,7 @@ Managed screenshots are transient. Successfully stopped recordings are Managed B
 
 ## External Chrome (Local Beta)
 
-External Chrome is an intentionally unpacked local integration. It is not distributed or updated through the Chrome Web Store. Forge Desktop deploys a pinned extension shell and payload plus an authenticated native-messaging host into the active Forge data directory. Chrome loads the stable extension folder from that data directory while compatible payload selectors can change underneath it.
+External Chrome is an intentionally unpacked local integration. It is not distributed or updated through the Chrome Web Store. Forge Desktop deploys a pinned extension shell and payload plus an authenticated native-messaging host into the active Forge data directory. Chrome loads the stable extension folder from that data directory while Forge atomically updates the selector-bound shell and payload inside it.
 
 ### Requirements and warnings
 

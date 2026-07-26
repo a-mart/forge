@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { loadVerifiedPayloadSelector, parsePayloadSelector } from '../src/shell/selector.js'
+import { loadVerifiedPayloadSelector, parsePayloadSelector, payloadResourcePath } from '../src/shell/selector.js'
 
 const hash = 'a'.repeat(64)
 const payloadFiles = { 'content-script.js': hash, 'service-worker.js': hash, 'side-panel.js': hash }
@@ -15,6 +15,14 @@ describe('versioned local payload selector', () => {
       payloadDirectory: `m1-spike.1-${hash}`,
       payloadFiles,
     })).toMatchObject({ payloadVersion: 'm1-spike.1', payloadSha256: hash })
+  })
+
+  it('resolves the service worker to the selector-bound extension-root path', () => {
+    const selector = parsePayloadSelector({
+      schemaVersion: 1, shellAbi: 1, payloadVersion: 'm1', payloadSha256: hash,
+      payloadDirectory: `m1-${hash}`, payloadFiles,
+    })
+    expect(payloadResourcePath(selector, 'service-worker.js')).toBe(`payloads/m1-${hash}/service-worker.js`)
   })
 
   it.each([

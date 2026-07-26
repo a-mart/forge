@@ -17,7 +17,8 @@ function developmentManifest() {
       publicKeySha256: EXTERNAL_CHROME_PUBLIC_KEY_SHA256,
       minimumChromeVersion: '125', shellAbi: 1, shellSha256: hash,
       payloadVersion: 'dev', payloadSha256: hash, payloadDirectory: `dev-${hash}`,
-      shellFiles: { 'manifest.json': hash }, payloadFiles: { 'worker.js': hash },
+      shellFiles: { 'manifest.json': hash },
+      payloadFiles: { 'content-script.js': hash, 'service-worker.js': hash, 'side-panel.js': hash },
     },
     nativeHost: {
       protocol: { min: 1, max: 1, maxMessageBytes: 1_048_576 },
@@ -34,6 +35,13 @@ describe('External Chrome package manifest development policy', () => {
     const manifest = developmentManifest()
     expect(() => parseExternalChromePackageManifest(manifest)).toThrow('not release-verified')
     expect(parseExternalChromePackageManifest(manifest, { allowDevelopmentHost: true })).toEqual(manifest)
+  })
+
+  it('rejects an inventory that cannot satisfy the selector-resolved worker path', () => {
+    const manifest = developmentManifest()
+    manifest.extension.payloadFiles = { 'content-script.js': hash, 'side-panel.js': hash } as typeof manifest.extension.payloadFiles
+    expect(() => parseExternalChromePackageManifest(manifest, { allowDevelopmentHost: true }))
+      .toThrow('payload inventory does not match the shell ABI')
   })
 
   it('rejects the POSIX shebang development policy on Windows', () => {

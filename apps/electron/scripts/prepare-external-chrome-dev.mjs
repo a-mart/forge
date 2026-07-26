@@ -36,17 +36,7 @@ export async function prepareExternalChromeDevelopmentResources({
     readJson(electronManifestPath),
     readFile(nativeBundlePath),
   ])
-  const shellFiles = {}
-  const payloadFiles = {}
-  const payloadPrefix = `payloads/${selector.payloadDirectory}/`
-  for (const [relative, digest] of Object.entries(extensionManifest.extension.fileHashes)) {
-    if (relative === 'current.json') continue
-    if (relative.startsWith(payloadPrefix)) payloadFiles[relative.slice(payloadPrefix.length)] = digest
-    else shellFiles[relative] = digest
-  }
-  if (Object.keys(shellFiles).length === 0 || Object.keys(payloadFiles).length === 0) {
-    throw new Error('External Chrome development extension inventory is incomplete')
-  }
+  const { shellFiles, payloadFiles } = verifiedExtensionInventories(extensionManifest, selector, 'development')
 
   const executableName = 'forge-external-chrome-native-host'
   const executable = Buffer.concat([Buffer.from(`#!${nodeExecutable}\n`), nativeBundle])
@@ -134,6 +124,21 @@ async function copyInventory(sourceRoot, targetRoot, inventory) {
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, bytes)
   }
+}
+
+function verifiedExtensionInventories(extensionManifest, selector, label) {
+  const extension = extensionManifest?.extension
+  const shellFiles = extension?.shellFiles
+  const payloadFiles = extension?.payloadFiles
+  const expectedPayloadFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  if (
+    extension?.payloadVersion !== selector.payloadVersion || extension?.payloadSha256 !== selector.payloadSha256
+    || extension?.payloadDirectory !== selector.payloadDirectory
+    || stableJson(payloadFiles) !== stableJson(selector.payloadFiles)
+    || Object.keys(payloadFiles ?? {}).sort().join('\0') !== expectedPayloadFiles.join('\0')
+    || Object.keys(shellFiles ?? {}).length === 0
+  ) throw new Error(`External Chrome ${label} selector and package inventories disagree`)
+  return { shellFiles, payloadFiles }
 }
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex') }
