@@ -1249,6 +1249,90 @@ describe('SwarmManager', () => {
     expect(manager.runtimeByAgentId.get('worker-a')).toBeUndefined()
   })
 
+  it('loads canonical history from a retired Claude SDK session without executing SDK state', async () => {
+    const config = await makeTempConfig()
+    const sessionFile = join(getSessionDir(config.paths.dataDir, 'manager', 'manager'), 'session.jsonl')
+    const createdAt = '2026-01-01T00:00:00.000Z'
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              status: 'streaming',
+              createdAt,
+              updatedAt: createdAt,
+              cwd: config.defaultCwd,
+              model: {
+                provider: 'claude-sdk',
+                modelId: 'claude-opus-4-7',
+                thinkingLevel: 'high',
+              },
+              sessionFile,
+              profileId: 'manager',
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    await mkdir(dirname(sessionFile), { recursive: true })
+    const persistedSession = SessionManager.open(sessionFile)
+    persistedSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+    persistedSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'canonical history survives the SDK retirement',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'speak_to_user',
+    })
+    persistedSession.appendCustomEntry('swarm_claude_session_state', {
+      sessionId: 'legacy-sdk-resume-must-not-run',
+    })
+    persistedSession.appendCustomEntry('swarm_claude_compaction_summary', {
+      summary: 'legacy SDK summary must not become conversation history',
+    })
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.getAgent('manager')?.model).toMatchObject({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-7',
+      thinkingLevel: 'high',
+    })
+    const history = manager.getConversationHistory('manager')
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'conversation_message',
+          agentId: 'manager',
+          text: 'canonical history survives the SDK retirement',
+        }),
+      ]),
+    )
+    expect(JSON.stringify(history)).not.toContain('legacy-sdk-resume-must-not-run')
+    expect(JSON.stringify(history)).not.toContain('legacy SDK summary must not become conversation history')
+    expect(manager.createdRuntimeIds).toEqual([])
+    expect(manager.runtimeByAgentId.get('manager')).toBeUndefined()
+
+    const persistedJsonl = await readFile(sessionFile, 'utf8')
+    expect(persistedJsonl).toContain('"customType":"swarm_claude_session_state"')
+    expect(persistedJsonl).toContain('"customType":"swarm_claude_compaction_summary"')
+  })
+
   it('preserves critical persisted descriptor fields across boot save normalization', async () => {
     const config = await makeTempConfig()
     const projectSessionFile = join(config.paths.sessionsDir, 'release-notes.jsonl')
