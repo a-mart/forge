@@ -96,42 +96,56 @@ index 2bec7263fdbb2d5ab96dae74b5ae430656641385..90383f317bcb208dede6ddeebcb1ba36
          const normalizedError = error instanceof Error ? error : new Error(String(error));
          this.errors.push(normalizedError);
 diff --git a/dist/core/model-registry.js b/dist/core/model-registry.js
-index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088e21d05c2 100644
+index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159607686bc 100644
 --- a/dist/core/model-registry.js
 +++ b/dist/core/model-registry.js
-@@ -262,6 +262,7 @@ export const clearApiKeyCache = clearConfigValueCache;
+@@ -262,6 +262,8 @@ export const clearApiKeyCache = clearConfigValueCache;
   */
  export class ModelRegistry {
      models = [];
 +    modelsWithoutOAuth = [];
++    oauthRoutingModels = new WeakSet();
      providerRequestConfigs = new Map();
      modelRequestHeaders = new Map();
      configModelOverrides = new Map();
-@@ -310,15 +311,41 @@ export class ModelRegistry {
+@@ -310,15 +312,53 @@ export class ModelRegistry {
              // Keep built-in models even if custom models failed to load
          }
          const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
 -        let combined = this.mergeCustomModels(builtInModels, customModels);
 -        // Let OAuth providers modify their models (e.g., update baseUrl)
+-        for (const oauthProvider of this.authStorage.getOAuthProviders()) {
 +        const combined = this.mergeCustomModels(builtInModels, customModels);
 +        this.modelsWithoutOAuth = structuredClone(combined);
 +        this.applyOAuthModelTransforms();
 +    }
 +    applyOAuthModelTransforms() {
 +        this.models = structuredClone(this.modelsWithoutOAuth);
++        const oauthProviders = this.authStorage.getOAuthProviders();
 +        // Let OAuth providers modify their models (e.g., update baseUrl), unless a
 +        // higher-priority runtime API key is currently effective for that provider.
-         for (const oauthProvider of this.authStorage.getOAuthProviders()) {
++        for (const oauthProvider of oauthProviders) {
              const cred = this.authStorage.get(oauthProvider.id);
 -            if (cred?.type === "oauth" && oauthProvider.modifyModels) {
 -                combined = oauthProvider.modifyModels(combined, cred);
 +            if (!this.authStorage.hasRuntimeApiKey(oauthProvider.id) && cred?.type === "oauth" && oauthProvider.modifyModels) {
 +                this.models = oauthProvider.modifyModels(this.models, cred);
++            }
++        }
++        const oauthRoutingProviderIds = new Set(oauthProviders.filter((provider) => provider.modifyModels).map((provider) => provider.id));
++        for (const model of this.models) {
++            if (oauthRoutingProviderIds.has(model.provider)) {
++                // Identity is the ownership boundary: arbitrary SDK model objects may
++                // intentionally reuse a registry provider/id with a different endpoint.
++                this.oauthRoutingModels.add(model);
              }
          }
 -        this.models = combined;
 +    }
 +    synchronizeModelForEffectiveCredential(model) {
++        if (!this.oauthRoutingModels.has(model)) {
++            return;
++        }
 +        const baseline = this.modelsWithoutOAuth.find((candidate) => candidate.provider === model.provider && candidate.id === model.id);
 +        if (!baseline) {
 +            return;
@@ -154,7 +168,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
      }
      /** Load built-in models and apply provider/model overrides */
      loadBuiltInModels(overrides, modelOverrides) {
-@@ -552,11 +579,19 @@ export class ModelRegistry {
+@@ -552,11 +592,19 @@ export class ModelRegistry {
       */
      async getApiKeyAndHeaders(model) {
          try {
@@ -176,7 +190,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
                      ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
                      : undefined);
              const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`, providerEnv);
-@@ -624,10 +659,16 @@ export class ModelRegistry {
+@@ -624,10 +672,16 @@ export class ModelRegistry {
       * Get API key for a provider.
       */
      async getApiKeyForProvider(provider) {
@@ -194,7 +208,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
          const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
          return providerApiKey
              ? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
-@@ -638,7 +679,7 @@ export class ModelRegistry {
+@@ -638,7 +692,7 @@ export class ModelRegistry {
       */
      isUsingOAuth(model) {
          const cred = this.authStorage.get(model.provider);
@@ -203,7 +217,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
      }
      /**
       * Register a provider dynamically (from extensions).
-@@ -725,8 +766,10 @@ export class ModelRegistry {
+@@ -725,8 +779,10 @@ export class ModelRegistry {
          }
          this.storeProviderRequestConfig(providerName, config);
          if (config.models && config.models.length > 0) {
@@ -216,7 +230,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
              // Parse and add new models
              for (const modelDef of config.models) {
                  const api = modelDef.api || config.api;
-@@ -750,19 +793,12 @@ export class ModelRegistry {
+@@ -750,19 +806,12 @@ export class ModelRegistry {
                      headers: undefined,
                      compat: modelDef.compat,
                  });
@@ -239,7 +253,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..9caaac285f7c6e39b6f019ef1e3e0088
                  if (m.provider !== providerName)
                      return m;
                  return {
-@@ -771,6 +807,9 @@ export class ModelRegistry {
+@@ -771,6 +820,9 @@ export class ModelRegistry {
                  };
              });
          }

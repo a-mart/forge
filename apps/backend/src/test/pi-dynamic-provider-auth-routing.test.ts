@@ -44,4 +44,28 @@ describe("Pi dynamic provider request routing", () => {
       expect(model?.baseUrl).toBe(dynamicBaseUrl);
     },
   );
+
+  it.each(PROVIDER_CASES)(
+    "does not rewrite a caller-owned $provider model that reuses a built-in ID",
+    async ({ provider }) => {
+      const builtInModel = getModels(provider)[0];
+      if (!builtInModel) {
+        throw new Error(`Expected a built-in ${provider} model`);
+      }
+
+      const authStorage = AuthStorage.inMemory({});
+      const runtimeApiKey = `${provider}-caller-runtime-key`;
+      authStorage.setRuntimeApiKey(provider, runtimeApiKey);
+      const registry = ModelRegistry.inMemory(authStorage);
+      const callerBaseUrl = `https://${provider}.caller-owned.example.test/v1`;
+      const callerModel = {
+        ...builtInModel,
+        baseUrl: callerBaseUrl,
+      };
+
+      const resolvedAuth = await registry.getApiKeyAndHeaders(callerModel);
+      expect(resolvedAuth).toMatchObject({ ok: true, apiKey: runtimeApiKey });
+      expect(callerModel.baseUrl).toBe(callerBaseUrl);
+    },
+  );
 });
