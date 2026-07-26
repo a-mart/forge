@@ -31,10 +31,10 @@ describe('pinned offline identity and MV3 ledger', () => {
     expect(manifest).toMatchObject({
       manifest_version: 3,
       minimum_chrome_version: '125',
-      name: 'Forge External Chrome (Local Beta)',
+      name: 'Forge',
       key: base64,
       background: { service_worker: 'shell/service-worker-bootstrap.js' },
-      action: { default_title: 'Open Forge External Chrome' },
+      action: { default_title: 'Open Forge' },
       side_panel: { default_path: 'shell/side-panel.html' },
       host_permissions: ['<all_urls>'],
       optional_permissions: ['downloads.open'],
@@ -73,6 +73,10 @@ describe('pinned offline identity and MV3 ledger', () => {
     expect(manifest.description).toContain('Developer Mode')
     expect(manifest.description).toContain('dedicated profile')
     expect(manifest.description).not.toMatch(/Test-side-load|milestone|M1/i)
+    expect(html).toContain('<title>Forge</title>')
+    expect(html).toContain('<h1>Forge</h1>')
+    expect(html).toContain('External Chrome · Local beta')
+    expect(html).not.toContain('Forge External Chrome')
     expect(html).toContain('Attach selected tabs')
     expect(html).toContain('New Forge group')
     expect(html).toContain('Leases can include tabs you select below')

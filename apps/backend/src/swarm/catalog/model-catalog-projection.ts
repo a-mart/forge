@@ -173,7 +173,7 @@ function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiPro
 
   return {
     baseUrl: provider.piBaseUrl,
-    apiKey: provider.piApiKeyEnvVar,
+    apiKey: provider.piApiKeyEnvVar ? `$${provider.piApiKeyEnvVar}` : undefined,
     api: provider.piApiProtocol,
     models,
   };

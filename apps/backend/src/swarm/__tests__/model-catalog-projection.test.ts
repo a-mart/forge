@@ -68,6 +68,7 @@ describe("model-catalog-projection", () => {
     const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
       providers: Record<string, {
         api?: string;
+        apiKey?: string;
         models?: Array<{ id: string; api?: string; cost?: unknown }>;
         modelOverrides?: Record<string, unknown>;
       }>;
@@ -81,6 +82,7 @@ describe("model-catalog-projection", () => {
     expect(projectedXaiModels.map((model) => model.id).sort()).toEqual(upstreamXaiModelIds);
     expect(projectedXaiModels.every((model) => model.api === "openai-responses")).toBe(true);
     expect(projection.providers.xai?.api).toBe("openai-responses");
+    expect(projection.providers.xai?.apiKey).toBe("$XAI_API_KEY");
 
     const upstreamGrok4Fast = getModels("xai").find((model) => model.id === "grok-4-fast");
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
@@ -190,7 +192,7 @@ describe("model-catalog-projection", () => {
 
     expect(projection.providers.openrouter).toMatchObject({
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "OPENROUTER_API_KEY",
+      apiKey: "$OPENROUTER_API_KEY",
       api: "openai-completions",
     });
     expect(projection.providers.openrouter?.models).toEqual([

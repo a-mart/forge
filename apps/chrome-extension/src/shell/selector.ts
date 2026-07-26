@@ -38,6 +38,14 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+export function payloadResourcePath(
+  selector: PayloadSelector,
+  entry: keyof PayloadSelector['payloadFiles'],
+): string {
+  if (!(entry in selector.payloadFiles)) throw new Error('selected payload entry is not declared')
+  return `payloads/${selector.payloadDirectory}/${entry}`
+}
+
 export async function loadPayloadSelector(getUrl: (path: string) => string, fetchValue: typeof fetch = fetch): Promise<PayloadSelector> {
   const response = await fetchValue(getUrl('current.json'), { cache: 'no-store', credentials: 'omit', redirect: 'error' })
   if (!response.ok) throw new Error(`payload selector returned ${response.status}`)
@@ -53,10 +61,10 @@ export async function loadVerifiedPayloadSelector(
   fetchValue: typeof fetch = fetch,
 ): Promise<PayloadSelector> {
   const selector = await loadPayloadSelector(getUrl, fetchValue)
-  if (!(selectedEntry in selector.payloadFiles)) throw new Error('selected payload entry is not declared')
+  payloadResourcePath(selector, selectedEntry)
   await Promise.all(Object.entries(selector.payloadFiles).map(async ([fileName, expectedHash]) => {
-    const path = `payloads/${selector.payloadDirectory}/${fileName}`
-    const response = await fetchValue(getUrl(path), { cache: 'no-store', credentials: 'omit', redirect: 'error' })
+    const resourcePath = payloadResourcePath(selector, fileName as keyof PayloadSelector['payloadFiles'])
+    const response = await fetchValue(getUrl(resourcePath), { cache: 'no-store', credentials: 'omit', redirect: 'error' })
     if (!response.ok) throw new Error(`payload file unavailable: ${fileName}`)
     const bytes = await response.arrayBuffer()
     if (bytes.byteLength > MAX_PAYLOAD_FILE_BYTES) throw new Error(`payload file exceeds shell bound: ${fileName}`)
