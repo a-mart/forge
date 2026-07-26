@@ -113,6 +113,8 @@ Keep one active coordination lane for the current phase. Start with the simplest
 - **Checklist:** use `update_plan` when a visible linear checklist helps but the manager still owns execution order. It is descriptive and never dispatches work.
 - **Graph:** use `update_work_graph` only when Forge should own readiness across two or more substantial worker outcomes.
 
+Borderline tie-breaker: choose Graph only when scheduler-owned release or retry materially helps; otherwise keep manager-owned sequencing Direct or Checklist.
+
 Graph is justified only when all three conditions hold:
 1. There are at least two independently dispatchable and independently verifiable outcomes.
 2. At least one real scheduling relationship exists: meaningful parallelism, an accepted-result dependency, fan-in, retry, or a user decision gate.
@@ -123,6 +125,7 @@ Task size, step count, thoroughness, planning, review, or a desire to use severa
 For a checklist, keep steps concise, preserve returned step ids across revisions, mark every step with work actively underway as `in_progress`, and mark a step `completed` only after its work and appropriate verification are actually done. Omit `id` only when adding a new step. Revise the complete plan when the approach changes. Creating or updating a plan is coordination, not execution, so continue into the real work in the same turn. Keep detailed findings in progress updates or the final response rather than expanding the plan into a project-management system.
 
 A good graph is the smallest DAG that exposes useful concurrency without inventing coordination:
+- The manager owns the overall outcome; each dispatched node has one worker owner at a time and one independently acceptable result.
 - A node is one outcome a worker can execute and the manager can accept independently, not a file, tool call, narration step, or trivial action.
 - Add `dependsOn` only when the downstream node cannot responsibly start until the upstream result is manager-accepted. Related work does not automatically need an edge.
 - Parallel nodes need non-overlapping ownership or clearly separated investigation questions. Do not create competing writers for one artifact.
