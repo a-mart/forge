@@ -1,10 +1,11 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { getOAuthProvider, resetOAuthProviders, xaiOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { buildPiModelsProjection } from "../swarm/catalog/model-catalog-projection.js";
 
 const XAI_API_BASE_URL = "https://api.x.ai/v1";
 const XAI_OAUTH_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
@@ -12,6 +13,7 @@ const XAI_OAUTH_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   resetOAuthProviders();
 });
 
@@ -46,6 +48,86 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(oauthXaiModels.every((model) => model.baseUrl === XAI_OAUTH_BASE_URL)).toBe(true);
     expect(oauthXaiModels.every((model) => model.headers?.["X-XAI-Token-Auth"] === "xai-grok-cli")).toBe(true);
     expect(oauthNonXaiModel?.baseUrl).not.toBe(XAI_OAUTH_BASE_URL);
+  });
+
+  it("resolves env-only xAI auth through the Forge projection and sends it only to api.x.ai", async () => {
+    vi.stubEnv("XAI_API_KEY", "env-only-xai-key");
+    const root = await mkdtemp(join(tmpdir(), "forge-xai-env-projection-"));
+    const projectionPath = join(root, "pi-models.json");
+    await writeFile(projectionPath, JSON.stringify(buildPiModelsProjection()), "utf8");
+
+    const registry = ModelRegistry.create(AuthStorage.inMemory({}), projectionPath);
+    const model = registry.getAll().find((candidate) => candidate.provider === "xai");
+    expect(model).toBeDefined();
+    expect(model?.baseUrl).toBe(XAI_API_BASE_URL);
+
+    const resolvedAuth = await registry.getApiKeyAndHeaders(model!);
+    expect(resolvedAuth).toMatchObject({ ok: true, apiKey: "env-only-xai-key" });
+    await expect(registry.getApiKeyForProvider("xai")).resolves.toBe("env-only-xai-key");
+
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return new Response("data: [DONE]\\n\\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }));
+
+    if (!resolvedAuth.ok || !resolvedAuth.apiKey) {
+      throw new Error("Expected the xAI environment API key to resolve");
+    }
+    for await (const event of streamOpenAIResponses(model as any, { messages: [] } as any, {
+      apiKey: resolvedAuth.apiKey,
+    })) {
+      void event;
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer env-only-xai-key");
+    expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+  });
+
+  it("does not fall back to XAI_API_KEY when stored OAuth refresh fails on a proxy-routed model", async () => {
+    vi.stubEnv("XAI_API_KEY", "must-not-reach-oauth-proxy");
+    const root = await mkdtemp(join(tmpdir(), "forge-xai-oauth-env-shadow-"));
+    const projectionPath = join(root, "pi-models.json");
+    await writeFile(projectionPath, JSON.stringify(buildPiModelsProjection()), "utf8");
+
+    const registry = ModelRegistry.create(AuthStorage.inMemory({
+      xai: {
+        type: "oauth",
+        access: "expired-access-token",
+        refresh: "expired-refresh-token",
+        expires: 0,
+      },
+    }), projectionPath);
+    const model = registry.getAll().find((candidate) => candidate.provider === "xai");
+    expect(model).toBeDefined();
+    expect(model?.baseUrl).toBe(XAI_OAUTH_BASE_URL);
+    expect(model?.headers?.["X-XAI-Token-Auth"]).toBe("xai-grok-cli");
+    expect(registry.isUsingOAuth(model!)).toBe(true);
+
+    const requests: Request[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resolvedAuth = await registry.getApiKeyAndHeaders(model!);
+    const providerApiKey = await registry.getApiKeyForProvider("xai");
+
+    expect(resolvedAuth).toEqual({ ok: true, apiKey: undefined, headers: { "X-XAI-Token-Auth": "xai-grok-cli" }, env: undefined });
+    expect(providerApiKey).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requests[0].url).toBe("https://auth.x.ai/oauth2/token");
+    expect(requests[0].headers.get("authorization")).toBeNull();
+    expect(requests.some((request) => request.url.startsWith(XAI_OAUTH_BASE_URL))).toBe(false);
   });
 
   it("sends API keys to api.x.ai while OAuth uses the CLI proxy bearer contract", async () => {

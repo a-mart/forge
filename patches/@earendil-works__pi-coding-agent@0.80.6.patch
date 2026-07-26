@@ -1,8 +1,8 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index 1111111..2222222 100644
+index a208774c956e3039c47ca54ce1f2f362ce3e4db3..d70e43f4a4a5758cd44cde9970a3ba070ee11b98 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
-@@ -1563,6 +1563,13 @@
+@@ -1563,6 +1563,13 @@ export class AgentSession {
       * Internal: Run auto-compaction with events.
       */
      async _runAutoCompaction(reason, willRetry) {
@@ -16,7 +16,7 @@ index 1111111..2222222 100644
          const settings = this.settingsManager.getCompactionSettings();
          let started = false;
          try {
-@@ -1590,7 +1597,8 @@
+@@ -1590,7 +1597,8 @@ export class AgentSession {
                  return false;
              }
              this._emit({ type: "compaction_start", reason });
@@ -26,7 +26,7 @@ index 1111111..2222222 100644
              started = true;
              let extensionCompaction;
              let fromExtension = false;
-@@ -1602,7 +1610,7 @@
+@@ -1602,7 +1610,7 @@ export class AgentSession {
                      customInstructions: undefined,
                      reason,
                      willRetry,
@@ -35,7 +35,7 @@ index 1111111..2222222 100644
                  }));
                  if (extensionResult?.cancel) {
                      this._emit({
-@@ -1632,13 +1640,13 @@
+@@ -1632,13 +1640,13 @@ export class AgentSession {
              }
              else {
                  // Generate compaction result
@@ -51,7 +51,7 @@ index 1111111..2222222 100644
                  this._emit({
                      type: "compaction_end",
                      reason,
-@@ -1701,7 +1709,10 @@
+@@ -1701,7 +1709,10 @@ export class AgentSession {
              return false;
          }
          finally {
@@ -63,3 +63,40 @@ index 1111111..2222222 100644
          }
      }
      /**
+diff --git a/dist/core/model-registry.js b/dist/core/model-registry.js
+index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..98e79343e91dbd5575c96f8ec695ee51938809aa 100644
+--- a/dist/core/model-registry.js
++++ b/dist/core/model-registry.js
+@@ -554,9 +554,13 @@ export class ModelRegistry {
+         try {
+             const providerConfig = this.providerRequestConfigs.get(model.provider);
+             const providerEnv = this.authStorage.getProviderEnv(model.provider);
++            // A persisted auth.json entry owns the provider credential slot. If an OAuth
++            // refresh fails, do not silently replace that credential with models.json auth;
++            // OAuth providers may already have rewritten the model to a subscription proxy.
++            const hasStoredCredential = this.authStorage.has(model.provider);
+             const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
+             const apiKey = apiKeyFromAuthStorage ??
+-                (providerConfig?.apiKey
++                (!hasStoredCredential && providerConfig?.apiKey
+                     ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
+                     : undefined);
+             const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`, providerEnv);
+@@ -624,10 +628,16 @@ export class ModelRegistry {
+      * Get API key for a provider.
+      */
+     async getApiKeyForProvider(provider) {
+-        const apiKey = await this.authStorage.getApiKey(provider);
++        const hasStoredCredential = this.authStorage.has(provider);
++        const apiKey = await this.authStorage.getApiKey(provider, {
++            includeFallback: !hasStoredCredential,
++        });
+         if (apiKey !== undefined) {
+             return apiKey;
+         }
++        if (hasStoredCredential) {
++            return undefined;
++        }
+         const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
+         return providerApiKey
+             ? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
