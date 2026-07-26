@@ -206,4 +206,4 @@ export interface ObservabilityAgentDeliveryInput {
 }
 
 export type ObservabilityRuntimeTarget = PhoenixObservabilityStatus["runtimeTarget"];
-export type ObservabilityRuntimeType = "pi" | "claude-sdk" | "cursor-sdk";
+export type ObservabilityRuntimeType = "pi" | "cursor-sdk";

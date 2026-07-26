@@ -138,7 +138,7 @@ function isSecureSessionRuntimeSupported(
   agent: AgentDescriptor | null | undefined,
 ): boolean {
   if (!agent || agent.externalThread) return false
-  return agent.model.provider !== 'claude-sdk' && agent.model.provider !== 'cursor-sdk'
+  return agent.model.provider !== 'cursor-sdk'
 }
 
 type BuilderNavigationState =

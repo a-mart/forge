@@ -144,18 +144,15 @@ describe("model config routes", () => {
     });
   });
 
-  it("reports claude-sdk as provider-available without Anthropic credentials", async () => {
+  it("omits the retired Claude SDK provider from availability", async () => {
     const harness = await createModelConfigRouteHarness();
 
     const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides`);
+    const body = await response.json() as { providerAvailability: Record<string, boolean> };
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      providerAvailability: {
-        anthropic: false,
-        "claude-sdk": true,
-      },
-    });
+    expect(body.providerAvailability.anthropic).toBe(false);
+    expect(body.providerAvailability).not.toHaveProperty("claude-sdk");
   });
 });
 

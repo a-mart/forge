@@ -87,7 +87,6 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     emitConversationMessage(event: ConversationMessageEvent, options?: { routingReceipt?: MessageRoutingReceiptRecord }): void;
   };
   promptService: {
-    buildClaudeRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
     buildCursorSdkRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
   };
   secretsEnvService: {
@@ -273,8 +272,6 @@ export class SwarmRuntimeController {
       getSwarmContextFiles: async (cwd) => this.host.getSwarmContextFiles(cwd),
       resolveProjectExecutableTrustPlan: async (options) =>
         this.host.resolveProjectExecutableTrustPlanForRuntime(options),
-      buildClaudeRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
-        this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
       buildCursorSdkRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
         this.host.promptService.buildCursorSdkRuntimeSystemPrompt(descriptor, systemPrompt),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
@@ -1066,11 +1063,7 @@ export class SwarmRuntimeController {
       managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
       profileId: descriptor.profileId,
       role: descriptor.role,
-      runtimeType: descriptor.model.provider === "claude-sdk"
-        ? "claude-sdk"
-        : descriptor.model.provider === "cursor-sdk"
-          ? "cursor-sdk"
-          : "pi",
+      runtimeType: descriptor.model.provider === "cursor-sdk" ? "cursor-sdk" : "pi",
       runtimeToken,
       agentName: descriptor.displayName,
       phase: error.phase,

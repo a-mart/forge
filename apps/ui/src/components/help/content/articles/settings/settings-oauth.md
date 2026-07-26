@@ -14,7 +14,7 @@ Once connected, the pool card lists the account and Forge handles token refresh 
 
 ## OAuth and other authentication paths
 
-The current Settings UI does not use one universal auth control. Anthropic and OpenAI use OAuth pool cards; xAI, OpenRouter, and Cursor SDK have separate key/token rows. Claude SDK authentication happens outside Settings through `claude login`. OpenAI/Codex may instead be managed by Forge Auth broker mode, which makes the local OpenAI card read-only.
+The current Settings UI does not use one universal auth control. Anthropic and OpenAI use OAuth pool cards; xAI, OpenRouter, and Cursor SDK have separate key/token rows. OpenAI/Codex may instead be managed by Forge Auth broker mode, which makes the local OpenAI card read-only.
 
 ## Troubleshooting
 

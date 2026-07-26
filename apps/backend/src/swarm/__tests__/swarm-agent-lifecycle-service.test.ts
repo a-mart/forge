@@ -382,7 +382,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-1",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const svc = new SwarmAgentLifecycleService(
@@ -504,7 +504,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -569,7 +569,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-failure",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -639,7 +639,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-stale",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -699,7 +699,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-cursor-defer-replaced",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
     };
     let capturedCreationOptions: unknown;
@@ -749,7 +749,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-before-attach",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
@@ -810,7 +810,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-concurrent-before-attach",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
@@ -856,7 +856,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
@@ -914,7 +914,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-stop-all-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
@@ -972,7 +972,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-delete-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {
@@ -1018,7 +1018,7 @@ describe("SwarmAgentLifecycleService", () => {
       requestId: "req-concurrent-after-applied",
       createdAt: NOW,
       sessionAgentId: manager.agentId,
-      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
       targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {

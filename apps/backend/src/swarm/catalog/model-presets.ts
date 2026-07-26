@@ -2,6 +2,12 @@ import { getSpawnPresetFamilies, type ModelPresetInfo } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "../types.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import {
+  assertClaudeSdkProviderNotSelected,
+  CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE,
+  isLegacyClaudeSdkPreset,
+  mapLegacyClaudeSdkModel,
+} from "./legacy-claude-sdk-model.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-5.5";
 
@@ -12,6 +18,8 @@ const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
 
 const PERSISTED_ONLY_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "pi-codex-spark": "pi-5.5",
+  "sdk-opus": "pi-opus",
+  "sdk-sonnet": "pi-sonnet",
 };
 
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
@@ -28,12 +36,6 @@ const REMOVED_MODEL_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "anthropic/claude-haiku-4.5": "pi-sonnet",
   "anthropic/claude-sonnet-4-5": "pi-sonnet",
   "anthropic/claude-haiku-4-5": "pi-sonnet",
-  "claude-sdk/claude-sonnet-4-5-20250929": "sdk-sonnet",
-  "claude-sdk/claude-haiku-4-5-20251001": "sdk-sonnet",
-  "claude-sdk/claude-sonnet-4.5": "sdk-sonnet",
-  "claude-sdk/claude-haiku-4.5": "sdk-sonnet",
-  "claude-sdk/claude-sonnet-4-5": "sdk-sonnet",
-  "claude-sdk/claude-haiku-4-5": "sdk-sonnet",
 };
 
 const RETIRED_MODEL_REJECTION_REPLACEMENTS: Record<string, SwarmModelPreset> = {
@@ -69,6 +71,10 @@ export function isSwarmReasoningLevel(value: unknown): value is SwarmReasoningLe
 export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmModelPreset | undefined {
   if (value === undefined) {
     return undefined;
+  }
+
+  if (isLegacyClaudeSdkPreset(value)) {
+    throw new Error(`${fieldName}: ${CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE}`);
   }
 
   const normalizedPreset = normalizeSwarmModelPresetValue(value);
@@ -208,6 +214,7 @@ function resolveModelReplacementFromMap(
 }
 
 export function assertSwarmModelIdNotRetired(provider: string, modelId: string, fieldName: string): void {
+  assertClaudeSdkProviderNotSelected(provider, fieldName);
   const replacementPreset = resolveRemovedSwarmModelReplacementPreset(provider, modelId);
   if (!replacementPreset) {
     return;
@@ -223,6 +230,19 @@ export function normalizePersistedSwarmModelDescriptor(
 ): AgentModelDescriptor | undefined {
   if (!descriptor) {
     return undefined;
+  }
+
+  const legacyClaudeSdkMapping = mapLegacyClaudeSdkModel(descriptor);
+  if (legacyClaudeSdkMapping.kind === "mapped") {
+    const mappedDescriptor = {
+      provider: legacyClaudeSdkMapping.provider,
+      modelId: legacyClaudeSdkMapping.modelId,
+      thinkingLevel: descriptor.thinkingLevel,
+    };
+    return {
+      ...mappedDescriptor,
+      thinkingLevel: normalizeThinkingLevelForModelDescriptor(mappedDescriptor),
+    };
   }
 
   const provider = descriptor.provider.trim().toLowerCase();

@@ -18,6 +18,7 @@ import {
 import { getCompactionSettingsPath } from "./data-paths.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { mapLegacyClaudeSdkModel } from "./catalog/legacy-claude-sdk-model.js";
 
 export { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
@@ -243,7 +244,10 @@ function normalizeLoadedModel(
     return fallback;
   }
 
-  return { provider, modelId };
+  const legacyMapping = mapLegacyClaudeSdkModel({ provider, modelId });
+  return legacyMapping.kind === "mapped"
+    ? { provider: legacyMapping.provider, modelId: legacyMapping.modelId }
+    : { provider, modelId };
 }
 
 function normalizeLoadedReasoningLevel(

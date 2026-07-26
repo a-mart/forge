@@ -58,7 +58,6 @@ describe('buildManagerModelRows provider availability gating', () => {
     const rows = buildManagerModelRows('create', {}, {
       'anthropic': true,
       'openai-codex': true,
-      'claude-sdk': true,
     })
 
     const anthropicRows = rows.filter((r) => r.provider === 'anthropic')

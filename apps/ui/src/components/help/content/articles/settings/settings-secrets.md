@@ -137,7 +137,7 @@ destination-constrained network proxy.
 
 Secure Sessions currently require a Pi-backed local Builder runtime and the pinned
 Forge Docker runner image. Supported local Forge Pi workers can participate with
-independent principals. Claude SDK, Cursor SDK, Cursor ACP, Remote Projects,
+independent principals. Cursor SDK, Cursor ACP, Remote Projects,
 Collaboration, Codex plugin/external-thread workers, and the integrated terminal are
 not secure-session execution paths. Secure Bash is non-interactive pipe execution
 rather than a PTY. SSH passwords work through the `SSH_ASKPASS` binding.

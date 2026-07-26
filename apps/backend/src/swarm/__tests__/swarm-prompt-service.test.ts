@@ -1482,11 +1482,6 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resources.additionalSkillPaths).toEqual([memorySkill.path, selectedSkill.path]);
     expect(resources.skillMetadata.map((skill) => skill.directoryName)).toEqual(["memory", "brave-search"]);
 
-    const claudePrompt = await service.buildClaudeRuntimeSystemPrompt(descriptor, "Base prompt");
-    expect(claudePrompt).toContain("<name>memory</name>");
-    expect(claudePrompt).toContain("<name>brave-search</name>");
-    expect(claudePrompt).not.toContain("agent-browser");
-
     const cursorSdkPrompt = await service.buildCursorSdkRuntimeSystemPrompt(descriptor, "Base prompt");
     expect(cursorSdkPrompt).toContain("<name>memory</name>");
     expect(cursorSdkPrompt).toContain("<name>brave-search</name>");

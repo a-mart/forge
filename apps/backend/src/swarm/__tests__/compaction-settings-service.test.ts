@@ -166,7 +166,7 @@ describe("CompactionSettingsService", () => {
     });
   });
 
-  it("marks native SDK providers as invalid for compaction availability", async () => {
+  it("normalizes a known persisted Claude SDK compaction model to native Anthropic", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-sdk-invalid-"));
     const service = new CompactionSettingsService({
       dataDir,
@@ -196,10 +196,10 @@ describe("CompactionSettingsService", () => {
     await service.load();
     const view = await service.getSettingsView();
 
-    expect(view.settings.model).toEqual({ provider: "claude-sdk", modelId: "claude-sonnet-5" });
+    expect(view.settings.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-5" });
     expect(view.availability).toEqual({
       providerConfigured: true,
-      modelValid: false,
+      modelValid: true,
       reasoningSupported: true,
     });
   });
@@ -292,7 +292,7 @@ describe("CompactionSettingsService", () => {
     expect(highResult.settings.timeoutMs).toBe(MAX_COMPACTION_TIMEOUT_MS);
   });
 
-  it("rejects native SDK providers for compaction updates", async () => {
+  it("rejects new Claude SDK compaction selections with remediation", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-sdk-reject-"));
     const service = new CompactionSettingsService({
       dataDir,
@@ -303,7 +303,7 @@ describe("CompactionSettingsService", () => {
 
     await expect(
       service.update({ model: { provider: "claude-sdk", modelId: "claude-sonnet-5" } }),
-    ).rejects.toThrow("Native SDK providers are not supported for compaction");
+    ).rejects.toThrow("Claude SDK has been retired");
   });
 
   it("rejects unknown models, unsupported reasoning, and non-finite timeouts", async () => {

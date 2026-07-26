@@ -37,18 +37,18 @@ export function planPiRuntimePrompt(options: PlanPiRuntimePromptOptions): PiRunt
   };
 }
 
-export interface ClaudeRuntimePromptPlan {
+export interface SdkRuntimePromptPlan {
   systemPrompt: string;
   startupSystemPromptOverride?: string;
   skipInitialSessionResume?: boolean;
 }
 
-export interface PlanClaudeRuntimePromptOptions {
+export interface PlanSdkRuntimePromptOptions {
   systemPrompt: string;
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
 }
 
-export function planClaudeRuntimePrompt(options: PlanClaudeRuntimePromptOptions): ClaudeRuntimePromptPlan {
+function planSdkRuntimePrompt(options: PlanSdkRuntimePromptOptions): SdkRuntimePromptPlan {
   const startupSystemPromptOverride = appendStartupRecoveryContext(
     options.systemPrompt,
     options.startupRecoveryContext
@@ -61,8 +61,8 @@ export function planClaudeRuntimePrompt(options: PlanClaudeRuntimePromptOptions)
   };
 }
 
-export function planCursorSdkRuntimePrompt(options: PlanClaudeRuntimePromptOptions): ClaudeRuntimePromptPlan {
-  return planClaudeRuntimePrompt(options);
+export function planCursorSdkRuntimePrompt(options: PlanSdkRuntimePromptOptions): SdkRuntimePromptPlan {
+  return planSdkRuntimePrompt(options);
 }
 
 export function appendStartupRecoveryContext(

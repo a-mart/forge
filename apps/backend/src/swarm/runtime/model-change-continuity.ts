@@ -9,7 +9,8 @@ import { isEnoentError } from "../../utils/fs-errors.js";
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
 const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
 
-export type ModelChangeContinuityRuntimeKind = "pi" | "claude" | "cursor-sdk";
+export type ModelChangeContinuityRuntimeKind = "pi" | "cursor-sdk";
+type PersistedModelChangeContinuityRuntimeKind = ModelChangeContinuityRuntimeKind | "claude" | "codex";
 
 export interface ModelChangeContinuityModel {
   provider: string;
@@ -48,9 +49,6 @@ export function inferModelChangeContinuityRuntimeKind(
   model: Pick<AgentModelDescriptor, "provider">
 ): ModelChangeContinuityRuntimeKind {
   const provider = model.provider.trim().toLowerCase();
-  if (provider === "claude-sdk") {
-    return "claude";
-  }
   if (provider === "cursor-sdk") {
     return "cursor-sdk";
   }
@@ -354,12 +352,12 @@ function isValidModelChangeContinuityModel(value: unknown): value is ModelChange
   );
 }
 
-function isPersistedRuntimeKind(value: unknown): value is ModelChangeContinuityRuntimeKind | "codex" {
+function isPersistedRuntimeKind(value: unknown): value is PersistedModelChangeContinuityRuntimeKind {
   return value === "pi" || value === "claude" || value === "cursor-sdk" || value === "codex";
 }
 
-function normalizeRuntimeKind(value: ModelChangeContinuityRuntimeKind | "codex"): ModelChangeContinuityRuntimeKind {
-  return value === "codex" ? "pi" : value;
+function normalizeRuntimeKind(value: PersistedModelChangeContinuityRuntimeKind): ModelChangeContinuityRuntimeKind {
+  return value === "cursor-sdk" ? "cursor-sdk" : "pi";
 }
 
 function normalizeThinkingLevel(level: string | undefined): string | undefined {

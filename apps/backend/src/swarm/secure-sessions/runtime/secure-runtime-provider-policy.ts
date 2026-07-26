@@ -1,5 +1,4 @@
 const UNSUPPORTED_SECURE_RUNTIME_PROVIDERS = new Set([
-  "claude-sdk",
   "cursor-sdk",
   "cursor-acp",
 ]);

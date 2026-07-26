@@ -41,7 +41,7 @@ provider locator.
 Team Secure Mode is currently available for a supported local Pi-backed Builder
 manager and eligible local Forge Pi workers in the same project. Unsupported worker
 runtimes fail closed before secure work is dispatched; Forge does not silently run
-that assignment without the secure boundary. Claude SDK, Cursor SDK, Cursor ACP,
+that assignment without the secure boundary. Cursor SDK, Cursor ACP,
 Remote Projects, Collaboration channels, Codex plugin/external-thread workers, and
 ordinary integrated terminals are not Secure Sessions execution paths.
 

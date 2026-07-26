@@ -183,7 +183,6 @@ describe("collaboration category service", () => {
     for (const model of [
       { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "low" },
       { provider: "anthropic", modelId: "claude-sonnet-4.5", thinkingLevel: "medium" },
-      { provider: "claude-sdk", modelId: "claude-haiku-4-5-20251001", thinkingLevel: "low" },
     ]) {
       expect(() => service.createCategory({
         workspaceId: workspace.workspaceId,
@@ -191,6 +190,17 @@ describe("collaboration category service", () => {
         channelCreationDefaults: { model },
       })).toThrow("retired model");
     }
+
+    const sdkModel = {
+      provider: "claude-sdk",
+      modelId: "claude-haiku-4-5-20251001",
+      thinkingLevel: "low",
+    };
+    expect(() => service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Retired Claude SDK",
+      channelCreationDefaults: { model: sdkModel },
+    })).toThrow("Claude SDK has been retired");
   });
 
   it("preserves GPT-5.6 max reasoning as the category default", async () => {

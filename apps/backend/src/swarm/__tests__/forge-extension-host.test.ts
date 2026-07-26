@@ -430,7 +430,7 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "claude",
+      runtimeType: "pi",
       runtimeToken: 1
     });
     host.activateRuntimeBindings(bindings!);
@@ -469,7 +469,7 @@ describe("ForgeExtensionHost", () => {
           hook: "tool:after",
           message: "after boom",
           agentId: "worker-1",
-          runtimeType: "claude"
+          runtimeType: "pi"
         })
       ])
     );
@@ -499,7 +499,7 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "claude",
+      runtimeType: "pi",
       runtimeToken: 1
     });
     host.activateRuntimeBindings(bindings!);
@@ -925,7 +925,7 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "claude",
+      runtimeType: "pi",
       runtimeToken: 1
     });
 
@@ -951,7 +951,7 @@ describe("ForgeExtensionHost", () => {
           hook: "tool:before",
           message: "boom",
           agentId: "worker-1",
-          runtimeType: "claude"
+          runtimeType: "pi"
         })
       ])
     );

@@ -69,13 +69,6 @@ export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
     validateStagedPackageDir: (stagedPackageDir) => validateStagedBetterSqlite3PackageDir(stagedPackageDir),
   },
   {
-    name: '@anthropic-ai/claude-agent-sdk',
-    optional: false,
-    validateLoadedModule: (loadedModule) =>
-      typeof loadedModule?.query === 'function' ? null : 'expected a query() export',
-    validateStagedPackageDir: (stagedPackageDir) => validateStagedClaudeSdkPackageDir(stagedPackageDir),
-  },
-  {
     name: '@cursor/sdk',
     optional: false,
     validateLoadedModule: (loadedModule) =>
@@ -129,7 +122,7 @@ const PACKAGE_SPECIFIC_DIRS_TO_PRUNE = new Map([
   ['koffi', new Set(['src', 'vendor'])],
   ['sharp', new Set(['install', 'src'])],
 ])
-const PACKAGES_KEEP_DECLARATION_FILES = new Set(['@anthropic-ai/claude-agent-sdk', '@cursor/sdk'])
+const PACKAGES_KEEP_DECLARATION_FILES = new Set(['@cursor/sdk'])
 const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
@@ -1502,27 +1495,6 @@ function getCurrentCursorSdkPlatformPackageName() {
   }
 
   return `@cursor/sdk-${platform}-${arch}`
-}
-
-function validateStagedClaudeSdkPackageDir(stagedPackageDir) {
-  const requiredPaths = [
-    'package.json',
-    'sdk.mjs',
-    'sdk.d.ts',
-    'cli.js',
-    'manifest.json',
-    'manifest.zst.json',
-    path.join('vendor', 'audio-capture'),
-    path.join('vendor', 'ripgrep'),
-  ]
-
-  for (const relativePath of requiredPaths) {
-    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
-      return `missing required asset ${relativePath}`
-    }
-  }
-
-  return null
 }
 
 function shouldCopyRuntimePackagePath(packageName, packageRoot, sourcePath) {

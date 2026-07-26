@@ -8,6 +8,7 @@ import {
   SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE,
   type SecureRuntimeBinding,
 } from "../secure-sessions/runtime/secure-runtime-binding.js";
+import { CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE } from "../catalog/legacy-claude-sdk-model.js";
 import {
   applySecurePiResourcePolicy,
   createSecurePiCodingTools,
@@ -67,18 +68,25 @@ function createBinding(
 }
 
 describe("Secure runtime provider boundary", () => {
-  it.each(["claude-sdk", "cursor-sdk"])(
-    "rejects %s before provider runtime construction",
-    async (provider) => {
-      const factory = new RuntimeFactory({
-        getSecureRuntimeBinding: () => createBinding(),
-      } as never);
+  it("rejects retired Claude SDK descriptors before runtime construction", async () => {
+    const factory = new RuntimeFactory({
+      getSecureRuntimeBinding: () => createBinding(),
+    } as never);
 
-      await expect(
-        factory.createRuntimeForDescriptor(createDescriptor(provider), "system"),
-      ).rejects.toThrow(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
-    },
-  );
+    await expect(
+      factory.createRuntimeForDescriptor(createDescriptor("claude-sdk"), "system"),
+    ).rejects.toThrow(CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE);
+  });
+
+  it("rejects cursor-sdk before provider runtime construction", async () => {
+    const factory = new RuntimeFactory({
+      getSecureRuntimeBinding: () => createBinding(),
+    } as never);
+
+    await expect(
+      factory.createRuntimeForDescriptor(createDescriptor("cursor-sdk"), "system"),
+    ).rejects.toThrow(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+  });
 
   it("replaces binding-resolution failures with a fixed non-secret error", async () => {
     const factory = new RuntimeFactory({

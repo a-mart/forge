@@ -22,6 +22,7 @@ import type {
 import { readModelOverrides } from "./model-overrides.js";
 import { readOpenRouterModels } from "./openrouter-models.js";
 import type { AgentModelDescriptor } from "../types.js";
+import { mapLegacyClaudeSdkModel } from "./legacy-claude-sdk-model.js";
 
 const REASONING_LEVELS: ManagerReasoningLevel[] = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
 
@@ -42,7 +43,7 @@ export class ModelCatalogService {
     ]);
 
     this.loadedDataDir = dataDir;
-    this.overrides = { ...overrideFile.overrides };
+    this.overrides = normalizeLoadedOverrides(overrideFile.overrides);
     this.openRouterModels = { ...openRouterFile.models };
   }
 
@@ -281,6 +282,57 @@ export class ModelCatalogService {
 }
 
 export const modelCatalogService = new ModelCatalogService();
+
+function normalizeLoadedOverrides(
+  overrides: Record<string, ModelOverrideEntry>,
+): Record<string, ModelOverrideEntry> {
+  const normalized = Object.fromEntries(
+    Object.entries(overrides).filter(([key]) => !key.trim().toLowerCase().startsWith("claude-sdk/")),
+  );
+
+  for (const [key, legacyEntry] of Object.entries(overrides)) {
+    const normalizedKey = key.trim().toLowerCase();
+    if (!normalizedKey.startsWith("claude-sdk/")) {
+      continue;
+    }
+
+    const mapping = mapLegacyClaudeSdkModel({ provider: "claude-sdk", modelId: normalizedKey });
+    if (mapping.kind !== "mapped") {
+      continue;
+    }
+
+    normalized[mapping.modelId] = mergeMappedOverride(legacyEntry, normalized[mapping.modelId]);
+  }
+
+  return normalized;
+}
+
+function mergeMappedOverride(
+  legacyEntry: ModelOverrideEntry,
+  canonicalEntry: ModelOverrideEntry | undefined,
+): ModelOverrideEntry {
+  const merged: ModelOverrideEntry = {};
+  const enabled = falseWins(legacyEntry.enabled, canonicalEntry?.enabled);
+  const managerEnabled = falseWins(legacyEntry.managerEnabled, canonicalEntry?.managerEnabled);
+  const caps = [legacyEntry.contextWindowCap, canonicalEntry?.contextWindowCap]
+    .filter((value): value is number => value !== undefined);
+
+  if (enabled !== undefined) merged.enabled = enabled;
+  if (managerEnabled !== undefined) merged.managerEnabled = managerEnabled;
+  if (caps.length > 0) merged.contextWindowCap = Math.min(...caps);
+  if (canonicalEntry?.modelSpecificInstructions !== undefined) {
+    merged.modelSpecificInstructions = canonicalEntry.modelSpecificInstructions;
+  } else if (legacyEntry.modelSpecificInstructions !== undefined) {
+    merged.modelSpecificInstructions = legacyEntry.modelSpecificInstructions;
+  }
+
+  return merged;
+}
+
+function falseWins(left: boolean | undefined, right: boolean | undefined): boolean | undefined {
+  if (left === false || right === false) return false;
+  return right ?? left;
+}
 
 function getOverrideKey(model: ForgeModelDefinition): string {
   return model.catalogId ?? model.modelId;

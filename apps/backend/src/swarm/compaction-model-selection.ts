@@ -7,6 +7,7 @@ import {
 } from "@forge/protocol";
 import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
+import { CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE } from "./catalog/legacy-claude-sdk-model.js";
 
 const COMPACTION_PROVIDER_ERROR =
   "Compaction model must use a Pi-compatible provider with raw API-key auth. Native SDK providers are not supported for compaction.";
@@ -30,6 +31,10 @@ export function validateCompactionModelSelection(
 
   if (!modelId) {
     throw new CompactionSettingsValidationError("model.modelId must be a non-empty string");
+  }
+
+  if (provider === "claude-sdk") {
+    throw new CompactionSettingsValidationError(CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE);
   }
 
   if (!isCompactionProviderSupported(provider)) {

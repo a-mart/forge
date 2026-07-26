@@ -130,7 +130,7 @@ Forge does not hot-reload an active session. Runtime-bound hooks refresh on the 
 
 ## Forge vs Pi behavior
 
-Forge-owned tools are wrapped directly, so Forge hooks work across Pi, Claude SDK, and Codex runtimes.
+Forge-owned tools are wrapped directly, so Forge hooks work across Pi, Cursor SDK, and Codex runtimes.
 
 For Pi-native tools such as `read`, `bash`, `edit`, `write`, package tools, and Pi-extension tools, Forge installs a small internal Pi bridge so the same Forge hooks can observe them in Pi runtimes.
 

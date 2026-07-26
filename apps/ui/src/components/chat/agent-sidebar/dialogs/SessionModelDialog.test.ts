@@ -14,7 +14,6 @@ const modelsApiMock = vi.hoisted(() => ({
     providerAvailability: {
       'openai-codex': true,
       anthropic: true,
-      'claude-sdk': true,
       xai: true,
     },
   })),

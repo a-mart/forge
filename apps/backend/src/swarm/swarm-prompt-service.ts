@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace, type TierConfig } from "@forge/protocol";
-import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
+import { assembleRuntimePrompt, discoverAgentsMd } from "./runtime-prompt-assembler.js";
 import { isSessionAgentDescriptor } from "./agent-directory.js";
 import {
   getCommonKnowledgePath,
@@ -790,36 +790,6 @@ export class SwarmPromptService {
     return contextFiles;
   }
 
-  async buildClaudeRuntimeSystemPrompt(
-    descriptor: AgentDescriptor,
-    systemPrompt: string,
-  ): Promise<string> {
-    const runtimeMemoryFilePath = this.options.getAgentMemoryPath(descriptor.agentId);
-    const resolvedBasePrompt = resolvePromptVariables(
-      systemPrompt,
-      this.buildRuntimePromptVariables(runtimeMemoryFilePath),
-    );
-    const [memoryResources, agentsMdPaths, swarmContextFiles] = await Promise.all([
-      this.getMemoryRuntimeResources(descriptor),
-      discoverAgentsMd(descriptor.cwd),
-      this.getSwarmContextFiles(descriptor.cwd),
-    ]);
-
-    return await assembleClaudePrompt({
-      basePrompt: resolvedBasePrompt,
-      memoryContextFile: memoryResources.memoryContextFile,
-      agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
-      availableSkills: memoryResources.skillMetadata.map((skill) => ({
-        name: skill.skillName,
-        description: skill.description ?? "",
-        location: skill.path,
-      })),
-      role: descriptor.role,
-      agentId: descriptor.agentId,
-      cwd: descriptor.cwd,
-    });
-  }
-
   async buildCursorSdkRuntimeSystemPrompt(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -835,7 +805,7 @@ export class SwarmPromptService {
       this.getSwarmContextFiles(descriptor.cwd),
     ]);
 
-    const assembledPrompt = await assembleClaudePrompt({
+    const assembledPrompt = await assembleRuntimePrompt({
       basePrompt: resolvedBasePrompt,
       memoryContextFile: memoryResources.memoryContextFile,
       agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],

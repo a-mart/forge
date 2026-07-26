@@ -334,8 +334,8 @@ describe("session command handler", () => {
       listProfiles: vi.fn(() => ALL_PROFILES),
       getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
       updateSessionExactModel: vi.fn(async () => ({
-        provider: "claude-sdk",
-        modelId: "claude-opus-4-7",
+        provider: "anthropic",
+        modelId: "claude-opus-4-8",
         thinkingLevel: "high",
       })),
     };
@@ -345,7 +345,7 @@ describe("session command handler", () => {
         type: "update_session_model",
         sessionAgentId: "manager--s2",
         mode: "override",
-        modelSelection: { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+        modelSelection: { provider: "anthropic", modelId: "claude-opus-4-8" },
         requestId: "req-session-model-exact",
       } as never,
       socket: {} as never,
@@ -358,7 +358,7 @@ describe("session command handler", () => {
 
     expect(swarmManager.updateSessionExactModel).toHaveBeenCalledWith(
       "manager--s2",
-      { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+      { provider: "anthropic", modelId: "claude-opus-4-8" },
       undefined,
     );
     expect(send).toHaveBeenCalledWith(
@@ -367,7 +367,7 @@ describe("session command handler", () => {
         type: "session_model_updated",
         sessionAgentId: "manager--s2",
         mode: "override",
-        model: "sdk-opus",
+        model: "pi-opus",
         requestId: "req-session-model-exact",
       }),
     );

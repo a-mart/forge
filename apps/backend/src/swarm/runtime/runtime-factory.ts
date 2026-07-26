@@ -1,6 +1,5 @@
 import { type AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type { ObservabilityFacade } from "../../observability/observability-types.js";
-import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type { OpenAIAuthBrokerRuntimeService } from "../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
@@ -23,7 +22,6 @@ import type {
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compatibility.js";
 import { assertSwarmModelIdNotRetired } from "../model-presets.js";
-import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
 import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
 import {
@@ -58,7 +56,6 @@ interface RuntimeFactoryDependencies {
     descriptor: AgentDescriptor;
     sessionDescriptor?: AgentDescriptor;
   }) => Promise<ProjectExecutableTrustPlan>;
-  buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildCursorSdkRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
@@ -89,12 +86,10 @@ interface RuntimeFactoryDependencies {
 }
 
 export class RuntimeFactory {
-  private readonly claudeRuntimeCreator: ClaudeRuntimeCreator;
   private readonly cursorSdkRuntimeCreator: CursorSdkRuntimeCreator;
   private readonly piRuntimeCreator: PiRuntimeCreator;
 
   constructor(private readonly deps: RuntimeFactoryDependencies) {
-    this.claudeRuntimeCreator = new ClaudeRuntimeCreator(deps);
     this.cursorSdkRuntimeCreator = new CursorSdkRuntimeCreator(deps);
     this.piRuntimeCreator = new PiRuntimeCreator(deps);
   }
@@ -120,36 +115,6 @@ export class RuntimeFactory {
     const creationOptions = secureRuntimeBinding
       ? { ...options, secureRuntimeBinding }
       : options;
-
-    if (isClaudeSdkModelDescriptor(descriptor.model)) {
-      if (secureRuntimeBinding) {
-        throw new Error(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
-      }
-      try {
-        return await this.claudeRuntimeCreator.createRuntimeForDescriptor({
-          descriptor,
-          systemPrompt,
-          runtimeToken,
-          sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-          creationOptions
-        });
-      } catch (error) {
-        if (!isClaudeSdkUnavailableError(error)) {
-          throw error;
-        }
-
-        this.deps.logDebug("runtime:create:claude_sdk:unavailable", {
-          agentId: descriptor.agentId,
-          model: descriptor.model,
-          message: error.message,
-          code: error.code
-        });
-
-        throw new Error(
-          `${error.message} Install the Claude Agent SDK or switch this agent to the Pi-proxied anthropic/${descriptor.model.modelId} variant.`
-        );
-      }
-    }
 
     if (isCursorSdkModelDescriptor(descriptor.model)) {
       if (secureRuntimeBinding) {
@@ -200,10 +165,6 @@ export class RuntimeFactory {
     const sessionDescriptor = this.deps.getAgentDescriptor?.(descriptor.managerId);
     return sessionDescriptor?.role === "manager" ? sessionDescriptor : undefined;
   }
-}
-
-function isClaudeSdkModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
-  return descriptor.provider.trim().toLowerCase() === "claude-sdk";
 }
 
 function isCursorSdkModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {

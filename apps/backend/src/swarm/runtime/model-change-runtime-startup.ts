@@ -13,7 +13,6 @@ import {
 import { isEnoentError } from "../../utils/fs-errors.js";
 
 const CONVERSATION_ENTRY_CUSTOM_TYPE = "swarm_conversation_entry";
-const CLAUDE_COMPACTION_SUMMARY_ENTRY_TYPE = "swarm_claude_compaction_summary";
 
 export interface ResolvePendingModelChangeRuntimeStartupOptions {
   descriptor: Pick<AgentDescriptor, "agentId" | "role" | "sessionFile">;
@@ -57,8 +56,6 @@ export async function resolvePendingModelChangeRuntimeStartup(
   const recoveryContext = buildModelChangeRecoveryContext({
     descriptor: options.descriptor,
     entries: sessionRecoveryInputs.entries,
-    sourceModel: request.sourceModel,
-    latestClaudeCompactionSummary: sessionRecoveryInputs.latestClaudeCompactionSummary,
     modelContextWindow: options.modelContextWindow,
     existingPrompt: options.existingPrompt,
     hasPinnedContent: options.hasPinnedContent
@@ -77,7 +74,6 @@ export function shouldApplyModelChangeRecoveryContext(request: ModelChangeContin
 
 async function loadSessionRecoveryInputs(sessionFile: string): Promise<{
   entries: ConversationEntryEvent[];
-  latestClaudeCompactionSummary?: string;
 }> {
   const content = await readFile(sessionFile, "utf8").catch((error: unknown) => {
     if (isEnoentError(error)) {
@@ -88,7 +84,6 @@ async function loadSessionRecoveryInputs(sessionFile: string): Promise<{
   });
 
   const entries: ConversationEntryEvent[] = [];
-  let latestClaudeCompactionSummary: string | undefined;
 
   for (const rawLine of content.split(/\r?\n/u)) {
     const line = rawLine.trim();
@@ -118,29 +113,9 @@ async function loadSessionRecoveryInputs(sessionFile: string): Promise<{
 
     if (customEntry.customType === CONVERSATION_ENTRY_CUSTOM_TYPE && isConversationEntryEvent(customEntry.data)) {
       entries.push(customEntry.data);
-      continue;
-    }
-
-    if (customEntry.customType === CLAUDE_COMPACTION_SUMMARY_ENTRY_TYPE) {
-      const summary = parseClaudeCompactionSummary(customEntry.data);
-      if (summary) {
-        latestClaudeCompactionSummary = summary;
-      }
     }
   }
 
-  return {
-    entries,
-    latestClaudeCompactionSummary
-  };
-}
-
-function parseClaudeCompactionSummary(data: unknown): string | undefined {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return undefined;
-  }
-
-  const summary = (data as { summary?: unknown }).summary;
-  return typeof summary === "string" && summary.trim().length > 0 ? summary.trim() : undefined;
+  return { entries };
 }
 

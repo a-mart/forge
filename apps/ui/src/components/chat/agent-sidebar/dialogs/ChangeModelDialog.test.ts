@@ -15,8 +15,7 @@ vi.mock('@/components/settings/models-api', () => ({
       providerAvailability: {
         'openai-codex': true,
         'anthropic': true,
-        'claude-sdk': true,
-        'xai': true,
+          'xai': true,
       },
     }),
 }))

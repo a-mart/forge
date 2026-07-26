@@ -1,3 +1,7 @@
+export function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 export function normalizeManagerId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {

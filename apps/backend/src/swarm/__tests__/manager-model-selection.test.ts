@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe("manager model selection", () => {
-  it("resolves exact Anthropic and Claude SDK Opus 4.6/4.7 selections distinctly", async () => {
+  it("resolves exact native Anthropic Opus 4.6/4.7 selections", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
 
@@ -48,33 +48,16 @@ describe("manager model selection", () => {
       modelId: "claude-opus-4-7",
       thinkingLevel: "high",
     });
-
-    expect(
-      resolveExactManagerModelSelection(
-        { provider: "claude-sdk", modelId: "claude-opus-4-7" },
-        { surface: "change", providerAvailability: new Map([["claude-sdk", true]]) },
-      )
-    ).toEqual({
-      provider: "claude-sdk",
-      modelId: "claude-opus-4-7",
-      thinkingLevel: "high",
-    });
   });
 
-  it("allows Claude SDK exact selection when Anthropic credentials are unavailable", async () => {
+  it("rejects every new Claude SDK exact selection with remediation", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
 
-    expect(
-      resolveExactManagerModelSelection(
-        { provider: "claude-sdk", modelId: "claude-opus-4-7" },
-        { surface: "change", providerAvailability: new Map([["anthropic", false]]) },
-      )
-    ).toEqual({
-      provider: "claude-sdk",
-      modelId: "claude-opus-4-7",
-      thinkingLevel: "high",
-    });
+    expect(() => resolveExactManagerModelSelection(
+      { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+      { surface: "change", providerAvailability: new Map([["claude-sdk", true]]) },
+    )).toThrow("Choose a native Anthropic model");
   });
 
   it("normalizes unsupported exact GPT-5.6 Terra/Luna reasoning to model-supported high", async () => {
@@ -140,8 +123,6 @@ describe("manager model selection", () => {
     ["openai-codex", "gpt-5.3-codex-spark", "pi-5.5"],
     ["anthropic", "claude-sonnet-4-5-20250929", "pi-sonnet"],
     ["anthropic", "claude-haiku-4.5", "pi-sonnet"],
-    ["claude-sdk", "claude-sonnet-4.5", "sdk-sonnet"],
-    ["claude-sdk", "claude-sdk/claude-haiku-4-5-20251001", "sdk-sonnet"],
     ["openrouter", "openai/gpt-5.3-codex-spark", "pi-5.5"],
   ])("rejects retired exact manager selection %s/%s", async (provider, modelId, replacementPreset) => {
     const dataDir = await makeTempDataDir();

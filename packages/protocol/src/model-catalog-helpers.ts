@@ -100,10 +100,6 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
     return undefined
   }
 
-  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-sonnet-')) {
-    return 'sdk-sonnet'
-  }
-
   if (normalizedProvider === 'anthropic' && normalizedModelId.startsWith('claude-sonnet-')) {
     return 'pi-sonnet'
   }
@@ -111,10 +107,6 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
   const model = getCatalogModel(normalizedModelId, normalizedProvider)
   if (model && model.provider === normalizedProvider) {
     return model.familyId
-  }
-
-  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-')) {
-    return 'sdk-opus'
   }
 
   if (normalizedProvider === 'xai' && normalizedModelId.startsWith('grok-')) {
@@ -132,12 +124,6 @@ const RETIRED_FORGE_MODELS = new Set([
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-sonnet-4-5',
   'anthropic/claude-haiku-4-5',
-  'claude-sdk/claude-sonnet-4-5-20250929',
-  'claude-sdk/claude-haiku-4-5-20251001',
-  'claude-sdk/claude-sonnet-4.5',
-  'claude-sdk/claude-haiku-4.5',
-  'claude-sdk/claude-sonnet-4-5',
-  'claude-sdk/claude-haiku-4-5',
   'openrouter/~anthropic/claude-haiku-latest',
   'openrouter/anthropic/claude-sonnet-4.5',
   'openrouter/anthropic/claude-haiku-4.5',

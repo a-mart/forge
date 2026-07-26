@@ -32,7 +32,9 @@ You'll see a short welcome form from Cortex, Forge's learning system. It asks fo
 
 To run agents, configure at least one supported model provider. Go to **Settings → Authentication**.
 
-The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**, and masked key/token rows for **xAI**, **OpenRouter**, and **Cursor SDK**. Status and auth-type badges appear only on applicable cards. Claude SDK authentication is handled outside these rows: run `claude login` to use its native Claude Code CLI OAuth runtime.
+The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**, and masked key/token rows for **xAI**, **OpenRouter**, and **Cursor SDK**. Status and auth-type badges appear only on applicable cards.
+
+> Forge no longer includes the Claude Agent SDK runtime. Existing known SDK model selections load as native Anthropic selections, but Claude Code login credentials do not transfer. Configure Anthropic in Forge before continuing those sessions. Unknown SDK selections remain unavailable until you choose a native Anthropic model; canonical Forge history remains viewable and external Claude Code data is untouched.
 
 Choose providers based on the models and runtimes you need. Anthropic covers Claude models, OpenAI covers GPT and Codex, xAI covers native Grok models, OpenRouter credentials support user-added OpenRouter models, and Cursor SDK credentials support its catalog models when visible. Existing local OpenAI or Anthropic credentials may still be reflected in provider status, but the current Settings cards add OAuth accounts rather than presenting a general API-key entry flow.
 
@@ -494,7 +496,7 @@ Forge's smart compaction works differently:
 5. **Pinned messages** — Any messages you've pinned (up to 10 per session) are preserved verbatim in the summary under a dedicated "Preserved Messages (Pinned)" section.
 6. **Resume** — If compaction happened while the session was active, interrupted, or waiting on dispatch, the agent comes back with the detailed recent context, a high-level summary of older work, pinned messages, and the handoff file.
 
-If you trigger Smart compact manually while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction. While compaction or context recovery is active, the session row shows a violet pulsing `C` badge in the sidebar. **Settings → General → Compaction** controls the compaction model, reasoning, and timeout for supported Pi-backed OpenAI/Codex and Anthropic manager compaction runtimes only, not Claude SDK/native runtimes or xAI/Grok.
+If you trigger Smart compact manually while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction. While compaction or context recovery is active, the session row shows a violet pulsing `C` badge in the sidebar. **Settings → General → Compaction** controls the compaction model, reasoning, and timeout for supported Pi-backed OpenAI/Codex and Anthropic manager compaction runtimes only, not Cursor SDK or xAI/Grok runtimes.
 
 Sessions can compact 50+ times and still maintain full continuity. You can just keep going indefinitely.
 
@@ -824,7 +826,7 @@ Once you're comfortable with the basics:
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Review consolidation settings** — While Knowledge v2 is ON, use **Settings → General** for the daily entry consolidation schedule; manual consolidation is available under Cortex **Run**.
-6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
+6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."

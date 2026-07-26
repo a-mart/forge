@@ -141,12 +141,11 @@ export class SwarmCompactionCoordinator {
           sourceContext,
         );
       } else {
-        const text =
-          runtime.runtimeType === "claude" &&
-          result.reason === "claude_runtime_below_compaction_threshold"
-            ? "Smart compaction skipped because context is already below the Claude compaction threshold."
-            : "Smart compaction finished, but context was not reduced.";
-        this.emitSystemMessage(agentId, text, sourceContext);
+        this.emitSystemMessage(
+          agentId,
+          "Smart compaction finished, but context was not reduced.",
+          sourceContext,
+        );
       }
 
       this.options.logDebug("manager:smart_compact:complete", {

@@ -89,7 +89,7 @@ describe("collaboration workspace service", () => {
   it.each([
     ["openai-codex", "gpt-5.3-codex-spark", "high", "openai-codex", "gpt-5.5", "high"],
     ["anthropic", "claude-sonnet-4-5-20250929", "medium", "anthropic", "claude-sonnet-5", "medium"],
-    ["claude-sdk", "claude-haiku-4.5", "low", "claude-sdk", "claude-sonnet-5", "low"],
+    ["claude-sdk", "claude-haiku-4.5", "low", "anthropic", "claude-sonnet-5", "low"],
   ])("repairs persisted sunset workspace default %s/%s deterministically", async (
     provider,
     modelId,

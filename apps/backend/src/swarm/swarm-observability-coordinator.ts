@@ -60,8 +60,7 @@ export class SwarmObservabilityCoordinator {
 
   getRuntimeType(
     descriptor: AgentDescriptor,
-  ): "pi" | "claude-sdk" | "cursor-sdk" {
-    if (descriptor.model.provider === "claude-sdk") return "claude-sdk";
+  ): "pi" | "cursor-sdk" {
     if (descriptor.model.provider === "cursor-sdk") return "cursor-sdk";
     return "pi";
   }

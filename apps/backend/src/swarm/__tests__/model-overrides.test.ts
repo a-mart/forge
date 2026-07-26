@@ -51,10 +51,6 @@ describe("model-overrides", () => {
         "claude-opus-4-7": {
           enabled: false,
         },
-        "claude-sdk/claude-opus-4-6": {
-          enabled: true,
-          contextWindowCap: 250_000,
-        },
       },
     });
 
@@ -63,9 +59,6 @@ describe("model-overrides", () => {
 
     expect(service.getEffectiveContextWindow("claude-opus-4-6")).toBe(300_000);
     expect(service.isModelEnabled("claude-opus-4-6")).toBe(false);
-    expect(service.getEffectiveContextWindow("claude-opus-4-6", "claude-sdk")).toBe(250_000);
-    expect(service.isModelEnabled("claude-opus-4-6", "claude-sdk")).toBe(true);
-
     const opusPreset = service.getModelPresetInfoList().find((preset) => preset.presetId === "pi-opus");
     expect(opusPreset?.modelId).toBe("claude-opus-4-8");
     expect(service.resolveModelDescriptorFromFamily("pi-opus")).toEqual({
@@ -73,6 +66,49 @@ describe("model-overrides", () => {
       modelId: "claude-opus-4-8",
       thinkingLevel: "high",
     });
+  });
+
+  it("maps persisted Claude SDK overrides in memory with deterministic collision rules", async () => {
+    const dataDir = await makeTempDataDir();
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        "claude-sdk/claude-opus-4-6": {
+          enabled: true,
+          managerEnabled: false,
+          contextWindowCap: 250_000,
+          modelSpecificInstructions: "Legacy SDK instructions",
+        },
+        "claude-opus-4-6": {
+          enabled: false,
+          managerEnabled: true,
+          contextWindowCap: 300_000,
+          modelSpecificInstructions: "Canonical Anthropic instructions",
+        },
+        "claude-sdk/unknown-future-model": {
+          enabled: true,
+        },
+      },
+    });
+
+    const service = new ModelCatalogService();
+    await service.loadOverrides(dataDir);
+
+    expect(service.getOverrides()).toEqual({
+      "claude-opus-4-6": {
+        enabled: false,
+        managerEnabled: false,
+        contextWindowCap: 250_000,
+        modelSpecificInstructions: "Canonical Anthropic instructions",
+      },
+    });
+    expect(service.getEffectiveContextWindow("claude-opus-4-6", "anthropic")).toBe(250_000);
+    expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6", "anthropic")).toBe(
+      "Canonical Anthropic instructions",
+    );
+    await expect(readModelOverrides(dataDir)).resolves.toHaveProperty(
+      "overrides.claude-sdk/claude-opus-4-6",
+    );
   });
 
   it("preserves managerEnabled alongside other override fields", async () => {
