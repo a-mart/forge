@@ -102,7 +102,10 @@ function choice(
   };
 }
 
-function planSummary(id: string): ConversationEntryEvent {
+function planSummary(
+  id: string,
+  options: Partial<Extract<ConversationEntryEvent, { type: "plan_summary" }>> = {}
+): Extract<ConversationEntryEvent, { type: "plan_summary" }> {
   return {
     type: "plan_summary",
     id,
@@ -110,7 +113,8 @@ function planSummary(id: string): ConversationEntryEvent {
     timestamp: FIXED_NOW,
     revision: 2,
     updatedAt: FIXED_NOW,
-    plan: [{ step: "Finish the work", status: "completed" }]
+    plan: [{ step: "Finish the work", status: "completed" }],
+    ...options
   };
 }
 
@@ -256,6 +260,54 @@ describe("history policy", () => {
     expect(ids(entries)).not.toContain("remove-3");
   });
 
+  it("retains the authoritative active plan anchor at 2,000-entry saturation", () => {
+    const active = planSummary("authoritative-plan", {
+      state: "active",
+      revision: 1,
+      plan: [{ step: "Keep working", status: "in_progress" }]
+    });
+    const entries: ConversationEntryEvent[] = [
+      active,
+      ...Array.from(
+        { length: MAX_CONVERSATION_HISTORY },
+        (_, index) => message(`visible-${index}`, { source: "user_input" })
+      )
+    ];
+
+    trimConversationHistory(entries, "manager-1");
+
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
+    expect(entries).toContain(active);
+    expect(ids(entries)).not.toContain("visible-0");
+  });
+
+  it("collapses polluted active ids into the current completed card without removing historical completed plans", () => {
+    const historical = planSummary("historical", { revision: 1 });
+    const stale = planSummary("stale-active", {
+      state: "active",
+      revision: 2,
+      plan: [{ step: "Current plan", status: "in_progress" }]
+    });
+    const currentActive = planSummary("current", {
+      state: "active",
+      revision: 3,
+      plan: [{ step: "Current plan", status: "in_progress" }]
+    });
+    const currentCompleted = planSummary("current", { revision: 4, state: "completed" });
+    const entries: ConversationEntryEvent[] = [
+      historical,
+      stale,
+      currentActive,
+      currentCompleted,
+      planSummary("next-historical", { revision: 5 })
+    ];
+
+    trimConversationHistory(entries);
+
+    expect(ids(entries)).toEqual(["historical", "current", "next-historical"]);
+    expect(entries[1]).toBe(currentCompleted);
+  });
+
   it("trims visible transcript only as the retention last resort", () => {
     const entries = Array.from(
       { length: MAX_CONVERSATION_HISTORY + 2 },
@@ -386,6 +438,22 @@ describe("history policy", () => {
 
     expect(selection.trimmed).toBe(true);
     expect(ids(selection.history)).toEqual(["message-1", "plan-summary-1"]);
+  });
+
+  it("rehydrates an active plan anchor excluded by the requested tail count", () => {
+    const active = planSummary("active-plan", {
+      state: "active",
+      plan: [{ step: "Continue", status: "in_progress" }]
+    });
+    const history = [active, message("message-1"), message("message-2")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      requestedMessageCount: 1,
+      isWithinBudget: () => true
+    });
+
+    expect(ids(selection.history)).toEqual(["active-plan", "message-2"]);
   });
 
   it("applies requested message count before bootstrap budget selection", () => {
