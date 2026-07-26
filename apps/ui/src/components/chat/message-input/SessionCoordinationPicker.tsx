@@ -160,7 +160,7 @@ export function SessionCoordinationPicker({
           <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="flex items-center gap-2 text-xs text-muted-foreground">
           Coordination
           {(loading || saving) && <Loader2 className="ml-auto size-3 animate-spin" />}
@@ -169,8 +169,8 @@ export function SessionCoordinationPicker({
 
         <DropdownMenuSub>
           <DropdownMenuSubTrigger disabled={saving}>
-            <span>Manager posture</span>
-            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+            <span className="shrink-0">Manager posture</span>
+            <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
               {postureLabel}
             </span>
           </DropdownMenuSubTrigger>
@@ -210,8 +210,8 @@ export function SessionCoordinationPicker({
 
         <DropdownMenuSub>
           <DropdownMenuSubTrigger disabled={loading || saving || !!error}>
-            <span>Delegation roster</span>
-            <span className="ml-auto max-w-24 truncate text-xs text-muted-foreground">
+            <span className="shrink-0">Delegation roster</span>
+            <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
               {loading ? 'Loading…' : currentRosterLabel}
             </span>
           </DropdownMenuSubTrigger>

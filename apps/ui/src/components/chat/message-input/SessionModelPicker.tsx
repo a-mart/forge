@@ -229,7 +229,15 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
               {loading ? 'Loading…' : modelLabel}
             </span>
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-[min(70vh,32rem)] w-64 overflow-y-auto">
+          <DropdownMenuSubContent
+            className={cn(
+              'max-h-[min(70vh,32rem)] w-64 overflow-y-auto',
+              '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+              '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+              'hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/50',
+              '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+            )}
+          >
             <DropdownMenuRadioGroup value={currentKey} onValueChange={selectModel}>
               {groups.map((group, index) => (
                 <div key={group.provider}>
