@@ -20,19 +20,19 @@ Build output is `dist/extension/` plus `dist/package-manifest.json`. Inputs and 
 
 The extension declares `<all_urls>` plus `alarms`, `debugger`, `nativeMessaging`, `scripting`, `storage`, and `webNavigation`. It declares no action or side panel, optional permissions, `tabGroups`, `bookmarks`, `history`, `downloads`, `sessions`, `notifications`, or `topSites`. Every declared permission has a production caller. Keep this ledger aligned across the manifest, documentation, and identity tests.
 
-The extension creates a random local instance ID in extension storage. It does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. Forge Desktop sees only opaque extension-instance identity and readiness until automatic operation-scoped authority is acquired.
+The extension creates a random local instance ID in extension storage. It does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. Forge Desktop sees only opaque extension-instance identity and bounded readiness/coordinator status until automatic operation-scoped authority is acquired.
 
 A dedicated Chrome profile is strongly recommended because an authorized page can expose visible content, accessibility data, bounded console/network/action diagnostics, a bounded PNG, and authenticated actions. Snapshot and interaction run through `chrome.debugger`, including arbitrary page JavaScript.
 
 ## Automatic authority behavior
 
-The native port connects through `com.forge.external_chrome` to Forge Desktop's authenticated current-user relay. The renderer receives no tab inventory or authority interface. Desktop privately selects an eligible connected instance, acquires authority for one tab, and falls back to the embedded browser when acquisition cannot begin safely. If multiple instances remain ambiguous, the main process asks the user once for the current Forge session without exposing instance IDs to the renderer.
+The native port connects through `com.forge.external_chrome` to Forge Desktop's authenticated current-user relay. The renderer receives no Chrome profile/tab inventory or per-tab operation-authority state or controls. It does receive bounded coordinator setup, build, readiness, and ownership status. For a tabless operation, Desktop privately selects an eligible connected instance, acquires authority for one tab, and can fall back to the embedded browser when acquisition cannot begin safely. An explicit Chrome-backed tab never migrates. If multiple instances remain ambiguous, the main process asks the user once for the current Forge session without exposing instance IDs to the renderer.
 
 Authority is bounded to exact tabs with compare-and-set epochs. Trusted human input interrupts agent control. A debugger loss, connection loss, bounded expiry, turn disposition, or session lifecycle release revokes or reconciles authority. User tabs remain open when Forge releases authority.
 
 Supported operations are status, open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. Chrome-backed targets do not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or the embedded Browser dock/pop-out. Snapshot can still return bounded transient screenshot data.
 
-Compatible connected instances can accept an authenticated local payload reload after Desktop update or rollback. Manual Chrome reload is fallback-only when Forge Settings reports **Manual extension reload required**.
+Compatible connected instances can accept an authenticated local payload reload after Desktop update or rollback. Manual Chrome reload is fallback-only when **Settings → Use Chrome with Forge → Advanced diagnostics → Recovery** reports `manual-extension-reload`.
 
 ## Commands
 

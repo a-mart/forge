@@ -35,11 +35,11 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 
 ### Browser automation
 
-Forge Desktop registers one protocol-v2 Automatic Browser Host for normal local Builder managers. The host privately assigns each logical tab to the embedded Electron target or the optional Chrome target; there is no environment selector, host picker, or persisted browser-host preference. Browser is not a Skill.
+Forge Desktop provides one local Automatic Browser that can use an embedded browser or an optional Chrome-backed tab. It is not a Skill, and there is no host preference to configure.
 
-Optional Chrome setup and qualified repair live under **Settings → Use Chrome with Forge**. Settings exposes status, setup/enable, repair, and the validated extension-folder reveal action; automatic target policy is not configurable there. Forge deploys the integration under `<data-dir>/integrations/external-chrome/`, and Chrome loads its stable `extension/` folder once per Chrome profile and Forge data directory. Recordings are embedded-only.
+Optional Chrome setup and repair live under **Settings → Use Chrome with Forge**. Complete setup for every Chrome profile and `FORGE_DATA_DIR` you intend to use. Browser recording remains embedded-only.
 
-Ordinary web clients have no local browser host. The Automatic Browser Host, Chrome native relay, and browser IPC are not forwarded to Remote Projects or Collaboration channels. See [Browser automation](BROWSER_AUTOMATION.md).
+Ordinary web clients have no local browser host, and Forge does not forward the capability to Remote Projects or Collaboration channels. See [Browser automation](BROWSER_AUTOMATION.md) for setup, behavior, persistence, and security boundaries.
 
 ### Secure Sessions
 
@@ -394,7 +394,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │       ├── meta.json
 │       ├── feedback.jsonl
 │       ├── pinned-messages.json
-│       ├── browser.json                    # Protocol-v2 logical tab affinity/action metadata
+│       ├── browser.json                    # Logical browser tab and action metadata
 │       ├── plan.json
 │       ├── plan-history.ndjson
 │       ├── plan-usage.ndjson
@@ -426,7 +426,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 └── uploads/                                # Uploaded attachments
 ```
 
-`browser.json` is per session and uses protocol schema v2. It stores logical session identity, hosting state, tabs with `targetAffinity`, active/default tab IDs, panel and reveal state, bounded action summaries, lifecycle-cleanup acknowledgement, revision, and timestamps. It contains no selected host or target preference. For Chrome-backed tabs, persistence clears page URL/title and error detail and removes page-identifying URL/title fields from action summaries. The opaque logical target identity and operation type can remain so routing and audit state are coherent. Schema-v1 migration preserves proven embedded tabs as `managed-electron` and drops unproven Chrome hints rather than treating old lease-like state as authority.
+`browser.json` is per session. It stores logical browser tabs, the active/default tab, UI state, bounded action summaries, cleanup acknowledgement, and revision/timestamp metadata; it contains no selected host preference. For Chrome-backed tabs, persistence clears page URL/title and error detail and removes page-identifying URL/title fields from action summaries. Older browser state migrates conservatively rather than treating stale Chrome control hints as current authority.
 
 Successfully stopped recordings live under the session's `artifacts/browser/` directory and are embedded-only. Embedded screenshot previews are transient; a Chrome snapshot can return a bounded PNG to the active operation, but neither path writes a standalone screenshot artifact.
 
@@ -446,9 +446,9 @@ These are registration and diagnostic paths, not evidence that headed Chrome or 
 
 `auth/`, `run/`, and `state/` contain sensitive current-user authentication, rendezvous, ownership, and exact per-tab release-recovery material. Protect them and backups like credentials. Chrome tabs remain open when Forge releases operation authority or performs session lifecycle cleanup.
 
-The extension declares exactly `<all_urls>` plus `alarms`, `debugger`, `nativeMessaging`, `scripting`, `storage`, and `webNavigation`; it declares no optional permissions. Compatible connected instances can reload an authenticated payload after Desktop updates. Manually reload the unpacked extension only when Settings reports **Manual extension reload required**.
+Compatible connected instances can reload an authenticated payload after Desktop updates. Manually reload the unpacked extension only when **Settings → Use Chrome with Forge → Advanced diagnostics → Recovery** reports `manual-extension-reload`.
 
-The native relay's packaged manifest records target/architecture and signature verification state. Validation-mode SEA output is explicitly unverified and non-publishable; release deployment requires the pinned official SEA runtime, matching target metadata, platform signing, signer verification, byte-preserving packaging, and post-package hash/signature checks. Unit, build, staging, and package-content checks do not qualify headed Chrome, live native registration, a target platform, an installer, or rollout stability. See [Browser automation](BROWSER_AUTOMATION.md#optional-chrome-setup) for setup and troubleshooting, and the [Electron guide](../apps/electron/README.md#optional-chrome-adapter-packaging-and-validation) for maintainer gates.
+The native relay's packaged manifest records target/architecture and signature verification state. See [Browser automation](BROWSER_AUTOMATION.md#optional-chrome-setup) for setup and troubleshooting, and the [Electron guide](../apps/electron/README.md#optional-chrome-adapter-packaging-and-validation) for maintainer release and qualification gates.
 
 `shared/config/secrets.json` stores sensitive values as ordinary JSON; Forge does not application-encrypt that file at rest. Protect the data directory and every backup with appropriate operating-system or storage access controls, and handle copied `secrets.json` files as secrets.
 

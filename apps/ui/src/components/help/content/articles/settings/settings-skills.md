@@ -18,7 +18,7 @@ To configure a variable, paste the value into the input field and click **Save**
 
 ## Dedicated skill panels
 
-Some skills may expose dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls. The `agent-browser` Skill instead documents its external CLI prerequisites and browser lifecycle. It is not an alias or configuration surface for the Automatic Browser Host.
+Some skills may expose dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls. The `agent-browser` Skill instead documents its external CLI prerequisites and browser lifecycle. It is not an alias or configuration surface for the Automatic Browser.
 
 ## How skills load
 

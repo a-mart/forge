@@ -25,7 +25,7 @@ property-inspector settings for development and non-default local instances.
 | --- | --- |
 | 1 | Forge Pulse, Attention Beacon, six attention-ranked recent sessions |
 | 2 | Worker Radar, Context Core, tokens, cache, commits, lines added, two more recent sessions |
-| 3 | Source Control, Managed Browser, Terminal, Statistics, Tokens, Chat, New Session, Status Mission |
+| 3 | Source Control, Automatic Browser, Terminal, Statistics, Tokens, Chat, New Session, Status Mission |
 | 4 | Ship Check Mission, Stop/Resume, Smart Compact, Mark Read |
 
 Only unresolved choice requests animate; normal running, unread, worker, and statistic states remain

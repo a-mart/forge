@@ -232,7 +232,7 @@ export const settingsArticles: HelpArticle[] = [
       'environment variable',
       'brave',
       'image generation',
-      'managed browser',
+      'embedded browser',
       'browser automation',
       'configuration',
       'secrets',
@@ -374,7 +374,7 @@ export const settingsArticles: HelpArticle[] = [
     summary: 'Set up or repair optional automatic Chrome use in Forge Desktop.',
     content: settingsExternalChromeContent,
     keywords: [
-      'external chrome',
+      'Use Chrome with Forge',
       'chrome extension',
       'load unpacked',
       'developer mode',

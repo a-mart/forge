@@ -125,7 +125,7 @@ Setup is per Chrome profile and per `FORGE_DATA_DIR`:
 
 Settings is deliberately limited to status, setup/enable, qualified repair, and revealing the validated folder, with advanced diagnostics for failures. There is no browser-host selector, persisted target preference, profile alias, candidate list, attachment flow, or authority UI.
 
-Compatible connected extensions can reload an authenticated local payload after Desktop update or recovery. A manual reload in `chrome://extensions` is fallback-only when Settings explicitly reports **Manual extension reload required**. Development builds can also require one manual reload after Desktop replaces same-version development content while the old worker is broken or disconnected.
+Compatible connected extensions can reload an authenticated local payload after Desktop update or recovery. A manual reload in `chrome://extensions` is fallback-only when **Settings → Use Chrome with Forge → Advanced diagnostics → Recovery** reports `manual-extension-reload`. Development builds can also require one manual reload after Desktop replaces same-version development content while the old worker is broken or disconnected.
 
 ### Repair and troubleshooting
 
@@ -148,4 +148,4 @@ A normal manager running on a remote backend may still have structurally planned
 
 ## `agent-browser` Skill
 
-The legacy `agent-browser` Skill invokes the separately installed Vercel Labs CLI and owns a separate browser/session lifecycle. It does not register the Automatic Browser Host, use `browser.json`, appear in the Browser workspace, or configure Chrome integration. Use the Skill when you specifically want its command-line browsing and extraction workflow.
+The `agent-browser` Skill invokes the separately installed Vercel Labs CLI and owns a separate browser/session lifecycle. It does not register the Automatic Browser Host, use `browser.json`, appear in the Browser workspace, or configure Chrome integration. Use the Skill when you specifically want its command-line browsing and extraction workflow.

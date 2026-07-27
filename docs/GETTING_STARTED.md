@@ -155,21 +155,13 @@ When Source Control has a linked worktree selected, that worktree scopes Files b
 
 ### Browser Automation
 
-Forge Desktop exposes one protocol-v2 Automatic Browser Host for the selected local Builder manager. It is not a Skill, and there is no host picker or persisted host preference. Each logical tab gets a private, sticky affinity to either the embedded Electron target or an optional Chrome target. An explicit tab never silently migrates between them.
+Forge Desktop provides one local Automatic Browser for the selected Builder manager. Select **Browser** in the desktop rail: embedded tabs render in Forge with navigation, viewport, transient screenshot, recording, and dock/pop-out controls, while Chrome-backed tabs stay in Chrome and appear as compact cards with **Show in Chrome**. Physical resize and recording are embedded-only, and human input interrupts active agent control instead of racing it.
 
-Select **Browser** in the desktop rail. Embedded tabs render in Forge with navigation, viewport, transient screenshot, recording, and dock/pop-out controls. Chrome-backed tabs stay in Chrome and appear as a compact card with **Show in Chrome**. Common status, open, navigation, snapshot, click, type, press, scroll, evaluate, and wait operations work on Chrome; physical resize and recording are embedded-only. Human input interrupts active agent control instead of racing it.
+Forge chooses the target automatically. For tabless requests, it can use the embedded browser when Chrome is unavailable or the operation needs an embedded-only capability. An explicit Chrome-backed tab never migrates, unsupported operations fail on that tab, and Forge never replays an operation that may have mutated a page.
 
-The Browser workspace creates tabs with `reuseExistingTab: false`, so automatic Chrome use requests a dedicated ungrouped tab. The model's `browser_open` tool defaults reuse to true and may reuse a uniquely focused eligible Chrome tab. Otherwise Forge uses the sole ready profile or creates a dedicated tab. If multiple ready profiles remain ambiguous, Forge asks once for that Forge session with generic profile labels and a **Use embedded browser** option; the choice remains in memory only until Forge quits.
+Optional Chrome use requires Chrome 125+, Developer Mode, and the pinned unpacked extension. Open **Settings → Use Chrome with Forge**, reveal and load the exact extension folder through `chrome://extensions`, confirm extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`, then return to Settings to enable Chrome. Repeat setup for every Chrome profile and `FORGE_DATA_DIR` you intend to use. Use a dedicated Chrome profile containing only the accounts needed for Forge work.
 
-Optional Chrome use requires Chrome 125+, Developer Mode, and the pinned unpacked extension. Open **Settings → Use Chrome with Forge**, reveal the validated extension folder, manually load that exact stable `integrations/external-chrome/extension/` folder through `chrome://extensions`, confirm extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`, then choose **Use Chrome with Forge**. Repeat setup per Chrome profile and Forge data directory. Use a dedicated Chrome profile containing only the accounts needed for Forge work.
-
-Forge does not show candidate tabs, profile aliases, attachment/group controls, or authority state. It acquires exact per-tab Chrome authority only for short adaptive operation bursts and releases it at idle, turn, and session lifecycle boundaries. Chrome tabs remain open. If a release acknowledgement is lost, Forge retains the exact checkpoint and blocks later acquisition until reconciliation. **Show in Chrome** transiently reacquires and reveals the exact sticky target.
-
-Automatic retry or embedded fallback occurs only when Forge proves mutation did not start. A tabless focused-Chrome attempt may retry once on a dedicated Chrome tab, then use Electron. Forge never replays a possibly mutating action and never falls back an explicit logical target to another affinity.
-
-Each schema-v2 `browser.json` stores logical tab affinity, not a selected host. Chrome URL/title, tab error detail, and page-identifying action fields are redacted before persistence; schema-v1 migration keeps proven embedded tabs and drops unproven Chrome hints. Completed recordings under `artifacts/browser/` are embedded-only.
-
-A connected Forge Desktop host is required. Ordinary web clients do not attempt local browser IPC. The host, native relay, and IPC are not forwarded to Remote Projects or Collaboration. A remote normal Builder manager may still receive structurally planned tools, but without a host connected directly to that backend they return `unavailable-host`; Collaboration channels receive neither host nor tools. See [Browser automation](BROWSER_AUTOMATION.md) for the full permission, persistence, setup, repair, and troubleshooting reference.
+A connected Forge Desktop host is required. Ordinary web clients do not attempt local browser IPC, and the capability is not forwarded to Remote Projects or Collaboration. See [Browser automation](BROWSER_AUTOMATION.md) for the full behavior, persistence, permissions, repair, and troubleshooting reference.
 
 ### Secure Sessions
 
@@ -581,11 +573,11 @@ You can upload custom notification sounds if you want to distinguish between ses
 Go to **Settings → Skills** to configure optional skill-backed agent capabilities:
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
-- **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is separate from Forge Desktop's Automatic Browser Host.
+- **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is separate from Forge Desktop's Automatic Browser.
 - **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.
 
-The Automatic Browser Host is not configured as a Skill and remains local to Forge Desktop. Optional Chrome setup and repair live in **Settings → Use Chrome with Forge**; automatic per-tab affinity is not a setting. The host is not forwarded to Remote Projects or Collaboration.
+The Automatic Browser is not configured as a Skill and remains local to Forge Desktop. Optional Chrome setup and repair live in **Settings → Use Chrome with Forge**. The capability is not forwarded to Remote Projects or Collaboration.
 
 ### System Prompt Preview
 

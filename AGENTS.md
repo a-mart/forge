@@ -74,12 +74,10 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
   files or transient chat context.
 - Model-specific instructions are optional, user-authored per-model additions. Forge does not provide
   built-in model-specific instruction defaults.
-- Forge Desktop exposes one protocol-v2 Automatic Browser Host for normal local Builder managers, not a
-  Skill. Per-tab `managed-electron` or `external-chrome` affinity is private and sticky; callers do not
-  select a host and `browser.json` contains no host preference. The host and Chrome relay are never
-  forwarded to Remote Projects or Collaboration. The optional Chrome adapter deploys under
-  `integrations/external-chrome/`, while Chrome loads its stable `extension/` path once per Chrome
-  profile and data directory. Browser recording and `artifacts/browser/` remain embedded-only.
+- Forge Desktop's Automatic Browser is a local Builder capability, not a Skill. Target selection
+  between embedded and optional Chrome-backed tabs stays private; explicit tabs do not migrate, and
+  possibly mutating operations are never replayed during fallback. The capability is not forwarded to
+  Remote Projects or Collaboration. Browser recording and saved browser artifacts remain embedded-only.
 
 ## Safety
 
