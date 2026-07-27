@@ -9,9 +9,9 @@ Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md
 The committed public key pins extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`. Chrome 125 is the manifest minimum. A small deterministic shell selects a versioned local payload from `current.json`:
 
 - the classic service-worker bootstrap registers every top-level Chrome listener synchronously;
-- each built shell is bound to its exact payload directory so a new payload URL forces Chrome to install the updated worker rather than trying to late-import a script absent from the activated worker's script map;
-- the shell verifies the SHA-256 inventory for every selected payload file before execution;
-- the service worker uses `importScripts` only after verification;
+- each built shell is bound to its exact payload directory and embeds the exact worker payload bytes in a deferred static factory, so worker payload changes always change the shell Chrome installs;
+- the shell verifies the SHA-256 inventory for every selected payload file and matches the embedded worker hash before initializing that factory;
+- the worker does not use delayed `importScripts`, dynamic import, eval, or a blob URL;
 - the side panel performs the same full verification before importing its payload; and
 - eval, blobs, remote executable code, source maps, and unverified hash-shaped fallback directories are excluded.
 
@@ -57,7 +57,7 @@ An opt-in isolated fixture is available:
 FORGE_RUN_ISOLATED_CHROME=1 pnpm --filter @forge/chrome-extension fixture:chrome
 ```
 
-It creates a temporary profile, launches only the discovered Chrome/Chromium process with the built unpacked extension, terminates only that spawned process group, and deletes the temporary profile. It never discovers or touches an existing profile, tab, or process. The fixture is not part of default validation because headless extension behavior depends on the installed browser channel.
+It creates a temporary profile and unique ephemeral DevTools endpoint, launches only the discovered Chrome/Chromium process with the built unpacked extension, and inspects the Forge service-worker target for its manifest identity and initialized runtime state. It then terminates only that spawned process group and deletes the temporary profile. It never discovers or touches an existing profile, tab, or process. The fixture is not part of default validation because headless extension behavior depends on the installed browser channel.
 
 Do not use an everyday profile or live native registration for routine validation. Headed Chrome, native-host/Desktop end-to-end, target-platform, and distribution SEA/signing checks remain separate release gates; passing unit/build/isolated checks does not claim them.
 

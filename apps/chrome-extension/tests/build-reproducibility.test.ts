@@ -66,11 +66,18 @@ describe('deterministic MV3 package', () => {
       expect(payloadWorker).not.toContain('var import_meta = {}')
       expect(payloadWorker).toContain('payload directory does not match runtime version and hash')
       const workerBootstrap = await readFile(path.join(first, 'extension/shell/service-worker-bootstrap.js'), 'utf8')
-      expect(workerBootstrap).toContain('importScripts(payloadUrl)')
+      const indentedPayloadWorker = payloadWorker.trimEnd().split('\n').map((line) => `    ${line}`).join('\n')
+      expect(workerBootstrap).toContain(indentedPayloadWorker)
+      expect(workerBootstrap).not.toContain('importScripts')
       expect(workerBootstrap).toContain(JSON.stringify(selector.payloadDirectory))
+      expect(workerBootstrap).toContain(JSON.stringify(payloadFiles['service-worker.js']))
       expect(workerBootstrap).toContain('selected payload does not match the installed shell')
       expect(workerBootstrap).toContain('directory: selector.payloadDirectory, sha256: selector.payloadSha256')
-      expect(workerBootstrap).not.toMatch(/\b(?:eval|Function)\s*\(|blob:|https?:\/\//)
+      const verification = workerBootstrap.indexOf('await loadVerifiedPayloadSelector')
+      const payloadInitialization = workerBootstrap.indexOf('loadBundledServiceWorkerPayload();', verification)
+      expect(verification).toBeGreaterThan(0)
+      expect(payloadInitialization).toBeGreaterThan(verification)
+      expect(workerBootstrap).not.toMatch(/\b(?:eval|Function)\s*\(|blob:|\bimport\s*\(/)
       const packageManifest = JSON.parse(await readFile(path.join(first, 'package-manifest.json'), 'utf8')) as {
         extension: { shellFiles: Record<string, string>; payloadFiles: Record<string, string> }
         capabilities: Record<string, boolean>

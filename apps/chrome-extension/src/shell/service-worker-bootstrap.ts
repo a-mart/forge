@@ -1,7 +1,7 @@
-import { loadVerifiedPayloadSelector, payloadResourcePath } from './selector.js'
+import { loadVerifiedPayloadSelector } from './selector.js'
 
 declare const FORGE_PAYLOAD_DIRECTORY: string
-declare function importScripts(...urls: string[]): void
+declare const FORGE_SERVICE_WORKER_SHA256: string
 
 type Listener = (...args: unknown[]) => unknown
 
@@ -40,6 +40,15 @@ export interface VerifiedPayloadIdentity {
   sha256: string
 }
 
+interface BundledServiceWorkerPayload {
+  activateServiceWorker?: (identity: VerifiedPayloadIdentity) => Promise<ServiceWorkerPayload> | ServiceWorkerPayload
+}
+
+// The build wraps the exact service-worker payload bundle in this deferred,
+// statically parsed factory. Chromium never has to add a script after install,
+// and payload module initialization cannot run until selector verification passes.
+declare function loadBundledServiceWorkerPayload(): BundledServiceWorkerPayload
+
 const chromeApi = (globalThis as unknown as { chrome: ShellChrome }).chrome
 let payload: ServiceWorkerPayload | null = null
 const queuedEvents: Array<{ name: ShellEventName; args: unknown[] }> = []
@@ -56,7 +65,7 @@ function register(event: ChromeEvent, name: ShellEventName): void {
   event.addListener((...args: unknown[]) => dispatch(name, args))
 }
 
-// MV3 listeners are intentionally registered synchronously before selector I/O/import.
+// MV3 listeners are intentionally registered synchronously before selector I/O.
 register(chromeApi.runtime.onInstalled, 'runtime.installed')
 register(chromeApi.runtime.onStartup, 'runtime.startup')
 register(chromeApi.runtime.onMessage, 'runtime.message')
@@ -73,16 +82,19 @@ register(chromeApi.downloads.onChanged, 'download.changed')
 
 async function boot(): Promise<void> {
   const selector = await loadVerifiedPayloadSelector((path) => chromeApi.runtime.getURL(path), 'service-worker.js')
-  if (selector.payloadDirectory !== FORGE_PAYLOAD_DIRECTORY) throw new Error('selected payload does not match the installed shell')
-  const payloadUrl = chromeApi.runtime.getURL(payloadResourcePath(selector, 'service-worker.js'))
-  // Classic importScripts is intentionally delayed until all payload files have passed SHA-256 verification.
-  importScripts(payloadUrl)
-  const loaded = (globalThis as unknown as { ForgeExternalChromePayload?: {
-    activateServiceWorker?: (identity: VerifiedPayloadIdentity) => Promise<ServiceWorkerPayload> | ServiceWorkerPayload
-  } }).ForgeExternalChromePayload
-  if (typeof loaded?.activateServiceWorker !== 'function') throw new Error('selected payload has no service-worker activation export')
+  if (selector.payloadDirectory !== FORGE_PAYLOAD_DIRECTORY || selector.payloadFiles['service-worker.js'] !== FORGE_SERVICE_WORKER_SHA256) {
+    throw new Error('selected payload does not match the installed shell')
+  }
+  const loaded = loadBundledServiceWorkerPayload()
+  if (typeof loaded.activateServiceWorker !== 'function') throw new Error('selected payload has no service-worker activation export')
   payload = await loaded.activateServiceWorker({ directory: selector.payloadDirectory, sha256: selector.payloadSha256 })
   for (const event of queuedEvents.splice(0)) payload.onShellEvent(event.name, event.args)
+  Object.defineProperty(globalThis, '__forgeServiceWorkerBootState', {
+    configurable: false,
+    enumerable: false,
+    value: Object.freeze({ state: 'ready', directory: selector.payloadDirectory, sha256: selector.payloadSha256 }),
+    writable: false,
+  })
 }
 
 void boot().catch((error: unknown) => {

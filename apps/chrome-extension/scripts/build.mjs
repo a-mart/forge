@@ -38,6 +38,29 @@ async function bundle(entry, outfile, options = {}) {
   await writeFile(outfile, normalized.endsWith('\n') ? normalized : `${normalized}\n`, { mode: 0o644 })
 }
 
+async function bundleServiceWorkerBootstrap(payloadFile, outfile, define) {
+  const shellFile = `${outfile}.shell`
+  await bundle('src/shell/service-worker-bootstrap.ts', shellFile, { format: 'iife', define })
+  const [payloadSource, shellSource] = await Promise.all([
+    readFile(payloadFile, 'utf8'),
+    readFile(shellFile, 'utf8'),
+  ])
+  const indent = (source) => source.split('\n').filter((line, index, lines) => index < lines.length - 1 || line !== '').map((line) => `    ${line}`).join('\n')
+  const combined = [
+    '(() => {',
+    '  function loadBundledServiceWorkerPayload() {',
+    indent(payloadSource),
+    '    return ForgeExternalChromePayload;',
+    '  }',
+    indent(shellSource),
+    '})();',
+    '',
+  ].join('\n')
+  if (combined.includes(sourceRoot) || combined.includes('sourceMappingURL=')) throw new Error(`non-reproducible build metadata in ${outfile}`)
+  await writeFile(outfile, combined, { mode: 0o644 })
+  await rm(shellFile, { force: true })
+}
+
 await rm(packageRoot, { recursive: true, force: true })
 await Promise.all([mkdir(path.join(extensionRoot, 'shell'), { recursive: true }), mkdir(temporaryPayload, { recursive: true })])
 await verifyIdentity(sourceRoot)
@@ -57,12 +80,20 @@ const finalPayload = path.join(extensionRoot, 'payloads', payloadDirectory)
 await mkdir(path.dirname(finalPayload), { recursive: true })
 await rename(temporaryPayload, finalPayload)
 
-// MV3 service workers may import a new classic script URL only while installing.
-// Binding the selected directory into the shell forces Chrome to reinstall the
-// bootstrap whenever payload bytes (and therefore the immutable URL) change.
-const shellDefine = { FORGE_PAYLOAD_DIRECTORY: JSON.stringify(payloadDirectory) }
+// Chromium MV3 does not support adding classic worker scripts after asynchronous
+// selector verification. Bind the identity into the shell and embed the exact
+// worker payload in a deferred static factory so Chrome parses it at install time
+// but payload initialization cannot execute before verification.
+const shellDefine = {
+  FORGE_PAYLOAD_DIRECTORY: JSON.stringify(payloadDirectory),
+  FORGE_SERVICE_WORKER_SHA256: JSON.stringify(payloadFiles['service-worker.js']),
+}
 await Promise.all([
-  bundle('src/shell/service-worker-bootstrap.ts', path.join(extensionRoot, 'shell/service-worker-bootstrap.js'), { format: 'iife', define: shellDefine }),
+  bundleServiceWorkerBootstrap(
+    path.join(finalPayload, 'service-worker.js'),
+    path.join(extensionRoot, 'shell/service-worker-bootstrap.js'),
+    shellDefine,
+  ),
   bundle('src/shell/side-panel-bootstrap.ts', path.join(extensionRoot, 'shell/side-panel-bootstrap.js'), { define: shellDefine }),
 ])
 
