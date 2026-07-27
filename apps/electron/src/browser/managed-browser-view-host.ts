@@ -15,6 +15,9 @@ import {
 
 export type ManagedBrowserOwner = 'docked' | 'popout'
 
+const MANAGED_BLANK_BACKGROUND = '#18181b'
+const MANAGED_BLANK_STYLES = 'html,body{margin:0;min-height:100%;background:#18181b;color-scheme:dark}'
+
 export interface BrowserViewportMetrics {
   workspaceEpoch: number
   rect: { x: number; y: number; width: number; height: number }
@@ -275,6 +278,13 @@ export class ManagedBrowserViewHost {
         this.options.guestPreloadPath,
       ),
     })
+    view.setBackgroundColor(MANAGED_BLANK_BACKGROUND)
+    const applyBlankAppearance = (): void => {
+      if (view.webContents.isDestroyed() || view.webContents.getURL() !== 'about:blank') return
+      void view.webContents.insertCSS(MANAGED_BLANK_STYLES).catch(() => undefined)
+    }
+    applyBlankAppearance()
+    view.webContents.on('did-finish-load', applyBlankAppearance)
     const incarnation = ++this.incarnation
     const owned: OwnedTab = {
       tab,

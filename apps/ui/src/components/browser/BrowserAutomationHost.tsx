@@ -19,6 +19,7 @@ import type {
 } from '@/lib/electron-bridge'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
+import { rebaseHostOwnedTabFields } from './browser-runtime-state'
 
 export interface BrowserAutomationHostHandle {
   open(autoOpenAttemptKey?: string): Promise<void>
@@ -45,10 +46,11 @@ interface BrowserAutomationHostProps {
   selectedProfileId?: string | null
   panelVisible: boolean
   onWorkspaceModeChange?: (mode: ManagedBrowserWorkspaceMode) => void
+  onRuntimeTabStateChanged?: (tab: BrowserTabSnapshot) => void
 }
 
 export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, BrowserAutomationHostProps>(
-  function BrowserAutomationHost({ client, state, selectedSessionAgentId, selectedProfileId, panelVisible, onWorkspaceModeChange }, ref) {
+  function BrowserAutomationHost({ client, state, selectedSessionAgentId, selectedProfileId, panelVisible, onWorkspaceModeChange, onRuntimeTabStateChanged }, ref) {
     const bridge = typeof window !== 'undefined' ? window.electronBridge?.browserAutomation : undefined
     const workspace = typeof window !== 'undefined' ? window.electronBridge?.browserWorkspace : undefined
     const bridgeRef = useRef(bridge)
@@ -56,6 +58,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const stateRef = useRef(state)
     const selectedSessionRef = useRef(selectedSessionAgentId)
     const selectedProfileRef = useRef(selectedProfileId ?? null)
+    const runtimeTabStateChangedRef = useRef(onRuntimeTabStateChanged)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
     const controllerInstanceIdRef = useRef(`renderer-${randomId()}`)
     const workspaceEpochRef = useRef(Date.now())
@@ -115,6 +118,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [state.browserHostHydrated, state.browserSessions])
     useEffect(() => { selectedSessionRef.current = selectedSessionAgentId }, [selectedSessionAgentId])
     useEffect(() => { selectedProfileRef.current = selectedProfileId ?? null }, [selectedProfileId])
+    useEffect(() => { runtimeTabStateChangedRef.current = onRuntimeTabStateChanged }, [onRuntimeTabStateChanged])
 
     const flushReports = useCallback(async () => {
       const currentClient = clientRef.current
@@ -254,6 +258,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         const session = canonicalSessions.current.get(tab.sessionAgentId)
           ?? managedSessionProjection(stateRef.current.browserSessions[tab.sessionAgentId])
         if (!session || session.hostingState !== 'hosted' || !session.tabs.some((candidate) => candidate.tabId === tab.tabId)) return
+        runtimeTabStateChangedRef.current?.(tab)
         pendingTabUpdates.current.set(tab.tabId, tab)
         runtimeUpdateSequence.current += 1
         reportRetryState.current.conflicts = 0
@@ -510,17 +515,6 @@ function rebasePendingSession(pending: Map<string, BrowserTabSnapshot>, canonica
   }
 }
 
-function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: BrowserTabSnapshot): BrowserTabSnapshot {
-  return {
-    ...canonical,
-    url: updated.url, title: updated.title, lifecycle: updated.lifecycle, loading: updated.loading, live: updated.live,
-    canGoBack: updated.canGoBack, canGoForward: updated.canGoForward, zoomFactor: updated.zoomFactor,
-    controller: updated.controller, agentCursor: updated.agentCursor, recording: updated.recording,
-    viewportSetting: updated.viewportSetting, renderedViewport: updated.renderedViewport,
-    ...(updated.physicalVisible !== undefined ? { physicalVisible: updated.physicalVisible } : {}),
-    error: updated.error, updatedAt: updated.updatedAt,
-  }
-}
 function normalizeUrl(value: string): string {
   const trimmed = value.trim()
   if (trimmed === '' || trimmed === 'about:blank') return 'about:blank'

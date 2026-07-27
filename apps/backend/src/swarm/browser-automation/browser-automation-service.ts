@@ -138,7 +138,9 @@ export class BrowserAutomationService {
       const requestedTabId = (input as { tabId?: string }).tabId;
       const target = requestedTabId
         ? snapshot.tabs.find((tab) => tab.tabId === requestedTabId && tab.lifecycle !== "closed")
-        : selectedTab(snapshot);
+        : operation === "open" && !(input as BrowserAutomationInputByOperation["open"]).reuseExistingTab
+          ? undefined
+          : selectedTab(snapshot);
       if (requestedTabId && !target) {
         const owner = this.tabOwners.get(requestedTabId);
         return { ok: false, operation, error: owner && owner !== sessionAgentId

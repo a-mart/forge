@@ -54,6 +54,27 @@ describe('BrowserPanel automatic experience', () => {
     expect(container.querySelector('select#browser-viewport')).not.toBeNull()
   })
 
+  it('renders the about:blank placeholder as neutral dark instead of white', () => {
+    render(snapshot([{ ...managedTab, url: 'about:blank', title: 'New tab' }]))
+    const viewport = container.querySelector('[data-browser-automation-viewport]')!
+    expect(viewport.classList).toContain('bg-zinc-900')
+    expect(viewport.classList).not.toContain('bg-white')
+  })
+
+  it('projects active and inactive URL/title metadata without reselection', () => {
+    const inactive = { ...managedTab, tabId: 'managed-2', url: 'https://old.test', title: 'Old inactive' }
+    render(snapshot([managedTab, inactive], managedTab.tabId))
+
+    render(snapshot([
+      { ...managedTab, url: 'https://active.test/live', title: 'Live active' },
+      { ...inactive, url: 'https://inactive.test/live', title: 'Live inactive' },
+    ], managedTab.tabId))
+
+    expect((container.querySelector('#browser-address') as HTMLInputElement).value).toBe('https://active.test/live')
+    expect([...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).toEqual(['Live active', 'Live inactive'])
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Live active')
+  })
+
   it('labels pop-out controls with the Automatic Browser product name', () => {
     const state = snapshot([managedTab])
     render(state)
@@ -76,9 +97,16 @@ describe('BrowserPanel automatic experience', () => {
     expect(commands.reveal).toHaveBeenCalledWith(externalTab.tabId)
   })
 
-  it('automatically opens once from an empty hosted session', async () => {
+  it('dispatches an explicit new-tab command from the plus button', () => {
+    const commands = render(snapshot([managedTab]))
+    act(() => (container.querySelector('button[aria-label="New browser tab"]') as HTMLButtonElement).click())
+    expect(commands.open).toHaveBeenCalledWith()
+  })
+
+  it('automatically opens once from an empty hosted session with a deduplication key', async () => {
     const commands = render(snapshot([]))
     await act(async () => { await Promise.resolve() })
     expect(commands.open).toHaveBeenCalledTimes(1)
+    expect(commands.open).toHaveBeenCalledWith(expect.stringMatching(/^session-1:profile-1:2:1$/))
   })
 })

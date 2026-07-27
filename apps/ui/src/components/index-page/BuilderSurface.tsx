@@ -14,6 +14,7 @@ import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
 import { type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
+import { projectRuntimeBrowserTabState } from '@/components/browser/browser-runtime-state'
 import { BuilderBrowserPanel } from '@/components/index-page/BuilderBrowserPanel'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
@@ -256,7 +257,7 @@ export function BuilderSurface({
       return browserHostRef.current
     }
     return {
-      open: () => host().open(), activate: (tabId) => host().activate(tabId), close: (tabId) => host().close(tabId),
+      open: (autoOpenAttemptKey) => host().open(autoOpenAttemptKey), activate: (tabId) => host().activate(tabId), close: (tabId) => host().close(tabId),
       resize: (tabId, viewport) => host().resize(tabId, viewport), navigate: (tabId, url) => host().navigate(tabId, url),
       history: async (tabId, direction) => host().history(tabId, direction), reload: async (tabId, hard) => host().reload(tabId, hard),
       zoom: async (tabId, factor) => host().setZoom(tabId, factor), capture: (tabId) => host().captureScreenshot(tabId),
@@ -283,6 +284,9 @@ export function BuilderSurface({
       : update
     if (next !== previous) target.ingest({ type: 'snapshot', state: next })
   }, [])
+  const handleBrowserRuntimeTabStateChanged = useCallback((tab: Parameters<typeof projectRuntimeBrowserTabState>[1]) => {
+    setLocalState((previous) => projectRuntimeBrowserTabState(previous, tab))
+  }, [setLocalState])
 
   // Sync builder WS health to the module-level store so ModeSwitch can
   // display the builder connection dot even from the collab surface. Always
@@ -1662,6 +1666,7 @@ export function BuilderSurface({
         selectedSessionAgentId={browserSessionAgentId}
         selectedProfileId={browserProfileId}
         panelVisible={activeView === 'chat' && panels.isBrowserOpen}
+        onRuntimeTabStateChanged={handleBrowserRuntimeTabStateChanged}
         onWorkspaceModeChange={(mode) => {
           setBrowserWorkspaceMode(mode)
           if (mode === 'docked') window.requestAnimationFrame(() => {

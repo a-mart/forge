@@ -209,7 +209,7 @@ export function BrowserPanel({
       ) : activeTab ? (
         <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/40 p-2">
           <div className="relative min-w-0 flex-1">
-            <div data-browser-automation-viewport className="h-full w-full rounded-md bg-white shadow-sm" aria-label="Browser content viewport" />
+            <div data-browser-automation-viewport className={cn('h-full w-full rounded-md shadow-sm', activeTab.url === 'about:blank' ? 'bg-zinc-900' : 'bg-white')} aria-label="Browser content viewport" />
             {activeTab.loading ? <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 animate-pulse bg-primary" /> : null}
           </div>
           {screenshot ? <ScreenshotPreview dataUrl={screenshot} onClose={() => setScreenshot(null)} /> : null}

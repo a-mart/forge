@@ -8,7 +8,7 @@ const fakes = vi.hoisted(() => {
     navigationHistory = { canGoBack: () => false, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() }
     listeners = new Map<string, (...args: unknown[]) => void>(); destroyed = false
     isDestroyed = () => this.destroyed; isLoading = () => false; getURL = () => 'about:blank'; getTitle = () => 'tab'; getZoomFactor = () => 1
-    loadURL = vi.fn(async () => undefined); reload = vi.fn(); reloadIgnoringCache = vi.fn(); setZoomFactor = vi.fn(); capturePage = vi.fn(); send = vi.fn(); focus = vi.fn()
+    loadURL = vi.fn(async () => undefined); insertCSS = vi.fn(async () => 'blank-theme'); reload = vi.fn(); reloadIgnoringCache = vi.fn(); setZoomFactor = vi.fn(); capturePage = vi.fn(); send = vi.fn(); focus = vi.fn()
     close = vi.fn(() => { this.destroyed = true }); setWindowOpenHandler = vi.fn()
     on = vi.fn((event: string, listener: (...args: unknown[]) => void) => this.listeners.set(event, listener)); once = this.on
     off = vi.fn((event: string) => this.listeners.delete(event))
@@ -17,6 +17,7 @@ const fakes = vi.hoisted(() => {
     webContents = new FakeContents(); bounds = { x: 0, y: 0, width: 0, height: 0 }; visible = false
     constructor() { createdViews.push(this) }
     setBounds = vi.fn((bounds: typeof this.bounds) => { this.bounds = bounds }); setVisible = vi.fn((visible: boolean) => { this.visible = visible })
+    setBackgroundColor = vi.fn()
   }
   return { createdViews, FakeView }
 })
@@ -102,6 +103,27 @@ describe('ManagedBrowserViewHost', () => {
     expect(popout.children).toEqual(new Set([identity]))
     expect(createdViews).toHaveLength(2)
     expect((identity.webContents as { focus: ReturnType<typeof vi.fn> }).focus).not.toHaveBeenCalled()
+  })
+
+  it('keeps a neutral dark about:blank surface through creation, reload, and same-view reparenting', async () => {
+    const { host } = makeHost()
+    await host.reconcile({ controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 1, workspaceEpoch: 2, sessions: [session([tab('blank')])] })
+    const view = createdViews[0]!
+    const contents = view.webContents as InstanceType<typeof fakes.FakeView>['webContents']
+    expect(view.setBackgroundColor).toHaveBeenCalledWith('#18181b')
+    expect(contents.insertCSS).toHaveBeenCalledOnce()
+
+    contents.listeners.get('did-finish-load')?.()
+    expect(contents.insertCSS).toHaveBeenCalledTimes(2)
+
+    const main = fakeWindow(); const popout = fakeWindow()
+    const metrics = { workspaceEpoch: 2, rect: { x: 0, y: 0, width: 600, height: 500 }, innerWidth: 1000, innerHeight: 800 }
+    host.setPresentationTarget('docked', main as never, metrics)
+    host.setPresentationTarget('popout', popout as never, metrics)
+    await host.present({ tabId: 'blank', visible: true, renderedViewport: { width: 1, height: 1, deviceScaleFactor: 1 }, hostGeneration: 1, sessionRevision: 1, sequence: 1, workspaceEpoch: 2 })
+    await host.transferOwner('popout', 2)
+    expect(createdViews).toEqual([view])
+    expect(view.setBackgroundColor).toHaveBeenCalledTimes(1)
   })
 
   it('routes guest input through the main-owned lifecycle callback', async () => {

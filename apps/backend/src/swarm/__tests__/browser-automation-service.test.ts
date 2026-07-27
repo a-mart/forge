@@ -76,6 +76,31 @@ describe("Automatic Browser Host service", () => {
     await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({ schemaVersion: 2, activeTabId: "logical-tab-1", defaultTabId: "logical-tab-1", tabs: [{ tabId: "logical-tab-1", targetAffinity: "external-chrome", url: "", title: "" }] });
   });
 
+  it("creates and selects a distinct tab when open disables selected-tab reuse", async () => {
+    const instance = await service();
+    const requests: BrowserAutomationRequest[] = [];
+    register(instance, (request) => requests.push(request));
+
+    const first = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: false });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const firstTab = tab(requests[0]!, "logical-tab-1");
+    accept(instance, { ...routing(requests[0]!), ok: true, updatedTab: firstTab, result: { tab: firstTab, created: true, panelRevealRequested: false } });
+    await first;
+
+    const second = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: false });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ operation: "open", tabId: null, input: { reuseExistingTab: false } });
+    const secondTab = tab(requests[1]!, "logical-tab-2");
+    accept(instance, { ...routing(requests[1]!), ok: true, updatedTab: secondTab, result: { tab: secondTab, created: true, panelRevealRequested: false } });
+    await second;
+
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      activeTabId: "logical-tab-2",
+      defaultTabId: "logical-tab-2",
+      tabs: [{ tabId: "logical-tab-1" }, { tabId: "logical-tab-2" }],
+    });
+  });
+
   it("dispatches every tabless operation once and adopts the target returned by Desktop", async () => {
     const instance = await service();
     const requests: BrowserAutomationRequest[] = [];
