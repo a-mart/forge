@@ -93,6 +93,7 @@ async function fakeExtensionLoop(
   requests: Array<{ method: string; params: Record<string, unknown> }> = [],
   instanceId = 'instance_profile_a',
 ): Promise<void> {
+  const authorityTabs = new Map<string, number[]>()
   while (true) {
     const message = await client.receive()
     if (!message) return
@@ -101,15 +102,17 @@ async function fakeExtensionLoop(
     requests.push({ method: message.method, params })
     if (message.method === 'forge.browser.listCandidates') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
-        protocolVersion: 1, extensionInstanceId: instanceId, windows: [],
+        protocolVersion: 1, extensionInstanceId: instanceId, windows: [{ windowId: 2, focused: true, groups: [], tabs: [] }],
       } })
     } else if (message.method === 'forge.browser.claim') {
+      authorityTabs.set(String(params.leaseId), [40])
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
         extensionInstanceId: instanceId, groupId: 9, childPolicy: params.childPolicy,
         tabs: [{ windowId: 2, tabId: 40, groupId: 9, title: 'Selected', url: 'https://selected.invalid/private', origin: 'https://selected.invalid', active: true }],
       } })
     } else if (message.method === 'forge.browser.create') {
+      authorityTabs.set(String(params.leaseId), [41])
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
         extensionInstanceId: instanceId, groupId: 9,
@@ -117,7 +120,7 @@ async function fakeExtensionLoop(
       } })
     } else if (message.method === 'forge.browser.release') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
-        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: [40, 41],
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: authorityTabs.get(String(params.leaseId)) ?? [40],
       } })
     } else if (message.method === 'forge.browser.execute') {
       const now = new Date(0).toISOString()
@@ -162,17 +165,6 @@ async function fakeExtensionLoop(
   }
 }
 
-async function waitForCheckpoint(root: string, predicate: (contents: string) => boolean): Promise<string> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      const contents = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
-      if (predicate(contents)) return contents
-    } catch { /* relay callback has not persisted yet */ }
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  throw new Error('checkpoint did not reach expected state')
-}
-
 describe('authenticated External Chrome Desktop relay runtime', () => {
   it('routes create and navigate through the real adapter transport and persists only opaque lease scope', async () => {
     const { runtime, client, root } = await connectedRuntime()
@@ -196,6 +188,24 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate()
     client.close()
     await loop
+  })
+
+  it('acquires one automatic tab authority and releases that exact owner epoch', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    const acquired = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 27,
+    })
+    expect(acquired).toEqual({ ok: true, authority: { ownerEpoch: 27, tabId: 'ext.instance_profile_a.41' } })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    expect(requests.map(({ method }) => method)).toEqual([
+      'forge.browser.listCandidates', 'forge.browser.create', 'forge.browser.release',
+    ])
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); client.close(); await loop
   })
 
   it('routes M4 functional results and exact bounded turn dispositions without persisting page data', async () => {
@@ -320,23 +330,18 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     expect(checkpoint.finalizedReleaseIds).toContain('release-exact')
   })
 
-  it('adopts only authenticated side-panel leases without persisting candidate tab metadata', async () => {
+  it('never adopts extension-originated side-panel authority', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const loop = fakeExtensionLoop(client)
     await client.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
-      protocolVersion: 1, leaseId: 'side-panel-local-lease', leaseEpoch: 7, state: 'claimed',
+      protocolVersion: 1, leaseId: 'obsolete-side-panel-lease', leaseEpoch: 7, state: 'claimed',
       tabIds: [73], groupId: 4, childPolicy: 'manual',
     } })
-    const checkpoint = await waitForCheckpoint(root, (contents) => contents.includes('side-panel-local-lease'))
-    expect(checkpoint).toContain('"sessionAgentId":"__local_pending__"')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await expect(readFile(path.join(root, 'state', 'leases.json'), 'utf8')).rejects.toThrow()
     const opened = await runtime.execute(request('open', null, { show: false, reuseExistingTab: true }))
-    expect(opened).toMatchObject({ ok: true, result: { created: false, tab: { tabId: 'ext.instance_profile_a.73' } } })
-    await client.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
-      protocolVersion: 1, leaseId: 'side-panel-local-lease', leaseEpoch: 7, state: 'released',
-      tabIds: [73], groupId: 4, childPolicy: 'manual',
-    } })
-    const tombstone = await waitForCheckpoint(root, (contents) => contents.includes('side-panel-local-lease') && contents.includes('releasedAt'))
-    expect(tombstone).toContain('"sessionAgentId":"session-a"')
+    expect(opened).toMatchObject({ ok: true, result: { created: false, tab: { tabId: 'ext.instance_profile_a.41' } } })
+    expect(await readFile(path.join(root, 'state', 'leases.json'), 'utf8')).not.toContain('obsolete-side-panel-lease')
     runtime.deactivate()
     client.close()
     await loop
@@ -567,67 +572,6 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     ])
     expect(raced).toBe('none')
     runtime.deactivate(); client.close()
-  })
-
-  it('activates once only after every exact current stale generation prepares', async () => {
-    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
-    const activations: string[] = []
-    const { runtime, client: oldA, root } = await connectedRuntime('instance_profile_a', () => Date.now(), expected)
-    runtime.configureExpectedRuntime(expected, async () => { activations.push('activate') })
-    const prepareA = await oldA.receive()
-    expect(prepareA).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
-
-    const oldB = await connectRelayClient(path.join(root, 'relay.sock'))
-    await sendRuntimeHello(oldB, 'instance_profile_b')
-    const prepareB = await oldB.receive()
-    expect(prepareB).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
-    await oldA.send({ jsonrpc: '2.0', id: prepareA!.id, result: {
-      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
-    } })
-    await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(activations).toEqual([])
-
-    // A prepared acknowledgement belongs only to that exact generation. Its
-    // stale replacement must prepare independently while B remains blocked.
-    const replacementA = await connectRelayClient(path.join(root, 'relay.sock'))
-    await sendRuntimeHello(replacementA, 'instance_profile_a')
-    const replacementPrepareA = await replacementA.receive()
-    expect(replacementPrepareA).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
-    expect(activations).toEqual([])
-
-    // A disconnected generation is absence only when no durable checkpoint can
-    // still represent debugger authority. B's checkpoint prevents bypass.
-    await oldB.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
-      protocolVersion: 1, leaseId: 'blocked-profile-b', leaseEpoch: 1, state: 'claimed',
-      tabIds: [73], groupId: 4, childPolicy: 'manual',
-    } })
-    await waitForCheckpoint(root, (contents) => contents.includes('blocked-profile-b'))
-    oldB.close()
-    await replacementA.send({ jsonrpc: '2.0', id: replacementPrepareA!.id, result: {
-      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
-    } })
-    await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(activations).toEqual([])
-
-    const replacementB = await connectRelayClient(path.join(root, 'relay.sock'))
-    await sendRuntimeHello(replacementB, 'instance_profile_b')
-    const replacementPrepareB = await replacementB.receive()
-    expect(replacementPrepareB).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
-    await replacementB.send({ jsonrpc: '2.0', id: replacementPrepareB!.id, result: {
-      protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true,
-    } })
-
-    const [reloadA, reloadB] = await Promise.all([replacementA.receive(), replacementB.receive()])
-    expect(activations).toEqual(['activate'])
-    expect(reloadA).toMatchObject({ method: 'forge.runtime.reload' })
-    expect(reloadB).toMatchObject({ method: 'forge.runtime.reload' })
-    await Promise.all([
-      replacementA.send({ jsonrpc: '2.0', id: reloadA!.id, result: { protocolVersion: 1, payloadVersion: expected.payloadVersion, accepted: true } }),
-      replacementB.send({ jsonrpc: '2.0', id: reloadB!.id, result: { protocolVersion: 1, payloadVersion: expected.payloadVersion, accepted: true } }),
-    ])
-    await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(activations).toEqual(['activate'])
-    runtime.deactivate(); oldA.close(); oldB.close(); replacementA.close(); replacementB.close()
   })
 
   it('updates every stale profile independently and aggregates mixed generations safely', async () => {

@@ -1,26 +1,20 @@
-import {
-  EXTERNAL_CHROME_MAX_ARRAY_ITEMS,
-  EXTERNAL_CHROME_MAX_CANDIDATE_TABS,
-  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
-  EXTERNAL_CHROME_MAX_URL_LENGTH,
-  type ExternalChromeChildPolicy,
-} from '@forge/protocol'
 import type { ChromeApi, ChromeTab } from './chrome-api.js'
-import { candidateOrigin, restrictedTargetReason } from './restricted-target.js'
+import { restrictedTargetReason } from './restricted-target.js'
 
-const SESSION_LEASE_KEY = 'forge.externalChrome.activeLease.v1'
+const SESSION_AUTHORITY_KEY = 'forge.externalChrome.tabAuthority.v2'
+const MAX_AUTHORITIES = 128
 
-export type LeaseState = 'LEASED_HUMAN' | 'CONTROLLING_AGENT' | 'INTERRUPTING' | 'HANDOFF' | 'LOST'
+export type TabAuthorityState = 'human' | 'agent' | 'lost'
 
-export interface LeaseRecord {
-  leaseId: string
-  leaseEpoch: number
+/** A durable CAS record for one Chrome tab. No record grants profile- or window-wide authority. */
+export interface TabAuthorityRecord {
+  tabId: number
+  ownerId: string
+  ownerEpoch: number
   sessionAgentId: string
-  tabIds: number[]
-  groupId: number | null
-  childPolicy: ExternalChromeChildPolicy
-  state: LeaseState
+  state: TabAuthorityState
   controlEpoch: number
+  createdByForge: boolean
   payloadVersion: string
   expiresAt: number
 }
@@ -32,50 +26,17 @@ export class LeaseError extends Error {
   }
 }
 
-export interface CandidateTab {
-  windowId: number
-  tabId: number
-  groupId: number | null
-  title: string
-  origin: string
-  active: boolean
-  attached: boolean
-  restricted: boolean
-  debuggerConflict: boolean
-}
-
-export interface CandidateWindow {
-  windowId: number
-  focused: boolean
-  groups: Array<{ groupId: number; title: string; collapsed: boolean }>
-  tabs: CandidateTab[]
-}
-
-function requiredTabFields(tab: ChromeTab): { tabId: number; windowId: number } | null {
-  return tab.id === undefined || tab.windowId === undefined ? null : { tabId: tab.id, windowId: tab.windowId }
-}
-
-function assertLeaseRecord(value: unknown): LeaseRecord | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-  const candidate = value as Partial<LeaseRecord>
-  if (
-    typeof candidate.leaseId !== 'string' ||
-    !Number.isSafeInteger(candidate.leaseEpoch) ||
-    typeof candidate.sessionAgentId !== 'string' ||
-    !Array.isArray(candidate.tabIds) ||
-    candidate.tabIds.some((tabId) => !Number.isSafeInteger(tabId)) ||
-    (candidate.groupId !== null && !Number.isSafeInteger(candidate.groupId)) ||
-    (candidate.childPolicy !== 'manual' && candidate.childPolicy !== 'include-opened-by-leased-tabs') ||
-    !['LEASED_HUMAN', 'CONTROLLING_AGENT', 'INTERRUPTING', 'HANDOFF', 'LOST'].includes(String(candidate.state)) ||
-    !Number.isSafeInteger(candidate.controlEpoch) ||
-    typeof candidate.payloadVersion !== 'string' ||
-    !Number.isFinite(candidate.expiresAt)
-  ) return null
-  return candidate as LeaseRecord
+function validRecord(value: unknown): value is TabAuthorityRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Partial<TabAuthorityRecord>
+  return Number.isSafeInteger(record.tabId) && typeof record.ownerId === 'string' && record.ownerId.length > 0 &&
+    Number.isSafeInteger(record.ownerEpoch) && (record.ownerEpoch as number) > 0 && typeof record.sessionAgentId === 'string' &&
+    ['human', 'agent', 'lost'].includes(String(record.state)) && Number.isSafeInteger(record.controlEpoch) &&
+    typeof record.createdByForge === 'boolean' && typeof record.payloadVersion === 'string' && Number.isFinite(record.expiresAt)
 }
 
 export class LeaseManager {
-  private active: LeaseRecord | null = null
+  private readonly authorities = new Map<number, TabAuthorityRecord>()
   private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(
@@ -85,365 +46,185 @@ export class LeaseManager {
     private readonly ttlMs = 15 * 60_000,
   ) {}
 
-  current(): LeaseRecord | null {
-    return this.active === null ? null : structuredClone(this.active)
+  all(): TabAuthorityRecord[] {
+    return [...this.authorities.values()].map((record) => structuredClone(record)).sort((a, b) => a.tabId - b.tabId)
   }
 
-  async listCandidates(): Promise<CandidateWindow[]> {
-    const [rawWindows, rawGroups, debuggerTargets] = await Promise.all([
-      this.chrome.windows.getAll({ populate: true }),
-      this.chrome.tabGroups.query({}),
-      this.chrome.debugger.getTargets(),
-    ])
-    const conflictingTabs = new Set(debuggerTargets.filter((target) => target.attached === true && target.extensionId !== this.chrome.runtime.id).flatMap((target) => target.tabId === undefined ? [] : [target.tabId]))
-    const windows = rawWindows.filter((window) => window.id !== undefined)
-      .sort((left, right) => (left.id as number) - (right.id as number))
-      .slice(0, EXTERNAL_CHROME_MAX_ARRAY_ITEMS)
-    const groups = rawGroups.slice().sort((left, right) => left.id - right.id)
-    let remainingTabs = EXTERNAL_CHROME_MAX_CANDIDATE_TABS
-    let remainingGroups = EXTERNAL_CHROME_MAX_ARRAY_ITEMS
-    return windows.map((window) => {
-      const windowId = window.id as number
-      const windowGroups = groups.filter((group) => group.windowId === windowId).slice(0, remainingGroups)
-      remainingGroups -= windowGroups.length
-      const tabs = (window.tabs ?? []).flatMap((tab) => {
-        const ids = requiredTabFields(tab)
-        if (ids === null) return []
-        return [{
-          ...ids,
-          groupId: tab.groupId === undefined || tab.groupId < 0 ? null : tab.groupId,
-          title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
-          origin: candidateOrigin(tab.url).slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
-          active: tab.active === true,
-          attached: this.active?.tabIds.includes(ids.tabId) === true,
-          restricted: restrictedTargetReason(tab.url) !== null,
-          debuggerConflict: conflictingTabs.has(ids.tabId),
-        }]
-      }).sort((left, right) => left.tabId - right.tabId).slice(0, remainingTabs)
-      remainingTabs -= tabs.length
-      return {
-        windowId,
-        focused: window.focused,
-        groups: windowGroups.map((group) => ({
-          groupId: group.id,
-          title: (group.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
-          collapsed: group.collapsed,
-        })),
-        tabs,
-      }
-    })
+  forTab(tabId: number): TabAuthorityRecord | null {
+    const record = this.authorities.get(tabId)
+    return record === undefined ? null : structuredClone(record)
   }
 
-  claim(input: {
-    leaseId: string
-    leaseEpoch: number
+  async hasUniqueFocusedWindow(): Promise<boolean> {
+    const windows = await this.chrome.windows.getAll({ populate: false })
+    return windows.filter((window) => window.focused).length === 1
+  }
+
+  async focusedEligibleTab(): Promise<ChromeTab | null> {
+    const windows = await this.chrome.windows.getAll({ populate: true })
+    const focused = windows.filter((window) => window.focused)
+    if (focused.length !== 1) return null
+    const active = (focused[0]!.tabs ?? []).filter((tab) => tab.active === true && tab.id !== undefined)
+    if (active.length !== 1 || restrictedTargetReason(active[0]!.url) !== null) return null
+    return active[0]!
+  }
+
+  acquire(input: {
+    tabId: number
+    ownerId: string
+    ownerEpoch: number
     sessionAgentId: string
-    tabIds: number[]
-    groupId?: number
-    childPolicy: ExternalChromeChildPolicy
-  }): Promise<{ lease: LeaseRecord; tabs: ChromeTab[] }> {
-    return this.mutate(() => this.claimUnlocked(input))
-  }
-
-  private async claimUnlocked(input: {
-    leaseId: string
-    leaseEpoch: number
-    sessionAgentId: string
-    tabIds: number[]
-    groupId?: number
-    childPolicy: ExternalChromeChildPolicy
-  }): Promise<{ lease: LeaseRecord; tabs: ChromeTab[] }> {
-    if (!input.leaseId || input.leaseId.length > 128 || !Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1 ||
-      !input.sessionAgentId || input.sessionAgentId.length > 128) {
-      throw new LeaseError('scope-mismatch', 'lease routing fields are invalid')
-    }
-    const tabIds = [...new Set(input.tabIds)].sort((left, right) => left - right)
-    if (tabIds.length === 0 || tabIds.length > EXTERNAL_CHROME_MAX_CANDIDATE_TABS || tabIds.length !== input.tabIds.length) {
-      throw new LeaseError('scope-mismatch', 'claim must contain a bounded non-empty unique tab set')
-    }
-    if (this.active !== null) {
-      if (this.active.state === 'LOST') throw new LeaseError('lease-lost', 'the existing lease has already lost debugger ownership')
-      const sameRouting = this.active.leaseId === input.leaseId && this.active.leaseEpoch === input.leaseEpoch
-      const exactClaim = sameRouting && this.active.sessionAgentId === input.sessionAgentId &&
-        this.active.groupId === (input.groupId ?? null) && this.active.childPolicy === input.childPolicy &&
-        this.active.tabIds.length === tabIds.length && this.active.tabIds.every((tabId, index) => tabId === tabIds[index])
-      if (!exactClaim) {
-        throw new LeaseError('lease-conflict', sameRouting
-          ? 'same lease ID and epoch were reused with different immutable scope'
-          : 'another local session already owns this extension instance')
-      }
-      const tabs = await Promise.all(tabIds.map((tabId) => this.chrome.tabs.get(tabId)))
-      return { lease: structuredClone(this.active), tabs }
-    }
-    const tabs = await Promise.all(tabIds.map(async (tabId) => {
-      try {
-        return await this.chrome.tabs.get(tabId)
-      } catch {
-        throw new LeaseError('target-not-found', `tab ${tabId} no longer exists`)
-      }
-    }))
-    for (const tab of tabs) {
-      const reason = restrictedTargetReason(tab.url)
-      if (reason !== null) throw new LeaseError('restricted-target', `tab ${String(tab.id)} is restricted (${reason})`)
-      if (input.groupId !== undefined && tab.groupId !== input.groupId) {
-        throw new LeaseError('scope-mismatch', `tab ${String(tab.id)} is not in the selected group`)
-      }
-    }
-    const lease: LeaseRecord = {
-      leaseId: input.leaseId,
-      leaseEpoch: input.leaseEpoch,
-      sessionAgentId: input.sessionAgentId,
-      tabIds,
-      groupId: input.groupId ?? null,
-      childPolicy: input.childPolicy,
-      state: 'LEASED_HUMAN',
-      controlEpoch: 0,
-      payloadVersion: this.payloadVersion,
-      expiresAt: this.now() + this.ttlMs,
-    }
-    this.active = lease
-    await this.persist()
-    return { lease: structuredClone(lease), tabs }
-  }
-
-  includeChild(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
-    return this.mutate(() => this.includeChildUnlocked(tabId, openerTabId))
-  }
-
-  private async includeChildUnlocked(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
-    const lease = this.active
-    if (lease === null || lease.state === 'LOST' || lease.childPolicy !== 'include-opened-by-leased-tabs' ||
-      !lease.tabIds.includes(openerTabId) || lease.groupId === null || lease.tabIds.includes(tabId)) return null
-    if (lease.tabIds.length >= EXTERNAL_CHROME_MAX_CANDIDATE_TABS) throw new LeaseError('scope-mismatch', 'lease tab bound reached')
-    let tab: ChromeTab
-    try { tab = await this.chrome.tabs.get(tabId) } catch { return null }
-    if (tab.openerTabId !== openerTabId || restrictedTargetReason(tab.url) !== null) return null
-    await this.chrome.tabs.group({ tabIds: [tabId], groupId: lease.groupId })
-    this.active = { ...lease, tabIds: [...lease.tabIds, tabId].sort((left, right) => left - right) }
-    await this.persist()
-    return structuredClone(this.active)
-  }
-
-  create(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
-    return this.mutate(() => this.createUnlocked(input))
-  }
-
-  private async createUnlocked(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
-    if (!input.leaseId || input.leaseId.length > 128 || !Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1 ||
-      !input.sessionAgentId || input.sessionAgentId.length > 128 || !input.groupTitle || input.groupTitle.length > EXTERNAL_CHROME_MAX_LABEL_LENGTH) {
-      throw new LeaseError('scope-mismatch', 'create routing fields are invalid')
-    }
-    if (input.url !== undefined && restrictedTargetReason(input.url) !== null) {
-      throw new LeaseError('restricted-target', 'the requested URL cannot be controlled')
-    }
-    const existing = this.active
-    if (existing !== null && existing.tabIds.length >= EXTERNAL_CHROME_MAX_CANDIDATE_TABS) {
-      throw new LeaseError('scope-mismatch', 'lease tab bound reached')
-    }
-    if (existing !== null && (existing.state === 'LOST' || existing.leaseId !== input.leaseId ||
-      existing.leaseEpoch !== input.leaseEpoch || existing.sessionAgentId !== input.sessionAgentId || existing.groupId === null)) {
-      throw new LeaseError(existing.state === 'LOST' ? 'lease-lost' : 'lease-conflict', 'created tabs must use the matching active lease and Forge-owned group')
-    }
-    const tab = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
-    if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return the created tab ID')
-    try {
-      if (existing !== null) {
-        await this.chrome.tabs.group({ tabIds: [tab.id], groupId: existing.groupId as number })
-        tab.groupId = existing.groupId as number
-        this.active = { ...existing, tabIds: [...existing.tabIds, tab.id].sort((left, right) => left - right) }
-        await this.persist()
-        return { lease: structuredClone(this.active), tab }
-      }
-      const groupId = await this.chrome.tabs.group({ tabIds: [tab.id], ...(tab.windowId === undefined ? {} : { createProperties: { windowId: tab.windowId } }) })
-      await this.chrome.tabGroups.update(groupId, { title: input.groupTitle, color: 'blue', collapsed: false })
-      tab.groupId = groupId
-      const claimed = await this.claimUnlocked({ ...input, tabIds: [tab.id], groupId, childPolicy: 'manual' })
-      return { lease: claimed.lease, tab }
-    } catch (error) {
-      if (this.active?.leaseId === input.leaseId && this.active.leaseEpoch === input.leaseEpoch && this.active.tabIds.includes(tab.id)) {
-        const remaining = this.active.tabIds.filter((id) => id !== tab.id)
-        this.active = remaining.length === 0 ? null : { ...this.active, tabIds: remaining }
-        if (this.active === null) await this.chrome.storage.session.remove(SESSION_LEASE_KEY).catch(() => undefined)
-        else await this.persist().catch(() => undefined)
-      }
-      await this.chrome.tabs.remove(tab.id).catch(() => undefined)
-      throw error
-    }
-  }
-
-  rollbackCreatedTab(tabId: number, leaseId: string, leaseEpoch: number): Promise<void> {
+    expectedOwnerEpoch?: number
+    createdByForge?: boolean
+  }): Promise<{ authority: TabAuthorityRecord; tab: ChromeTab }> {
     return this.mutate(async () => {
-      const lease = this.active
-      if (lease?.leaseId === leaseId && lease.leaseEpoch === leaseEpoch && lease.tabIds.includes(tabId)) {
-        const remaining = lease.tabIds.filter((id) => id !== tabId)
-        if (remaining.length === 0) {
-          this.active = null
-          await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-        } else {
-          this.active = { ...lease, tabIds: remaining }
-          await this.persist()
-        }
+      this.validateRouting(input)
+      let tab: ChromeTab
+      try { tab = await this.chrome.tabs.get(input.tabId) } catch { throw new LeaseError('target-not-found', 'tab no longer exists') }
+      const restriction = restrictedTargetReason(tab.url)
+      if (restriction !== null) throw new LeaseError('restricted-target', `tab is restricted (${restriction})`)
+      const existing = this.authorities.get(input.tabId)
+      if (existing !== undefined) {
+        const exact = existing.ownerId === input.ownerId && existing.ownerEpoch === input.ownerEpoch &&
+          existing.sessionAgentId === input.sessionAgentId && existing.state !== 'lost'
+        if (!exact) throw new LeaseError(existing.state === 'lost' ? 'lease-lost' : 'lease-conflict', 'tab authority compare-and-set failed')
+        return { authority: structuredClone(existing), tab }
       }
-      await this.chrome.tabs.remove(tabId).catch(() => undefined)
-    })
-  }
-
-  assertScope(leaseId: string, leaseEpoch: number, tabId: number): LeaseRecord {
-    const lease = this.active
-    if (lease === null || lease.state === 'LOST' || lease.state === 'HANDOFF' || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch) {
-      throw new LeaseError('lease-lost', 'the lease is not active at this epoch')
-    }
-    if (!lease.tabIds.includes(tabId)) throw new LeaseError('scope-mismatch', 'tab is outside the lease')
-    return structuredClone(lease)
-  }
-
-  resumeHandoff(leaseId: string, leaseEpoch: number, tabId: number): Promise<LeaseRecord> {
-    return this.mutate(async () => {
-      const lease = this.active
-      if (lease === null || lease.state !== 'HANDOFF' || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch ||
-        lease.expiresAt <= this.now() || !lease.tabIds.includes(tabId)) {
-        throw new LeaseError('lease-lost', 'the handoff lease is missing, expired, or outside scope')
+      if (input.expectedOwnerEpoch !== undefined && input.expectedOwnerEpoch !== 0) {
+        throw new LeaseError('lease-conflict', 'tab authority compare-and-set expected an existing epoch')
       }
-      this.active = { ...lease, state: 'LEASED_HUMAN', expiresAt: this.now() + this.ttlMs }
+      if (this.authorities.size >= MAX_AUTHORITIES) throw new LeaseError('scope-mismatch', 'tab authority bound reached')
+      const authority: TabAuthorityRecord = {
+        tabId: input.tabId,
+        ownerId: input.ownerId,
+        ownerEpoch: input.ownerEpoch,
+        sessionAgentId: input.sessionAgentId,
+        state: 'human',
+        controlEpoch: 0,
+        createdByForge: input.createdByForge === true,
+        payloadVersion: this.payloadVersion,
+        expiresAt: this.now() + this.ttlMs,
+      }
+      this.authorities.set(input.tabId, authority)
       await this.persist()
-      return structuredClone(this.active)
+      return { authority: structuredClone(authority), tab }
     })
   }
 
-  turnEnded(leaseId: string, leaseEpoch: number, finalTabs: number[], handoffTabs: number[], handoffTtlMs: number): Promise<{ releasedTabs: number[]; handoffTabs: number[] }> {
+  beginAgentControl(ownerId: string, ownerEpoch: number, tabId: number, expectedControlEpoch?: number): Promise<number> {
     return this.mutate(async () => {
-      const lease = this.active
-      if (lease === null || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch || lease.state === 'LOST') {
-        throw new LeaseError('lease-lost', 'cannot finalize a stale lease epoch')
+      const authority = this.assertScope(ownerId, ownerEpoch, tabId)
+      if (expectedControlEpoch !== undefined && authority.controlEpoch !== expectedControlEpoch) {
+        throw new LeaseError('lease-lost', 'human input changed queued operation authority')
       }
-      const final = [...new Set(finalTabs)].sort((a, b) => a - b)
-      const handoff = [...new Set(handoffTabs)].sort((a, b) => a - b)
-      const requested = [...final, ...handoff].sort((a, b) => a - b)
-      if (final.length !== finalTabs.length || handoff.length !== handoffTabs.length || final.some((tabId) => handoff.includes(tabId)) ||
-        requested.length !== lease.tabIds.length || requested.some((tabId, index) => tabId !== lease.tabIds[index])) {
-        throw new LeaseError('scope-mismatch', 'turn dispositions must cover the exact leased tab scope once')
-      }
-      if (handoff.length === 0) {
-        this.active = null
-        await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-      } else {
-        this.active = { ...lease, tabIds: handoff, state: 'HANDOFF', expiresAt: this.now() + handoffTtlMs }
-        await this.persist()
-      }
-      return { releasedTabs: final, handoffTabs: handoff }
-    })
-  }
-
-  beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number, expectedControlEpoch?: number): Promise<number> {
-    return this.mutate(async () => {
-      const lease = this.assertScope(leaseId, leaseEpoch, tabId)
-      if (expectedControlEpoch !== undefined && lease.controlEpoch !== expectedControlEpoch) {
-        throw new LeaseError('lease-lost', 'trusted input changed queued operation authority before it started')
-      }
-      this.active = { ...lease, state: 'CONTROLLING_AGENT' }
+      this.authorities.set(tabId, { ...authority, state: 'agent', expiresAt: this.now() + this.ttlMs })
       await this.persist()
-      return lease.controlEpoch
+      return authority.controlEpoch
     })
   }
 
-  trustedHumanInput(tabId: number): Promise<LeaseRecord | null> {
+  trustedHumanInput(tabId: number): Promise<TabAuthorityRecord | null> {
     return this.mutate(async () => {
-      if (this.active === null || !this.active.tabIds.includes(tabId)) return null
-      this.active = { ...this.active, state: 'LEASED_HUMAN', controlEpoch: this.active.controlEpoch + 1 }
+      const authority = this.authorities.get(tabId)
+      if (authority === undefined) return null
+      const interrupted = { ...authority, state: 'human' as const, controlEpoch: authority.controlEpoch + 1 }
+      this.authorities.set(tabId, interrupted)
       await this.persist()
-      return structuredClone(this.active)
+      return structuredClone(interrupted)
     })
   }
 
-  isOperationCurrent(leaseId: string, leaseEpoch: number, controlEpoch: number): boolean {
-    return this.active?.leaseId === leaseId && this.active.leaseEpoch === leaseEpoch && this.active.controlEpoch === controlEpoch && this.active.state === 'CONTROLLING_AGENT'
+  isOperationCurrent(ownerId: string, ownerEpoch: number, tabId: number, controlEpoch: number): boolean {
+    const authority = this.authorities.get(tabId)
+    return authority?.ownerId === ownerId && authority.ownerEpoch === ownerEpoch && authority.controlEpoch === controlEpoch && authority.state === 'agent'
   }
 
-  finishAgentControl(leaseId: string, leaseEpoch: number, controlEpoch: number): Promise<boolean> {
+  finishAgentControl(ownerId: string, ownerEpoch: number, tabId: number, controlEpoch: number): Promise<boolean> {
     return this.mutate(async () => {
-      if (!this.isOperationCurrent(leaseId, leaseEpoch, controlEpoch) || this.active === null) return false
-      this.active = { ...this.active, state: 'LEASED_HUMAN' }
+      if (!this.isOperationCurrent(ownerId, ownerEpoch, tabId, controlEpoch)) return false
+      const authority = this.authorities.get(tabId)!
+      this.authorities.set(tabId, { ...authority, state: 'human' })
       await this.persist()
       return true
     })
   }
 
-  markLost(): Promise<void> {
+  assertScope(ownerId: string, ownerEpoch: number, tabId: number): TabAuthorityRecord {
+    const authority = this.authorities.get(tabId)
+    if (authority === undefined || authority.state === 'lost' || authority.ownerId !== ownerId || authority.ownerEpoch !== ownerEpoch) {
+      throw new LeaseError('lease-lost', 'tab authority is missing or stale')
+    }
+    return structuredClone(authority)
+  }
+
+  markLost(tabId: number): Promise<void> {
     return this.mutate(async () => {
-      if (this.active === null) return
-      this.active = { ...this.active, state: 'LOST' }
+      const authority = this.authorities.get(tabId)
+      if (authority === undefined) return
+      this.authorities.set(tabId, { ...authority, state: 'lost', controlEpoch: authority.controlEpoch + 1 })
       await this.persist()
     })
   }
 
-  beginRelease(leaseId: string, leaseEpoch: number): Promise<number[]> {
+  release(ownerId: string, ownerEpoch: number, tabId: number): Promise<boolean> {
     return this.mutate(async () => {
-      if (this.active === null) return []
-      if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot release a stale lease epoch')
-      if (this.active.state !== 'LOST') {
-        this.active = { ...this.active, state: 'LOST' }
-        await this.persist()
+      const authority = this.authorities.get(tabId)
+      if (authority === undefined) return false
+      if (authority.ownerId !== ownerId || authority.ownerEpoch !== ownerEpoch) throw new LeaseError('lease-lost', 'exact tab release compare-and-set failed')
+      this.authorities.delete(tabId)
+      await this.persist()
+      return true
+    })
+  }
+
+  releaseOwner(ownerId: string, ownerEpoch: number): Promise<number[]> {
+    return this.mutate(async () => {
+      const matches = this.all().filter((record) => record.ownerId === ownerId && record.ownerEpoch === ownerEpoch)
+      for (const record of matches) this.authorities.delete(record.tabId)
+      await this.persist()
+      return matches.map((record) => record.tabId)
+    })
+  }
+
+  async recover(): Promise<TabAuthorityRecord[]> {
+    return this.mutate(async () => {
+      const stored = await this.chrome.storage.session.get(SESSION_AUTHORITY_KEY)
+      const records = Array.isArray(stored[SESSION_AUTHORITY_KEY]) ? stored[SESSION_AUTHORITY_KEY] as unknown[] : []
+      this.authorities.clear()
+      for (const record of records.filter(validRecord).slice(0, MAX_AUTHORITIES)) {
+        if (record.payloadVersion !== this.payloadVersion || record.expiresAt <= this.now()) continue
+        try {
+          const tab = await this.chrome.tabs.get(record.tabId)
+          if (restrictedTargetReason(tab.url) !== null) continue
+        } catch { continue }
+        // MV3 restart never assumes a debugger survived. Durable ownership resumes human/unattached.
+        this.authorities.set(record.tabId, { ...record, state: record.state === 'lost' ? 'lost' : 'human' })
       }
-      return [...this.active.tabIds]
+      await this.persist()
+      return this.all()
     })
   }
 
-  completeRelease(leaseId: string, leaseEpoch: number): Promise<number[]> {
+  async expire(): Promise<TabAuthorityRecord[]> {
     return this.mutate(async () => {
-      if (this.active === null) return []
-      if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot complete a stale lease epoch')
-      const released = [...this.active.tabIds]
-      this.active = null
-      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-      return released
+      const expired = this.all().filter((record) => record.expiresAt <= this.now())
+      for (const record of expired) this.authorities.delete(record.tabId)
+      if (expired.length > 0) await this.persist()
+      return expired
     })
   }
 
-  /** Immediate state-only release for claim rollback before debugger authority exists. */
-  release(leaseId: string, leaseEpoch: number): Promise<number[]> {
-    return this.completeRelease(leaseId, leaseEpoch)
-  }
-
-  expireIfNeeded(): Promise<LeaseRecord | null> {
-    return this.mutate(async () => {
-      if (this.active === null || (this.active.state !== 'LOST' && this.active.expiresAt > this.now())) return null
-      if (this.active.state !== 'LOST') {
-        this.active = { ...this.active, state: 'LOST' }
-        await this.persist()
-      }
-      return structuredClone(this.active)
-    })
-  }
-
-  recover(): Promise<LeaseRecord | null> {
-    return this.mutate(() => this.recoverUnlocked())
-  }
-
-  private async recoverUnlocked(): Promise<LeaseRecord | null> {
-    const stored = await this.chrome.storage.session.get(SESSION_LEASE_KEY)
-    const lease = assertLeaseRecord(stored[SESSION_LEASE_KEY])
-    if (lease === null || lease.payloadVersion !== this.payloadVersion) {
-      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-      this.active = null
-      return null
+  private validateRouting(input: { ownerId: string; ownerEpoch: number; sessionAgentId: string; tabId: number }): void {
+    if (!input.ownerId || input.ownerId.length > 128 || !Number.isSafeInteger(input.ownerEpoch) || input.ownerEpoch < 1 ||
+      !input.sessionAgentId || input.sessionAgentId.length > 128 || !Number.isSafeInteger(input.tabId) || input.tabId < 0) {
+      throw new LeaseError('scope-mismatch', 'tab authority routing is invalid')
     }
-    try {
-      const tabs = await Promise.all(lease.tabIds.map((tabId) => this.chrome.tabs.get(tabId)))
-      if (lease.state !== 'LOST' && tabs.some((tab) => restrictedTargetReason(tab.url) !== null)) throw new Error('restricted')
-    } catch {
-      // Missing tabs no longer retain debugger ownership. Other release failures
-      // remain represented by a valid LOST record and are retried by Runtime.
-      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-      this.active = null
-      return null
-    }
-    this.active = lease.expiresAt <= this.now() && lease.state !== 'LOST' ? { ...lease, state: 'LOST' } : lease
-    if (this.active !== lease) await this.persist()
-    return structuredClone(this.active)
   }
 
   private async persist(): Promise<void> {
-    if (this.active !== null) await this.chrome.storage.session.set({ [SESSION_LEASE_KEY]: this.active })
+    const records = this.all()
+    if (records.length === 0) await this.chrome.storage.session.remove(SESSION_AUTHORITY_KEY)
+    else await this.chrome.storage.session.set({ [SESSION_AUTHORITY_KEY]: records })
   }
 
   private mutate<Value>(operation: () => Promise<Value>): Promise<Value> {

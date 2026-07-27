@@ -23,6 +23,7 @@ import {
   type ExternalChromeResultByMethod,
 } from '@forge/protocol'
 import type { ExternalChromeTransport, ExternalChromeTransportResult } from '../browser/external-chrome-target-adapter.js'
+import type { BrowserTargetSession, ExternalBrowserAcquireInput, ExternalBrowserAcquireResult, ExternalBrowserTargetAuthority } from '../browser/browser-target-adapter.js'
 
 const MAX_RELAY_RECORD_BYTES = 384 * 1_024
 const MAX_CONNECTIONS = 16
@@ -139,14 +140,6 @@ class LeaseCheckpointStore {
     })
   }
 
-  removePendingForExtension(extensionInstanceId: string): Promise<void> {
-    return this.serialize(async () => {
-      await this.load()
-      this.checkpoints = this.checkpoints.filter((lease) => lease.extensionInstanceId !== extensionInstanceId || lease.sessionAgentId !== '__local_pending__')
-      await this.persist()
-    })
-  }
-
   private serialize<Value>(work: () => Promise<Value>): Promise<Value> {
     const result = this.operation.then(work, work)
     this.operation = result.then(() => undefined, () => undefined)
@@ -161,7 +154,9 @@ class LeaseCheckpointStore {
       if (Buffer.byteLength(raw) > 64 * 1_024) return
       const value = JSON.parse(raw) as Partial<PersistedCheckpoints>
       if (value.schemaVersion !== 1 || !Array.isArray(value.leases)) return
-      this.checkpoints = value.leases.filter(validCheckpoint).slice(-128)
+      this.checkpoints = value.leases.filter(validCheckpoint)
+        .filter((lease) => lease.sessionAgentId !== '__local_pending__' && lease.profileId !== '__local_pending__')
+        .slice(-128)
       this.finalizedReleaseIds = Array.isArray(value.finalizedReleaseIds)
         ? value.finalizedReleaseIds.filter(validLifecycleReleaseId).slice(-256)
         : []
@@ -473,6 +468,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private activatedRuntimeKey: string | null = null
   private failedActivationRuntimeKey: string | null = null
   private lifecycleBarrierRecovery: RuntimeRecovery | null = null
+  /** Desktop-private session affinity. Never exposed as a caller-selectable host. */
+  private readonly sessionAffinities = new Map<string, string>()
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
     this.checkpoints = new LeaseCheckpointStore(checkpointFile)
@@ -523,6 +520,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.allConnections.clear()
     this.connections.clear()
     this.instanceStates.clear()
+    this.sessionAffinities.clear()
     this.runtimeStateRevision += 1
     this.context?.secret.fill(0)
     this.context = null
@@ -772,6 +770,72 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     await this.checkpoints.put({ ...transaction, releasedAt: this.now() })
   }
 
+  async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
+    if (this.operationsQuiesced) return acquireFailure('runtime-not-ready', 'External Chrome is updating or reconnecting.', true)
+    const affinityKey = `${input.sessionAgentId}\0${input.profileId}`
+    const decoded = input.preferredTabId ? decodeTabId(input.preferredTabId) : null
+    let extensionInstanceId = decoded?.extensionInstanceId ?? this.sessionAffinities.get(affinityKey)
+    if (extensionInstanceId !== undefined && !this.isInstanceReady(extensionInstanceId)) {
+      return acquireFailure('runtime-not-ready', 'The session-affine Chrome instance is not ready.', true)
+    }
+    if (extensionInstanceId === undefined) {
+      const focused = await this.uniquelyFocusedInstances(input.sessionAgentId)
+      if (focused.length !== 1) {
+        const options = this.readyConnectionIds().slice(0, 8).map((id, index) => this.connections.get(id)?.inventory?.profileAlias ?? `Chrome ${index + 1}`)
+        return {
+          ok: false,
+          error: { code: 'attachment-required', message: 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', retryable: false, details: { choiceKind: 'ambiguous-profile', optionCount: options.length, options: JSON.stringify(options).slice(0, 1_024) } },
+          metadata: { phase: 'discovery', mutationState: 'not-started', fallbackReason: focused.length === 0 ? 'no-eligible-target' : 'ambiguous-instance' },
+        }
+      }
+      extensionInstanceId = focused[0]!
+    }
+    const leaseId = randomUUID()
+    const leaseEpoch = input.ownerEpoch
+    try {
+      let tabId: number
+      if (decoded !== null) {
+        if (decoded.extensionInstanceId !== extensionInstanceId) return acquireFailure('authority-conflict', 'Preferred tab does not match the session affinity.', false)
+        const claimed = await this.connection(extensionInstanceId).request('forge.browser.claim', {
+          protocolVersion: 1, sessionAgentId: input.sessionAgentId, leaseId, leaseEpoch, tabIds: [decoded.tabId], childPolicy: 'manual',
+        })
+        tabId = claimed.tabs[0]?.tabId ?? -1
+      } else {
+        const opened = await this.connection(extensionInstanceId).request('forge.browser.create', {
+          protocolVersion: 1, sessionAgentId: input.sessionAgentId, leaseId, leaseEpoch,
+          groupTitle: input.reuseExisting ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
+        })
+        tabId = opened.tab.tabId
+      }
+      if (!Number.isSafeInteger(tabId) || tabId < 0) throw new Error('extension did not return one acquired tab')
+      await this.checkpoints.put({
+        extensionInstanceId, sessionAgentId: input.sessionAgentId, profileId: input.profileId,
+        leaseId, leaseEpoch, tabIds: [tabId], groupId: null, childPolicy: 'manual', expiresAt: this.now() + CHECKPOINT_TTL_MS,
+      })
+      this.sessionAffinities.set(affinityKey, extensionInstanceId)
+      return { ok: true, authority: { ownerEpoch: input.ownerEpoch, tabId: encodeTabId(extensionInstanceId, tabId) } }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'External Chrome acquisition failed.'
+      const conflict = /lease|authority|debugger/u.test(message)
+      return acquireFailure(conflict ? 'authority-conflict' : 'no-eligible-target', message, !conflict)
+    }
+  }
+
+  async releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void> {
+    const decoded = decodeTabId(authority.tabId)
+    if (decoded === null) throw new Error('stale tab authority')
+    const checkpoint = (await this.checkpoints.all()).find((entry) => entry.extensionInstanceId === decoded.extensionInstanceId &&
+      entry.sessionAgentId === session.sessionAgentId && entry.profileId === session.profileId && entry.leaseEpoch === authority.ownerEpoch &&
+      entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
+    if (!checkpoint) return
+    const result = await this.connection(checkpoint.extensionInstanceId).request('forge.browser.release', {
+      protocolVersion: 1, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch, reason,
+    })
+    if (result.leaseId !== checkpoint.leaseId || result.leaseEpoch !== checkpoint.leaseEpoch ||
+      result.releasedTabIds.length !== 1 || result.releasedTabIds[0] !== decoded.tabId) throw new Error('exact tab release was not acknowledged')
+    await this.checkpoints.remove(checkpoint.extensionInstanceId, checkpoint.leaseId, checkpoint.leaseEpoch)
+  }
+
   async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
     if (this.operationsQuiesced && request.operation !== 'status') return failure('extension-update-required', 'External Chrome is updating or reconnecting.', true)
     if (request.operation === 'status') return this.statusResult(request)
@@ -801,7 +865,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         if (!response.ok) return { ok: false, error: response.error }
         const reported = response.result.selectedTab
         selectedTab = reported ? {
-          ...reported, hostKind: 'external-chrome', tabId: request.tabId,
+          ...reported, targetAffinity: 'external-chrome', tabId: request.tabId,
           sessionAgentId: request.sessionAgentId, profileId: request.profileId, controller: 'human', physicalVisible: false,
         } : null
       }
@@ -814,7 +878,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const result: BrowserAutomationResultByOperation['status'] = {
       available: readyConnectionIds.length > 0,
       host: {
-        hostKind: 'external-chrome', connected: readyConnectionIds.length > 0, hostId: request.hostId,
+        connected: readyConnectionIds.length > 0, hostId: request.hostId,
         hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt,
       },
       panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab,
@@ -826,48 +890,51 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const leases = await this.activeCheckpoints()
     if (request.tabId) {
       const existing = findCheckpoint(leases, request.tabId, request.sessionAgentId, request.profileId)
-      if (!existing) return failure('attachment-required', 'A pre-existing Chrome tab requires an explicit local lease.', false)
+      if (!existing) return failure('attachment-required', 'The tab does not have current per-tab authority.', false)
       if (!this.isInstanceReady(existing.extensionInstanceId)) return failure('extension-update-required', 'The selected Chrome profile is updating or reconnecting.', true)
-      const tab = checkpointTab(existing, request.tabId, request, '', 'External Chrome tab')
-      return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+      const input = request.input as { url?: string }
+      return this.openCheckpoint(request, existing, decodeTabId(request.tabId)!.tabId, input.url)
     }
     const input = request.input as { url?: string; reuseExistingTab: boolean }
+    const affinityKey = `${request.sessionAgentId}\0${request.profileId}`
     const mapped = leases.find((lease) => lease.sessionAgentId === request.sessionAgentId && lease.profileId === request.profileId)
-    if (mapped && !this.isInstanceReady(mapped.extensionInstanceId)) {
-      return failure('extension-update-required', 'The selected Chrome profile is updating or reconnecting.', true)
+    const priorAffinity = mapped?.extensionInstanceId ?? this.sessionAffinities.get(affinityKey)
+    if (priorAffinity !== undefined && !this.isInstanceReady(priorAffinity)) {
+      return failure('extension-update-required', 'The session-affine Chrome instance is updating or reconnecting.', true)
     }
     if (mapped && input.reuseExistingTab && mapped.tabIds[0] !== undefined) {
       return this.openCheckpoint(request, mapped, mapped.tabIds[0], input.url)
     }
-    const local = leases.filter((lease) => lease.sessionAgentId === '__local_pending__' && lease.profileId === '__local_pending__' && this.isInstanceReady(lease.extensionInstanceId))
-    if (input.reuseExistingTab && local.length === 1 && local[0]!.tabIds[0] !== undefined) {
-      const adopted = { ...local[0]!, sessionAgentId: request.sessionAgentId, profileId: request.profileId, expiresAt: this.now() + CHECKPOINT_TTL_MS }
-      await this.checkpoints.put(adopted)
-      return this.openCheckpoint(request, adopted, adopted.tabIds[0]!, input.url)
+    let eligible: string[]
+    if (priorAffinity !== undefined) eligible = [priorAffinity]
+    else eligible = await this.uniquelyFocusedInstances(request.sessionAgentId)
+    if (eligible.length !== 1) {
+      const options = this.readyConnectionIds().slice(0, 8).map((id, index) => this.connections.get(id)?.inventory?.profileAlias ?? `Chrome ${index + 1}`)
+      return failure('attachment-required', 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', false, {
+        choiceKind: 'ambiguous-profile', optionCount: options.length, options: JSON.stringify(options).slice(0, 1_024),
+      })
     }
-    const candidates = mapped ? [mapped.extensionInstanceId] : this.readyConnectionIds()
-    const unique = [...new Set(candidates)].filter((id) => this.isInstanceReady(id))
-    if (unique.length !== 1) return failure('attachment-required', 'Choose a Chrome profile in the local side panel before creating a tab.', false)
-    const extensionInstanceId = unique[0]!
+    const extensionInstanceId = eligible[0]!
     const leaseId = mapped?.leaseId ?? randomUUID()
     const leaseEpoch = mapped?.leaseEpoch ?? (Math.max(0, ...leases.filter((lease) => lease.extensionInstanceId === extensionInstanceId).map((lease) => lease.leaseEpoch)) + 1)
-    const created = await this.connection(extensionInstanceId).request('forge.browser.create', {
+    const opened = await this.connection(extensionInstanceId).request('forge.browser.create', {
       protocolVersion: 1, sessionAgentId: request.sessionAgentId, leaseId, leaseEpoch,
-      ...(input.url ? { url: input.url } : {}), groupTitle: `Forge · ${request.sessionAgentId}`.slice(0, 512),
+      ...(input.url ? { url: input.url } : {}), groupTitle: input.reuseExistingTab ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
     })
-    if (created.extensionInstanceId !== extensionInstanceId || created.sessionAgentId !== request.sessionAgentId ||
-      created.leaseId !== leaseId || created.leaseEpoch !== leaseEpoch || created.tab.groupId !== created.groupId) {
-      throw new Error('extension create response did not match the authorized compare-and-set scope')
+    if (opened.extensionInstanceId !== extensionInstanceId || opened.sessionAgentId !== request.sessionAgentId ||
+      opened.leaseId !== leaseId || opened.leaseEpoch !== leaseEpoch) {
+      throw new Error('extension acquire response did not match per-tab compare-and-set authority')
     }
     const checkpoint: ExternalChromeLeaseCheckpoint = {
       extensionInstanceId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, leaseId, leaseEpoch,
-      tabIds: [...(mapped?.tabIds ?? []), created.tab.tabId].sort((a, b) => a - b), groupId: created.groupId,
-      childPolicy: mapped?.childPolicy ?? 'manual', expiresAt: mapped?.expiresAt ?? (this.now() + CHECKPOINT_TTL_MS),
+      tabIds: [...new Set([...(mapped?.tabIds ?? []), opened.tab.tabId])].sort((a, b) => a - b), groupId: null,
+      childPolicy: 'manual', expiresAt: this.now() + CHECKPOINT_TTL_MS,
     }
     await this.checkpoints.put(checkpoint)
-    const opaqueTabId = encodeTabId(extensionInstanceId, created.tab.tabId)
-    const tab = checkpointTab(checkpoint, opaqueTabId, request, created.tab.url, created.tab.title)
-    return { ok: true, result: { tab, created: true, panelRevealRequested: false }, updatedTab: tab }
+    this.sessionAffinities.set(affinityKey, extensionInstanceId)
+    const opaqueTabId = encodeTabId(extensionInstanceId, opened.tab.tabId)
+    const tab = checkpointTab(checkpoint, opaqueTabId, request, opened.tab.url, opened.tab.title)
+    return { ok: true, result: { tab, created: !input.reuseExistingTab, panelRevealRequested: false }, updatedTab: tab }
   }
 
   private async openCheckpoint(request: BrowserAutomationRequest, checkpoint: ExternalChromeLeaseCheckpoint, tabId: number, url?: string): Promise<ExternalChromeTransportResult> {
@@ -875,14 +942,14 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (url) {
       const navigated = await this.navigateResult({
         ...request, operation: 'navigate', tabId: opaqueTabId,
-        input: { hostKind: 'external-chrome', tabId: opaqueTabId, url, readiness: 'load', timeoutMs: 30_000 },
+        input: { url, readiness: 'load', timeoutMs: 30_000 },
       } as BrowserAutomationRequest)
       if (!navigated.ok) return navigated
       const tab = navigated.updatedTab!
       return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
     }
     const inspected = await this.statusResult({
-      ...request, operation: 'status', tabId: opaqueTabId, input: { hostKind: 'external-chrome', tabId: opaqueTabId },
+      ...request, operation: 'status', tabId: opaqueTabId, input: {},
     } as BrowserAutomationRequest)
     if (!inspected.ok) return inspected
     const selected = (inspected.result as BrowserAutomationResultByOperation['status']).selectedTab
@@ -912,7 +979,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     await this.markCheckpointResumed(checkpoint)
     if (!response.ok) return { ok: false, error: response.error }
     const raw = response.result as BrowserAutomationResultByOperation['navigate']
-    const tab = { ...raw.tab, hostKind: 'external-chrome' as const, tabId: request.tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId }
+    const tab = { ...raw.tab, targetAffinity: 'external-chrome' as const, tabId: request.tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId }
     return { ok: true, result: { ...raw, tab }, updatedTab: tab }
   }
 
@@ -978,13 +1045,9 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         if (result.leaseId === lease.leaseId && result.leaseEpoch === lease.leaseEpoch) {
           const current = (await this.checkpoints.all()).find((candidate) => candidate.extensionInstanceId === lease.extensionInstanceId
             && candidate.leaseId === lease.leaseId && candidate.leaseEpoch === lease.leaseEpoch) ?? lease
-          if (current.sessionAgentId === '__local_pending__' || current.profileId === '__local_pending__') {
-            await this.checkpoints.remove(current.extensionInstanceId, current.leaseId, current.leaseEpoch)
-          } else {
-            // Merge the latest durable transaction fields: expiry and an explicit
-            // lifecycle prepare may race, but neither may erase the other's authority.
-            await this.checkpoints.put({ ...current, releasedAt: current.releasedAt ?? this.now() })
-          }
+          // Merge the latest durable transaction fields: expiry and an explicit
+          // lifecycle prepare may race, but neither may erase the other's authority.
+          await this.checkpoints.put({ ...current, releasedAt: current.releasedAt ?? this.now() })
         }
       } catch { /* retain checkpoint until acknowledged; never forget a possibly attached debugger */ }
     }
@@ -1008,6 +1071,19 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
 
   private readyConnectionIds(): string[] {
     return [...this.connections.keys()].filter((id) => this.isInstanceReady(id))
+  }
+
+  /** Focus probing is privacy bounded: runtimes return one boolean window marker and no tabs. */
+  private async uniquelyFocusedInstances(sessionAgentId: string): Promise<string[]> {
+    const probed = await Promise.all(this.readyConnectionIds().map(async (extensionInstanceId) => {
+      try {
+        const result = await this.connection(extensionInstanceId).request('forge.browser.listCandidates', { protocolVersion: 1, sessionAgentId })
+        return result.windows.length === 1 && result.windows[0]?.focused === true && result.windows[0].tabs.length === 0
+          ? extensionInstanceId
+          : null
+      } catch { return null }
+    }))
+    return probed.filter((value): value is string => value !== null)
   }
 
   private runtimeMatchesExpected(inventory: ExternalChromeRuntimeInventory | null): boolean {
@@ -1204,33 +1280,17 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           const extensionInstanceId = connection.inventory?.extensionInstanceId
           if (!extensionInstanceId) return
           const existing = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId && lease.leaseId === change.leaseId && lease.leaseEpoch === change.leaseEpoch)
-          const firstReport = connection.consumeFirstLeaseReport()
-          if (firstReport && existing && (
-            canonical(existing.tabIds) !== canonical([...change.tabIds].sort((a, b) => a - b)) ||
-            existing.groupId !== change.groupId || existing.childPolicy !== change.childPolicy
-          )) {
-            throw new Error('reconnect lease proof attempted to expand or change durable scope')
+          connection.consumeFirstLeaseReport()
+          // Unknown extension-originated authority is never adopted. Desktop is the
+          // sole automatic acquisition initiator; reconnect may only prove exact CAS state.
+          if (!existing) return
+          if (canonical(existing.tabIds) !== canonical([...change.tabIds].sort((a, b) => a - b)) ||
+            existing.groupId !== change.groupId || existing.childPolicy !== change.childPolicy) {
+            throw new Error('reconnect authority proof attempted to change exact per-tab scope')
           }
           if (change.state === 'released') {
-            if (!existing || existing.sessionAgentId === '__local_pending__' || existing.profileId === '__local_pending__') {
-              await this.checkpoints.remove(extensionInstanceId, change.leaseId, change.leaseEpoch)
-            } else {
-              await this.checkpoints.put({ ...existing, expiresAt: Math.min(existing.expiresAt, this.now()), releasedAt: this.now() })
-            }
-            return
+            await this.checkpoints.put({ ...existing, expiresAt: Math.min(existing.expiresAt, this.now()), releasedAt: this.now() })
           }
-          if (existing && change.state === 'claimed') {
-            const oldTabs = new Set(existing.tabIds)
-            const added = change.tabIds.filter((tabId) => !oldTabs.has(tabId))
-            if (added.length > 0 && (existing.childPolicy !== 'include-opened-by-leased-tabs' || existing.groupId !== change.groupId)) {
-              throw new Error('lease notification attempted unauthorized scope expansion')
-            }
-          }
-          await this.checkpoints.put({
-            extensionInstanceId, sessionAgentId: existing?.sessionAgentId ?? '__local_pending__', profileId: existing?.profileId ?? '__local_pending__',
-            leaseId: change.leaseId, leaseEpoch: change.leaseEpoch, tabIds: [...change.tabIds].sort((a, b) => a - b),
-            groupId: change.groupId, childPolicy: change.childPolicy, expiresAt: this.now() + CHECKPOINT_TTL_MS,
-          })
         },
         (connection) => {
           this.allConnections.delete(connection)
@@ -1264,14 +1324,31 @@ function findCheckpoint(leases: ExternalChromeLeaseCheckpoint[], opaqueTabId: st
 function checkpointTab(_checkpoint: ExternalChromeLeaseCheckpoint, opaqueTabId: string, request: BrowserAutomationRequest, url: string, title: string): BrowserTabSnapshot {
   const now = new Date().toISOString()
   return {
-    hostKind: 'external-chrome', tabId: opaqueTabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+    targetAffinity: 'external-chrome', tabId: opaqueTabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
     url, title, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false,
     zoomFactor: 1, controller: 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' },
     renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
   }
 }
-function failure(code: BrowserAutomationFailure['code'], message: string, retryable: boolean): ExternalChromeTransportResult {
-  return { ok: false, error: { code, message, retryable } }
+function failure(
+  code: BrowserAutomationFailure['code'],
+  message: string,
+  retryable: boolean,
+  details?: Record<string, string | number | boolean | null>,
+): ExternalChromeTransportResult {
+  return { ok: false, error: { code, message, retryable, ...(details ? { details } : {}) } }
+}
+
+function acquireFailure(
+  fallbackReason: 'runtime-not-ready' | 'authority-conflict' | 'no-eligible-target',
+  message: string,
+  retryable: boolean,
+): ExternalBrowserAcquireResult {
+  return {
+    ok: false,
+    error: { code: fallbackReason === 'authority-conflict' ? 'lease-conflict' : 'attachment-required', message: message.slice(0, 1_024), retryable },
+    metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason },
+  }
 }
 
 function canonical(value: unknown): string {

@@ -1,4 +1,4 @@
-import type { ChromeApi, ChromeDebuggerSession, ChromeRuntimePort, ChromeStorageArea, ChromeTab, ChromeTabGroup, ChromeWindow } from '../src/runtime/chrome-api.js'
+import type { ChromeApi, ChromeDebuggerSession, ChromeRuntimePort, ChromeStorageArea, ChromeTab, ChromeWindow } from '../src/runtime/chrome-api.js'
 
 export class FakeStorage implements ChromeStorageArea {
   readonly values: Record<string, unknown> = {}
@@ -13,7 +13,6 @@ export class FakeStorage implements ChromeStorageArea {
 
 export interface FakeChromeOptions {
   tabs?: ChromeTab[]
-  groups?: ChromeTabGroup[]
   windows?: ChromeWindow[]
   session?: FakeStorage
   detachFailures?: Set<number>
@@ -26,14 +25,12 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
   injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }>
 } {
   const tabs = options.tabs ?? []
-  const groups = options.groups ?? []
   const session = options.session ?? new FakeStorage()
   const local = new FakeStorage()
   const attached = new Set<number>()
   const commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> = []
   const injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }> = []
   let nextTabId = Math.max(0, ...tabs.map((tab) => tab.id ?? 0)) + 1
-  let nextGroupId = Math.max(0, ...groups.map((group) => group.id)) + 1
   return {
     attached,
     commands,
@@ -62,22 +59,6 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
       remove: async (tabIds) => {
         const removed = new Set(Array.isArray(tabIds) ? tabIds : [tabIds])
         for (let index = tabs.length - 1; index >= 0; index -= 1) if (tabs[index]?.id !== undefined && removed.has(tabs[index]!.id!)) tabs.splice(index, 1)
-        for (let index = groups.length - 1; index >= 0; index -= 1) if (!tabs.some((tab) => tab.groupId === groups[index]!.id)) groups.splice(index, 1)
-      },
-      group: async ({ tabIds, groupId }) => {
-        const selectedGroup = groupId ?? nextGroupId++
-        for (const tab of tabs) if (tab.id !== undefined && tabIds.includes(tab.id)) tab.groupId = selectedGroup
-        if (!groups.some((group) => group.id === selectedGroup)) groups.push({ id: selectedGroup, windowId: 1, title: '', collapsed: false })
-        return selectedGroup
-      },
-    },
-    tabGroups: {
-      query: async () => structuredClone(groups),
-      update: async (groupId, properties) => {
-        const group = groups.find((entry) => entry.id === groupId)
-        if (group === undefined) throw new Error('missing group')
-        Object.assign(group, properties)
-        return structuredClone(group)
       },
     },
     windows: {
@@ -102,7 +83,6 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
         return {}
       },
     },
-    sidePanel: { open: async () => undefined, setPanelBehavior: async () => undefined },
     alarms: { create: () => undefined, clear: async () => true },
   }
 }

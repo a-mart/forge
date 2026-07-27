@@ -14,7 +14,7 @@ export async function createPackageManifest({ packageRoot, sourceRoot, payloadVe
   const unexpectedPayloadFiles = files.filter((relative) => relative.startsWith('payloads/') && !relative.startsWith(payloadPrefix))
   const shellFiles = Object.fromEntries(shellFileNames.map((relative) => [relative, fileHashes[relative]]))
   const payloadFiles = Object.fromEntries(payloadFileNames.map((relative) => [relative.slice(payloadPrefix.length), fileHashes[relative]]))
-  const expectedPayloadFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  const expectedPayloadFiles = ['content-script.js', 'service-worker.js']
   if (unexpectedPayloadFiles.length > 0 || Object.keys(payloadFiles).sort().join('\0') !== expectedPayloadFiles.join('\0')) {
     throw new Error('extension payload inventory does not match the shell ABI')
   }

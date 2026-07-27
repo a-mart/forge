@@ -37,7 +37,6 @@ async function root(): Promise<{ dataRoot: string; deployer: ExternalChromeDeplo
   const payloadContents = {
     'content-script.js': Buffer.from('content payload\n'),
     'service-worker.js': Buffer.from('service worker payload\n'),
-    'side-panel.js': Buffer.from('side panel payload\n'),
   }
   const native = Buffer.from('native')
   const payloadSha256 = treeSha256(payloadContents)

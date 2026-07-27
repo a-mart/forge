@@ -8,7 +8,7 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
-  "description": "Local Beta unpacked extension for Forge-attached Chrome tabs. Requires Chrome 125+, Developer Mode, and a dedicated profile.",
+  "description": "Local Beta bridge for automatic, operation-scoped Forge control of eligible Chrome tabs.",
   "host_permissions": [
     "<all_urls>"
   ],
@@ -16,29 +16,14 @@
   "manifest_version": 3,
   "minimum_chrome_version": "125",
   "name": "Forge",
-  "optional_permissions": [
-    "downloads.open"
-  ],
   "permissions": [
     "alarms",
-    "bookmarks",
     "debugger",
-    "downloads",
-    "favicon",
-    "history",
     "nativeMessaging",
-    "notifications",
     "scripting",
-    "sessions",
-    "sidePanel",
     "storage",
-    "tabGroups",
     "tabs",
-    "topSites",
     "webNavigation"
   ],
-  "side_panel": {
-    "default_path": "shell/side-panel.html"
-  },
   "version": "0.1.0"
 }

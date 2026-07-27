@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
@@ -68,11 +68,10 @@ await verifyIdentity(sourceRoot)
 await Promise.all([
   bundle('src/payload/service-worker/index.ts', path.join(temporaryPayload, 'service-worker.js'), { format: 'iife', globalName: 'ForgeExternalChromePayload' }),
   bundle('src/payload/content-script/index.ts', path.join(temporaryPayload, 'content-script.js'), { format: 'iife' }),
-  bundle('src/payload/side-panel/index.ts', path.join(temporaryPayload, 'side-panel.js')),
 ])
 
 const payloadFiles = Object.fromEntries(await Promise.all(
-  ['content-script.js', 'service-worker.js', 'side-panel.js'].map(async (file) => [file, sha256(await readFile(path.join(temporaryPayload, file)))]),
+  ['content-script.js', 'service-worker.js'].map(async (file) => [file, sha256(await readFile(path.join(temporaryPayload, file)))]),
 ))
 const payloadSha256 = await hashTree(temporaryPayload)
 const payloadDirectory = `${payloadVersion}-${payloadSha256}`
@@ -88,24 +87,14 @@ const shellDefine = {
   FORGE_PAYLOAD_DIRECTORY: JSON.stringify(payloadDirectory),
   FORGE_SERVICE_WORKER_SHA256: JSON.stringify(payloadFiles['service-worker.js']),
 }
-await Promise.all([
-  bundleServiceWorkerBootstrap(
-    path.join(finalPayload, 'service-worker.js'),
-    path.join(extensionRoot, 'shell/service-worker-bootstrap.js'),
-    shellDefine,
-  ),
-  bundle('src/shell/side-panel-bootstrap.ts', path.join(extensionRoot, 'shell/side-panel-bootstrap.js'), { define: shellDefine }),
-])
+await bundleServiceWorkerBootstrap(
+  path.join(finalPayload, 'service-worker.js'),
+  path.join(extensionRoot, 'shell/service-worker-bootstrap.js'),
+  shellDefine,
+)
 
 const manifest = JSON.parse(await readFile(path.join(sourceRoot, 'manifest.shell.json'), 'utf8'))
 await writeFile(path.join(extensionRoot, 'manifest.json'), stableJson(manifest), { mode: 0o644 })
-await cp(path.join(sourceRoot, 'public/side-panel.html'), path.join(extensionRoot, 'shell/side-panel.html'))
-await cp(path.join(sourceRoot, 'public/side-panel.css'), path.join(extensionRoot, 'shell/side-panel.css'))
-for (const file of ['side-panel.html', 'side-panel.css']) {
-  const destination = path.join(extensionRoot, 'shell', file)
-  const normalized = (await readFile(destination, 'utf8')).replace(/\r\n/g, '\n')
-  await writeFile(destination, normalized.endsWith('\n') ? normalized : `${normalized}\n`, { mode: 0o644 })
-}
 await writeFile(path.join(extensionRoot, 'current.json'), stableJson({
   schemaVersion: 1,
   shellAbi: 1,

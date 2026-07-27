@@ -155,7 +155,7 @@ export class NativeRpcClient {
         downloadOpen: false,
         oopif: true,
         humanInterruption: true,
-        groups: true,
+        groups: false,
       },
     }
   }

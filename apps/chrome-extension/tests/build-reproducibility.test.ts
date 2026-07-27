@@ -57,14 +57,14 @@ describe('deterministic MV3 package', () => {
       const selector = JSON.parse(await readFile(path.join(first, 'extension/current.json'), 'utf8')) as Record<string, unknown>
       expect(selector.payloadDirectory).toBe(`${String(selector.payloadVersion)}-${String(selector.payloadSha256)}`)
       const payloadFiles = selector.payloadFiles as Record<string, string>
-      expect(Object.keys(payloadFiles).sort()).toEqual(['content-script.js', 'service-worker.js', 'side-panel.js'])
+      expect(Object.keys(payloadFiles).sort()).toEqual(['content-script.js', 'service-worker.js'])
       for (const [file, expectedHash] of Object.entries(payloadFiles)) {
         const content = await readFile(path.join(first, 'extension/payloads', String(selector.payloadDirectory), file))
         expect(createHash('sha256').update(content).digest('hex')).toBe(expectedHash)
       }
       const payloadWorker = await readFile(path.join(first, 'extension/payloads', String(selector.payloadDirectory), 'service-worker.js'), 'utf8')
       expect(payloadWorker).not.toContain('var import_meta = {}')
-      expect(payloadWorker).toContain('payload directory does not match runtime version and hash')
+      expect(payloadWorker).toContain('invalid immutable payload identity')
       const workerBootstrap = await readFile(path.join(first, 'extension/shell/service-worker-bootstrap.js'), 'utf8')
       const indentedPayloadWorker = payloadWorker.trimEnd().split('\n').map((line) => `    ${line}`).join('\n')
       expect(workerBootstrap).toContain(indentedPayloadWorker)
@@ -84,8 +84,7 @@ describe('deterministic MV3 package', () => {
       }
       expect(packageManifest).toMatchObject({ capabilities: { desktopIntegration: false, testSideLoadOnly: true, resize: false, recording: false, downloadArtifacts: false, downloadOpen: false } })
       expect(Object.keys(packageManifest.extension.shellFiles).sort()).toEqual([
-        'manifest.json', 'shell/service-worker-bootstrap.js', 'shell/side-panel-bootstrap.js',
-        'shell/side-panel.css', 'shell/side-panel.html',
+        'manifest.json', 'shell/service-worker-bootstrap.js',
       ])
       expect(packageManifest.extension.payloadFiles).toEqual(payloadFiles)
       for (const relative of firstFiles) {
