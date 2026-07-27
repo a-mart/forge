@@ -100,6 +100,12 @@ export function isPrivateSecureFulfillmentAvailable(): boolean {
   return getPrivateBridge() !== null
 }
 
+export function isSecureControlAvailable(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.electronBridge?.secureControlToken === 'string'
+    && window.electronBridge.secureControlToken.length > 0
+}
+
 export async function fetchSecureSessionCatalog(
   apiClient: SettingsApiClient,
 ): Promise<SecureSecretsCatalog> {
@@ -277,21 +283,13 @@ export async function denySecureAccessRequest(
   requestId: string,
   baseRevision: number,
 ): Promise<SecureSessionSnapshot> {
-  const input: ResolveSecureSecretAccessRequest = {
-    baseRevision,
-    requestId,
-    decision: 'deny',
-  }
-  return requestSnapshot(
+  return requestWebSafeSnapshot(
     apiClient,
-    `${sessionPath(sessionAgentId)}/access-requests/${encodeURIComponent(requestId)}/resolve`,
+    `${sessionPath(sessionAgentId)}/access-requests/${encodeURIComponent(requestId)}`,
     {
-      method: 'POST',
+      method: 'DELETE',
       headers: jsonHeaders(),
-      body: JSON.stringify({
-        baseRevision: input.baseRevision,
-        decision: input.decision,
-      }),
+      body: JSON.stringify({ baseRevision }),
     },
   )
 }
@@ -558,11 +556,27 @@ async function requestSnapshot(
   init?: RequestInit,
 ): Promise<SecureSessionSnapshot> {
   assertBuilderTarget(apiClient)
-  const controlledInit = withSecureControl(init)
+  return performSnapshotRequest(apiClient, path, withSecureControl(init))
+}
+
+async function requestWebSafeSnapshot(
+  apiClient: SettingsApiClient,
+  path: string,
+  init?: RequestInit,
+): Promise<SecureSessionSnapshot> {
+  assertBuilderTarget(apiClient)
+  return performSnapshotRequest(apiClient, path, init)
+}
+
+async function performSnapshotRequest(
+  apiClient: SettingsApiClient,
+  path: string,
+  init?: RequestInit,
+): Promise<SecureSessionSnapshot> {
   let response: Response
   try {
     response = await apiClient.fetch(path, {
-      ...controlledInit,
+      ...init,
       cache: 'no-store',
     })
   } catch {

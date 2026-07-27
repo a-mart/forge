@@ -368,10 +368,32 @@ describe('SecureSecretRequestCard', () => {
     expect(container.textContent).toContain('Remote origin')
     expect(container.textContent).toContain('another Forge host')
     expect(container.textContent).not.toContain('Add secret and approve')
-    expect(container.querySelector('button')?.textContent).toBe('Deny')
+    expect(container.querySelector('button')?.textContent).toBe('Dismiss request')
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Deny' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Dismiss request' }))
+    })
+    expect(onDeny).toHaveBeenCalledWith('request-1')
+  })
+
+  it('offers only dismissal when Desktop secure control is unavailable', () => {
+    const onDeny = vi.fn()
+    renderCard({
+      canApprove: false,
+      onDeny,
+    })
+
+    expect(container.textContent).toContain(
+      'Open Forge Desktop to approve or add a secret. You can dismiss this request here.',
+    )
+    expect(container.textContent).not.toContain('Approve with saved secret')
+    expect(
+      Array.from(container.querySelectorAll('button')).map((button) => button.textContent),
+    ).not.toContain('Approve')
+    expect(container.textContent).not.toContain('Add secret and approve')
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Dismiss request' }))
     })
     expect(onDeny).toHaveBeenCalledWith('request-1')
   })

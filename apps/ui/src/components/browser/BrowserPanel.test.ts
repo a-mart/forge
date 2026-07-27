@@ -35,8 +35,8 @@ function snapshot(tabs: BrowserTabSnapshot[], activeTabId = tabs[0]?.tabId ?? nu
 function port(): BrowserWorkspaceCommandPort {
   return { open: vi.fn(), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn(), popOut: vi.fn(), dock: vi.fn() }
 }
-function render(state: BrowserSessionSnapshot, commands = port()) {
-  act(() => root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: state, host, commandPort: commands, popoutAvailable: true })))
+function render(state: BrowserSessionSnapshot, commands = port(), mode: 'docked' | 'popped-out' = 'docked') {
+  act(() => root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: state, host, commandPort: commands, mode, popoutAvailable: true })))
   return commands
 }
 
@@ -52,6 +52,17 @@ describe('BrowserPanel automatic experience', () => {
     expect(container.querySelector('[data-browser-automation-viewport]')).not.toBeNull()
     expect(container.querySelector('button[aria-label="Start recording"]')).not.toBeNull()
     expect(container.querySelector('select#browser-viewport')).not.toBeNull()
+  })
+
+  it('labels pop-out controls with the Automatic Browser product name', () => {
+    const state = snapshot([managedTab])
+    render(state)
+    expect(container.querySelector('button[aria-label="Open Automatic Browser in a separate window"][title="Open Automatic Browser in a separate window"]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label*="Managed Browser"]')).toBeNull()
+
+    render(state, port(), 'popped-out')
+    expect(container.querySelector('button[aria-label="Dock Automatic Browser in main window"][title="Dock Automatic Browser in main window"]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label*="Managed Browser"]')).toBeNull()
   })
 
   it('shows a compact Chrome card and hides unsupported controls', () => {

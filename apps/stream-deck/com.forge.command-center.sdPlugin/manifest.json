@@ -148,7 +148,7 @@
       "Name": "Open Forge View",
       "UUID": "com.forge.command-center.view",
       "Icon": "imgs/view",
-      "Tooltip": "Open Chat, Source Control, Managed Browser, Terminal, or Statistics",
+      "Tooltip": "Open Chat, Source Control, Automatic Browser, Terminal, or Statistics",
       "PropertyInspectorPath": "ui/inspector.html",
       "Controllers": [
         "Keypad"

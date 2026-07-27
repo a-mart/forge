@@ -156,6 +156,7 @@ export interface SecureSessionRequestConfig {
   secrets: SecureSecretOption[]
   project?: SecureSessionProjectContext
   disabled?: boolean
+  canApprove?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
   onGrant: (

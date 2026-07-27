@@ -5,7 +5,7 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
-  "description": "Local Beta bridge for automatic, operation-scoped Forge control of eligible Chrome tabs.",
+  "description": "Automatic Browser bridge for operation-scoped Forge control of eligible Chrome tabs.",
   "host_permissions": [
     "<all_urls>"
   ],

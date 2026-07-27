@@ -165,8 +165,8 @@ export function BrowserPanel({
           <IconButton label={activeTab?.recording ? 'Stop recording' : 'Start recording'} disabled={controlsUnavailable || !activeTab || !host.capabilities?.features?.recording} onClick={() => activeTab && void run(() => activeTab.recording ? commands.stopRecording(activeTab.tabId, activeTab.recording.recordingId) : commands.startRecording(activeTab.tabId))}><Circle className={cn(activeTab?.recording && 'fill-red-500 text-red-500')} /></IconButton>
           {popoutAvailable && (commands.popOut || commands.dock) ? (
             popped
-              ? <IconButton label="Dock Managed Browser in main window" onClick={() => void run(() => commands.dock?.())}><PanelTopClose /></IconButton>
-              : <IconButton label="Open Managed Browser in a separate window" onClick={() => void run(() => commands.popOut?.())}><ExternalLink /></IconButton>
+              ? <IconButton label="Dock Automatic Browser in main window" onClick={() => void run(() => commands.dock?.())}><PanelTopClose /></IconButton>
+              : <IconButton label="Open Automatic Browser in a separate window" onClick={() => void run(() => commands.popOut?.())}><ExternalLink /></IconButton>
           ) : null}
           <HelpTrigger contextKey="chat.browser" size="sm" className="size-8" />
         </div>

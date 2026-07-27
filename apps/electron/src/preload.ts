@@ -7,6 +7,7 @@ import {
   type SecureVaultRendererResponse,
 } from './secure-vault-ipc.js'
 import { createTrustedExternalChromeBridge } from './external-chrome/ipc.js'
+import { MAIN_RENDERER_READY_CHANNEL } from './main-renderer-recovery.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -42,6 +43,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       getVersion: (): string => bootstrap.version,
       platform: bootstrap.platform,
       secureControlToken: bootstrap.secureControlToken,
+      markRendererReady: (): void => ipcRenderer.send(MAIN_RENDERER_READY_CHANNEL),
       browserAutomation: createTrustedBrowserBridge(ipcRenderer),
       browserWorkspace,
       externalChrome: createTrustedExternalChromeBridge(ipcRenderer),

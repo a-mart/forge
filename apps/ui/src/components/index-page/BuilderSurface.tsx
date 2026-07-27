@@ -71,6 +71,7 @@ import {
   grantSecureSessionLease,
   grantSecureSessionLeases,
   isPrivateSecureFulfillmentAvailable,
+  isSecureControlAvailable,
   revokeSecureSessionLease,
   resolveSecureSecretsForProfile,
   secureSessionUiErrorMessage,
@@ -1302,12 +1303,12 @@ export function BuilderSurface({
         ) throw error
         const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
         applySecureMutationResult(client, refreshed)
-        if (
-          error.code === 'SECURE_REQUEST_INVALID'
-          || !refreshed.pendingRequests.some(
-            (request) => request.requestId === requestId,
-          )
-        ) throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        if (!refreshed.pendingRequests.some(
+          (request) => request.requestId === requestId,
+        )) return
+        if (error.code === 'SECURE_REQUEST_INVALID') {
+          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        }
         nextSnapshot = await denySecureAccessRequest(
           apiClient,
           sessionAgentId,
@@ -1487,6 +1488,7 @@ export function BuilderSurface({
               : {}),
           }),
       disabled: !state.connected || secureCatalogLoading,
+      canApprove: !isRemoteOriginActive && isSecureControlAvailable(),
       onGrant: handleGrantSecureSession,
       onDeny: handleDenySecureRequest,
       ...(isActiveManager ? { onRevoke: handleRevokeSecureSession } : {}),

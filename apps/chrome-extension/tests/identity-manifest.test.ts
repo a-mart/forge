@@ -25,6 +25,7 @@ describe('pinned offline identity and narrowed MV3 ledger', () => {
     const manifest = JSON.parse(await readFile(path.join(root, 'manifest.shell.json'), 'utf8')) as Record<string, unknown>
     expect(manifest).toMatchObject({
       manifest_version: 3, minimum_chrome_version: '125', name: 'Forge',
+      description: 'Automatic Browser bridge for operation-scoped Forge control of eligible Chrome tabs.',
       background: { service_worker: 'shell/service-worker-bootstrap.js' },
       host_permissions: ['<all_urls>'],
       content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'" },
