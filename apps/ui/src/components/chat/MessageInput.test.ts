@@ -698,10 +698,8 @@ describe('MessageInput', () => {
       typeInTextarea('Keep this empty-vault draft unsent')
       fireEvent.click(getByLabelText(container, /secure session ready/i))
       await flush()
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
-      await flush()
       fireEvent.click(getByRole(document.body, 'button', {
-        name: 'Add a project secret',
+        name: 'Add project secret',
       }))
       await flush()
 

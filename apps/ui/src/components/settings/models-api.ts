@@ -1,4 +1,4 @@
-import type { ForgeProviderCredentialSummary, ModelOverrideEntry } from '@forge/protocol'
+import type { ForgeModelDefinition, ForgeProviderCredentialSummary, ModelOverrideEntry } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import { createBuilderSettingsApiClient } from './settings-api-client'
 
@@ -14,6 +14,7 @@ export interface ModelOverridesResponse {
   overrides: Record<string, ModelOverrideEntry>
   providerAvailability: Record<string, boolean>
   providerCredentials: Record<string, ForgeProviderCredentialSummary>
+  discoveredModels: ForgeModelDefinition[]
 }
 
 export async function fetchModelOverrides(
@@ -38,6 +39,7 @@ export async function fetchModelOverrides(
       data.providerCredentials && typeof data.providerCredentials === 'object'
         ? data.providerCredentials
         : {},
+    discoveredModels: Array.isArray(data.discoveredModels) ? data.discoveredModels : [],
   }
 }
 

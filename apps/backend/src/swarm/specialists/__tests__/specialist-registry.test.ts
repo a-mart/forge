@@ -26,6 +26,7 @@ import {
 } from "../specialist-registry.js";
 import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
+import { parseXaiOAuthModelCatalog } from "../../catalog/xai-oauth-model-discovery.js";
 import { writeModelOverrides } from "../../model-overrides.js";
 
 function makeSpecialistMarkdown(options: {
@@ -71,6 +72,7 @@ describe("specialist-registry", () => {
       process.env.MIDDLEMAN_DATA_DIR = originalMiddlemanDataDir;
     }
 
+    modelCatalogService.setXaiOAuthDiscoveredModels(null);
     invalidateSpecialistCache();
   });
 
@@ -446,6 +448,58 @@ describe("specialist-registry", () => {
       pinned: true,
       webSearch: true,
       targetSpace: ["collaboration", "builder"],
+    });
+  });
+
+  it("roundtrips exact OAuth-discovered xAI model identities through specialist persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-xai-oauth-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "native-composer.md");
+    modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+      data: [
+        {
+          id: "grok-composer-2.5-fast",
+          context_window: 320_000,
+          max_output_tokens: 32_000,
+          supported_reasoning_levels: ["low", "high"],
+        },
+        {
+          id: "grok-build",
+          context_window: 420_000,
+          max_output_tokens: 42_000,
+          supported_reasoning_levels: ["medium", "high"],
+        },
+      ],
+    }));
+
+    await saveSharedSpecialist(dataDir, "native-composer", {
+      displayName: "Native Composer",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Use the entitled native Composer model.",
+      modelId: "grok-composer-2.5-fast",
+      provider: "xai",
+      reasoningLevel: "low",
+      fallbackModelId: "grok-build",
+      fallbackProvider: "xai",
+      fallbackReasoningLevel: "medium",
+      targetSpace: ["builder"],
+      promptBody: "Native Composer prompt body.",
+    });
+
+    invalidateSpecialistCache();
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).toContain('modelId: "grok-composer-2.5-fast"');
+    expect(markdown).toContain('fallbackModelId: "grok-build"');
+    await expect(parseSpecialistFile(specialistPath)).resolves.toMatchObject({
+      frontmatter: {
+        provider: "xai",
+        modelId: "grok-composer-2.5-fast",
+        reasoningLevel: "low",
+        fallbackProvider: "xai",
+        fallbackModelId: "grok-build",
+        fallbackReasoningLevel: "medium",
+      },
     });
   });
 

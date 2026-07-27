@@ -95,6 +95,7 @@ async function handleSettingsModelsRequest(
   applyCorsHeaders(request, response, SETTINGS_MODELS_METHODS);
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_MODELS_ENDPOINT_PATH) {
+    await swarmManager.reloadModelCatalogOverridesAndProjection();
     const credentialPoolService = typeof swarmManager.getCredentialPoolService === "function"
       ? swarmManager.getCredentialPoolService()
       : undefined;

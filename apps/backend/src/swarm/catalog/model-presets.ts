@@ -161,6 +161,17 @@ export function normalizeSwarmModelDescriptor(
   descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
   fallbackPreset: SwarmModelPreset = DEFAULT_SWARM_MODEL_PRESET,
 ): AgentModelDescriptor {
+  if (descriptor) {
+    const selectedModel = modelCatalogService.getModel(descriptor.modelId, descriptor.provider);
+    if (selectedModel?.provider === "xai") {
+      return {
+        provider: selectedModel.provider,
+        modelId: selectedModel.modelId,
+        thinkingLevel: selectedModel.defaultReasoningLevel,
+      };
+    }
+  }
+
   const preset = inferSwarmModelPresetFromDescriptor(descriptor) ?? fallbackPreset;
   return resolveModelDescriptorFromPreset(preset);
 }

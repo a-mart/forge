@@ -136,7 +136,11 @@ export interface SecureSessionPickerConfig {
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
-  onStart?: () => boolean | void | Promise<boolean | void>
+  onStart?: () =>
+    | SecureSessionSnapshotView
+    | boolean
+    | void
+    | Promise<SecureSessionSnapshotView | boolean | void>
   onGrant?: (
     sessionAgentId: string,
     grants: SecureGrantInput[],

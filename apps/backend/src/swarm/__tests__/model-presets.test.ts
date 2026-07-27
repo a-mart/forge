@@ -68,7 +68,7 @@ describe("model-presets", () => {
     ).toBe("pi-grok");
   });
 
-  it("normalizes Grok variants to the pi-grok default descriptor instead of falling back to pi-codex", () => {
+  it("preserves selected Grok variants instead of collapsing them to a stale family default", () => {
     expect(
       normalizeSwarmModelDescriptor(
         {
@@ -79,8 +79,8 @@ describe("model-presets", () => {
       ),
     ).toEqual({
       provider: "xai",
-      modelId: "grok-4",
-      thinkingLevel: "high",
+      modelId: "grok-4-fast",
+      thinkingLevel: "medium",
     });
 
     expect(
@@ -93,15 +93,21 @@ describe("model-presets", () => {
       ),
     ).toEqual({
       provider: "xai",
-      modelId: "grok-4",
+      modelId: "grok-4.20-0309-reasoning",
       thinkingLevel: "high",
     });
   });
 
   it("includes webSearch capability metadata for the pi-grok preset", () => {
     const grokPreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-grok");
-    expect(grokPreset?.webSearch).toBe(true);
+    expect(grokPreset).toMatchObject({
+      modelId: "grok-4.5",
+      defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+      webSearch: true,
+    });
     expect(grokPreset?.variants?.map((variant) => variant.modelId)).toEqual([
+      "grok-4",
       "grok-4-fast",
       "grok-4.20-0309-reasoning",
       "grok-4.20-0309-non-reasoning",

@@ -10,6 +10,7 @@ import {
 import { getSharedCacheGeneratedDir } from "../data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
+import { refreshXaiOAuthModelDiscovery } from "./xai-oauth-model-discovery.js";
 
 const PI_MODELS_FILENAME = "pi-models.json";
 
@@ -30,6 +31,7 @@ interface PiModelDefinition {
   id: string;
   name?: string;
   api?: string;
+  authScope?: "any" | "oauth";
   reasoning?: boolean;
   input?: string[];
   cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
@@ -94,6 +96,7 @@ export function buildPiModelsProjection(): PiModelsConfig {
  * passed as modelsJsonPath to every Pi ModelRegistry instance.
  */
 export async function generatePiProjection(dataDir: string): Promise<string> {
+  await refreshXaiOAuthModelDiscovery(dataDir);
   await modelCatalogService.loadOverrides(dataDir);
 
   const outputPath = getPiModelsProjectionPath(dataDir);
@@ -163,8 +166,8 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
 
 function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiProviderConfig | undefined {
   const models =
-    provider.projectionScope === "full-upstream-provider"
-      ? generateFullProviderProjection(provider)
+    provider.projectionScope === "approved-provider-models"
+      ? generateApprovedProviderProjection(provider)
       : generateCatalogOnlyProviderProjection(provider);
 
   if (models.length === 0) {
@@ -180,30 +183,33 @@ function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiPro
 }
 
 /**
- * Used for xAI: copy every Pi upstream model into the projection so mergeCustomModels()
- * covers the provider's full inventory, not just Forge-curated IDs.
- *
- * Curated Forge entries override authored metadata. Uncurated entries keep Pi upstream metadata
- * verbatim except for the provider-level API protocol swap to openai-responses.
+ * Used for xAI: project the checked-in Forge rows plus authenticated entitlement discovery.
+ * Pi upstream metadata is reused only for those approved exact IDs; uncurated upstream additions
+ * must not silently bypass Forge's auth scope and model approval rules.
  */
-function generateFullProviderProjection(provider: ForgeProviderDefinition): PiModelDefinition[] {
+function generateApprovedProviderProjection(provider: ForgeProviderDefinition): PiModelDefinition[] {
   const upstreamModels = getModels(provider.providerId as any);
+  const upstreamById = new Map(upstreamModels.map((model) => [model.id, model]));
+  const effectiveCatalogModels = modelCatalogService.getModelsForProvider(provider.providerId);
+  const modelIds = new Set(effectiveCatalogModels.map((model) => model.modelId));
 
-  return upstreamModels.flatMap((upstream) => {
-    const catalogModel = getCatalogModel(upstream.id);
-    const curated = catalogModel?.provider === provider.providerId ? catalogModel : undefined;
+  return [...modelIds].map((modelId) => {
+    const upstream = upstreamById.get(modelId);
+    const catalogModel = modelCatalogService.getModel(modelId, provider.providerId)
+      ?? getCatalogModel(modelId, provider.providerId);
 
-    return [{
-      id: upstream.id,
-      name: curated?.displayName ?? upstream.name,
-      api: provider.piApiProtocol ?? upstream.api,
-      reasoning: curated?.supportsReasoning ?? upstream.reasoning,
-      input: curated ? [...curated.inputModes] : [...upstream.input],
-      contextWindow: curated
-        ? (modelCatalogService.getEffectiveContextWindow(curated.modelId) ?? curated.contextWindow)
-        : upstream.contextWindow,
-      maxTokens: curated?.maxOutputTokens ?? upstream.maxTokens,
-      ...(upstream.cost
+    return {
+      id: modelId,
+      name: catalogModel?.displayName ?? upstream?.name ?? modelId,
+      api: provider.piApiProtocol ?? upstream?.api,
+      ...(catalogModel?.authScope ? { authScope: catalogModel.authScope } : {}),
+      reasoning: catalogModel?.supportsReasoning ?? upstream?.reasoning ?? false,
+      input: catalogModel ? [...catalogModel.inputModes] : [...(upstream?.input ?? ["text"])],
+      contextWindow: catalogModel
+        ? (modelCatalogService.getEffectiveContextWindow(catalogModel.modelId, catalogModel.provider) ?? catalogModel.contextWindow)
+        : (upstream?.contextWindow ?? 1),
+      maxTokens: catalogModel?.maxOutputTokens ?? upstream?.maxTokens ?? 1,
+      ...(upstream?.cost
         ? {
             cost: {
               input: upstream.cost.input,
@@ -213,10 +219,10 @@ function generateFullProviderProjection(provider: ForgeProviderDefinition): PiMo
             },
           }
         : {}),
-      ...(upstream.headers ? { headers: { ...upstream.headers } } : {}),
-      ...projectThinkingLevelMap(curated ?? upstream),
-      ...(upstream.compat ? { compat: structuredClone(upstream.compat) } : {}),
-    }];
+      ...(upstream?.headers ? { headers: { ...upstream.headers } } : {}),
+      ...projectThinkingLevelMap(catalogModel ?? upstream),
+      ...(upstream?.compat ? { compat: structuredClone(upstream.compat) } : {}),
+    };
   });
 }
 

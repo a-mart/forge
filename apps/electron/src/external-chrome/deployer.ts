@@ -220,6 +220,7 @@ export class ExternalChromeDeployer {
       const manifest = await this.readPackageManifest(path.join(this.options.resourcesRoot, 'package-manifest.json'))
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, this.options.resourcesRoot)
+      await this.assertSameVersionContentPolicy(manifest)
       const record = installRecordFromManifest(manifest)
       const directory = `staged-${manifest.extension.shellSha256.slice(0, 16)}-${manifest.extension.payloadSha256.slice(0, 16)}-${manifest.nativeHost.sha256.slice(0, 16)}`
       const destination = path.join(this.paths.deployment, directory)
@@ -283,6 +284,7 @@ export class ExternalChromeDeployer {
       const manifest = await this.readPackageManifest(path.join(resourcesRoot, 'package-manifest.json'))
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, resourcesRoot)
+      await this.assertSameVersionContentPolicy(manifest)
       await this.phase('validated', manifest)
 
       const oldSelector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
@@ -522,6 +524,17 @@ export class ExternalChromeDeployer {
 
   private readPackageManifest(file: string): Promise<ExternalChromePackageManifest> {
     return readExternalChromePackageManifest(file, { allowDevelopmentHost: this.options.allowDevelopmentHost })
+  }
+
+  private async assertSameVersionContentPolicy(manifest: ExternalChromePackageManifest): Promise<void> {
+    if (this.options.allowDevelopmentHost === true) return
+    const installed = await this.readInstall(this.paths.installState)
+    if (
+      installed?.packageVersion === manifest.packageVersion
+      && !deploymentContentEquals(installed, installRecordFromManifest(manifest))
+    ) {
+      throw new Error('External Chrome release policy rejects changed content for an installed package version')
+    }
   }
 
   private async validatePackagedResources(manifest: ExternalChromePackageManifest, resourcesRoot: string): Promise<void> {
@@ -938,6 +951,7 @@ export class ExternalChromeDeployer {
       if (manifest.extension.payloadSha256 !== value.payloadSha256 || manifest.nativeHost.sha256 !== value.nativeSha256) return null
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, root)
+      await this.assertSameVersionContentPolicy(manifest)
       return { root, manifest }
     } catch {
       return null
@@ -1040,6 +1054,15 @@ function installRecordFromManifest(manifest: ExternalChromePackageManifest): Ext
     desktopCompatibility: { ...manifest.compatibility.desktop },
     shellAbiCompatibility: { ...manifest.compatibility.shellAbi },
   }
+}
+
+export function deploymentContentEquals(
+  left: Pick<ExternalChromeInstallRecord, 'shellSha256' | 'payloadSha256' | 'nativeSha256'>,
+  right: Pick<ExternalChromeInstallRecord, 'shellSha256' | 'payloadSha256' | 'nativeSha256'>,
+): boolean {
+  return left.shellSha256 === right.shellSha256
+    && left.payloadSha256 === right.payloadSha256
+    && left.nativeSha256 === right.nativeSha256
 }
 
 function selectorFromInstall(install: ExternalChromeInstallRecord): ExternalChromeSelector {

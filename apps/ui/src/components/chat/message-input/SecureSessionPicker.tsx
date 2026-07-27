@@ -29,6 +29,7 @@ import type {
   SecureLeaseView,
   SecureProjectDefaultStatusView,
   SecureSessionPickerConfig,
+  SecureSessionSnapshotView,
 } from '../secure-session/types'
 
 function formatExpiry(expiresAt: string): string {
@@ -91,6 +92,15 @@ function projectDefaultStateLabel(
   if (state === 'configured') return 'Ready to apply'
   if (state === 'unavailable') return 'Unavailable'
   return 'Binding conflict'
+}
+
+function isSecureSessionSnapshotView(
+  value: boolean | void | SecureSessionSnapshotView,
+): value is SecureSessionSnapshotView {
+  return typeof value === 'object'
+    && value !== null
+    && typeof value.sessionAgentId === 'string'
+    && Array.isArray(value.leases)
 }
 
 function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number): {
@@ -238,6 +248,12 @@ export function SecureSessionPicker({
     && config.snapshot?.executionMode === 'secure'
     && config.snapshot.environmentStatus === 'ready'
     && grantableSecrets.some((secret) => secret.available && secret.bindings.length > 0)
+  const hasSavedSecrets = config.secrets.length > 0
+  const hasUnleasedSecrets = grantableSecrets.length > 0
+  const shouldOfferSecretReview =
+    !canGrant
+    && hasUnleasedSecrets
+    && Boolean(config.onReviewProjectSecrets)
   const shouldOfferStart =
     !config.readOnly
     && config.availability.state === 'available'
@@ -265,12 +281,27 @@ export function SecureSessionPicker({
     setStarting(true)
     try {
       const result = await config.onStart()
-      if (
-        result !== false
-        && configIdentityRef.current === startIdentity
-      ) {
-        setGrantOpen(true)
+      if (configIdentityRef.current !== startIdentity) return
+      if (result === false) {
+        setOpen(true)
+        return
       }
+      if (!isSecureSessionSnapshotView(result)) {
+        setGrantOpen(true)
+        return
+      }
+
+      const returnedDefaults = result.projectDefaults ?? []
+      if (returnedDefaults.some((projectDefault) => projectDefault.state !== 'active')) {
+        setOpen(true)
+        return
+      }
+      if (result.leases.some((lease) => lease.status === 'active')) return
+      if (grantableSecrets.some((secret) => secret.available && secret.bindings.length > 0)) {
+        setGrantOpen(true)
+        return
+      }
+      config.onReviewProjectSecrets?.()
     } finally {
       if (configIdentityRef.current === startIdentity) {
         setStarting(false)
@@ -600,21 +631,46 @@ export function SecureSessionPicker({
             {!config.readOnly
             && config.availability.state === 'available'
             && !shouldOfferStart ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={
-                  config.disabled
-                  || (!canGrant && !config.onReviewProjectSecrets)
-                }
-                onClick={() => {
-                  setOpen(false)
-                  setGrantOpen(true)
-                }}
-              >
-                Grant secrets
-              </Button>
+              canGrant ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={config.disabled}
+                  onClick={() => {
+                    setOpen(false)
+                    setGrantOpen(true)
+                  }}
+                >
+                  Grant secrets
+                </Button>
+              ) : !hasSavedSecrets && config.onReviewProjectSecrets ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={config.disabled}
+                  onClick={() => {
+                    setOpen(false)
+                    config.onReviewProjectSecrets?.()
+                  }}
+                >
+                  Add project secret
+                </Button>
+              ) : shouldOfferSecretReview && !hasProjectDefaultsNeedingReview ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={config.disabled}
+                  onClick={() => {
+                    setOpen(false)
+                    config.onReviewProjectSecrets?.()
+                  }}
+                >
+                  Review unavailable secrets
+                </Button>
+              ) : null
             ) : null}
             {shouldOfferStop ? (
               <Button

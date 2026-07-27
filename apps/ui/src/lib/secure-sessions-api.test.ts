@@ -15,6 +15,7 @@ import {
   shouldRefreshAfterProjectDefaultsApplyError,
   toProtocolBindings,
   toSecureSessionSnapshotView,
+  unlockLocalProjectDefaultsIfNeeded,
 } from './secure-sessions-api'
 
 function makeClient(fetchImpl: SettingsApiClient['fetch']): SettingsApiClient {
@@ -89,6 +90,109 @@ describe('Secure Sessions API', () => {
     expect(shouldRefreshAfterProjectDefaultsApplyError(
       new TypeError('offline'),
     )).toBe(false)
+  })
+
+  it('unlocks only when the current project has a local automatic grant', async () => {
+    const unlock = vi.fn(async () => ({
+      ok: true as const,
+      available: true as const,
+    }))
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        secureControlToken: 'test-secure-control-token-that-is-long-enough',
+        secureVault: {
+          status: vi.fn(async () => ({
+            ok: false as const,
+            errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' as const,
+          })),
+          unlock,
+          encryptLocalValue: vi.fn(),
+        },
+      },
+    })
+    const catalog = {
+      providers: [{
+        providerId: 'local',
+        kind: 'local_keychain' as const,
+        displayName: 'Local vault',
+        enabled: true,
+        status: 'unreachable' as const,
+        lastVerifiedAt: null,
+        lastStatusCode: 'source_unreachable' as const,
+      }],
+      secrets: [{
+        secretId: 'local-default',
+        providerId: 'local',
+        displayAlias: 'deploy-token',
+        displayName: null,
+        scope: { kind: 'instance' as const },
+        retention: 'saved' as const,
+        bindings: [{
+          deliveryKind: 'environment' as const,
+          targetName: 'DEPLOY_TOKEN',
+        }],
+        automaticGrantPolicy: {
+          kind: 'projects' as const,
+          profileIds: ['profile-1'],
+        },
+        available: false,
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      }],
+      projectDefaults: [],
+    }
+
+    await expect(unlockLocalProjectDefaultsIfNeeded(catalog, 'profile-1'))
+      .resolves.toBe(true)
+    expect(unlock).toHaveBeenCalledTimes(1)
+
+    await expect(unlockLocalProjectDefaultsIfNeeded(catalog, 'profile-2'))
+      .resolves.toBe(true)
+    expect(unlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when a required local project default cannot unlock', async () => {
+    const unlock = vi.fn(async () => ({
+      ok: false as const,
+      errorCode: 'SECURE_VAULT_STORAGE_UNAVAILABLE' as const,
+    }))
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        secureControlToken: 'test-secure-control-token-that-is-long-enough',
+        secureVault: {
+          status: vi.fn(),
+          unlock,
+          encryptLocalValue: vi.fn(),
+        },
+      },
+    })
+
+    await expect(unlockLocalProjectDefaultsIfNeeded({
+      providers: [{
+        providerId: 'local',
+        kind: 'local_keychain',
+        displayName: 'Local vault',
+        enabled: true,
+        status: 'locked',
+        lastVerifiedAt: null,
+        lastStatusCode: 'source_locked',
+      }],
+      secrets: [{
+        secretId: 'local-default',
+        providerId: 'local',
+        displayAlias: 'deploy-token',
+        displayName: null,
+        scope: { kind: 'instance' },
+        retention: 'saved',
+        bindings: [],
+        automaticGrantPolicy: { kind: 'all_projects' },
+        available: false,
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      }],
+      projectDefaults: [],
+    }, 'profile-1')).resolves.toBe(false)
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
   it('uses no-store for snapshot reads', async () => {

@@ -680,6 +680,7 @@ describe('settings routes', () => {
     })
     const swarmManager = {
       updateSettingsAuthCredential: vi.fn(async () => undefined),
+      reloadModelCatalogOverridesAndProjection: vi.fn(async () => undefined),
       listCredentialPool: vi.fn(async () => ({ strategy: 'fill_first', credentials: [] })),
     }
     const server = await createSettingsRouteTestServer(swarmManager)
@@ -694,6 +695,7 @@ describe('settings routes', () => {
       refresh: 'xai-refresh-token',
       expires: 4_000_000_000_000,
     })
+    expect(swarmManager.reloadModelCatalogOverridesAndProjection).toHaveBeenCalledOnce()
 
     const accountsResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai/accounts`)
     expect(accountsResponse.status).toBe(400)

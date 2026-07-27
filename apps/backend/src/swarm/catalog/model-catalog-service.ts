@@ -30,6 +30,8 @@ export class ModelCatalogService {
   private readonly catalog: ForgeModelCatalog;
   private overrides: Record<string, ModelOverrideEntry> = {};
   private openRouterModels: Record<string, OpenRouterModelEntry> = {};
+  private xaiOAuthActive = false;
+  private xaiOAuthModels = new Map<string, ForgeModelDefinition>();
   private loadedDataDir: string | null = null;
 
   constructor(catalog: ForgeModelCatalog = FORGE_MODEL_CATALOG) {
@@ -67,6 +69,31 @@ export class ModelCatalogService {
       .sort((left, right) => left.modelId.localeCompare(right.modelId));
   }
 
+  setXaiOAuthDiscoveredModels(models: readonly ForgeModelDefinition[] | null): void {
+    this.xaiOAuthActive = models !== null;
+    this.xaiOAuthModels = new Map((models ?? []).map((model) => [model.modelId, { ...model }]));
+  }
+
+  isXaiOAuthActive(): boolean {
+    return this.xaiOAuthActive;
+  }
+
+  getModelsForProvider(provider: string): ForgeModelDefinition[] {
+    const normalizedProvider = provider.trim().toLowerCase();
+    const checkedIn = Object.values(this.catalog.models)
+      .filter((model) => model.provider === normalizedProvider)
+      .map((model) => this.getModel(model.modelId, normalizedProvider) ?? model);
+    if (normalizedProvider !== "xai") {
+      return checkedIn;
+    }
+
+    const byId = new Map(checkedIn.map((model) => [model.modelId, model]));
+    for (const model of this.xaiOAuthModels.values()) {
+      byId.set(model.modelId, model);
+    }
+    return [...byId.values()];
+  }
+
   isKnownModelId(modelId: string, provider?: string): boolean {
     const normalizedModelId = modelId.trim();
     if (provider && isRetiredForgeModel(provider, normalizedModelId)) {
@@ -75,7 +102,7 @@ export class ModelCatalogService {
     if (isRetiredForgeModel("openrouter", normalizedModelId)) {
       return false;
     }
-    return getCatalogModel(normalizedModelId, provider) !== undefined || normalizedModelId in this.openRouterModels;
+    return this.getModel(normalizedModelId, provider) !== undefined || normalizedModelId in this.openRouterModels;
   }
 
   inferProvider(modelId: string): string | null {
@@ -84,7 +111,9 @@ export class ModelCatalogService {
       return null;
     }
 
-    const catalogProvider = inferCatalogProvider(normalizedModelId);
+    const catalogProvider = this.xaiOAuthModels.has(normalizedModelId)
+      ? "xai"
+      : inferCatalogProvider(normalizedModelId);
     if (catalogProvider) {
       return catalogProvider;
     }
@@ -99,7 +128,8 @@ export class ModelCatalogService {
       return undefined;
     }
 
-    return inferCatalogFamily(descriptor.provider, descriptor.modelId);
+    return this.getModel(descriptor.modelId, descriptor.provider)?.familyId
+      ?? inferCatalogFamily(descriptor.provider, descriptor.modelId);
   }
 
   getModelPresetInfoList(): ModelPresetInfo[] {
@@ -117,7 +147,14 @@ export class ModelCatalogService {
 
       const variants: ModelVariantInfo[] = enabledModels
         .filter((model) => model.modelId !== effectiveDefaultModel.modelId)
-        .map((model) => ({ modelId: model.modelId, label: model.displayName }));
+        .map((model) => ({
+          modelId: model.modelId,
+          label: model.displayName,
+          supportedReasoningLevels: [
+            ...((model.supportedReasoningLevels ?? REASONING_LEVELS) as ManagerReasoningLevel[]),
+          ],
+          defaultReasoningLevel: model.defaultReasoningLevel as ManagerReasoningLevel,
+        }));
       const supportsWebSearch = enabledModels.some((model) => model.webSearchCapability === "native");
 
       return [{
@@ -174,7 +211,7 @@ export class ModelCatalogService {
 
   getEffectiveContextWindow(modelId: string, provider?: string): number | undefined {
     const normalizedModelId = modelId.trim();
-    const model = getCatalogModel(normalizedModelId, provider);
+    const model = this.getModel(normalizedModelId, provider);
     if (model) {
       const cap = this.overrides[getOverrideKey(model)]?.contextWindowCap;
       return cap !== undefined ? Math.min(model.contextWindow, cap) : model.contextWindow;
@@ -185,11 +222,11 @@ export class ModelCatalogService {
 
   getModelDisplayName(modelId: string, provider?: string): string {
     const normalizedModelId = modelId.trim();
-    return getCatalogModel(normalizedModelId, provider)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
+    return this.getModel(normalizedModelId, provider)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
   }
 
   getEffectiveModelSpecificInstructions(modelId: string, provider?: string): string | undefined {
-    const model = getCatalogModel(modelId.trim(), provider);
+    const model = this.getModel(modelId.trim(), provider);
     if (!model) {
       return undefined;
     }
@@ -203,12 +240,12 @@ export class ModelCatalogService {
   }
 
   supportsNativeWebSearch(modelId: string, provider?: string): boolean {
-    return this.isModelEnabled(modelId, provider) && getCatalogModel(modelId, provider)?.webSearchCapability === "native";
+    return this.isModelEnabled(modelId, provider) && this.getModel(modelId, provider)?.webSearchCapability === "native";
   }
 
   isModelEnabled(modelId: string, provider?: string): boolean {
     const normalizedModelId = modelId.trim();
-    const model = getCatalogModel(normalizedModelId, provider);
+    const model = this.getModel(normalizedModelId, provider);
     if (model) {
       return this.overrides[getOverrideKey(model)]?.enabled ?? model.enabledByDefault;
     }
@@ -217,7 +254,7 @@ export class ModelCatalogService {
   }
 
   getOverride(modelId: string, provider?: string): ModelOverrideEntry | undefined {
-    const model = getCatalogModel(modelId, provider);
+    const model = this.getModel(modelId, provider);
     if (!model) {
       return undefined;
     }
@@ -229,7 +266,7 @@ export class ModelCatalogService {
   getAllModelIds(): string[] {
     const openRouterModelIds = Object.keys(this.openRouterModels)
       .filter((modelId) => !isRetiredForgeModel("openrouter", modelId));
-    return [...new Set([...Object.keys(this.catalog.models), ...openRouterModelIds])];
+    return [...new Set([...Object.keys(this.catalog.models), ...this.xaiOAuthModels.keys(), ...openRouterModelIds])];
   }
 
   getAllProviders(): ForgeProviderDefinition[] {
@@ -241,7 +278,21 @@ export class ModelCatalogService {
   }
 
   getModel(modelId: string, provider?: string): ForgeModelDefinition | undefined {
-    return getCatalogModel(modelId, provider);
+    const normalizedModelId = modelId.trim().toLowerCase();
+    const normalizedProvider = provider?.trim().toLowerCase();
+    const discovered = this.xaiOAuthModels.get(normalizedModelId);
+    if (discovered && (!normalizedProvider || normalizedProvider === "xai")) {
+      return discovered;
+    }
+
+    const checkedIn = getCatalogModel(normalizedModelId, normalizedProvider);
+    if (!checkedIn) {
+      return undefined;
+    }
+    if (this.xaiOAuthActive && checkedIn.provider === "xai" && checkedIn.modelId === "grok-4.5") {
+      return buildXaiOAuthFallbackGrok45(checkedIn);
+    }
+    return checkedIn;
   }
 
   getProvider(providerId: string): ForgeProviderDefinition | undefined {
@@ -249,7 +300,11 @@ export class ModelCatalogService {
   }
 
   private getEnabledModelsByFamily(familyId: string): ForgeModelDefinition[] {
-    return getCatalogModelsByFamily(familyId).filter((model) => this.isModelEnabled(model.modelId, model.provider));
+    const checkedIn = getCatalogModelsByFamily(familyId)
+      .map((model) => this.getModel(model.modelId, model.provider) ?? model);
+    const discovered = familyId === "pi-grok" ? [...this.xaiOAuthModels.values()] : [];
+    const byId = new Map([...checkedIn, ...discovered].map((model) => [model.modelId, model]));
+    return [...byId.values()].filter((model) => this.isModelEnabled(model.modelId, model.provider));
   }
 
   private getEffectiveDefaultModelForFamily(familyId: string): ForgeModelDefinition | undefined {
@@ -258,7 +313,7 @@ export class ModelCatalogService {
       return undefined;
     }
 
-    const familyModels = getCatalogModelsByFamily(familyId);
+    const familyModels = this.getEnabledModelsByFamily(familyId);
     const enabledDefaultModel = familyModels.find(
       (model) => model.isFamilyDefault && this.isModelEnabled(model.modelId, model.provider),
     );
@@ -267,7 +322,7 @@ export class ModelCatalogService {
       return enabledDefaultModel;
     }
 
-    const fallbackDefaultModel = getCatalogModel(family.defaultModelId, family.provider);
+    const fallbackDefaultModel = this.getModel(family.defaultModelId, family.provider);
     if (fallbackDefaultModel && this.isModelEnabled(fallbackDefaultModel.modelId, fallbackDefaultModel.provider)) {
       return fallbackDefaultModel;
     }
@@ -336,4 +391,13 @@ function falseWins(left: boolean | undefined, right: boolean | undefined): boole
 
 function getOverrideKey(model: ForgeModelDefinition): string {
   return model.catalogId ?? model.modelId;
+}
+
+function buildXaiOAuthFallbackGrok45(model: ForgeModelDefinition): ForgeModelDefinition {
+  return {
+    ...model,
+    supportedReasoningLevels: ["low", "medium", "high"],
+    defaultReasoningLevel: "high",
+    thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high", xhigh: null },
+  };
 }

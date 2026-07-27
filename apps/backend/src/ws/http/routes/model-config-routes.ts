@@ -65,6 +65,7 @@ async function handleModelOverridesRequest(
 
   if (request.method === "GET" && requestUrl.pathname === MODEL_OVERRIDES_ENDPOINT_PATH) {
     try {
+      await swarmManager.reloadModelCatalogOverridesAndProjection();
       const credentialPoolService = typeof swarmManager.getCredentialPoolService === "function"
         ? swarmManager.getCredentialPoolService()
         : undefined;
@@ -79,6 +80,7 @@ async function handleModelOverridesRequest(
         overrides: overridesFile.overrides,
         providerAvailability: Object.fromEntries(providerAvailability),
         providerCredentials: Object.fromEntries(providerCredentials),
+        discoveredModels: modelCatalogService.getModelsForProvider("xai").filter((model) => model.discovered === true),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -84,7 +84,7 @@ const EXPECTED_FAMILIES = {
   },
   'pi-grok': {
     provider: 'xai',
-    defaultModelId: 'grok-4',
+    defaultModelId: 'grok-4.5',
     visibleInCreateManager: false,
     visibleInChangeManager: false,
     visibleInSpawnPreset: true,
@@ -197,6 +197,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'grok-4.5': {
+    provider: 'xai',
+    familyId: 'pi-grok',
+    contextWindow: 500_000,
+    maxOutputTokens: 500_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'grok-4': {
     provider: 'xai',
     familyId: 'pi-grok',
@@ -266,7 +274,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -299,7 +307,7 @@ describe('model-catalog', () => {
       intentionalDivergenceNotes: null,
     })
     expect(getCatalogModel('claude-fable-5')?.supportedReasoningLevels).not.toContain('none')
-    expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
+    expect(getCatalogProvider('xai')?.projectionScope).toBe('approved-provider-models')
     expect(getCatalogProvider('openrouter')).toMatchObject({
       availabilityMode: 'external',
       piProjectionMode: 'custom-provider-merge',
@@ -361,7 +369,18 @@ describe('model-catalog', () => {
       catalogId: 'cursor-sdk/grok-4.5',
       provider: 'cursor-sdk',
     })
-    expect(getCatalogModel('grok-4.5')).toBeUndefined()
+    expect(getCatalogModel('grok-4.5')).toMatchObject({
+      provider: 'xai',
+      familyId: 'pi-grok',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 500_000,
+      inputModes: ['text', 'image'],
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+    })
+    expect(getCatalogModel('grok-4.5', 'cursor-sdk')?.catalogId).toBe('cursor-sdk/grok-4.5')
   })
 
   it('makes Cursor SDK accessible across manager and specialist surfaces', () => {
@@ -452,8 +471,8 @@ describe('model-catalog', () => {
     expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')
     expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
-    expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4')
-    expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
+    expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.5')
+    expect(getCatalogProvider('xai')?.projectionScope).toBe('approved-provider-models')
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
     expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')

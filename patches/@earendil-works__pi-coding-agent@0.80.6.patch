@@ -96,10 +96,18 @@ index 2bec7263fdbb2d5ab96dae74b5ae430656641385..90383f317bcb208dede6ddeebcb1ba36
          const normalizedError = error instanceof Error ? error : new Error(String(error));
          this.errors.push(normalizedError);
 diff --git a/dist/core/model-registry.js b/dist/core/model-registry.js
-index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159607686bc 100644
+index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..06f3e08a2576416a55b15900f32889000b31ab68 100644
 --- a/dist/core/model-registry.js
 +++ b/dist/core/model-registry.js
-@@ -262,6 +262,8 @@ export const clearApiKeyCache = clearConfigValueCache;
+@@ -135,6 +135,7 @@ const ModelDefinitionSchema = Type.Object({
+     name: Type.Optional(Type.String({ minLength: 1 })),
+     api: Type.Optional(Type.String({ minLength: 1 })),
+     baseUrl: Type.Optional(Type.String({ minLength: 1 })),
++    authScope: Type.Optional(Type.Union([Type.Literal("any"), Type.Literal("oauth")])),
+     reasoning: Type.Optional(Type.Boolean()),
+     thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
+     input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+@@ -262,6 +263,8 @@ export const clearApiKeyCache = clearConfigValueCache;
   */
  export class ModelRegistry {
      models = [];
@@ -108,7 +116,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
      providerRequestConfigs = new Map();
      modelRequestHeaders = new Map();
      configModelOverrides = new Map();
-@@ -310,15 +312,53 @@ export class ModelRegistry {
+@@ -310,15 +313,59 @@ export class ModelRegistry {
              // Keep built-in models even if custom models failed to load
          }
          const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
@@ -130,17 +138,23 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
 -                combined = oauthProvider.modifyModels(combined, cred);
 +            if (!this.authStorage.hasRuntimeApiKey(oauthProvider.id) && cred?.type === "oauth" && oauthProvider.modifyModels) {
 +                this.models = oauthProvider.modifyModels(this.models, cred);
-+            }
-+        }
+             }
+         }
+-        this.models = combined;
 +        const oauthRoutingProviderIds = new Set(oauthProviders.filter((provider) => provider.modifyModels).map((provider) => provider.id));
 +        for (const model of this.models) {
 +            if (oauthRoutingProviderIds.has(model.provider)) {
 +                // Identity is the ownership boundary: arbitrary SDK model objects may
 +                // intentionally reuse a registry provider/id with a different endpoint.
 +                this.oauthRoutingModels.add(model);
-             }
-         }
--        this.models = combined;
++            }
++        }
++    }
++    isOAuthCredentialEffective(provider) {
++        return !this.authStorage.hasRuntimeApiKey(provider) && this.authStorage.get(provider)?.type === "oauth";
++    }
++    isModelAllowedByEffectiveCredential(model) {
++        return model.authScope !== "oauth" || this.isOAuthCredentialEffective(model.provider);
 +    }
 +    synchronizeModelForEffectiveCredential(model) {
 +        if (!this.oauthRoutingModels.has(model)) {
@@ -168,13 +182,56 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
      }
      /** Load built-in models and apply provider/model overrides */
      loadBuiltInModels(overrides, modelOverrides) {
-@@ -552,11 +592,19 @@ export class ModelRegistry {
+@@ -485,6 +532,7 @@ export class ModelRegistry {
+                     api: api,
+                     provider: providerName,
+                     baseUrl,
++                    authScope: modelDef.authScope,
+                     reasoning: modelDef.reasoning ?? false,
+                     thinkingLevelMap: modelDef.thinkingLevelMap,
+                     input: (modelDef.input ?? ["text"]),
+@@ -503,25 +551,28 @@ export class ModelRegistry {
+      * If models.json had errors, returns only built-in models.
+      */
+     getAll() {
+-        return this.models;
++        return this.models.filter((model) => this.isModelAllowedByEffectiveCredential(model));
+     }
+     /**
+      * Get only models that have auth configured.
+      * This is a fast check that doesn't refresh OAuth tokens.
+      */
+     getAvailable() {
+-        return this.models.filter((m) => this.hasConfiguredAuth(m));
++        return this.models.filter((model) => this.isModelAllowedByEffectiveCredential(model) && this.hasConfiguredAuth(model));
+     }
+     /**
+      * Find a model by provider and ID.
+      */
+     find(provider, modelId) {
+-        return this.models.find((m) => m.provider === provider && m.id === modelId);
++        return this.models.find((model) => model.provider === provider && model.id === modelId && this.isModelAllowedByEffectiveCredential(model));
+     }
+     /**
+      * Get API key for a model.
+      */
+     hasConfiguredAuth(model) {
++        if (!this.isModelAllowedByEffectiveCredential(model)) {
++            return false;
++        }
+         const providerApiKey = this.providerRequestConfigs.get(model.provider)?.apiKey;
+         return (this.authStorage.hasAuth(model.provider) ||
+             (providerApiKey !== undefined && isConfigValueConfigured(providerApiKey)));
+@@ -552,11 +603,22 @@ export class ModelRegistry {
       */
      async getApiKeyAndHeaders(model) {
          try {
 +            // Routing and auth must be derived from the same effective credential. In
 +            // particular, a runtime API key must undo an OAuth proxy model rewrite.
 +            this.synchronizeModelForEffectiveCredential(model);
++            if (!this.isModelAllowedByEffectiveCredential(model)) {
++                return { ok: false, error: `Model "${model.provider}/${model.id}" requires OAuth authentication.` };
++            }
              const providerConfig = this.providerRequestConfigs.get(model.provider);
              const providerEnv = this.authStorage.getProviderEnv(model.provider);
 -            const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
@@ -190,7 +247,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
                      ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
                      : undefined);
              const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`, providerEnv);
-@@ -624,10 +672,16 @@ export class ModelRegistry {
+@@ -624,10 +686,16 @@ export class ModelRegistry {
       * Get API key for a provider.
       */
      async getApiKeyForProvider(provider) {
@@ -208,7 +265,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
          const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
          return providerApiKey
              ? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
-@@ -638,7 +692,7 @@ export class ModelRegistry {
+@@ -638,7 +706,7 @@ export class ModelRegistry {
       */
      isUsingOAuth(model) {
          const cred = this.authStorage.get(model.provider);
@@ -217,7 +274,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
      }
      /**
       * Register a provider dynamically (from extensions).
-@@ -725,8 +779,10 @@ export class ModelRegistry {
+@@ -725,8 +793,10 @@ export class ModelRegistry {
          }
          this.storeProviderRequestConfig(providerName, config);
          if (config.models && config.models.length > 0) {
@@ -230,7 +287,15 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
              // Parse and add new models
              for (const modelDef of config.models) {
                  const api = modelDef.api || config.api;
-@@ -750,19 +806,12 @@ export class ModelRegistry {
+@@ -741,6 +811,7 @@ export class ModelRegistry {
+                     api: api,
+                     provider: providerName,
+                     baseUrl: modelDef.baseUrl ?? config.baseUrl,
++                    authScope: modelDef.authScope,
+                     reasoning: modelDef.reasoning,
+                     thinkingLevelMap: modelDef.thinkingLevelMap,
+                     input: modelDef.input,
+@@ -750,19 +821,12 @@ export class ModelRegistry {
                      headers: undefined,
                      compat: modelDef.compat,
                  });
@@ -253,7 +318,7 @@ index 89ef507421d727f5cd4ad62c440b0f6bff68f3c0..dba3fe5770e2aae3bf5ea0e21f898159
                  if (m.provider !== providerName)
                      return m;
                  return {
-@@ -771,6 +820,9 @@ export class ModelRegistry {
+@@ -771,6 +835,9 @@ export class ModelRegistry {
                  };
              });
          }

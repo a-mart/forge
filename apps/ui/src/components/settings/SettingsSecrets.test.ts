@@ -280,12 +280,51 @@ describe('SettingsSecrets', () => {
       name: 'Unlock private storage',
     }))
     await waitFor(() => {
-      expect(container.textContent).toContain('Private storage is unlocked.')
+      expect(container.textContent).toContain(
+        'Private storage is unlocked and the local vault is ready.',
+      )
       expect(queryByRole(container, 'button', {
         name: 'Unlock private storage',
       })).toBeNull()
     })
+    expect(secureSecretsApiMock.testSecureSecretProvider).toHaveBeenCalledWith(
+      expect.anything(),
+      LOCAL_PROVIDER.providerId,
+    )
     expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps copied-data recovery actionable when unlock finds unreadable values', async () => {
+    secureSecretsApiMock.checkSecureMaterialEntryAvailability
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    secureSecretsApiMock.testSecureSecretProvider.mockResolvedValueOnce({
+      provider: {
+        ...LOCAL_PROVIDER,
+        status: 'locked',
+        lastStatusCode: 'source_locked',
+      },
+      code: 'local_secret_decrypt_failed',
+      affectedSecrets: [{
+        secretId: 'secret-1',
+        displayAlias: 'github/work',
+      }],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'button', { name: 'Test vault' })).toBeTruthy()
+    })
+    fireEvent.click(await waitFor(() => getByRole(container, 'button', {
+      name: 'Unlock private storage',
+    })))
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'Private storage is unlocked, but some saved values need attention.',
+      )
+      expect(container.textContent).toContain('Use Test vault below to recover them.')
+    })
   })
 
   it('shows fixed readiness actions and copies only bounded safe diagnostics', async () => {

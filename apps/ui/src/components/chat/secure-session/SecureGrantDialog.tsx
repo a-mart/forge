@@ -154,7 +154,9 @@ export function SecureGrantDialog({
                 {availableSecrets.length === 0 ? (
                   <div className="space-y-3 rounded-md border border-dashed p-3">
                     <p className="text-sm text-muted-foreground">
-                      No unleased saved secrets are available yet.
+                      {secrets.length === 0
+                        ? 'No saved project secrets are configured yet.'
+                        : 'Saved secrets are configured, but none are currently available to grant.'}
                     </p>
                     {onAddSecret ? (
                       <Button
@@ -167,7 +169,9 @@ export function SecureGrantDialog({
                           onAddSecret()
                         }}
                       >
-                        Add a project secret
+                        {secrets.length === 0
+                          ? 'Add a project secret'
+                          : 'Manage project secrets'}
                       </Button>
                     ) : null}
                   </div>
@@ -210,52 +214,58 @@ export function SecureGrantDialog({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor={scopeId}>Scope</Label>
-              <select
-                id={scopeId}
-                value={policyKey}
-                disabled={submitting}
-                onChange={(event) => setPolicyKey(event.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {POLICY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground">
-                {selectedPolicy?.description}
-              </p>
-            </div>
+            {availableSecrets.length > 0 ? (
+              <div className="space-y-1.5">
+                <Label htmlFor={scopeId}>Scope</Label>
+                <select
+                  id={scopeId}
+                  value={policyKey}
+                  disabled={submitting}
+                  onChange={(event) => setPolicyKey(event.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {POLICY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {selectedPolicy?.description}
+                </p>
+              </div>
+            ) : null}
 
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-              Each selected secret is available to the whole command process, not only
-              to the action you intend. Secure Session output filtering helps with
-              accidental echoes, but authorized code can still use or transform the value.
-            </div>
+            {availableSecrets.length > 0 ? (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                Each selected secret is available to the whole command process, not only
+                to the action you intend. Secure Session output filtering helps with
+                accidental echoes, but authorized code can still use or transform the value.
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>
             <Button type="button" variant="ghost" disabled={submitting} onClick={onClose}>
-              Cancel
+              {availableSecrets.length === 0 ? 'Close' : 'Cancel'}
             </Button>
-            <Button
-              type="submit"
-              disabled={selectedSecretIds.length === 0 || !policyKey || submitting}
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Granting…
-                </>
-              ) : (
-                `Grant ${selectedSecretIds.length === 1
-                  ? '1 secret'
-                  : `${selectedSecretIds.length} secrets`}`
-              )}
-            </Button>
+            {availableSecrets.length > 0 ? (
+              <Button
+                type="submit"
+                disabled={selectedSecretIds.length === 0 || !policyKey || submitting}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Granting…
+                  </>
+                ) : (
+                  `Grant ${selectedSecretIds.length === 1
+                    ? '1 secret'
+                    : `${selectedSecretIds.length} secrets`}`
+                )}
+              </Button>
+            ) : null}
           </DialogFooter>
         </form>
       </DialogContent>
