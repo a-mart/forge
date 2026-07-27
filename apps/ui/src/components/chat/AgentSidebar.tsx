@@ -478,7 +478,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       ))
     ))
     const isConversationSurface = !isSettingsActive && !isStatsActive && !isArchiveActive
-    if (currentSelectionIsVisible && isConversationSurface) return
+    // Neutral surfaces intentionally have no active conversation to constrain.
+    // Selecting a fallback here would immediately navigate away from them.
+    if (!isConversationSurface || currentSelectionIsVisible) return
 
     const target = viewNavigationRows.flatMap((row) => {
       const session = row.treeRow.sessions.find((entry) => entry.isDefault)

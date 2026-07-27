@@ -1416,6 +1416,37 @@ describe('AgentSidebar', () => {
     await waitFor(() => expect(onSelectAgent).toHaveBeenCalledWith(customerSession.agentId))
   })
 
+  it('does not leave Settings to enforce an active project view', async () => {
+    const customerSession = sessionManager('customer-main', 'customer-project')
+    const privateSession = sessionManager('private-main', 'private-project')
+    const onSelectAgent = vi.fn()
+    localStorageMock.setItem('forge-sidebar-project-views', JSON.stringify({
+      version: 1,
+      activeViewId: 'customer-view',
+      views: [{
+        id: 'customer-view',
+        name: 'Acme screen share',
+        projectKeys: [JSON.stringify(['local', 'customer-project'])],
+      }],
+    }))
+
+    renderSidebar({
+      agents: [customerSession, privateSession],
+      profiles: [
+        { ...profileFor(customerSession), profileId: 'customer-project', displayName: 'Acme Project', defaultSessionAgentId: customerSession.agentId },
+        { ...profileFor(privateSession), profileId: 'private-project', displayName: 'Private Project', defaultSessionAgentId: privateSession.agentId },
+      ],
+      selectedAgentId: privateSession.agentId,
+      isSettingsActive: true,
+      onSelectAgent,
+    })
+
+    await flushEffects()
+
+    expect(getByRole(getDesktopSidebar(), 'button', { name: 'Project view: Acme screen share' })).toBeTruthy()
+    expect(onSelectAgent).not.toHaveBeenCalled()
+  })
+
   it('creates a named project view and can switch cleanly back to all projects', async () => {
     const customerSession = sessionManager('customer-main', 'customer-project')
     const privateSession = sessionManager('private-main', 'private-project')
