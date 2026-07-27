@@ -39,7 +39,7 @@ Selecting a remote row makes that server the active origin for supported project
 
 There is no local clone, sync, or fallback copy. Remote profiles, sessions, workspaces, credentials, terminal state, and agents stay on the selected server. Select a local project to switch supported surfaces back to the local origin.
 
-Non-chat Settings, Stats, Archive, onboarding, Cortex, provider usage, and the mixed sidebar-order setting remain local even while a remote project is selected. Managed Browser and External Chrome are local Forge Desktop hosts, not Skills, and are excluded from remote/collaboration routing: Electron webviews/partitions and the External Chrome native relay, candidates, aliases, leases, and IPC remain with the selected local Builder manager. They are never forwarded to a Remote Project or Collaboration channel. A remote normal manager may still expose typed browser tools, but without a Desktop host connected directly to that remote backend their calls return `unavailable-host`.
+Non-chat Settings, Stats, Archive, onboarding, Cortex, provider usage, and the mixed sidebar-order setting remain local even while a remote project is selected. Browser is a local Forge Desktop capability, not a Skill, and its embedded surface and Chrome connection are never forwarded to a Remote Project or Collaboration channel. A remote normal manager may still expose typed browser tools, but without a Desktop host connected directly to that remote backend their calls return `unavailable-host`.
 
 Remote chat can show author chips for messages from other users. Viewer presence is only a snapshot of authenticated people subscribed to the session; it is not typing status, an edit lock, or proof that someone is actively reading.
 

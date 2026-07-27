@@ -62,6 +62,7 @@ export function BrowserPopoutSurface() {
       capture: async (tabId) => String(await invoke({ type: 'capture', tabId })),
       startRecording: async (tabId) => { await invoke({ type: 'recordingStart', tabId }) },
       stopRecording: async (tabId, recordingId) => { await invoke({ type: 'recordingStop', tabId, recordingId }) },
+      reveal: async () => { throw new Error('Chrome-backed tabs stay in the main Forge window.') },
       dock: async () => { await bridge.dock(projection.workspaceEpoch) },
     }
   }, [bridge, projection])

@@ -1,4 +1,4 @@
-import type { BrowserAutomationRequest } from '@forge/protocol'
+import type { BrowserAutomationRequest, BrowserHostLifecycleRequest } from '@forge/protocol'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { BrowserAutomationManager } from './browser-automation-manager.js'
 import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
@@ -87,6 +87,15 @@ export function installBrowserIpc(options: {
       manager.setRecordingMimeType(value, value.recordingMimeType)
     }
     return manager.execute(value)
+  })
+  handle(BROWSER_IPC.lifecycle, async (event, request) => {
+    trustedMain(event)
+    return manager.handleLifecycle(request as BrowserHostLifecycleRequest)
+  })
+  handle(BROWSER_IPC.reveal, async (event, input) => {
+    trustedMain(event)
+    const value = input as { sessionAgentId: string; profileId: string; tabId: string }
+    return manager.revealTarget({ sessionAgentId: value.sessionAgentId, profileId: value.profileId }, value.tabId)
   })
   handle(BROWSER_IPC.prepareRecording, async (event, request) => {
     trustedMain(event)

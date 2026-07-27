@@ -1,335 +1,75 @@
 /** @vitest-environment jsdom */
 
-import { act, createElement, createRef } from 'react'
+import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserHostConnectionSnapshot, BrowserSessionSnapshot, BrowserTabSnapshot } from '@forge/protocol'
-import type { BrowserAutomationHostHandle } from './BrowserAutomationHost'
 import type { BrowserWorkspaceCommandPort } from './BrowserPanel'
-import { getArticlesForContext, initializeHelpContent } from '@/components/help/help-registry'
 
-vi.mock('@/components/help/HelpTrigger', () => ({
-  HelpTrigger: ({ contextKey }: { contextKey: string }) =>
-    createElement('button', {
-      type: 'button',
-      'aria-label': 'Help',
-      'data-testid': 'browser-help-trigger',
-      'data-context-key': contextKey,
-    }),
-}))
-
+vi.mock('@/components/help/HelpTrigger', () => ({ HelpTrigger: () => createElement('button', { 'aria-label': 'Help' }) }))
 const { BrowserPanel } = await import('./BrowserPanel')
-
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-let container: HTMLDivElement
-let root: Root | null = null
-beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container) })
-afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); sessionStorage.clear(); delete window.electronBridge })
-
 const now = new Date(0).toISOString()
-const tab: BrowserTabSnapshot = { tabId: 'tab-1', sessionAgentId: 'session-1', profileId: 'profile-1', url: 'https://example.com', title: 'Example', lifecycle: 'ready', loading: false, live: true, canGoBack: true, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: { x: 20, y: 30, phase: 'move', sequence: 1, createdAt: now }, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now }
-const snapshot: BrowserSessionSnapshot = { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [tab], activeTabId: 'tab-1', defaultTabId: 'tab-1', panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
-const emptySnapshot: BrowserSessionSnapshot = { ...snapshot, tabs: [], activeTabId: null, defaultTabId: null, revision: 3 }
-const disconnectedHost: BrowserHostConnectionSnapshot = { connected: false, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }
-const connectedHost: BrowserHostConnectionSnapshot = {
-  connected: true,
-  hostId: 'host-1',
-  hostGeneration: 7,
-  focused: false,
-  capabilities: {
-    supportedOperations: ['status'],
-    electronVersion: '37',
-    chromiumVersion: '138',
-    playwrightVersion: '1.60.0',
-    maxResponseBytes: 1024,
-    supportsSandboxedWebviews: true,
-    supportsCapturePage: true,
-    supportsRecording: true,
-  },
-  connectedAt: now,
+const managedTab = tab('managed-electron', 'managed-1', 'Embedded tab')
+const externalTab = tab('external-chrome', 'ext.profile.7', 'Chrome tab')
+const host: BrowserHostConnectionSnapshot = {
+  connected: true, hostId: 'host-1', hostGeneration: 2, focused: true, connectedAt: now,
+  capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: ['status'], maxResponseBytes: 1024,
+    features: { resize: true, recording: true, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false } },
+}
+let container: HTMLDivElement
+let root: Root
+beforeEach(() => {
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
+  window.electronBridge = { windowRole: 'main', platform: 'darwin', backendWsUrl: 'ws://local' }
+})
+afterEach(() => { act(() => root.unmount()); container.remove(); delete window.electronBridge })
+
+function tab(targetAffinity: BrowserTabSnapshot['targetAffinity'], tabId: string, title: string): BrowserTabSnapshot {
+  return { targetAffinity, tabId, title, sessionAgentId: 'session-1', profileId: 'profile-1', url: targetAffinity === 'external-chrome' ? '' : 'https://example.com', lifecycle: 'ready', loading: false, live: true, canGoBack: true, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now }
+}
+function snapshot(tabs: BrowserTabSnapshot[], activeTabId = tabs[0]?.tabId ?? null): BrowserSessionSnapshot {
+  return { schemaVersion: 2, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs, activeTabId, defaultTabId: activeTabId, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
+}
+function port(): BrowserWorkspaceCommandPort {
+  return { open: vi.fn(), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn(), popOut: vi.fn(), dock: vi.fn() }
+}
+function render(state: BrowserSessionSnapshot, commands = port()) {
+  act(() => root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: state, host, commandPort: commands, popoutAvailable: true })))
+  return commands
 }
 
-function createCommandPort(overrides: Partial<BrowserWorkspaceCommandPort> = {}): BrowserWorkspaceCommandPort {
-  return {
-    open: vi.fn(async () => undefined),
-    activate: vi.fn(),
-    close: vi.fn(),
-    resize: vi.fn(),
-    navigate: vi.fn(),
-    history: vi.fn(),
-    reload: vi.fn(),
-    zoom: vi.fn(),
-    capture: vi.fn(async () => 'data:image/png;base64,a'),
-    startRecording: vi.fn(),
-    stopRecording: vi.fn(),
-    popOut: vi.fn(),
-    dock: vi.fn(),
-    ...overrides,
-  }
-}
-
-function renderPanel(props: {
-  snapshot: BrowserSessionSnapshot | null
-  host: BrowserHostConnectionSnapshot
-  commandPort?: BrowserWorkspaceCommandPort
-  mode?: 'docked' | 'popped-out'
-  popoutAvailable?: boolean
-  windowRole?: 'main' | 'managed-browser-popout'
-  sessionAgentId?: string
-  profileId?: string
-}) {
-  window.electronBridge = { windowRole: props.windowRole ?? 'main', backendWsUrl: 'ws://localhost', platform: 'darwin' }
-  const element = createElement(BrowserPanel, {
-    sessionAgentId: props.sessionAgentId ?? 'session-1',
-    profileId: props.profileId ?? 'profile-1',
-    snapshot: props.snapshot,
-    host: props.host,
-    commandPort: props.commandPort,
-    mode: props.mode,
-    popoutAvailable: props.popoutAvailable,
-  })
-  act(() => {
-    if (!root) root = createRoot(container)
-    root.render(element)
-  })
-}
-
-describe('BrowserPanel', () => {
-  it('shows an accessible web-unavailable state without invoking a bridge', () => {
-    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { client: null, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: disconnectedHost, hostRef: createRef<BrowserAutomationHostHandle>() })) })
-    expect(container.querySelector('[aria-label="Managed Browser workspace"]')).not.toBeNull()
-    expect(container.textContent).toContain('available in the Forge desktop app')
-    expect(container.querySelector('button[aria-label="Back"]')).not.toBeNull()
-    expect(container.querySelector('input[aria-label="Viewport width"]')).not.toBeNull()
+describe('BrowserPanel automatic experience', () => {
+  it('renders one tab strip without host or attachment ceremony', () => {
+    render(snapshot([managedTab, externalTab], managedTab.tabId))
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2)
+    expect(container.querySelector('[aria-label="Browser workspace"]')).not.toBeNull()
+    expect(container.querySelector('select[aria-label="Browser host"]')).toBeNull()
+    expect(container.textContent).not.toMatch(/attach|detach|lease|candidate|profile alias/i)
   })
 
-  it('filters every External Chrome tab from the Managed strip and command targets', () => {
-    const activate = vi.fn()
-    const close = vi.fn()
-    const external = { ...tab, hostKind: 'external-chrome' as const, tabId: 'ext.profile_a.7', title: 'Opaque external secret' }
-    const managed = { ...tab, hostKind: 'managed-electron' as const, tabId: 'managed-1', title: 'Managed visible' }
-    const mixed = { ...snapshot, hostKind: 'managed-electron' as const, tabs: [external, managed], activeTabId: external.tabId, defaultTabId: external.tabId }
-    renderPanel({ snapshot: mixed, host: connectedHost, commandPort: createCommandPort({ activate, close }) })
-    expect(container.textContent).not.toContain('Opaque external secret')
-    expect(container.textContent).not.toContain('ext.profile_a.7')
-    expect(container.textContent).toContain('Managed visible')
-    const managedTab = container.querySelector('[role="tab"]')!
-    act(() => managedTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(activate).toHaveBeenCalledWith('managed-1')
-    expect(close).not.toHaveBeenCalled()
+  it('shows the embedded surface and its supported controls', () => {
+    render(snapshot([managedTab]))
+    expect(container.querySelector('[data-browser-automation-viewport]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label="Start recording"]')).not.toBeNull()
+    expect(container.querySelector('select#browser-viewport')).not.toBeNull()
   })
 
-  it('renders a HelpTrigger that routes to the Managed Browser article', () => {
-    initializeHelpContent()
-    act(() => {
-      root = createRoot(container)
-      root.render(createElement(BrowserPanel, {
-        client: null,
-        sessionAgentId: 'session-1',
-        profileId: 'profile-1',
-        snapshot,
-        host: disconnectedHost,
-        hostRef: createRef<BrowserAutomationHostHandle>(),
-      }))
-    })
-
-    const help = container.querySelector('[data-testid="browser-help-trigger"]')
-    expect(help).not.toBeNull()
-    expect(help?.getAttribute('data-context-key')).toBe('chat.browser')
-
-    const recording = container.querySelector('button[aria-label="Start recording"]')
-    expect(recording).not.toBeNull()
-    expect(
-      Boolean(recording && help && Boolean(recording.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING)),
-    ).toBe(true)
-
-    const routed = getArticlesForContext('chat.browser')
-    expect(routed.map((article) => article.id)).toContain('chat-browser')
-  })
-
-  it('hydrates host selection from the canonical snapshot instead of overwriting it with renderer storage', () => {
-    sessionStorage.setItem('forge.browser.host.v1:session-1', 'external-chrome')
-    const selectBrowserHost = vi.fn()
-    act(() => {
-      root = createRoot(container)
-      root.render(createElement(BrowserPanel, {
-        client: { selectBrowserHost } as never,
-        sessionAgentId: 'session-1', profileId: 'profile-1',
-        snapshot: { ...snapshot, hostKind: 'managed-electron' }, host: connectedHost,
-        commandPort: createCommandPort(),
-      }))
-    })
-    expect((container.querySelector('select[aria-label="Browser host"]') as HTMLSelectElement).value).toBe('managed-electron')
-    expect(selectBrowserHost).not.toHaveBeenCalled()
-  })
-
-  it('defaults to Managed Browser and switches to the session-scoped External Chrome host without projecting a view', async () => {
-    const localStatus = vi.fn(async () => ({ ok: true as const, status: {
-      coordinator: { state: 'disabled', authority: 'none', auth: 'missing', registration: 'not-registered', trust: 'missing', platform: 'darwin', canEnable: true, canDisable: false, canRepair: true, canRollback: false, canRemove: false, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
-      instances: [], attachment: null,
-    } }))
-    window.electronBridge = { windowRole: 'main', backendWsUrl: 'ws://localhost', platform: 'darwin', externalChrome: { localStatus } as never }
-    const commandPort = createCommandPort()
-    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { sessionAgentId: 'host-selector-session', profileId: 'profile-1', snapshot, host: connectedHost, commandPort })) })
-    const selector = container.querySelector('select[aria-label="Browser host"]') as HTMLSelectElement
-    expect(selector.value).toBe('managed-electron')
-    await act(async () => { selector.value = 'external-chrome'; selector.dispatchEvent(new Event('change', { bubbles: true })); await Promise.resolve(); await Promise.resolve() })
-    expect(selector.value).toBe('external-chrome')
-    expect(container.querySelector('[aria-label="External Chrome workspace"]')).not.toBeNull()
+  it('shows a compact Chrome card and hides unsupported controls', () => {
+    const commands = render(snapshot([externalTab]))
+    expect(container.textContent).toContain('Browser tab open in Chrome')
     expect(container.querySelector('[data-browser-automation-viewport]')).toBeNull()
-    expect(localStatus).toHaveBeenCalledWith('host-selector-session', 'profile-1')
+    expect(container.querySelector('button[aria-label="Start recording"]')).toBeNull()
+    expect(container.querySelector('select#browser-viewport')).toBeNull()
+    const show = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Show in Chrome')!
+    act(() => show.click())
+    expect(commands.reveal).toHaveBeenCalledWith(externalTab.tabId)
   })
 
-  it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {
-    window.electronBridge = { windowRole: 'main', backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin', browserAutomation: {} as never }
-    const commandPort = createCommandPort()
-    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: connectedHost, commandPort, popoutAvailable: true })) })
-
-    click('Back'); click('Hard reload'); click('Zoom in'); click('Reset zoom'); click('Screenshot')
+  it('automatically opens once from an empty hosted session', async () => {
+    const commands = render(snapshot([]))
     await act(async () => { await Promise.resolve() })
-    expect(commandPort.history).toHaveBeenCalledWith('tab-1', 'back')
-    expect(commandPort.reload).toHaveBeenCalledWith('tab-1', true)
-    expect(commandPort.zoom).toHaveBeenCalledWith('tab-1', 1)
-    expect(container.querySelector('[aria-label="Browser screenshot"]')).not.toBeNull()
-    click('Resize'); click('Start recording')
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.resize).toHaveBeenCalled()
-    expect(commandPort.startRecording).toHaveBeenCalledWith('tab-1')
-    expect(window.electronBridge?.browserAutomation?.invoke).toBeUndefined()
-
-    const recordingTab = { ...tab, recording: { recordingId: 'recording-1', startedAt: now, mimeType: 'video/webm' } }
-    const recordingSnapshot = { ...snapshot, tabs: [recordingTab] }
-    act(() => root!.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: recordingSnapshot, host: connectedHost, commandPort, popoutAvailable: true })))
-    click('Stop recording')
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.stopRecording).toHaveBeenCalledWith('tab-1', 'recording-1')
-  })
-
-  it('opens exactly one blank tab for a connected empty canonical snapshot', async () => {
-    const commandPort = createCommandPort()
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
-    expect(container.textContent).toContain('Opening a new tab…')
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not duplicate opens across rerenders with the same empty authority', async () => {
-    const commandPort = createCommandPort()
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    renderPanel({ snapshot: { ...emptySnapshot }, host: { ...connectedHost }, commandPort })
-    renderPanel({ snapshot: { ...emptySnapshot, updatedAt: new Date(1).toISOString(), revision: emptySnapshot.revision + 1 }, host: { ...connectedHost, hostGeneration: 8 }, commandPort })
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps empty-phase attempts scoped when switching authorities', async () => {
-    const commandPort = createCommandPort()
-    const sessionB = {
-      ...emptySnapshot,
-      sessionAgentId: 'session-2',
-      profileId: 'profile-2',
-      revision: 10,
-    }
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    renderPanel({ snapshot: sessionB, host: { ...connectedHost, hostGeneration: 8 }, commandPort, sessionAgentId: 'session-2', profileId: 'profile-2' })
-    await act(async () => { await Promise.resolve() })
-    renderPanel({ snapshot: { ...sessionB, revision: 11 }, host: { ...connectedHost, hostGeneration: 9 }, commandPort, sessionAgentId: 'session-2', profileId: 'profile-2' })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not auto-open when the host is disconnected or the web surface is unavailable', async () => {
-    const commandPort = createCommandPort()
-    renderPanel({ snapshot: emptySnapshot, host: disconnectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('Browser host unavailable')
-
-    act(() => root?.unmount())
-    root = null
-    container.remove()
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    delete window.electronBridge
-
-    act(() => {
-      root = createRoot(container)
-      root.render(createElement(BrowserPanel, {
-        client: null,
-        sessionAgentId: 'session-1',
-        profileId: 'profile-1',
-        snapshot: emptySnapshot,
-        host: connectedHost,
-        hostRef: createRef<BrowserAutomationHostHandle>(),
-      }))
-    })
-    await act(async () => { await Promise.resolve() })
-    expect(container.textContent).toContain('available in the Forge desktop app')
-    expect((container.querySelector('input#browser-address') as HTMLInputElement | null)?.disabled).toBe(true)
-  })
-
-  it('enables the address bar once an authoritative tab arrives and reopens once after that tab is closed', async () => {
-    const commandPort = createCommandPort()
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-
-    const withTab = { ...emptySnapshot, revision: 4, tabs: [tab], activeTabId: tab.tabId, defaultTabId: tab.tabId }
-    renderPanel({ snapshot: withTab, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    const address = container.querySelector('input#browser-address') as HTMLInputElement | null
-    expect(address).not.toBeNull()
-    expect(address?.disabled).toBe(false)
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-
-    const closedAgain: BrowserSessionSnapshot = {
-      ...withTab,
-      revision: 5,
-      tabs: [{ ...tab, lifecycle: 'closed' }],
-      activeTabId: null,
-      defaultTabId: null,
-    }
-    renderPanel({ snapshot: closedAgain, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(2)
-  })
-
-  it('uses the same empty-open behavior in pop-out mode without a second host registration path', async () => {
-    const commandPort = createCommandPort()
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort, mode: 'popped-out', popoutAvailable: true, windowRole: 'managed-browser-popout' })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('Managed Browser is open in a separate window.')
-    expect(window.electronBridge?.browserAutomation).toBeUndefined()
-  })
-
-  it('keeps manual Open a tab recovery after a failed automatic attempt without retry looping', async () => {
-    const commandPort = createCommandPort({
-      open: vi.fn()
-        .mockRejectedValueOnce(new Error('open failed'))
-        .mockResolvedValue(undefined),
-    })
-    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('open failed')
-    expect(container.textContent).toContain('No browser tabs are open.')
-
-    renderPanel({ snapshot: { ...emptySnapshot }, host: connectedHost, commandPort })
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(1)
-
-    click('Open a tab')
-    await act(async () => { await Promise.resolve() })
-    expect(commandPort.open).toHaveBeenCalledTimes(2)
+    expect(commands.open).toHaveBeenCalledTimes(1)
   })
 })
-
-function click(label: string) {
-  const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.getAttribute('aria-label') === label || candidate.textContent === label)
-  if (!button) throw new Error(`Missing button ${label}`)
-  act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-}

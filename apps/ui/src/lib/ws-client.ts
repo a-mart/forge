@@ -1,4 +1,3 @@
-import { resolveBrowserHostKind } from '@forge/protocol'
 import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import {
@@ -11,8 +10,7 @@ import {
   assertReconnectableSocket,
   buildBrowserHostFocusCommand,
   buildBrowserHostHydrateCommand,
-  buildBrowserHostSelectCommand,
-  buildBrowserExternalChromeDetachConfirmedCommand,
+  buildBrowserHostLifecycleResponseCommand,
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
@@ -159,9 +157,10 @@ import type {
   AgentSessionPurpose,
   BrowserAutomationRequest,
   BrowserAutomationResponse,
+  BrowserHostLifecycleRequest,
+  BrowserHostLifecycleResponse,
   BrowserHostRegistration,
   BrowserHostSessionStateReport,
-  BrowserHostKind,
   BrowserHostStateReportResult,
   BrowserSessionSnapshot,
   BrowserViewportSetting,
@@ -237,11 +236,7 @@ export class ManagerWsClient {
   private browserHandshakeInFlight = false
   private readonly browserHydrationChunks = new Map<string, { chunkCount: number; chunks: Array<Uint8Array | undefined> }>()
   private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
-  private secondaryBrowserHostRegistration: BrowserHostRegistration | null = null
-  private secondaryBrowserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
-  private secondaryBrowserHostGeneration: number | null = null
-  private secondaryBrowserHandshakeTimer: ReturnType<typeof setTimeout> | null = null
-  private secondaryBrowserHandshakeEpoch = 0
+  private browserLifecycleRequestHandler: ((request: BrowserHostLifecycleRequest) => Promise<BrowserHostLifecycleResponse>) | null = null
   private readonly repositoryProjectProgressListeners = new Map<
     string,
     (event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>) => void
@@ -359,89 +354,20 @@ export class ManagerWsClient {
   registerBrowserAutomationHost(
     registration: BrowserHostRegistration,
     handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
+    handleLifecycle?: (request: BrowserHostLifecycleRequest) => Promise<BrowserHostLifecycleResponse>,
   ): () => void {
     this.browserHostRegistration = registration
     this.browserAutomationRequestHandler = handleRequest
+    this.browserLifecycleRequestHandler = handleLifecycle ?? null
     this.restartBrowserHandshake()
     return () => {
       if (this.browserHostRegistration?.hostId === registration.hostId) {
         this.browserHostRegistration = null
         this.browserAutomationRequestHandler = null
+        this.browserLifecycleRequestHandler = null
         this.stopBrowserHandshake()
       }
     }
-  }
-
-  registerSecondaryBrowserAutomationHost(
-    registration: BrowserHostRegistration,
-    handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
-  ): () => void {
-    if ((registration.capabilities.hostKind ?? 'managed-electron') === 'managed-electron') {
-      throw new Error('The secondary browser host must use a non-default host kind')
-    }
-    this.secondaryBrowserHostRegistration = registration
-    this.secondaryBrowserAutomationRequestHandler = handleRequest
-    this.restartSecondaryBrowserHandshake()
-    return () => {
-      if (this.secondaryBrowserHostRegistration?.hostId !== registration.hostId) return
-      this.secondaryBrowserHostRegistration = null
-      this.secondaryBrowserAutomationRequestHandler = null
-      this.secondaryBrowserHostGeneration = null
-      this.stopSecondaryBrowserHandshake()
-    }
-  }
-
-  private restartSecondaryBrowserHandshake(): void {
-    this.stopSecondaryBrowserHandshake()
-    const registration = this.secondaryBrowserHostRegistration
-    if (!registration || !isSocketOpen(this.socket)) return
-    const hostKind = resolveBrowserHostKind(registration.capabilities.hostKind)
-    const epoch = this.secondaryBrowserHandshakeEpoch
-    this.secondaryBrowserHandshakeTimer = setTimeout(() => {
-      this.secondaryBrowserHandshakeTimer = null
-      void this.requestDispatcher.enqueueRequest(
-        'browser_host_register',
-        (requestId) => buildBrowserHostRegisterCommand(requestId, { ...registration, registeredAt: new Date().toISOString() }),
-        { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
-      ).then((host) => {
-        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
-          host.hostId !== registration.hostId || host.hostGeneration === null || !isSocketOpen(this.socket)) return
-        this.secondaryBrowserHostGeneration = host.hostGeneration
-        this.runSecondaryBrowserHydration(epoch, registration, hostKind, host.hostGeneration)
-      }).catch(() => {
-        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration || !isSocketOpen(this.socket)) return
-        this.secondaryBrowserHandshakeTimer = setTimeout(() => this.restartSecondaryBrowserHandshake(), BROWSER_HANDSHAKE_RETRY_MS)
-      })
-    }, 0)
-  }
-
-  private runSecondaryBrowserHydration(
-    epoch: number,
-    registration: BrowserHostRegistration,
-    hostKind: BrowserHostKind,
-    hostGeneration: number,
-  ): void {
-    if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
-      this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
-    this.browserHydrationChunks.clear()
-    void this.requestDispatcher.enqueueRequest(
-      'browser_host_hydrate',
-      (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, hostGeneration, hostKind),
-      { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
-    ).catch(() => {
-      if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
-        this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
-      this.secondaryBrowserHandshakeTimer = setTimeout(() => {
-        this.secondaryBrowserHandshakeTimer = null
-        this.runSecondaryBrowserHydration(epoch, registration, hostKind, hostGeneration)
-      }, BROWSER_HANDSHAKE_RETRY_MS)
-    })
-  }
-
-  private stopSecondaryBrowserHandshake(): void {
-    this.secondaryBrowserHandshakeEpoch += 1
-    if (this.secondaryBrowserHandshakeTimer) clearTimeout(this.secondaryBrowserHandshakeTimer)
-    this.secondaryBrowserHandshakeTimer = null
   }
 
   private restartBrowserHandshake(): void {
@@ -479,7 +405,7 @@ export class ManagerWsClient {
       this.browserHydrationChunks.clear()
       await this.requestDispatcher.enqueueRequest(
         'browser_host_hydrate',
-        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!, registration.capabilities.hostKind ?? 'managed-electron'),
+        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!),
         { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
       )
     } catch {
@@ -540,7 +466,7 @@ export class ManagerWsClient {
     }
     return this.requestDispatcher.enqueueRequest(
       'browser_host_state_report',
-      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions, registration.capabilities.hostKind ?? 'managed-electron'),
+      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions),
       { timeoutMs: 15_000 },
     )
   }
@@ -549,7 +475,7 @@ export class ManagerWsClient {
     const registration = this.browserHostRegistration
     const generation = this.state.browserHost.hostGeneration
     if (!registration || generation === null || !isSocketOpen(this.socket)) return
-    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused, registration.capabilities.hostKind ?? 'managed-electron'))
+    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused))
   }
 
   acknowledgeBrowserPanelReveal(options: {
@@ -567,25 +493,12 @@ export class ManagerWsClient {
       'browser_panel_reveal_acknowledge',
       (requestId) => buildBrowserPanelRevealAcknowledgeCommand({
         requestId,
-        hostKind: registration.capabilities.hostKind ?? 'managed-electron',
         hostId: registration.hostId,
         hostGeneration,
         ...options,
       }),
       { timeoutMs: 15_000 },
     )
-  }
-
-  selectBrowserHost(sessionAgentId: string, profileId: string, hostKind: BrowserHostKind): Promise<BrowserSessionSnapshot> {
-    assertConnectedSocket(this.socket)
-    return this.requestDispatcher.enqueueRequest('browser_host_select', (requestId) =>
-      buildBrowserHostSelectCommand(sessionAgentId, profileId, hostKind, requestId))
-  }
-
-  confirmExternalChromeDetached(sessionAgentId: string, profileId: string): Promise<BrowserSessionSnapshot> {
-    assertConnectedSocket(this.socket)
-    return this.requestDispatcher.enqueueRequest('browser_external_chrome_detach_confirmed', (requestId) =>
-      buildBrowserExternalChromeDetachConfirmedCommand(sessionAgentId, profileId, requestId))
   }
 
   openBrowserTab(sessionAgentId: string, profileId: string, options?: { url?: string; activate?: boolean }): Promise<BrowserSessionSnapshot> {
@@ -1528,7 +1441,6 @@ export class ManagerWsClient {
       reason: 'reconnect',
     })
     this.restartBrowserHandshake()
-    this.restartSecondaryBrowserHandshake()
   }
 
   private handleTransportClose(event?: CloseEvent): void {
@@ -1543,8 +1455,6 @@ export class ManagerWsClient {
       this.recordConversationBootstrapTerminal(pendingBootstrap.subscriptionId, 'disconnected')
     }
     this.stopBrowserHandshake()
-    this.stopSecondaryBrowserHandshake()
-    this.secondaryBrowserHostGeneration = null
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
@@ -1599,53 +1509,6 @@ export class ManagerWsClient {
     })
   }
 
-  private handleSecondaryBrowserEvent(event: ServerEvent): boolean {
-    const registration = this.secondaryBrowserHostRegistration
-    if (!registration) return false
-    const hostKind = registration.capabilities.hostKind ?? 'managed-electron'
-    if (event.type === 'browser_host_connected') {
-      if ((event.host.hostKind ?? event.host.capabilities?.hostKind ?? 'managed-electron') !== hostKind ||
-        (event.host.hostId !== null && event.host.hostId !== registration.hostId)) return false
-      if (event.requestId && this.requestDispatcher.tracker.getPendingRequestType(event.requestId) === 'browser_host_register') {
-        this.secondaryBrowserHostGeneration = event.host.hostGeneration
-        this.requestDispatcher.tracker.resolve('browser_host_register', event.requestId, event.host)
-      }
-      return true
-    }
-    if (event.type === 'browser_host_hydration_chunk') {
-      if (event.hostKind !== hostKind || event.hostId !== registration.hostId ||
-        event.hostGeneration !== this.secondaryBrowserHostGeneration ||
-        this.requestDispatcher.tracker.getPendingRequestType(event.requestId) !== 'browser_host_hydrate') return false
-      const sessions = this.acceptBrowserHydrationChunk(event)
-      if (sessions !== null) this.requestDispatcher.tracker.resolve('browser_host_hydrate', event.requestId, sessions)
-      return true
-    }
-    if (event.type !== 'browser_automation_request') return false
-    const request = { ...event.request, hostKind: resolveBrowserHostKind(event.request.hostKind) } as BrowserAutomationRequest
-    if (request.hostKind !== hostKind) return false
-    if (request.hostId !== registration.hostId || request.hostGeneration !== this.secondaryBrowserHostGeneration || !this.secondaryBrowserAutomationRequestHandler) {
-      this.send(buildBrowserHostResponseCommand({
-        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
-        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
-        operation: request.operation, ok: false,
-        error: { code: 'stale-host-generation', message: 'External Chrome release/request targeted a stale local host generation.', retryable: true },
-        elapsedMs: 0,
-      } as BrowserAutomationResponse))
-      return true
-    }
-    void this.secondaryBrowserAutomationRequestHandler(request).then(
-      (response) => this.send(buildBrowserHostResponseCommand(response)),
-      (error: unknown) => this.send(buildBrowserHostResponseCommand({
-        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
-        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
-        operation: request.operation, ok: false,
-        error: { code: 'host-disconnected', message: error instanceof Error ? error.message : 'External Chrome host failed.', retryable: true },
-        elapsedMs: 0,
-      } as BrowserAutomationResponse)),
-    )
-    return true
-  }
-
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
 
@@ -1695,7 +1558,6 @@ export class ManagerWsClient {
       if (consumed) return
     }
 
-    if (this.handleSecondaryBrowserEvent(event)) return
 
     if (handleBrowserEvent(event, {
       state: this.state,
@@ -1704,7 +1566,9 @@ export class ManagerWsClient {
       acceptHydrationChunk: (chunk) => this.acceptBrowserHydrationChunk(chunk),
       registration: this.browserHostRegistration,
       handleAutomationRequest: this.browserAutomationRequestHandler,
+      handleLifecycleRequest: this.browserLifecycleRequestHandler,
       sendHostResponse: (response) => this.send(buildBrowserHostResponseCommand(response)),
+      sendLifecycleResponse: (response) => this.send(buildBrowserHostLifecycleResponseCommand(response)),
     })) {
       return
     }

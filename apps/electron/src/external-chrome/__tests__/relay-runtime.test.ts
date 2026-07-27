@@ -258,6 +258,43 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
   })
 
+  it('remembers one confirmed ambiguous profile for the current runtime session', async () => {
+    const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
+    const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(profileB, 'instance_profile_b')
+    const requestsA: Array<{ method: string; params: Record<string, unknown> }> = []
+    const requestsB: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loopA = fakeExtensionLoop(profileA, requestsA, 'instance_profile_a', false)
+    const loopB = fakeExtensionLoop(profileB, requestsB, 'instance_profile_b', false)
+
+    runtime.confirmAutomaticInstance('session-a', 'profile-a', 'instance_profile_b')
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: false, createIfNeeded: true, ownerEpoch: 30,
+    })).resolves.toEqual({ ok: true, authority: { ownerEpoch: 30, tabId: 'ext.instance_profile_b.41' } })
+    expect(requestsA).toEqual([])
+    expect(requestsB.map(({ method }) => method)).toEqual(['forge.browser.create'])
+
+    runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
+  })
+
+  it('reveals the exact authorized Chrome tab through the existing bounded execute transport', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    const acquired = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: false, createIfNeeded: true, ownerEpoch: 31,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    await expect(runtime.revealTarget({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority.tabId))
+      .resolves.toEqual({ revealed: true, tabId: 'ext.instance_profile_a.41' })
+    expect(requests.at(-1)).toMatchObject({ method: 'forge.browser.execute', params: {
+      tabId: 41, operation: 'evaluate', input: { expression: '/* forge:reveal-authorized-tab:v1 */ undefined' },
+    } })
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it('routes M4 functional results and exact bounded turn dispositions without persisting page data', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const loop = fakeExtensionLoop(client)

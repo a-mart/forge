@@ -77,6 +77,7 @@ export class ManagedBrowserViewHost {
   }) {}
 
   get currentOwner(): ManagedBrowserOwner { return this.owner }
+  get currentWorkspaceEpoch(): number { return this.workspaceEpoch }
   get tabCount(): number { return this.tabs.size }
   get currentAttachedTabId(): string | null { return this.attachedTabId }
   getTabWebContentsId(tabId: string): number | null {

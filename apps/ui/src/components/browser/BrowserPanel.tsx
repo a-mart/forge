@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
-  resolveBrowserHostKind,
+  resolveBrowserTargetAffinity,
   resolveBrowserViewportPreset,
   type BrowserHostConnectionSnapshot,
   type BrowserSessionSnapshot,
@@ -16,7 +16,6 @@ import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { isElectron } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
-import { ExternalChromePanel } from './ExternalChromePanel'
 
 export interface BrowserWorkspaceCommandPort {
   open(autoOpenAttemptKey?: string): Promise<void>
@@ -30,6 +29,7 @@ export interface BrowserWorkspaceCommandPort {
   capture(tabId: string): Promise<string>
   startRecording(tabId: string): Promise<void>
   stopRecording(tabId: string, recordingId: string): Promise<void>
+  reveal(tabId: string): Promise<void>
   popOut?(): Promise<void>
   dock?(): Promise<void>
 }
@@ -62,39 +62,7 @@ export function BrowserPanel({
   client = null, sessionAgentId, profileId, snapshot, host, hostRef, commandPort,
   mode = 'docked', popoutAvailable = Boolean(window.electronBridge?.browserWorkspace?.capability.popoutAvailable),
 }: BrowserPanelProps) {
-  const preferenceKey = `forge.browser.host.v1:${sessionAgentId}`
-  const [selectedHost, setSelectedHost] = useState<'managed-electron' | 'external-chrome'>(() => readHostPreference(preferenceKey))
-  const [externalAvailable, setExternalAvailable] = useState(false)
-  useEffect(() => setSelectedHost(readHostPreference(preferenceKey)), [preferenceKey])
-  useEffect(() => {
-    const bridge = window.electronBridge?.windowRole === 'main' ? window.electronBridge.externalChrome : undefined
-    if (!bridge?.localStatus) { setExternalAvailable(false); return }
-    let disposed = false
-    const inspect = async (): Promise<void> => {
-      try {
-        const result = await bridge.localStatus!(sessionAgentId, profileId)
-        if (!disposed) setExternalAvailable(result.ok && result.status.coordinator.state === 'online'
-          && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0)
-      } catch { if (!disposed) setExternalAvailable(false) }
-    }
-    void inspect()
-    const timer = window.setInterval(() => void inspect(), 3_000)
-    return () => { disposed = true; window.clearInterval(timer) }
-  }, [profileId, sessionAgentId])
-  const selectHost = (value: 'managed-electron' | 'external-chrome'): void => {
-    setSelectedHost(value)
-    try { sessionStorage.setItem(preferenceKey, value) } catch { /* session-only fallback remains in component state */ }
-    void client?.selectBrowserHost(sessionAgentId, profileId, value).catch(() => {
-      if (snapshot) setSelectedHost(resolveBrowserHostKind(snapshot.hostKind))
-    })
-  }
-  useEffect(() => {
-    if (!snapshot) return
-    const canonicalHost = resolveBrowserHostKind(snapshot.hostKind)
-    setSelectedHost(canonicalHost)
-    try { sessionStorage.setItem(preferenceKey, canonicalHost) } catch { /* canonical state remains in component state */ }
-  }, [preferenceKey, snapshot])
-  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed' && resolveBrowserHostKind(tab.hostKind) === 'managed-electron')
+  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed')
   const hasOpenTab = openTabs.length > 0
   const activeTab = openTabs.find((tab) => tab.tabId === snapshot?.activeTabId) ?? openTabs[0] ?? null
   const [address, setAddress] = useState(activeTab?.url ?? '')
@@ -108,7 +76,7 @@ export function BrowserPanel({
 
   const commands = commandPort ?? createLegacyLocalPort(client, sessionAgentId, profileId, hostRef)
   const unavailableMessage = !commandPort && !isElectron()
-    ? 'Managed Browser is available in the Forge desktop app. This web session will not attempt local browser IPC.'
+    ? 'Browser is available in the Forge desktop app. This web session will not attempt local browser IPC.'
     : !host.connected
       ? 'The local browser host is reconnecting. Browser metadata remains visible but controls are unavailable.'
       : null
@@ -124,8 +92,7 @@ export function BrowserPanel({
 
   const managedBrowserSurface = window.electronBridge?.windowRole === 'main' || window.electronBridge?.windowRole === 'managed-browser-popout'
   const emptyAuthorityIdentity = `${sessionAgentId}:${profileId}`
-  const emptyAuthorityKey = selectedHost === 'managed-electron' && resolveBrowserHostKind(snapshot?.hostKind) === 'managed-electron'
-    && managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
+  const emptyAuthorityKey = managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
     ? emptyBrowserOpenAttemptKey(sessionAgentId, profileId, host, snapshot)
     : null
 
@@ -162,15 +129,12 @@ export function BrowserPanel({
 
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'
-  const selector = <BrowserHostSelector selected={selectedHost} onSelect={selectHost} externalAvailable={externalAvailable || selectedHost === 'external-chrome'} />
-
-  if (selectedHost === 'external-chrome') return <div className="flex min-h-0 flex-1 flex-col">{selector}<ExternalChromePanel sessionAgentId={sessionAgentId} profileId={profileId} client={client} /></div>
+  const managedTarget = !activeTab || resolveBrowserTargetAffinity(activeTab) === 'managed-electron'
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {selector}
-    <section className="relative flex min-h-0 flex-1 flex-col bg-background" aria-label="Managed Browser workspace">
-      <div className="sr-only" aria-live="polite">{popped ? 'Managed Browser is open in a separate window.' : 'Managed Browser is docked in the main window.'}</div>
+    <section className="relative flex min-h-0 flex-1 flex-col bg-background" aria-label="Browser workspace">
+      <div className="sr-only" aria-live="polite">{popped ? 'Browser is open in a separate window.' : 'Browser is ready.'}</div>
       <header className="border-b bg-muted/30">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto px-2 pt-2" role="tablist" aria-label="Browser tabs">
           {openTabs.map((tab) => (
@@ -184,6 +148,8 @@ export function BrowserPanel({
           <button type="button" aria-label="New browser tab" className="rounded p-2 hover:bg-muted focus-visible:ring-2" disabled={!host.connected} onClick={() => void run(() => commands.open())}><Plus className="size-4" /></button>
         </div>
 
+        {managedTarget ? (
+        <>
         <div className="flex flex-wrap items-center gap-1.5 p-2">
           <IconButton label="Back" disabled={controlsUnavailable || !activeTab?.canGoBack} onClick={() => activeTab && void run(() => commands.history(activeTab.tabId, 'back'))}><ArrowLeft /></IconButton>
           <IconButton label="Forward" disabled={controlsUnavailable || !activeTab?.canGoForward} onClick={() => activeTab && void run(() => commands.history(activeTab.tabId, 'forward'))}><ArrowRight /></IconButton>
@@ -197,7 +163,7 @@ export function BrowserPanel({
           <button type="button" aria-label="Reset zoom" title="Reset zoom" disabled={controlsUnavailable || !activeTab} className="w-11 rounded py-1 text-center text-xs tabular-nums hover:bg-muted disabled:opacity-40 focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.zoom(activeTab.tabId, 1))}>{Math.round((activeTab?.zoomFactor ?? 1) * 100)}%</button>
           <IconButton label="Zoom in" disabled={controlsUnavailable || !activeTab} onClick={() => activeTab && void run(() => commands.zoom(activeTab.tabId, activeTab.zoomFactor + .1))}><ZoomIn /></IconButton>
           <IconButton label="Screenshot" disabled={controlsUnavailable || !activeTab} onClick={() => activeTab && void run(async () => setScreenshot(await commands.capture(activeTab.tabId)))}><Camera /></IconButton>
-          <IconButton label={activeTab?.recording ? 'Stop recording' : 'Start recording'} disabled={controlsUnavailable || !activeTab || !host.capabilities?.supportsRecording} onClick={() => activeTab && void run(() => activeTab.recording ? commands.stopRecording(activeTab.tabId, activeTab.recording.recordingId) : commands.startRecording(activeTab.tabId))}><Circle className={cn(activeTab?.recording && 'fill-red-500 text-red-500')} /></IconButton>
+          <IconButton label={activeTab?.recording ? 'Stop recording' : 'Start recording'} disabled={controlsUnavailable || !activeTab || !host.capabilities?.features?.recording} onClick={() => activeTab && void run(() => activeTab.recording ? commands.stopRecording(activeTab.tabId, activeTab.recording.recordingId) : commands.startRecording(activeTab.tabId))}><Circle className={cn(activeTab?.recording && 'fill-red-500 text-red-500')} /></IconButton>
           {popoutAvailable && (commands.popOut || commands.dock) ? (
             popped
               ? <IconButton label="Dock Managed Browser in main window" onClick={() => void run(() => commands.dock?.())}><PanelTopClose /></IconButton>
@@ -222,10 +188,25 @@ export function BrowserPanel({
           <button type="button" disabled={controlsUnavailable || !activeTab} className="h-7 rounded border px-2 hover:bg-muted disabled:opacity-40 focus-visible:ring-2" onClick={() => resize({ mode: 'freeform', width: customWidth, height: customHeight })}>Resize</button>
           {activeTab ? <TabStatus tab={activeTab} /> : null}
         </div>
+        </>
+        ) : (
+          <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
+            <span>This tab is open in Chrome.</span>
+            <button type="button" className="ml-auto rounded border px-3 py-1.5 text-foreground hover:bg-muted focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+            <HelpTrigger contextKey="chat.browser" size="sm" className="size-8" />
+          </div>
+        )}
       </header>
 
       {unavailableMessage ? (
         <div className="m-auto max-w-lg p-8 text-center"><Globe2 className="mx-auto mb-3 size-10 text-muted-foreground" /><h2 className="font-medium">Browser host unavailable</h2><p className="mt-2 text-sm text-muted-foreground">{unavailableMessage}</p></div>
+      ) : activeTab && !managedTarget ? (
+        <div className="m-auto max-w-sm rounded-lg border bg-card p-6 text-center shadow-sm">
+          <Globe2 className="mx-auto mb-3 size-9 text-muted-foreground" />
+          <h2 className="font-medium">Browser tab open in Chrome</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Forge can use this tab while it stays in your Chrome window.</p>
+          <button type="button" className="mt-4 rounded border px-3 py-1.5 hover:bg-muted focus-visible:ring-2" onClick={() => void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+        </div>
       ) : activeTab ? (
         <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/40 p-2">
           <div className="relative min-w-0 flex-1">
@@ -260,6 +241,7 @@ function createLegacyLocalPort(client: ManagerWsClient | null, sessionAgentId: s
     capture: (tabId) => handle().captureScreenshot(tabId),
     startRecording: async (tabId) => { if (hostRef?.current) await hostRef.current.startRecording(tabId); else await client?.startBrowserRecording(sessionAgentId, tabId) },
     stopRecording: async (tabId, recordingId) => { if (hostRef?.current) await hostRef.current.stopRecording(tabId, recordingId); else await client?.stopBrowserRecording(sessionAgentId, tabId, recordingId) },
+    reveal: (tabId) => handle().reveal(tabId),
     popOut: hostRef ? () => handle().popOut() : undefined,
     dock: hostRef ? () => handle().dock() : undefined,
   }
@@ -268,5 +250,3 @@ function IconButton({ label, disabled, onClick, children }: { label: string; dis
 function TabStatus({ tab }: { tab: BrowserTabSnapshot }) { const label = tab.controller === 'agent' ? 'Agent controlling' : tab.controller === 'human' ? 'Human controlling' : 'Ready'; return <span className="ml-auto flex items-center gap-1 text-muted-foreground"><span className={cn('size-1.5 rounded-full', tab.loading ? 'bg-amber-400' : tab.error ? 'bg-destructive' : 'bg-emerald-500')} />{label}{tab.recording ? ' · Recording' : ''}</span> }
 function ScreenshotPreview({ dataUrl, onClose }: { dataUrl: string; onClose: () => void }) { return <aside aria-label="Browser screenshot" className="ml-2 flex w-80 shrink-0 flex-col rounded-lg border bg-background p-3 shadow"><div className="mb-2 flex items-center"><strong className="text-sm">Screenshot</strong><button type="button" aria-label="Close screenshot" className="ml-auto rounded p-1 hover:bg-muted" onClick={onClose}><X className="size-4" /></button></div><img src={dataUrl} alt="Captured browser viewport" className="min-h-0 flex-1 object-contain" /></aside> }
 function viewportSelectValue(setting: BrowserViewportSetting | undefined): string { return setting?.mode === 'preset' ? setting.presetId : setting?.mode ?? 'fill' }
-function readHostPreference(key: string): 'managed-electron' | 'external-chrome' { try { return sessionStorage.getItem(key) === 'external-chrome' ? 'external-chrome' : 'managed-electron' } catch { return 'managed-electron' } }
-function BrowserHostSelector({ selected, onSelect, externalAvailable }: { selected: 'managed-electron' | 'external-chrome'; onSelect(value: 'managed-electron' | 'external-chrome'): void; externalAvailable: boolean }) { return <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2"><label htmlFor="browser-host" className="text-xs font-medium text-muted-foreground">Browser host</label><select id="browser-host" aria-label="Browser host" className="h-8 rounded border bg-background px-2 text-sm" value={selected} onChange={(event) => onSelect(event.target.value as 'managed-electron' | 'external-chrome')}><option value="managed-electron">Managed Browser</option><option value="external-chrome" disabled={!externalAvailable}>External Chrome</option></select><span className="rounded-full border px-2 py-0.5 text-[10px]">External Chrome · Local Beta · off by default</span></div> }

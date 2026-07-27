@@ -251,7 +251,7 @@ export function BuilderSurface({
   )
   const browserCommandPort = useMemo<BrowserWorkspaceCommandPort>(() => {
     const host = (): BrowserAutomationHostHandle => {
-      if (!browserHostRef.current) throw new Error('Managed Browser controller is unavailable')
+      if (!browserHostRef.current) throw new Error('Browser controller is unavailable')
       return browserHostRef.current
     }
     return {
@@ -260,6 +260,7 @@ export function BuilderSurface({
       history: async (tabId, direction) => host().history(tabId, direction), reload: async (tabId, hard) => host().reload(tabId, hard),
       zoom: async (tabId, factor) => host().setZoom(tabId, factor), capture: (tabId) => host().captureScreenshot(tabId),
       startRecording: (tabId) => host().startRecording(tabId), stopRecording: (tabId, recordingId) => host().stopRecording(tabId, recordingId),
+      reveal: (tabId) => host().reveal(tabId),
       popOut: () => host().popOut(), dock: () => host().dock(),
     }
   }, [])

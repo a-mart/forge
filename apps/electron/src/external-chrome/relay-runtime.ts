@@ -770,6 +770,12 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     await this.checkpoints.put({ ...transaction, releasedAt: this.now() })
   }
 
+  /** Remembers a user-confirmed profile only for this Desktop process/session. */
+  confirmAutomaticInstance(sessionAgentId: string, profileId: string, extensionInstanceId: string): void {
+    if (!this.isInstanceReady(extensionInstanceId)) throw new Error('The selected Chrome profile is no longer ready.')
+    this.sessionAffinities.set(`${sessionAgentId}\0${profileId}`, extensionInstanceId)
+  }
+
   async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
     if (this.operationsQuiesced) return acquireFailure('runtime-not-ready', 'External Chrome is updating or reconnecting.', true)
     const affinityKey = `${input.sessionAgentId}\0${input.profileId}`
@@ -838,6 +844,29 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (result.leaseId !== checkpoint.leaseId || result.leaseEpoch !== checkpoint.leaseEpoch ||
       result.releasedTabIds.length !== 1 || result.releasedTabIds[0] !== decoded.tabId) throw new Error('exact tab release was not acknowledged')
     await this.checkpoints.remove(checkpoint.extensionInstanceId, checkpoint.leaseId, checkpoint.leaseEpoch)
+  }
+
+  async revealTarget(session: BrowserTargetSession, tabId: string): Promise<{ revealed: true; tabId: string }> {
+    const leases = await this.activeCheckpoints()
+    const checkpoint = findCheckpoint(leases, tabId, session.sessionAgentId, session.profileId)
+    const decoded = decodeTabId(tabId)
+    if (!checkpoint || !decoded || !this.isInstanceReady(checkpoint.extensionInstanceId)) throw new Error('The Chrome tab is no longer available.')
+    const requestId = `reveal-${randomUUID()}`
+    const response = await this.connection(checkpoint.extensionInstanceId).request('forge.browser.execute', {
+      protocolVersion: 1,
+      requestId,
+      leaseId: checkpoint.leaseId,
+      leaseEpoch: checkpoint.leaseEpoch,
+      tabId: decoded.tabId,
+      operation: 'evaluate',
+      input: { expression: '/* forge:reveal-authorized-tab:v1 */ undefined', awaitPromise: false, returnByValue: true },
+      deadlineAt: new Date(this.now() + 5_000).toISOString(),
+    })
+    if (response.requestId !== requestId || response.leaseId !== checkpoint.leaseId || response.leaseEpoch !== checkpoint.leaseEpoch ||
+      response.tabId !== decoded.tabId || response.operation !== 'evaluate' || !response.ok) {
+      throw new Error('Chrome did not reveal the authorized tab.')
+    }
+    return { revealed: true, tabId }
   }
 
   async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {

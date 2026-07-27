@@ -1,5 +1,5 @@
 /* Recording coordination follows T3 Code browserRecording.ts at 9a0a0716 (MIT). */
-import type { BrowserAutomationFailure, BrowserAutomationRequest, BrowserAutomationResponse, BrowserTabSnapshot } from '@forge/protocol'
+import type { BrowserAutomationFailure, BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostLifecycleRequest, BrowserHostLifecycleResponse, BrowserTabSnapshot } from '@forge/protocol'
 import type { IpcRenderer, IpcRendererEvent } from 'electron'
 import {
   BROWSER_IPC,
@@ -161,6 +161,9 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
     reload: (tabId: string, hard = false): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanReload, { tabId, hard }),
     setZoom: (tabId: string, factor: number): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanZoom, { tabId, factor }),
     invoke,
+    invokeLifecycle: (request: BrowserHostLifecycleRequest): Promise<BrowserHostLifecycleResponse> => invokeIpc(BROWSER_IPC.lifecycle, request),
+    reveal: (sessionAgentId: string, profileId: string, tabId: string): Promise<{ targetAffinity: 'managed-electron' | 'external-chrome'; revealed: boolean; tabId: string }> =>
+      invokeIpc(BROWSER_IPC.reveal, { sessionAgentId, profileId, tabId }),
     onStateChanged: (listener: (tab: BrowserTabSnapshot) => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, tab: BrowserTabSnapshot): void => listener(tab)
       ipcRenderer.on(BROWSER_IPC.stateChanged, handler)

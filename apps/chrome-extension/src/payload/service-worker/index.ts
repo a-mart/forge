@@ -20,6 +20,7 @@ const PROFILE_ALIAS_KEY = 'forge.externalChrome.profileAlias.v1'
 const HEARTBEAT_ALARM = 'forge.externalChrome.heartbeat.v2'
 const TRANSPORT_GRACE_ALARM = 'forge.externalChrome.transportGrace.v2'
 const REUSE_SENTINEL = '__forge_reuse_focused_tab__'
+const REVEAL_SENTINEL = '/* forge:reveal-authorized-tab:v1 */ undefined'
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
@@ -192,6 +193,14 @@ export class Runtime implements ServiceWorkerPayload {
   private async execute(params: ExternalChromeExecuteParams): Promise<unknown> {
     const authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
     if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { hostKind: 'external-chrome', connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority) })
+    if (params.operation === 'evaluate' && (params.input as { expression?: unknown }).expression === REVEAL_SENTINEL) {
+      const tab = await this.chrome.tabs.get(params.tabId)
+      const tabs = this.chrome.tabs as unknown as { update(tabId: number, properties: { active: boolean }): Promise<unknown> }
+      const windows = this.chrome.windows as unknown as { update(windowId: number, properties: { focused: boolean }): Promise<unknown> }
+      await tabs.update(params.tabId, { active: true })
+      if (tab.windowId !== undefined) await windows.update(tab.windowId, { focused: true })
+      return this.executeResponse(params, true, { tabId: String(params.tabId), value: null, serializedBytes: 4 })
+    }
     if (!['navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(params.operation)) return this.executeFailure(params, 'unsupported-operation', `External Chrome does not support ${params.operation}.`, false)
     return this.operations.runExclusive(params.tabId, async () => {
       let resolveTracked!: () => void

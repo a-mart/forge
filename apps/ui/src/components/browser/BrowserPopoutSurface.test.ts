@@ -34,7 +34,7 @@ const connectedHost: BrowserHostConnectionSnapshot = {
   connectedAt: now,
 }
 const emptySnapshot: BrowserSessionSnapshot = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sessionAgentId: 'session-1',
   profileId: 'profile-1',
   hostingState: 'hosted',
@@ -80,7 +80,7 @@ describe('BrowserPopoutSurface', () => {
     const workspace = bridge(projection)
     window.electronBridge = { windowRole: 'managed-browser-popout', platform: 'darwin', browserWorkspace: workspace }
     await act(async () => { root = createRoot(container); root.render(createElement(BrowserPopoutSurface)); await Promise.resolve(); await Promise.resolve() })
-    expect(container.querySelector('[aria-label="Managed Browser workspace"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Browser workspace"]')).not.toBeNull()
     expect(workspace.sendCommand).toHaveBeenCalledTimes(1)
     expect(workspace.sendCommand).toHaveBeenCalledWith(expect.objectContaining({
       workspaceEpoch: 3,
