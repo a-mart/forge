@@ -1,7 +1,8 @@
-import type { IncomingMessage } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SECURE_CONTROL_HEADER,
+  applyTerminalCorsHeaders,
   validateSecureBuilderControlCapability,
   validateSecureBuilderControlOrigin,
   validateTerminalHttpOrigin,
@@ -121,6 +122,21 @@ describe('terminal-access-policy', () => {
     )
 
     expect(result).toEqual({ ok: true, allowedOrigin: null })
+  })
+
+  it('allows credentialed browser fetches for validated terminal origins', () => {
+    const request = createRequest({ origin: 'http://localhost:47188' })
+    const headers = new Map<string, string>()
+    const response = {
+      setHeader: (name: string, value: string) => headers.set(name.toLowerCase(), value),
+    } as unknown as ServerResponse
+
+    applyTerminalCorsHeaders(request, response, 'GET, POST, OPTIONS', 'http://localhost:47188')
+
+    expect(headers.get('access-control-allow-origin')).toBe('http://localhost:47188')
+    expect(headers.get('access-control-allow-credentials')).toBe('true')
+    expect(headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS')
+    expect(headers.get('access-control-allow-headers')).toBe('content-type')
   })
 
   it('allows same-origin HTTP requests', () => {
