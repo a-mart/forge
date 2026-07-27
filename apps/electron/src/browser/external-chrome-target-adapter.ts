@@ -1,5 +1,6 @@
 import {
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  isExternalChromeDebuggerAttachConflictDetails,
   type BrowserAutomationFailure,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
@@ -53,23 +54,38 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   }
 
   async executeWithAuthority(input: { authority: ExternalBrowserTargetAuthority; request: BrowserAutomationRequest }): Promise<BrowserTargetExecution> {
-    const response = await this.execute(input.request)
+    const response = await this.executeTransported(input.request)
+    if (response.ok) return { response }
+
+    const evidence = debuggerAttachConflictEvidence(response.error)
+    if (evidence === 'malformed') {
+      return {
+        response: {
+          ...response,
+          error: {
+            code: 'malformed-response',
+            message: 'External Chrome returned malformed execution safety evidence.',
+            retryable: false,
+          },
+        },
+        failure: { phase: 'execution', mutationState: mutationDefault(input.request.operation) },
+      }
+    }
+    if (evidence === 'proven') {
+      const { details: _privateEvidence, ...error } = response.error
+      void _privateEvidence
+      return {
+        response: { ...response, error },
+        failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+      }
+    }
     return {
       response,
-      ...(!response.ok ? { failure: response.error.code === 'debugger-unavailable'
-        ? {
-            // The extension emits debugger-unavailable only before it dispatches the
-            // requested page operation. A DevTools/foreign-debugger race is therefore
-            // safe for the automatic host's one dedicated-target retry.
-            phase: 'acquisition' as const,
-            mutationState: 'not-started' as const,
-            fallbackReason: 'foreign-debugger' as const,
-          }
-        : {
-            phase: 'execution' as const,
-            mutationState: ['status', 'snapshot', 'waitFor'].includes(input.request.operation) ? 'not-started' as const : 'possible' as const,
-            ...(response.error.code === 'control-interrupted' ? { fallbackReason: 'authority-conflict' as const } : {}),
-          } } : {}),
+      failure: {
+        phase: 'execution',
+        mutationState: mutationDefault(input.request.operation),
+        ...(response.error.code === 'control-interrupted' ? { fallbackReason: 'authority-conflict' as const } : {}),
+      },
     }
   }
 
@@ -83,6 +99,26 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   }
 
   async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    const response = await this.executeTransported(request)
+    if (response.ok) return response
+    const evidence = debuggerAttachConflictEvidence(response.error)
+    if (evidence === 'absent') return response
+    if (evidence === 'malformed') {
+      return {
+        ...response,
+        error: {
+          code: 'malformed-response',
+          message: 'External Chrome returned malformed execution safety evidence.',
+          retryable: false,
+        },
+      }
+    }
+    const { details: _privateEvidence, ...error } = response.error
+    void _privateEvidence
+    return { ...response, error }
+  }
+
+  private async executeTransported(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
     const started = this.now()
     if (!(this.capabilities.supportedOperations as readonly string[]).includes(request.operation)) {
       return this.failure(request, { code: 'unsupported-operation', message: `External Chrome does not support ${request.operation}.`, retryable: false }, started)
@@ -105,4 +141,18 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   private failure(request: BrowserAutomationRequest, error: BrowserAutomationFailure, started: number): BrowserAutomationResponse {
     return { requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false, error, elapsedMs: Math.max(0, this.now() - started) }
   }
+}
+
+function mutationDefault(operation: BrowserAutomationRequest['operation']): 'not-started' | 'possible' {
+  return operation === 'status' || operation === 'snapshot' || operation === 'waitFor' ? 'not-started' : 'possible'
+}
+
+function debuggerAttachConflictEvidence(error: BrowserAutomationFailure): 'absent' | 'proven' | 'malformed' {
+  const details = error.details
+  const hasReservedField = details !== undefined && ['failurePhase', 'mutationState', 'fallbackReason']
+    .some((key) => Object.prototype.hasOwnProperty.call(details, key))
+  if (!hasReservedField) return 'absent'
+  return error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(details)
+    ? 'proven'
+    : 'malformed'
 }

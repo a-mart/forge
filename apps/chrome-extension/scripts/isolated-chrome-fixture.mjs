@@ -215,7 +215,9 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const conflict=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-conflict',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'click',input:{locator:'role=button[name="Increment"]',timeoutMs:5000},deadlineAt:new Date(Date.now()+10000).toISOString()});
         await chrome.debugger.detach({tabId});
         const [counterAfterConflict]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>window.__state?.clicks});
-        const conflictPreMutation=conflict.ok===false&&conflict.error?.code==='debugger-unavailable'&&counterAfterConflict?.result===1;
+        const conflictDetails=conflict.error?.details;
+        const exactConflictEvidence=conflictDetails&&Object.keys(conflictDetails).length===3&&conflictDetails.failurePhase==='debugger-attach'&&conflictDetails.mutationState==='not-started'&&conflictDetails.fallbackReason==='foreign-debugger';
+        const conflictPreMutation=conflict.ok===false&&conflict.error?.code==='debugger-unavailable'&&exactConflictEvidence&&counterAfterConflict?.result===1;
         const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'fixture-complete'});
         const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:2,reuseFocused:false,url:${JSON.stringify(fixtureUrl)}});
         const dedicatedTab=await chrome.tabs.get(dedicated.tab.tabId);
@@ -228,7 +230,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           acquisition:{acquired:acquired.created===false&&focused.eligible===true,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.tabId===String(tabId)},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
-          debuggerConflict:{preMutation:conflictPreMutation},
+          debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
           dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},
           released:released.releasedTabIds.length===1&&released.releasedTabIds[0]===tabId,
           debuggerDetached:await detached(tabId)
@@ -272,7 +274,7 @@ try {
   if (state.acquisition?.acquired !== true || state.debuggerDetached !== true || state.released !== true ||
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
     state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
-    state.debuggerConflict?.preMutation !== true ||
+    state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {
     throw new Error(`isolated automatic runtime proof failed: ${JSON.stringify(state)}`)
   }

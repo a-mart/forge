@@ -135,6 +135,24 @@ describe('AutomaticBrowserHost', () => {
     expect(managed.requests).toHaveLength(0)
   })
 
+  it('does not retry a mutating debugger-unavailable failure without explicit safety metadata', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const original = request('click', { x: 1, y: 1, timeoutMs: 100 }, null)
+    external.executionResults.push({
+      response: failure({ ...original, tabId: 'chrome-tab-1' } as BrowserAutomationRequest, 'debugger-unavailable'),
+    })
+    const host = createHost(managed, external, vi.fn(async () => 'must-not-run'))
+
+    await expect(host.perform(original)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'debugger-unavailable', details: { mutationState: 'possible', noReplay: true } },
+    })
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.executions).toHaveLength(1)
+    expect(managed.requests).toHaveLength(0)
+  })
+
   it('falls back to Managed only while mutation is proven not started', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()

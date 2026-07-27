@@ -302,6 +302,30 @@ interface ExternalChromeExecuteResultRouting<Operation extends BrowserAutomation
   operation: Operation
 }
 
+export const EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS = {
+  failurePhase: 'debugger-attach',
+  mutationState: 'not-started',
+  fallbackReason: 'foreign-debugger',
+} as const
+
+/**
+ * Extension-private proof that Chrome rejected the initial debugger attach because another
+ * debugger already owned the tab. The Desktop adapter consumes this exact object and never
+ * forwards these host-specific fields to browser callers.
+ */
+export type ExternalChromeDebuggerAttachConflictDetails = typeof EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS
+
+export function isExternalChromeDebuggerAttachConflictDetails(
+  value: unknown,
+): value is ExternalChromeDebuggerAttachConflictDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).length === 3 &&
+    details.failurePhase === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.failurePhase &&
+    details.mutationState === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.mutationState &&
+    details.fallbackReason === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.fallbackReason
+}
+
 export type ExternalChromeExecuteResult = {
   [Operation in BrowserAutomationOperation]:
     | (ExternalChromeExecuteResultRouting<Operation> & {
@@ -750,6 +774,11 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
   if (error.details !== undefined) {
     const rawDetails = object(error.details, `${path}.details`)
     if (Object.keys(rawDetails).length > EXTERNAL_CHROME_MAX_OBJECT_PROPERTIES) fail('invalid-result', `${path}.details exceeds property bound`)
+    const hasAttachEvidenceField = ['failurePhase', 'mutationState', 'fallbackReason']
+      .some((key) => Object.prototype.hasOwnProperty.call(rawDetails, key))
+    if (hasAttachEvidenceField && (error.code !== 'debugger-unavailable' || !isExternalChromeDebuggerAttachConflictDetails(rawDetails))) {
+      fail('invalid-result', `${path}.details has malformed debugger attach conflict evidence`)
+    }
     details = Object.fromEntries(Object.entries(rawDetails).map(([key, entry]) => {
       boundedString(key, `${path}.details key`, EXTERNAL_CHROME_MAX_LABEL_LENGTH)
       if (entry === null || typeof entry === 'boolean') return [key, entry]

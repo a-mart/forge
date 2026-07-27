@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BROWSER_AUTOMATION_OPERATIONS,
+  EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
   EXTERNAL_CHROME_EXTENSION_ID,
   EXTERNAL_CHROME_EXTENSION_ORIGIN,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
@@ -146,6 +147,32 @@ describe('External Chrome automatic transport contract', () => {
     delete obsolete.result.result.tab.targetAffinity
     obsolete.result.result.tab.unexpectedAffinity = 'external-chrome'
     expect(() => parse(obsolete, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+  })
+
+  it('accepts only exact debugger attach-conflict safety evidence', () => {
+    const response = {
+      jsonrpc: '2.0', id: 'execute-conflict',
+      result: {
+        ...lease, requestId: 'request-conflict', tabId: 17, operation: 'click', ok: false,
+        error: {
+          code: 'debugger-unavailable', message: 'Another debugger is already attached', retryable: true,
+          details: EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+        },
+      },
+    }
+    expect(parse(response, 'forge.browser.execute')).toEqual(response)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, details: { ...response.result.error.details, mutationState: 'possible' } } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, details: { ...response.result.error.details, unexpected: true } } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, code: 'execution-failed' } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
   })
 
   it('round-trips exact authority notifications without display or grouping fields', () => {

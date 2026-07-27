@@ -3,9 +3,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { BrowserAutomationRequest } from '@forge/protocol'
+import {
+  EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  type BrowserAutomationFailure,
+  type BrowserAutomationRequest,
+} from '@forge/protocol'
 import { AuthenticatedRelayClient } from '../../../../native-messaging-host/src/relay-client.js'
 import { NodeSocketConnector } from '../../../../native-messaging-host/src/transport.js'
+import { ExternalChromeTargetAdapter } from '../../browser/external-chrome-target-adapter.js'
 import { ExternalChromeRelayRuntime } from '../relay-runtime.js'
 
 const roots: string[] = []
@@ -93,6 +98,7 @@ async function fakeExtensionLoop(
   requests: Array<{ method: string; params: Record<string, unknown> }> = [],
   instanceId = 'instance_profile_a',
   focusedEligible = true,
+  executeFailure?: BrowserAutomationFailure,
 ): Promise<void> {
   const authorityTabs = new Map<string, number[]>()
   while (true) {
@@ -121,6 +127,13 @@ async function fakeExtensionLoop(
     } else if (message.method === 'forge.browser.execute') {
       const now = new Date(0).toISOString()
       const operation = String(params.operation)
+      if (executeFailure !== undefined) {
+        await client.send({ jsonrpc: '2.0', id: message.id, result: {
+          protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, requestId: params.requestId,
+          tabId: params.tabId, operation, ok: false, error: executeFailure,
+        } })
+        continue
+      }
       const result = operation === 'navigate' ? {
         readiness: 'load', tab: {
           targetAffinity: 'external-chrome', tabId: '41', sessionAgentId: 'session-a', profileId: 'instance_profile_a',
@@ -181,6 +194,54 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate()
     client.close()
     await loop
+  })
+
+  it('passes exact attach-conflict evidence through the relay for private adapter consumption', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client, [], 'instance_profile_a', true, {
+      code: 'debugger-unavailable', message: 'Another debugger is already attached', retryable: true,
+      details: EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+    })
+    const authority = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'click', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 30,
+    })
+    if (!authority.ok) throw new Error('fixture acquisition failed')
+    const adapter = new ExternalChromeTargetAdapter(runtime)
+
+    const execution = await adapter.executeWithAuthority({
+      authority: authority.authority,
+      request: request('click', authority.authority.tabId, { x: 1, y: 1, timeoutMs: 1_000 }),
+    })
+    expect(execution).toMatchObject({
+      response: { ok: false, error: { code: 'debugger-unavailable' } },
+      failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+    })
+    expect(execution.response.ok || execution.response.error.details).toBeUndefined()
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('closes malformed attach-conflict evidence at the relay boundary', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client, [], 'instance_profile_a', true, {
+      code: 'debugger-unavailable', message: 'Another debugger is already attached', retryable: true,
+      details: { ...EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS, mutationState: 'possible' },
+    })
+    const authority = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'click', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 31,
+    })
+    if (!authority.ok) throw new Error('fixture acquisition failed')
+    const adapter = new ExternalChromeTargetAdapter(runtime)
+
+    await expect(adapter.executeWithAuthority({
+      authority: authority.authority,
+      request: request('click', authority.authority.tabId, { x: 1, y: 1, timeoutMs: 1_000 }),
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'host-disconnected' } },
+      failure: { phase: 'execution', mutationState: 'possible' },
+    })
+    runtime.deactivate(); client.close(); await loop
   })
 
   it('acquires one automatic tab authority and releases that exact owner epoch', async () => {

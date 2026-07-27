@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
   type BrowserAutomationOperation,
   type BrowserAutomationRequest,
@@ -78,7 +79,29 @@ describe('BrowserTargetAdapter routing', () => {
     expect(transport.requests).toHaveLength(0)
   })
 
-  it('classifies a real debugger attach conflict as pre-mutation dedicated-target fallback authority', async () => {
+  it('classifies only exact debugger attach-conflict evidence as pre-mutation fallback authority', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'debugger-unavailable', message: 'Another debugger is already attached', retryable: true,
+        details: EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+      },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    const execution = await adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })
+    expect(execution).toMatchObject({
+      response: { ok: false, error: { code: 'debugger-unavailable' } },
+      failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+    })
+    expect(execution.response.ok || execution.response.error.details).toBeUndefined()
+  })
+
+  it('does not treat the debugger-unavailable code alone as replay-safe for a click', async () => {
     const transport = new FakeExternalChromeTransport()
     transport.execute = async () => ({
       ok: false,
@@ -91,8 +114,45 @@ describe('BrowserTargetAdapter routing', () => {
       request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
     })).resolves.toMatchObject({
       response: { ok: false, error: { code: 'debugger-unavailable' } },
-      failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+      failure: { phase: 'execution', mutationState: 'possible' },
     })
+  })
+
+  it('classifies mutating execution failures as possible while read-only failures remain replay-safe', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({ ok: false, error: { code: 'execution-failed', message: 'failed', retryable: true } })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })).resolves.toMatchObject({ failure: { phase: 'execution', mutationState: 'possible' } })
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('snapshot', {}, 'external-tab-1'),
+    })).resolves.toMatchObject({ failure: { phase: 'execution', mutationState: 'not-started' } })
+  })
+
+  it('fails malformed attach-conflict evidence closed without exposing it', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'debugger-unavailable', message: 'failed', retryable: true,
+        details: { ...EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS, mutationState: 'possible' },
+      },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    const execution = await adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })
+    expect(execution).toMatchObject({
+      response: { ok: false, error: { code: 'malformed-response', retryable: false } },
+      failure: { phase: 'execution', mutationState: 'possible' },
+    })
+    expect(execution.response.ok || execution.response.error.details).toBeUndefined()
   })
 
   it('enforces the fake transport response bound', async () => {

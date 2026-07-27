@@ -1,11 +1,12 @@
-import type {
-  BrowserAutomationResultByOperation,
-  BrowserTabSnapshot,
-  ExternalChromeExecuteParams,
-  ExternalChromeJsonRpcMessage,
-  ExternalChromeRequest,
+import {
+  EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  type BrowserAutomationResultByOperation,
+  type BrowserTabSnapshot,
+  type ExternalChromeExecuteParams,
+  type ExternalChromeJsonRpcMessage,
+  type ExternalChromeRequest,
 } from '@forge/protocol'
-import { DebuggerController } from '../../runtime/debugger-controller.js'
+import { DebuggerAttachConflictError, DebuggerController } from '../../runtime/debugger-controller.js'
 import { installedChrome, type ChromeRuntimePort, type ChromeRuntimeSender, type ChromeTab } from '../../runtime/chrome-api.js'
 import { PAYLOAD_VERSION } from '../../runtime/identity.js'
 import { LeaseError, LeaseManager, type TabAuthorityRecord } from '../../runtime/lease-manager.js'
@@ -210,7 +211,14 @@ export class Runtime implements ServiceWorkerPayload {
       let syntheticOperationId: string | null = null
       try {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= Date.now()) return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
-        await this.debuggers.attach(params.tabId)
+        try {
+          await this.debuggers.attach(params.tabId)
+        } catch (error) {
+          if (error instanceof DebuggerAttachConflictError) {
+            return this.executeFailure(params, 'debugger-unavailable', error.message, true, EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS)
+          }
+          throw error
+        }
         await this.chrome.scripting.executeScript({ target: { tabId: params.tabId, allFrames: true }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
         controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
         const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
@@ -239,7 +247,10 @@ export class Runtime implements ServiceWorkerPayload {
         })
         return outcome.ok ? this.executeResponse(params, true, outcome.result) : this.executeFailure(params, outcome.error.code, outcome.error.message, outcome.error.retryable, outcome.error.details)
       } catch (error) {
-        return this.executeFailure(params, error instanceof LeaseError ? error.code : 'debugger-unavailable', error instanceof Error ? error.message : 'Chrome operation failed', true)
+        const code = error instanceof LeaseError
+          ? error.code
+          : params.operation === 'evaluate' ? 'evaluation-failed' : 'execution-failed'
+        return this.executeFailure(params, code, error instanceof Error ? error.message : 'Chrome operation failed', true)
       } finally {
         if (syntheticOperationId !== null && controlEpoch !== null) this.signalSyntheticEnd(params.tabId, syntheticOperationId, controlEpoch)
         if (controlEpoch !== null) await this.authorities.finishAgentControl(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch)
