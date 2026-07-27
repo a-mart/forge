@@ -8,9 +8,8 @@ import {
   BROWSER_AUTOMATION_MAX_TIMEOUT_MS,
   BROWSER_AUTOMATION_MAX_URL_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
-  BROWSER_HOST_KINDS,
   BROWSER_HOST_PROTOCOL_VERSION,
-  DEFAULT_BROWSER_HOST_KIND,
+  BROWSER_TARGET_AFFINITIES,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_PRESETS,
   BrowserAutomationContractError,
@@ -23,7 +22,6 @@ import {
   type BrowserSessionSnapshot,
   isBrowserAutomationOperation,
   parseBrowserAutomationInput,
-  resolveBrowserHostKind,
   resolveBrowserViewportPreset,
 } from '../browser-automation.js'
 import { getWsRequestContract } from '../ws-request-contract.js'
@@ -73,13 +71,8 @@ describe('browser automation operation contract', () => {
 
   it('exposes protocol v2 and rejects caller-selected hosts and tunneled lifecycle fields', () => {
     expect(BROWSER_HOST_PROTOCOL_VERSION).toBe(2)
-    expect(BROWSER_HOST_KINDS).toEqual(['managed-electron', 'external-chrome'])
-    expect(DEFAULT_BROWSER_HOST_KIND).toBe('managed-electron')
-    expect(resolveBrowserHostKind(undefined)).toBe('managed-electron')
+    expect(BROWSER_TARGET_AFFINITIES).toEqual(['managed-electron', 'external-chrome'])
     expect(parseBrowserAutomationInput('status', {})).toEqual({})
-    expect(() => parseBrowserAutomationInput('status', { hostKind: 'external-chrome' })).toThrow(BrowserAutomationContractError)
-    expect(() => parseBrowserAutomationInput('status', { externalChromeLifecycleRelease: {} })).toThrow(BrowserAutomationContractError)
-    expect(() => parseBrowserAutomationInput('status', { externalChromeTurnDisposition: {} })).toThrow(BrowserAutomationContractError)
   })
 
   it('applies T3-compatible defaults', () => {
@@ -301,7 +294,7 @@ describe('browser host, session, and routing wire contract', () => {
     ] satisfies ClientCommand[]
     const events = [
       { type: 'browser_host_connected', host: { connected: true, hostId: host.hostId, hostGeneration: 4, focused: true, capabilities: host.capabilities, connectedAt: host.registeredAt } },
-      { type: 'browser_host_state_snapshot', hostId: host.hostId, hostGeneration: 4, sessions: [session] },
+      { type: 'browser_host_hydration_chunk', requestId: 'register-1', hostId: host.hostId, hostGeneration: 4, chunkIndex: 0, chunkCount: 1, payloadBase64: 'W10=' },
       { type: 'browser_host_state_report_result', requestId: 'state-1', result: { hostId: host.hostId, hostGeneration: 4, status: 'processed', sessions: [{ sessionAgentId: session.sessionAgentId, profileId: session.profileId, status: 'accepted', snapshot: session }] } },
       { type: 'browser_automation_request', request: routedRequest },
       { type: 'browser_session_snapshot', snapshot: session },

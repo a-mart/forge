@@ -61,8 +61,8 @@ describe("Automatic Browser Host service", () => {
     const opening = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: true });
     await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]).toMatchObject({ operation: "open", tabId: null });
-    accept(instance, { ...routing(requests[1]!), ok: false, error: { code: "attachment-required", message: "old acquisition failed", retryable: true } });
-    await expect(opening).resolves.toMatchObject({ ok: false, error: { code: "attachment-required" } });
+    accept(instance, { ...routing(requests[1]!), ok: false, error: { code: "target-not-found", message: "old acquisition failed", retryable: true } });
+    await expect(opening).resolves.toMatchObject({ ok: false, error: { code: "target-not-found" } });
 
     const snapshot = instance.invoke("manager-1", "profile-1", "snapshot", {});
     await vi.waitFor(() => expect(requests).toHaveLength(3));

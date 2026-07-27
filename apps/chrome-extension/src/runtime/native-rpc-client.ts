@@ -34,7 +34,6 @@ export interface NativeRpcClientOptions {
   extensionInstanceId: string
   chromeVersion: string
   payloadSha256?: string
-  profileAlias?: string
   scheduler?: NativeRpcScheduler
   randomId?: () => string
   onConnected?: (welcome: ExternalChromeWelcomeResult) => void
@@ -138,7 +137,6 @@ export class NativeRpcClient {
       payloadSha256: this.options.payloadSha256 ?? '0'.repeat(64),
       extensionId: EXTERNAL_CHROME_EXTENSION_ID,
       extensionInstanceId: this.options.extensionInstanceId,
-      ...(this.options.profileAlias ? { profileAlias: this.options.profileAlias } : {}),
       chromeVersion: this.options.chromeVersion,
       methods: [...EXTERNAL_CHROME_METHODS],
       maxMessageBytes: EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
@@ -155,7 +153,6 @@ export class NativeRpcClient {
         downloadOpen: false,
         oopif: true,
         humanInterruption: true,
-        groups: false,
       },
     }
   }

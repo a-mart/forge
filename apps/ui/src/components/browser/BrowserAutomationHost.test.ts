@@ -57,7 +57,6 @@ describe('BrowserAutomationHost', () => {
   it('registers one protocol-v2 automatic host', () => {
     render()
     expect(registered?.capabilities.protocolVersions).toEqual({ minimum: 2, maximum: 2 })
-    expect(registered?.capabilities).not.toHaveProperty('hostKind')
     expect(registered?.capabilities.supportedOperations).toContain('recordingStop')
   })
 

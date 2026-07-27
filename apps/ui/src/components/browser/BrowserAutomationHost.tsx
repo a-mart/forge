@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { BROWSER_AUTOMATION_OPERATIONS, resolveBrowserTargetAffinity } from '@forge/protocol'
+import { BROWSER_AUTOMATION_OPERATIONS } from '@forge/protocol'
 import type {
   BrowserAutomationErrorCode,
   BrowserAutomationRequest,
@@ -250,7 +250,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     useEffect(() => {
       if (!bridge || !client) return
       return bridge.onStateChanged((tab) => {
-        if (resolveBrowserTargetAffinity(tab) !== 'managed-electron') return
+        if (tab.targetAffinity !== 'managed-electron') return
         const session = canonicalSessions.current.get(tab.sessionAgentId)
           ?? managedSessionProjection(stateRef.current.browserSessions[tab.sessionAgentId])
         if (!session || session.hostingState !== 'hosted' || !session.tabs.some((candidate) => candidate.tabId === tab.tabId)) return
@@ -461,7 +461,7 @@ const MAX_HOST_REPORT_CONFLICT_RETRIES = 3
 
 function managedSessionProjection(session: BrowserSessionSnapshot | null | undefined): BrowserSessionSnapshot | null {
   if (!session) return null
-  const tabs = session.tabs.filter((tab) => resolveBrowserTargetAffinity(tab) === 'managed-electron')
+  const tabs = session.tabs.filter((tab) => tab.targetAffinity === 'managed-electron')
   const tabIds = new Set(tabs.map((tab) => tab.tabId))
   return {
     ...session,

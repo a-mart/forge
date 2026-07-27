@@ -36,7 +36,6 @@ describe("BrowserHostBroker protocol v2", () => {
     broker.register({ connectionId: "socket", registration: registration(), sendRequest: (request) => sent.push(request) });
     const pending = broker.request({ sessionAgentId: "manager", profileId: "profile", tabId: null, operation: "snapshot", input: {} });
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]).not.toHaveProperty("hostKind");
     expect(sent[0]).toMatchObject({ tabId: null, operation: "snapshot", hostGeneration: 1 });
     expect(broker.acceptResponse("wrong", response(sent[0]!))).toBe("wrong-connection");
     expect(broker.acceptResponse("socket", response(sent[0]!))).toBe("accepted");

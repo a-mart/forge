@@ -4,7 +4,7 @@ import { withSessionProfileConfirmation, type ProfileConfirmingChromeTransport }
 
 const ambiguous: ExternalBrowserAcquireResult = {
   ok: false,
-  error: { code: 'attachment-required', message: 'Choose once.', retryable: false },
+  error: { code: 'target-not-found', message: 'Choose once.', retryable: false },
   metadata: { phase: 'discovery', mutationState: 'not-started', fallbackReason: 'ambiguous-instance' },
 }
 const acquired: ExternalBrowserAcquireResult = { ok: true, authority: { ownerEpoch: 1, tabId: 'ext.profile-b.7' } }
@@ -17,8 +17,8 @@ function fixture(results: ExternalBrowserAcquireResult[]) {
     maxResponseBytes: 1024,
     execute: vi.fn(), acquireTarget, confirmAutomaticInstance,
     inventory: () => [
-      { extensionInstanceId: 'profile-a', profileAlias: 'Work', chromeVersion: '1', shellAbi: 1, payloadVersion: '1', methods: [], supportedOperations: [], features: {}, connectedAt: '' },
-      { extensionInstanceId: 'profile-b', profileAlias: 'Personal', chromeVersion: '1', shellAbi: 1, payloadVersion: '1', methods: [], supportedOperations: [], features: {}, connectedAt: '' },
+      { extensionInstanceId: 'profile-a', chromeVersion: '1', shellAbi: 1, payloadVersion: '1', methods: [], supportedOperations: [], features: {}, connectedAt: '' },
+      { extensionInstanceId: 'profile-b', chromeVersion: '1', shellAbi: 1, payloadVersion: '1', methods: [], supportedOperations: [], features: {}, connectedAt: '' },
     ],
   } as unknown as ProfileConfirmingChromeTransport
   return { transport, acquireTarget, confirmAutomaticInstance }
@@ -30,7 +30,7 @@ describe('session-only Chrome profile confirmation', () => {
     const choose = vi.fn(async () => 1)
     const transport = withSessionProfileConfirmation(value.transport, choose)
     await expect(transport.acquireTarget!(input)).resolves.toEqual(acquired)
-    expect(choose).toHaveBeenCalledWith(['Work', 'Personal'])
+    expect(choose).toHaveBeenCalledWith(['Chrome profile 1', 'Chrome profile 2'])
     expect(value.confirmAutomaticInstance).toHaveBeenCalledWith('session-1', 'profile-1', 'profile-b')
     expect(value.acquireTarget).toHaveBeenCalledTimes(2)
   })

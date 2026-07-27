@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { LeaseManager } from '../src/runtime/lease-manager.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
 
-const tab = (id: number, active = false) => ({ id, windowId: 1, groupId: -1, active, title: `Tab ${id}`, url: `https://tab-${id}.invalid/` })
+const tab = (id: number, active = false) => ({ id, windowId: 1, active, title: `Tab ${id}`, url: `https://tab-${id}.invalid/` })
 
 describe('per-tab compare-and-set authority', () => {
   it('allows independent owners on different tabs and rejects a conflicting owner on the same tab', async () => {
@@ -60,7 +60,7 @@ describe('per-tab compare-and-set authority', () => {
     const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
     const manager = new LeaseManager(chrome, 'payload')
     await expect(manager.allocateAutomaticTab({ reuseFocused: true })).resolves.toMatchObject({
-      tab: { id: 2, groupId: -1, active: true, url: 'https://forge.invalid/' }, createdByForge: true,
+      tab: { id: 2, active: true, url: 'https://forge.invalid/' }, createdByForge: true,
     })
   })
 })

@@ -52,7 +52,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
         return structuredClone(tab)
       },
       create: async (properties) => {
-        const tab = { id: nextTabId++, windowId: 1, groupId: -1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created' }
+        const tab = { id: nextTabId++, windowId: 1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created' }
         tabs.push(tab)
         return structuredClone(tab)
       },

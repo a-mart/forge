@@ -24,25 +24,7 @@ export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[
 
 export const BROWSER_TARGET_AFFINITIES = ['managed-electron', 'external-chrome'] as const
 export type BrowserTargetAffinity = (typeof BROWSER_TARGET_AFFINITIES)[number]
-/** @deprecated Browser implementations are target affinities, not separately registered hosts. */
-export const BROWSER_HOST_KINDS = BROWSER_TARGET_AFFINITIES
-/** @deprecated Use BrowserTargetAffinity. */
-export type BrowserHostKind = BrowserTargetAffinity
-/** @deprecated Automatic Browser Host policy chooses an affinity. */
-export const DEFAULT_BROWSER_HOST_KIND: BrowserTargetAffinity = 'managed-electron'
 export const BROWSER_HOST_PROTOCOL_VERSION = 2
-
-export function isBrowserHostKind(value: unknown): value is BrowserHostKind {
-  return typeof value === 'string' && (BROWSER_HOST_KINDS as readonly string[]).includes(value)
-}
-
-export function resolveBrowserHostKind(value: BrowserHostKind | null | undefined): BrowserHostKind {
-  return value ?? DEFAULT_BROWSER_HOST_KIND
-}
-
-export function resolveBrowserTargetAffinity(tab: Pick<BrowserTabSnapshot, 'targetAffinity' | 'hostKind'>): BrowserTargetAffinity {
-  return tab.targetAffinity ?? tab.hostKind ?? DEFAULT_BROWSER_HOST_KIND
-}
 
 export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
   'status',
@@ -139,8 +121,6 @@ export type BrowserSessionHostingState = 'hosted' | 'unhosted' | 'removed'
 export interface BrowserTabSnapshot {
   /** Desktop-private implementation affinity. Callers may observe but never choose it. */
   targetAffinity: BrowserTargetAffinity
-  /** @deprecated v1 persisted/read-only alias. v2 writers omit it. */
-  hostKind?: BrowserHostKind
   tabId: string
   sessionAgentId: string
   profileId: string
@@ -293,18 +273,6 @@ export interface BrowserHostCapabilities {
     chrome?: string
     extension?: string
   }
-  /** @deprecated Read runtimeVersions.electron. */
-  electronVersion?: string
-  /** @deprecated Read runtimeVersions.chromium. */
-  chromiumVersion?: string
-  /** @deprecated Read runtimeVersions.playwright. */
-  playwrightVersion?: string
-  /** @deprecated Read features.capturePage. */
-  supportsSandboxedWebviews?: boolean
-  /** @deprecated Read features.capturePage. */
-  supportsCapturePage?: boolean
-  /** @deprecated Read features.recording. */
-  supportsRecording?: boolean
 }
 
 export interface BrowserHostRegistration {
@@ -350,7 +318,6 @@ export type BrowserAutomationErrorCode =
   | 'recording-not-found'
   | 'request-cancelled'
   | 'execution-failed'
-  | 'attachment-required'
   | 'lease-conflict'
   | 'lease-lost'
   | 'restricted-target'
@@ -839,14 +806,6 @@ export interface BrowserHostHydrationChunkEvent {
   payloadBase64: string
 }
 
-/** Legacy unchunked event retained for wire compatibility with older peers. */
-export interface BrowserHostStateSnapshotEvent {
-  type: 'browser_host_state_snapshot'
-  hostId: string
-  hostGeneration: number
-  sessions: BrowserSessionSnapshot[]
-}
-
 export interface BrowserHostStateReportResultEvent {
   type: 'browser_host_state_report_result'
   requestId: string
@@ -906,7 +865,6 @@ export type BrowserRecordingCommandSucceededEvent =
 export type BrowserServerEvent =
   | BrowserHostConnectedEvent
   | BrowserHostHydrationChunkEvent
-  | BrowserHostStateSnapshotEvent
   | BrowserHostStateReportResultEvent
   | BrowserAutomationRequestEvent
   | BrowserHostLifecycleRequestEvent

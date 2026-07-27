@@ -22,14 +22,11 @@ const connectedHost: BrowserHostConnectionSnapshot = {
   hostGeneration: 4,
   focused: true,
   capabilities: {
+    protocolVersions: { minimum: 2, maximum: 2 },
     supportedOperations: ['status'],
-    electronVersion: '37',
-    chromiumVersion: '138',
-    playwrightVersion: '1.60.0',
     maxResponseBytes: 1024,
-    supportsSandboxedWebviews: true,
-    supportsCapturePage: true,
-    supportsRecording: true,
+    features: { resize: true, recording: true, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+    runtimeVersions: { electron: '37', chromium: '138', playwright: '1.60.0' },
   },
   connectedAt: now,
 }

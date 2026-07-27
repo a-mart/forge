@@ -118,12 +118,10 @@ describe("BrowserSessionStore", () => {
     ];
     state.activeTabId = "ext.profile.7";
     state.defaultTabId = "ext.profile.7";
-    state.externalChromeLifecycleRelease = { token: "must-not-migrate" };
     await writeFile(path, JSON.stringify(state), "utf8");
     const migrated = await store.load("profile-1", "manager-1");
     expect(migrated).toMatchObject({ schemaVersion: 2, activeTabId: "tab-1", defaultTabId: "tab-1", tabs: [{ tabId: "tab-1", targetAffinity: "managed-electron" }] });
     expect(migrated).not.toHaveProperty("hostKind");
-    expect(migrated).not.toHaveProperty("externalChromeLifecycleRelease");
     const rewritten = await readFile(path, "utf8");
     expect(JSON.parse(rewritten)).toMatchObject({ schemaVersion: 2, tabs: [{ tabId: "tab-1" }] });
     expect(rewritten).not.toContain("private.invalid");

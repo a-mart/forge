@@ -48,7 +48,6 @@ describe('BrowserTargetAdapter routing', () => {
     await expect(manager.revealTarget({ sessionAgentId: 'session-1', profileId: 'profile-1' }, 'external-tab-1'))
       .resolves.toEqual({ targetAffinity: 'external-chrome', revealed: true, tabId: 'external-tab-1' })
     expect(transport.reveals).toHaveLength(1)
-    expect(transport.requests[0]).not.toHaveProperty('hostKind')
   })
 
   it('routes every advertised External Chrome operation through the bounded v2 transport', async () => {

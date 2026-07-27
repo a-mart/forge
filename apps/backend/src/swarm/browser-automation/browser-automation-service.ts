@@ -2,7 +2,6 @@ import { isAbsolute, relative, resolve } from "node:path";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
   BROWSER_TARGET_AFFINITIES,
-  resolveBrowserTargetAffinity,
   type BrowserAutomationFailure,
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
@@ -343,16 +342,6 @@ export class BrowserAutomationService {
     await this.runLifecycle(profileId, sessionAgentId, { kind: "release-session", reason });
   }
 
-  async recordFailedLifecycleRelease(profileId: string, sessionAgentId: string, reason: Extract<BrowserLifecycleReleaseReason, "stop">, error: unknown): Promise<BrowserSessionSnapshot> {
-    return this.mutate(profileId, sessionAgentId, async (snapshot, generation) => {
-      const problem = error instanceof BrowserLifecycleReleaseError ? error.failure : failure("execution-failed", "Browser lifecycle release failed.", false);
-      const timestamp = this.now();
-      snapshot.recentActions.push({ id: `browser-release-failed:${reason}:${crypto.randomUUID()}`, operation: "status", tabId: null, status: "failed", errorCode: problem.code, startedAt: timestamp, completedAt: timestamp });
-      snapshot.recentActions = snapshot.recentActions.slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS);
-      await this.persistChanged(snapshot, "lifecycle", generation);
-    });
-  }
-
   async archiveSession(profileId: string, sessionAgentId: string): Promise<BrowserSessionSnapshot> {
     return this.mutate(profileId, sessionAgentId, async (snapshot, generation) => {
       snapshot.hostingState = "unhosted"; snapshot.panelVisible = false; clearPanelReveal(snapshot);
@@ -493,13 +482,10 @@ export class BrowserAutomationService {
 
 function normalizeHostTab(tab: BrowserTabSnapshot, snapshot: BrowserSessionSnapshot): BrowserTabSnapshot | undefined {
   if (tab.sessionAgentId !== snapshot.sessionAgentId || tab.profileId !== snapshot.profileId) return undefined;
-  const affinity = tab.targetAffinity ?? tab.hostKind;
-  if (!(BROWSER_TARGET_AFFINITIES as readonly unknown[]).includes(affinity)) return undefined;
-  const normalized: BrowserTabSnapshot = { ...tab, targetAffinity: affinity };
-  delete normalized.hostKind;
-  return affinity === "external-chrome" ? { ...normalized, url: "", title: "", error: null } : normalized;
+  if (!(BROWSER_TARGET_AFFINITIES as readonly unknown[]).includes(tab.targetAffinity)) return undefined;
+  return tab.targetAffinity === "external-chrome" ? { ...tab, url: "", title: "", error: null } : { ...tab };
 }
-function publicTab(tab: BrowserTabSnapshot): BrowserTabSnapshot { const copy = { ...tab, targetAffinity: resolveBrowserTargetAffinity(tab) }; delete copy.hostKind; return copy; }
+function publicTab(tab: BrowserTabSnapshot): BrowserTabSnapshot { return { ...tab }; }
 function selectedTab(snapshot: BrowserSessionSnapshot): BrowserTabSnapshot | undefined {
   const id = snapshot.defaultTabId ?? snapshot.activeTabId; return id ? snapshot.tabs.find((tab) => tab.tabId === id && tab.lifecycle !== "closed") : undefined;
 }

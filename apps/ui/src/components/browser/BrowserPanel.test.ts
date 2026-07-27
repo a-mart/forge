@@ -41,12 +41,10 @@ function render(state: BrowserSessionSnapshot, commands = port()) {
 }
 
 describe('BrowserPanel automatic experience', () => {
-  it('renders one tab strip without host or attachment ceremony', () => {
+  it('renders one automatic tab strip', () => {
     render(snapshot([managedTab, externalTab], managedTab.tabId))
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2)
     expect(container.querySelector('[aria-label="Browser workspace"]')).not.toBeNull()
-    expect(container.querySelector('select[aria-label="Browser host"]')).toBeNull()
-    expect(container.textContent).not.toMatch(/attach|detach|lease|candidate|profile alias/i)
   })
 
   it('shows the embedded surface and its supported controls', () => {

@@ -1,18 +1,9 @@
 export interface ChromeTab {
   id?: number
   windowId?: number
-  groupId?: number
-  openerTabId?: number
   active?: boolean
   title?: string
   url?: string
-}
-
-export interface ChromeTabGroup {
-  id: number
-  windowId: number
-  title?: string
-  collapsed: boolean
 }
 
 export interface ChromeWindow {

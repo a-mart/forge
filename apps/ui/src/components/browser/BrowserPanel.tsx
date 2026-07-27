@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
-  resolveBrowserTargetAffinity,
   resolveBrowserViewportPreset,
   type BrowserHostConnectionSnapshot,
   type BrowserSessionSnapshot,
@@ -129,7 +128,7 @@ export function BrowserPanel({
 
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'
-  const managedTarget = !activeTab || resolveBrowserTargetAffinity(activeTab) === 'managed-electron'
+  const managedTarget = !activeTab || activeTab.targetAffinity === 'managed-electron'
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

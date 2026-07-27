@@ -144,42 +144,26 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
 
 function parseCapabilities(value: unknown): BrowserHostCapabilities {
   const capabilities = record(value, "registration.capabilities");
-  if (capabilities.hostKind !== undefined) throw new Error("registration.capabilities.hostKind is not supported by protocol v2");
+  const allowedFields = new Set(["protocolVersions", "supportedOperations", "maxResponseBytes", "features", "runtimeVersions"]);
+  if (Object.keys(capabilities).some((field) => !allowedFields.has(field))) {
+    throw new Error("registration.capabilities contains an unsupported field");
+  }
   const operations = array(capabilities.supportedOperations, "registration.capabilities.supportedOperations", BROWSER_AUTOMATION_OPERATIONS.length);
   if (operations.length === 0 || operations.some((operation) => !(BROWSER_AUTOMATION_OPERATIONS as readonly unknown[]).includes(operation))) {
     throw new Error("registration.capabilities.supportedOperations contains an unsupported operation");
   }
   const maxResponseBytes = integer(capabilities.maxResponseBytes, "registration.capabilities.maxResponseBytes", 1_024, 8 * 1_024 * 1_024);
-  const versions = capabilities.protocolVersions === undefined
-    ? { minimum: BROWSER_HOST_PROTOCOL_VERSION, maximum: BROWSER_HOST_PROTOCOL_VERSION }
-    : parseProtocolVersions(capabilities.protocolVersions);
-  const legacyCapture = capabilities.supportsCapturePage === undefined ? false : boolean(capabilities.supportsCapturePage, "registration.capabilities.supportsCapturePage");
-  const legacyRecording = capabilities.supportsRecording === undefined ? false : boolean(capabilities.supportsRecording, "registration.capabilities.supportsRecording");
-  const features = capabilities.features === undefined
-    ? {
-        resize: operations.includes("resize"), recording: legacyRecording, capturePage: legacyCapture,
-        downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
-      }
-    : parseFeatures(capabilities.features);
+  const versions = parseProtocolVersions(capabilities.protocolVersions);
+  const features = parseFeatures(capabilities.features);
   const runtimeVersions = capabilities.runtimeVersions === undefined
-    ? {
-        ...(typeof capabilities.electronVersion === "string" ? { electron: boundedString(capabilities.electronVersion, "registration.capabilities.electronVersion", 64) } : {}),
-        ...(typeof capabilities.chromiumVersion === "string" ? { chromium: boundedString(capabilities.chromiumVersion, "registration.capabilities.chromiumVersion", 64) } : {}),
-        ...(typeof capabilities.playwrightVersion === "string" ? { playwright: boundedString(capabilities.playwrightVersion, "registration.capabilities.playwrightVersion", 64) } : {}),
-      }
+    ? undefined
     : parseRuntimeVersions(capabilities.runtimeVersions);
   return {
     protocolVersions: versions,
     supportedOperations: [...new Set(operations)] as BrowserHostCapabilities["supportedOperations"],
     maxResponseBytes,
     features,
-    runtimeVersions,
-    ...(typeof capabilities.electronVersion === "string" ? { electronVersion: capabilities.electronVersion } : {}),
-    ...(typeof capabilities.chromiumVersion === "string" ? { chromiumVersion: capabilities.chromiumVersion } : {}),
-    ...(typeof capabilities.playwrightVersion === "string" ? { playwrightVersion: capabilities.playwrightVersion } : {}),
-    ...(capabilities.supportsSandboxedWebviews === undefined ? {} : { supportsSandboxedWebviews: boolean(capabilities.supportsSandboxedWebviews, "registration.capabilities.supportsSandboxedWebviews") }),
-    ...(capabilities.supportsCapturePage === undefined ? {} : { supportsCapturePage: legacyCapture }),
-    ...(capabilities.supportsRecording === undefined ? {} : { supportsRecording: legacyRecording }),
+    ...(runtimeVersions === undefined ? {} : { runtimeVersions }),
   };
 }
 
@@ -214,7 +198,6 @@ function parseRuntimeVersions(value: unknown): NonNullable<BrowserHostCapabiliti
 function parseResponseEnvelope(value: unknown): BrowserAutomationResponse {
   const response = record(value, "response");
   identifier(response.requestId, "response.requestId");
-  if (response.hostKind !== undefined) throw new Error("response.hostKind is not supported by protocol v2");
   identifier(response.sessionAgentId, "response.sessionAgentId");
   identifier(response.profileId, "response.profileId");
   if (response.tabId !== null) identifier(response.tabId, "response.tabId");

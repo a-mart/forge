@@ -1,4 +1,3 @@
-import { resolveBrowserTargetAffinity } from '@forge/protocol'
 import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
@@ -56,17 +55,6 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
         browserMetadataStale: false,
       })
       context.requestTracker.resolve('browser_host_hydrate', event.requestId, sessions)
-      return true
-    }
-    case 'browser_host_state_snapshot': {
-      if (!isCurrentHostEvent(context, event.hostId, event.hostGeneration)) return true
-      const browserSessions = indexSessions(event.sessions)
-      context.updateState({
-        browserSessions,
-        browserHostHydrated: true,
-        browserPanelRevealRequest: projectPanelRevealRequest(context.state, browserSessions, event.hostGeneration),
-        browserMetadataStale: false,
-      })
       return true
     }
     case 'browser_host_state_report_result': {
@@ -192,7 +180,7 @@ function projectPanelRevealRequest(
   const reveal = snapshot?.panelReveal
   if (!snapshot || !reveal || reveal.sequence <= reveal.acknowledgedSequence || reveal.tabId === null) return null
   if (!snapshot.tabs.some((tab) => tab.tabId === reveal.tabId
-    && resolveBrowserTargetAffinity(tab) === 'managed-electron'
+    && tab.targetAffinity === 'managed-electron'
     && tab.lifecycle !== 'closed')) return null
   return {
     sessionAgentId: snapshot.sessionAgentId,

@@ -134,11 +134,9 @@ function privacyBoundSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionS
     sessionAgentId: snapshot.sessionAgentId,
     profileId: snapshot.profileId,
     hostingState: snapshot.hostingState,
-    tabs: snapshot.tabs.map((tab) => {
-      const canonical = { ...tab };
-      delete canonical.hostKind;
-      return tab.targetAffinity === "external-chrome" ? { ...canonical, url: "", title: "", error: null } : canonical;
-    }),
+    tabs: snapshot.tabs.map((tab) => tab.targetAffinity === "external-chrome"
+      ? { ...tab, url: "", title: "", error: null }
+      : { ...tab }),
     activeTabId: snapshot.activeTabId,
     defaultTabId: snapshot.defaultTabId,
     panelVisible: snapshot.panelVisible,
@@ -161,13 +159,13 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   if (!Array.isArray(record.tabs) || record.tabs.length > MAX_TABS) throw new Error("Invalid browser tabs");
 
   const v1 = record.schemaVersion === 1;
-  const legacySessionAffinity = targetAffinity(record.hostKind, "managed-electron");
+  const legacySessionAffinity = v1 ? targetAffinity(record.hostKind, "managed-electron") : "managed-electron";
   // v1 Chrome page records are privacy-bounded recovery hints. Desktop v2 must
   // prove and re-project them; backend never reinterprets a v1 lease as authority.
   const sourceTabs = v1
     ? record.tabs.filter((value) => targetAffinity(isRecord(value) ? value.hostKind : undefined, legacySessionAffinity) === "managed-electron")
     : record.tabs;
-  const tabs = sourceTabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, legacySessionAffinity));
+  const tabs = sourceTabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, legacySessionAffinity, v1));
   const ids = new Set<string>();
   for (const tab of tabs) {
     if (ids.has(tab.tabId)) throw new Error("Duplicate browser logical tab id");
@@ -235,13 +233,20 @@ function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingS
   throw new Error("Invalid browser session hosting state");
 }
 
-function normalizeTab(value: unknown, profileId: string, sessionAgentId: string, legacyAffinity: BrowserTargetAffinity): BrowserTabSnapshot {
+function normalizeTab(
+  value: unknown,
+  profileId: string,
+  sessionAgentId: string,
+  legacyAffinity: BrowserTargetAffinity,
+  migrateV1: boolean,
+): BrowserTabSnapshot {
   const tab = requiredRecord(value, "browser tab");
   if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) throw new Error("Browser tab identity does not match its session");
   if (tab.lifecycle !== "restoring" && tab.lifecycle !== "loading" && tab.lifecycle !== "ready" && tab.lifecycle !== "failed" && tab.lifecycle !== "closed") throw new Error("Invalid browser tab lifecycle");
   if (tab.controller !== "human" && tab.controller !== "agent" && tab.controller !== "none") throw new Error("Invalid browser controller");
+  if (!migrateV1 && tab.targetAffinity === undefined) throw new Error("Browser tab target affinity is required");
   return {
-    targetAffinity: targetAffinity(tab.targetAffinity ?? tab.hostKind, legacyAffinity),
+    targetAffinity: targetAffinity(migrateV1 ? tab.targetAffinity ?? tab.hostKind : tab.targetAffinity, legacyAffinity),
     tabId: requiredId(tab.tabId, "tabId"), sessionAgentId, profileId,
     url: requiredString(tab.url, "url", 2_048, true), title: requiredString(tab.title, "title", 4_096, true),
     lifecycle: tab.lifecycle, loading: requiredBoolean(tab.loading, "loading"), live: requiredBoolean(tab.live, "live"),

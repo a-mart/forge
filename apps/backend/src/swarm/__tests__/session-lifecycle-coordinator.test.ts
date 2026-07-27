@@ -461,7 +461,7 @@ describe("SessionLifecycleCoordinator", () => {
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
       "browser.release.failed",
-      "browser.release-failed:stop:forge:forge--s2",
+      "log:browser:lifecycle_release:stop_failed",
       "lifecycle.stop",
       "tools:forge--s2",
     ]);
@@ -682,10 +682,6 @@ function createHarness(): Harness {
       },
       releaseSessionForLifecycle: async (profileId, agentId, reason) => {
         calls.push(`browser.release:${reason}:${profileId}:${agentId}`);
-      },
-      recordFailedLifecycleRelease: async (profileId, agentId, reason) => {
-        calls.push(`browser.release-failed:${reason}:${profileId}:${agentId}`);
-        return {} as never;
       },
       archiveSession: async (profileId, agentId) => {
         calls.push(`browser.archive:${profileId}:${agentId}`);

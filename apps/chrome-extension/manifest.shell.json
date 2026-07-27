@@ -1,7 +1,4 @@
 {
-  "action": {
-    "default_title": "Open Forge"
-  },
   "background": {
     "service_worker": "shell/service-worker-bootstrap.js"
   },
@@ -22,7 +19,6 @@
     "nativeMessaging",
     "scripting",
     "storage",
-    "tabs",
     "webNavigation"
   ],
   "version": "0.1.0"

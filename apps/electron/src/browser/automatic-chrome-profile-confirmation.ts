@@ -29,7 +29,7 @@ export function withSessionProfileConfirmation(
       promptedSessions.add(sessionKey)
       const profiles = transport.inventory()
       if (profiles.length < 2) return result
-      const labels = profiles.map((profile, index) => profile.profileAlias?.trim() || `Chrome profile ${index + 1}`)
+      const labels = profiles.map((_profile, index) => `Chrome profile ${index + 1}`)
       const selectedIndex = await choose(labels)
       const selected = selectedIndex === null ? undefined : profiles[selectedIndex]
       if (!selected) return result

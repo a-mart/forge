@@ -81,23 +81,19 @@ describe("browser automation tools", () => {
     expect(invoke).toHaveBeenCalledWith("manager-1", "evaluate", expect.objectContaining({ awaitPromise: true, returnByValue: true }));
   });
 
-  it("omits hostKind from every strict schema branch", async () => {
+  it("keeps every schema branch strict", async () => {
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
     const tools = buildBrowserAutomationTools(host(invoke), descriptor());
     for (const tool of tools) {
       const branches = schemaObjectBranches(tool.parameters as unknown as Record<string, unknown>);
       expect(branches.length, tool.name).toBeGreaterThan(0);
-      for (const branch of branches) {
-        expect(branch.additionalProperties, tool.name).toBe(false);
-        expect(branch.properties, tool.name).not.toHaveProperty("hostKind");
-      }
-      expect(Value.Check(tool.parameters, { ...validInputs[tool.name], hostKind: "external-chrome" }), tool.name).toBe(false);
-      expect(JSON.stringify(tool.parameters)).not.toContain("hostKind");
+      for (const branch of branches) expect(branch.additionalProperties, tool.name).toBe(false);
+      expect(Value.Check(tool.parameters, { ...validInputs[tool.name], unexpectedSelector: "external-chrome" }), tool.name).toBe(false);
     }
   });
 
   it("preserves typed External Chrome attachment, restricted, conflict, and lost failures", async () => {
-    const failures = ["attachment-required", "restricted-target", "lease-conflict", "lease-lost"] as const;
+    const failures = ["target-not-found", "restricted-target", "lease-conflict", "lease-lost"] as const;
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({
       ok: false as const,
       operation,

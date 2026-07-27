@@ -1,4 +1,3 @@
-import { resolveBrowserTargetAffinity } from '@forge/protocol'
 import type {
   BrowserSessionSnapshot,
   BrowserTabSnapshot,
@@ -113,7 +112,7 @@ export class ManagedBrowserViewHost {
       for (const session of input.sessions) {
         if (session.hostingState !== 'hosted') continue
         for (const tab of session.tabs) {
-          if (resolveBrowserTargetAffinity(tab) === 'managed-electron' && tab.lifecycle !== 'closed') next.set(tab.tabId, tab)
+          if (tab.targetAffinity === 'managed-electron' && tab.lifecycle !== 'closed') next.set(tab.tabId, tab)
         }
       }
       this.desired.clear()
@@ -139,7 +138,7 @@ export class ManagedBrowserViewHost {
   async ensureProvisional(tab: BrowserTabSnapshot, workspaceEpoch: number): Promise<BrowserTabSnapshot> {
     return this.serialize(async () => {
       this.assertEpoch(workspaceEpoch)
-      if (resolveBrowserTargetAffinity(tab) !== 'managed-electron') {
+      if (tab.targetAffinity !== 'managed-electron') {
         throw new BrowserHostError('invalid-input', 'Managed browser host cannot own an external Chrome tab')
       }
       const existing = this.tabs.get(tab.tabId)
@@ -266,7 +265,7 @@ export class ManagedBrowserViewHost {
 
   private async createTab(tab: BrowserTabSnapshot, provisional: boolean): Promise<BrowserTabSnapshot> {
     this.assertAlive()
-    if (resolveBrowserTargetAffinity(tab) !== 'managed-electron') {
+    if (tab.targetAffinity !== 'managed-electron') {
       throw new BrowserHostError('invalid-input', 'Managed browser host cannot own an external Chrome tab')
     }
     if (!isAllowedManagedBrowserUrl(tab.url)) throw new BrowserHostError('invalid-url', 'Managed browser URLs must use HTTP or HTTPS')

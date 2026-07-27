@@ -16,20 +16,15 @@ import type { ServiceWorkerPayload, ShellEventName, VerifiedPayloadIdentity } fr
 import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
 
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
-const PROFILE_ALIAS_KEY = 'forge.externalChrome.profileAlias.v1'
 const HEARTBEAT_ALARM = 'forge.externalChrome.heartbeat.v2'
 const TRANSPORT_GRACE_ALARM = 'forge.externalChrome.transportGrace.v2'
-const REUSE_SENTINEL = '__forge_reuse_focused_tab__'
 const REVEAL_SENTINEL = '/* forge:reveal-authorized-tab:v1 */ undefined'
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
 function chromeVersion(): string { return /Chrom(?:e|ium)\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? 'unknown' }
-function selectedTab(tab: ChromeTab): Record<string, unknown> {
-  const url = tab.url ?? ''
-  let origin = ''
-  try { origin = new URL(url).origin } catch { /* restricted before selection */ }
-  return { windowId: tab.windowId ?? 0, tabId: tab.id ?? 0, groupId: null, title: tab.title ?? '', url, origin, active: tab.active === true }
+function acquiredTab(tab: ChromeTab): Record<string, unknown> {
+  return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? '', active: tab.active === true }
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -50,10 +45,8 @@ export class Runtime implements ServiceWorkerPayload {
     const stored = await this.chrome.storage.local.get(INSTANCE_KEY)
     this.extensionInstanceId = typeof stored[INSTANCE_KEY] === 'string' ? String(stored[INSTANCE_KEY]) : crypto.randomUUID()
     if (stored[INSTANCE_KEY] !== this.extensionInstanceId) await this.chrome.storage.local.set({ [INSTANCE_KEY]: this.extensionInstanceId })
-    const alias = await this.chrome.storage.local.get(PROFILE_ALIAS_KEY)
-    const profileAlias = typeof alias[PROFILE_ALIAS_KEY] === 'string' ? String(alias[PROFILE_ALIAS_KEY]).slice(0, 512) : undefined
     const recovered = await this.authorities.recover()
-    // Recovery restores only CAS ownership. Prove and release any attachment that
+    // Recovery restores only CAS ownership. Prove and release any debugger control that
     // survived a service-worker crash; never adopt a foreign debugger.
     for (const authority of recovered) {
       await this.debuggers.reconcileForRelease(authority.tabId, this.chrome.runtime.id)
@@ -66,7 +59,6 @@ export class Runtime implements ServiceWorkerPayload {
       extensionInstanceId: this.extensionInstanceId,
       chromeVersion: chromeVersion(),
       payloadSha256: identity.sha256,
-      ...(profileAlias ? { profileAlias } : {}),
       onDisconnected: () => this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: 0.1 }),
       onConnected: () => { void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM) },
       onRequest: (message) => this.handleDesktopRequest(message),
@@ -106,49 +98,50 @@ export class Runtime implements ServiceWorkerPayload {
     }
     switch (request.method) {
       case 'forge.runtime.ping': return { protocolVersion: 1, nonce: request.params.nonce, receivedAt: new Date().toISOString() }
-      // V1 required this method in hello. Automatic v2 reports only whether one
-      // focused tab is eligible for reuse; it never enumerates tabs.
-      case 'forge.browser.listCandidates': {
-        const focusedEligible = await this.authorities.focusedEligibleTab() !== null
-        return {
-          protocolVersion: 1, extensionInstanceId: this.extensionInstanceId,
-          windows: focusedEligible ? [{ windowId: 0, focused: true, groups: [], tabs: [] }] : [],
-        }
-      }
-      case 'forge.browser.claim': {
-        const acquired = await Promise.all(request.params.tabIds.map((tabId) => this.authorities.acquire({
-          tabId, ownerId: request.params.leaseId, ownerEpoch: request.params.leaseEpoch,
-          sessionAgentId: request.params.sessionAgentId, expectedOwnerEpoch: 0,
-        })))
-        return {
-          protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch,
-          sessionAgentId: request.params.sessionAgentId, extensionInstanceId: this.extensionInstanceId,
-          groupId: null, childPolicy: 'manual', tabs: acquired.map(({ tab }) => selectedTab(tab)),
-        }
-      }
-      case 'forge.browser.create': {
-        // Focus is only a reuse preference. Once Desktop has selected this
-        // unambiguous profile, focus loss or an ineligible active tab allocates a
-        // dedicated ungrouped Forge tab rather than requiring a picker.
-        const { tab, createdByForge } = await this.authorities.allocateAutomaticTab({
-          reuseFocused: request.params.groupTitle === REUSE_SENTINEL,
-          ...(request.params.url === undefined ? {} : { url: request.params.url }),
-        })
-        if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a tab ID')
-        try {
-          await this.authorities.acquire({
-            tabId: tab.id, ownerId: request.params.leaseId, ownerEpoch: request.params.leaseEpoch,
-            sessionAgentId: request.params.sessionAgentId, expectedOwnerEpoch: 0, createdByForge,
+      case 'forge.browser.focusedEligibility':
+        return { protocolVersion: 1, eligible: await this.authorities.focusedEligibleTab() !== null }
+      case 'forge.browser.acquire': {
+        let tab: ChromeTab
+        let createdByForge = false
+        if (request.params.tabId !== undefined) {
+          const acquired = await this.authorities.acquire({
+            tabId: request.params.tabId,
+            ownerId: request.params.leaseId,
+            ownerEpoch: request.params.leaseEpoch,
+            sessionAgentId: request.params.sessionAgentId,
+            expectedOwnerEpoch: 0,
           })
-        } catch (error) {
-          if (createdByForge) await this.chrome.tabs.remove(tab.id).catch(() => undefined)
-          throw error
+          tab = acquired.tab
+        } else {
+          const allocated = await this.authorities.allocateAutomaticTab({
+            reuseFocused: request.params.reuseFocused,
+            ...(request.params.url === undefined ? {} : { url: request.params.url }),
+          })
+          tab = allocated.tab
+          createdByForge = allocated.createdByForge
+          if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a tab ID')
+          try {
+            await this.authorities.acquire({
+              tabId: tab.id,
+              ownerId: request.params.leaseId,
+              ownerEpoch: request.params.leaseEpoch,
+              sessionAgentId: request.params.sessionAgentId,
+              expectedOwnerEpoch: 0,
+              createdByForge,
+            })
+          } catch (error) {
+            if (createdByForge) await this.chrome.tabs.remove(tab.id).catch(() => undefined)
+            throw error
+          }
         }
         return {
-          protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch,
-          sessionAgentId: request.params.sessionAgentId, extensionInstanceId: this.extensionInstanceId,
-          // V1's obsolete group field is a compatibility placeholder; the tab remains ungrouped.
-          groupId: 0, tab: selectedTab(tab),
+          protocolVersion: 1,
+          leaseId: request.params.leaseId,
+          leaseEpoch: request.params.leaseEpoch,
+          sessionAgentId: request.params.sessionAgentId,
+          extensionInstanceId: this.extensionInstanceId,
+          tab: acquiredTab(tab),
+          created: createdByForge,
         }
       }
       case 'forge.browser.release': {
@@ -192,7 +185,7 @@ export class Runtime implements ServiceWorkerPayload {
 
   private async execute(params: ExternalChromeExecuteParams): Promise<unknown> {
     const authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
-    if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { hostKind: 'external-chrome', connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority) })
+    if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority) })
     if (params.operation === 'evaluate' && (params.input as { expression?: unknown }).expression === REVEAL_SENTINEL) {
       const tab = await this.chrome.tabs.get(params.tabId)
       const tabs = this.chrome.tabs as unknown as { update(tabId: number, properties: { active: boolean }): Promise<unknown> }
@@ -256,9 +249,7 @@ export class Runtime implements ServiceWorkerPayload {
 
   private browserTab(tab: ChromeTab, authority: TabAuthorityRecord): BrowserTabSnapshot {
     const now = new Date().toISOString()
-    // The authenticated extension wire remains V1-shaped; Desktop converts this
-    // compatibility alias to the protocol-v2 targetAffinity before returning it.
-    return { hostKind: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: authority.state === 'agent' ? 'agent' : 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now } as unknown as BrowserTabSnapshot
+    return { targetAffinity: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: authority.state === 'agent' ? 'agent' : 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now }
   }
 
   private handleConnect(value: unknown): void {

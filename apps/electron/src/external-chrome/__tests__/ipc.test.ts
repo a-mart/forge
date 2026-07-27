@@ -30,20 +30,7 @@ describe('trusted External Chrome IPC', () => {
     await expect(control({ sender: { id: 7 } } as unknown as IpcMainInvokeEvent, { operation: 'status' })).resolves.toEqual({ ok: false, error: 'invalid-request' })
     await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'status' })).resolves.toEqual({ ok: true, status })
     dispose()
-    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(2)
-  })
-
-  it('makes the legacy attach channel non-authoritative and never enumerates candidates', async () => {
-    const { handlers, ipcMain, mainWindow, coordinator } = fixture()
-    installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
-    const attach = handlers.get('forge:external-chrome-attach')!
-    const event = { sender: { id: 42 } } as unknown as IpcMainInvokeEvent
-    await expect(attach(event, { operation: 'status', sessionAgentId: 'session', profileId: 'profile' })).resolves.toEqual({
-      ok: true, status: { coordinator: status, instances: [], attachment: null },
-    })
-    for (const operation of ['candidates', 'attach', 'detach', 'lifecycle-release', 'turn-ended']) {
-      await expect(attach(event, { operation, sessionAgentId: 'session', profileId: 'profile' })).resolves.toEqual({ ok: false, error: 'attachment-required' })
-    }
-    expect(coordinator.transport().inventory()).toEqual([])
+    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(1)
+    expect(handlers.has('forge:external-chrome-control')).toBe(true)
   })
 })

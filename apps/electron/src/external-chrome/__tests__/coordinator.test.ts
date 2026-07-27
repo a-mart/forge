@@ -158,12 +158,12 @@ async function sendCoordinatorRuntimeHello(
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
       protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
       extensionId: EXTERNAL_CHROME_EXTENSION_ID, extensionInstanceId, chromeVersion: '125.0.0.0',
-      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.listCandidates', 'forge.browser.claim', 'forge.browser.create', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
         operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
       })),
-      features: { resize: false, recording: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true, groups: true },
+      features: { resize: false, recording: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true },
     },
   })
   await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1 } })
@@ -180,11 +180,12 @@ async function lifecycleExtensionLoop(
     if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
     const params = message.params as Record<string, unknown>
     requests.push({ method: message.method, params })
-    if (message.method === 'forge.browser.claim') {
+    if (message.method === 'forge.browser.focusedEligibility') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, eligible: true } })
+    } else if (message.method === 'forge.browser.acquire') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
-        extensionInstanceId, groupId: 9, childPolicy: params.childPolicy,
-        tabs: [{ windowId: 2, tabId: 40, groupId: 9, title: '', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true }],
+        extensionInstanceId, tab: { tabId: 40, title: '', url: 'https://fixture.invalid/', active: true }, created: false,
       } })
     } else if (message.method === 'forge.runtime.prepareUpdate') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
@@ -267,13 +268,12 @@ describe('ExternalChromeHostCoordinator', () => {
     )
     const originalRequests: Array<{ method: string; params: Record<string, unknown> }> = []
     const originalLoop = lifecycleExtensionLoop(originalClient, originalRequests, 'instance_restart_exact')
-    await first.transport().claim({
-      extensionInstanceId: 'instance_restart_exact', sessionAgentId: 'session-restart', profileId: 'profile-restart',
-      leaseId: 'lease-restart-exact', leaseEpoch: 17, tabIds: [40], groupId: 9, childPolicy: 'manual',
-    })
-    expect(await first.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
-      extensionInstanceId: 'instance_restart_exact', leaseId: 'lease-restart-exact', leaseEpoch: 17,
-    })])
+    await expect(first.transport().acquireTarget({
+      sessionAgentId: 'session-restart', profileId: 'profile-restart', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 17,
+    })).resolves.toMatchObject({ ok: true, authority: { ownerEpoch: 17, tabId: 'ext.instance_restart_exact.40' } })
+    const [durableLease] = await first.transport().leaseCheckpoints()
+    expect(durableLease).toMatchObject({ extensionInstanceId: 'instance_restart_exact', leaseEpoch: 17, tabIds: [40] })
 
     // Simulate an involuntary process loss: transport and listener disappear,
     // while desired-enabled, stale same-data-dir authority, auth, and checkpoint
@@ -297,7 +297,7 @@ describe('ExternalChromeHostCoordinator', () => {
     expect(await restarted.status()).toMatchObject({ state: 'online', authority: 'owned', recovery: 'reconnecting' })
     expect(await readFile(resolveExternalChromeDataPaths(dataRoot, 'linux').authKey, 'utf8')).not.toBe(firstAuth)
     expect(await restarted.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
-      extensionInstanceId: 'instance_restart_exact', leaseId: 'lease-restart-exact', leaseEpoch: 17,
+      extensionInstanceId: 'instance_restart_exact', leaseId: durableLease!.leaseId, leaseEpoch: 17,
     })])
 
     const reconnected = await connectToCoordinator(dataRoot)
@@ -305,8 +305,7 @@ describe('ExternalChromeHostCoordinator', () => {
       reconnected, 'instance_restart_exact', deployed.install.payloadVersion, deployed.install.payloadSha256,
     )
     await reconnected.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
-      protocolVersion: 1, leaseId: 'lease-restart-exact', leaseEpoch: 17, state: 'claimed',
-      tabIds: [40], groupId: 9, childPolicy: 'manual',
+      protocolVersion: 1, leaseId: durableLease!.leaseId, leaseEpoch: 17, state: 'acquired', tabIds: [40],
     } })
     const retryRequests: Array<{ method: string; params: Record<string, unknown> }> = []
     const retryLoop = lifecycleExtensionLoop(reconnected, retryRequests, 'instance_restart_exact')
@@ -317,7 +316,7 @@ describe('ExternalChromeHostCoordinator', () => {
       'forge.runtime.prepareUpdate', 'forge.browser.release',
     ])
     expect(retryRequests[1]?.params).toMatchObject({
-      leaseId: 'lease-restart-exact', leaseEpoch: 17, reason: 'integration-remove',
+      leaseId: durableLease!.leaseId, leaseEpoch: 17, reason: 'integration-remove',
     })
     expect(await restarted.transport().leaseCheckpoints()).toEqual([])
     await retryLoop
@@ -449,7 +448,7 @@ describe('ExternalChromeHostCoordinator', () => {
       schemaVersion: 1,
       leases: [{
         extensionInstanceId: 'instance_offline_repair', sessionAgentId: 'session-repair', profileId: 'profile-repair',
-        leaseId: 'lease-offline-repair', leaseEpoch: 8, tabIds: [52], groupId: 4, childPolicy: 'manual',
+        leaseId: 'lease-offline-repair', leaseEpoch: 8, tabIds: [52],
         expiresAt: Date.now() + 60_000,
       }],
     })}\n`, { mode: 0o600 })
@@ -553,7 +552,7 @@ describe('ExternalChromeHostCoordinator', () => {
       schemaVersion: 1,
       leases: [{
         extensionInstanceId: 'profile_opaque', sessionAgentId: 'session_opaque', profileId: 'profile_opaque',
-        leaseId: 'lease_opaque', leaseEpoch: 4, tabIds: [17], groupId: 3, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
+        leaseId: 'lease_opaque', leaseEpoch: 4, tabIds: [17], expiresAt: Date.now() + 60_000,
       }],
     })}\n`)
     const coordinator = new ExternalChromeHostCoordinator({
