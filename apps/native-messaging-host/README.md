@@ -1,8 +1,8 @@
-# Forge External Chrome native messaging host
+# Forge Automatic Browser Chrome native relay
 
-This package builds the narrow native relay used by **External Chrome (Local Beta)**. Chrome starts it through native messaging; the process authenticates to Forge Desktop's current-user rendezvous and relays bounded protocol records. It is not a browser automation engine and contains no policy for choosing or controlling tabs.
+This package builds the narrow native relay used by the Automatic Browser Host's optional Chrome adapter. Chrome starts it through native messaging; the process authenticates to Forge Desktop's current-user rendezvous and relays bounded protocol records. It is not a browser automation engine, a separate host, or a policy owner for choosing and controlling tabs.
 
-Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md#external-chrome-local-beta) for setup, permissions, and lifecycle behavior.
+Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md#optional-chrome-setup) for setup, permissions, and lifecycle behavior.
 
 ## Boundary
 
@@ -56,6 +56,6 @@ The release sequence is fail-closed:
 
 The macOS ad-hoc signature is only an execution prerequisite and remains explicitly unverified in validation metadata; Windows does not use an ad-hoc first signature. macOS release mode replaces the ad-hoc signature and requires the exact configured `Developer ID Application` identity and Apple team. Windows release mode requires Authenticode and the exact configured certificate subject. Electron packaging preserves the pre-signed host bytes, then rechecks the packaged hash and signature after its own signing hooks.
 
-A successful build or validation-mode SEA does not by itself qualify headed Chrome, live native registration, a target platform, installer behavior, or distribution. Those remain separate release gates in the [Electron guide](../electron/README.md#external-chrome-packaging-and-validation).
+A successful build or validation-mode SEA does not by itself qualify headed Chrome, live native registration, a target platform, installer behavior, or distribution. Those remain separate release gates in the [Electron guide](../electron/README.md#optional-chrome-adapter-packaging-and-validation).
 
 Windows byte-stream handling stays behind an explicit binary-mode integration seam; Node/libuv pipe streams are binary by default.

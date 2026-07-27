@@ -161,7 +161,7 @@ The active origin determines the backend for these project-scoped surfaces:
 | Session Audit | Audit reads target the active remote session. |
 | Model availability | Project/session model pickers read availability from the active remote server. |
 
-Browser automation is not an active-origin surface. Managed Browser and External Chrome are local Forge Desktop hosts, not Skills. Forge-owned Electron webviews/partitions and the External Chrome extension relay, native registration, candidate tabs, aliases, and leases stay bound to the selected local Builder manager. The client never forwards either host or its IPC to a Remote Project. A remote normal Builder manager may still receive typed browser tools from its runtime plan, but without a Desktop host connected directly to that remote backend the tools return `unavailable-host`. Do not describe the tools as structurally absent. Collaboration channel sessions receive neither Desktop host nor its tools.
+Browser automation is not an active-origin surface. Forge Desktop exposes one local Automatic Browser Host, not a Skill. Its embedded views/partitions and optional Chrome relay, native registration, private per-tab affinity, operation authority, and IPC stay bound to the selected local Builder manager. The client never forwards that host to a Remote Project. A remote normal Builder manager may still receive typed browser tools from its runtime plan, but without a Desktop host connected directly to that remote backend the tools return `unavailable-host`. Do not describe the tools as structurally absent. Collaboration channel sessions receive neither the host nor its tools.
 
 Remote New Project and Change Working Directory use the server directory browser and only allow paths under `FORGE_CWD_ALLOWLIST_ROOTS`. There is no local native directory picker for a remote origin.
 
@@ -174,7 +174,7 @@ These surfaces remain local even while a remote project is selected:
 - Cortex
 - sidebar provider-usage data
 - the unified sidebar-order API and persistence
-- both Forge Desktop browser hosts, Managed Browser webviews/partitions, External Chrome relay/leases, and the Browser workspace
+- Forge Desktop's Automatic Browser Host, embedded views/partitions, optional Chrome relay/authority, and Browser workspace
 
 Do not infer support from a mounted backend route. Remote Projects is an explicitly allowlisted subset of Builder behavior. Collaboration channels have a different protocol and feature boundary.
 
