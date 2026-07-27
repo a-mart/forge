@@ -11,6 +11,7 @@ import {
   refreshXaiOAuthModelDiscovery,
   XAI_OAUTH_MODELS_ENDPOINT,
 } from "../catalog/xai-oauth-model-discovery.js";
+import { getForgeAppVersion } from "../../utils/app-version.js";
 
 async function writeCredential(dataDir: string, credential: Record<string, unknown>): Promise<void> {
   const authFile = getSharedAuthFilePath(dataDir);
@@ -158,8 +159,18 @@ describe("xAI OAuth model discovery", () => {
     expect(requests).toHaveLength(2);
     expect(requests.every((request) => request.url === XAI_OAUTH_MODELS_ENDPOINT)).toBe(true);
     expect(requests.every((request) => request.method === "GET")).toBe(true);
-    expect(requests.every((request) => request.headers.get("authorization") === "Bearer oauth-access-token")).toBe(true);
-    expect(requests.every((request) => request.headers.get("X-XAI-Token-Auth") === "xai-grok-cli")).toBe(true);
+    for (const request of requests) {
+      expect(Object.fromEntries(request.headers)).toEqual({
+        accept: "application/json",
+        authorization: "Bearer oauth-access-token",
+        "user-agent": `forge/${getForgeAppVersion()}`,
+        "x-authenticateresponse": "authenticate-response",
+        "x-grok-client-identifier": "forge",
+        "x-grok-client-version": "0.2.112",
+        "x-xai-token-auth": "xai-grok-cli",
+      });
+      expect(request.headers.get("x-grok-model-override")).toBeNull();
+    }
   });
 
   it("keeps only the newest current account when discovery responses finish out of order", async () => {

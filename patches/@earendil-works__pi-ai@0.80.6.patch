@@ -262,19 +262,19 @@ index cd76bb3e3a06a10dd028a41e250fc6d8ae700d00..feb710c5ef51e453d3d0c2331566618d
                  continue;
              messages.push(...output);
 diff --git a/dist/utils/oauth/index.d.ts b/dist/utils/oauth/index.d.ts
-index f68eecebd8a481ec21fd244af22bf56b8d8f5f89..6548334e4cd24fab43ea36ff171ee40d7c078eb6 100644
+index f68eecebd8a481ec21fd244af22bf56b8d8f5f89..cc3c2c277c5b2fbd22b22d5d8de8e9c79a6ccca9 100644
 --- a/dist/utils/oauth/index.d.ts
 +++ b/dist/utils/oauth/index.d.ts
 @@ -10,6 +10,7 @@ export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from ".
  export * from "./device-code.ts";
  export { getGitHubCopilotBaseUrl, githubCopilotOAuthProvider, loginGitHubCopilot, normalizeDomain, refreshGitHubCopilotToken, } from "./github-copilot.ts";
  export { loginOpenAICodex, loginOpenAICodexDeviceCode, OPENAI_CODEX_BROWSER_LOGIN_METHOD, OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, openaiCodexOAuthProvider, refreshOpenAICodexToken, } from "./openai-codex.ts";
-+export { refreshXaiToken, xaiOAuthProvider } from "./xai.ts";
++export { configureXaiOAuthProxyClient, getXaiOAuthProxyHeaders, refreshXaiToken, XAI_GROK_PROXY_COMPATIBILITY_SOURCE, XAI_GROK_PROXY_COMPATIBILITY_VERSION, xaiOAuthProvider } from "./xai.ts";
  export * from "./types.ts";
  import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
  /**
 diff --git a/dist/utils/oauth/index.js b/dist/utils/oauth/index.js
-index ae045477994713c7f5382f2adbcab1a63b45242f..fac9b82779a6af4570229840c35d1e5c662f989d 100644
+index ae045477994713c7f5382f2adbcab1a63b45242f..b13621fcb2d9d1e8006996aee7530b17b7823f5a 100644
 --- a/dist/utils/oauth/index.js
 +++ b/dist/utils/oauth/index.js
 @@ -13,6 +13,8 @@ export * from "./device-code.js";
@@ -282,7 +282,7 @@ index ae045477994713c7f5382f2adbcab1a63b45242f..fac9b82779a6af4570229840c35d1e5c
  // OpenAI Codex (ChatGPT OAuth)
  export { loginOpenAICodex, loginOpenAICodexDeviceCode, OPENAI_CODEX_BROWSER_LOGIN_METHOD, OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, openaiCodexOAuthProvider, refreshOpenAICodexToken, } from "./openai-codex.js";
 +// xAI (Grok OAuth)
-+export { refreshXaiToken, xaiOAuthProvider } from "./xai.js";
++export { configureXaiOAuthProxyClient, getXaiOAuthProxyHeaders, refreshXaiToken, XAI_GROK_PROXY_COMPATIBILITY_SOURCE, XAI_GROK_PROXY_COMPATIBILITY_VERSION, xaiOAuthProvider } from "./xai.js";
  export * from "./types.js";
  // ============================================================================
  // Provider Registry
@@ -301,21 +301,29 @@ index ae045477994713c7f5382f2adbcab1a63b45242f..fac9b82779a6af4570229840c35d1e5c
  /**
 diff --git a/dist/utils/oauth/xai.d.ts b/dist/utils/oauth/xai.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a7f1bfcb4f79640d3ea88a1cdd63a34b8e0ba7a
+index 0000000000000000000000000000000000000000..6cecf349fbecdde3a4700dac526df4a2d147b4c4
 --- /dev/null
 +++ b/dist/utils/oauth/xai.d.ts
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,13 @@
 +import type { OAuthCredentials, OAuthProviderInterface } from "./types.ts";
++/** Grok Build version accepted by the xAI CLI proxy version gate. */
++export declare const XAI_GROK_PROXY_COMPATIBILITY_VERSION: string;
++/** Auditable first-party source commit for the pinned compatibility version. */
++export declare const XAI_GROK_PROXY_COMPATIBILITY_SOURCE: string;
++/** Configure the honest Forge product version used on xAI CLI proxy requests. */
++export declare function configureXaiOAuthProxyClient(forgeVersion: string): void;
++/** Build proxy-only compatibility/authentication headers, optionally for one routed model. */
++export declare function getXaiOAuthProxyHeaders(options?: { modelId?: string }): Record<string, string>;
 +/** Refresh xAI credentials, preserving the current refresh token when the server does not rotate it. */
 +export declare function refreshXaiToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
 +/** xAI Authorization Code + S256 PKCE and device-code OAuth provider. */
 +export declare const xaiOAuthProvider: OAuthProviderInterface;
 diff --git a/dist/utils/oauth/xai.js b/dist/utils/oauth/xai.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..00d13a63a11a7147bf29d622008e5680d81b280c
+index 0000000000000000000000000000000000000000..0fd50dba2b3ba465a3f2061fb4372cb9c3c02a04
 --- /dev/null
 +++ b/dist/utils/oauth/xai.js
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,375 @@
 +import { pollOAuthDeviceCodeFlow } from "./device-code.js";
 +
 +const ISSUER = "https://auth.x.ai";
@@ -328,6 +336,12 @@ index 0000000000000000000000000000000000000000..00d13a63a11a7147bf29d622008e5680
 +const REDIRECT_PORT = 56121;
 +const REDIRECT_PATH = "/callback";
 +const CLI_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
++/**
++ * Proxy compatibility version pinned to xAI's official Grok Build release.
++ * Source: https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-version/Cargo.toml#L4
++ */
++export const XAI_GROK_PROXY_COMPATIBILITY_VERSION = "0.2.112";
++export const XAI_GROK_PROXY_COMPATIBILITY_SOURCE = "https://github.com/xai-org/grok-build/commit/02d9359435d0e9c20a20945679389cdce441e431";
 +const REFRESH_SKEW_MS = 2 * 60 * 1000;
 +const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 +
@@ -624,6 +638,30 @@ index 0000000000000000000000000000000000000000..00d13a63a11a7147bf29d622008e5680
 +    });
 +    return readTokenResponse(response, "token refresh", credentials.refresh);
 +}
++let forgeUserAgent;
++/** Configure the honest Forge product version used on xAI CLI proxy requests. */
++export function configureXaiOAuthProxyClient(forgeVersion) {
++    const normalizedVersion = forgeVersion.trim();
++    if (!normalizedVersion)
++        throw new Error("Forge app version is required for xAI OAuth proxy requests");
++    forgeUserAgent = `forge/${normalizedVersion}`;
++}
++/**
++ * Build the proxy-only compatibility and authentication headers.
++ * Model override is omitted for endpoint-wide requests such as /v1/models discovery.
++ */
++export function getXaiOAuthProxyHeaders(options = {}) {
++    if (!forgeUserAgent)
++        throw new Error("xAI OAuth proxy client must be configured with the Forge app version");
++    return {
++        "X-XAI-Token-Auth": "xai-grok-cli",
++        "x-grok-client-version": XAI_GROK_PROXY_COMPATIBILITY_VERSION,
++        "x-grok-client-identifier": "forge",
++        "User-Agent": forgeUserAgent,
++        "x-authenticateresponse": "authenticate-response",
++        ...(options.modelId ? { "x-grok-model-override": options.modelId } : {}),
++    };
++}
 +export const xaiOAuthProvider = {
 +    id: "xai",
 +    name: "xAI (Grok)",
@@ -656,7 +694,7 @@ index 0000000000000000000000000000000000000000..00d13a63a11a7147bf29d622008e5680
 +            ? {
 +                ...model,
 +                baseUrl: CLI_PROXY_BASE_URL,
-+                headers: { ...model.headers, "X-XAI-Token-Auth": "xai-grok-cli" },
++                headers: { ...model.headers, ...getXaiOAuthProxyHeaders({ modelId: model.id }) },
 +            }
 +            : model);
 +    },

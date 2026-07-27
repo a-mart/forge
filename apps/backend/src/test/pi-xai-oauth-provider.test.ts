@@ -3,14 +3,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
-import { getOAuthProvider, resetOAuthProviders, xaiOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import {
+  configureXaiOAuthProxyClient,
+  getOAuthProvider,
+  resetOAuthProviders,
+  XAI_GROK_PROXY_COMPATIBILITY_SOURCE,
+  XAI_GROK_PROXY_COMPATIBILITY_VERSION,
+  xaiOAuthProvider,
+} from "@earendil-works/pi-ai/oauth";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { buildPiModelsProjection } from "../swarm/catalog/model-catalog-projection.js";
 import { modelCatalogService } from "../swarm/catalog/model-catalog-service.js";
 import { parseXaiOAuthModelCatalog } from "../swarm/catalog/xai-oauth-model-discovery.js";
+import { getForgeAppVersion } from "../utils/app-version.js";
 
 const XAI_API_BASE_URL = "https://api.x.ai/v1";
 const XAI_OAUTH_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
+const XAI_PROXY_ONLY_HEADERS = [
+  "X-XAI-Token-Auth",
+  "x-grok-client-version",
+  "x-grok-client-identifier",
+  "x-grok-model-override",
+  "x-authenticateresponse",
+] as const;
+
+configureXaiOAuthProxyClient(getForgeAppVersion());
+
+function expectNoXaiProxyHeaders(headers: Headers): void {
+  for (const header of XAI_PROXY_ONLY_HEADERS) {
+    expect(headers.get(header), header).toBeNull();
+  }
+  expect(headers.get("User-Agent")).not.toBe(`forge/${getForgeAppVersion()}`);
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -27,14 +51,23 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(getOAuthProvider("xai")).toBe(xaiOAuthProvider);
   });
 
-  it("routes only OAuth-backed xAI models through the CLI proxy with its required header", () => {
+  it("pins proxy compatibility to the official Grok Build source", () => {
+    expect(XAI_GROK_PROXY_COMPATIBILITY_VERSION).toBe("0.2.112");
+    expect(XAI_GROK_PROXY_COMPATIBILITY_SOURCE).toBe(
+      "https://github.com/xai-org/grok-build/commit/02d9359435d0e9c20a20945679389cdce441e431",
+    );
+  });
+
+  it("routes only OAuth-backed xAI models with exact per-model proxy headers", () => {
     const apiKeyRegistry = ModelRegistry.create(AuthStorage.inMemory({
       xai: { type: "api_key", key: "test-api-key" },
     }));
     const apiKeyXaiModel = apiKeyRegistry.getAll().find((model) => model.provider === "xai");
 
     expect(apiKeyXaiModel?.baseUrl).toBe(XAI_API_BASE_URL);
-    expect(apiKeyXaiModel?.headers?.["X-XAI-Token-Auth"]).toBeUndefined();
+    for (const header of [...XAI_PROXY_ONLY_HEADERS, "User-Agent"] as const) {
+      expect(apiKeyXaiModel?.headers?.[header]).toBeUndefined();
+    }
 
     const oauthRegistry = ModelRegistry.create(AuthStorage.inMemory({
       xai: {
@@ -48,8 +81,17 @@ describe("patched Pi xAI OAuth provider", () => {
     const oauthNonXaiModel = oauthRegistry.getAll().find((model) => model.provider !== "xai");
 
     expect(oauthXaiModels.length).toBeGreaterThan(0);
-    expect(oauthXaiModels.every((model) => model.baseUrl === XAI_OAUTH_BASE_URL)).toBe(true);
-    expect(oauthXaiModels.every((model) => model.headers?.["X-XAI-Token-Auth"] === "xai-grok-cli")).toBe(true);
+    for (const model of oauthXaiModels) {
+      expect(model.baseUrl).toBe(XAI_OAUTH_BASE_URL);
+      expect(model.headers).toEqual({
+        "X-XAI-Token-Auth": "xai-grok-cli",
+        "x-grok-client-version": "0.2.112",
+        "x-grok-client-identifier": "forge",
+        "User-Agent": `forge/${getForgeAppVersion()}`,
+        "x-authenticateresponse": "authenticate-response",
+        "x-grok-model-override": model.id,
+      });
+    }
     expect(oauthNonXaiModel?.baseUrl).not.toBe(XAI_OAUTH_BASE_URL);
   });
 
@@ -89,7 +131,7 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
     expect(requests[0].headers.get("authorization")).toBe("Bearer env-only-xai-key");
-    expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+    expectNoXaiProxyHeaders(requests[0].headers);
   });
 
   it("does not fall back to XAI_API_KEY when stored OAuth refresh fails on a proxy-routed model", async () => {
@@ -125,11 +167,24 @@ describe("patched Pi xAI OAuth provider", () => {
     const resolvedAuth = await registry.getApiKeyAndHeaders(model!);
     const providerApiKey = await registry.getApiKeyForProvider("xai");
 
-    expect(resolvedAuth).toEqual({ ok: true, apiKey: undefined, headers: { "X-XAI-Token-Auth": "xai-grok-cli" }, env: undefined });
+    expect(resolvedAuth).toEqual({
+      ok: true,
+      apiKey: undefined,
+      headers: {
+        "X-XAI-Token-Auth": "xai-grok-cli",
+        "x-grok-client-version": "0.2.112",
+        "x-grok-client-identifier": "forge",
+        "User-Agent": `forge/${getForgeAppVersion()}`,
+        "x-authenticateresponse": "authenticate-response",
+        "x-grok-model-override": model?.id,
+      },
+      env: undefined,
+    });
     expect(providerApiKey).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(requests[0].url).toBe("https://auth.x.ai/oauth2/token");
     expect(requests[0].headers.get("authorization")).toBeNull();
+    expectNoXaiProxyHeaders(requests[0].headers);
     expect(requests.some((request) => request.url.startsWith(XAI_OAUTH_BASE_URL))).toBe(false);
   });
 
@@ -158,7 +213,9 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(resolvedAuth).toMatchObject({ ok: true, apiKey: "runtime-xai-api-key" });
     expect(registry.isUsingOAuth(model!)).toBe(false);
     expect(model?.baseUrl).toBe(XAI_API_BASE_URL);
-    expect(model?.headers?.["X-XAI-Token-Auth"]).toBeUndefined();
+    for (const header of [...XAI_PROXY_ONLY_HEADERS, "User-Agent"] as const) {
+      expect(model?.headers?.[header]).toBeUndefined();
+    }
 
     const requests: Request[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -181,7 +238,7 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
     expect(requests[0].headers.get("authorization")).toBe("Bearer runtime-xai-api-key");
-    expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+    expectNoXaiProxyHeaders(requests[0].headers);
   });
 
   it("rejects a discovered OAuth-only model after a runtime API-key override becomes effective", async () => {
@@ -220,7 +277,14 @@ describe("patched Pi xAI OAuth provider", () => {
       id: "grok-build",
       baseUrl: XAI_OAUTH_BASE_URL,
       authScope: "oauth",
-      headers: { "X-XAI-Token-Auth": "xai-grok-cli" },
+      headers: {
+        "X-XAI-Token-Auth": "xai-grok-cli",
+        "x-grok-client-version": "0.2.112",
+        "x-grok-client-identifier": "forge",
+        "User-Agent": `forge/${getForgeAppVersion()}`,
+        "x-authenticateresponse": "authenticate-response",
+        "x-grok-model-override": "grok-build",
+      },
     });
 
     authStorage.setRuntimeApiKey("xai", "must-not-pair-with-oauth-only-model");
@@ -237,7 +301,9 @@ describe("patched Pi xAI OAuth provider", () => {
       error: 'Model "xai/grok-build" requires OAuth authentication.',
     });
     expect(selectedModel?.baseUrl).toBe(XAI_API_BASE_URL);
-    expect(selectedModel?.headers?.["X-XAI-Token-Auth"]).toBeUndefined();
+    for (const header of [...XAI_PROXY_ONLY_HEADERS, "User-Agent"] as const) {
+      expect(selectedModel?.headers?.[header]).toBeUndefined();
+    }
     expect(fetchMock).not.toHaveBeenCalled();
 
     const apiKeyRegistry = ModelRegistry.create(AuthStorage.inMemory({
@@ -290,10 +356,32 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
     expect(requests[0].headers.get("authorization")).toBe("Bearer xai-api-key");
-    expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+    expectNoXaiProxyHeaders(requests[0].headers);
     expect(requests[1].url).toBe("https://cli-chat-proxy.grok.com/v1/responses");
     expect(requests[1].headers.get("authorization")).toBe("Bearer oauth-access-token");
-    expect(requests[1].headers.get("X-XAI-Token-Auth")).toBe("xai-grok-cli");
+    expect(Object.fromEntries([
+      "user-agent",
+      "x-authenticateresponse",
+      "x-grok-client-identifier",
+      "x-grok-client-version",
+      "x-grok-model-override",
+      "x-xai-token-auth",
+    ].map((header) => [header, requests[1].headers.get(header)]))).toEqual({
+      "user-agent": `forge/${getForgeAppVersion()}`,
+      "x-authenticateresponse": "authenticate-response",
+      "x-grok-client-identifier": "forge",
+      "x-grok-client-version": "0.2.112",
+      "x-grok-model-override": "grok-test",
+      "x-xai-token-auth": "xai-grok-cli",
+    });
+    for (const fabricatedIdentityHeader of [
+      "x-grok-conv-id",
+      "x-grok-session-id",
+      "x-grok-user-id",
+      "x-grok-deployment-id",
+    ]) {
+      expect(requests[1].headers.get(fabricatedIdentityHeader)).toBeNull();
+    }
   });
 
   it("runs Authorization Code + S256 PKCE with the narrow Grok inference scopes", async () => {
@@ -466,7 +554,7 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://auth.x.ai/oauth2/token");
-    expect(new Headers(init.headers).get("X-XAI-Token-Auth")).toBeNull();
+    expectNoXaiProxyHeaders(new Headers(init.headers));
     expect(new URLSearchParams(String(init.body))).toEqual(new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: "old-refresh-token",
