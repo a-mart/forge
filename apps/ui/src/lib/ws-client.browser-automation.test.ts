@@ -10,8 +10,8 @@ const registration: BrowserHostRegistration = {
 function tab(targetAffinity: BrowserTabSnapshot['targetAffinity']): BrowserTabSnapshot {
   return { targetAffinity, tabId: targetAffinity === 'external-chrome' ? 'ext.profile.7' : 'managed-1', sessionAgentId: 'session-1', profileId: 'profile-1', url: '', title: 'Browser tab', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now }
 }
-function snapshot(revision: number, tabs: BrowserTabSnapshot[] = []): BrowserSessionSnapshot {
-  return { schemaVersion: 2, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs, activeTabId: tabs[0]?.tabId ?? null, defaultTabId: tabs[0]?.tabId ?? null, panelVisible: true, recentActions: [], revision, createdAt: now, updatedAt: new Date(revision).toISOString() }
+function snapshot(revision: number, tabs: BrowserTabSnapshot[] = [], activeTabId = tabs[0]?.tabId ?? null): BrowserSessionSnapshot {
+  return { schemaVersion: 2, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs, activeTabId, defaultTabId: activeTabId, panelVisible: true, recentActions: [], revision, createdAt: now, updatedAt: new Date(revision).toISOString() }
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
@@ -57,6 +57,29 @@ describe('ManagerWsClient automatic Browser integration', () => {
     value.ingest({ type: 'browser_session_changed', reason: 'recovery', snapshot: snapshot(3, [tab('external-chrome')]) })
     expect(value.client.getState().browserSessions['session-1']?.revision).toBe(4)
     expect(value.client.getState().browserSessions['session-1']?.tabs[0]?.targetAffinity).toBe('managed-electron')
+    value.client.destroy()
+  })
+
+  it('hydrates URL/title metadata and applies live active/inactive metadata without stealing selection', async () => {
+    const value = fixture()
+    value.client.registerBrowserAutomationHost(registration, vi.fn())
+    const hydrate = await connectHost(value)
+    const active = { ...tab('managed-electron'), tabId: 'managed-active', url: 'https://active.test/bootstrap', title: 'Active bootstrap' }
+    const inactive = { ...tab('managed-electron'), tabId: 'managed-inactive', url: 'https://inactive.test/bootstrap', title: 'Inactive bootstrap' }
+    value.ingest({ type: 'browser_host_hydration_chunk', requestId: hydrate.requestId, hostId: 'host-1', hostGeneration: 3, chunkIndex: 0, chunkCount: 1, payloadBase64: btoa(JSON.stringify([snapshot(2, [active, inactive], active.tabId)])) })
+    expect(value.client.getState().browserSessions['session-1']).toMatchObject({ activeTabId: active.tabId, tabs: [{ title: 'Active bootstrap' }, { title: 'Inactive bootstrap' }] })
+
+    value.ingest({ type: 'browser_session_changed', reason: 'host-report', snapshot: snapshot(3, [
+      { ...active, url: 'https://active.test/live', title: 'Active live' },
+      { ...inactive, url: 'https://inactive.test/live', title: 'Inactive live' },
+    ], active.tabId) })
+    expect(value.client.getState().browserSessions['session-1']).toMatchObject({
+      activeTabId: active.tabId,
+      tabs: [
+        { tabId: active.tabId, url: 'https://active.test/live', title: 'Active live' },
+        { tabId: inactive.tabId, url: 'https://inactive.test/live', title: 'Inactive live' },
+      ],
+    })
     value.client.destroy()
   })
 

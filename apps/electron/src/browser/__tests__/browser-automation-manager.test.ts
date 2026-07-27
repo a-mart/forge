@@ -155,7 +155,7 @@ function tabSnapshot(tabId = 'tab-1', sessionAgentId = 'session-1', profileId = 
 
 async function setup(
   created = false,
-  options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile'> = {},
+  options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile' | 'sendToRenderer'> = {},
 ): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-manager-'))
   const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: vi.fn(), ...options })
@@ -215,6 +215,25 @@ describe('BrowserAutomationManager', () => {
     expect(snapshot?.ok && snapshot.operation === 'snapshot' ? snapshot.result : null).toMatchObject({
       visibleText: 'Fixture text', viewport: { width: 800, height: 600 }, screenshot: { mimeType: 'image/png', width: 800, height: 600 },
     })
+  })
+
+  it('projects guest navigation and title metadata without presentation or reselection', async () => {
+    const sendToRenderer = vi.fn()
+    const { webview } = await setup(false, { sendToRenderer })
+    sendToRenderer.mockClear()
+
+    webview.url = 'https://active.test/live'
+    webview.title = 'Active live'
+    webview.emit('did-navigate')
+    expect(sendToRenderer).toHaveBeenLastCalledWith('forge:browser-state-changed', expect.objectContaining({
+      tabId: 'tab-1', url: 'https://active.test/live', title: 'Active live',
+    }))
+
+    webview.title = 'Renamed live'
+    webview.emit('page-title-updated')
+    expect(sendToRenderer).toHaveBeenLastCalledWith('forge:browser-state-changed', expect.objectContaining({
+      tabId: 'tab-1', url: 'https://active.test/live', title: 'Renamed live',
+    }))
   })
 
   it('resolves none before DOMContentLoaded before load and removes readiness listeners', async () => {
