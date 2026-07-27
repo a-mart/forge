@@ -202,7 +202,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const scrolled=await run('scroll',{deltaX:0,deltaY:600});
         const evaluated=await run('evaluate',{expression:'({state:window.__state,value:document.querySelector("#field").value,scrollY:window.scrollY})',awaitPromise:true,returnByValue:true});
         const waited=await run('waitFor',{text:'Entered 1',timeoutMs:5000});
-        const revealed=await run('evaluate',{expression:'/* forge:reveal-authorized-tab:v1 */ undefined',awaitPromise:false,returnByValue:true});
+        const revealed=await call('forge.browser.reveal',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,tabId});
         const beforeChildren=(await chrome.tabs.query({})).map(tab=>tab.id);
         await run('click',{locator:'role=button[name="Open child"]',timeoutMs:5000});
         await new Promise(resolve=>setTimeout(resolve,250));
@@ -228,7 +228,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           instanceReady:typeof stored['forge.externalChrome.instanceId.v1']==='string',heartbeatReady:alarm?.name==='forge.externalChrome.heartbeat.v2',
           bootState:globalThis.__forgeServiceWorkerBootState??null,workerLocation:globalThis.location.href,
           acquisition:{acquired:acquired.created===false&&focused.eligible===true,tabId},
-          operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.tabId===String(tabId)},
+          operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
           dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},

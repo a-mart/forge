@@ -47,7 +47,7 @@ async function sendRuntimeHello(
       protocol: { min: 1, max: 1 }, shellAbi, payloadVersion,
       ...(payloadSha256 === null ? {} : { payloadSha256 }),
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', extensionInstanceId: instanceId, chromeVersion: '125.0.0.0',
-      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
         operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
@@ -112,7 +112,7 @@ async function fakeExtensionLoop(
         protocolVersion: 1, eligible: focusedEligible,
       } })
     } else if (message.method === 'forge.browser.acquire') {
-      const tabId = params.reuseFocused === true ? 40 : 41
+      const tabId = typeof params.tabId === 'number' ? params.tabId : params.reuseFocused === true ? 40 : 41
       authorityTabs.set(String(params.leaseId), [tabId])
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
@@ -123,6 +123,11 @@ async function fakeExtensionLoop(
     } else if (message.method === 'forge.browser.release') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: authorityTabs.get(String(params.leaseId)) ?? [40],
+      } })
+    } else if (message.method === 'forge.browser.reveal') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        tabId: params.tabId, revealed: true,
       } })
     } else if (message.method === 'forge.browser.execute') {
       const now = new Date(0).toISOString()
@@ -156,11 +161,6 @@ async function fakeExtensionLoop(
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, requestId: params.requestId,
         tabId: params.tabId, operation, ok: true, result,
-      } })
-    } else if (message.method === 'forge.browser.turnEnded') {
-      await client.send({ jsonrpc: '2.0', id: message.id, result: {
-        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, turnId: params.turnId,
-        releasedTabs: params.finalTabs, handoffTabs: params.handoffTabs,
       } })
     } else if (message.method === 'forge.runtime.prepareUpdate') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
@@ -263,6 +263,63 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close(); await loop
   })
 
+  it('retains an exact idle-release checkpoint across disconnect and clears it only after retry acknowledgement', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const firstLoop = fakeExtensionLoop(client)
+    const acquired = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 32,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    client.close(); await firstLoop
+    await expect(runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')).rejects.toThrow()
+    expect(await runtime.leaseCheckpoints()).toHaveLength(1)
+
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const retryLoop = fakeExtensionLoop(reconnected, requests)
+    await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    expect(requests.map(({ method }) => method)).toEqual(['forge.browser.release'])
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); reconnected.close(); await retryLoop
+  })
+
+  it('reacquires, reveals through the dedicated RPC, and releases exact authority after idle cleanup', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    const acquired = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 33,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    await expect(runtime.revealTarget({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority.tabId))
+      .resolves.toEqual({ revealed: true, tabId: acquired.authority.tabId })
+    expect(requests.map(({ method }) => method)).toEqual([
+      'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release',
+      'forge.browser.acquire', 'forge.browser.reveal', 'forge.browser.release',
+    ])
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('uses generic endTurn and releaseSession cleanup with no surviving checkpoint', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
+    const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
+    const first = await runtime.acquireTarget({ ...session, operation: 'snapshot', preferredTabId: null, reuseExisting: true, createIfNeeded: true, ownerEpoch: 34 })
+    if (!first.ok) throw new Error('fixture acquisition failed')
+    await runtime.endTurn(session, 'turn-1')
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    const second = await runtime.acquireTarget({ ...session, operation: 'snapshot', preferredTabId: null, reuseExisting: true, createIfNeeded: true, ownerEpoch: 35 })
+    if (!second.ok) throw new Error('fixture acquisition failed')
+    await runtime.releaseSession(session, 'archive')
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it.each([true, false])('acquires a dedicated tab from the sole ready profile without focus when reuseExisting is %s', async (reuseExisting) => {
     const { runtime, client } = await connectedRuntime()
     const requests: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -310,6 +367,25 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
   })
 
+  it('rejects an opaque choice token when its exact ready runtime reconnects before confirmation', async () => {
+    const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
+    const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(profileB, 'instance_profile_b')
+    const loopA = fakeExtensionLoop(profileA, [], 'instance_profile_a', false)
+    const choices = runtime.automaticProfileChoices()
+    expect(choices).toHaveLength(2)
+    const stale = choices[1]!
+
+    profileB.close()
+    await waitForCondition(() => runtime.inventory().every((item) => item.extensionInstanceId !== 'instance_profile_b'))
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_b')
+    const loopB = fakeExtensionLoop(reconnected, [], 'instance_profile_b', false)
+    expect(runtime.confirmAutomaticChoice('session-a', 'profile-a', stale.token)).toBe(false)
+
+    runtime.deactivate(); profileA.close(); reconnected.close(); await Promise.all([loopA, loopB])
+  })
+
   it('remembers one confirmed ambiguous profile for the current runtime session', async () => {
     const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
     const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
@@ -319,7 +395,9 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     const loopA = fakeExtensionLoop(profileA, requestsA, 'instance_profile_a', false)
     const loopB = fakeExtensionLoop(profileB, requestsB, 'instance_profile_b', false)
 
-    runtime.confirmAutomaticInstance('session-a', 'profile-a', 'instance_profile_b')
+    const choice = runtime.automaticProfileChoices()[1]
+    if (!choice) throw new Error('fixture choice missing')
+    expect(runtime.confirmAutomaticChoice('session-a', 'profile-a', choice.token)).toBe(true)
     await expect(runtime.acquireTarget({
       sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
       reuseExisting: false, createIfNeeded: true, ownerEpoch: 30,
@@ -331,3 +409,11 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
   })
 
 })
+
+async function waitForCondition(assertion: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (assertion()) return
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  throw new Error('condition did not settle')
+}

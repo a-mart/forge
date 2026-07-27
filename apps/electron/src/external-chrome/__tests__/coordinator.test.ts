@@ -158,7 +158,7 @@ async function sendCoordinatorRuntimeHello(
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
       protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
       extensionId: EXTERNAL_CHROME_EXTENSION_ID, extensionInstanceId, chromeVersion: '125.0.0.0',
-      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
         operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),

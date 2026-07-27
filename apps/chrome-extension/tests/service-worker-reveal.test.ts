@@ -15,13 +15,12 @@ describe('Chrome-backed Browser reveal', () => {
     const runtime = new Runtime()
     const authority = (runtime as unknown as { authorities: { acquire(input: unknown): Promise<unknown> } }).authorities
     await authority.acquire({ tabId: 7, ownerId: 'lease-1', ownerEpoch: 4, sessionAgentId: 'session-1', expectedOwnerEpoch: 0 })
-    const execute = (runtime as unknown as { execute(input: unknown): Promise<unknown> }).execute.bind(runtime)
+    const handle = (runtime as unknown as { handleDesktopRequest(input: unknown): Promise<unknown> }).handleDesktopRequest.bind(runtime)
 
-    await expect(execute({
-      protocolVersion: 1, requestId: 'reveal-1', leaseId: 'lease-1', leaseEpoch: 4, tabId: 7,
-      operation: 'evaluate', input: { expression: '/* forge:reveal-authorized-tab:v1 */ undefined', awaitPromise: false, returnByValue: true },
-      deadlineAt: new Date(Date.now() + 5_000).toISOString(),
-    })).resolves.toMatchObject({ ok: true })
+    await expect(handle({
+      jsonrpc: '2.0', id: 'reveal-1', method: 'forge.browser.reveal',
+      params: { protocolVersion: 1, leaseId: 'lease-1', leaseEpoch: 4, tabId: 7 },
+    })).resolves.toEqual({ protocolVersion: 1, leaseId: 'lease-1', leaseEpoch: 4, tabId: 7, revealed: true })
     expect(updateTab).toHaveBeenCalledWith(7, { active: true })
     expect(updateWindow).toHaveBeenCalledWith(2, { focused: true })
   })

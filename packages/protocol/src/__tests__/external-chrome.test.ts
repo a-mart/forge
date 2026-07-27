@@ -73,8 +73,8 @@ describe('External Chrome automatic transport contract', () => {
       'forge.browser.focusedEligibility',
       'forge.browser.acquire',
       'forge.browser.release',
+      'forge.browser.reveal',
       'forge.browser.execute',
-      'forge.browser.turnEnded',
       'forge.runtime.prepareUpdate',
       'forge.runtime.reload',
     ])
@@ -114,6 +114,14 @@ describe('External Chrome automatic transport contract', () => {
     expect(parse(eligibility, 'forge.browser.focusedEligibility')).toEqual(eligibility)
     expect(parse(acquire, 'forge.browser.acquire')).toEqual(acquire)
     expect(() => parse({ ...acquire, result: { ...acquire.result, windows: [] } }, 'forge.browser.acquire')).toThrow(ExternalChromeContractError)
+  })
+
+  it('round-trips the dedicated non-CDP reveal RPC', () => {
+    const request = { jsonrpc: '2.0', id: 'reveal-1', method: 'forge.browser.reveal', params: { ...lease, tabId: 17 } }
+    const response = { jsonrpc: '2.0', id: 'reveal-1', result: { ...lease, tabId: 17, revealed: true } }
+    expect(parse(request)).toEqual(request)
+    expect(parse(response, 'forge.browser.reveal')).toEqual(response)
+    expect(() => parse({ ...response, result: { ...response.result, revealed: false } }, 'forge.browser.reveal')).toThrow(ExternalChromeContractError)
   })
 
   it('forbids duplicate tab routing inside execute input', () => {

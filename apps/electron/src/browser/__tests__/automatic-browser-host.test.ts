@@ -46,6 +46,8 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
   acquireResults: ExternalBrowserAcquireResult[] = []
   executionResults: BrowserTargetExecution[] = []
+  releaseFailures: Error[] = []
+  revealFailures: Error[] = []
   sequence = 0
 
   async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
@@ -64,9 +66,13 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   }
   async releaseAuthority(_session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void> {
     this.authorityReleases.push({ authority: structuredClone(authority), reason })
+    const failure = this.releaseFailures.shift()
+    if (failure) throw failure
   }
   async revealTarget(session: BrowserTargetSession, tabId: string) {
     this.reveals.push({ session: structuredClone(session), tabId })
+    const failure = this.revealFailures.shift()
+    if (failure) throw failure
     return { revealed: true as const, tabId }
   }
   async endTurn(session: BrowserTargetSession, turnId: string): Promise<void> { this.ended.push({ session, turnId }) }
@@ -91,6 +97,20 @@ describe('AutomaticBrowserHost', () => {
       error: { code: 'unsupported-operation', details: { mutationState: 'not-started', noReplay: false } },
     })
     expect(managed.requests).toHaveLength(0)
+  })
+
+  it('preserves caller tab correlation while open, navigate, and snapshot allocate or target internally', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+
+    const opened = await host.perform(request('open', { show: false, reuseExistingTab: true }, null))
+    expect(opened).toMatchObject({ ok: true, tabId: null, result: { tab: { tabId: 'chrome-tab-1' } } })
+    const navigated = await host.perform(request('navigate', { url: 'https://example.test', readiness: 'load', timeoutMs: 100 }, null))
+    expect(navigated).toMatchObject({ ok: true, tabId: null, result: { tab: { tabId: 'chrome-tab-1' } } })
+    const snapshot = await host.perform(request('snapshot', {}, null))
+    expect(snapshot).toMatchObject({ ok: true, tabId: null, result: { tabId: 'chrome-tab-1' } })
+    expect(external.executions.map((execution) => execution.tabId)).toEqual(['chrome-tab-1', 'chrome-tab-1', 'chrome-tab-1'])
   })
 
   it('honors reuseExistingTab=false and allocates a fresh target under automatic policy', async () => {
@@ -209,6 +229,75 @@ describe('AutomaticBrowserHost', () => {
     expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
   })
 
+  it('retains a failed idle release, retries it exactly, and blocks acquisition until acknowledgement', async () => {
+    vi.useFakeTimers()
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.releaseFailures.push(new Error('disconnected'))
+    const host = new AutomaticBrowserHost({ managedAdapter: managed, externalAdapter: external, authorityBurst: { initialIdleMs: 10 } })
+    await host.perform(request('snapshot', {}, null))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(external.authorityReleases).toHaveLength(1)
+
+    await expect(host.perform(request('snapshot', {}, null))).resolves.toMatchObject({ ok: true })
+    expect(external.authorityReleases).toHaveLength(2)
+    expect(external.authorityReleases[1]?.authority).toEqual(external.authorityReleases[0]?.authority)
+    expect(external.acquisitions).toHaveLength(2)
+  })
+
+  it('returns the original no-replay failure when post-mutation cleanup also fails', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const original = request('click', { x: 1, y: 1, timeoutMs: 100 }, null)
+    external.executionResults.push({
+      response: failure({ ...original, tabId: 'chrome-tab-1' } as BrowserAutomationRequest, 'execution-failed'),
+      failure: { phase: 'execution', mutationState: 'possible' },
+    })
+    external.releaseFailures.push(new Error('release disconnected'))
+    const host = createHost(managed, external)
+
+    await expect(host.perform(original)).resolves.toMatchObject({
+      ok: false, tabId: null, error: { code: 'execution-failed', details: { mutationState: 'possible', noReplay: true } },
+    })
+    expect(external.authorityReleases).toHaveLength(1)
+    expect(managed.requests).toHaveLength(0)
+    await expect(host.perform(request('snapshot', {}, null))).resolves.toMatchObject({ ok: true })
+    expect(external.authorityReleases[1]?.authority).toEqual(external.authorityReleases[0]?.authority)
+  })
+
+  it('reveals an exact Chrome tab after idle and after turn-end release, and surfaces failed reacquire', async () => {
+    vi.useFakeTimers()
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = new AutomaticBrowserHost({ managedAdapter: managed, externalAdapter: external, authorityBurst: { initialIdleMs: 10 } })
+    const opened = await host.perform(request('open', { show: false, reuseExistingTab: true }, null))
+    const tabId = opened.updatedTab!.tabId
+    await vi.advanceTimersByTimeAsync(10)
+    await expect(host.revealTarget({ sessionAgentId: 'session', profileId: 'profile' }, tabId)).resolves.toMatchObject({ revealed: true, tabId })
+
+    await host.perform(request('snapshot', {}, tabId))
+    await expect(host.handleLifecycle(lifecycle('turn-ended'))).resolves.toMatchObject({ ok: true })
+    await expect(host.revealTarget({ sessionAgentId: 'session', profileId: 'profile' }, tabId)).resolves.toMatchObject({ revealed: true, tabId })
+
+    external.revealFailures.push(new Error('exact reacquire failed'))
+    await expect(host.revealTarget({ sessionAgentId: 'session', profileId: 'profile' }, tabId)).rejects.toThrow('exact reacquire failed')
+    expect(external.reveals).toHaveLength(3)
+  })
+
+  it('retains failed turn cleanup and acknowledges only an exact retry', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.releaseFailures.push(new Error('turn disconnect'))
+    const host = createHost(managed, external)
+    await host.perform(request('snapshot', {}, null))
+
+    await expect(host.handleLifecycle(lifecycle('turn-ended'))).resolves.toMatchObject({ ok: false, error: { code: 'execution-failed' } })
+    expect(external.ended).toHaveLength(0)
+    await expect(host.handleLifecycle(lifecycle('turn-ended'))).resolves.toMatchObject({ ok: true })
+    expect(external.authorityReleases[1]?.authority).toEqual(external.authorityReleases[0]?.authority)
+    expect(external.ended).toHaveLength(1)
+  })
+
   it('centralizes generic turn/session cleanup and Show in Chrome reveal', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
@@ -221,7 +310,7 @@ describe('AutomaticBrowserHost', () => {
     })
     await expect(host.handleLifecycle(lifecycle('turn-ended'))).resolves.toMatchObject({ ok: true, kind: 'turn-ended', turnId: 'turn-1' })
     await expect(host.handleLifecycle(lifecycle('release-session'))).resolves.toMatchObject({ ok: true, kind: 'release-session', reason: 'archive' })
-    expect(external.authorityReleases).toMatchObject([{ reason: 'turn-ended' }])
+    expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
     expect(external.ended).toHaveLength(1)
     expect(external.sessionReleases).toHaveLength(1)
     expect(managed.ended).toHaveLength(1)

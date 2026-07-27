@@ -28,6 +28,8 @@ export interface ExternalChromeTransport {
   execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult>
   acquireTarget?(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult>
   releaseAuthority?(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void>
+  endTurn?(session: BrowserTargetSession, turnId: string): Promise<void>
+  releaseSession?(session: BrowserTargetSession, reason: BrowserHostLifecycleReason): Promise<void>
   revealTarget?(session: BrowserTargetSession, tabId: string): Promise<ExternalBrowserRevealResult>
 }
 
@@ -91,6 +93,14 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
 
   releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: 'idle' | 'operation-failed' | 'turn-ended' | BrowserHostLifecycleReason): Promise<void> {
     return this.transport.releaseAuthority?.(session, authority, reason) ?? Promise.resolve()
+  }
+
+  endTurn(session: BrowserTargetSession, turnId: string): Promise<void> {
+    return this.transport.endTurn?.(session, turnId) ?? Promise.resolve()
+  }
+
+  releaseSession(session: BrowserTargetSession, reason: BrowserHostLifecycleReason): Promise<void> {
+    return this.transport.releaseSession?.(session, reason) ?? Promise.resolve()
   }
 
   revealTarget(session: BrowserTargetSession, tabId: string): Promise<ExternalBrowserRevealResult> {

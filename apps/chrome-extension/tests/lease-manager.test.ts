@@ -26,6 +26,22 @@ describe('per-tab compare-and-set authority', () => {
     expect(manager.all()).toEqual([expect.objectContaining({ tabId: 2, ownerId: 'other' })])
   })
 
+  it('persists an idempotent exact release receipt across worker restart without retaining authority', async () => {
+    const session = new FakeStorage()
+    const chrome = fakeChrome({ tabs: [tab(1)], session })
+    const first = new LeaseManager(chrome, 'payload')
+    await first.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 4, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
+    await expect(first.releaseOwner('owner', 4)).resolves.toEqual([1])
+    expect(first.all()).toEqual([])
+
+    const restarted = new LeaseManager(chrome, 'payload')
+    await restarted.recover()
+    expect(restarted.all()).toEqual([])
+    expect(restarted.releaseScope('owner', 4)).toEqual([1])
+    await expect(restarted.releaseOwner('owner', 4)).resolves.toEqual([1])
+    expect(restarted.all()).toEqual([])
+  })
+
   it('interrupts active control immediately by advancing the tab-local control epoch', async () => {
     const manager = new LeaseManager(fakeChrome({ tabs: [tab(1)] }), 'payload')
     await manager.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 2, sessionAgentId: 'session', expectedOwnerEpoch: 0 })

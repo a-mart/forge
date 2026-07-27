@@ -19,7 +19,6 @@ import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
 const HEARTBEAT_ALARM = 'forge.externalChrome.heartbeat.v2'
 const TRANSPORT_GRACE_ALARM = 'forge.externalChrome.transportGrace.v2'
-const REVEAL_SENTINEL = '/* forge:reveal-authorized-tab:v1 */ undefined'
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
@@ -152,22 +151,23 @@ export class Runtime implements ServiceWorkerPayload {
         }
       }
       case 'forge.browser.release': {
-        const tabIds = this.authorities.all().filter((entry) => entry.ownerId === request.params.leaseId && entry.ownerEpoch === request.params.leaseEpoch).map((entry) => entry.tabId)
+        const tabIds = this.authorities.releaseScope(request.params.leaseId, request.params.leaseEpoch)
         await Promise.all(tabIds.map((tabId) => this.debuggers.reset(tabId)))
         this.broadcastState(tabIds, 'detached')
         const releasedTabIds = await this.authorities.releaseOwner(request.params.leaseId, request.params.leaseEpoch)
         for (const tabId of releasedTabIds) this.operations.clear(tabId)
         return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, releasedTabIds }
       }
-      case 'forge.browser.execute': return this.execute(request.params)
-      case 'forge.browser.turnEnded': {
-        const exact = [...request.params.finalTabs, ...request.params.handoffTabs]
-        if (new Set(exact).size !== exact.length) throw new LeaseError('scope-mismatch', 'turn disposition contains duplicate tabs')
-        // Debugger control never survives an operation. Final releases ownership; handoff retains per-tab CAS affinity.
-        this.broadcastState(request.params.finalTabs, 'detached')
-        for (const tabId of request.params.finalTabs) await this.authorities.release(request.params.leaseId, request.params.leaseEpoch, tabId)
-        return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, turnId: request.params.turnId, releasedTabs: request.params.finalTabs, handoffTabs: request.params.handoffTabs }
+      case 'forge.browser.reveal': {
+        this.authorities.assertScope(request.params.leaseId, request.params.leaseEpoch, request.params.tabId)
+        const tab = await this.chrome.tabs.get(request.params.tabId)
+        const tabs = this.chrome.tabs as unknown as { update(tabId: number, properties: { active: boolean }): Promise<unknown> }
+        const windows = this.chrome.windows as unknown as { update(windowId: number, properties: { focused: boolean }): Promise<unknown> }
+        await tabs.update(request.params.tabId, { active: true })
+        if (tab.windowId !== undefined) await windows.update(tab.windowId, { focused: true })
+        return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, tabId: request.params.tabId, revealed: true }
       }
+      case 'forge.browser.execute': return this.execute(request.params)
       case 'forge.runtime.prepareUpdate': {
         this.acceptingOperations = false
         const deadline = Date.parse(request.params.deadlineAt)
@@ -193,14 +193,6 @@ export class Runtime implements ServiceWorkerPayload {
   private async execute(params: ExternalChromeExecuteParams): Promise<unknown> {
     const authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
     if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority) })
-    if (params.operation === 'evaluate' && (params.input as { expression?: unknown }).expression === REVEAL_SENTINEL) {
-      const tab = await this.chrome.tabs.get(params.tabId)
-      const tabs = this.chrome.tabs as unknown as { update(tabId: number, properties: { active: boolean }): Promise<unknown> }
-      const windows = this.chrome.windows as unknown as { update(windowId: number, properties: { focused: boolean }): Promise<unknown> }
-      await tabs.update(params.tabId, { active: true })
-      if (tab.windowId !== undefined) await windows.update(tab.windowId, { focused: true })
-      return this.executeResponse(params, true, { tabId: String(params.tabId), value: null, serializedBytes: 4 })
-    }
     if (!['navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(params.operation)) return this.executeFailure(params, 'unsupported-operation', `External Chrome does not support ${params.operation}.`, false)
     return this.operations.runExclusive(params.tabId, async () => {
       let resolveTracked!: () => void

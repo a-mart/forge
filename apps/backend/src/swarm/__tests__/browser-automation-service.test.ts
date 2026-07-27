@@ -102,6 +102,35 @@ describe("Automatic Browser Host service", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it("retains a failed lifecycle receipt and retries the exact request before acknowledging cleanup", async () => {
+    const instance = await service();
+    const operations: BrowserAutomationRequest[] = [];
+    const lifecycle: BrowserHostLifecycleRequest[] = [];
+    register(instance, (request) => operations.push(request), (request) => lifecycle.push(request));
+    const opening = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: false });
+    await vi.waitFor(() => expect(operations).toHaveLength(1));
+    const owned = tab(operations[0]!, "logical-retry");
+    accept(instance, { ...routing(operations[0]!), ok: true, updatedTab: owned, result: { tab: owned, created: true, panelRevealRequested: false } });
+    await opening;
+
+    const first = instance.releaseSessionForLifecycle("profile-1", "manager-1", "archive");
+    await vi.waitFor(() => expect(lifecycle).toHaveLength(1));
+    expect(instance.acceptHostLifecycleResponse("desktop-socket", {
+      requestId: lifecycle[0]!.requestId, sessionAgentId: lifecycle[0]!.sessionAgentId, profileId: lifecycle[0]!.profileId,
+      hostId: lifecycle[0]!.hostId, hostGeneration: lifecycle[0]!.hostGeneration, kind: "release-session", ok: false,
+      error: { code: "host-disconnected", message: "ack lost", retryable: true },
+    })).toBe("accepted");
+    await expect(first).rejects.toMatchObject({ failure: { code: "host-disconnected" } });
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({ hostCleanup: { phase: "pending" } });
+
+    const retry = instance.releaseSessionForLifecycle("profile-1", "manager-1", "archive");
+    await vi.waitFor(() => expect(lifecycle).toHaveLength(2));
+    expect(lifecycle[1]!.requestId).toBe(lifecycle[0]!.requestId);
+    expect(instance.acceptHostLifecycleResponse("desktop-socket", { ...lifecycle[1], ok: true })).toBe("accepted");
+    await retry;
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({ hostCleanup: { phase: "acknowledged" } });
+  });
+
   it("uses generic correlated turn and release lifecycle requests", async () => {
     const instance = await service();
     const operations: BrowserAutomationRequest[] = [];

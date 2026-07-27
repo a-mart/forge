@@ -63,8 +63,8 @@ export const EXTERNAL_CHROME_REQUEST_METHODS = [
   'forge.browser.focusedEligibility',
   'forge.browser.acquire',
   'forge.browser.release',
+  'forge.browser.reveal',
   'forge.browser.execute',
-  'forge.browser.turnEnded',
   'forge.runtime.prepareUpdate',
   'forge.runtime.reload',
 ] as const
@@ -338,16 +338,13 @@ export type ExternalChromeExecuteResult = {
       })
 }[BrowserAutomationOperation]
 
-export interface ExternalChromeTurnEndedParams extends ExternalChromeLeaseRouting {
-  turnId: string
-  finalTabs: number[]
-  handoffTabs: number[]
+export interface ExternalChromeRevealParams extends ExternalChromeLeaseRouting {
+  tabId: number
 }
 
-export interface ExternalChromeTurnEndedResult extends ExternalChromeLeaseRouting {
-  turnId: string
-  releasedTabs: number[]
-  handoffTabs: number[]
+export interface ExternalChromeRevealResult extends ExternalChromeLeaseRouting {
+  tabId: number
+  revealed: true
 }
 
 export interface ExternalChromePrepareUpdateParams {
@@ -432,8 +429,8 @@ export interface ExternalChromeRequestParamsByMethod {
   'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityParams
   'forge.browser.acquire': ExternalChromeAcquireParams
   'forge.browser.release': ExternalChromeReleaseParams
+  'forge.browser.reveal': ExternalChromeRevealParams
   'forge.browser.execute': ExternalChromeExecuteParams
-  'forge.browser.turnEnded': ExternalChromeTurnEndedParams
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateParams
   'forge.runtime.reload': ExternalChromeReloadParams
 }
@@ -444,8 +441,8 @@ export interface ExternalChromeResultByMethod {
   'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityResult
   'forge.browser.acquire': ExternalChromeAcquireResult
   'forge.browser.release': ExternalChromeReleaseResult
+  'forge.browser.reveal': ExternalChromeRevealResult
   'forge.browser.execute': ExternalChromeExecuteResult
-  'forge.browser.turnEnded': ExternalChromeTurnEndedResult
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateResult
   'forge.runtime.reload': ExternalChromeReloadResult
 }
@@ -845,6 +842,10 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
       strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'reason'])
       return { ...parseLeaseRouting(params, expected), reason: boundedString(params.reason, 'params.reason', EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH) }
     }
+    case 'forge.browser.reveal': {
+      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId'])
+      return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId') }
+    }
     case 'forge.browser.execute': {
       strictKeys(params, 'params', ['protocolVersion', 'requestId', 'leaseId', 'leaseEpoch', 'tabId', 'operation', 'input', 'deadlineAt'])
       if (!isBrowserAutomationOperation(params.operation)) fail('invalid-params', 'params.operation is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
@@ -857,13 +858,6 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
         return fail('invalid-params', 'params.input is invalid for the operation', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       }
       return { ...parseLeaseRouting(params, expected), requestId: identifier(params.requestId, 'params.requestId'), tabId: integer(params.tabId, 'params.tabId'), operation: params.operation, input: parsedInput, deadlineAt: boundedString(params.deadlineAt, 'params.deadlineAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) } as ExternalChromeExecuteParams
-    }
-    case 'forge.browser.turnEnded': {
-      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'turnId', 'finalTabs', 'handoffTabs'])
-      const finalTabs = parseNumericIdArray(params.finalTabs, 'params.finalTabs')
-      const handoffTabs = parseNumericIdArray(params.handoffTabs, 'params.handoffTabs')
-      if (finalTabs.some((tabId) => handoffTabs.includes(tabId))) fail('invalid-params', 'finalTabs and handoffTabs must be disjoint', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
-      return { ...parseLeaseRouting(params, expected), turnId: identifier(params.turnId, 'params.turnId'), finalTabs, handoffTabs }
     }
     case 'forge.runtime.prepareUpdate': {
       strictKeys(params, 'params', ['protocolVersion', 'payloadVersion', 'sha256', 'deadlineAt'])
@@ -1250,11 +1244,12 @@ function parseResult(method: ExternalChromeRequestMethod, value: unknown, expect
       strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'releasedTabIds'])
       return { ...parseLeaseRouting(result, expected), releasedTabIds: parseNumericIdArray(result.releasedTabIds, 'result.releasedTabIds') }
     }
-    case 'forge.browser.execute': return parseExecuteResult(value, expected)
-    case 'forge.browser.turnEnded': {
-      strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'turnId', 'releasedTabs', 'handoffTabs'])
-      return { ...parseLeaseRouting(result, expected), turnId: identifier(result.turnId, 'result.turnId'), releasedTabs: parseNumericIdArray(result.releasedTabs, 'result.releasedTabs'), handoffTabs: parseNumericIdArray(result.handoffTabs, 'result.handoffTabs') }
+    case 'forge.browser.reveal': {
+      strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId', 'revealed'])
+      if (result.revealed !== true) fail('invalid-result', 'result.revealed must be true')
+      return { ...parseLeaseRouting(result, expected), tabId: integer(result.tabId, 'result.tabId'), revealed: true }
     }
+    case 'forge.browser.execute': return parseExecuteResult(value, expected)
     case 'forge.runtime.prepareUpdate': {
       strictKeys(result, 'result', ['protocolVersion', 'payloadVersion', 'quiesced'])
       if (result.quiesced !== true) fail('invalid-result', 'result.quiesced must be true')

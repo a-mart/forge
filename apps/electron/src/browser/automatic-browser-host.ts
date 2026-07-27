@@ -72,6 +72,7 @@ interface AuthorityBurst {
   authority: ExternalBrowserTargetAuthority
   operations: number
   timer: ReturnType<typeof setTimeout> | null
+  pendingReleaseReason: 'idle' | 'operation-failed' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'] | null
 }
 
 /**
@@ -156,7 +157,7 @@ export class AutomaticBrowserHost {
   }
 
   perform(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
-    return this.serialize(sessionKey(request), () => this.performSerialized(request))
+    return this.serialize(sessionKey(request), async () => correlateCallerTab(request, await this.performSerialized(request)))
   }
 
   execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
@@ -212,25 +213,29 @@ export class AutomaticBrowserHost {
     }
   }
 
-  async revealTarget(session: BrowserTargetSession, tabId: string): Promise<AutomaticBrowserRevealResult> {
-    const affinity = this.targetAffinities.get(targetKey(session, tabId))
-    if (affinity !== 'external-chrome') {
-      return { targetAffinity: 'managed-electron', revealed: false, tabId, reason: 'embedded-target' }
-    }
-    const external = this.external
-    if (!isAutomaticExternalBrowserAdapter(external)) {
-      throw failureError('unsupported-operation', 'This Chrome target cannot be revealed.', false, {
-        phase: 'execution', mutationState: 'not-started', fallbackReason: 'operation-unsupported',
-      })
-    }
-    return { targetAffinity: 'external-chrome', ...await external.revealTarget(session, tabId) }
+  revealTarget(session: BrowserTargetSession, tabId: string): Promise<AutomaticBrowserRevealResult> {
+    return this.serialize(sessionKey(session), async () => {
+      const affinity = this.targetAffinities.get(targetKey(session, tabId))
+      if (affinity !== 'external-chrome') {
+        return { targetAffinity: 'managed-electron', revealed: false, tabId, reason: 'embedded-target' }
+      }
+      const external = this.external
+      if (!isAutomaticExternalBrowserAdapter(external)) {
+        throw failureError('unsupported-operation', 'This Chrome target cannot be revealed.', false, {
+          phase: 'execution', mutationState: 'not-started', fallbackReason: 'operation-unsupported',
+        })
+      }
+      // Reveal never borrows operation authority. Close any active burst first;
+      // the External adapter then reacquires this exact tab with bounded authority.
+      await this.releaseBurst(session, 'idle')
+      return { targetAffinity: 'external-chrome', ...await external.revealTarget(session, tabId) }
+    })
   }
 
   async destroy(): Promise<void> {
     if (this.destroyed) return
     this.destroyed = true
-    const releases = [...this.bursts.values()].map((burst) => this.releaseBurstValue(burst, 'desktop-quit'))
-    this.bursts.clear()
+    const releases = [...this.bursts.entries()].map(([key, burst]) => this.releaseAndForgetBurst(key, burst, 'desktop-quit'))
     await Promise.allSettled(releases)
     await Promise.allSettled([
       this.managed.destroy?.(),
@@ -307,11 +312,16 @@ export class AutomaticBrowserHost {
     const burstKey = sessionKey(session)
     let burst = this.bursts.get(burstKey)
     const canReuseBurst = Boolean(burst
+      && burst.pendingReleaseReason === null
       && reuseExisting
       && (!preferredTabId || preferredTabId === burst.authority.tabId))
-    if (!canReuseBurst && burst) {
-      await this.releaseBurstValue(burst, 'idle')
-      this.bursts.delete(burstKey)
+    if (burst && !canReuseBurst) {
+      try {
+        await this.releaseAndForgetBurst(burstKey, burst, burst.pendingReleaseReason ?? 'idle')
+      } catch (error) {
+        return failureResponse(request, 'host-disconnected', error instanceof Error ? error.message : 'Pending Chrome authority release failed.', true,
+          policyDetails({ phase: 'cleanup', mutationState: 'not-started', fallbackReason: 'transport-disconnected' }, false))
+      }
       burst = undefined
     }
 
@@ -336,7 +346,7 @@ export class AutomaticBrowserHost {
           ...policyDetails(acquired.metadata, false),
         })
       }
-      burst = { session, authority: acquired.authority, operations: 0, timer: null }
+      burst = { session, authority: acquired.authority, operations: 0, timer: null, pendingReleaseReason: null }
       this.bursts.set(burstKey, burst)
     } else if (burst.timer) {
       this.clearTimer(burst.timer)
@@ -360,8 +370,10 @@ export class AutomaticBrowserHost {
       return response
     }
 
-    await this.releaseBurstValue(burst, 'operation-failed')
-    this.bursts.delete(burstKey)
+    // Cleanup cannot replace the original no-replay operation result. If the
+    // acknowledgement is lost, retain this exact authority and retry before any
+    // later acquisition or lifecycle acknowledgement.
+    await this.releaseAndForgetBurst(burstKey, burst, 'operation-failed').catch(() => undefined)
     const metadata = execution.failure ?? {
       phase: 'execution' as const,
       mutationState: mutationDefault(request.operation),
@@ -434,23 +446,22 @@ export class AutomaticBrowserHost {
     burst.timer = this.setTimer(() => {
       const key = sessionKey(burst.session)
       if (this.bursts.get(key) !== burst) return
-      this.bursts.delete(key)
-      void this.releaseBurstValue(burst, 'idle')
+      void this.releaseAndForgetBurst(key, burst, 'idle').catch(() => undefined)
     }, delay)
   }
 
   private async releaseBurst(
     session: BrowserTargetSession,
-    reason: 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
+    reason: 'idle' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
   ): Promise<void> {
     const key = sessionKey(session)
     const burst = this.bursts.get(key)
     if (!burst) return
-    this.bursts.delete(key)
-    await this.releaseBurstValue(burst, reason)
+    await this.releaseAndForgetBurst(key, burst, reason)
   }
 
-  private async releaseBurstValue(
+  private async releaseAndForgetBurst(
+    key: string,
     burst: AuthorityBurst,
     reason: 'idle' | 'operation-failed' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
   ): Promise<void> {
@@ -458,9 +469,11 @@ export class AutomaticBrowserHost {
       this.clearTimer(burst.timer)
       burst.timer = null
     }
+    burst.pendingReleaseReason ??= reason
     if (isAutomaticExternalBrowserAdapter(this.external)) {
-      await this.external.releaseAuthority(burst.session, burst.authority, reason)
+      await this.external.releaseAuthority(burst.session, burst.authority, burst.pendingReleaseReason)
     }
+    if (this.bursts.get(key) === burst) this.bursts.delete(key)
   }
 
   private serialize<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -495,6 +508,13 @@ function sessionKey(session: BrowserTargetSession): string {
 
 function targetKey(session: BrowserTargetSession, tabId: string): string {
   return `${sessionKey(session)}\u0000${tabId}`
+}
+
+function correlateCallerTab(
+  request: BrowserAutomationRequest,
+  response: BrowserAutomationResponse,
+): BrowserAutomationResponse {
+  return response.tabId === request.tabId ? response : { ...response, tabId: request.tabId } as BrowserAutomationResponse
 }
 
 function resultTab(response: BrowserAutomationResponse): BrowserTabSnapshot | undefined {
