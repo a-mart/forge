@@ -67,6 +67,9 @@ import type {
 } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type {
+  AcceptWorkGraphNodeInput,
+} from "./planning/accept-work-graph-node-tool.js";
 import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
 import type { ProjectAgentRecommendations } from "./project-agent-analysis.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
@@ -235,6 +238,7 @@ export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
   updateWorkGraph(callerAgentId: string, toolCallId: string, input: UpdateWorkGraphInput) {
     return this.services.interactions.updateWorkGraph(callerAgentId, toolCallId, input);
   }
+  acceptWorkGraphNode(callerAgentId: string, toolCallId: string, input: AcceptWorkGraphNodeInput) { return this.services.interactions.acceptWorkGraphNode(callerAgentId, toolCallId, input); }
   requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
     return this.services.interactions.requestUserChoice(agentId, questions);
   }

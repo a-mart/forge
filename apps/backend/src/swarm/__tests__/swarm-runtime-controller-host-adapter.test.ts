@@ -32,6 +32,7 @@ function createToolHost(onListAgents: (receiver: unknown) => void): SwarmToolHos
     invokeBrowserAutomation: vi.fn(),
     updatePlan: vi.fn(),
     updateWorkGraph: vi.fn(),
+    acceptWorkGraphNode: vi.fn(),
     createGoal: vi.fn(),
     getGoal: vi.fn(),
     updateGoal: vi.fn(),

@@ -140,6 +140,89 @@ describe("SessionInteractionCoordinator", () => {
     );
   });
 
+  it("accepts one graph node, dispatches newly ready work, and records manager evidence", async () => {
+    const harness = createHarness();
+    vi.mocked(harness.options.plans.acceptWorkGraphNode).mockResolvedValue({
+      nodeId: "research",
+      alreadyAccepted: false,
+      snapshot: {
+        type: "session_plan_snapshot",
+        sessionAgentId: "manager",
+        profileId: "profile-1",
+        revision: 5,
+        updatedAt: NOW,
+        coordinationMode: "graph",
+        plan: [
+          { id: "research", step: "Research behavior", status: "completed" },
+          { id: "synthesize", step: "Synthesize result", status: "pending" },
+        ],
+        workGraph: { maxConcurrency: 2, nodes: [] },
+      },
+    });
+    vi.mocked(harness.options.plans.claimReadyWorkGraphNodes).mockResolvedValue([{
+      nodeId: "synthesize",
+      attemptId: "attempt-2",
+      agentId: "graph-synthesize-1",
+      title: "Synthesize result",
+      task: "Synthesize the accepted evidence.",
+      dependencyContext: "[research: Research behavior]\nstatus: done\nsummary: Evidence.",
+      behaviorMode: "general",
+      requestedRoute: "auto",
+    }]);
+    vi.mocked(harness.options.plans.getSnapshot).mockResolvedValue({
+      type: "session_plan_snapshot",
+      sessionAgentId: "manager",
+      profileId: "profile-1",
+      revision: 7,
+      updatedAt: NOW,
+      coordinationMode: "graph",
+      plan: [
+        { id: "research", step: "Research behavior", status: "completed" },
+        { id: "synthesize", step: "Synthesize result", status: "in_progress" },
+      ],
+      workGraph: { maxConcurrency: 2, nodes: [] },
+    });
+
+    const result = await harness.coordinator.acceptWorkGraphNode(
+      "manager",
+      "accept-tool",
+      {
+        nodeId: "research",
+        evidence: "  Verified the cited source path.  ",
+      },
+    );
+
+    expect(harness.options.plans.acceptWorkGraphNode).toHaveBeenCalledWith(
+      harness.descriptors.get("manager"),
+      "research",
+    );
+    expect(harness.options.lifecycle.spawnAgent).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        agentId: "graph-synthesize-1",
+        planStep: "synthesize",
+        initialMessage: expect.stringContaining("Accepted dependency results"),
+      }),
+    );
+    expect(result).toMatchObject({
+      acceptedNodeId: "research",
+      alreadyAccepted: false,
+      revision: 7,
+      dispatched: [{ nodeId: "synthesize", workerId: "graph-synthesize-1" }],
+    });
+    expect(harness.options.recordToolSideEffect).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        toolName: "accept_work_graph_node",
+        toolCallId: "accept-tool",
+        input: {
+          nodeId: "research",
+          evidence: "Verified the cited source path.",
+        },
+      }),
+    );
+  });
+
   it("rejects update_plan outside a running, non-Cortex Builder manager session", async () => {
     const harness = createHarness();
     const manager = harness.descriptors.get("manager")!;
@@ -147,11 +230,23 @@ describe("SessionInteractionCoordinator", () => {
     await expect(
       harness.coordinator.updatePlan("manager", "tool", { plan: [] }),
     ).rejects.toThrow("not available for Collaboration sessions");
+    await expect(
+      harness.coordinator.acceptWorkGraphNode("manager", "tool", {
+        nodeId: "research",
+        evidence: "Verified.",
+      }),
+    ).rejects.toThrow("not available for Collaboration sessions");
 
     manager.sessionSurface = "builder";
     manager.archetypeId = "cortex";
     await expect(
       harness.coordinator.updatePlan("manager", "tool", { plan: [] }),
+    ).rejects.toThrow("not available for Cortex sessions");
+    await expect(
+      harness.coordinator.acceptWorkGraphNode("manager", "tool", {
+        nodeId: "research",
+        evidence: "Verified.",
+      }),
     ).rejects.toThrow("not available for Cortex sessions");
 
     manager.archetypeId = "manager";
@@ -421,6 +516,18 @@ function createHarness(): Harness {
       resolvePreferredManagerId: vi.fn(() => "manager"),
     },
     plans: {
+      acceptWorkGraphNode: vi.fn(async (_owner, nodeId) => ({
+        nodeId,
+        alreadyAccepted: false,
+        snapshot: {
+          type: "session_plan_snapshot",
+          sessionAgentId: "manager",
+          profileId: "profile-1",
+          revision: 0,
+          updatedAt: NOW,
+          plan: [],
+        },
+      })),
       claimReadyWorkGraphNodes: vi.fn(async () => []),
       getSnapshot: vi.fn(async (owner, requestId) => ({
         type: "session_plan_snapshot",

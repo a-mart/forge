@@ -333,28 +333,33 @@ describe('SessionPlanCoordinator', () => {
     })
     await expect(harness.coordinator.claimReadyWorkGraphNodes(harness.owner)).resolves.toEqual([])
 
-    await harness.coordinator.updateWorkGraph(harness.owner, {
-      explanation: 'Research accepted; synthesize next.',
-      maxConcurrency: 2,
-      nodes: [
-        {
-          id: 'research',
-          title: 'Research current behavior',
-          task: 'Inspect current behavior and return evidence.',
-          kind: 'research',
-          status: 'completed',
-          acceptanceCriteria: 'Evidence cites the inspected path.',
-        },
-        {
-          id: 'synthesize',
-          title: 'Synthesize the recommendation',
-          task: 'Synthesize the accepted evidence.',
-          kind: 'synthesis',
-          status: 'pending',
-          dependsOn: ['research'],
-        },
-      ],
+    const accepted = await harness.coordinator.acceptWorkGraphNode(
+      harness.owner,
+      'research',
+    )
+    expect(accepted).toMatchObject({
+      nodeId: 'research',
+      alreadyAccepted: false,
+      snapshot: {
+        revision: 6,
+        workGraph: { nodes: [
+          {
+            id: 'research',
+            status: 'completed',
+            task: 'Inspect current behavior and return evidence.',
+            acceptanceCriteria: 'Evidence cites the inspected path.',
+            attempts: [{ workerId: 'research-worker', status: 'succeeded' }],
+          },
+          { id: 'synthesize', status: 'pending', dependsOn: ['research'] },
+        ] },
+      },
     })
+    const repeated = await harness.coordinator.acceptWorkGraphNode(
+      harness.owner,
+      'research',
+    )
+    expect(repeated.alreadyAccepted).toBe(true)
+    expect(repeated.snapshot.revision).toBe(6)
     const synthesis = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
     expect(synthesis.map((claim) => claim.nodeId)).toEqual(['synthesize'])
 

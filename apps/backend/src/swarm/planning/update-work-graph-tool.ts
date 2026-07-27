@@ -116,7 +116,7 @@ export function buildUpdateWorkGraphTool(
       'For simple requests use no coordination tool; for a short visible checklist use update_plan.',
       'If one bounded planning investigation must happen before the graph is knowable, run and accept that delegation first; do not create speculative downstream nodes.',
       'Forge automatically dispatches ready non-decision nodes. Follow the active roster guidance for route selection; graph size and fan-in do not justify a stronger executor.',
-      'Worker success moves a node to awaiting_review; personally accept its result, then submit the complete graph with that node completed to release dependents.',
+      'Worker success moves a node to awaiting_review; personally verify its result, then use accept_work_graph_node to complete only that node and release dependents.',
       'Use waiting decision nodes for user gates. Re-submit a blocked node as pending to retry it; Forge uses the prior route capability-escalation target when one was configured.',
     ].join(' '),
     parameters: updateWorkGraphToolSchema,

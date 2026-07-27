@@ -201,6 +201,7 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 const BUILDER_COORDINATION_TOOL_NAMES = new Set([
   "update_plan",
   "update_work_graph",
+  "accept_work_graph_node",
   "create_goal",
   "get_goal",
   "update_goal",
@@ -212,6 +213,7 @@ const CORTEX_DISABLED_TOOL_NAMES = new Set([
   "kill_agent",
   "update_plan",
   "update_work_graph",
+  "accept_work_graph_node",
   "create_goal",
   "get_goal",
   "update_goal",

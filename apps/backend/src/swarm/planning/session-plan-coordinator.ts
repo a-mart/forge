@@ -23,6 +23,7 @@ import {
 import { SessionPlanStore } from './session-plan-store.js'
 import type { UpdatePlanInput, UpdatePlanResult } from './update-plan-tool.js'
 import {
+  acceptWorkGraphNode,
   blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
@@ -50,6 +51,12 @@ export interface SessionPlanUpdateReceipt {
 export interface WorkGraphUpdateReceipt {
   input: UpdateWorkGraphInput
   cancelledWorkerIds: string[]
+  snapshot: SessionPlanSnapshotEvent
+}
+
+export interface WorkGraphNodeAcceptanceReceipt {
+  nodeId: string
+  alreadyAccepted: boolean
   snapshot: SessionPlanSnapshotEvent
 }
 
@@ -126,6 +133,36 @@ export class SessionPlanCoordinator {
       return {
         input: normalizedInput,
         cancelledWorkerIds,
+        snapshot: this.toSnapshotEvent(owner, snapshot),
+      }
+    })
+  }
+
+  async acceptWorkGraphNode(
+    owner: SessionPlanOwner,
+    nodeId: string,
+  ): Promise<WorkGraphNodeAcceptanceReceipt> {
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) {
+        throw new Error('The current working plan is not a work graph.')
+      }
+      const accepted = acceptWorkGraphNode(current.workGraph, nodeId)
+      if (accepted.alreadyAccepted) {
+        return {
+          nodeId,
+          alreadyAccepted: true,
+          snapshot: this.toSnapshotEvent(owner, current),
+        }
+      }
+      const snapshot = await this.writeGraph(
+        owner,
+        current.explanation,
+        accepted.graph,
+      )
+      return {
+        nodeId,
+        alreadyAccepted: false,
         snapshot: this.toSnapshotEvent(owner, snapshot),
       }
     })

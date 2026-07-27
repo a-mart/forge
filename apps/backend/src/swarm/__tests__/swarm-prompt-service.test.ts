@@ -410,6 +410,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("Keep one active coordination lane for the current phase")
     expect(resolved).toContain("**Checklist:** use `update_plan`")
     expect(resolved).toContain("**Graph:** use `update_work_graph`")
+    expect(resolved).toContain("call `accept_work_graph_node` with concise evidence")
     expect(resolved).toContain("all three conditions hold")
     expect(resolved).toContain("choose Graph only when scheduler-owned release or retry materially helps")
     expect(resolved).toContain("smallest DAG that exposes useful concurrency")

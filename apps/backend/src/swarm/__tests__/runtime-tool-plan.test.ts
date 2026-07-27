@@ -163,6 +163,7 @@ describe("runtime tool plan", () => {
       "send_message_to_agent",
       "knowledge",
       "update_work_graph",
+      "accept_work_graph_node",
       "update_plan",
       "create_goal",
       "get_goal",

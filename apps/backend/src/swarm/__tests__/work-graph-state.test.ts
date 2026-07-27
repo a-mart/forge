@@ -1,6 +1,7 @@
 import type { WorkGraphNode, WorkGraphSnapshot } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import {
+  acceptWorkGraphNode,
   blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
@@ -99,14 +100,49 @@ describe('progressive work graph scenarios', () => {
     expect(settled.graph.nodes[0]?.status).toBe('awaiting_review')
     expect(claim(settled.graph).claims).toEqual([])
 
-    const accepted = normalizeWorkGraphInput({ nodes: [
-      inputNode(settled.graph.nodes[0]!, 'completed'),
-      inputNode(settled.graph.nodes[1]!, 'pending'),
-    ] }, settled.graph)
-    const dependentClaim = claim(accepted).claims[0]
+    const accepted = acceptWorkGraphNode(settled.graph, 'research')
+    const dependentClaim = claim(accepted.graph).claims[0]
     expect(dependentClaim?.nodeId).toBe('synthesis')
     expect(dependentClaim?.dependencyContext).toContain('[research: Research behavior]')
     expect(dependentClaim?.dependencyContext).toContain('summary: Evidence.')
+  })
+
+  it('accepts only awaiting-review nodes and treats repeated acceptance as a no-op', () => {
+    const initial = claim(graphOf([
+      node('research', 'Research behavior', { kind: 'research' }),
+      node('synthesis', 'Synthesize answer', {
+        kind: 'synthesis',
+        dependsOn: ['research'],
+      }),
+    ]))
+    const started = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'research',
+      initial.claims[0]!.attemptId,
+      'research-worker',
+    )
+    const settled = recordWorkGraphWorkerResult(
+      started,
+      'research-worker',
+      'status: done\nsummary: Evidence.',
+      now,
+    )
+
+    expect(() => acceptWorkGraphNode(settled.graph, 'synthesis'))
+      .toThrow('expected awaiting_review')
+    expect(() => acceptWorkGraphNode(settled.graph, 'missing'))
+      .toThrow('node not found')
+
+    const accepted = acceptWorkGraphNode(settled.graph, 'research')
+    expect(accepted.alreadyAccepted).toBe(false)
+    expect(accepted.graph.nodes).toMatchObject([
+      { id: 'research', status: 'completed', attempts: [{ status: 'succeeded' }] },
+      { id: 'synthesis', status: 'pending' },
+    ])
+    expect(acceptWorkGraphNode(accepted.graph, 'research')).toEqual({
+      graph: accepted.graph,
+      alreadyAccepted: true,
+    })
   })
 
   it('bounds accepted dependency result handoff for downstream workers', () => {

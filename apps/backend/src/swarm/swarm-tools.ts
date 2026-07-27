@@ -14,6 +14,7 @@ import {
   type SpawnAgentInput
 } from "./types.js";
 import { MAX_PLAN_STEP_ID_LENGTH } from "./planning/session-plan-state.js";
+import { buildAcceptWorkGraphNodeTool } from "./planning/accept-work-graph-node-tool.js";
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
 import { buildUpdateWorkGraphTool } from "./planning/update-work-graph-tool.js";
 import { buildGoalTools } from "./goals/goal-tools.js";
@@ -449,6 +450,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
   const managerOnly: ToolDefinition[] = [
     buildUpdateWorkGraphTool(host, descriptor),
+    buildAcceptWorkGraphNodeTool(host, descriptor),
     buildUpdatePlanTool(host, descriptor),
     ...buildGoalTools(host, descriptor),
     {

@@ -43,6 +43,11 @@ export interface UpdateWorkGraphInput {
   nodes: WorkGraphNodeInput[]
 }
 
+export interface WorkGraphNodeAcceptance {
+  graph: WorkGraphSnapshot
+  alreadyAccepted: boolean
+}
+
 export interface WorkGraphDispatchClaim {
   nodeId: string
   attemptId: string
@@ -187,6 +192,44 @@ export function projectWorkGraphPlan(graph: WorkGraphSnapshot): PlanStep[] {
           ? 'in_progress'
           : 'pending',
     }))
+}
+
+export function acceptWorkGraphNode(
+  graph: WorkGraphSnapshot,
+  nodeId: string,
+): WorkGraphNodeAcceptance {
+  const normalizedNodeId = normalizeRequiredText(
+    nodeId,
+    'nodeId',
+    MAX_WORK_GRAPH_ID_LENGTH,
+  )
+  const nodeIndex = graph.nodes.findIndex((node) => node.id === normalizedNodeId)
+  if (nodeIndex < 0) {
+    throw new WorkGraphValidationError(`Work graph node not found: ${normalizedNodeId}.`)
+  }
+  const node = graph.nodes[nodeIndex]!
+  if (node.status === 'completed') {
+    return { graph, alreadyAccepted: true }
+  }
+  if (node.status !== 'awaiting_review') {
+    throw new WorkGraphValidationError(
+      `Work graph node ${normalizedNodeId} cannot be accepted while status=${node.status}; expected awaiting_review.`,
+    )
+  }
+  if (currentAttempt(node)?.status !== 'succeeded') {
+    throw new WorkGraphValidationError(
+      `Work graph node ${normalizedNodeId} cannot be accepted without a succeeded attempt.`,
+    )
+  }
+  const nodes = graph.nodes.map((currentNode, index) => (
+    index === nodeIndex
+      ? { ...currentNode, status: 'completed' as const }
+      : currentNode
+  ))
+  return {
+    graph: { ...graph, nodes },
+    alreadyAccepted: false,
+  }
 }
 
 export function findRunningWorkersToCancel(
