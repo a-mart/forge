@@ -63,4 +63,15 @@ describe('per-tab compare-and-set authority', () => {
       tab: { id: 2, active: true, url: 'https://forge.invalid/' }, createdByForge: true,
     })
   })
+
+  it('waits for Chrome to expose a created tab URL before applying the unchanged restriction check', async () => {
+    const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
+    const create = chrome.tabs.create
+    chrome.tabs.create = async (properties) => ({ ...await create(properties), url: undefined })
+    const manager = new LeaseManager(chrome, 'payload')
+
+    await expect(manager.allocateAutomaticTab({ reuseFocused: false, url: 'https://fixture.invalid/' })).resolves.toMatchObject({
+      tab: { id: 2, url: 'https://fixture.invalid/' }, createdByForge: true,
+    })
+  })
 })

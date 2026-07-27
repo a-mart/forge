@@ -68,7 +68,12 @@ export class LeaseManager {
     const focused = input.reuseFocused ? await this.focusedEligibleTab() : null
     if (focused !== null) return { tab: focused, createdByForge: false }
     if (input.url !== undefined && restrictedTargetReason(input.url) !== null) throw new LeaseError('restricted-target', 'requested URL is restricted')
-    const tab = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
+    const created = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
+    if (created.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a created tab ID')
+    // Real Chrome may resolve tabs.create while the new tab still has no observable URL.
+    // Never weaken acquire's restricted-target check; wait until Chrome can prove the
+    // created target identity instead.
+    const tab = await this.waitForCreatedTarget(created.id)
     return { tab, createdByForge: true }
   }
 
@@ -215,6 +220,18 @@ export class LeaseManager {
       if (expired.length > 0) await this.persist()
       return expired
     })
+  }
+
+  private async waitForCreatedTarget(tabId: number): Promise<ChromeTab> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      let tab: ChromeTab
+      try { tab = await this.chrome.tabs.get(tabId) } catch { throw new LeaseError('target-not-found', 'created tab no longer exists') }
+      const restriction = restrictedTargetReason(tab.url)
+      if (restriction === null) return tab
+      if (restriction !== 'missing-url') throw new LeaseError('restricted-target', `created tab is restricted (${restriction})`)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    throw new LeaseError('target-not-found', 'created tab URL did not become observable')
   }
 
   private validateRouting(input: { ownerId: string; ownerEpoch: number; sessionAgentId: string; tabId: number }): void {

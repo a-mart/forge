@@ -33,6 +33,12 @@ export class Runtime implements ServiceWorkerPayload {
   private readonly debuggers = new DebuggerController(this.chrome.debugger)
   private readonly operations = new ExternalChromeOperationExecutor(this.debuggers, (tabId) => this.chrome.tabs.get(tabId))
   private readonly contentPorts = new Map<number, Set<ContentPort>>()
+  private readonly readyContentPorts = new Map<number, Set<ContentPort>>()
+  private readonly syntheticAcknowledgements = new Map<string, {
+    pending: Set<ContentPort>
+    controlEpoch: number
+    resolve: () => void
+  }>()
   private readonly activeOperations = new Map<number, Promise<void>>()
   private native: NativeRpcClient | null = null
   private directory = ''
@@ -210,7 +216,7 @@ export class Runtime implements ServiceWorkerPayload {
         const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
         if (params.operation === 'click' || params.operation === 'type' || params.operation === 'press') {
           syntheticOperationId = crypto.randomUUID()
-          this.signalSynthetic(params.tabId, 'synthetic-start', syntheticOperationId, controlEpoch)
+          await this.signalSyntheticStart(params.tabId, syntheticOperationId, controlEpoch)
         }
         if (params.operation === 'navigate') {
           const input = params.input as { url?: string; readiness: 'load' | 'domContentLoaded' | 'none'; timeoutMs: number }
@@ -235,7 +241,7 @@ export class Runtime implements ServiceWorkerPayload {
       } catch (error) {
         return this.executeFailure(params, error instanceof LeaseError ? error.code : 'debugger-unavailable', error instanceof Error ? error.message : 'Chrome operation failed', true)
       } finally {
-        if (syntheticOperationId !== null && controlEpoch !== null) this.signalSynthetic(params.tabId, 'synthetic-end', syntheticOperationId, controlEpoch)
+        if (syntheticOperationId !== null && controlEpoch !== null) this.signalSyntheticEnd(params.tabId, syntheticOperationId, controlEpoch)
         if (controlEpoch !== null) await this.authorities.finishAgentControl(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch)
         try { await this.debuggers.reset(params.tabId) } catch { await this.authorities.markLost(params.tabId) }
         resolveTracked()
@@ -260,10 +266,35 @@ export class Runtime implements ServiceWorkerPayload {
     const ports = this.contentPorts.get(tabId) ?? new Set<ContentPort>()
     ports.add(port); this.contentPorts.set(tabId, ports)
     port.onMessage.addListener((message) => {
-      if (typeof message !== 'object' || message === null || (message as Record<string, unknown>).type !== 'trusted-human-input') return
-      void this.interrupt(tabId, (message as Record<string, unknown>).event)
+      if (typeof message !== 'object' || message === null) return
+      const record = message as Record<string, unknown>
+      if (record.nonce !== port.name.slice('forge-leased-frame:'.length)) return
+      if (record.type === 'content-ready') {
+        const ready = this.readyContentPorts.get(tabId) ?? new Set<ContentPort>()
+        ready.add(port)
+        this.readyContentPorts.set(tabId, ready)
+        return
+      }
+      if (record.type === 'synthetic-ack' && typeof record.operationId === 'string' && Number.isSafeInteger(record.controlEpoch)) {
+        const acknowledgement = this.syntheticAcknowledgements.get(this.syntheticKey(tabId, record.operationId))
+        if (acknowledgement === undefined || acknowledgement.controlEpoch !== record.controlEpoch) return
+        acknowledgement.pending.delete(port)
+        if (acknowledgement.pending.size === 0) acknowledgement.resolve()
+        return
+      }
+      if (record.type === 'trusted-human-input') void this.interrupt(tabId, record.event)
     })
-    port.onDisconnect.addListener(() => { ports.delete(port); if (ports.size === 0) this.contentPorts.delete(tabId) })
+    port.onDisconnect.addListener(() => {
+      ports.delete(port)
+      if (ports.size === 0) this.contentPorts.delete(tabId)
+      const ready = this.readyContentPorts.get(tabId)
+      ready?.delete(port)
+      if (ready?.size === 0) this.readyContentPorts.delete(tabId)
+      for (const acknowledgement of this.syntheticAcknowledgements.values()) {
+        acknowledgement.pending.delete(port)
+        if (acknowledgement.pending.size === 0) acknowledgement.resolve()
+      }
+    })
   }
 
   private broadcastState(tabIds: number[], state: 'human' | 'agent' | 'detached'): void {
@@ -273,12 +304,45 @@ export class Runtime implements ServiceWorkerPayload {
     }
   }
 
-  private signalSynthetic(tabId: number, type: 'synthetic-start' | 'synthetic-end', operationId: string, controlEpoch: number): void {
-    for (const port of this.contentPorts.get(tabId) ?? []) {
+  private async signalSyntheticStart(tabId: number, operationId: string, controlEpoch: number): Promise<void> {
+    const deadline = Date.now() + 1_000
+    while ((this.readyContentPorts.get(tabId)?.size ?? 0) === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const ports = new Set(this.readyContentPorts.get(tabId) ?? [])
+    if (ports.size === 0) throw new LeaseError('lease-lost', 'trusted-input guard did not become ready')
+    const key = this.syntheticKey(tabId, operationId)
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.syntheticAcknowledgements.delete(key)
+        if (error) reject(error)
+        else resolve()
+      }
+      const timer = setTimeout(() => finish(new Error('synthetic input acknowledgement timed out')), 1_000)
+      this.syntheticAcknowledgements.set(key, {
+        pending: ports,
+        controlEpoch,
+        resolve: () => finish(),
+      })
+      for (const port of ports) {
+        const nonce = port.name.slice('forge-leased-frame:'.length)
+        port.postMessage({ type: 'synthetic-start', nonce, operationId, controlEpoch, durationMs: 1_000 })
+      }
+    })
+  }
+
+  private signalSyntheticEnd(tabId: number, operationId: string, controlEpoch: number): void {
+    for (const port of this.readyContentPorts.get(tabId) ?? []) {
       const nonce = port.name.slice('forge-leased-frame:'.length)
-      port.postMessage({ type, nonce, operationId, controlEpoch, ...(type === 'synthetic-start' ? { durationMs: 1_000 } : {}) })
+      port.postMessage({ type: 'synthetic-end', nonce, operationId, controlEpoch })
     }
   }
+
+  private syntheticKey(tabId: number, operationId: string): string { return `${tabId}\0${operationId}` }
 
   private async interrupt(tabId: number, event: unknown): Promise<void> {
     const authority = await this.authorities.trustedHumanInput(tabId)

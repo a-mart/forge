@@ -56,11 +56,20 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
     const response = await this.execute(input.request)
     return {
       response,
-      ...(!response.ok ? { failure: {
-        phase: 'execution' as const,
-        mutationState: ['status', 'snapshot', 'waitFor'].includes(input.request.operation) ? 'not-started' as const : 'possible' as const,
-        ...(response.error.code === 'control-interrupted' ? { fallbackReason: 'authority-conflict' as const } : {}),
-      } } : {}),
+      ...(!response.ok ? { failure: response.error.code === 'debugger-unavailable'
+        ? {
+            // The extension emits debugger-unavailable only before it dispatches the
+            // requested page operation. A DevTools/foreign-debugger race is therefore
+            // safe for the automatic host's one dedicated-target retry.
+            phase: 'acquisition' as const,
+            mutationState: 'not-started' as const,
+            fallbackReason: 'foreign-debugger' as const,
+          }
+        : {
+            phase: 'execution' as const,
+            mutationState: ['status', 'snapshot', 'waitFor'].includes(input.request.operation) ? 'not-started' as const : 'possible' as const,
+            ...(response.error.code === 'control-interrupted' ? { fallbackReason: 'authority-conflict' as const } : {}),
+          } } : {}),
     }
   }
 

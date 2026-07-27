@@ -78,6 +78,23 @@ describe('BrowserTargetAdapter routing', () => {
     expect(transport.requests).toHaveLength(0)
   })
 
+  it('classifies a real debugger attach conflict as pre-mutation dedicated-target fallback authority', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: { code: 'debugger-unavailable', message: 'Another debugger is already attached', retryable: true },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'debugger-unavailable' } },
+      failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+    })
+  })
+
   it('enforces the fake transport response bound', async () => {
     const adapter = new ExternalChromeTargetAdapter(new FakeExternalChromeTransport(10))
     await expect(adapter.execute(request('status', {}, null))).resolves.toMatchObject({ ok: false, error: { code: 'response-too-large' } })

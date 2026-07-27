@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { access, cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,8 +11,8 @@ if (process.env.FORGE_RUN_ISOLATED_CHROME !== '1') {
 }
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionRoot = path.resolve(process.argv[2] ?? path.join(sourceRoot, 'dist/extension'))
-const manifest = JSON.parse(await readFile(path.join(extensionRoot, 'manifest.json'), 'utf8'))
+const sourceExtensionRoot = path.resolve(process.argv[2] ?? path.join(sourceRoot, 'dist/extension'))
+const manifest = JSON.parse(await readFile(path.join(sourceExtensionRoot, 'manifest.json'), 'utf8'))
 if (manifest.name !== 'Forge') throw new Error('isolated extension manifest name is not Forge')
 
 async function playwrightChromeCandidates() {
@@ -45,9 +45,39 @@ if (executable === undefined) throw new Error('no qualified Chrome or Chromium e
 const versionResult = spawnSync(executable, ['--version'], { encoding: 'utf8' })
 const version = `${versionResult.stdout}${versionResult.stderr}`.trim()
 const profile = await mkdtemp(path.join(os.tmpdir(), 'forge-external-chrome-fixture-'))
-const fixtureServer = createServer((_request, response) => {
+const extensionRoot = path.join(profile, 'isolated-extension')
+await cp(sourceExtensionRoot, extensionRoot, { recursive: true })
+const bootstrapPath = path.join(extensionRoot, 'shell/service-worker-bootstrap.js')
+const bootstrap = await readFile(bootstrapPath, 'utf8')
+const nativeConnect = 'connect: (host) => this.chrome.runtime.connectNative(host),'
+if (!bootstrap.includes(nativeConnect) || bootstrap.indexOf(nativeConnect) !== bootstrap.lastIndexOf(nativeConnect)) {
+  throw new Error('isolated fixture could not uniquely block native messaging')
+}
+const activation = 'payload = await loaded.activateServiceWorker({ directory: selector.payloadDirectory, sha256: selector.payloadSha256 });'
+if (!bootstrap.includes(activation) || bootstrap.indexOf(activation) !== bootstrap.lastIndexOf(activation)) {
+  throw new Error('isolated fixture could not uniquely expose the verified payload')
+}
+await writeFile(bootstrapPath, bootstrap
+  .replace(nativeConnect, 'connect: (_host) => { throw new Error("isolated fixture blocks native messaging") },')
+  .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleDesktopRequest(request) });`), 'utf8')
+const fixtureServer = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
-  response.end('<!doctype html><button id="action" onclick="window.__clicked=true">Click</button><input id="field" aria-label="Field">')
+  if (request.url === '/child') {
+    response.end('<!doctype html><title>Fixture child</title><p>Child stays outside parent authority</p>')
+    return
+  }
+  response.end(`<!doctype html><title>Forge automatic fixture</title>
+    <style>body{font:16px sans-serif}.spacer{height:1600px}</style>
+    <button id="action" aria-label="Increment">Increment</button>
+    <button id="child" aria-label="Open child">Open child</button>
+    <label>Field <input id="field" aria-label="Field"></label>
+    <p id="state">Ready for automatic automation</p><div class="spacer"></div><p id="bottom">Bottom</p>
+    <script>
+      window.__state={clicks:0,entered:0};
+      action.onclick=()=>{window.__state.clicks+=1;state.textContent='Clicked '+window.__state.clicks};
+      child.onclick=()=>window.open('/child','_blank');
+      field.addEventListener('keydown',event=>{if(event.key==='Enter'){window.__state.entered+=1;state.textContent='Entered '+window.__state.entered}});
+    </script>`)
 })
 await new Promise((resolve, reject) => { fixtureServer.once('error', reject); fixtureServer.listen(0, '127.0.0.1', resolve) })
 const fixtureAddress = fixtureServer.address()
@@ -140,75 +170,78 @@ async function inspectWorker(webSocketDebuggerUrl) {
   try {
     await send('Runtime.enable')
     const evaluation = await send('Runtime.evaluate', {
-      expression: `new Promise(resolve => {
-        const deadline = Date.now() + 10_000;
-        const inspect = async () => {
-          const [stored, alarm] = await Promise.all([
-            chrome.storage.local.get('forge.externalChrome.instanceId.v1'),
-            chrome.alarms.get('forge.externalChrome.heartbeat.v2')
-          ]);
-          const state = {
-            manifestName: chrome.runtime.getManifest().name,
-            extensionId: chrome.runtime.id,
-            instanceReady: typeof stored['forge.externalChrome.instanceId.v1'] === 'string',
-            heartbeatReady: alarm?.name === 'forge.externalChrome.heartbeat.v2',
-            bootState: globalThis.__forgeServiceWorkerBootState ?? null,
-            workerLocation: globalThis.location.href
-          };
-          if (state.bootState?.state === 'ready' || Date.now() >= deadline) {
-            const [tab] = await chrome.tabs.query({ active: true });
-            if (!tab?.id) throw new Error('no active fixture tab');
-            const authority = { tabId: tab.id, ownerId: 'isolated-fixture', ownerEpoch: 1, sessionAgentId: 'fixture', state: 'human', controlEpoch: 0, createdByForge: false, payloadVersion: 'fixture', expiresAt: Date.now() + 60000 };
-            await chrome.storage.session.set({ 'forge.externalChrome.tabAuthority.v2': [authority] });
-            const authorityState = await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
-            await chrome.storage.session.remove('forge.externalChrome.tabAuthority.v2');
-            state.acquisition = { acquired: authorityState['forge.externalChrome.tabAuthority.v2']?.[0]?.tabId === tab.id, tabId: tab.id };
-            resolve(state);
-          } else setTimeout(inspect, 50);
+      expression: `(async () => {
+        const deadline = Date.now() + 10000;
+        while (globalThis.__forgeServiceWorkerBootState?.state !== 'ready' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+        const [stored, alarm] = await Promise.all([
+          chrome.storage.local.get('forge.externalChrome.instanceId.v1'),
+          chrome.alarms.get('forge.externalChrome.heartbeat.v2')
+        ]);
+        const call = (method, params) => globalThis.__forgeIsolatedFixtureRequest({jsonrpc:'2.0',id:crypto.randomUUID(),method,params});
+        const detached = async tabId => !(await chrome.debugger.getTargets()).some(target => target.tabId === tabId && target.attached);
+        let focused={eligible:false};
+        while(Date.now()<deadline){
+          const active=(await chrome.tabs.query({active:true}))[0];
+          focused=await call('forge.browser.focusedEligibility',{protocolVersion:1});
+          if(focused.eligible===true&&active?.id&&(await chrome.tabs.get(active.id)).url===${JSON.stringify(fixtureUrl)}) break;
+          await new Promise(resolve=>setTimeout(resolve,50));
+        }
+        if(focused.eligible!==true) throw new Error('focused fixture tab did not become eligible');
+        const acquired = await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-session',leaseId:'fixture-root',leaseEpoch:1,reuseFocused:true});
+        const tabId = acquired.tab.tabId;
+        const run = async (operation,input) => {
+          const response = await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-'+operation+'-'+crypto.randomUUID(),leaseId:'fixture-root',leaseEpoch:1,tabId,operation,input,deadlineAt:new Date(Date.now()+10000).toISOString()});
+          if (!response.ok) throw new Error(operation+': '+response.error.code+' '+response.error.message);
+          if (!(await detached(tabId))) throw new Error(operation+': debugger remained attached');
+          return response.result;
         };
-        void inspect();
-      })`,
+        const snapshot=await run('snapshot',{});
+        const click=await run('click',{locator:'role=button[name="Increment"]',timeoutMs:5000});
+        const typed=await run('type',{locator:'role=textbox[name="Field"]',text:'forge automatic',clear:true,timeoutMs:5000});
+        const pressed=await run('press',{key:'Enter',modifiers:[]});
+        const scrolled=await run('scroll',{deltaX:0,deltaY:600});
+        const evaluated=await run('evaluate',{expression:'({state:window.__state,value:document.querySelector("#field").value,scrollY:window.scrollY})',awaitPromise:true,returnByValue:true});
+        const waited=await run('waitFor',{text:'Entered 1',timeoutMs:5000});
+        const revealed=await run('evaluate',{expression:'/* forge:reveal-authorized-tab:v1 */ undefined',awaitPromise:false,returnByValue:true});
+        const beforeChildren=(await chrome.tabs.query({})).map(tab=>tab.id);
+        await run('click',{locator:'role=button[name="Open child"]',timeoutMs:5000});
+        await new Promise(resolve=>setTimeout(resolve,250));
+        const afterChildren=await chrome.tabs.query({});
+        const child=afterChildren.find(tab=>!beforeChildren.includes(tab.id));
+        const authorityState=await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
+        const childOutsideAuthority=!!child && !(authorityState['forge.externalChrome.tabAuthority.v2']??[]).some(record=>record.tabId===child.id);
+        if(child?.id) await chrome.tabs.remove(child.id);
+        await chrome.debugger.attach({tabId},'1.3');
+        const conflict=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-conflict',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'click',input:{locator:'role=button[name="Increment"]',timeoutMs:5000},deadlineAt:new Date(Date.now()+10000).toISOString()});
+        await chrome.debugger.detach({tabId});
+        const [counterAfterConflict]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>window.__state?.clicks});
+        const conflictPreMutation=conflict.ok===false&&conflict.error?.code==='debugger-unavailable'&&counterAfterConflict?.result===1;
+        const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'fixture-complete'});
+        const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:2,reuseFocused:false,url:${JSON.stringify(fixtureUrl)}});
+        const dedicatedTab=await chrome.tabs.get(dedicated.tab.tabId);
+        await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-dedicated',leaseEpoch:2,reason:'fixture-complete'});
+        await chrome.tabs.remove(dedicated.tab.tabId);
+        return {
+          manifestName:chrome.runtime.getManifest().name,extensionId:chrome.runtime.id,
+          instanceReady:typeof stored['forge.externalChrome.instanceId.v1']==='string',heartbeatReady:alarm?.name==='forge.externalChrome.heartbeat.v2',
+          bootState:globalThis.__forgeServiceWorkerBootState??null,workerLocation:globalThis.location.href,
+          acquisition:{acquired:acquired.created===false&&focused.eligible===true,tabId},
+          operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.tabId===String(tabId)},
+          childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
+          debuggerConflict:{preMutation:conflictPreMutation},
+          dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},
+          released:released.releasedTabIds.length===1&&released.releasedTabIds[0]===tabId,
+          debuggerDetached:await detached(tabId)
+        };
+      })()`,
       awaitPromise: true,
       returnByValue: true,
     })
-    if (evaluation.exceptionDetails) throw new Error(`worker evaluation failed: ${evaluation.exceptionDetails.text}`)
+    if (evaluation.exceptionDetails) throw new Error(`worker evaluation failed: ${evaluation.exceptionDetails.exception?.description ?? evaluation.exceptionDetails.text}`)
     return { state: evaluation.result?.value, acquisition: evaluation.result?.value?.acquisition, runtimeErrors }
   } finally {
     socket.close()
   }
-}
-
-async function inspectPageOperations(webSocketDebuggerUrl) {
-  const socket = new WebSocket(webSocketDebuggerUrl)
-  const pending = new Map()
-  let sequence = 0
-  socket.addEventListener('message', (event) => {
-    const message = JSON.parse(String(event.data)); const request = pending.get(message.id)
-    if (!request) return
-    pending.delete(message.id); clearTimeout(request.timer)
-    message.error ? request.reject(new Error(message.error.message)) : request.resolve(message.result)
-  })
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('page debugger socket timed out')), 5_000)
-    socket.addEventListener('open', () => { clearTimeout(timer); resolve() }, { once: true })
-    socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('page debugger socket failed')) }, { once: true })
-  })
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)) }, 10_000)
-    pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params }))
-  })
-  try {
-    await send('Runtime.enable')
-    const snapshot = await send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })
-    const point = await send('Runtime.evaluate', { expression: '(() => { const r=document.querySelector("#action").getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()', returnByValue: true })
-    const { x, y } = point.result.value
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
-    await send('Runtime.evaluate', { expression: 'document.querySelector("#field").focus()' })
-    await send('Input.insertText', { text: 'forge' })
-    const proof = await send('Runtime.evaluate', { expression: '({clicked:window.__clicked===true,value:document.querySelector("#field").value})', returnByValue: true })
-    return { snapshot: snapshot.result.value, clicked: proof.result.value.clicked, typed: proof.result.value.value }
-  } finally { socket.close() }
 }
 
 function processGroupAlive(pid) {
@@ -228,18 +261,20 @@ try {
 
   const debuggingPort = await waitForValue(readDebuggingPort, 'ephemeral DevTools port')
   const target = await waitForValue(() => workerTarget(debuggingPort), 'Forge service-worker target')
+  await waitForValue(() => pageTarget(debuggingPort), 'fixture page target')
   const inspected = await inspectWorker(target.webSocketDebuggerUrl)
-  const page = await waitForValue(() => pageTarget(debuggingPort), 'fixture page target')
-  const pageOperations = await inspectPageOperations(page.webSocketDebuggerUrl)
   const state = inspected.state
-  const operations = { ...inspected.acquisition, ...pageOperations }
   if (state?.manifestName !== 'Forge' || state?.extensionId !== EXPECTED_EXTENSION_ID) throw new Error('worker reported an unexpected Forge identity')
   if (state?.instanceReady !== true || state?.heartbeatReady !== true || state?.bootState?.state !== 'ready') {
     throw new Error(`Forge payload did not reach ready state: ${JSON.stringify(state)}`)
   }
   if (state.workerLocation !== target.url) throw new Error('worker target URL and runtime location disagree')
-  if (operations?.acquired !== true || !String(operations.snapshot).includes('Click') || operations.clicked !== true || operations.typed !== 'forge') {
-    throw new Error(`isolated acquire/snapshot/click/type/detach proof failed: ${JSON.stringify(operations)}`)
+  if (state.acquisition?.acquired !== true || state.debuggerDetached !== true || state.released !== true ||
+    Object.values(state.operations ?? {}).some((value) => value !== true) ||
+    state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
+    state.debuggerConflict?.preMutation !== true ||
+    state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {
+    throw new Error(`isolated automatic runtime proof failed: ${JSON.stringify(state)}`)
   }
   const bootErrors = [...inspected.runtimeErrors, stderr].filter((value) => /Forge payload failed to boot|importScripts/iu.test(value))
   if (bootErrors.length > 0) throw new Error(`Forge worker reported a payload boot error: ${bootErrors.join(' | ').slice(0, 512)}`)
@@ -254,9 +289,12 @@ try {
     payloadBootState: state.bootState.state,
     instanceReady: state.instanceReady,
     heartbeatReady: state.heartbeatReady,
-    nativeHostAbsent: /native messaging host.*not found|specified native messaging host not found/iu.test(stderr),
+    nativeMessaging: 'fixture-blocked',
     importScriptsBootError: false,
-    operations: { acquired: true, snapshot: true, clicked: true, typed: true, detached: true },
+    operations: { acquired: true, ...state.operations, released: state.released, debuggerDetached: state.debuggerDetached },
+    allocation: { focusedReuse: state.acquisition.acquired, dedicatedCreated: state.dedicated.created, dedicatedUngrouped: state.dedicated.ungrouped },
+    childPolicy: state.childPolicy,
+    debuggerConflict: state.debuggerConflict,
   }
 } finally {
   if (child !== undefined && child.exitCode === null && child.signalCode === null) {
