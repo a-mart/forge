@@ -105,12 +105,13 @@ export class Runtime implements ServiceWorkerPayload {
     }
     switch (request.method) {
       case 'forge.runtime.ping': return { protocolVersion: 1, nonce: request.params.nonce, receivedAt: new Date().toISOString() }
-      // V1 required this method in hello. Automatic v2 reports only a focus bit; it never enumerates tabs.
+      // V1 required this method in hello. Automatic v2 reports only whether one
+      // focused tab is eligible for reuse; it never enumerates tabs.
       case 'forge.browser.listCandidates': {
-        const focused = await this.authorities.hasUniqueFocusedWindow()
+        const focusedEligible = await this.authorities.focusedEligibleTab() !== null
         return {
           protocolVersion: 1, extensionInstanceId: this.extensionInstanceId,
-          windows: focused ? [{ windowId: 0, focused: true, groups: [], tabs: [] }] : [],
+          windows: focusedEligible ? [{ windowId: 0, focused: true, groups: [], tabs: [] }] : [],
         }
       }
       case 'forge.browser.claim': {
@@ -125,15 +126,13 @@ export class Runtime implements ServiceWorkerPayload {
         }
       }
       case 'forge.browser.create': {
-        const reuseFocused = request.params.groupTitle === REUSE_SENTINEL
-        let tab = reuseFocused ? await this.authorities.focusedEligibleTab() : null
-        let createdByForge = false
-        if (tab === null) {
-          if (reuseFocused) throw new LeaseError('target-not-found', 'this Chrome instance has no uniquely focused eligible tab')
-          if (request.params.url !== undefined && restrictedTargetReason(request.params.url) !== null) throw new LeaseError('restricted-target', 'requested URL is restricted')
-          tab = await this.chrome.tabs.create({ url: request.params.url ?? 'https://forge.invalid/', active: true })
-          createdByForge = true
-        }
+        // Focus is only a reuse preference. Once Desktop has selected this
+        // unambiguous profile, focus loss or an ineligible active tab allocates a
+        // dedicated ungrouped Forge tab rather than requiring a picker.
+        const { tab, createdByForge } = await this.authorities.allocateAutomaticTab({
+          reuseFocused: request.params.groupTitle === REUSE_SENTINEL,
+          ...(request.params.url === undefined ? {} : { url: request.params.url }),
+        })
         if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a tab ID')
         try {
           await this.authorities.acquire({

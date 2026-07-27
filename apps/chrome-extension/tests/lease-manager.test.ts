@@ -47,9 +47,20 @@ describe('per-tab compare-and-set authority', () => {
     expect(chrome.attached.size).toBe(0)
   })
 
-  it('reports only one focused eligible tab and never an inventory', async () => {
+  it('reports and reuses only one focused eligible tab without exposing an inventory', async () => {
     const chrome = fakeChrome({ tabs: [tab(1, true), tab(2)], windows: [{ id: 1, focused: true, tabs: [tab(1, true), tab(2)] }] })
     const manager = new LeaseManager(chrome, 'payload')
     await expect(manager.focusedEligibleTab()).resolves.toMatchObject({ id: 1, active: true })
+    await expect(manager.allocateAutomaticTab({ reuseFocused: true })).resolves.toMatchObject({
+      tab: { id: 1, active: true }, createdByForge: false,
+    })
+  })
+
+  it('allocates a dedicated ungrouped tab when focused reuse is requested but unavailable', async () => {
+    const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
+    const manager = new LeaseManager(chrome, 'payload')
+    await expect(manager.allocateAutomaticTab({ reuseFocused: true })).resolves.toMatchObject({
+      tab: { id: 2, groupId: -1, active: true, url: 'https://forge.invalid/' }, createdByForge: true,
+    })
   })
 })

@@ -92,6 +92,7 @@ async function fakeExtensionLoop(
   client: AuthenticatedRelayClient,
   requests: Array<{ method: string; params: Record<string, unknown> }> = [],
   instanceId = 'instance_profile_a',
+  focusedEligible = true,
 ): Promise<void> {
   const authorityTabs = new Map<string, number[]>()
   while (true) {
@@ -102,7 +103,8 @@ async function fakeExtensionLoop(
     requests.push({ method: message.method, params })
     if (message.method === 'forge.browser.listCandidates') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
-        protocolVersion: 1, extensionInstanceId: instanceId, windows: [{ windowId: 2, focused: true, groups: [], tabs: [] }],
+        protocolVersion: 1, extensionInstanceId: instanceId,
+        windows: focusedEligible ? [{ windowId: 2, focused: true, groups: [], tabs: [] }] : [],
       } })
     } else if (message.method === 'forge.browser.claim') {
       authorityTabs.set(String(params.leaseId), [40])
@@ -204,8 +206,56 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     expect(requests.map(({ method }) => method)).toEqual([
       'forge.browser.listCandidates', 'forge.browser.create', 'forge.browser.release',
     ])
+    expect(requests[1]?.params).toMatchObject({ groupTitle: '__forge_reuse_focused_tab__' })
     expect(await runtime.leaseCheckpoints()).toEqual([])
     runtime.deactivate(); client.close(); await loop
+  })
+
+  it.each([true, false])('acquires a dedicated tab from the sole ready profile without focus when reuseExisting is %s', async (reuseExisting) => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests, 'instance_profile_a', false)
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting, createIfNeeded: true, ownerEpoch: 28,
+    })).resolves.toEqual({ ok: true, authority: { ownerEpoch: 28, tabId: 'ext.instance_profile_a.41' } })
+    expect(requests.map(({ method }) => method)).toEqual(['forge.browser.listCandidates', 'forge.browser.create'])
+    expect(requests[1]?.params).toMatchObject({ groupTitle: '__forge_create_ungrouped_tab__' })
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it.each([true, false])('opens a dedicated tab in the sole ready profile without focus when reuseExistingTab is %s', async (reuseExistingTab) => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests, 'instance_profile_a', false)
+    await expect(runtime.execute(request('open', null, { show: false, reuseExistingTab }))).resolves.toMatchObject({
+      ok: true, result: { created: true, tab: { tabId: 'ext.instance_profile_a.41' } },
+    })
+    expect(requests.map(({ method }) => method)).toEqual(['forge.browser.listCandidates', 'forge.browser.create'])
+    expect(requests[1]?.params).toMatchObject({ groupTitle: '__forge_create_ungrouped_tab__' })
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('returns bounded ambiguity only when multiple ready profiles have no unique focused eligible tab', async () => {
+    const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
+    const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(profileB, 'instance_profile_b')
+    const loopA = fakeExtensionLoop(profileA, [], 'instance_profile_a', false)
+    const loopB = fakeExtensionLoop(profileB, [], 'instance_profile_b', false)
+
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 29,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'attachment-required', details: { choiceKind: 'ambiguous-profile', optionCount: 2 } },
+      metadata: { phase: 'discovery', mutationState: 'not-started', fallbackReason: 'ambiguous-instance' },
+    })
+    await expect(runtime.execute(request('open', null, { show: false, reuseExistingTab: true }))).resolves.toMatchObject({
+      ok: false, error: { code: 'attachment-required', details: { choiceKind: 'ambiguous-profile', optionCount: 2 } },
+    })
+
+    runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
   })
 
   it('routes M4 functional results and exact bounded turn dispositions without persisting page data', async () => {

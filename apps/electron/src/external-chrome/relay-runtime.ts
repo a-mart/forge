@@ -775,20 +775,24 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const affinityKey = `${input.sessionAgentId}\0${input.profileId}`
     const decoded = input.preferredTabId ? decodeTabId(input.preferredTabId) : null
     let extensionInstanceId = decoded?.extensionInstanceId ?? this.sessionAffinities.get(affinityKey)
+    let reuseFocused = false
     if (extensionInstanceId !== undefined && !this.isInstanceReady(extensionInstanceId)) {
       return acquireFailure('runtime-not-ready', 'The session-affine Chrome instance is not ready.', true)
     }
     if (extensionInstanceId === undefined) {
-      const focused = await this.uniquelyFocusedInstances(input.sessionAgentId)
-      if (focused.length !== 1) {
-        const options = this.readyConnectionIds().slice(0, 8).map((id, index) => this.connections.get(id)?.inventory?.profileAlias ?? `Chrome ${index + 1}`)
+      const selected = await this.selectAutomaticInstance(input.sessionAgentId)
+      if (selected.kind === 'unavailable') return acquireFailure('no-eligible-target', 'No ready Chrome profile is available.', true)
+      if (selected.kind === 'ambiguous') {
         return {
           ok: false,
-          error: { code: 'attachment-required', message: 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', retryable: false, details: { choiceKind: 'ambiguous-profile', optionCount: options.length, options: JSON.stringify(options).slice(0, 1_024) } },
-          metadata: { phase: 'discovery', mutationState: 'not-started', fallbackReason: focused.length === 0 ? 'no-eligible-target' : 'ambiguous-instance' },
+          error: { code: 'attachment-required', message: 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', retryable: false, details: ambiguityDetails(selected.options) },
+          metadata: { phase: 'discovery', mutationState: 'not-started', fallbackReason: 'ambiguous-instance' },
         }
       }
-      extensionInstanceId = focused[0]!
+      extensionInstanceId = selected.extensionInstanceId
+      reuseFocused = selected.focusedEligible
+    } else if (decoded === null && input.reuseExisting) {
+      reuseFocused = (await this.uniquelyFocusedInstances(input.sessionAgentId, [extensionInstanceId])).length === 1
     }
     const leaseId = randomUUID()
     const leaseEpoch = input.ownerEpoch
@@ -803,7 +807,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       } else {
         const opened = await this.connection(extensionInstanceId).request('forge.browser.create', {
           protocolVersion: 1, sessionAgentId: input.sessionAgentId, leaseId, leaseEpoch,
-          groupTitle: input.reuseExisting ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
+          groupTitle: input.reuseExisting && reuseFocused ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
         })
         tabId = opened.tab.tabId
       }
@@ -902,24 +906,28 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (priorAffinity !== undefined && !this.isInstanceReady(priorAffinity)) {
       return failure('extension-update-required', 'The session-affine Chrome instance is updating or reconnecting.', true)
     }
-    if (mapped && input.reuseExistingTab && mapped.tabIds[0] !== undefined) {
-      return this.openCheckpoint(request, mapped, mapped.tabIds[0], input.url)
+    let extensionInstanceId: string
+    let reuseFocused = false
+    if (priorAffinity !== undefined) {
+      extensionInstanceId = priorAffinity
+      if (input.reuseExistingTab) {
+        reuseFocused = (await this.uniquelyFocusedInstances(request.sessionAgentId, [extensionInstanceId])).length === 1
+      }
+    } else {
+      const selected = await this.selectAutomaticInstance(request.sessionAgentId)
+      if (selected.kind === 'unavailable') return failure('attachment-required', 'No ready Chrome profile is available.', true)
+      if (selected.kind === 'ambiguous') {
+        return failure('attachment-required', 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', false, ambiguityDetails(selected.options))
+      }
+      extensionInstanceId = selected.extensionInstanceId
+      reuseFocused = selected.focusedEligible
     }
-    let eligible: string[]
-    if (priorAffinity !== undefined) eligible = [priorAffinity]
-    else eligible = await this.uniquelyFocusedInstances(request.sessionAgentId)
-    if (eligible.length !== 1) {
-      const options = this.readyConnectionIds().slice(0, 8).map((id, index) => this.connections.get(id)?.inventory?.profileAlias ?? `Chrome ${index + 1}`)
-      return failure('attachment-required', 'More than one eligible Chrome instance is available. Confirm the intended profile once for this session.', false, {
-        choiceKind: 'ambiguous-profile', optionCount: options.length, options: JSON.stringify(options).slice(0, 1_024),
-      })
-    }
-    const extensionInstanceId = eligible[0]!
     const leaseId = mapped?.leaseId ?? randomUUID()
     const leaseEpoch = mapped?.leaseEpoch ?? (Math.max(0, ...leases.filter((lease) => lease.extensionInstanceId === extensionInstanceId).map((lease) => lease.leaseEpoch)) + 1)
     const opened = await this.connection(extensionInstanceId).request('forge.browser.create', {
       protocolVersion: 1, sessionAgentId: request.sessionAgentId, leaseId, leaseEpoch,
-      ...(input.url ? { url: input.url } : {}), groupTitle: input.reuseExistingTab ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
+      ...(input.url ? { url: input.url } : {}),
+      groupTitle: input.reuseExistingTab && reuseFocused ? '__forge_reuse_focused_tab__' : '__forge_create_ungrouped_tab__',
     })
     if (opened.extensionInstanceId !== extensionInstanceId || opened.sessionAgentId !== request.sessionAgentId ||
       opened.leaseId !== leaseId || opened.leaseEpoch !== leaseEpoch) {
@@ -934,7 +942,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.sessionAffinities.set(affinityKey, extensionInstanceId)
     const opaqueTabId = encodeTabId(extensionInstanceId, opened.tab.tabId)
     const tab = checkpointTab(checkpoint, opaqueTabId, request, opened.tab.url, opened.tab.title)
-    return { ok: true, result: { tab, created: !input.reuseExistingTab, panelRevealRequested: false }, updatedTab: tab }
+    return { ok: true, result: { tab, created: !(input.reuseExistingTab && reuseFocused), panelRevealRequested: false }, updatedTab: tab }
   }
 
   private async openCheckpoint(request: BrowserAutomationRequest, checkpoint: ExternalChromeLeaseCheckpoint, tabId: number, url?: string): Promise<ExternalChromeTransportResult> {
@@ -1073,9 +1081,23 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return [...this.connections.keys()].filter((id) => this.isInstanceReady(id))
   }
 
-  /** Focus probing is privacy bounded: runtimes return one boolean window marker and no tabs. */
-  private async uniquelyFocusedInstances(sessionAgentId: string): Promise<string[]> {
-    const probed = await Promise.all(this.readyConnectionIds().map(async (extensionInstanceId) => {
+  private async selectAutomaticInstance(sessionAgentId: string): Promise<
+    | { kind: 'selected'; extensionInstanceId: string; focusedEligible: boolean }
+    | { kind: 'ambiguous'; options: string[] }
+    | { kind: 'unavailable' }
+  > {
+    const ready = this.readyConnectionIds()
+    if (ready.length === 0) return { kind: 'unavailable' }
+    const focused = await this.uniquelyFocusedInstances(sessionAgentId, ready)
+    if (focused.length === 1) return { kind: 'selected', extensionInstanceId: focused[0]!, focusedEligible: true }
+    if (ready.length === 1) return { kind: 'selected', extensionInstanceId: ready[0]!, focusedEligible: false }
+    const options = ready.slice(0, 8).map((id, index) => this.connections.get(id)?.inventory?.profileAlias ?? `Chrome ${index + 1}`)
+    return { kind: 'ambiguous', options }
+  }
+
+  /** Focus probing is privacy bounded: runtimes return one boolean marker and no tabs. */
+  private async uniquelyFocusedInstances(sessionAgentId: string, instances = this.readyConnectionIds()): Promise<string[]> {
+    const probed = await Promise.all(instances.map(async (extensionInstanceId) => {
       try {
         const result = await this.connection(extensionInstanceId).request('forge.browser.listCandidates', { protocolVersion: 1, sessionAgentId })
         return result.windows.length === 1 && result.windows[0]?.focused === true && result.windows[0].tabs.length === 0
@@ -1337,6 +1359,14 @@ function failure(
   details?: Record<string, string | number | boolean | null>,
 ): ExternalChromeTransportResult {
   return { ok: false, error: { code, message, retryable, ...(details ? { details } : {}) } }
+}
+
+function ambiguityDetails(options: string[]): Record<string, string | number> {
+  return {
+    choiceKind: 'ambiguous-profile',
+    optionCount: options.length,
+    options: JSON.stringify(options).slice(0, 1_024),
+  }
 }
 
 function acquireFailure(

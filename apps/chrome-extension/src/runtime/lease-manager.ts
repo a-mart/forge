@@ -55,11 +55,6 @@ export class LeaseManager {
     return record === undefined ? null : structuredClone(record)
   }
 
-  async hasUniqueFocusedWindow(): Promise<boolean> {
-    const windows = await this.chrome.windows.getAll({ populate: false })
-    return windows.filter((window) => window.focused).length === 1
-  }
-
   async focusedEligibleTab(): Promise<ChromeTab | null> {
     const windows = await this.chrome.windows.getAll({ populate: true })
     const focused = windows.filter((window) => window.focused)
@@ -67,6 +62,14 @@ export class LeaseManager {
     const active = (focused[0]!.tabs ?? []).filter((tab) => tab.active === true && tab.id !== undefined)
     if (active.length !== 1 || restrictedTargetReason(active[0]!.url) !== null) return null
     return active[0]!
+  }
+
+  async allocateAutomaticTab(input: { reuseFocused: boolean; url?: string }): Promise<{ tab: ChromeTab; createdByForge: boolean }> {
+    const focused = input.reuseFocused ? await this.focusedEligibleTab() : null
+    if (focused !== null) return { tab: focused, createdByForge: false }
+    if (input.url !== undefined && restrictedTargetReason(input.url) !== null) throw new LeaseError('restricted-target', 'requested URL is restricted')
+    const tab = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
+    return { tab, createdByForge: true }
   }
 
   acquire(input: {
