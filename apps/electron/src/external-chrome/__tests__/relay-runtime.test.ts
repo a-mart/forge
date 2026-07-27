@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:net'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -99,6 +99,7 @@ async function fakeExtensionLoop(
   instanceId = 'instance_profile_a',
   focusedEligible = true,
   executeFailure?: BrowserAutomationFailure,
+  releasedTabIdsOverride?: number[],
 ): Promise<void> {
   const authorityTabs = new Map<string, number[]>()
   while (true) {
@@ -122,7 +123,8 @@ async function fakeExtensionLoop(
       } })
     } else if (message.method === 'forge.browser.release') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
-        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: authorityTabs.get(String(params.leaseId)) ?? [40],
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        releasedTabIds: releasedTabIdsOverride ?? authorityTabs.get(String(params.leaseId)) ?? [40],
       } })
     } else if (message.method === 'forge.browser.reveal') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
@@ -175,6 +177,32 @@ async function fakeExtensionLoop(
 }
 
 describe('authenticated External Chrome Desktop relay runtime', () => {
+  it.each([
+    ['corrupt JSON', '{not-json'],
+    ['invalid schema', JSON.stringify({ schemaVersion: 2, leases: [] })],
+    ['invalid record', JSON.stringify({ schemaVersion: 1, leases: [{ extensionInstanceId: 'instance' }] })],
+    ['oversized file', 'x'.repeat(1 * 1_024 * 1_024 + 1)],
+  ])('keeps %s checkpoints permanently fail-closed across sequential and concurrent loads', async (_name, contents) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-checkpoint-'))
+    roots.push(root)
+    const sequentialFile = path.join(root, 'sequential', 'leases.json')
+    await mkdir(path.dirname(sequentialFile), { recursive: true })
+    await writeFile(sequentialFile, contents)
+    const sequential = new ExternalChromeRelayRuntime(sequentialFile)
+    await expect(sequential.ready()).rejects.toThrow()
+    await writeFile(sequentialFile, JSON.stringify({ schemaVersion: 1, leases: [] }))
+    await expect(sequential.ready()).rejects.toThrow()
+    await expect(sequential.hasActiveLeaseCheckpoints()).rejects.toThrow()
+
+    const concurrentFile = path.join(root, 'concurrent', 'leases.json')
+    await mkdir(path.dirname(concurrentFile), { recursive: true })
+    await writeFile(concurrentFile, contents)
+    const concurrent = new ExternalChromeRelayRuntime(concurrentFile)
+    const results = await Promise.allSettled([concurrent.ready(), concurrent.ready(), concurrent.leaseCheckpoints()])
+    expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected', 'rejected'])
+    await expect(concurrent.ready()).rejects.toThrow()
+  })
+
   it('routes create and navigate through the real adapter transport and persists only opaque lease scope', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const loop = fakeExtensionLoop(client)
@@ -285,6 +313,27 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); reconnected.close(); await retryLoop
   })
 
+  it('removes a relay checkpoint only after the retry acknowledges its exact receipted tab IDs', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const mismatchedLoop = fakeExtensionLoop(client, [], 'instance_profile_a', true, undefined, [999])
+    const acquired = await runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 36,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    await expect(runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle'))
+      .rejects.toThrow('exact checkpoint release was not acknowledged')
+    expect(await runtime.leaseCheckpoints()).toHaveLength(1)
+    client.close(); await mismatchedLoop
+
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const exactLoop = fakeExtensionLoop(reconnected)
+    await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); reconnected.close(); await exactLoop
+  })
+
   it('reacquires, reveals through the dedicated RPC, and releases exact authority after idle cleanup', async () => {
     const { runtime, client } = await connectedRuntime()
     const requests: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -372,7 +421,7 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
     await sendRuntimeHello(profileB, 'instance_profile_b')
     const loopA = fakeExtensionLoop(profileA, [], 'instance_profile_a', false)
-    const choices = runtime.automaticProfileChoices()
+    const choices = runtime.automaticProfileChoices('session-a', 'profile-a')
     expect(choices).toHaveLength(2)
     const stale = choices[1]!
 
@@ -386,6 +435,36 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); profileA.close(); reconnected.close(); await Promise.all([loopA, loopB])
   })
 
+  it('scopes concurrent prompts per Forge session and refreshes only the requesting session', async () => {
+    const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
+    const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(profileB, 'instance_profile_b')
+    const loopA = fakeExtensionLoop(profileA, [], 'instance_profile_a', false)
+    const loopB = fakeExtensionLoop(profileB, [], 'instance_profile_b', false)
+
+    const firstA = runtime.automaticProfileChoices('session-a', 'profile-a')
+    const firstB = runtime.automaticProfileChoices('session-b', 'profile-b')
+    const refreshedA = runtime.automaticProfileChoices('session-a', 'profile-a')
+    expect(runtime.confirmAutomaticChoice('session-a', 'profile-a', firstA[0]!.token)).toBe(false)
+    expect(runtime.confirmAutomaticChoice('wrong-session', 'profile-b', firstB[1]!.token)).toBe(false)
+    expect(runtime.confirmAutomaticChoice('session-b', 'profile-b', firstB[1]!.token)).toBe(true)
+    expect(runtime.confirmAutomaticChoice('session-a', 'profile-a', refreshedA[0]!.token)).toBe(true)
+
+    runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
+  })
+
+  it('bounds outstanding prompt sessions and evicts the oldest token set', async () => {
+    const { runtime, client } = await connectedRuntime('instance_profile_a')
+    const loop = fakeExtensionLoop(client, [], 'instance_profile_a', false)
+    const oldest = runtime.automaticProfileChoices('session-0', 'profile')[0]!
+    let newest = oldest
+    for (let index = 1; index <= 64; index += 1) newest = runtime.automaticProfileChoices(`session-${index}`, 'profile')[0]!
+    expect(runtime.confirmAutomaticChoice('session-0', 'profile', oldest.token)).toBe(false)
+    expect(runtime.confirmAutomaticChoice('session-64', 'profile', newest.token)).toBe(true)
+
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it('remembers one confirmed ambiguous profile for the current runtime session', async () => {
     const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
     const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
@@ -395,7 +474,7 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     const loopA = fakeExtensionLoop(profileA, requestsA, 'instance_profile_a', false)
     const loopB = fakeExtensionLoop(profileB, requestsB, 'instance_profile_b', false)
 
-    const choice = runtime.automaticProfileChoices()[1]
+    const choice = runtime.automaticProfileChoices('session-a', 'profile-a')[1]
     if (!choice) throw new Error('fixture choice missing')
     expect(runtime.confirmAutomaticChoice('session-a', 'profile-a', choice.token)).toBe(true)
     await expect(runtime.acquireTarget({

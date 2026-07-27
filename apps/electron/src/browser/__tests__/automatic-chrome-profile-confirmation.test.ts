@@ -12,8 +12,8 @@ const input = { sessionAgentId: 'session-1', profileId: 'profile-1', operation: 
 
 function fixture(results: ExternalBrowserAcquireResult[], confirm = true) {
   const acquireTarget = vi.fn(async () => results.shift() ?? ambiguous)
-  const confirmAutomaticChoice = vi.fn(() => confirm)
-  const automaticProfileChoices = vi.fn(() => [
+  const confirmAutomaticChoice = vi.fn((_sessionAgentId: string, _profileId: string, _token: string) => confirm)
+  const automaticProfileChoices = vi.fn((_sessionAgentId: string, _profileId: string) => [
     { token: 'ready-token-a', label: 'Chrome profile 1' },
     { token: 'ready-token-b', label: 'Chrome profile 2' },
   ])
@@ -31,8 +31,29 @@ describe('session-only Chrome profile confirmation', () => {
     const transport = withSessionProfileConfirmation(value.transport, choose)
     await expect(transport.acquireTarget!(input)).resolves.toEqual(acquired)
     expect(choose).toHaveBeenCalledWith(['Chrome profile 1', 'Chrome profile 2'])
+    expect(value.automaticProfileChoices).toHaveBeenCalledWith('session-1', 'profile-1')
     expect(value.confirmAutomaticChoice).toHaveBeenCalledWith('session-1', 'profile-1', 'ready-token-b')
     expect(value.acquireTarget).toHaveBeenCalledTimes(2)
+  })
+
+  it('allows two Forge sessions to confirm concurrently without invalidating either prompt', async () => {
+    const value = fixture([ambiguous, ambiguous, acquired, acquired])
+    value.automaticProfileChoices.mockImplementation((sessionAgentId: string) => [
+      { token: `${sessionAgentId}-a`, label: 'Chrome profile 1' },
+      { token: `${sessionAgentId}-b`, label: 'Chrome profile 2' },
+    ])
+    value.confirmAutomaticChoice.mockImplementation((sessionAgentId, _profileId, token) => token === `${sessionAgentId}-b`)
+    const confirmations: Array<() => void> = []
+    const choose = vi.fn(() => new Promise<number>((resolve) => confirmations.push(() => resolve(1))))
+    const transport = withSessionProfileConfirmation(value.transport, choose)
+    const sessionA = transport.acquireTarget!(input)
+    const sessionB = transport.acquireTarget!({ ...input, sessionAgentId: 'session-2', profileId: 'profile-2' })
+    await vi.waitFor(() => expect(confirmations).toHaveLength(2))
+    for (const confirm of confirmations) confirm()
+
+    await expect(Promise.all([sessionA, sessionB])).resolves.toEqual([acquired, acquired])
+    expect(value.confirmAutomaticChoice).toHaveBeenCalledWith('session-1', 'profile-1', 'session-1-b')
+    expect(value.confirmAutomaticChoice).toHaveBeenCalledWith('session-2', 'profile-2', 'session-2-b')
   })
 
   it('fails not-started without throwing when the ready choice disappears before confirmation', async () => {

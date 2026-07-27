@@ -151,7 +151,7 @@ export class Runtime implements ServiceWorkerPayload {
         }
       }
       case 'forge.browser.release': {
-        const tabIds = this.authorities.releaseScope(request.params.leaseId, request.params.leaseEpoch)
+        const tabIds = this.authorities.activeReleaseScope(request.params.leaseId, request.params.leaseEpoch)
         await Promise.all(tabIds.map((tabId) => this.debuggers.reset(tabId)))
         this.broadcastState(tabIds, 'detached')
         const releasedTabIds = await this.authorities.releaseOwner(request.params.leaseId, request.params.leaseEpoch)

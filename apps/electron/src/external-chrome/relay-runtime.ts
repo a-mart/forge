@@ -31,6 +31,7 @@ const HEARTBEAT_MS = 5_000
 const CHECKPOINT_TTL_MS = 15 * 60_000
 const MAX_LEASE_CHECKPOINTS = MAX_CONNECTIONS * 128
 const MAX_CHECKPOINT_FILE_BYTES = 1 * 1_024 * 1_024
+const MAX_PROFILE_CHOICE_SESSIONS = 64
 
 interface RelayContext {
   epoch: string
@@ -74,6 +75,7 @@ interface PersistedCheckpoints {
 class LeaseCheckpointStore {
   private checkpoints: ExternalChromeLeaseCheckpoint[] = []
   private loaded = false
+  private fatalLoadError: Error | null = null
   private operation: Promise<void> = Promise.resolve()
   constructor(private readonly file: string) {}
 
@@ -111,8 +113,8 @@ class LeaseCheckpointStore {
   }
 
   private async load(): Promise<void> {
+    if (this.fatalLoadError !== null) throw this.fatalLoadError
     if (this.loaded) return
-    this.loaded = true
     try {
       const raw = await fs.readFile(this.file, 'utf8')
       if (Buffer.byteLength(raw) > MAX_CHECKPOINT_FILE_BYTES) throw new Error('lease checkpoint file exceeds bound')
@@ -129,9 +131,15 @@ class LeaseCheckpointStore {
       }
       if (migrated.length > MAX_LEASE_CHECKPOINTS) throw new Error('lease checkpoint file exceeds authority bound')
       this.checkpoints = migrated
+      this.loaded = true
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') this.checkpoints = []
-      else throw error
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.checkpoints = []
+        this.loaded = true
+        return
+      }
+      this.fatalLoadError = error instanceof Error ? error : new Error(String(error))
+      throw this.fatalLoadError
     }
   }
 
@@ -437,7 +445,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private lifecycleBarrierRecovery: RuntimeRecovery | null = null
   /** Desktop-private session affinity. Never exposed as a caller-selectable host. */
   private readonly sessionAffinities = new Map<string, string>()
-  private readonly profileChoiceTokens = new Map<string, { extensionInstanceId: string; generation: number }>()
+  private readonly profileChoiceTokens = new Map<string, {
+    sessionKey: string
+    extensionInstanceId: string
+    instanceGeneration: number
+    readySetGeneration: number
+  }>()
+  private readonly profileChoiceSessions = new Map<string, Set<string>>()
   private transientOwnerEpoch = 1_000_000_000
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
@@ -491,6 +505,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.instanceStates.clear()
     this.sessionAffinities.clear()
     this.profileChoiceTokens.clear()
+    this.profileChoiceSessions.clear()
     this.runtimeStateRevision += 1
     this.context?.secret.fill(0)
     this.context = null
@@ -621,26 +636,43 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return result
   }
 
-  automaticProfileChoices(): AutomaticChromeProfileChoice[] {
-    this.profileChoiceTokens.clear()
+  automaticProfileChoices(sessionAgentId: string, profileId: string): AutomaticChromeProfileChoice[] {
+    const sessionKey = `${sessionAgentId}\0${profileId}`
+    this.clearProfileChoices(sessionKey)
+    const tokens = new Set<string>()
+    this.profileChoiceSessions.set(sessionKey, tokens)
+    while (this.profileChoiceSessions.size > MAX_PROFILE_CHOICE_SESSIONS) {
+      const oldest = this.profileChoiceSessions.keys().next().value
+      if (oldest !== undefined) this.clearProfileChoices(oldest)
+    }
     return this.readyConnectionIds().sort().map((extensionInstanceId, index) => {
       const token = randomUUID()
+      tokens.add(token)
       this.profileChoiceTokens.set(token, {
+        sessionKey,
         extensionInstanceId,
-        generation: this.instanceStates.get(extensionInstanceId)?.generation ?? -1,
+        instanceGeneration: this.instanceStates.get(extensionInstanceId)?.generation ?? -1,
+        readySetGeneration: this.runtimeStateRevision,
       })
       return { token, label: `Chrome profile ${index + 1}` }
     })
   }
 
-  /** Consumes one opaque, ready-set-bound choice without exposing runtime identity. */
+  /** Consumes one opaque, session- and ready-set-bound choice without exposing runtime identity. */
   confirmAutomaticChoice(sessionAgentId: string, profileId: string, token: string): boolean {
+    const sessionKey = `${sessionAgentId}\0${profileId}`
     const choice = this.profileChoiceTokens.get(token)
-    this.profileChoiceTokens.delete(token)
-    if (!choice || !this.isInstanceReady(choice.extensionInstanceId) ||
-      this.instanceStates.get(choice.extensionInstanceId)?.generation !== choice.generation) return false
-    this.sessionAffinities.set(`${sessionAgentId}\0${profileId}`, choice.extensionInstanceId)
+    if (!choice || choice.sessionKey !== sessionKey) return false
+    this.clearProfileChoices(sessionKey)
+    if (choice.readySetGeneration !== this.runtimeStateRevision || !this.isInstanceReady(choice.extensionInstanceId) ||
+      this.instanceStates.get(choice.extensionInstanceId)?.generation !== choice.instanceGeneration) return false
+    this.sessionAffinities.set(sessionKey, choice.extensionInstanceId)
     return true
+  }
+
+  private clearProfileChoices(sessionKey: string): void {
+    for (const token of this.profileChoiceSessions.get(sessionKey) ?? []) this.profileChoiceTokens.delete(token)
+    this.profileChoiceSessions.delete(sessionKey)
   }
 
   async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {

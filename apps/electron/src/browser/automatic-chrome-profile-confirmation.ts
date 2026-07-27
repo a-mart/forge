@@ -2,9 +2,11 @@ import type { AutomaticChromeProfileChoice } from '../external-chrome/relay-runt
 import type { ExternalChromeTransport } from './external-chrome-target-adapter.js'
 
 export interface ProfileConfirmingChromeTransport extends ExternalChromeTransport {
-  automaticProfileChoices(): AutomaticChromeProfileChoice[]
+  automaticProfileChoices(sessionAgentId: string, profileId: string): AutomaticChromeProfileChoice[]
   confirmAutomaticChoice(sessionAgentId: string, profileId: string, token: string): boolean
 }
+
+const MAX_PROMPTED_SESSIONS = 256
 
 /** Adds the sole allowed Chrome-profile prompt while keeping runtime identity out of the renderer. */
 export function withSessionProfileConfirmation(
@@ -29,7 +31,8 @@ export function withSessionProfileConfirmation(
       const sessionKey = `${input.sessionAgentId}\0${input.profileId}`
       if (promptedSessions.has(sessionKey)) return result
       promptedSessions.add(sessionKey)
-      const choices = transport.automaticProfileChoices()
+      while (promptedSessions.size > MAX_PROMPTED_SESSIONS) promptedSessions.delete(promptedSessions.values().next().value!)
+      const choices = transport.automaticProfileChoices(input.sessionAgentId, input.profileId)
       if (choices.length < 2) return result
       const selectedIndex = await choose(choices.map((choice) => choice.label))
       const selected = selectedIndex === null ? undefined : choices[selectedIndex]

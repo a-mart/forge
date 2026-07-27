@@ -2,9 +2,13 @@ import type { ChromeApi, ChromeTab } from './chrome-api.js'
 import { restrictedTargetReason } from './restricted-target.js'
 
 const SESSION_AUTHORITY_KEY = 'forge.externalChrome.tabAuthority.v2'
-const RELEASE_RECEIPTS_KEY = 'forge.externalChrome.releaseReceipts.v1'
+const LEGACY_SESSION_RELEASE_RECEIPTS_KEY = 'forge.externalChrome.releaseReceipts.v1'
+const DURABLE_RELEASE_RECEIPTS_KEY = 'forge.externalChrome.releaseReceipts.v2'
 const MAX_AUTHORITIES = 128
 const MAX_RELEASE_RECEIPTS = 128
+const MAX_RELEASE_RECEIPT_TAB_IDS = 128
+const MAX_RELEASE_RECEIPT_BYTES = 64 * 1_024
+const MAX_RELEASE_RECEIPT_TTL_MS = 15 * 60_000
 
 export type TabAuthorityState = 'human' | 'agent' | 'lost'
 
@@ -19,6 +23,19 @@ export interface TabAuthorityRecord {
   createdByForge: boolean
   payloadVersion: string
   expiresAt: number
+}
+
+interface ReleaseReceipt {
+  ownerId: string
+  ownerEpoch: number
+  tabIds: number[]
+  releasedAt: number
+  expiresAt: number
+}
+
+interface PersistedReleaseReceipts {
+  schemaVersion: 1
+  receipts: ReleaseReceipt[]
 }
 
 export class LeaseError extends Error {
@@ -37,9 +54,22 @@ function validRecord(value: unknown): value is TabAuthorityRecord {
     typeof record.createdByForge === 'boolean' && typeof record.payloadVersion === 'string' && Number.isFinite(record.expiresAt)
 }
 
+function validReceipt(value: unknown): value is ReleaseReceipt {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(',') !== 'expiresAt,ownerEpoch,ownerId,releasedAt,tabIds') return false
+  return typeof record.ownerId === 'string' && record.ownerId.length > 0 && record.ownerId.length <= 128 && !record.ownerId.includes('\0') &&
+    Number.isSafeInteger(record.ownerEpoch) && (record.ownerEpoch as number) > 0 && Array.isArray(record.tabIds) &&
+    record.tabIds.length > 0 && record.tabIds.length <= MAX_RELEASE_RECEIPT_TAB_IDS &&
+    record.tabIds.every((tabId) => Number.isSafeInteger(tabId) && (tabId as number) >= 0) &&
+    new Set(record.tabIds).size === record.tabIds.length && Number.isFinite(record.releasedAt) && (record.releasedAt as number) >= 0 &&
+    Number.isFinite(record.expiresAt) && (record.expiresAt as number) > (record.releasedAt as number) &&
+    (record.expiresAt as number) - (record.releasedAt as number) <= MAX_RELEASE_RECEIPT_TTL_MS
+}
+
 export class LeaseManager {
   private readonly authorities = new Map<number, TabAuthorityRecord>()
-  private readonly releaseReceipts = new Map<string, number[]>()
+  private readonly releaseReceipts = new Map<string, ReleaseReceipt>()
   private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(
@@ -58,10 +88,16 @@ export class LeaseManager {
     return record === undefined ? null : structuredClone(record)
   }
 
+  /** Only live exact authority may trigger debugger cleanup; receipts are acknowledgement proof only. */
+  activeReleaseScope(ownerId: string, ownerEpoch: number): number[] {
+    return this.all().filter((record) => record.ownerId === ownerId && record.ownerEpoch === ownerEpoch).map((record) => record.tabId)
+  }
+
   /** Exact active-or-receipted scope makes release retryable after a lost acknowledgement. */
   releaseScope(ownerId: string, ownerEpoch: number): number[] {
-    const active = this.all().filter((record) => record.ownerId === ownerId && record.ownerEpoch === ownerEpoch).map((record) => record.tabId)
-    return active.length > 0 ? active : [...(this.releaseReceipts.get(releaseKey(ownerId, ownerEpoch)) ?? [])]
+    const active = this.activeReleaseScope(ownerId, ownerEpoch)
+    const receipt = this.releaseReceipts.get(releaseKey(ownerId, ownerEpoch))
+    return active.length > 0 ? active : receipt !== undefined && receipt.expiresAt > this.now() ? [...receipt.tabIds] : []
   }
 
   async focusedEligibleTab(): Promise<ChromeTab | null> {
@@ -123,7 +159,7 @@ export class LeaseManager {
         expiresAt: this.now() + this.ttlMs,
       }
       this.authorities.set(input.tabId, authority)
-      await this.persist()
+      await this.persistAuthorities()
       return { authority: structuredClone(authority), tab }
     })
   }
@@ -135,7 +171,7 @@ export class LeaseManager {
         throw new LeaseError('lease-lost', 'human input changed queued operation authority')
       }
       this.authorities.set(tabId, { ...authority, state: 'agent', expiresAt: this.now() + this.ttlMs })
-      await this.persist()
+      await this.persistAuthorities()
       return authority.controlEpoch
     })
   }
@@ -146,7 +182,7 @@ export class LeaseManager {
       if (authority === undefined) return null
       const interrupted = { ...authority, state: 'human' as const, controlEpoch: authority.controlEpoch + 1 }
       this.authorities.set(tabId, interrupted)
-      await this.persist()
+      await this.persistAuthorities()
       return structuredClone(interrupted)
     })
   }
@@ -161,7 +197,7 @@ export class LeaseManager {
       if (!this.isOperationCurrent(ownerId, ownerEpoch, tabId, controlEpoch)) return false
       const authority = this.authorities.get(tabId)!
       this.authorities.set(tabId, { ...authority, state: 'human' })
-      await this.persist()
+      await this.persistAuthorities()
       return true
     })
   }
@@ -179,7 +215,7 @@ export class LeaseManager {
       const authority = this.authorities.get(tabId)
       if (authority === undefined) return
       this.authorities.set(tabId, { ...authority, state: 'lost', controlEpoch: authority.controlEpoch + 1 })
-      await this.persist()
+      await this.persistAuthorities()
     })
   }
 
@@ -189,7 +225,7 @@ export class LeaseManager {
       if (authority === undefined) return false
       if (authority.ownerId !== ownerId || authority.ownerEpoch !== ownerEpoch) throw new LeaseError('lease-lost', 'exact tab release compare-and-set failed')
       this.authorities.delete(tabId)
-      await this.persist()
+      await this.persistAuthorities()
       return true
     })
   }
@@ -198,25 +234,38 @@ export class LeaseManager {
     return this.mutate(async () => {
       const key = releaseKey(ownerId, ownerEpoch)
       const matches = this.all().filter((record) => record.ownerId === ownerId && record.ownerEpoch === ownerEpoch)
-      const released = matches.length > 0 ? matches.map((record) => record.tabId) : [...(this.releaseReceipts.get(key) ?? [])]
+      if (matches.length === 0) {
+        const receipt = this.releaseReceipts.get(key)
+        return receipt !== undefined && receipt.expiresAt > this.now() ? [...receipt.tabIds] : []
+      }
+      const released = matches.map((record) => record.tabId)
+      const nextReceipts = this.withReleaseReceipt(this.releaseReceipts, ownerId, ownerEpoch, released)
+      // Establish durable idempotency before forgetting or acknowledging exact authority.
+      await this.persistReceipts(nextReceipts)
+      this.replaceReceipts(nextReceipts)
       for (const record of matches) this.authorities.delete(record.tabId)
-      if (matches.length > 0) this.rememberRelease(key, released)
-      await this.persist()
+      try {
+        await this.persistAuthorities()
+      } catch (error) {
+        for (const record of matches) this.authorities.set(record.tabId, record)
+        throw error
+      }
       return released
     })
   }
 
   async recover(): Promise<TabAuthorityRecord[]> {
     return this.mutate(async () => {
-      const stored = await this.chrome.storage.session.get([SESSION_AUTHORITY_KEY, RELEASE_RECEIPTS_KEY])
-      const records = Array.isArray(stored[SESSION_AUTHORITY_KEY]) ? stored[SESSION_AUTHORITY_KEY] as unknown[] : []
-      const receipts = Array.isArray(stored[RELEASE_RECEIPTS_KEY]) ? stored[RELEASE_RECEIPTS_KEY] as unknown[] : []
-      this.authorities.clear()
-      this.releaseReceipts.clear()
-      for (const value of receipts.slice(-MAX_RELEASE_RECEIPTS)) {
-        if (!Array.isArray(value) || typeof value[0] !== 'string' || !Array.isArray(value[1]) || !value[1].every(Number.isSafeInteger)) continue
-        this.releaseReceipts.set(value[0], [...value[1]])
-      }
+      const [sessionStored, localStored] = await Promise.all([
+        this.chrome.storage.session.get([SESSION_AUTHORITY_KEY, LEGACY_SESSION_RELEASE_RECEIPTS_KEY]),
+        this.chrome.storage.local.get(DURABLE_RELEASE_RECEIPTS_KEY),
+      ])
+      const records = Array.isArray(sessionStored[SESSION_AUTHORITY_KEY]) ? sessionStored[SESSION_AUTHORITY_KEY] as unknown[] : []
+      const nextReceipts = this.parseDurableReceipts(localStored[DURABLE_RELEASE_RECEIPTS_KEY])
+      this.migrateLegacyReceipts(nextReceipts, sessionStored[LEGACY_SESSION_RELEASE_RECEIPTS_KEY])
+      for (const [key, receipt] of nextReceipts) if (receipt.expiresAt <= this.now()) nextReceipts.delete(key)
+
+      const nextAuthorities = new Map<number, TabAuthorityRecord>()
       for (const record of records.filter(validRecord).slice(0, MAX_AUTHORITIES)) {
         if (record.payloadVersion !== this.payloadVersion || record.expiresAt <= this.now()) continue
         try {
@@ -224,9 +273,14 @@ export class LeaseManager {
           if (restrictedTargetReason(tab.url) !== null) continue
         } catch { continue }
         // MV3 restart never assumes a debugger survived. Durable ownership resumes human/unattached.
-        this.authorities.set(record.tabId, { ...record, state: record.state === 'lost' ? 'lost' : 'human' })
+        nextAuthorities.set(record.tabId, { ...record, state: record.state === 'lost' ? 'lost' : 'human' })
       }
-      await this.persist()
+      await this.persistReceipts(nextReceipts)
+      await this.chrome.storage.session.remove(LEGACY_SESSION_RELEASE_RECEIPTS_KEY)
+      this.authorities.clear()
+      for (const [tabId, authority] of nextAuthorities) this.authorities.set(tabId, authority)
+      this.replaceReceipts(nextReceipts)
+      await this.persistAuthorities()
       return this.all()
     })
   }
@@ -234,9 +288,13 @@ export class LeaseManager {
   async expire(): Promise<TabAuthorityRecord[]> {
     return this.mutate(async () => {
       const expired = this.all().filter((record) => record.expiresAt <= this.now())
+      if (expired.length === 0) return []
+      let nextReceipts = new Map(this.releaseReceipts)
+      for (const record of expired) nextReceipts = this.withReleaseReceipt(nextReceipts, record.ownerId, record.ownerEpoch, [record.tabId])
+      await this.persistReceipts(nextReceipts)
+      this.replaceReceipts(nextReceipts)
       for (const record of expired) this.authorities.delete(record.tabId)
-      for (const record of expired) this.rememberRelease(releaseKey(record.ownerId, record.ownerEpoch), [record.tabId])
-      if (expired.length > 0) await this.persist()
+      await this.persistAuthorities()
       return expired
     })
   }
@@ -254,31 +312,92 @@ export class LeaseManager {
   }
 
   private validateRouting(input: { ownerId: string; ownerEpoch: number; sessionAgentId: string; tabId: number }): void {
-    if (!input.ownerId || input.ownerId.length > 128 || !Number.isSafeInteger(input.ownerEpoch) || input.ownerEpoch < 1 ||
-      !input.sessionAgentId || input.sessionAgentId.length > 128 || !Number.isSafeInteger(input.tabId) || input.tabId < 0) {
+    if (!input.ownerId || input.ownerId.length > 128 || input.ownerId.includes('\0') || !Number.isSafeInteger(input.ownerEpoch) || input.ownerEpoch < 1 ||
+      !input.sessionAgentId || input.sessionAgentId.length > 128 || input.sessionAgentId.includes('\0') || !Number.isSafeInteger(input.tabId) || input.tabId < 0) {
       throw new LeaseError('scope-mismatch', 'tab authority routing is invalid')
     }
   }
 
-  private rememberRelease(key: string, tabIds: number[]): void {
-    const combined = [...new Set([...(this.releaseReceipts.get(key) ?? []), ...tabIds])].sort((left, right) => left - right)
-    this.releaseReceipts.delete(key)
-    this.releaseReceipts.set(key, combined)
-    while (this.releaseReceipts.size > MAX_RELEASE_RECEIPTS) this.releaseReceipts.delete(this.releaseReceipts.keys().next().value!)
+  private withReleaseReceipt(
+    receipts: Map<string, ReleaseReceipt>,
+    ownerId: string,
+    ownerEpoch: number,
+    tabIds: number[],
+  ): Map<string, ReleaseReceipt> {
+    const key = releaseKey(ownerId, ownerEpoch)
+    const existing = receipts.get(key)
+    const combined = [...new Set([...(existing?.tabIds ?? []), ...tabIds])].sort((left, right) => left - right)
+    if (combined.length === 0 || combined.length > MAX_RELEASE_RECEIPT_TAB_IDS) throw new LeaseError('scope-mismatch', 'release receipt tab bound reached')
+    const next = new Map(receipts)
+    next.delete(key)
+    const releasedAt = this.now()
+    next.set(key, {
+      ownerId,
+      ownerEpoch,
+      tabIds: combined,
+      releasedAt,
+      expiresAt: releasedAt + Math.min(this.ttlMs, MAX_RELEASE_RECEIPT_TTL_MS),
+    })
+    while (next.size > MAX_RELEASE_RECEIPTS) next.delete(next.keys().next().value!)
+    return next
   }
 
-  private async persist(): Promise<void> {
+  private parseDurableReceipts(value: unknown): Map<string, ReleaseReceipt> {
+    if (value === undefined) return new Map()
+    let bytes: number
+    try { bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength } catch { throw new Error('durable release receipts are not serializable') }
+    if (bytes > MAX_RELEASE_RECEIPT_BYTES || typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error('durable release receipts exceed their storage bound')
+    }
+    const persisted = value as Record<string, unknown>
+    if (Object.keys(persisted).sort().join(',') !== 'receipts,schemaVersion' || persisted.schemaVersion !== 1 ||
+      !Array.isArray(persisted.receipts) || persisted.receipts.length > MAX_RELEASE_RECEIPTS || !persisted.receipts.every(validReceipt) ||
+      persisted.receipts.some((receipt) => receipt.releasedAt > this.now())) {
+      throw new Error('durable release receipts have an invalid schema')
+    }
+    const receipts = new Map<string, ReleaseReceipt>()
+    for (const receipt of persisted.receipts) {
+      const key = releaseKey(receipt.ownerId, receipt.ownerEpoch)
+      if (receipts.has(key)) throw new Error('durable release receipts contain a duplicate owner epoch')
+      receipts.set(key, structuredClone(receipt))
+    }
+    return receipts
+  }
+
+  private migrateLegacyReceipts(receipts: Map<string, ReleaseReceipt>, value: unknown): void {
+    if (!Array.isArray(value)) return
+    for (const item of value.slice(-MAX_RELEASE_RECEIPTS)) {
+      if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== 'string' || !Array.isArray(item[1]) ||
+        item[1].length === 0 || item[1].length > MAX_RELEASE_RECEIPT_TAB_IDS ||
+        !item[1].every((tabId) => Number.isSafeInteger(tabId) && tabId >= 0)) continue
+      const separator = item[0].lastIndexOf('\0')
+      const ownerId = item[0].slice(0, separator)
+      const ownerEpoch = Number(item[0].slice(separator + 1))
+      if (separator < 1 || ownerId.length > 128 || !Number.isSafeInteger(ownerEpoch) || ownerEpoch < 1) continue
+      const migrated = this.withReleaseReceipt(receipts, ownerId, ownerEpoch, item[1])
+      receipts.clear()
+      for (const [key, receipt] of migrated) receipts.set(key, receipt)
+    }
+  }
+
+  private replaceReceipts(receipts: Map<string, ReleaseReceipt>): void {
+    this.releaseReceipts.clear()
+    for (const [key, receipt] of receipts) this.releaseReceipts.set(key, structuredClone(receipt))
+  }
+
+  private async persistAuthorities(): Promise<void> {
     const records = this.all()
-    const receipts = [...this.releaseReceipts.entries()]
-    const updates: Record<string, unknown> = {}
-    if (records.length > 0) updates[SESSION_AUTHORITY_KEY] = records
-    if (receipts.length > 0) updates[RELEASE_RECEIPTS_KEY] = receipts
-    if (Object.keys(updates).length > 0) await this.chrome.storage.session.set(updates)
-    const removals = [
-      ...(records.length === 0 ? [SESSION_AUTHORITY_KEY] : []),
-      ...(receipts.length === 0 ? [RELEASE_RECEIPTS_KEY] : []),
-    ]
-    if (removals.length > 0) await this.chrome.storage.session.remove(removals)
+    if (records.length > 0) await this.chrome.storage.session.set({ [SESSION_AUTHORITY_KEY]: records })
+    else await this.chrome.storage.session.remove(SESSION_AUTHORITY_KEY)
+  }
+
+  private async persistReceipts(receipts: Map<string, ReleaseReceipt>): Promise<void> {
+    const value: PersistedReleaseReceipts = { schemaVersion: 1, receipts: [...receipts.values()] }
+    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_RELEASE_RECEIPT_BYTES) {
+      throw new LeaseError('scope-mismatch', 'release receipt storage bound reached')
+    }
+    if (value.receipts.length > 0) await this.chrome.storage.local.set({ [DURABLE_RELEASE_RECEIPTS_KEY]: value })
+    else await this.chrome.storage.local.remove(DURABLE_RELEASE_RECEIPTS_KEY)
   }
 
   private mutate<Value>(operation: () => Promise<Value>): Promise<Value> {

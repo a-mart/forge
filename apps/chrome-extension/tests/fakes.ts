@@ -15,6 +15,7 @@ export interface FakeChromeOptions {
   tabs?: ChromeTab[]
   windows?: ChromeWindow[]
   session?: FakeStorage
+  local?: FakeStorage
   detachFailures?: Set<number>
   debuggerTargets?: ChromeDebuggerSession[]
 }
@@ -26,7 +27,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
 } {
   const tabs = options.tabs ?? []
   const session = options.session ?? new FakeStorage()
-  const local = new FakeStorage()
+  const local = options.local ?? new FakeStorage()
   const attached = new Set<number>()
   const commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> = []
   const injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }> = []
