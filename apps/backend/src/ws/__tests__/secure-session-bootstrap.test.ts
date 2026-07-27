@@ -38,17 +38,17 @@ function manager(options: { secureSnapshotError?: Error } = {}) {
     displayName: "Worker 1",
     role: "worker" as const,
   };
-  const secureSnapshot = (sessionAgentId: "session" | "worker-1") => ({
-    sessionAgentId,
+  const secureSnapshot = () => ({
+    sessionAgentId: "session",
     profileId: "project",
-    principalKind: sessionAgentId === "session" ? "manager" as const : "worker" as const,
-    ownerManagerAgentId: sessionAgentId === "session" ? null : "session",
-    workerAssignmentId: sessionAgentId === "session" ? null : "assignment-1",
+    principalKind: "manager" as const,
+    ownerManagerAgentId: null,
+    workerAssignmentId: null,
     revision: 7,
     executionMode: "secure" as const,
     environmentStatus: "ready" as const,
     leases: [{
-      leaseId: `lease-${sessionAgentId}`,
+      leaseId: "lease-session",
       secretId: "secret-1",
       displayAlias: "DEPLOY_TOKEN",
       leaseKind: "task" as const,
@@ -71,17 +71,17 @@ function manager(options: { secureSnapshotError?: Error } = {}) {
     }],
     updatedAt: "2026-07-23T00:00:00.000Z",
   });
-  const getSecureSessionSnapshot = vi.fn(async (sessionAgentId: string) => {
+  const getSecureSessionSnapshot = vi.fn(async (_sessionAgentId: string) => {
     if (options.secureSnapshotError) {
       throw options.secureSnapshotError;
     }
-    return secureSnapshot(sessionAgentId === "worker-1" ? "worker-1" : "session");
+    return secureSnapshot();
   });
   const listSecureSessionTeamSnapshots = vi.fn(async () => {
     if (options.secureSnapshotError) {
       throw options.secureSnapshotError;
     }
-    return [secureSnapshot("session"), secureSnapshot("worker-1")];
+    return [secureSnapshot()];
   });
   return {
     getConfig: () => ({ runtimeTarget: "builder" as const }),
@@ -119,7 +119,7 @@ function manager(options: { secureSnapshotError?: Error } = {}) {
 }
 
 describe("secure session bootstrap projection", () => {
-  it("sends only the worker principal snapshot to a worker subscription", async () => {
+  it("sends the manager authority snapshot to a worker subscription", async () => {
     const swarmManager = manager();
     const events: ServerEvent[] = [];
 
@@ -144,15 +144,15 @@ describe("secure session bootstrap projection", () => {
       .toEqual([
         expect.objectContaining({
           type: "secure_session_snapshot",
-          sessionAgentId: "worker-1",
-          principalKind: "worker",
-          ownerManagerAgentId: "session",
-          workerAssignmentId: "assignment-1",
+          sessionAgentId: "session",
+          principalKind: "manager",
+          ownerManagerAgentId: null,
+          workerAssignmentId: null,
         }),
       ]);
   });
 
-  it("sends existing team principal snapshots to the manager subscription", async () => {
+  it("sends one manager authority snapshot to the manager subscription", async () => {
     const swarmManager = manager();
     const events: ServerEvent[] = [];
 
@@ -177,7 +177,7 @@ describe("secure session bootstrap projection", () => {
       .map((event) => event.type === "secure_session_snapshot"
         ? event.sessionAgentId
         : null))
-      .toEqual(["session", "worker-1"]);
+      .toEqual(["session"]);
   });
 
   it("does not expose vault/provider failures while continuing bootstrap", async () => {

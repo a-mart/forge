@@ -48,7 +48,11 @@ export function applySecureSessionSnapshot(
   context: ManagerWsConversationEventContext,
 ): void {
   const targetAgentId = context.state.targetAgentId
-  if (!isSecureSessionSnapshotForTarget(snapshot, targetAgentId)) return
+  if (!isSecureSessionSnapshotForTarget(
+    snapshot,
+    targetAgentId,
+    context.state.agents,
+  )) return
 
   const current = context.state.secureSessionSnapshots[snapshot.sessionAgentId]
   if (current && snapshot.revision < current.revision) return
@@ -58,23 +62,33 @@ export function applySecureSessionSnapshot(
       ...context.state.secureSessionSnapshots,
       [snapshot.sessionAgentId]: snapshot,
     },
-    ...(context.state.secureSessionSnapshotLoadingSessionId === snapshot.sessionAgentId
+    ...(
+      context.state.secureSessionSnapshotLoadingSessionId === snapshot.sessionAgentId
+      || context.state.secureSessionSnapshotLoadingSessionId === targetAgentId
       ? { secureSessionSnapshotLoadingSessionId: null }
-      : {}),
+      : {}
+    ),
   })
 }
 
 export function isSecureSessionSnapshotForTarget(
   snapshot: SecureSessionSnapshot,
   targetAgentId: string | null,
+  agents: ReadonlyArray<{
+    agentId: string
+    managerId: string
+    role: 'manager' | 'worker'
+  }> = [],
 ): boolean {
   if (!targetAgentId) return false
-  const ownerManagerAgentId =
+  const snapshotAuthorityAgentId =
     snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
-  return snapshot.principalKind === 'worker'
-    ? targetAgentId === snapshot.sessionAgentId
-      || targetAgentId === ownerManagerAgentId
-    : targetAgentId === snapshot.sessionAgentId
+  const target = agents.find((agent) => agent.agentId === targetAgentId)
+  const targetAuthorityAgentId = target?.role === 'worker'
+    ? target.managerId
+    : targetAgentId
+  return targetAgentId === snapshot.sessionAgentId
+    || targetAuthorityAgentId === snapshotAuthorityAgentId
 }
 
 function isChoiceEventForTarget(

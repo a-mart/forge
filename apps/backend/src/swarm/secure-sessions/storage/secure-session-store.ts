@@ -1517,20 +1517,11 @@ export class SecureSessionStore {
     const normalized = this.normalizeRequestInput(input);
     return this.database.transaction(() => {
       const state = this.getOrCreateSessionState(input.sessionAgentId);
-      if (input.requestedByAgentId !== input.sessionAgentId) {
-        throw new SecureSessionIdConflictError("request principal");
-      }
       if (
-        (state.principalKind === "manager" && normalized.workerAssignmentId !== null)
-        || (
-          state.principalKind === "worker"
-          && (
-            normalized.workerAssignmentId === null
-            || normalized.workerAssignmentId !== state.workerAssignmentId
-          )
-        )
+        state.principalKind !== "manager"
+        || normalized.workerAssignmentId !== null
       ) {
-        throw new SecureSessionIdConflictError("request worker assignment");
+        throw new SecureSessionIdConflictError("request session authority");
       }
       if (input.secretId) {
         const secret = this.requireSecret(input.secretId);

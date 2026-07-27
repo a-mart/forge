@@ -60,7 +60,6 @@ export interface SecureProjectDefaultStatusView {
 export interface SecureAccessRequestView {
   requestId: string
   sessionAgentId: string
-  principalLabel?: string
   requestedByAgentId: string
   requestedByLabel?: string
   secretId?: string
@@ -84,12 +83,6 @@ export interface SecureSessionSnapshotView {
   pendingRequests: SecureAccessRequestView[]
   projectDefaults?: SecureProjectDefaultStatusView[]
   updatedAt: string
-}
-
-export interface SecureSessionTeamMemberView {
-  sessionAgentId: string
-  displayName: string
-  snapshot: SecureSessionSnapshotView
 }
 
 export interface SecureGrantInput {
@@ -130,7 +123,6 @@ export interface SecureSessionPickerConfig {
   originId?: string
   availability: SecureSessionAvailability
   snapshot?: SecureSessionSnapshotView | null
-  teamMembers?: SecureSessionTeamMemberView[]
   readOnly?: boolean
   secrets: SecureSecretOption[]
   disabled?: boolean

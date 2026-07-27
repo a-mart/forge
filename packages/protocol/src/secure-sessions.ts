@@ -250,7 +250,9 @@ export interface SecureAccessRequestSummary {
   requestedByAgentId: string
   requestedByDisplayName: string
   /**
-   * Captured worker assignment generation. Manager requests always use null.
+   * Legacy compatibility field. Current manager-session authority keeps
+   * requests across worker assignments, so producers always send null and use
+   * requestedByAgentId only for attribution.
    */
   workerAssignmentId: string | null
   createdAt: string
@@ -306,15 +308,19 @@ export interface SecureSessionProjectDefaultStatus {
 }
 
 export interface SecureSessionSnapshot {
+  /** Manager session that owns the shared sandbox, grants, and requests. */
   sessionAgentId: string
   profileId: string
-  /** The executing principal that owns this snapshot's leases and requests. */
+  /**
+   * Compatibility discriminator. Current producers always send `manager`;
+   * older clients and persisted databases may still contain worker snapshots.
+   */
   principalKind: SecureSessionPrincipalKind
-  /** Null for managers; the owning manager principal for workers. */
+  /** Compatibility field. Current manager-owned snapshots always send null. */
   ownerManagerAgentId: string | null
   /**
-   * Null for managers. Workers use the assignment identifier as a
-   * stale-request and sandbox-generation boundary.
+   * Compatibility field. Current manager-owned snapshots always send null.
+   * Worker assignment identity is enforced at runtime dispatch instead.
    */
   workerAssignmentId: string | null
   revision: number

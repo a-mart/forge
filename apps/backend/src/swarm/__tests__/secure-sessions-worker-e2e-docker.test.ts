@@ -51,7 +51,7 @@ import {
 import { runSecureSessionMigrations } from "../secure-sessions/storage/secure-session-migrations.js";
 import { SecureSessionStore } from "../secure-sessions/storage/secure-session-store.js";
 
-const NOW = "2026-07-24T12:00:00.000Z";
+const NOW = "2026-07-27T12:00:00.000Z";
 const PROFILE = "docker-e2e-profile";
 const MANAGER = "docker-e2e-manager";
 const WORKER_ONE = "docker-e2e-worker-one";
@@ -59,18 +59,9 @@ const WORKER_TWO = "docker-e2e-worker-two";
 const ASSIGNMENT_ONE = "docker-e2e-assignment-one";
 const ASSIGNMENT_TWO = "docker-e2e-assignment-two";
 const NEXT_ASSIGNMENT_ONE = "docker-e2e-assignment-one-next";
-const MANAGER_VALUE = "FORGE_DOCKER_E2E_MANAGER_VALUE";
-const WORKER_ONE_VALUE = "FORGE_DOCKER_E2E_WORKER_ONE_VALUE";
-const WORKER_TWO_VALUE = "FORGE_DOCKER_E2E_WORKER_TWO_VALUE";
-const WORKER_ONE_ONCE = "FORGE_DOCKER_E2E_WORKER_ONE_ONCE";
-const WORKER_TWO_ONCE = "FORGE_DOCKER_E2E_WORKER_TWO_ONCE";
-const ALL_VALUE_NAMES = [
-  MANAGER_VALUE,
-  WORKER_ONE_VALUE,
-  WORKER_TWO_VALUE,
-  WORKER_ONE_ONCE,
-  WORKER_TWO_ONCE,
-] as const;
+const SHARED_PRIMARY = "FORGE_DOCKER_E2E_SHARED_PRIMARY";
+const SHARED_SECONDARY = "FORGE_DOCKER_E2E_SHARED_SECONDARY";
+const SHARED_ONE_USE = "FORGE_DOCKER_E2E_SHARED_ONE_USE";
 
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
 const daemonProbe = process.platform === "win32"
@@ -88,11 +79,12 @@ if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
   );
 }
 const dockerSuite = dockerAvailable ? describe.sequential : describe.skip;
-const runnerImage = `${uniqueManagedName("worker-runner")}:latest`;
+const runnerImage = `${uniqueManagedName("team-runner")}:latest`;
 const emergencyCleanups = new Set<() => Promise<void>>();
 
 interface ScopeContainer {
   name: string;
+  id: string;
   taskHash: string;
 }
 
@@ -107,7 +99,7 @@ function sha256(value: string | Uint8Array): string {
 
 function makeCanary(label: string): Buffer {
   return Buffer.from(
-    `Forge worker Docker E2E/${label}/${randomBytes(18).toString("hex")}?"\\end`,
+    `Forge team Docker E2E/${label}/${randomBytes(18).toString("hex")}?"\\end`,
     "utf8",
   );
 }
@@ -129,12 +121,8 @@ async function buildRunnerFixtureImage(): Promise<void> {
     timeoutMs: 180_000,
   });
   if (built.exitCode !== 0) {
-    throw new Error("failed to build production secure-session worker runner image");
+    throw new Error("failed to build production secure-session runner image");
   }
-}
-
-function workerTaskId(workerAgentId: string, assignmentId: string): string {
-  return `${workerAgentId}::${assignmentId}`;
 }
 
 function managerDescriptor(workspacePath: string): AgentDescriptor {
@@ -229,19 +217,9 @@ function verifiedEnvironmentCommand(
   return `node -e ${JSON.stringify(script)}`;
 }
 
-function fencedSentinelCommand(
-  startedPath: string,
-  releasePath: string,
-  completedPath: string,
-): string {
-  const script = [
-    'const fs=require("node:fs");',
-    `fs.writeFileSync(${JSON.stringify(startedPath)},"started",{flag:"wx"});`,
-    `while(!fs.existsSync(${JSON.stringify(releasePath)})){`,
-    "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);",
-    "}",
-    `fs.writeFileSync(${JSON.stringify(completedPath)},"completed",{flag:"wx"});`,
-  ].join("");
+function reflectedEnvironmentCommand(environmentName: string): string {
+  const script =
+    `process.stdout.write(process.env[${JSON.stringify(environmentName)}])`;
   return `node -e ${JSON.stringify(script)}`;
 }
 
@@ -251,17 +229,6 @@ function writeSentinelCommand(sentinelPath: string): string {
       JSON.stringify(sentinelPath)
     },"ran",{flag:"wx"})`;
   return `node -e ${JSON.stringify(script)}`;
-}
-
-function reflectedEnvironmentCommand(environmentName: string): string {
-  const script =
-    `process.stdout.write(process.env[${JSON.stringify(environmentName)}])`;
-  return `node -e ${JSON.stringify(script)}`;
-}
-
-function absentExcept(...presentNames: string[]): string[] {
-  const present = new Set(presentNames);
-  return ALL_VALUE_NAMES.filter((name) => !present.has(name));
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -323,30 +290,31 @@ async function listScopeContainers(
       "container",
       "inspect",
       "--format",
-      `{{index .Config.Labels ${JSON.stringify(
-        dockerSecureExecutionMetadata.taskLabel,
-      )}}}`,
+      [
+        "{{.Id}}",
+        `{{index .Config.Labels ${JSON.stringify(
+          dockerSecureExecutionMetadata.taskLabel,
+        )}}}`,
+      ].join(" "),
       name,
     ], { timeoutMs: 30_000 });
     expect(inspected.exitCode).toBe(0);
+    const [id, taskHash] = inspected.stdout.toString("utf8").trim().split(" ");
     containers.push({
       name,
-      taskHash: inspected.stdout.toString("utf8").trim(),
+      id: id ?? "",
+      taskHash: taskHash ?? "",
     });
   }
   return containers.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function expectIndependentTasks(
+function expectOneManagerSandbox(
   containers: readonly ScopeContainer[],
-  expectedTaskIds: readonly string[],
-): void {
-  expect(new Set(containers.map(({ name }) => name)).size).toBe(
-    expectedTaskIds.length,
-  );
-  expect(containers.map(({ taskHash }) => taskHash).sort()).toEqual(
-    expectedTaskIds.map((taskId) => sha256(taskId)).sort(),
-  );
+): ScopeContainer {
+  expect(containers).toHaveLength(1);
+  expect(containers[0]?.taskHash).toBe(sha256(MANAGER));
+  return containers[0]!;
 }
 
 async function collectScopeEvidence(
@@ -378,9 +346,7 @@ async function collectScopeEvidence(
             "}",
             "if(metadata.isDirectory()){",
             'records.push({path,kind:"directory",mode:metadata.mode&0o777});',
-            "for(const name of fs.readdirSync(path).sort()){",
-            'walk(path+"/"+name)',
-            "}",
+            "for(const name of fs.readdirSync(path).sort())walk(path+'/'+name);",
             "}else if(metadata.isFile()){",
             "const bytes=fs.readFileSync(path);",
             'records.push({path,kind:"file",mode:metadata.mode&0o777,',
@@ -414,18 +380,6 @@ function requireBinding(
   return binding;
 }
 
-function assertSafeExactOutput(
-  output: Buffer,
-  needles: readonly Uint8Array[],
-  marker: string,
-  path: string,
-): void {
-  const report = scanNamedBytes([{ path, bytes: output }], needles);
-  expect(report.totalMatches).toBe(0);
-  expect(report.matches).toEqual([]);
-  expect(output.equals(Buffer.from(marker))).toBe(true);
-}
-
 async function executeAndCapture(
   binding: SecureRuntimeBinding,
   workspacePath: string,
@@ -443,12 +397,24 @@ async function executeAndCapture(
   };
 }
 
+function assertSafeExactOutput(
+  output: Buffer,
+  needles: readonly Uint8Array[],
+  marker: string,
+  path: string,
+): void {
+  const report = scanNamedBytes([{ path, bytes: output }], needles);
+  expect(report.totalMatches).toBe(0);
+  expect(report.matches).toEqual([]);
+  expect(output.equals(Buffer.from(marker))).toBe(true);
+}
+
 async function createDockerHarness() {
   const temporaryRoot = await mkdtemp(
-    join(tmpdir(), "forge-secure-worker-e2e-"),
+    join(tmpdir(), "forge-secure-team-e2e-"),
   );
   const workspacePath = await realpath(temporaryRoot);
-  const scope = uniqueManagedName("worker-scope");
+  const scope = uniqueManagedName("team-scope");
   const scopeHash = sha256(scope).slice(0, 16);
   const heartbeatRoot = resolve(
     tmpdir(),
@@ -531,7 +497,7 @@ async function createDockerHarness() {
     emitCatalogChanged: () => undefined,
     applyModeRuntimeRecycle: async () => "recycled",
     now: () => NOW,
-    createId: () => `worker-docker-e2e-${++nextId}`,
+    createId: () => `team-docker-e2e-${++nextId}`,
   });
 
   let cleaned = false;
@@ -565,7 +531,6 @@ async function createDockerHarness() {
 
   return {
     service,
-    execution,
     descriptors,
     invocations,
     scopeHash,
@@ -596,13 +561,14 @@ async function createEnvironmentSecret(
 
 async function grantEnvironmentLease(
   harness: DockerHarness,
-  agentId: string,
+  addressedAgentId: string,
   secretId: string,
   environmentName: string,
   leaseKind: "task" | "one_use",
 ) {
-  const before = await harness.service.getSecureSessionSnapshot(agentId);
-  return await harness.service.grantSecureSessionLease(agentId, {
+  const before =
+    await harness.service.getSecureSessionSnapshot(addressedAgentId);
+  return await harness.service.grantSecureSessionLease(addressedAgentId, {
     baseRevision: before.revision,
     secretId,
     exposures: [{
@@ -619,7 +585,7 @@ afterEach(async () => {
 });
 
 dockerSuite(
-  `SecureSessionsService-to-Docker worker integration [${
+  `SecureSessionsService shared-team Docker integration [${
     dockerAvailable ? "available" : "backend_unavailable"
   }]`,
   () => {
@@ -631,14 +597,12 @@ dockerSuite(
       await removeManagedImage(runnerImage);
     }, 60_000);
 
-    it("integrates manager and worker authority with isolated Docker sandboxes", async () => {
+    it("runs the manager team through one shared sandbox and authority lifecycle", async () => {
       const harness = await createDockerHarness();
       const canaries = {
-        manager: makeCanary("manager"),
-        workerOne: makeCanary("worker-one"),
-        workerTwo: makeCanary("worker-two"),
-        workerOneOnce: makeCanary("worker-one-once"),
-        workerTwoOnce: makeCanary("worker-two-once"),
+        primary: makeCanary("primary"),
+        secondary: makeCanary("secondary"),
+        oneUse: makeCanary("one-use"),
       };
       const allCanaries = Object.values(canaries);
       const needles = allCanaries.flatMap((canary) => canaryNeedles(canary));
@@ -646,385 +610,261 @@ dockerSuite(
       const dockerEvidence: NamedEvidence[] = [];
 
       try {
-        const managerSecret = await createEnvironmentSecret(
+        const primary = await createEnvironmentSecret(
           harness,
-          "manager-task",
-          MANAGER_VALUE,
-          canaries.manager,
+          "primary",
+          SHARED_PRIMARY,
+          canaries.primary,
         );
-        const workerOneSecret = await createEnvironmentSecret(
+        const secondary = await createEnvironmentSecret(
           harness,
-          "worker-one-task",
-          WORKER_ONE_VALUE,
-          canaries.workerOne,
+          "secondary",
+          SHARED_SECONDARY,
+          canaries.secondary,
         );
-        const workerTwoSecret = await createEnvironmentSecret(
+        const oneUse = await createEnvironmentSecret(
           harness,
-          "worker-two-task",
-          WORKER_TWO_VALUE,
-          canaries.workerTwo,
-        );
-        const workerOneOnceSecret = await createEnvironmentSecret(
-          harness,
-          "worker-one-once",
-          WORKER_ONE_ONCE,
-          canaries.workerOneOnce,
-        );
-        const workerTwoOnceSecret = await createEnvironmentSecret(
-          harness,
-          "worker-two-once",
-          WORKER_TWO_ONCE,
-          canaries.workerTwoOnce,
+          "one-use",
+          SHARED_ONE_USE,
+          canaries.oneUse,
         );
 
         await harness.service.startSecureSession(MANAGER);
+        const retainedBindings = new Map(
+          [MANAGER, WORKER_ONE, WORKER_TWO].map((agentId) => [
+            agentId,
+            requireBinding(
+              harness.service,
+              harness.descriptors.get(agentId)!,
+            ),
+          ]),
+        );
         await grantEnvironmentLease(
           harness,
           MANAGER,
-          managerSecret.secretId,
-          MANAGER_VALUE,
+          primary.secretId,
+          SHARED_PRIMARY,
           "task",
         );
         await grantEnvironmentLease(
           harness,
           WORKER_ONE,
-          workerOneSecret.secretId,
-          WORKER_ONE_VALUE,
-          "task",
-        );
-        await grantEnvironmentLease(
-          harness,
-          WORKER_TWO,
-          workerTwoSecret.secretId,
-          WORKER_TWO_VALUE,
+          secondary.secretId,
+          SHARED_SECONDARY,
           "task",
         );
 
-        const initialScopeContainers = await listScopeContainers(
-          harness.scopeHash,
-        );
-        expectIndependentTasks(
-          initialScopeContainers,
-          [
-            MANAGER,
-            workerTaskId(WORKER_ONE, ASSIGNMENT_ONE),
-            workerTaskId(WORKER_TWO, ASSIGNMENT_TWO),
-          ],
-        );
-        expect(
-          await listDirectoryOrEmpty(harness.heartbeatRoot),
-        ).toEqual(initialScopeContainers.map(({ name }) => name).sort());
-
-        const repeatedBindings = new Map([
-          [MANAGER, requireBinding(
-            harness.service,
-            harness.descriptors.get(MANAGER)!,
-          )],
-          [WORKER_ONE, requireBinding(
-            harness.service,
-            harness.descriptors.get(WORKER_ONE)!,
-          )],
-          [WORKER_TWO, requireBinding(
-            harness.service,
-            harness.descriptors.get(WORKER_TWO)!,
-          )],
-        ]);
-        const repeatedPrincipals = [
-          {
-            agentId: MANAGER,
-            environmentName: MANAGER_VALUE,
-            canary: canaries.manager,
-          },
-          {
-            agentId: WORKER_ONE,
-            environmentName: WORKER_ONE_VALUE,
-            canary: canaries.workerOne,
-          },
-          {
-            agentId: WORKER_TWO,
-            environmentName: WORKER_TWO_VALUE,
-            canary: canaries.workerTwo,
-          },
-        ] as const;
-        const repeatedExecutions: Array<{
-          exitCode: number | null;
-          output: Buffer;
-          marker: string;
-          path: string;
-        }> = [];
-        for (let round = 0; round < 3; round += 1) {
-          const releasePath = join(
-            harness.workspacePath,
-            `.docker-e2e-round-${round}.release`,
-          );
-          const startedPaths = repeatedPrincipals.map(({ agentId }) =>
-            join(
-              harness.workspacePath,
-              `.docker-e2e-round-${round}-${agentId}.started`,
-            )
-          );
-          const pending = repeatedPrincipals.map((principal, index) => {
-            const marker = `${principal.agentId}-round-${round}`;
-            const path = `repeated-${principal.agentId}-${round}`;
-            return executeAndCapture(
-              repeatedBindings.get(principal.agentId)!,
-              harness.workspacePath,
-              verifiedEnvironmentCommand(
-                [{
-                  name: principal.environmentName,
-                  value: principal.canary,
-                }],
-                absentExcept(principal.environmentName),
-                marker,
-                {
-                  startedPath: startedPaths[index]!,
-                  releasePath,
-                },
-              ),
-            ).then(
-              (execution) => ({ execution, error: null, marker, path }),
-              (error: unknown) => ({ execution: null, error, marker, path }),
-            );
-          });
-
-          await waitForFiles(startedPaths);
-          expect(
-            (await Promise.all(
-              startedPaths.map(async (path) => await fileExists(path)),
-            )).every(Boolean),
-          ).toBe(true);
-          expect(await fileExists(releasePath)).toBe(false);
-          await writeFile(releasePath, "release", { flag: "wx" });
-
-          for (const outcome of await Promise.all(pending)) {
-            if (outcome.error) {
-              if (outcome.error instanceof Error) throw outcome.error;
-              throw new Error("Docker barrier execution failed");
-            }
-            if (!outcome.execution) {
-              throw new Error("missing Docker barrier execution result");
-            }
-            repeatedExecutions.push({
-              ...outcome.execution,
-              marker: outcome.marker,
-              path: outcome.path,
-            });
-          }
-        }
-        for (const execution of repeatedExecutions) {
-          expect(execution.exitCode).toBe(0);
-          assertSafeExactOutput(
-            execution.output,
-            needles,
-            execution.marker,
-            execution.path,
-          );
-          visibleOutputs.push({
-            path: execution.path,
-            bytes: execution.output,
-          });
-        }
-
-        await grantEnvironmentLease(
-          harness,
-          WORKER_ONE,
-          workerOneOnceSecret.secretId,
-          WORKER_ONE_ONCE,
-          "one_use",
-        );
-        await grantEnvironmentLease(
-          harness,
-          WORKER_TWO,
-          workerTwoOnceSecret.secretId,
-          WORKER_TWO_ONCE,
-          "one_use",
-        );
-        const workerOneOneUseExecution = await executeAndCapture(
-          requireBinding(
-            harness.service,
-            harness.descriptors.get(WORKER_ONE)!,
-          ),
-          harness.workspacePath,
-          verifiedEnvironmentCommand(
-            [
-              { name: WORKER_ONE_VALUE, value: canaries.workerOne },
-              { name: WORKER_ONE_ONCE, value: canaries.workerOneOnce },
-            ],
-            absentExcept(WORKER_ONE_VALUE, WORKER_ONE_ONCE),
-            "worker-one-consumed-own-once",
-          ),
-        );
-        expect(workerOneOneUseExecution.exitCode).toBe(0);
-        assertSafeExactOutput(
-          workerOneOneUseExecution.output,
-          needles,
-          "worker-one-consumed-own-once",
-          "worker-one-one-use",
-        );
-        visibleOutputs.push({
-          path: "worker-one-one-use",
-          bytes: workerOneOneUseExecution.output,
-        });
-
-        const workerOneAfterOneUse =
-          await harness.service.getSecureSessionSnapshot(WORKER_ONE);
-        const workerTwoBeforeOwnUse =
-          await harness.service.getSecureSessionSnapshot(WORKER_TWO);
-        expect(workerOneAfterOneUse).toEqual(expect.objectContaining({
+        const managerSnapshot =
+          await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(managerSnapshot).toEqual(expect.objectContaining({
+          sessionAgentId: MANAGER,
+          principalKind: "manager",
+          ownerManagerAgentId: null,
+          workerAssignmentId: null,
           environmentStatus: "ready",
           leases: expect.arrayContaining([
             expect.objectContaining({
-              secretId: workerOneSecret.secretId,
-              leaseKind: "task",
+              secretId: primary.secretId,
               status: "active",
             }),
             expect.objectContaining({
-              secretId: workerOneOnceSecret.secretId,
+              secretId: secondary.secretId,
+              status: "active",
+            }),
+          ]),
+        }));
+        expect(
+          await harness.service.getSecureSessionSnapshot(WORKER_ONE),
+        ).toEqual(managerSnapshot);
+        expect(
+          await harness.service.getSecureSessionSnapshot(WORKER_TWO),
+        ).toEqual(managerSnapshot);
+        for (const binding of retainedBindings.values()) {
+          expect(binding.guardValue(canaries.primary)).toBe(
+            SECURE_OUTPUT_QUARANTINE,
+          );
+          expect(binding.guardValue(canaries.secondary)).toBe(
+            SECURE_OUTPUT_QUARANTINE,
+          );
+        }
+
+        const initialSandbox = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
+        );
+        expect(
+          await listDirectoryOrEmpty(harness.heartbeatRoot),
+        ).toEqual([initialSandbox.name]);
+
+        const commonExpected = [
+          { name: SHARED_PRIMARY, value: canaries.primary },
+          { name: SHARED_SECONDARY, value: canaries.secondary },
+        ];
+        for (const [agentId, marker] of [
+          [MANAGER, "manager-sees-shared-leases"],
+          [WORKER_ONE, "worker-one-sees-shared-leases"],
+          [WORKER_TWO, "worker-two-sees-shared-leases"],
+        ] as const) {
+          const execution = await executeAndCapture(
+            retainedBindings.get(agentId)!,
+            harness.workspacePath,
+            verifiedEnvironmentCommand(
+              commonExpected,
+              [SHARED_ONE_USE],
+              marker,
+            ),
+          );
+          expect(execution.exitCode).toBe(0);
+          assertSafeExactOutput(execution.output, needles, marker, marker);
+          visibleOutputs.push({ path: marker, bytes: execution.output });
+        }
+
+        const concurrentRelease = join(
+          harness.workspacePath,
+          ".team-concurrent.release",
+        );
+        const concurrentParticipants = [MANAGER, WORKER_ONE, WORKER_TWO] as const;
+        const concurrentStarted = concurrentParticipants.map((agentId) =>
+          join(harness.workspacePath, `.team-concurrent-${agentId}.started`)
+        );
+        const concurrent = concurrentParticipants.map((agentId, index) => {
+          const marker = `concurrent-${agentId}`;
+          return executeAndCapture(
+            retainedBindings.get(agentId)!,
+            harness.workspacePath,
+            verifiedEnvironmentCommand(
+              commonExpected,
+              [SHARED_ONE_USE],
+              marker,
+              {
+                startedPath: concurrentStarted[index]!,
+                releasePath: concurrentRelease,
+              },
+            ),
+          ).then((execution) => ({ execution, marker }));
+        });
+        await waitForFiles(concurrentStarted);
+        expectOneManagerSandbox(await listScopeContainers(harness.scopeHash));
+        await writeFile(concurrentRelease, "release", { flag: "wx" });
+        for (const { execution, marker } of await Promise.all(concurrent)) {
+          expect(execution.exitCode).toBe(0);
+          assertSafeExactOutput(execution.output, needles, marker, marker);
+          visibleOutputs.push({ path: marker, bytes: execution.output });
+        }
+
+        await grantEnvironmentLease(
+          harness,
+          WORKER_TWO,
+          oneUse.secretId,
+          SHARED_ONE_USE,
+          "one_use",
+        );
+        const oneUseRelease = join(
+          harness.workspacePath,
+          ".team-one-use.release",
+        );
+        const oneUseStarted = join(
+          harness.workspacePath,
+          ".team-one-use.started",
+        );
+        const consuming = executeAndCapture(
+          retainedBindings.get(WORKER_ONE)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            [
+              ...commonExpected,
+              { name: SHARED_ONE_USE, value: canaries.oneUse },
+            ],
+            [],
+            "worker-one-reserved-one-use",
+            {
+              startedPath: oneUseStarted,
+              releasePath: oneUseRelease,
+            },
+          ),
+        );
+        await waitForFiles([oneUseStarted]);
+        const siblingWhileReserved = await executeAndCapture(
+          retainedBindings.get(WORKER_TWO)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            commonExpected,
+            [SHARED_ONE_USE],
+            "worker-two-cannot-double-reserve",
+          ),
+        );
+        assertSafeExactOutput(
+          siblingWhileReserved.output,
+          needles,
+          "worker-two-cannot-double-reserve",
+          "one-use-sibling",
+        );
+        visibleOutputs.push({
+          path: "one-use-sibling",
+          bytes: siblingWhileReserved.output,
+        });
+        await writeFile(oneUseRelease, "release", { flag: "wx" });
+        const consumed = await consuming;
+        assertSafeExactOutput(
+          consumed.output,
+          needles,
+          "worker-one-reserved-one-use",
+          "one-use-consumer",
+        );
+        visibleOutputs.push({
+          path: "one-use-consumer",
+          bytes: consumed.output,
+        });
+        const afterConsumption =
+          await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(afterConsumption).toEqual(expect.objectContaining({
+          environmentStatus: "ready",
+          leases: expect.arrayContaining([
+            expect.objectContaining({
+              secretId: oneUse.secretId,
               leaseKind: "one_use",
               status: "consumed",
               remainingUses: 0,
             }),
           ]),
         }));
-        expect(workerTwoBeforeOwnUse).toEqual(expect.objectContaining({
-          environmentStatus: "ready",
-          leases: expect.arrayContaining([
-            expect.objectContaining({
-              secretId: workerTwoOnceSecret.secretId,
-              leaseKind: "one_use",
-              status: "active",
-              remainingUses: 1,
-            }),
-          ]),
-        }));
+        expect(
+          await harness.service.getSecureSessionSnapshot(WORKER_TWO),
+        ).toEqual(afterConsumption);
+        expectOneManagerSandbox(await listScopeContainers(harness.scopeHash));
 
         const reflected = await executeAndCapture(
-          requireBinding(
-            harness.service,
-            harness.descriptors.get(WORKER_ONE)!,
-          ),
+          retainedBindings.get(WORKER_ONE)!,
           harness.workspacePath,
-          reflectedEnvironmentCommand(WORKER_ONE_VALUE),
+          reflectedEnvironmentCommand(SHARED_PRIMARY),
         );
         expect(reflected.exitCode).toBe(0);
         assertSafeExactOutput(
           reflected.output,
           needles,
           SECURE_OUTPUT_QUARANTINE,
-          "worker-one-reflection",
+          "worker-reflection",
         );
         visibleOutputs.push({
-          path: "worker-one-reflection",
+          path: "worker-reflection",
           bytes: reflected.output,
         });
+        const quarantined =
+          await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(quarantined.outputState).toBe("quarantined");
         expect(
           await harness.service.getSecureSessionSnapshot(WORKER_ONE),
-        ).toEqual(expect.objectContaining({
-          outputState: "quarantined",
-          environmentStatus: "ready",
-        }));
-        expect(
-          await harness.service.getSecureSessionSnapshot(MANAGER),
-        ).toEqual(expect.objectContaining({ outputState: "clear" }));
+        ).toEqual(quarantined);
         expect(
           await harness.service.getSecureSessionSnapshot(WORKER_TWO),
-        ).toEqual(expect.objectContaining({ outputState: "clear" }));
+        ).toEqual(quarantined);
 
-        const managerContinues = await executeAndCapture(
-          requireBinding(
-            harness.service,
-            harness.descriptors.get(MANAGER)!,
-          ),
-          harness.workspacePath,
-          verifiedEnvironmentCommand(
-            [{ name: MANAGER_VALUE, value: canaries.manager }],
-            absentExcept(MANAGER_VALUE),
-            "manager-continued-after-worker-quarantine",
-          ),
-        );
-        const workerTwoContinues = await executeAndCapture(
-          requireBinding(
-            harness.service,
-            harness.descriptors.get(WORKER_TWO)!,
-          ),
-          harness.workspacePath,
-          verifiedEnvironmentCommand(
-            [
-              { name: WORKER_TWO_VALUE, value: canaries.workerTwo },
-              { name: WORKER_TWO_ONCE, value: canaries.workerTwoOnce },
-            ],
-            absentExcept(WORKER_TWO_VALUE, WORKER_TWO_ONCE),
-            "worker-two-continued-after-sibling-quarantine",
-          ),
-        );
-        for (const [path, marker, execution] of [
-          [
-            "manager-after-quarantine",
-            "manager-continued-after-worker-quarantine",
-            managerContinues,
-          ],
-          [
-            "worker-two-after-quarantine",
-            "worker-two-continued-after-sibling-quarantine",
-            workerTwoContinues,
-          ],
-        ] as const) {
-          expect(execution.exitCode).toBe(0);
-          assertSafeExactOutput(execution.output, needles, marker, path);
-          visibleOutputs.push({ path, bytes: execution.output });
-        }
-        expect(
-          await harness.service.getSecureSessionSnapshot(WORKER_TWO),
-        ).toEqual(expect.objectContaining({
-          environmentStatus: "ready",
-          leases: expect.arrayContaining([
-            expect.objectContaining({
-              secretId: workerTwoOnceSecret.secretId,
-              status: "consumed",
-              remainingUses: 0,
-            }),
-          ]),
-        }));
-        dockerEvidence.push(
-          ...await collectScopeEvidence(
-            harness.scopeHash,
-            "after-worker-quarantine",
-          ),
-        );
-
-        const retainedWorkerOneBinding = requireBinding(
+        const staleBinding = requireBinding(
           harness.service,
           harness.descriptors.get(WORKER_ONE)!,
         );
-        const inFlightStartedPath = join(
-          harness.workspacePath,
-          ".old-assignment-in-flight.started",
+        const sandboxBeforeAssignment = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
         );
-        const inFlightReleasePath = join(
-          harness.workspacePath,
-          ".old-assignment-in-flight.release",
-        );
-        const inFlightCompletedPath = join(
-          harness.workspacePath,
-          ".old-assignment-in-flight.completed",
-        );
-        const inFlightOldAssignment = executeAndCapture(
-          retainedWorkerOneBinding,
-          harness.workspacePath,
-          fencedSentinelCommand(
-            inFlightStartedPath,
-            inFlightReleasePath,
-            inFlightCompletedPath,
-          ),
-        ).then(
-          (execution) => ({ execution, error: null }),
-          (error: unknown) => ({ execution: null, error }),
-        );
-        await waitForFiles([inFlightStartedPath]);
-        expect(await fileExists(inFlightStartedPath)).toBe(true);
-        expect(await fileExists(inFlightReleasePath)).toBe(false);
-        expect(await fileExists(inFlightCompletedPath)).toBe(false);
-
         setWorkerAssignment(
           harness.descriptors.get(WORKER_ONE)!,
           NEXT_ASSIGNMENT_ONE,
@@ -1033,167 +873,84 @@ dockerSuite(
           WORKER_ONE,
           NEXT_ASSIGNMENT_ONE,
         );
-        const fencedOutcome = await inFlightOldAssignment;
-        expect(fencedOutcome.execution).toBeNull();
-        expect(fencedOutcome.error).toMatchObject({
-          code: "TASK_REVOKED",
-          message: "The secure task sandbox has been revoked.",
-        });
-        expect(await fileExists(inFlightReleasePath)).toBe(false);
-        expect(await fileExists(inFlightCompletedPath)).toBe(false);
+        const sandboxAfterAssignment = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
+        );
+        expect(sandboxAfterAssignment.id).toBe(sandboxBeforeAssignment.id);
 
-        const staleBindingSentinel = join(
+        const staleSentinel = join(
           harness.workspacePath,
-          ".stale-binding-executed",
+          ".stale-assignment-ran",
         );
         await expect(Promise.resolve().then(async () =>
-          await retainedWorkerOneBinding.executeBash({
-            command: writeSentinelCommand(staleBindingSentinel),
+          await staleBinding.executeBash({
+            command: writeSentinelCommand(staleSentinel),
             cwd: harness.workspacePath,
             onData: () => undefined,
           })
         )).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
-        expect(await fileExists(staleBindingSentinel)).toBe(false);
+        expect(await fileExists(staleSentinel)).toBe(false);
 
-        expectIndependentTasks(
-          await listScopeContainers(harness.scopeHash),
-          [
-            MANAGER,
-            workerTaskId(WORKER_ONE, NEXT_ASSIGNMENT_ONE),
-            workerTaskId(WORKER_TWO, ASSIGNMENT_TWO),
-          ],
-        );
-        const workerOneAdvanced = await executeAndCapture(
+        const replacement = await executeAndCapture(
           requireBinding(
             harness.service,
             harness.descriptors.get(WORKER_ONE)!,
           ),
           harness.workspacePath,
           verifiedEnvironmentCommand(
-            [{ name: WORKER_ONE_VALUE, value: canaries.workerOne }],
-            absentExcept(WORKER_ONE_VALUE),
-            "worker-one-new-assignment-retained-task",
+            commonExpected,
+            [SHARED_ONE_USE],
+            "replacement-assignment-shared-authority",
           ),
         );
-        expect(workerOneAdvanced.exitCode).toBe(0);
         assertSafeExactOutput(
-          workerOneAdvanced.output,
+          replacement.output,
           needles,
-          "worker-one-new-assignment-retained-task",
-          "worker-one-new-assignment",
+          "replacement-assignment-shared-authority",
+          "replacement-assignment",
         );
         visibleOutputs.push({
-          path: "worker-one-new-assignment",
-          bytes: workerOneAdvanced.output,
+          path: "replacement-assignment",
+          bytes: replacement.output,
         });
-        const workerOneAdvancedSnapshot =
-          await harness.service.getSecureSessionSnapshot(WORKER_ONE);
-        expect(workerOneAdvancedSnapshot).toEqual(expect.objectContaining({
-          workerAssignmentId: NEXT_ASSIGNMENT_ONE,
-          outputState: "clear",
-          environmentStatus: "ready",
-          leases: expect.arrayContaining([
-            expect.objectContaining({
-              secretId: workerOneSecret.secretId,
-              leaseKind: "task",
-              status: "active",
-            }),
-          ]),
-        }));
 
-        const workerOneTaskLease = workerOneAdvancedSnapshot.leases.find(
-          ({ secretId }) => secretId === workerOneSecret.secretId,
-        );
-        expect(workerOneTaskLease).toBeDefined();
-        if (!workerOneTaskLease) {
-          throw new Error("expected retained worker task lease");
-        }
-        const afterWorkerOneRevoke =
-          await harness.service.revokeSecureSessionLease(WORKER_ONE, {
-            baseRevision: workerOneAdvancedSnapshot.revision,
-            leaseId: workerOneTaskLease.leaseId,
-          });
-        expect(afterWorkerOneRevoke).toEqual(expect.objectContaining({
-          environmentStatus: "stopped",
-          leases: expect.arrayContaining([
-            expect.objectContaining({
-              leaseId: workerOneTaskLease.leaseId,
-              status: "revoked",
-            }),
-          ]),
-        }));
-        const afterWorkerOneStop = await harness.service.stopSecureSession(
-          WORKER_ONE,
-          {
-            baseRevision: afterWorkerOneRevoke.revision,
-            stopProcesses: true,
-          },
-        );
-        expect(afterWorkerOneStop).toEqual(expect.objectContaining({
-          executionMode: "standard",
-          environmentStatus: "stopped",
-        }));
-        expect(harness.service.getSecureRuntimeBinding(
+        const removedWorkerBinding = requireBinding(
+          harness.service,
           harness.descriptors.get(WORKER_ONE)!,
-        )).toBeUndefined();
-        const survivingScopeContainers = await listScopeContainers(
-          harness.scopeHash,
         );
-        expectIndependentTasks(
-          survivingScopeContainers,
-          [
-            MANAGER,
-            workerTaskId(WORKER_TWO, ASSIGNMENT_TWO),
-          ],
+        harness.descriptors.delete(WORKER_ONE);
+        expect(() => removedWorkerBinding.guardValue("safe")).toThrow(
+          "SECURE_OPERATION_FAILED",
         );
-        expect(
-          await listDirectoryOrEmpty(harness.heartbeatRoot),
-        ).toEqual(survivingScopeContainers.map(({ name }) => name).sort());
-
-        const managerAfterStop = await executeAndCapture(
-          requireBinding(
-            harness.service,
-            harness.descriptors.get(MANAGER)!,
-          ),
-          harness.workspacePath,
-          verifiedEnvironmentCommand(
-            [{ name: MANAGER_VALUE, value: canaries.manager }],
-            absentExcept(MANAGER_VALUE),
-            "manager-survived-worker-stop",
-          ),
+        const sandboxAfterWorkerTeardown = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
         );
-        const workerTwoAfterStop = await executeAndCapture(
+        expect(sandboxAfterWorkerTeardown.id).toBe(sandboxBeforeAssignment.id);
+        const siblingAfterTeardown = await executeAndCapture(
           requireBinding(
             harness.service,
             harness.descriptors.get(WORKER_TWO)!,
           ),
           harness.workspacePath,
           verifiedEnvironmentCommand(
-            [{ name: WORKER_TWO_VALUE, value: canaries.workerTwo }],
-            absentExcept(WORKER_TWO_VALUE),
-            "worker-two-survived-sibling-stop",
+            commonExpected,
+            [SHARED_ONE_USE],
+            "worker-teardown-kept-team-authority",
           ),
         );
-        for (const [path, marker, execution] of [
-          [
-            "manager-after-worker-stop",
-            "manager-survived-worker-stop",
-            managerAfterStop,
-          ],
-          [
-            "worker-two-after-worker-stop",
-            "worker-two-survived-sibling-stop",
-            workerTwoAfterStop,
-          ],
-        ] as const) {
-          expect(execution.exitCode).toBe(0);
-          assertSafeExactOutput(execution.output, needles, marker, path);
-          visibleOutputs.push({ path, bytes: execution.output });
-        }
-        expect(harness.service.isTeamSecureMode(MANAGER)).toBe(true);
+        assertSafeExactOutput(
+          siblingAfterTeardown.output,
+          needles,
+          "worker-teardown-kept-team-authority",
+          "worker-teardown",
+        );
+        visibleOutputs.push({
+          path: "worker-teardown",
+          bytes: siblingAfterTeardown.output,
+        });
 
         dockerEvidence.push(
-          ...await collectScopeEvidence(harness.scopeHash, "final-live-team"),
+          ...await collectScopeEvidence(harness.scopeHash, "live-team"),
         );
         const invocationEvidence = {
           path: "docker-invocations",
@@ -1216,6 +973,26 @@ dockerSuite(
         expect(filesystemReport.totalMatches).toBe(0);
         expect(filesystemReport.matches).toEqual([]);
         invocationEvidence.bytes.fill(0);
+
+        const beforeStop =
+          await harness.service.getSecureSessionSnapshot(WORKER_TWO);
+        const stopped = await harness.service.stopSecureSession(WORKER_TWO, {
+          baseRevision: beforeStop.revision,
+          stopProcesses: true,
+        });
+        expect(stopped).toEqual(expect.objectContaining({
+          sessionAgentId: MANAGER,
+          executionMode: "standard",
+          environmentStatus: "stopped",
+        }));
+        expect(await listScopeContainers(harness.scopeHash)).toEqual([]);
+        expect(await listDirectoryOrEmpty(harness.heartbeatRoot)).toEqual([]);
+        expect(harness.service.getSecureRuntimeBinding(
+          harness.descriptors.get(MANAGER)!,
+        )).toBeUndefined();
+        expect(harness.service.getSecureRuntimeBinding(
+          harness.descriptors.get(WORKER_TWO)!,
+        )).toBeUndefined();
       } finally {
         for (const evidence of [...visibleOutputs, ...dockerEvidence]) {
           evidence.bytes.fill(0);

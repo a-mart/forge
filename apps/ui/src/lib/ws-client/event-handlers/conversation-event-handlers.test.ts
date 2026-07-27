@@ -480,14 +480,14 @@ describe('handleConversationEvent secure session snapshots', () => {
     expect(wrongSession.secureSessionSnapshots['other-manager']).toBeUndefined()
   })
 
-  it('lets a manager aggregate owned workers while workers receive only themselves', () => {
-    const workerSnapshot = {
+  it('delivers one manager authority snapshot to the manager and every owned worker', () => {
+    const managerSnapshot = {
       type: 'secure_session_snapshot' as const,
-      sessionAgentId: 'worker-1',
+      sessionAgentId: 'manager',
       profileId: 'profile-1',
-      principalKind: 'worker' as const,
-      ownerManagerAgentId: 'manager',
-      workerAssignmentId: 'assignment-1',
+      principalKind: 'manager' as const,
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
       revision: 4,
       executionMode: 'secure' as const,
       environmentStatus: 'ready' as const,
@@ -495,18 +495,35 @@ describe('handleConversationEvent secure session snapshots', () => {
       pendingRequests: [],
       updatedAt: '2026-07-23T12:00:04.000Z',
     }
+    const teamAgents = [
+      { agentId: 'manager', managerId: 'manager', role: 'manager' },
+      { agentId: 'worker-1', managerId: 'manager', role: 'worker' },
+      { agentId: 'worker-2', managerId: 'manager', role: 'worker' },
+      { agentId: 'other-manager', managerId: 'other-manager', role: 'manager' },
+    ] as ManagerWsState['agents']
 
-    const manager = runHandler(createInitialManagerWsState('manager'), workerSnapshot)
-    expect(manager.secureSessionSnapshots['worker-1']?.revision).toBe(4)
+    const manager = runHandler(createInitialManagerWsState('manager'), managerSnapshot)
+    expect(manager.secureSessionSnapshots.manager?.revision).toBe(4)
 
-    const worker = runHandler(createInitialManagerWsState('worker-1'), workerSnapshot)
-    expect(worker.secureSessionSnapshots['worker-1']?.revision).toBe(4)
+    const worker = runHandler({
+      ...createInitialManagerWsState('worker-1'),
+      agents: teamAgents,
+      secureSessionSnapshotLoadingSessionId: 'worker-1',
+    }, managerSnapshot)
+    expect(worker.secureSessionSnapshots.manager?.revision).toBe(4)
+    expect(worker.secureSessionSnapshotLoadingSessionId).toBeNull()
 
-    const sibling = runHandler(createInitialManagerWsState('worker-2'), workerSnapshot)
-    expect(sibling.secureSessionSnapshots['worker-1']).toBeUndefined()
+    const sibling = runHandler({
+      ...createInitialManagerWsState('worker-2'),
+      agents: teamAgents,
+    }, managerSnapshot)
+    expect(sibling.secureSessionSnapshots.manager?.revision).toBe(4)
 
-    const unrelated = runHandler(createInitialManagerWsState('other-manager'), workerSnapshot)
-    expect(unrelated.secureSessionSnapshots['worker-1']).toBeUndefined()
+    const unrelated = runHandler({
+      ...createInitialManagerWsState('other-manager'),
+      agents: teamAgents,
+    }, managerSnapshot)
+    expect(unrelated.secureSessionSnapshots.manager).toBeUndefined()
   })
 })
 

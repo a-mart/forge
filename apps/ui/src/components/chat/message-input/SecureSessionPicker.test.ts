@@ -145,7 +145,7 @@ describe('SecureSessionPicker', () => {
           {
             secretId: 'secret-ready',
             displayAlias: 'ready-secret',
-            state: 'active',
+            state: 'configured',
             statusCode: 'ok',
           },
           {
@@ -163,27 +163,6 @@ describe('SecureSessionPicker', () => {
         ],
         updatedAt: '2026-07-23T12:00:00.000Z',
       },
-      teamMembers: [{
-        sessionAgentId: 'worker-1',
-        displayName: 'Deploy worker',
-        snapshot: {
-          sessionAgentId: 'worker-1',
-          principalKind: 'worker',
-          ownerManagerAgentId: 'manager-1',
-          revision: 5,
-          executionMode: 'secure',
-          environmentStatus: 'ready',
-          leases: [],
-          pendingRequests: [],
-          projectDefaults: [{
-            secretId: 'secret-ready',
-            displayAlias: 'ready-secret',
-            state: 'configured',
-            statusCode: 'ok',
-          }],
-          updatedAt: '2026-07-23T12:00:00.000Z',
-        },
-      }],
     }))
 
     openPicker(/secure session ready/i)
@@ -611,47 +590,41 @@ describe('SecureSessionPicker', () => {
     )
   })
 
-  it('shows owned worker status and revokes against the exact worker principal', () => {
+  it('shows one shared manager status without worker authorization cards', () => {
     const onRevoke = vi.fn()
     renderPicker(makeConfig({
       onRevoke,
-      teamMembers: [{
-        sessionAgentId: 'worker-1',
-        displayName: 'Deploy worker',
-        snapshot: {
-          sessionAgentId: 'worker-1',
-          principalKind: 'worker',
-          ownerManagerAgentId: 'manager-1',
-          revision: 5,
-          executionMode: 'secure',
-          environmentStatus: 'ready',
-          leases: [{
-            leaseId: 'worker-lease-1',
-            secretId: 'secret-1',
-            displayAlias: 'deploy-token',
-            policy: { kind: 'task' },
-            status: 'active',
-            bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
-          }],
-          pendingRequests: [],
-          updatedAt: '2026-07-23T12:00:00.000Z',
-        },
-      }],
+      snapshot: {
+        sessionAgentId: 'manager-1',
+        principalKind: 'manager',
+        revision: 5,
+        executionMode: 'secure',
+        environmentStatus: 'ready',
+        leases: [{
+          leaseId: 'shared-lease-1',
+          secretId: 'secret-1',
+          displayAlias: 'deploy-token',
+          policy: { kind: 'task' },
+          status: 'active',
+          bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+        }],
+        pendingRequests: [],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
     }))
 
-    openPicker(/Secure session ready/)
-    const member = document.body.querySelector<HTMLElement>(
-      '[data-secure-team-member="worker-1"]',
+    openPicker(/active with 1 active lease/)
+    expect(document.body.textContent).toContain(
+      'The manager and its workers share one Secure Bash sandbox and one set of session grants.',
     )
-    expect(member?.textContent).toContain('Deploy worker')
-    expect(member?.textContent).toContain('Secure · 1 grant')
+    expect(document.body.querySelector('[data-secure-team-member]')).toBeNull()
     flushSync(() => {
-      fireEvent.click(getByRole(member!, 'button', { name: 'Revoke' }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Revoke' }))
     })
-    expect(onRevoke).toHaveBeenCalledWith('worker-1', 'worker-lease-1')
+    expect(onRevoke).toHaveBeenCalledWith('manager-1', 'shared-lease-1')
   })
 
-  it('keeps a worker view read-only while showing its own isolated grants', () => {
+  it('keeps a worker view read-only while showing the manager task grants', () => {
     const onGrant = vi.fn()
     const onRevoke = vi.fn()
     const onApplyProjectDefaults = vi.fn()
@@ -659,14 +632,13 @@ describe('SecureSessionPicker', () => {
     renderPicker(makeConfig({
       readOnly: true,
       snapshot: {
-        sessionAgentId: 'worker-1',
-        principalKind: 'worker',
-        ownerManagerAgentId: 'manager-1',
+        sessionAgentId: 'manager-1',
+        principalKind: 'manager',
         revision: 5,
         executionMode: 'secure',
         environmentStatus: 'ready',
         leases: [{
-          leaseId: 'worker-lease-1',
+          leaseId: 'shared-lease-1',
           secretId: 'secret-1',
           displayAlias: 'deploy-token',
           policy: { kind: 'task' },
@@ -689,13 +661,13 @@ describe('SecureSessionPicker', () => {
     }))
 
     openPicker(/active with 1 active lease/)
-    expect(document.body.textContent).toContain('Worker Secure Status')
+    expect(document.body.textContent).toContain('Team Secure Status')
     expect(document.body.textContent).toContain(
-      'Only its own approved grants are available here.',
+      'This worker uses the manager task’s shared Secure Bash sandbox and session grants.',
     )
     const popover = Array.from(
       document.body.querySelectorAll('[data-slot="popover-content"]'),
-    ).find((candidate) => candidate.textContent?.includes('Worker Secure Status'))
+    ).find((candidate) => candidate.textContent?.includes('Team Secure Status'))
     expect(popover).not.toBeNull()
     const actionButtonLabels = Array.from(popover!.querySelectorAll('button'))
       .map((button) => button.textContent ?? '')
@@ -714,40 +686,38 @@ describe('SecureSessionPicker', () => {
     expect(onReviewProjectSecrets).not.toHaveBeenCalled()
   })
 
-  it('attributes quarantined output to the worker and stops that exact principal', () => {
+  it('attributes quarantined output to the shared session and stops manager authority', () => {
     const onRevoke = vi.fn()
     renderPicker(makeConfig({
       onRevoke,
-      teamMembers: [{
-        sessionAgentId: 'worker-1',
-        displayName: 'Deploy worker',
-        snapshot: {
-          sessionAgentId: 'worker-1',
-          principalKind: 'worker',
-          ownerManagerAgentId: 'manager-1',
-          revision: 6,
-          executionMode: 'secure',
-          environmentStatus: 'ready',
-          outputState: 'quarantined',
-          leases: [],
-          pendingRequests: [],
-          updatedAt: '2026-07-23T12:00:00.000Z',
-        },
-      }],
+      outputState: 'quarantined',
+      snapshot: {
+        sessionAgentId: 'manager-1',
+        principalKind: 'manager',
+        revision: 6,
+        executionMode: 'secure',
+        environmentStatus: 'ready',
+        outputState: 'quarantined',
+        leases: [],
+        pendingRequests: [],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
     }))
 
-    openPicker(/Secure session ready/)
-    const member = document.body.querySelector<HTMLElement>(
-      '[data-secure-team-member="worker-1"]',
-    )
-    expect(member?.textContent).toContain(
-      'Protected output was redacted for Deploy worker.',
-    )
+    openPicker(/protected output redacted/)
+    expect(document.body.textContent).toContain('Protected output redacted')
     flushSync(() => {
-      fireEvent.click(getByRole(member!, 'button', { name: 'Stop secure processes' }))
+      fireEvent.click(getByRole(document.body, 'button', {
+        name: 'Stop processes and revoke',
+      }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', {
+        name: 'Stop processes and revoke',
+      }))
     })
     expect(onRevoke).toHaveBeenCalledWith(
-      'worker-1',
+      'manager-1',
       undefined,
       { stopProcesses: true },
     )

@@ -1137,7 +1137,7 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
-  it("advances worker assignment generations without dropping task or timed authority", () => {
+  it("keeps legacy worker rows recoverable but rejects new worker-owned requests", () => {
     const { database, store } = createMemoryStore();
     seedLocalCatalog(store);
     store.initializePrincipalState("manager", {
@@ -1150,28 +1150,13 @@ describe("SecureSessionStore", () => {
       ownerManagerAgentId: "manager",
       workerAssignmentId: "assignment-1"
     });
-    store.createRequest({
-      requestId: "stale-request",
-      sessionAgentId: "worker",
-      workerAssignmentId: "assignment-1",
-      secretId: "secret",
-      displayAlias: "deploy-token",
-      requestedExposures: [{
-        deliveryKind: "environment",
-        targetName: "TOKEN"
-      }],
-      requestedLeaseKind: "task",
-      purposeSummary: "Deploy the reviewed release",
-      requestedByAgentId: "worker",
-      requestedByDisplayName: "Worker"
-    });
     store.createLease({
       leaseId: "task",
       sessionAgentId: "worker",
       secretId: "secret",
       bindingIds: ["binding"],
       leaseKind: "task",
-      baseRevision: 1
+      baseRevision: 0
     });
     store.createLease({
       leaseId: "timed",
@@ -1180,7 +1165,7 @@ describe("SecureSessionStore", () => {
       bindingIds: ["binding"],
       leaseKind: "timed",
       expiresAt: "2026-07-23T13:00:00.000Z",
-      baseRevision: 2
+      baseRevision: 1
     });
     store.createLease({
       leaseId: "one-use",
@@ -1188,17 +1173,17 @@ describe("SecureSessionStore", () => {
       secretId: "secret",
       bindingIds: ["binding"],
       leaseKind: "one_use",
-      baseRevision: 3
+      baseRevision: 2
     });
 
     const advanced = store.updateWorkerAssignment({
       sessionAgentId: "worker",
       workerAssignmentId: "assignment-2",
-      baseRevision: 4
+      baseRevision: 3
     });
     expect(advanced).toEqual(expect.objectContaining({
       changed: true,
-      revision: 5,
+      revision: 4,
       snapshot: expect.objectContaining({
         state: expect.objectContaining({
           workerAssignmentId: "assignment-2"
@@ -1214,9 +1199,6 @@ describe("SecureSessionStore", () => {
         revocationReason: "policy_changed"
       })
     ]);
-    expect(database.prepare(`
-      SELECT state FROM secure_session_request WHERE request_id = 'stale-request'
-    `).get()).toEqual({ state: "cancelled" });
     expect(() => store.createRequest({
       requestId: "old-assignment-request",
       sessionAgentId: "worker",
@@ -1227,8 +1209,8 @@ describe("SecureSessionStore", () => {
       purposeSummary: "Use a stale assignment",
       requestedByAgentId: "worker",
       requestedByDisplayName: "Worker"
-    })).toThrow(/request worker assignment/);
-    expect(store.createRequest({
+    })).toThrow(/request session authority/);
+    expect(() => store.createRequest({
       requestId: "current-request",
       sessionAgentId: "worker",
       workerAssignmentId: "assignment-2",
@@ -1238,12 +1220,7 @@ describe("SecureSessionStore", () => {
       purposeSummary: "Use the current assignment",
       requestedByAgentId: "worker",
       requestedByDisplayName: "Worker"
-    }).requests).toEqual([
-      expect.objectContaining({
-        requestId: "current-request",
-        workerAssignmentId: "assignment-2"
-      })
-    ]);
+    })).toThrow(/request session authority/);
     expect(store.listAudit("worker")).toEqual(expect.arrayContaining([
       expect.objectContaining({
         eventType: "worker_assignment_updated",

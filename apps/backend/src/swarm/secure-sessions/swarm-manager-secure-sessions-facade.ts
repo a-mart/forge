@@ -25,7 +25,6 @@ import type {
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
-  TeardownWorkerSecurePrincipalOptions,
   UpdateBitwardenSecureSecretProviderCredentialInput,
   UpdateSecureSecretInput,
 } from "./secure-sessions-api.js";
@@ -169,26 +168,6 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     return this.secureSessions.advanceWorkerSecureAssignment(
       workerAgentId,
       assignmentId,
-    );
-  }
-
-  abortWorkerSecureAssignment(
-    workerAgentId: string,
-    assignmentId: string,
-  ): Promise<void> {
-    return this.secureSessions.abortWorkerSecureAssignment(
-      workerAgentId,
-      assignmentId,
-    );
-  }
-
-  teardownWorkerSecurePrincipal(
-    workerAgentId: string,
-    options?: TeardownWorkerSecurePrincipalOptions,
-  ): Promise<void> {
-    return this.secureSessions.teardownWorkerSecurePrincipal(
-      workerAgentId,
-      options,
     );
   }
 

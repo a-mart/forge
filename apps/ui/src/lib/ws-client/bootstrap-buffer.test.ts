@@ -135,20 +135,6 @@ describe('BootstrapBuffer', () => {
         pendingRequests: [],
         updatedAt: new Date().toISOString(),
       },
-      {
-        type: 'secure_session_snapshot',
-        sessionAgentId: 'worker-b1',
-        profileId: 'profile-1',
-        principalKind: 'worker',
-        ownerManagerAgentId: 'session-b',
-        workerAssignmentId: 'assignment-1',
-        revision: 2,
-        executionMode: 'secure',
-        environmentStatus: 'ready',
-        leases: [],
-        pendingRequests: [],
-        updatedAt: new Date().toISOString(),
-      },
       { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } },
     ]
 
@@ -164,7 +150,7 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].planSnapshots?.['session-b']?.plan).toHaveLength(1)
     expect(patches[0].goalSnapshots?.['session-b']?.goal?.objective).toBe('Finish the feature')
     expect(patches[0].secureSessionSnapshots?.['session-b']?.revision).toBe(4)
-    expect(patches[0].secureSessionSnapshots?.['worker-b1']?.revision).toBe(2)
+    expect(Object.keys(patches[0].secureSessionSnapshots ?? {})).toEqual(['session-b'])
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 

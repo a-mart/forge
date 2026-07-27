@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 describe('WorkerBackBar', () => {
-  it('shows the worker isolated Secure Bash status and navigates to its manager', () => {
+  it('shows the shared team Secure Bash status and navigates to its manager', () => {
     const onNavigateBack = vi.fn()
     flushSync(() => {
       root.render(createElement(WorkerBackBar, {
@@ -30,7 +30,7 @@ describe('WorkerBackBar', () => {
         onNavigateBack,
         secureStatus: {
           active: true,
-          label: 'Isolated Secure Bash · 2 grants',
+          label: 'Team Secure Bash · 2 grants',
         },
       }))
     })
@@ -38,9 +38,9 @@ describe('WorkerBackBar', () => {
     expect(getByRole(container, 'button', {
       name: 'Back to Release manager',
     })).toBeTruthy()
-    expect(container.textContent).toContain('Isolated Secure Bash · 2 grants')
+    expect(container.textContent).toContain('Team Secure Bash · 2 grants')
     expect(container.querySelector(
-      '[aria-label="Worker Secure Bash: Isolated Secure Bash · 2 grants"]',
+      '[aria-label="Team Secure Bash: Team Secure Bash · 2 grants"]',
     )).not.toBeNull()
 
     fireEvent.click(getByRole(container, 'button', {

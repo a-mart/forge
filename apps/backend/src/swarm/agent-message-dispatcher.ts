@@ -683,12 +683,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "worker_assignment_persist_failed");
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && secureAssignmentId) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          secureAssignmentId,
-        );
-      }
       throw error;
     }
     const expectedWorkerAssignmentId =
@@ -707,12 +701,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         "worker_assignment_completed_before_dispatch",
       );
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && assignmentTransaction) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          assignmentTransaction.assignmentId,
-        );
-      }
       throw assignmentErrorBeforeRuntime;
     }
 
@@ -729,12 +717,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         "runtime_creation_failed",
       );
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && assignmentTransaction) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          assignmentTransaction.assignmentId,
-        );
-      }
       throw error;
     }
 
@@ -750,12 +732,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         "worker_assignment_completed_before_dispatch",
       );
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && assignmentTransaction) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          assignmentTransaction.assignmentId,
-        );
-      }
       throw assignmentErrorAfterRuntime;
     }
 
@@ -802,12 +778,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         "worker_assignment_completed_before_dispatch",
       );
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && assignmentTransaction) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          assignmentTransaction.assignmentId,
-        );
-      }
       if (hasDeliveryLedger) {
         await this.options.ledger.recordDeliveryAcked({
           sessionAgentId: input.target.agentId,
@@ -830,12 +800,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "runtime_send_message_failed");
       await this.rollbackWorkerAssignment(assignmentTransaction);
-      if (secureWorkerPrepared && assignmentTransaction) {
-        await this.abortFailedSecureWorkerAssignment(
-          input.target.agentId,
-          assignmentTransaction.assignmentId,
-        );
-      }
       throw error;
     }
 
@@ -985,27 +949,6 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         message: errorToMessage(error),
       });
     });
-  }
-
-  private async abortFailedSecureWorkerAssignment(
-    workerAgentId: string,
-    assignmentId: string,
-  ): Promise<void> {
-    try {
-      await this.options.secureWorkers.abortWorkerSecureAssignment(
-        workerAgentId,
-        assignmentId,
-      );
-    } catch (error) {
-      this.options.logDebug("secure_worker_assignment:abort:error", {
-        workerAgentId,
-        assignmentId,
-        message: errorToMessage(error),
-      });
-      throw new Error(
-        `secure_worker_assignment_abort_failed: ${workerAgentId}`,
-      );
-    }
   }
 
   private getWorkerAssignmentDispatchError(

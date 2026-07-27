@@ -392,20 +392,14 @@ export function BuilderSurface({
   const goalSnapshot = isActiveManager && activeAgentId && state.goalSnapshotLoadingSessionId !== activeAgentId
     ? state.goalSnapshots[activeAgentId] ?? null
     : null
+  const secureAuthorityAgentId = activeAgent?.role === 'worker'
+    ? activeAgent.managerId
+    : activeAgentId
   const secureSessionSnapshot =
-    activeAgentId
+    secureAuthorityAgentId
     && state.secureSessionSnapshotLoadingSessionId !== activeAgentId
-      ? state.secureSessionSnapshots[activeAgentId] ?? null
+      ? state.secureSessionSnapshots[secureAuthorityAgentId] ?? null
       : null
-  const secureTeamSnapshots = useMemo(
-    () => !isActiveManager || !activeAgentId
-      ? []
-      : Object.values(state.secureSessionSnapshots)
-        .filter((snapshot) =>
-          (snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId) === activeAgentId)
-        .sort((left, right) => left.sessionAgentId.localeCompare(right.sessionAgentId)),
-    [activeAgentId, isActiveManager, state.secureSessionSnapshots],
-  )
 
   useEffect(() => {
     if (isRemoteOriginActive || !state.connected) {
@@ -527,41 +521,11 @@ export function BuilderSurface({
       : null,
     [secureSessionSnapshot],
   )
-  const secureTeamMemberViews = useMemo(
-    () => secureTeamSnapshots
-      .filter((snapshot) => snapshot.sessionAgentId !== activeAgentId)
-      .map((snapshot) => ({
-        sessionAgentId: snapshot.sessionAgentId,
-        displayName:
-          state.agents.find((agent) => agent.agentId === snapshot.sessionAgentId)
-            ?.displayName
-          ?? snapshot.sessionAgentId,
-        snapshot: toSecureSessionSnapshotView(snapshot),
-      })),
-    [activeAgentId, secureTeamSnapshots, state.agents],
-  )
   const securePendingRequestViews = useMemo(() => {
-    const snapshots = isActiveManager
-      ? secureTeamSnapshots
-      : secureSessionSnapshot
-        ? [secureSessionSnapshot]
-        : []
-    return snapshots.flatMap((snapshot) => {
-      const principalLabel =
-        state.agents.find((agent) => agent.agentId === snapshot.sessionAgentId)
-          ?.displayName
-        ?? snapshot.sessionAgentId
-      return toSecureSessionSnapshotView(snapshot).pendingRequests.map((request) => ({
-        ...request,
-        principalLabel,
-      }))
-    })
-  }, [
-    isActiveManager,
-    secureSessionSnapshot,
-    secureTeamSnapshots,
-    state.agents,
-  ])
+    return secureSessionSnapshot
+      ? toSecureSessionSnapshotView(secureSessionSnapshot).pendingRequests
+      : []
+  }, [secureSessionSnapshot])
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -836,7 +800,7 @@ export function BuilderSurface({
       label: secureSessionSnapshotView.outputState === 'quarantined'
         ? 'Protected output redacted'
         : active
-          ? `Isolated Secure Bash · ${activeGrantCount} ${activeGrantCount === 1 ? 'grant' : 'grants'}`
+          ? `Team Secure Bash · ${activeGrantCount} ${activeGrantCount === 1 ? 'grant' : 'grants'}`
           : `Secure Bash ${secureSessionSnapshotView.environmentStatus}`,
     }
   }, [activeAgent?.role, secureSessionSnapshotView])
@@ -999,14 +963,21 @@ export function BuilderSurface({
     client: ManagerWsClient,
     snapshot: SecureSessionSnapshot,
   ) => {
-    const targetAgentId = client.getState().targetAgentId
+    const clientState = client.getState()
+    const targetAgentId = clientState.targetAgentId
+    const targetAgent = clientState.agents.find(
+      (agent) => agent.agentId === targetAgentId,
+    )
+    const targetAuthorityAgentId = targetAgent?.role === 'worker'
+      ? targetAgent.managerId
+      : targetAgentId
     const ownerManagerAgentId =
       snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
     if (
       clientRef.current !== client
       || (
         targetAgentId !== snapshot.sessionAgentId
-        && targetAgentId !== ownerManagerAgentId
+        && targetAuthorityAgentId !== ownerManagerAgentId
       )
     ) return
     client.applySecureSessionSnapshot(snapshot)
@@ -1428,9 +1399,6 @@ export function BuilderSurface({
       originId: activeOriginId,
       availability: secureSessionAvailability,
       snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
-      ...(isActiveManager && !isRemoteOriginActive
-        ? { teamMembers: secureTeamMemberViews }
-        : {}),
       ...(!isActiveManager ? { readOnly: true } : {}),
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(isRemoteOriginActive || !secureSessionSnapshotView
@@ -1474,7 +1442,6 @@ export function BuilderSurface({
     secureSecretOptions,
     secureSessionAvailability,
     secureSessionSnapshotView,
-    secureTeamMemberViews,
     state.connected,
     state.secureSessionSnapshotLoadingSessionId,
   ])

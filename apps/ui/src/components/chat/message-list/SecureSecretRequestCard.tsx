@@ -88,10 +88,8 @@ export function SecureSecretRequestCard({
     && compatibleSecrets.length === 0
     && availability.state !== 'remote_origin'
     && availability.state !== 'unsupported_runtime'
-  const principalLabel =
-    request.principalLabel
-    ?? request.requestedByLabel
-    ?? request.requestedByAgentId
+  const requestedByLabel =
+    request.requestedByLabel ?? request.requestedByAgentId
 
   if (request.status !== 'pending') return null
 
@@ -199,8 +197,8 @@ export function SecureSecretRequestCard({
         )}
 
         <p className="text-xs text-muted-foreground">
-          Approval applies only to {principalLabel}&apos;s isolated Secure Bash process
-          scope, never to another agent or the secret value in chat.
+          Requested by {requestedByLabel}. Approval adds the secret to this manager
+          task&apos;s shared Secure Bash session; the value never enters chat.
         </p>
 
         <div className="flex flex-wrap gap-2">

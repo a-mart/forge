@@ -856,6 +856,28 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         ORDER BY secret_id;
       `);
     }
+  },
+  {
+    version: 6,
+    name: "manager_session_secret_authority",
+    up(database) {
+      database.exec(`
+        DROP TRIGGER secure_session_request_principal_insert_guard;
+
+        CREATE TRIGGER secure_session_request_principal_insert_guard
+        BEFORE INSERT ON secure_session_request
+        WHEN NEW.worker_assignment_id IS NOT NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM secure_session_state state
+            WHERE state.session_agent_id = NEW.session_agent_id
+              AND state.principal_kind = 'manager'
+          )
+        BEGIN
+          SELECT RAISE(ABORT, 'request session authority is invalid');
+        END;
+      `);
+    }
   }
 ];
 

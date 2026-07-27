@@ -64,10 +64,7 @@ const PROJECT_DEFAULT_STATE_PRIORITY: Record<
 function aggregateProjectDefaults(
   config: SecureSessionPickerConfig,
 ): SecureProjectDefaultStatusView[] {
-  const snapshots = [
-    ...(config.snapshot ? [config.snapshot] : []),
-    ...(config.teamMembers ?? []).map((member) => member.snapshot),
-  ]
+  const snapshots = config.snapshot ? [config.snapshot] : []
   const defaultsById = new Map<string, SecureProjectDefaultStatusView>()
   for (const snapshot of snapshots) {
     for (const projectDefault of snapshot.projectDefaults ?? []) {
@@ -222,7 +219,6 @@ export function SecureSessionPicker({
     () => config.snapshot?.leases.filter((lease) => lease.status === 'active') ?? [],
     [config.snapshot?.leases],
   )
-  const teamMembers = config.teamMembers ?? []
   const grantableSecrets = useMemo(
     () => config.secrets.filter((secret) =>
       !activeLeases.some((lease) => lease.secretId === secret.secretId)),
@@ -364,12 +360,12 @@ export function SecureSessionPicker({
           <PopoverHeader>
             <PopoverTitle className="flex items-center gap-2">
               <Shield className="size-4" aria-hidden="true" />
-              {config.readOnly ? 'Worker Secure Status' : 'Team Secure Mode'}
+              {config.readOnly ? 'Team Secure Status' : 'Team Secure Mode'}
             </PopoverTitle>
             <PopoverDescription>
               {config.readOnly
-                ? 'This worker has an isolated Secure Bash container. Only its own approved grants are available here.'
-                : 'Each agent runs Secure Bash in its own isolated container with independent grants.'}
+                ? 'This worker uses the manager task’s shared Secure Bash sandbox and session grants.'
+                : 'The manager and its workers share one Secure Bash sandbox and one set of session grants.'}
             </PopoverDescription>
           </PopoverHeader>
 
@@ -465,102 +461,6 @@ export function SecureSessionPicker({
                   ) : null}
                 </div>
               ) : null}
-            </section>
-          ) : null}
-
-          {teamMembers.length > 0 ? (
-            <section className="space-y-2" aria-label="Team secure status">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Team agents
-              </h3>
-              <div className="space-y-2">
-                {teamMembers.map((member) => {
-                  const memberLeases = member.snapshot.leases.filter(
-                    (lease) => lease.status === 'active',
-                  )
-                  const ready =
-                    member.snapshot.executionMode === 'secure'
-                    && member.snapshot.environmentStatus === 'ready'
-                  const quarantined = member.snapshot.outputState === 'quarantined'
-                  return (
-                    <div
-                      key={member.sessionAgentId}
-                      className="rounded-md border border-border/70 p-2.5"
-                      data-secure-team-member={member.sessionAgentId}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="min-w-0 truncate text-sm font-medium">
-                          {member.displayName}
-                        </p>
-                        <span className={cn(
-                          'shrink-0 text-xs',
-                          quarantined ? 'text-destructive' : 'text-muted-foreground',
-                        )}>
-                          {quarantined
-                            ? 'Output redacted'
-                            : ready
-                              ? 'Secure'
-                              : member.snapshot.environmentStatus}
-                          {' · '}
-                          {memberLeases.length} {memberLeases.length === 1 ? 'grant' : 'grants'}
-                        </span>
-                      </div>
-                      {quarantined ? (
-                        <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                          <span className="text-destructive">
-                            Protected output was redacted for {member.displayName}.
-                          </span>
-                          {config.onRevoke ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="destructive"
-                              className="h-7 shrink-0 px-2 text-xs"
-                              disabled={config.disabled}
-                              onClick={() => void config.onRevoke?.(
-                                member.sessionAgentId,
-                                undefined,
-                                { stopProcesses: true },
-                              )}
-                            >
-                              Stop secure processes
-                            </Button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {memberLeases.length > 0 ? (
-                        <div className="mt-2 space-y-1.5">
-                          {memberLeases.map((lease) => (
-                            <div
-                              key={lease.leaseId}
-                              className="flex items-center justify-between gap-2 text-xs"
-                            >
-                              <span className="min-w-0 truncate text-muted-foreground">
-                                {lease.displayAlias}
-                              </span>
-                              {config.onRevoke ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 shrink-0 px-2 text-xs"
-                                  disabled={config.disabled}
-                                  onClick={() => void config.onRevoke?.(
-                                    member.sessionAgentId,
-                                    lease.leaseId,
-                                  )}
-                                >
-                                  Revoke
-                                </Button>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </div>
             </section>
           ) : null}
 

@@ -476,8 +476,7 @@ describe('MessageList Secure Session attention', () => {
         availability: { state: 'available' },
         requests: [{
           requestId: 'secure-request-1',
-          sessionAgentId: 'worker-1',
-          principalLabel: 'Deploy worker',
+          sessionAgentId: 'manager',
           requestedByAgentId: 'worker-1',
           secretId: 'secret-1',
           secretAlias: 'deploy-token',
@@ -507,7 +506,7 @@ describe('MessageList Secure Session attention', () => {
       fireEvent.click(getByRole(attention!, 'button', { name: 'Approve' }))
     })
     expect(onGrant).toHaveBeenCalledWith(
-      'worker-1',
+      'manager',
       expect.objectContaining({ requestId: 'secure-request-1' }),
     )
   })

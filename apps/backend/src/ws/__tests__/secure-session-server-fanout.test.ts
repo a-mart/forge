@@ -11,7 +11,7 @@ import {
 import { SwarmWebSocketServer } from "../server.js";
 
 describe("secure session server transport", () => {
-  it("fans worker snapshots only to the worker and owning manager", async () => {
+  it("fans the manager session snapshot to its manager and every worker", async () => {
     const port = await getAvailablePort();
     const secureControlToken = "s".repeat(43);
     const config = await makeWsServerTempConfig(port, true);
@@ -145,11 +145,11 @@ describe("secure session server transport", () => {
 
       manager.emit("secure_session_snapshot", {
         type: "secure_session_snapshot",
-        sessionAgentId: worker.agentId,
+        sessionAgentId: "manager",
         profileId: "manager",
-        principalKind: "worker",
-        ownerManagerAgentId: "manager",
-        workerAssignmentId: "assignment-1",
+        principalKind: "manager",
+        ownerManagerAgentId: null,
+        workerAssignmentId: null,
         revision: 2,
         executionMode: "secure",
         environmentStatus: "ready",
@@ -183,6 +183,9 @@ describe("secure session server transport", () => {
       await waitForEvent(workerEvents, (event) =>
         event.type === "secure_session_snapshot" && event.revision === 2
       );
+      await waitForEvent(siblingEvents, (event) =>
+        event.type === "secure_session_snapshot" && event.revision === 2
+      );
       expect(managerEvents).toContainEqual(expect.objectContaining({
         type: "secure_session_snapshot",
         leases: [expect.objectContaining({
@@ -199,14 +202,14 @@ describe("secure session server transport", () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(otherEvents.some((event) =>
         event.type === "secure_session_snapshot"
-        && event.sessionAgentId === worker.agentId
+        && event.sessionAgentId === "manager"
         && event.revision === 2
       )).toBe(false);
       expect(siblingEvents.some((event) =>
         event.type === "secure_session_snapshot"
-        && event.sessionAgentId === worker.agentId
+        && event.sessionAgentId === "manager"
         && event.revision === 2
-      )).toBe(false);
+      )).toBe(true);
 
       manager.emit("secure_secret_catalog_changed", {
         type: "secure_secret_catalog_changed",

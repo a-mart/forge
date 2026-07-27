@@ -12,27 +12,28 @@ might need one.
 
 ## What Team Secure Mode is
 
-Team Secure Mode starts from one local Builder manager, but the manager and every
-eligible local Forge Pi worker are independent secure principals. No principal
-inherits another principal's grants, resolved material, requests, or container.
-While it is active:
+Team Secure Mode belongs to one local Builder manager session. That manager session
+is the only authorization principal: it owns one reusable Linux container, one lease
+set, one request queue, and one output-protection state. Eligible local Forge Pi
+workers inherit that authority while executing work for the manager; they never
+create a second secret grant or sandbox. While it is active:
 
-- the manager and each assigned eligible worker run Pi Bash in separate reusable,
-  principal-owned Linux containers;
-- an eligible worker without an assignment can hold its own automatic-grant policy
-  while stopped; Forge provisions its container only when work is assigned;
+- the manager and all eligible workers run Pi Bash in the same manager-owned
+  container;
+- idle, newly created, reassigned, and completed workers do not create or retain
+  additional containers;
 - the workspace is mounted directly into the container (at the same path on
   macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
   a protected RAM-backed file, or an askpass helper;
-- each principal's task or timed grant can be reused across many commands by that
-  principal;
+- a task or timed grant can be reused across many commands from the manager or any
+  eligible worker in the session;
 - every Bash output byte is filtered before the Pi tool accumulator, Forge events,
   persistence, extensions, UI, or the next provider request;
 - host-side file-tool results pass through the same active exact-value guard before
   they can be returned to the runtime;
-- stopping one worker's secure processes revokes only that worker and destroys its
-  container; stopping Team Secure Mode from the manager stops the entire team.
+- stopping or revoking Team Secure Mode destroys the shared process tree and revokes
+  the session's grants. A worker lifecycle event never revokes session authority.
 
 The agent sees only catalog aliases, delivery destinations, lease status, and fixed
 error codes. It cannot ask the Secure Sessions tools to return a stored value or a
@@ -47,12 +48,14 @@ ordinary integrated terminals are not Secure Sessions execution paths.
 
 Managers mark secret-dependent delegation with
 `spawn_agent(..., requiresSecureRuntime=true)`. Forge selects a compatible configured
-fallback when an execution policy's primary runtime is unsupported. If Team Secure
-Mode, the worker sandbox, or a compatible runtime cannot be prepared, Forge rolls the
-new worker back before delivering its initial assignment. Ordinary non-secret
-delegation remains unchanged. Reassigning an existing worker uses the same
-`requiresSecureRuntime=true` flag on `send_message_to_agent`; an ineligible target is
-rejected before the message is delivered.
+fallback when an execution policy's primary runtime is unsupported. Before delivery,
+Forge verifies that Team Secure Mode is ready, the worker uses a supported runtime,
+and its working directory is within the manager workspace. It then binds that
+assignment to the manager's existing sandbox. If any check fails, Forge rolls the new
+worker back before delivering its initial assignment. Ordinary non-secret delegation
+remains unchanged. Reassigning an existing worker uses the same
+`requiresSecureRuntime=true` flag on `send_message_to_agent`; a stale assignment
+binding or ineligible target is rejected before Bash or the message is delivered.
 
 ## Set up the execution environment
 
@@ -92,8 +95,7 @@ specific delivery shape.
 Agents should report only fixed presence/success outcomes and command results. They
 must not print, count, hash, encode, or otherwise derive metadata from a secret value.
 After a worker completes a credentialed action, the manager accepts the worker's safe
-evidence or performs a non-secret state check rather than repeating the credentialed
-action in its own container.
+evidence or performs a non-secret state check rather than repeating the action.
 
 The container has a read-only root filesystem, dropped Linux capabilities,
 `no-new-privileges`, no Docker socket, and a bounded process count. The selected
@@ -204,26 +206,26 @@ separate from the secret's catalog availability scope:
   without becoming automatic elsewhere;
 - **Every project** is available only for an all-projects secret;
 - each project may have at most 16 effective automatic grants;
-- when Team Secure Mode starts, Forge evaluates each applicable policy independently for the
-  manager and every eligible worker principal;
-- each eligible principal receives its own **Until Secure Session stops** lease and
-  resolves its own material; no value or lease is copied from the manager;
-- workers that join the secure team later receive their own applicable automatic grants
-  during secure preparation;
+- when Team Secure Mode starts, Forge evaluates each applicable policy once for the
+  manager session;
+- each applicable policy creates one **Until Secure Session stops** lease in the
+  shared manager authority;
+- workers that join later use the existing lease set without re-resolving or
+  duplicating secret material;
 - an automatic grant is never injected into standard Bash, a model prompt, the integrated
   terminal, another project, or an unsupported worker runtime.
 
 Changing an automatic-grant policy while Team Secure Mode is active marks it
 **Configured**. Choose **Apply now** in the shield to apply or retry non-active
-automatic grants for every eligible team principal without restarting. Disabling a
-policy revokes only the independent
-leases created from that policy; it does not remove a separate manual grant.
+automatic grants for the manager session without restarting. Disabling a policy
+revokes only the shared lease created from that policy; it does not remove a separate
+manual grant.
 
-Forge evaluates every principal and automatic grant independently. A locked or unavailable
-source is reported as unavailable, and a delivery collision is reported as a binding
-conflict. Either problem skips that principal's automatic grant without blocking other
-policies or principals. Public status contains only fixed states and error codes,
-never provider error text or protected material.
+Forge evaluates every automatic grant independently. A locked or unavailable source
+is reported as unavailable, and a delivery collision is reported as a binding
+conflict. Either problem skips that grant without blocking other policies. Public
+status contains only fixed states and error codes, never provider error text or
+protected material.
 
 Archiving a project preserves its project-scoped secrets and automatic-grant settings so they
 remain available after restore. Permanently deleting the project removes its
@@ -234,13 +236,14 @@ secret and its **Every project** policy are not deleted with any one project.
 
 1. Open a local Builder manager whose current runtime is supported.
 2. Select the shield beside **Send** and start Team Secure Mode. Forge prepares the
-   manager and every eligible current worker as separate principals. If a worker is
+   manager's shared sandbox and recycles every eligible current worker onto that
+   execution boundary. If a worker is
    actively streaming, startup fails instead of changing its execution boundary
    underneath a command.
-3. Forge applies the project's configured automatic grants independently and reports
-   any principal/secret pair it could not activate. Use **Apply now** to apply newly
+3. Forge applies the project's configured automatic grants once and reports
+   any secret it could not activate. Use **Apply now** to apply newly
    configured policies or retry recovered sources without restarting.
-4. Choose a team agent, then select any additional saved aliases. Forge gives a newly
+4. Select any additional saved aliases for the manager session. Forge gives a newly
    saved secret a stable, generated environment delivery automatically; advanced
    saved bindings remain available when a specific askpass, file, stdin, or
    environment shape is needed.
@@ -251,20 +254,23 @@ secret and its **Every project** policy are not deleted with any one project.
    - **One use** is atomically consumed by the next Secure Bash command, whether or
      not that command actually references the binding.
 6. Continue working normally. The same task or timed lease is checked on every
-   command from that principal, so a 16-command workflow does not require 16 prompts.
-7. Revoke one principal's lease, stop one worker's secure processes, or stop Team
-   Secure Mode from the manager to revoke the entire team and destroy its
-   environments.
+   command from the manager or its eligible workers, so a 16-command workflow does
+   not require 16 prompts.
+7. Revoke one shared lease or stop Team Secure Mode to revoke the manager session and
+   destroy its environment.
 
 Every active task or timed grant is injected into every Secure Bash command and is
 available to that command's child processes. This broad process scope is what
 preserves ordinary Bash syntax; it is not a semantic promise that the value is used
 only for the action the user had in mind. Grant narrowly and revoke promptly.
 
-Secure Bash calls for one principal are serialized across their complete authorization,
-execution, and teardown boundary. This is intentional: two model-requested Bash calls
-cannot race one-use consumption or enter the old container while the first call is
-destroying it. Different principals can still execute in parallel.
+Secure Bash calls from one agent are serialized across their complete authorization
+and execution boundary. Different eligible workers can execute concurrently in the
+same manager container. Lease reservation, one-use consumption, grant changes, and
+teardown remain serialized under the manager authority, so concurrent workers cannot
+consume the same one-use lease twice or enter an environment after revocation.
+Commands using a protected file binding are serialized because that binding promises
+a stable guest path; environment, stdin, and askpass deliveries remain concurrent.
 
 An agent can inspect safe session status and request an alias, binding, and lease
 shape. If the alias does not exist, the agent can propose the missing secret by alias,
@@ -279,21 +285,22 @@ The missing-secret dialog currently accepts local-vault material. To use Bitward
 first import its reference under **Settings → Secrets**; the agent can then request and
 you can approve that saved catalog alias normally.
 
-Requests and their approval cards stay outside the persisted transcript. A request
-belongs to the manager or worker that created it. Worker requests also capture the
-current assignment generation, so an approval from an old assignment becomes stale
-instead of granting a replacement assignment.
+Requests and their approval cards stay outside the persisted transcript. Every
+request belongs to the manager session. A worker request records the worker identity
+for attribution, but approval adds the lease to the shared manager authority and does
+not create worker-owned authority.
 
 Delegation remains available in Team Secure Mode for eligible local Forge Pi workers.
-Before the manager's assignment is delivered, Forge prepares that worker's independent
-principal and advances it to the exact assignment. Follow-up work on the same
-assignment reuses that worker environment. Reassignment destroys the previous
-environment before starting the new assignment. Pending requests and unused one-use
-grants from the old assignment are cancelled, while task and unexpired timed leases
-remain authority of the same worker principal and are re-resolved into the new
-environment. A failed dispatch aborts the new environment. Stopping or deleting a
-worker tears down that worker without disturbing siblings. Unsupported workers fail
-closed rather than receiving secure work through a non-secure runtime.
+Before an assignment is delivered, Forge validates the worker runtime, workspace, and
+exact assignment generation, then binds its Secure Bash calls to the manager
+container. Follow-up work and reassignment reuse the same session environment. A
+captured runtime binding becomes invalid when its worker assignment changes, while
+the manager leases and pending requests remain intact. Before later work begins,
+Forge recycles only an idle worker model runtime that still holds a stale secure
+binding; it does not recycle the shared container or its grants. A failed dispatch
+does not change the sandbox. Stopping, deleting, or idling a worker does not affect
+shared authority. Unsupported workers fail closed rather than receiving secure work
+through a non-secure runtime.
 
 Revision checks prevent a stale browser from overwriting a newer approval or
 revocation. Provider failures, expired leases, missing aliases, unsupported delivery
@@ -317,10 +324,10 @@ Secure Sessions make the following concrete promises for supported paths:
   revealing its position;
 - a final structured guard protects runtime events and provider context;
 - successful output redaction completes the command normally and marks only that
-  principal as quarantined; the agent can continue, a one-use lease is consumed when
-  applicable, and task or timed leases remain available for later commands;
-- the manager can stop the exact quarantined worker's secure processes without
-  tearing down sibling principals, or stop Team Secure Mode to revoke the whole team;
+  manager session as quarantined; the team can continue, a one-use lease is consumed
+  when applicable, and task or timed leases remain available for later commands;
+- the manager can stop Team Secure Mode to kill every tracked process and revoke the
+  shared authority;
 - stopping or failing a secure operation destroys the task container when safe
   filtering or process control cannot be guaranteed.
 
@@ -342,12 +349,13 @@ Docker host's kernel. The provider interface is intentionally replaceable so a
 microVM backend can be added without changing vault, lease, approval, or redaction
 contracts.
 
-The workspace mount is writable by design. Team principals in one project can see and
-modify the same selected workspace, so their file changes can race even though their
-processes, grants, and containers are isolated. Secure Sessions protect unrelated host
-paths and make hard process revocation reliable, but they do not protect the selected
-workspace from authorized code. Give high-risk or concurrently writing agents
-separate Git worktrees instead of relying on the secret boundary for file isolation.
+The workspace mount is writable by design. The manager and its workers can see and
+modify the same selected workspace and run concurrently in the same container, so
+their file and process changes can race. Secure Sessions protect unrelated host paths
+and make hard process revocation reliable, but they do not protect team members from
+one another or the selected workspace from authorized code. Give high-risk or
+concurrently writing agents separate Git worktrees instead of relying on the secret
+boundary for file isolation.
 
 ## Storage and lifecycle
 
@@ -374,14 +382,14 @@ popouts. Origin and loopback checks remain defense in depth. Same-user process
 inspection, Electron compromise, and the Docker daemon remain inside the trusted
 computing base.
 
-Forks and resumed runtimes never gain an active lease merely because another
-principal had one. Managers and workers keep separate session state, leases, requests,
-cached material, guards, and containers. A worker assignment change invalidates
-requests and unused one-use leases from the old assignment and rebuilds that worker's
-environment. Task and unexpired timed leases remain with the same worker principal;
-they never transfer to the manager or a sibling. A stopped principal must pass a
-fresh lease check before another credentialed command. Forge recovers and destroys
-orphaned managed containers rather than attaching them to an unrelated principal.
+Each manager session keeps separate state, leases, requests, cached material, guard,
+and container. A fork or different manager session never gains an active lease merely
+because another session had one. Workers inherit only the live authority of their
+own manager session. A worker assignment change invalidates bindings captured for the
+old assignment but does not revoke, duplicate, or move session grants. Every command
+passes a fresh manager-lease and assignment check. Forge removes legacy worker-owned
+state during startup recovery and destroys orphaned managed containers rather than
+attaching them to an unrelated session.
 
 Each running container also receives a read-only bind mount of a host-owned dead-man
 heartbeat file. Forge refreshes that file directly; the guest can only inspect its
@@ -395,7 +403,10 @@ Granting another secret, revoking a lease, consuming a one-use lease, or reachin
 timed expiry tears down the current process environment. This kills background
 processes before a new credential set can be used. Container-only `/tmp` and home
 state are therefore convenience state, not durable task storage; keep intended
-results in the selected workspace.
+results in the selected workspace. That container rebuild stays inside the same
+manager-session authority, so the manager and worker model runtimes keep a valid
+binding to the replacement environment. Stopping and later starting Team Secure
+Mode creates a new authority generation and invalidates every older runtime binding.
 
 Like ordinary local Bash, a command may launch a background descendant and return
 after a short output-drain grace period. That descendant remains inside the same task
@@ -422,10 +433,10 @@ still passes through the secure guard.
 | --- | --- |
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
-| Automatic grant unavailable | This principal's automatic grant was skipped; fix its source and choose **Apply now** after it recovers |
+| Automatic grant unavailable | This session's automatic grant was skipped; fix its source and choose **Apply now** after it recovers |
 | Automatic grant binding conflict | This automatic grant was skipped because its saved delivery collides with another active or automatic delivery |
 | Revision conflict | Another view changed the session; refresh before retrying |
-| Protected output redacted | The guard removed protected material before it reached the agent; that principal is quarantined but can continue, or you can stop its secure processes |
+| Protected output redacted | The guard removed protected material before it reached the agent; the shared session is quarantined but can continue, or you can stop Team Secure Mode |
 | Unsupported runtime | This manager or worker cannot guarantee Forge-owned tools before provider continuation and fails closed |
 
 Do not diagnose these failures by placing a value in chat, a shell command, an

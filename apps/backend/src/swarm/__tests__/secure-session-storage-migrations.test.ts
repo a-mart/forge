@@ -325,8 +325,8 @@ describe("secure session migrations", () => {
         'missing-assignment', 'worker', 'deploy', 'task', 'Deploy',
         'worker', 'Worker', 'pending', 't', NULL
       );
-    `)).toThrow(/principal assignment/);
-    database.exec(`
+    `)).toThrow(/session authority/);
+    expect(() => database.exec(`
       INSERT INTO secure_session_request (
         request_id, session_agent_id, display_alias, requested_lease_kind,
         purpose_summary, requested_by_agent_id, requested_by_display_name,
@@ -334,6 +334,16 @@ describe("secure session migrations", () => {
       ) VALUES (
         'worker-request', 'worker', 'deploy', 'task', 'Deploy',
         'worker', 'Worker', 'pending', 't', 'assignment-1'
+      );
+    `)).toThrow(/session authority/);
+    database.exec(`
+      INSERT INTO secure_session_request (
+        request_id, session_agent_id, display_alias, requested_lease_kind,
+        purpose_summary, requested_by_agent_id, requested_by_display_name,
+        state, requested_at, worker_assignment_id
+      ) VALUES (
+        'delegated-manager-request', 'manager', 'deploy', 'task', 'Deploy',
+        'worker', 'Worker', 'pending', 't', NULL
       );
     `);
     expect(() => database.exec(`
@@ -345,7 +355,7 @@ describe("secure session migrations", () => {
         'spoofed-request', 'worker', 'deploy', 'task', 'Deploy',
         'manager', 'Manager', 'pending', 't', 'assignment-1'
       );
-    `)).toThrow(/principal assignment/);
+    `)).toThrow(/session authority/);
 
     database.prepare(`
       DELETE FROM secure_session_state WHERE session_agent_id = 'manager'

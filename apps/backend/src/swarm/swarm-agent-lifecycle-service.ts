@@ -202,6 +202,7 @@ export interface SwarmAgentLifecycleServiceOptions {
     agentId: string,
     runtime: SwarmAgentRuntime,
   ): boolean;
+  hasSecureRuntimeBinding(runtime: SwarmAgentRuntime): boolean;
   ensureSessionFileParentDirectory: (sessionFile: string) => Promise<void>;
   updateSessionMetaForWorkerDescriptor: (
     descriptor: AgentDescriptor,
@@ -921,11 +922,6 @@ export class SwarmAgentLifecycleService {
         this.options.emitAgentsSnapshot();
       }
     } catch (error) {
-      let secureTeardownFailure: unknown;
-      if (secureWorkerPrepared) {
-        secureTeardownFailure =
-          await this.captureSecureWorkerTeardownFailure(agentId);
-      }
       try {
         if (this.options.runtimes.has(agentId)) {
           const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
@@ -957,13 +953,6 @@ export class SwarmAgentLifecycleService {
         });
       }
 
-      if (secureTeardownFailure) {
-        throw this.createSecureWorkerCleanupFailure(
-          agentId,
-          secureTeardownFailure,
-          error,
-        );
-      }
       throw error;
     }
 
@@ -1029,28 +1018,9 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Unknown worker agent: ${agentId}`);
     }
 
-    const secureTeardownFailure =
-      await this.captureSecureWorkerTeardownFailure(agentId);
-    try {
-      await this.stopWorkerRuntime(
-        descriptor as AgentDescriptor & { role: "worker" },
-      );
-    } catch (error) {
-      if (secureTeardownFailure) {
-        throw this.createSecureWorkerCleanupFailure(
-          agentId,
-          secureTeardownFailure,
-          error,
-        );
-      }
-      throw error;
-    }
-    if (secureTeardownFailure) {
-      throw this.createSecureWorkerCleanupFailure(
-        agentId,
-        secureTeardownFailure,
-      );
-    }
+    await this.stopWorkerRuntime(
+      descriptor as AgentDescriptor & { role: "worker" },
+    );
   }
 
   private async stopWorkerRuntime(
@@ -1171,7 +1141,6 @@ export class SwarmAgentLifecycleService {
 
     const stoppedWorkerIds: string[] = [];
     const workerShutdownTimeoutIds: string[] = [];
-    const secureTeardownFailures: unknown[] = [];
     const managerRuntime = this.options.runtimes.get(target.agentId);
     const shouldAllowManualStopMessageEnd =
       managerRuntime !== undefined && (target.status === "streaming" || managerRuntime.getStatus() === "streaming");
@@ -1191,12 +1160,6 @@ export class SwarmAgentLifecycleService {
 
       if (descriptor.managerId !== targetManagerId) {
         continue;
-      }
-
-      const secureTeardownFailure =
-        await this.captureSecureWorkerTeardownFailure(descriptor.agentId);
-      if (secureTeardownFailure) {
-        secureTeardownFailures.push(secureTeardownFailure);
       }
 
       if (isExternalThreadDescriptor(descriptor)) {
@@ -1292,13 +1255,6 @@ export class SwarmAgentLifecycleService {
       stoppedWorkerIds,
       managerStopped
     });
-
-    if (secureTeardownFailures.length > 0) {
-      throw new AggregateError(
-        secureTeardownFailures,
-        `secure_worker_teardown_failed: ${targetManagerId}`,
-      );
-    }
 
     return {
       managerId: targetManagerId,
@@ -1646,10 +1602,27 @@ export class SwarmAgentLifecycleService {
 
     const existingRuntime = this.getRuntime(descriptor.agentId);
     if (existingRuntime) {
-      return this.assertRuntimeMeetsCreationRequirements(
-        descriptor.agentId,
+      const hasStaleSecureBinding =
+        requirements?.secureRuntimeRequired === true
+        && !this.options.isSecureRuntimeBindingUsable(
+          descriptor.agentId,
+          existingRuntime,
+        )
+        && this.options.hasSecureRuntimeBinding(existingRuntime);
+      if (!hasStaleSecureBinding) {
+        return this.assertRuntimeMeetsCreationRequirements(
+          descriptor.agentId,
+          existingRuntime,
+          requirements,
+        );
+      }
+      if (!this.canRecycleAgentRuntimeImmediately(descriptor, existingRuntime)) {
+        throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+      }
+      await this.recycleAgentRuntime(
+        descriptor,
         existingRuntime,
-        requirements,
+        "secure_session_mode_change",
       );
     }
 
@@ -1872,7 +1845,7 @@ export class SwarmAgentLifecycleService {
     if (workerCleanupFailures.length > 0) {
       throw new AggregateError(
         workerCleanupFailures,
-        `secure_worker_teardown_failed: ${agentId}`,
+        `worker_cleanup_failed: ${agentId}`,
       );
     }
 
@@ -1926,61 +1899,11 @@ export class SwarmAgentLifecycleService {
     return "recycled";
   }
 
-  private async captureSecureWorkerTeardownFailure(
-    workerAgentId: string,
-  ): Promise<unknown | undefined> {
-    try {
-      await this.options.secureWorkers.teardownWorkerSecurePrincipal(
-        workerAgentId,
-      );
-      return undefined;
-    } catch (error) {
-      this.options.logDebug("secure_worker:teardown:error", {
-        workerAgentId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return error;
-    }
-  }
-
-  private createSecureWorkerCleanupFailure(
-    workerAgentId: string,
-    _secureTeardownFailure: unknown,
-    runtimeCleanupFailure?: unknown,
-  ): Error {
-    this.options.logDebug("secure_worker:cleanup:failed", {
-      workerAgentId,
-      runtimeCleanupFailed: runtimeCleanupFailure !== undefined,
-    });
-    return new Error(`secure_worker_teardown_failed: ${workerAgentId}`);
-  }
-
   async terminateDescriptor(
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
-    const secureTeardownFailure =
-      descriptor.role === "worker"
-        ? await this.captureSecureWorkerTeardownFailure(descriptor.agentId)
-        : undefined;
-    try {
-      await this.terminateDescriptorRuntime(descriptor, options);
-    } catch (error) {
-      if (secureTeardownFailure) {
-        throw this.createSecureWorkerCleanupFailure(
-          descriptor.agentId,
-          secureTeardownFailure,
-          error,
-        );
-      }
-      throw error;
-    }
-    if (secureTeardownFailure) {
-      throw this.createSecureWorkerCleanupFailure(
-        descriptor.agentId,
-        secureTeardownFailure,
-      );
-    }
+    await this.terminateDescriptorRuntime(descriptor, options);
   }
 
   private async terminateDescriptorRuntime(

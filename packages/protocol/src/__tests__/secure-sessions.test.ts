@@ -355,7 +355,7 @@ describe('Secure Sessions protocol', () => {
       purposeSummary: 'Fetch the deployment repository',
       requestedByAgentId: 'agent-worker',
       requestedByDisplayName: 'Deployment worker',
-      workerAssignmentId: 'assignment-1',
+      workerAssignmentId: null,
       createdAt: now,
       expiresAt: null,
     } satisfies SecureAccessRequestSummary

@@ -279,8 +279,8 @@ dockerSuite(
       }
 
       const concurrentValues = [
-        Buffer.from("serialized-first"),
-        Buffer.from("serialized-second"),
+        Buffer.from("concurrent-first"),
+        Buffer.from("concurrent-second"),
       ];
       const concurrent = await Promise.all(
         concurrentValues.map(async (value, index) =>
@@ -703,6 +703,57 @@ dockerSuite(
           code: "TASK_REVOKED",
         }),
       );
+    }, 30_000);
+
+    it("destroys every concurrent exec when the shared task is revoked", async () => {
+      let startedExecutions = 0;
+      let markBothStarted: (() => void) | undefined;
+      const bothStarted = new Promise<void>((resolveStarted) => {
+        markBothStarted = resolveStarted;
+      });
+      const backend = new DockerSecureExecutionBackend({
+        scope: uniqueScope("concurrent-revoke"),
+        onDockerInvocation: ({ args }) => {
+          if (!args.includes("exec") || !args.includes("-i")) return;
+          startedExecutions += 1;
+          if (startedExecutions === 2) markBothStarted?.();
+        },
+      });
+      const secureTask = task("concurrent-revoke");
+      cleanupOperations.push(async () => await backend.destroyTask(secureTask));
+      const sandbox = await backend.ensureTask(secureTask);
+
+      const executions = [
+        backend.execute({
+          task: secureTask,
+          command: { executable: "sleep", args: ["30"] },
+          guardOutput: passThroughGuard(),
+        }).then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason: unknown) => ({ status: "rejected" as const, reason }),
+        ),
+        backend.execute({
+          task: secureTask,
+          command: { executable: "sleep", args: ["30"] },
+          guardOutput: passThroughGuard(),
+        }).then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason: unknown) => ({ status: "rejected" as const, reason }),
+        ),
+      ];
+      await bothStarted;
+      await expect(backend.destroyTask(secureTask)).resolves.toBe(true);
+      await expect(Promise.all(executions)).resolves.toEqual([
+        expect.objectContaining({
+          status: "rejected",
+          reason: expect.objectContaining({ code: "TASK_REVOKED" }),
+        }),
+        expect.objectContaining({
+          status: "rejected",
+          reason: expect.objectContaining({ code: "TASK_REVOKED" }),
+        }),
+      ]);
+      expect(await dockerContainerExists(sandbox.sandboxId)).toBe(false);
     }, 30_000);
 
     it("closes the abort race at Docker exec spawn", async () => {

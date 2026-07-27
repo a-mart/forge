@@ -307,9 +307,15 @@ export class WsSubscriptions {
       }
 
       const subscribedAgentId = this.subscriptions.get(client);
+      const subscribedAgent = subscribedAgentId
+        ? this.swarmManager.getAgent(subscribedAgentId)
+        : undefined;
+      const subscribedAuthorityAgentId = subscribedAgent?.role === "worker"
+        ? subscribedAgent.managerId
+        : subscribedAgentId;
       if (
         subscribedAgentId !== event.sessionAgentId
-        && subscribedAgentId !== ownerManagerAgentId
+        && subscribedAuthorityAgentId !== ownerManagerAgentId
       ) {
         continue;
       }

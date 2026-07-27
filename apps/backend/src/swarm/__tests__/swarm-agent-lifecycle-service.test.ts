@@ -91,8 +91,6 @@ function baseLifecycleOptions(
       isTeamSecureMode: () => false,
       prepareWorkerForSecureTeam: vi.fn(async () => false),
       advanceWorkerSecureAssignment: vi.fn(async () => {}),
-      abortWorkerSecureAssignment: vi.fn(async () => {}),
-      teardownWorkerSecurePrincipal: vi.fn(async () => {}),
     },
     modelCapacityBlocks,
     sessionProvisioner,
@@ -145,6 +143,8 @@ function baseLifecycleOptions(
     allocateRuntimeToken: overrides.allocateRuntimeToken ?? vi.fn(() => 1),
     clearRuntimeToken: overrides.clearRuntimeToken ?? vi.fn(),
     getRuntimeToken: overrides.getRuntimeToken ?? vi.fn(() => 1),
+    hasSecureRuntimeBinding:
+      overrides.hasSecureRuntimeBinding ?? vi.fn(() => false),
     isSecureRuntimeBindingUsable:
       overrides.isSecureRuntimeBindingUsable ?? vi.fn(() => false),
     ensureSessionFileParentDirectory: overrides.ensureSessionFileParentDirectory ?? vi.fn(async () => {}),
@@ -1116,6 +1116,82 @@ describe("SwarmAgentLifecycleService", () => {
 
     expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
     expect(runtimes.get(worker.agentId)).toBe(existingRuntime);
+  });
+
+  it("recycles an idle stale secure binding before creating the next assignment runtime", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-existing-stale-secure",
+      status: "idle",
+    });
+    const recycle = vi.fn(async () => {});
+    const staleRuntime = makeRuntimeStub({ descriptor: worker, recycle });
+    const replacementRuntime = makeRuntimeStub({ descriptor: worker });
+    const runtimes = new Map([[worker.agentId, staleRuntime]]);
+    const createRuntimeForDescriptor = vi.fn(async (
+      _descriptor: AgentDescriptor,
+      _prompt: string,
+      _token: number | undefined,
+      options: RuntimeCreationOptions | undefined,
+    ) => {
+      expect(options).toMatchObject({ secureRuntimeRequired: true });
+      return replacementRuntime;
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        createRuntimeForDescriptor,
+        hasSecureRuntimeBinding: (runtime) => runtime === staleRuntime,
+        isSecureRuntimeBindingUsable: (agentId, runtime) =>
+          agentId === worker.agentId
+          && runtime === replacementRuntime
+          && runtimes.get(agentId) === runtime,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).resolves.toBe(replacementRuntime);
+
+    expect(recycle).toHaveBeenCalledOnce();
+    expect(createRuntimeForDescriptor).toHaveBeenCalledOnce();
+    expect(runtimes.get(worker.agentId)).toBe(replacementRuntime);
+  });
+
+  it("fails closed instead of recycling a busy stale secure runtime", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-busy-stale-secure",
+      status: "streaming",
+    });
+    const recycle = vi.fn(async () => {});
+    const staleRuntime = makeRuntimeStub({
+      descriptor: worker,
+      recycle,
+      getStatus: () => "streaming",
+    });
+    const runtimes = new Map([[worker.agentId, staleRuntime]]);
+    const createRuntimeForDescriptor = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        createRuntimeForDescriptor,
+        hasSecureRuntimeBinding: (runtime) => runtime === staleRuntime,
+        isSecureRuntimeBindingUsable: () => false,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(recycle).not.toHaveBeenCalled();
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
+    expect(runtimes.get(worker.agentId)).toBe(staleRuntime);
   });
 
   it("rechecks an in-flight runtime before satisfying a secure request", async () => {
@@ -2281,7 +2357,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
   });
 
-  it("recycles an idle secure worker runtime without tearing down its principal", async () => {
+  it("recycles an idle secure worker runtime without touching team authority", async () => {
     const worker = createWorkerDescriptor("/p", "m1", {
       agentId: "secure-worker-recycle",
       status: "idle",
@@ -2289,7 +2365,6 @@ describe("SwarmAgentLifecycleService", () => {
     const recycle = vi.fn(async () => {});
     const runtime = makeRuntimeStub({ descriptor: worker, recycle });
     const runtimes = new Map([[worker.agentId, runtime]]);
-    const teardownWorkerSecurePrincipal = vi.fn(async () => {});
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors: new Map([[worker.agentId, worker]]),
@@ -2298,8 +2373,6 @@ describe("SwarmAgentLifecycleService", () => {
           isTeamSecureMode: () => true,
           prepareWorkerForSecureTeam: vi.fn(async () => true),
           advanceWorkerSecureAssignment: vi.fn(async () => {}),
-          abortWorkerSecureAssignment: vi.fn(async () => {}),
-          teardownWorkerSecurePrincipal,
         },
       }),
     );
@@ -2312,7 +2385,6 @@ describe("SwarmAgentLifecycleService", () => {
     ).resolves.toBe("recycled");
 
     expect(recycle).toHaveBeenCalledOnce();
-    expect(teardownWorkerSecurePrincipal).not.toHaveBeenCalled();
     expect(runtimes.has(worker.agentId)).toBe(false);
   });
 
@@ -2346,47 +2418,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(worker.status).toBe("idle");
   });
 
-  it("stopWorker still shuts down the model runtime when secure teardown fails", async () => {
-    const worker = createWorkerDescriptor("/p", "m1", {
-      agentId: "w-secure-stop",
-      status: "streaming",
-    });
-    const descriptors = new Map([[worker.agentId, worker]]);
-    const runtimes = new Map([
-      [worker.agentId, makeRuntimeStub({ descriptor: worker })],
-    ]);
-    const runRuntimeShutdown = vi.fn(async () => ({
-      timedOut: false,
-      runtimeToken: 1,
-    }));
-    const teardownWorkerSecurePrincipal = vi.fn(async () => {
-      throw new Error("sandbox destroy unconfirmed");
-    });
-    const svc = new SwarmAgentLifecycleService(
-      baseLifecycleOptions({
-        descriptors,
-        runtimes,
-        runRuntimeShutdown,
-        secureWorkers: {
-          isTeamSecureMode: () => true,
-          prepareWorkerForSecureTeam: vi.fn(async () => true),
-          advanceWorkerSecureAssignment: vi.fn(async () => {}),
-          abortWorkerSecureAssignment: vi.fn(async () => {}),
-          teardownWorkerSecurePrincipal,
-        },
-      }),
-    );
-
-    await expect(svc.stopWorker(worker.agentId)).rejects.toThrow(
-      "secure_worker_teardown_failed",
-    );
-
-    expect(teardownWorkerSecurePrincipal).toHaveBeenCalledWith(worker.agentId);
-    expect(runRuntimeShutdown).toHaveBeenCalled();
-    expect(worker.status).toBe("idle");
-  });
-
-  it("killAgent tears down the exact secure worker before persisting termination", async () => {
+  it("killAgent terminates the worker without touching team secure authority", async () => {
     const manager = createAgentDescriptor({
       agentId: "m-secure-kill",
       role: "manager",
@@ -2399,9 +2431,6 @@ describe("SwarmAgentLifecycleService", () => {
       status: "streaming",
     });
     const order: string[] = [];
-    const teardownWorkerSecurePrincipal = vi.fn(async (agentId: string) => {
-      order.push(`secure:${agentId}`);
-    });
     const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
       order.push(`runtime:${descriptor.agentId}`);
       return { timedOut: false, runtimeToken: 1 };
@@ -2423,8 +2452,6 @@ describe("SwarmAgentLifecycleService", () => {
           isTeamSecureMode: () => true,
           prepareWorkerForSecureTeam: vi.fn(async () => true),
           advanceWorkerSecureAssignment: vi.fn(async () => {}),
-          abortWorkerSecureAssignment: vi.fn(async () => {}),
-          teardownWorkerSecurePrincipal,
         },
         runRuntimeShutdown,
         saveStore,
@@ -2434,7 +2461,6 @@ describe("SwarmAgentLifecycleService", () => {
     await svc.killAgent(manager.agentId, worker.agentId);
 
     expect(order).toEqual([
-      `secure:${worker.agentId}`,
       `runtime:${worker.agentId}`,
       "store",
     ]);
@@ -2559,8 +2585,6 @@ describe("SwarmAgentLifecycleService", () => {
           isTeamSecureMode: () => true,
           prepareWorkerForSecureTeam,
           advanceWorkerSecureAssignment: vi.fn(async () => {}),
-          abortWorkerSecureAssignment: vi.fn(async () => {}),
-          teardownWorkerSecurePrincipal: vi.fn(async () => {}),
         },
         createRuntimeForDescriptor,
         sendMessage,
@@ -2606,8 +2630,6 @@ describe("SwarmAgentLifecycleService", () => {
           isTeamSecureMode: () => true,
           prepareWorkerForSecureTeam: vi.fn(async () => true),
           advanceWorkerSecureAssignment: vi.fn(async () => {}),
-          abortWorkerSecureAssignment: vi.fn(async () => {}),
-          teardownWorkerSecurePrincipal: vi.fn(async () => {}),
         },
         sendMessage,
       }),

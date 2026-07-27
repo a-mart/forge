@@ -284,7 +284,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
   private readonly platform: NodeJS.Platform;
   private readonly preparing = new Map<string, Promise<TaskIdentity>>();
   private readonly lifecycleTails = new Map<string, Promise<void>>();
-  private readonly executionTails = new Map<string, Promise<void>>();
+  private readonly fileDeliveryTails = new Map<string, Promise<void>>();
   private readonly revoked = new Set<string>();
   private readonly activeExecutions = new Map<
     string,
@@ -385,7 +385,14 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       }
       await this.prepareTask(identity);
     });
-    return await this.runSerialized(identity.name, async () => {
+    if (this.revoked.has(identity.name)) {
+      throw new SecureExecutionError("TASK_REVOKED");
+    }
+    if (request.signal?.aborted) {
+      await this.destroyIdentity(identity);
+      throw new SecureExecutionError("EXECUTION_ABORTED");
+    }
+    const execute = async (): Promise<SecureExecutionResult> => {
       if (this.revoked.has(identity.name)) {
         throw new SecureExecutionError("TASK_REVOKED");
       }
@@ -394,7 +401,14 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
         throw new SecureExecutionError("EXECUTION_ABORTED");
       }
       return await this.executeInTask(identity, request);
-    });
+    };
+    // Environment, stdin, and askpass deliveries are execution-scoped and can
+    // run concurrently. Public file bindings intentionally use stable paths,
+    // so serialize only commands that materialize those paths; otherwise one
+    // command's cleanup could remove a sibling's active file.
+    return request.delivery?.ramFiles?.length
+      ? await this.runFileDeliverySerialized(identity.name, execute)
+      : await execute();
   }
 
   async destroyTask(task: SecureExecutionTask): Promise<boolean> {
@@ -1198,24 +1212,28 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     this.activeExecutions.set(name, executions);
   }
 
-  private async runSerialized<Result>(
+  private async runFileDeliverySerialized<Result>(
     name: string,
     operation: () => Promise<Result>,
   ): Promise<Result> {
-    const previous = this.executionTails.get(name) ?? Promise.resolve();
+    const previous = this.fileDeliveryTails.get(name) ?? Promise.resolve();
     let release: (() => void) | undefined;
     const current = new Promise<void>((resolveCurrent) => {
       release = resolveCurrent;
     });
-    this.executionTails.set(name, current);
+    const tail = previous.then(
+      () => current,
+      () => current,
+    );
+    this.fileDeliveryTails.set(name, tail);
 
     await previous.catch(() => undefined);
     try {
       return await operation();
     } finally {
       release?.();
-      if (this.executionTails.get(name) === current) {
-        this.executionTails.delete(name);
+      if (this.fileDeliveryTails.get(name) === tail) {
+        this.fileDeliveryTails.delete(name);
       }
     }
   }

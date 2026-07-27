@@ -706,6 +706,8 @@ export class SwarmManagerRuntimeComposition {
       allocateRuntimeToken: (agentId) => runtimeLifecycle.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, token) => runtimeLifecycle.clearRuntimeToken(agentId, token),
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      hasSecureRuntimeBinding: (runtime) =>
+        this.runtimeController.hasSecureRuntimeBinding(runtime),
       isSecureRuntimeBindingUsable: (agentId, runtime) => this.runtimeController.isSecureRuntimeBindingUsable(agentId, runtime),
       ensureSessionFileParentDirectory: runtimeResources.ensureSessionFileParentDirectory,
       updateSessionMetaForWorkerDescriptor: (descriptor, prompt) =>
@@ -986,16 +988,13 @@ export class SwarmManagerRuntimeComposition {
   private requirePlans(): SessionPlanCoordinator {
     if (!this.plans) throw new Error("Runtime composition planning has not been attached"); return this.plans;
   }
-
   private requireGoals(): SessionGoalCoordinator {
     if (!this.goalCoordinator) throw new Error("Runtime composition planning has not been attached");
     return this.goalCoordinator;
   }
   private requireServices(): SwarmManagerRuntimeBoundServices {
-    if (!this.services) throw new Error("Runtime composition services are not bound");
-    return this.services;
+    if (!this.services) throw new Error("Runtime composition services are not bound"); return this.services;
   }
-
   private requireTurnContext() {
     if (!this.completed?.turnContext) throw new Error("Runtime composition is not complete");
     return this.completed.turnContext;

@@ -28,7 +28,7 @@ export const WorkerBackBar = memo(function WorkerBackBar({
       {secureStatus ? (
         <div
           className="inline-flex min-w-0 items-center gap-1.5 px-2 text-xs text-muted-foreground"
-          aria-label={`Worker Secure Bash: ${secureStatus.label}`}
+          aria-label={`Team Secure Bash: ${secureStatus.label}`}
         >
           {secureStatus.active ? (
             <ShieldCheck className="size-3 shrink-0 text-emerald-500" aria-hidden="true" />

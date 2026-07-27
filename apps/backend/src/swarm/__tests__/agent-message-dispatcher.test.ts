@@ -122,7 +122,6 @@ function createHarness() {
   let secureRuntimeAvailable = true;
   let secureAssignmentAdvanceHook: (() => void) | undefined;
   let secureAssignmentAdvanceError: Error | undefined;
-  let secureAssignmentAbortError: Error | undefined;
   let activeParent: ReturnType<
     AgentMessageDispatcherOptions<TestGate>["turns"]["getActiveWorkerParentContext"]
   > = {
@@ -243,25 +242,6 @@ function createHarness() {
         }
         secureAssignmentAdvanceHook?.();
       },
-      abortWorkerSecureAssignment: async (
-        workerAgentId,
-        assignmentId,
-      ) => {
-        secureWorkerCalls.push({
-          operation: "abort",
-          workerAgentId,
-          assignmentId,
-        });
-        if (secureAssignmentAbortError) {
-          throw secureAssignmentAbortError;
-        }
-      },
-      teardownWorkerSecurePrincipal: async (workerAgentId) => {
-        secureWorkerCalls.push({
-          operation: "teardown",
-          workerAgentId,
-        });
-      },
     },
     getOrCreateRuntime: async (target, creationOptions) => {
       order.push("runtime:create");
@@ -328,9 +308,6 @@ function createHarness() {
     },
     setSecureAssignmentAdvanceError: (value: Error | undefined) => {
       secureAssignmentAdvanceError = value;
-    },
-    setSecureAssignmentAbortError: (value: Error | undefined) => {
-      secureAssignmentAbortError = value;
     },
   };
 }
@@ -429,14 +406,10 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
       { secureRuntimeRequired: true },
     ]);
     expect(harness.runtimeInputs).toHaveLength(0);
-    expect(harness.secureWorkerCalls).toContainEqual({
-      operation: "abort",
-      workerAgentId: "worker-1",
-      assignmentId: "assignment:worker-1:nonce-1",
-    });
+    expect(harness.worker.workerParentContext).toBeUndefined();
   });
 
-  it("aborts a newly prepared secure assignment when runtime creation fails", async () => {
+  it("rolls back a newly prepared secure assignment when runtime creation fails", async () => {
     const harness = createHarness();
     harness.setSecureWorkerPrepared(true);
     harness.setRuntimeCreationError(new Error("runtime unavailable"));
@@ -449,15 +422,10 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
       ),
     ).rejects.toThrow("runtime unavailable");
 
-    expect(harness.secureWorkerCalls).toContainEqual({
-      operation: "abort",
-      workerAgentId: "worker-1",
-      assignmentId: "assignment:worker-1:nonce-1",
-    });
     expect(harness.worker.workerParentContext).toBeUndefined();
   });
 
-  it("aborts a newly prepared secure assignment when its runtime delivery fails", async () => {
+  it("rolls back a newly prepared secure assignment when runtime delivery fails", async () => {
     const harness = createHarness();
     harness.setSecureWorkerPrepared(true);
     harness.setRuntimeError(new Error("runtime rejected"));
@@ -470,30 +438,7 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
       ),
     ).rejects.toThrow("runtime rejected");
 
-    expect(harness.secureWorkerCalls).toContainEqual({
-      operation: "abort",
-      workerAgentId: "worker-1",
-      assignmentId: "assignment:worker-1:nonce-1",
-    });
-    expect(harness.secureWorkerCalls).not.toContainEqual({
-      operation: "teardown",
-      workerAgentId: "worker-1",
-    });
-  });
-
-  it("fails closed when aborting a prepared secure assignment cannot be confirmed", async () => {
-    const harness = createHarness();
-    harness.setSecureWorkerPrepared(true);
-    harness.setRuntimeError(new Error("runtime rejected"));
-    harness.setSecureAssignmentAbortError(new Error("destroy unconfirmed"));
-
-    await expect(
-      harness.dispatcher.sendMessage(
-        "manager-1",
-        "worker-1",
-        "Do secure work",
-      ),
-    ).rejects.toThrow("secure_worker_assignment_abort_failed");
+    expect(harness.worker.workerParentContext).toBeUndefined();
   });
 
   it("keeps a contextless Builder assignment on the web transcript", async () => {
