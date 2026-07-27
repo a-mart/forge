@@ -2,8 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { BROWSER_WORKSPACE_IPC } from '../browser-bridge-contract.js'
 import { installBrowserWorkspaceIpc } from '../browser-workspace-ipc.js'
 
-function windowWithId(id: number) {
-  return { isDestroyed: () => false, webContents: { id, isDestroyed: () => false, send: vi.fn(), on: vi.fn() } }
+function windowWithId(id: number, send = vi.fn()) {
+  return {
+    isDestroyed: () => false,
+    webContents: {
+      id,
+      isDestroyed: () => false,
+      isLoadingMainFrame: () => false,
+      mainFrame: { detached: false, isDestroyed: () => false, send },
+      send,
+      on: vi.fn(),
+    },
+  }
 }
 const projection = {
   workspaceEpoch: 7, sessionAgentId: 'local-session', profileId: 'local-profile',
@@ -42,5 +52,26 @@ describe('browser workspace role-scoped IPC', () => {
     await (handlers.get(BROWSER_WORKSPACE_IPC.publish) as never as Function)({ sender: { id: 10 } }, { ...projection, workspaceEpoch: 8, sessionAgentId: null, profileId: null, snapshot: null })
     await expect((handlers.get(BROWSER_WORKSPACE_IPC.command) as never as Function)({ sender: { id: 20 } }, { requestId: 'request-456', workspaceEpoch: 7, sessionAgentId: 'remote', profileId: 'remote', deadlineAt: new Date(Date.now() + 1000).toISOString(), command: { type: 'open' } })).rejects.toMatchObject({ code: 'unavailable-host' })
     expect(main.webContents.send).not.toHaveBeenCalledWith(BROWSER_WORKSPACE_IPC.commandForward, expect.anything())
+  })
+
+  it('drops focus delivery when Electron disposes the authoritative main frame', () => {
+    const disposedSend = vi.fn(() => {
+      throw new Error('Error sending from webFrameMain: Render frame was disposed before WebFrameMain could be accessed')
+    })
+    const main = windowWithId(10, disposedSend)
+    const installed = installBrowserWorkspaceIpc({
+      ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } as never,
+      getMainWindow: () => main as never,
+      getPopoutWindow: () => null,
+      viewHost: {} as never,
+      getMode: () => 'docked',
+      popOut: vi.fn(),
+      dock: vi.fn(),
+      bringToFront: vi.fn(),
+    })
+
+    expect(() => installed.publishFocus(true)).not.toThrow()
+    expect(disposedSend).toHaveBeenCalledWith(BROWSER_WORKSPACE_IPC.focus, true)
+    installed.dispose()
   })
 })

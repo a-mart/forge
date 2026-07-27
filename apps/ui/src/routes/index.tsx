@@ -23,6 +23,7 @@ import { forgeOriginManager } from '@/lib/origin-store/forge-origin-manager'
 import { isElectron } from '@/lib/electron-bridge'
 import { getConfiguredDefaultSurface } from '@/lib/web-runtime-flags'
 import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
+import { useElectronRendererReady } from '@/hooks/use-electron-renderer-ready'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
@@ -61,6 +62,7 @@ export function IndexPage() {
 }
 
 function MainIndexPage() {
+  useElectronRendererReady()
   const wsUrl = resolveBackendWsUrl()
   const collabWsUrl = resolveCollaborationWsUrl()
 

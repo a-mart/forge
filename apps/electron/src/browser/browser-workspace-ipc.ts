@@ -7,6 +7,7 @@ import {
   type ManagedBrowserWorkspaceProjection,
 } from './browser-bridge-contract.js'
 import type { BrowserViewportMetrics, ManagedBrowserViewHost } from './managed-browser-view-host.js'
+import { sendToRendererWindow } from '../renderer-ipc.js'
 
 interface PendingCommand {
   resolve(value: unknown): void
@@ -81,7 +82,17 @@ export function installBrowserWorkspaceIpc(options: {
         reject(new BrowserHostError('timeout', 'Browser workspace command timed out', true))
       }, Math.max(1, deadline - Date.now()))
       pending.set(request.requestId, { resolve, reject, timer })
-      authoritative.webContents.send(BROWSER_WORKSPACE_IPC.commandForward, request)
+      try {
+        if (sendToRendererWindow(authoritative, BROWSER_WORKSPACE_IPC.commandForward, request)) return
+      } catch (error) {
+        pending.delete(request.requestId)
+        clearTimeout(timer)
+        reject(error)
+        return
+      }
+      pending.delete(request.requestId)
+      clearTimeout(timer)
+      reject(new BrowserHostError('host-disconnected', 'Authoritative Forge renderer is unavailable', true))
     })
   })
   handle(BROWSER_WORKSPACE_IPC.commandReply, (event, value) => {
@@ -197,6 +208,5 @@ function requireCurrentEpoch(value: unknown, projection: ManagedBrowserWorkspace
 }
 
 function send(window: BrowserWindow | null, channel: string, payload: unknown): void {
-  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
-  window.webContents.send(channel, payload)
+  sendToRendererWindow(window, channel, payload)
 }

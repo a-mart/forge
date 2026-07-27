@@ -10,6 +10,12 @@ import { buildCommandCenterRouteUrl, buildSkillImportRouteUrl, findCommandCenter
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { sendSleepBlockerStatusToWindow } from './sleep-blocker-status-ipc.js'
+import { sendToRendererWindow } from './renderer-ipc.js'
+import {
+  installMainRendererRecovery,
+  MAIN_RENDERER_READY_CHANNEL,
+  type MainRendererRecoveryController,
+} from './main-renderer-recovery.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 import { createBackendForkOptions } from './backend-fork-options.js'
@@ -83,6 +89,7 @@ type BackendBootstrap = {
 }
 
 let mainWindow: BrowserWindow | null = null
+let mainRendererRecovery: MainRendererRecoveryController | null = null
 let browserPopoutWindow: BrowserWindow | null = null
 let browserViewHost: ManagedBrowserViewHost | null = null
 let browserWorkspaceIpc: ReturnType<typeof installBrowserWorkspaceIpc> | null = null
@@ -523,6 +530,8 @@ async function prepareQuitForUpdate(): Promise<void> {
     sleepBlockerService?.dispose()
     browserWorkspaceIpc?.dispose()
     browserWorkspaceIpc = null
+    mainRendererRecovery?.dispose()
+    mainRendererRecovery = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
     disposeExternalChromeIpc?.()
@@ -607,6 +616,11 @@ if (!hasSingleInstanceLock) {
           windowRole,
           managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
         }
+  })
+
+  ipcMain.on(MAIN_RENDERER_READY_CHANNEL, (event) => {
+    if (!isTrustedMainRenderer(event)) return
+    mainRendererRecovery?.markReady(event.sender)
   })
 
   ipcMain.handle('bridge:showOpenDialog', async (_event, options: Electron.OpenDialogOptions) => {
@@ -779,13 +793,20 @@ if (!hasSingleInstanceLock) {
     writeInstallHint()
 
     mainWindow = createMainWindow()
+    const authoritativeWindow = mainWindow
+    mainRendererRecovery = installMainRendererRecovery({
+      window: authoritativeWindow,
+      loadRenderer: () => reloadRenderer(authoritativeWindow),
+      isClosing: () => appIsQuitting || mainWindowClosing,
+      onEvent: (event) => {
+        lifecycleLog.record(`electron_main_renderer_${event.type}`, event)
+      },
+    })
     const browserManager = new BrowserAutomationManager({
       approvedDataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
       hostWebContentsId: mainWindow.webContents.id,
       sendToRenderer: (channel, payload) => {
-        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-          mainWindow.webContents.send(channel, payload)
-        }
+        sendToRendererWindow(mainWindow, channel, payload)
       },
       externalChromeAdapter: new ExternalChromeTargetAdapter(externalChromeCoordinator.transport()),
     })
@@ -795,7 +816,7 @@ if (!hasSingleInstanceLock) {
       guestPreloadPath: path.join(__dirname, 'guest-preload.js'),
       onGuestBeforeInput: handleManagedBrowserCloseShortcut,
       onGuestCrash: (tabId, reason) => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('forge:browser-guest-crashed', { tabId, reason })
+        sendToRendererWindow(mainWindow, 'forge:browser-guest-crashed', { tabId, reason })
       },
     })
     disposeBrowserHost = installBrowserIpc({ ipcMain, mainWindow, manager: browserManager, viewHost: browserViewHost })
@@ -863,6 +884,8 @@ if (!hasSingleInstanceLock) {
     sleepBlockerService?.dispose()
     browserWorkspaceIpc?.dispose()
     browserWorkspaceIpc = null
+    mainRendererRecovery?.dispose()
+    mainRendererRecovery = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
     disposeExternalChromeIpc?.()
@@ -930,6 +953,8 @@ function createMainWindow(): BrowserWindow {
   })
   window.on('closed', () => {
     if (mainWindow === window) {
+      mainRendererRecovery?.dispose()
+      mainRendererRecovery = null
       browserWorkspaceIpc?.dispose()
       browserWorkspaceIpc = null
       disposeBrowserHost?.()
@@ -1147,11 +1172,7 @@ function publishManagedBrowserFocus(): void {
 }
 
 function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return
-  }
-
-  mainWindow.webContents.send(TERMINAL_SHORTCUT_CHANNEL, { action })
+  sendToRendererWindow(mainWindow, TERMINAL_SHORTCUT_CHANNEL, { action })
 }
 
 function focusMainWindow(): void {
@@ -1366,6 +1387,11 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
   pendingCommandCenterDeepLink = null
   const base = resolveRendererUrl(skillImportUrl ?? undefined)
   await window.loadURL(commandCenterDeepLink ? buildCommandCenterRouteUrl(base, commandCenterDeepLink) : base)
+}
+
+async function reloadRenderer(window: BrowserWindow): Promise<void> {
+  const currentUrl = window.webContents.isDestroyed() ? '' : window.webContents.getURL()
+  await window.loadURL(isTrustedRendererUrl(currentUrl) ? currentUrl : resolveRendererUrl())
 }
 
 function resolveRendererUrl(skillImportUrl?: string): string {

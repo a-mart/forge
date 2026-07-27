@@ -6,6 +6,7 @@ import {
   type UpdateInfo,
 } from 'electron-updater'
 import { readSettings, writeSettings } from './electron-settings.js'
+import { sendToRendererWindow } from './renderer-ipc.js'
 
 /** Delay before first update check after app launch. */
 const UPDATE_STARTUP_DELAY_MS = 10_000
@@ -80,9 +81,7 @@ export function initAutoUpdater(options: {
   let pendingDownloadedUpdate: UpdateDownloadedEvent | null = null
 
   const sendStatus = (status: UpdateStatus): void => {
-    if (!options.mainWindow.isDestroyed()) {
-      options.mainWindow.webContents.send('update-status', status)
-    }
+    sendToRendererWindow(options.mainWindow, 'update-status', status)
   }
 
   const checkForUpdates = async (isManual = false): Promise<void> => {
@@ -327,9 +326,7 @@ export async function prepareUpdateInstall(options: {
 
 export function checkForUpdatesManually(mainWindow?: BrowserWindow | null): Promise<void> {
   if (!app.isPackaged) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-status', { type: 'error', message: 'Update checks are not available in development mode. Build a packaged app to test auto-updates.' })
-    }
+    sendToRendererWindow(mainWindow, 'update-status', { type: 'error', message: 'Update checks are not available in development mode. Build a packaged app to test auto-updates.' })
     return Promise.resolve()
   }
   if (!triggerUpdateCheck) {

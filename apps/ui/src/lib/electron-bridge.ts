@@ -132,6 +132,7 @@ export interface ElectronBridge {
   backendUrl?: string
   backendWsUrl?: string
   secureControlToken?: string
+  markRendererReady?(): void
   getVersion?(): string
   platform: string
   browserAutomation?: BrowserAutomationBridge
