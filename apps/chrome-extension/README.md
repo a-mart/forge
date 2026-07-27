@@ -1,8 +1,8 @@
-# Forge External Chrome extension
+# Forge Automatic Browser Chrome adapter
 
-This workspace builds Forge's deterministic MV3 **External Chrome (Local Beta)** unpacked extension. The extension is loaded manually from the stable folder that Forge Desktop deploys for one Forge data directory. It is not distributed or updated through the Chrome Web Store.
+This workspace builds the deterministic MV3 unpacked extension for Forge Desktop's optional Chrome target adapter. The extension is loaded manually from the stable folder that Forge Desktop deploys for one Forge data directory. It is not distributed or updated through the Chrome Web Store, and it does not create a second user-selectable browser host.
 
-Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md#external-chrome-local-beta) before loading it into Chrome.
+Read the user-facing [Browser automation guide](../../docs/BROWSER_AUTOMATION.md#optional-chrome-setup) before loading it into Chrome.
 
 ## Identity and package model
 
@@ -18,7 +18,7 @@ Build output is `dist/extension/` plus `dist/package-manifest.json`. Inputs and 
 
 ## Permission and privacy boundary
 
-The extension declares `<all_urls>` plus `alarms`, `debugger`, `nativeMessaging`, `scripting`, `storage`, and `webNavigation`. Every declared permission has a production caller. Keep this ledger aligned across the manifest, documentation, and identity tests.
+The extension declares `<all_urls>` plus `alarms`, `debugger`, `nativeMessaging`, `scripting`, `storage`, and `webNavigation`. It declares no action or side panel, optional permissions, `tabGroups`, `bookmarks`, `history`, `downloads`, `sessions`, `notifications`, or `topSites`. Every declared permission has a production caller. Keep this ledger aligned across the manifest, documentation, and identity tests.
 
 The extension creates a random local instance ID in extension storage. It does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. Forge Desktop sees only opaque extension-instance identity and readiness until automatic operation-scoped authority is acquired.
 
@@ -30,7 +30,7 @@ The native port connects through `com.forge.external_chrome` to Forge Desktop's 
 
 Authority is bounded to exact tabs with compare-and-set epochs. Trusted human input interrupts agent control. A debugger loss, connection loss, bounded expiry, turn disposition, or session lifecycle release revokes or reconciles authority. User tabs remain open when Forge releases authority.
 
-Supported operations are status, open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. External Chrome does not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or the Managed Browser dock/pop-out. Snapshot can still return bounded transient screenshot data.
+Supported operations are status, open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. Chrome-backed targets do not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or the embedded Browser dock/pop-out. Snapshot can still return bounded transient screenshot data.
 
 Compatible connected instances can accept an authenticated local payload reload after Desktop update or rollback. Manual Chrome reload is fallback-only when Forge Settings reports **Manual extension reload required**.
 
@@ -62,4 +62,4 @@ Do not use an everyday profile or live native registration for routine validatio
 
 The extension alone is not a releasable Desktop integration. Electron staging combines its deterministic shell/payload inventory with the required native-host package and creates `.stage/external-chrome/package-manifest.json`. Release staging must verify protocol compatibility, extension identity, every file hash, the required current target/architecture host, and release-signature metadata before installer packaging.
 
-See [Forge Electron Desktop App](../electron/README.md#external-chrome-packaging-and-validation) and the [native host README](../native-messaging-host/README.md).
+See [Forge Electron Desktop App](../electron/README.md#optional-chrome-adapter-packaging-and-validation) and the [native relay README](../native-messaging-host/README.md).

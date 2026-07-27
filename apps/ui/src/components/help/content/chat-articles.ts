@@ -79,7 +79,6 @@ export const chatArticles: HelpArticle[] = [
       'browser',
       'managed browser',
       'external chrome',
-      'local beta',
       'chrome extension',
       'load unpacked',
       'Chrome setup',

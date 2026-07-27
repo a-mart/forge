@@ -6,7 +6,7 @@ Forge chooses the available local target automatically:
 - An embedded tab appears inside Forge and includes navigation, viewport, screenshot, recording, and dock/pop-out controls.
 - If Chrome is unavailable or an operation requires an embedded capability, Forge uses the embedded browser automatically.
 
-There is no host picker, tab attachment flow, or lease management UI. If more than one genuinely eligible Chrome profile is available, Forge asks once which profile to use for the current Forge session.
+There is no host picker, tab attachment flow, or lease management UI. If more than one ready Chrome profile remains ambiguous, Forge asks once for the current Forge session with generic profile labels and a **Use embedded browser** option. A confirmed Chrome choice stays in memory only until Forge quits.
 
 ## Chrome setup
 
@@ -14,6 +14,6 @@ Open **Settings → Use Chrome with Forge** for the one-time extension setup or 
 
 ## Privacy and persistence
 
-Chrome page URLs and titles are not persisted in Forge browser state. Embedded-browser cookies and site storage use Forge's persistent local browser partition. Successfully stopped embedded recordings persist under the session's `artifacts/browser/` directory.
+Schema-v2 browser state stores each logical tab's sticky target affinity, not a selected host. Chrome page URLs/titles, tab error detail, and page-identifying action fields are redacted before persistence. Embedded-browser cookies and site storage use Forge's persistent local browser partition. Successfully stopped embedded recordings persist under the session's `artifacts/browser/` directory.
 
 Browser state is delivered through the same live, bootstrap, and replay paths as the rest of the session. Clearing conversation history does not clear browser state; archive and deletion release active browser authority.

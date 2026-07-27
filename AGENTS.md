@@ -29,8 +29,8 @@ package manager version.
 
 - `apps/backend/` — orchestration, persistence, HTTP/WebSocket APIs, integrations, and terminals.
 - `apps/ui/` — TanStack Start/Vite React application.
-- `apps/electron/` — desktop packaging, runtime staging, updates, releases, and local browser hosts.
-- `apps/chrome-extension/` and `apps/native-messaging-host/` — External Chrome Local Beta extension and bounded native relay.
+- `apps/electron/` — desktop packaging, runtime staging, updates, releases, and the local Automatic Browser Host.
+- `apps/chrome-extension/` and `apps/native-messaging-host/` — optional Chrome adapter extension and bounded native relay.
 - `packages/protocol/` — shared wire types, API contracts, and event definitions.
 - `packages/cli/` — first-party Forge CLI.
 - `docs/collaboration/` — Collaboration architecture, development, operations, and project tracking.
@@ -74,12 +74,12 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
   files or transient chat context.
 - Model-specific instructions are optional, user-authored per-model additions. Forge does not provide
   built-in model-specific instruction defaults.
-- Managed Browser and External Chrome are local Forge Desktop hosts for normal local Builder managers,
-  not Skills. Host selection is session state in the shared `browser.json`; changing that preference does
-  not detach External Chrome. Neither host nor its IPC/relay is forwarded to Remote Projects or
-  Collaboration. External Chrome deploys under `integrations/external-chrome/` for the active data
-  directory, while Chrome loads its stable `extension/` path once per Chrome profile and data directory.
-  Browser recording and `artifacts/browser/` remain Managed Browser-only.
+- Forge Desktop exposes one protocol-v2 Automatic Browser Host for normal local Builder managers, not a
+  Skill. Per-tab `managed-electron` or `external-chrome` affinity is private and sticky; callers do not
+  select a host and `browser.json` contains no host preference. The host and Chrome relay are never
+  forwarded to Remote Projects or Collaboration. The optional Chrome adapter deploys under
+  `integrations/external-chrome/`, while Chrome loads its stable `extension/` path once per Chrome
+  profile and data directory. Browser recording and `artifacts/browser/` remain embedded-only.
 
 ## Safety
 

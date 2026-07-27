@@ -384,7 +384,6 @@ export const settingsArticles: HelpArticle[] = [
       'permissions',
       'repair',
       'dedicated profile',
-      'local beta',
     ],
     relatedIds: ['settings-extensions', 'chat-browser'],
     contextKeys: ['settings.external-chrome'],
