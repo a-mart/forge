@@ -173,6 +173,54 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "update_project_delegation_defaults") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const managerPosture = (maybe as { managerPosture?: unknown }).managerPosture;
+    const delegationRosterId =
+      (maybe as { delegationRosterId?: unknown }).delegationRosterId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    const hasPosture = Object.prototype.hasOwnProperty.call(maybe, "managerPosture");
+    const hasRoster = Object.prototype.hasOwnProperty.call(maybe, "delegationRosterId");
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return fail("update_project_delegation_defaults.profileId must be a non-empty string");
+    }
+    if (!hasPosture && !hasRoster) {
+      return fail("update_project_delegation_defaults requires managerPosture or delegationRosterId");
+    }
+    if (hasPosture && managerPosture !== null && !isManagerPosture(managerPosture)) {
+      return fail(
+        'update_project_delegation_defaults.managerPosture must be "delegation_first", "hands_on", or null',
+      );
+    }
+    if (
+      hasRoster
+      && delegationRosterId !== null
+      && (
+        typeof delegationRosterId !== "string"
+        || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(delegationRosterId.trim())
+      )
+    ) {
+      return fail(
+        "update_project_delegation_defaults.delegationRosterId must be a lowercase roster id or null",
+      );
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("update_project_delegation_defaults.requestId must be a string when provided");
+    }
+    return ok({
+      type: "update_project_delegation_defaults",
+      profileId: profileId.trim(),
+      ...(hasPosture ? { managerPosture: managerPosture as "delegation_first" | "hands_on" | null } : {}),
+      ...(hasRoster
+        ? {
+            delegationRosterId:
+              delegationRosterId === null ? null : (delegationRosterId as string).trim(),
+          }
+        : {}),
+      requestId,
+    });
+  }
+
   if (maybe.type === "update_profile_default_model") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const model = (maybe as { model?: unknown }).model;
@@ -327,4 +375,8 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
   }
 
   return undefined;
+}
+
+function isManagerPosture(value: unknown): value is "delegation_first" | "hands_on" {
+  return value === "delegation_first" || value === "hands_on";
 }

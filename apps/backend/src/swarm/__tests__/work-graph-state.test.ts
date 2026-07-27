@@ -1,6 +1,7 @@
 import type { WorkGraphNode, WorkGraphSnapshot } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import {
+  acceptWorkGraphNode,
   blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
@@ -10,9 +11,10 @@ import {
   projectWorkGraphPlan,
   recordWorkGraphDispatchFailure,
   recordWorkGraphWorkerResult,
+  recordWorkGraphWorkerModelReroute,
   recordWorkGraphWorkerStarted,
   recoverInterruptedWorkGraphDispatches,
-  resolveWorkGraphRoute,
+  resolveWorkGraphDispatch,
 } from '../planning/work-graph-state.js'
 
 const now = () => '2026-07-18T12:00:00.000Z'
@@ -23,19 +25,19 @@ describe('progressive work graph scenarios', () => {
       node('implement', 'Implement the focused change', { kind: 'implementation' }),
     ])
     expect(projectWorkGraphPlan(graph)).toEqual([
-      { step: 'Implement the focused change', status: 'pending' },
+      { id: 'implement', step: 'Implement the focused change', status: 'pending' },
     ])
     expect(graph).not.toHaveProperty('plan')
   })
 
-  it('2. dispatches one bounded implementation on routine policy', () => {
+  it('2. dispatches one bounded implementation through the automatic route', () => {
     const claimed = claim(graphOf([
       node('implement', 'Implement the focused change', { kind: 'implementation' }),
     ]))
     expect(claimed.claims).toMatchObject([{
       nodeId: 'implement',
       behaviorMode: 'general',
-      executionPolicy: 'routine',
+      requestedRoute: 'auto',
     }])
   })
 
@@ -48,32 +50,39 @@ describe('progressive work graph scenarios', () => {
     expect(claimed.graph.nodes.find((entry) => entry.id === 'verify')?.status).toBe('pending')
   })
 
-  it('4. fans independent research leaves out on support policy', () => {
+  it('4. fans independent research leaves out without forcing an executor tier', () => {
     const claimed = claim(graphOf([
       node('docs', 'Inspect primary documentation', { kind: 'research' }),
       node('runtime', 'Inspect runtime behavior', { kind: 'research' }),
       node('history', 'Inspect sanitized history evidence', { kind: 'research' }),
     ]))
     expect(claimed.claims).toHaveLength(3)
-    expect(new Set(claimed.claims.map((entry) => entry.executionPolicy))).toEqual(new Set(['support']))
+    expect(new Set(claimed.claims.map((entry) => entry.requestedRoute))).toEqual(new Set(['auto']))
+    expect(claimed.claims.every((entry) => entry.legacyExecutionPolicy === undefined)).toBe(true)
   })
 
-  it('5. uses routine rather than deep for ordinary correctness review', () => {
-    expect(resolveWorkGraphRoute(node('review', 'Review the patch', {
+  it('5. maps planning and review kinds to behavior while leaving model routing automatic', () => {
+    expect(resolveWorkGraphDispatch(node('review', 'Review the patch', {
       kind: 'review',
-    }))).toEqual({ behaviorMode: 'correctness-review', executionPolicy: 'routine' })
+    }))).toEqual({ behaviorMode: 'correctness-review', requestedRoute: 'auto' })
+    expect(resolveWorkGraphDispatch(node('design', 'Review the design', {
+      kind: 'design-review',
+    }))).toEqual({ behaviorMode: 'design-review', requestedRoute: 'auto' })
+    expect(resolveWorkGraphDispatch(node('plan', 'Plan the change', {
+      kind: 'plan',
+    }))).toEqual({ behaviorMode: 'plan', requestedRoute: 'auto' })
   })
 
-  it('6. keeps topology-only synthesis routine and honors explicit deep risk', () => {
-    expect(resolveWorkGraphRoute(node('synthesize', 'Synthesize findings', {
+  it('6. leaves topology-only synthesis automatic and honors an explicit named route', () => {
+    expect(resolveWorkGraphDispatch(node('synthesize', 'Synthesize findings', {
       kind: 'synthesis',
       dependsOn: ['one', 'two', 'three'],
-    }))).toEqual({ behaviorMode: 'general', executionPolicy: 'routine' })
-    expect(resolveWorkGraphRoute(node('high-risk', 'Resolve high-risk synthesis', {
+    }))).toEqual({ behaviorMode: 'general', requestedRoute: 'auto' })
+    expect(resolveWorkGraphDispatch(node('high-risk', 'Resolve high-risk synthesis', {
       kind: 'synthesis',
       dependsOn: ['one', 'two', 'three'],
-      effort: 'deep',
-    })).executionPolicy).toBe('deep')
+      route: 'deep-reasoner',
+    })).requestedRoute).toBe('deep-reasoner')
   })
 
   it('7. moves successful workers to manager acceptance before releasing dependents', () => {
@@ -91,14 +100,49 @@ describe('progressive work graph scenarios', () => {
     expect(settled.graph.nodes[0]?.status).toBe('awaiting_review')
     expect(claim(settled.graph).claims).toEqual([])
 
-    const accepted = normalizeWorkGraphInput({ nodes: [
-      inputNode(settled.graph.nodes[0]!, 'completed'),
-      inputNode(settled.graph.nodes[1]!, 'pending'),
-    ] }, settled.graph)
-    const dependentClaim = claim(accepted).claims[0]
+    const accepted = acceptWorkGraphNode(settled.graph, 'research')
+    const dependentClaim = claim(accepted.graph).claims[0]
     expect(dependentClaim?.nodeId).toBe('synthesis')
     expect(dependentClaim?.dependencyContext).toContain('[research: Research behavior]')
     expect(dependentClaim?.dependencyContext).toContain('summary: Evidence.')
+  })
+
+  it('accepts only awaiting-review nodes and treats repeated acceptance as a no-op', () => {
+    const initial = claim(graphOf([
+      node('research', 'Research behavior', { kind: 'research' }),
+      node('synthesis', 'Synthesize answer', {
+        kind: 'synthesis',
+        dependsOn: ['research'],
+      }),
+    ]))
+    const started = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'research',
+      initial.claims[0]!.attemptId,
+      'research-worker',
+    )
+    const settled = recordWorkGraphWorkerResult(
+      started,
+      'research-worker',
+      'status: done\nsummary: Evidence.',
+      now,
+    )
+
+    expect(() => acceptWorkGraphNode(settled.graph, 'synthesis'))
+      .toThrow('expected awaiting_review')
+    expect(() => acceptWorkGraphNode(settled.graph, 'missing'))
+      .toThrow('node not found')
+
+    const accepted = acceptWorkGraphNode(settled.graph, 'research')
+    expect(accepted.alreadyAccepted).toBe(false)
+    expect(accepted.graph.nodes).toMatchObject([
+      { id: 'research', status: 'completed', attempts: [{ status: 'succeeded' }] },
+      { id: 'synthesis', status: 'pending' },
+    ])
+    expect(acceptWorkGraphNode(accepted.graph, 'research')).toEqual({
+      graph: accepted.graph,
+      alreadyAccepted: true,
+    })
   })
 
   it('bounds accepted dependency result handoff for downstream workers', () => {
@@ -195,10 +239,17 @@ describe('progressive work graph scenarios', () => {
     }] }, running)).not.toThrow()
   })
 
-  it('8. retries a blocked node with automatic deep escalation', () => {
+  it('8. retries a blocked node through the route capability-escalation target', () => {
     const initial = claim(graphOf([node('hard', 'Resolve the hard abstraction')]))
-    const failed = recordWorkGraphDispatchFailure(
+    const started = recordWorkGraphWorkerStarted(
       initial.graph,
+      'hard',
+      initial.claims[0]!.attemptId,
+      'hard-worker',
+      { capabilityEscalationRouteId: 'deep-reasoner' },
+    )
+    const failed = recordWorkGraphDispatchFailure(
+      started,
       'hard',
       initial.claims[0]!.attemptId,
       new Error('first approach failed'),
@@ -206,8 +257,135 @@ describe('progressive work graph scenarios', () => {
     )
     const retry = normalizeWorkGraphInput({ nodes: [inputNode(failed.nodes[0]!, 'pending')] }, failed)
     const retried = claim(retry)
-    expect(retried.claims[0]).toMatchObject({ nodeId: 'hard', executionPolicy: 'deep' })
+    expect(retried.claims[0]).toMatchObject({
+      nodeId: 'hard',
+      requestedRoute: 'deep-reasoner',
+    })
+    expect(retried.graph.nodes[0]?.route).toBe('auto')
     expect(retried.graph.nodes[0]?.attempts).toHaveLength(2)
+    expect(() => normalizeWorkGraphInput({
+      nodes: [inputNode(retried.graph.nodes[0]!, 'running')],
+    }, retried.graph)).not.toThrow()
+  })
+
+  it('keeps an escalated route on later retries instead of dropping to the original route', () => {
+    const initial = claim(graphOf([node('hard', 'Resolve the hard abstraction')]))
+    const firstStarted = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'hard',
+      initial.claims[0]!.attemptId,
+      'first-worker',
+      { capabilityEscalationRouteId: 'deep-reasoner' },
+    )
+    const firstFailed = recordWorkGraphDispatchFailure(
+      firstStarted,
+      'hard',
+      initial.claims[0]!.attemptId,
+      new Error('first approach failed'),
+      now,
+    )
+    const firstRetry = claim(normalizeWorkGraphInput({
+      nodes: [inputNode(firstFailed.nodes[0]!, 'pending')],
+    }, firstFailed))
+    const secondStarted = recordWorkGraphWorkerStarted(
+      firstRetry.graph,
+      'hard',
+      firstRetry.claims[0]!.attemptId,
+      'second-worker',
+    )
+    const secondFailed = recordWorkGraphDispatchFailure(
+      secondStarted,
+      'hard',
+      firstRetry.claims[0]!.attemptId,
+      new Error('escalated approach failed'),
+      now,
+    )
+    const secondRetry = claim(normalizeWorkGraphInput({
+      nodes: [inputNode(secondFailed.nodes[0]!, 'pending')],
+    }, secondFailed))
+
+    expect(secondRetry.claims[0]?.requestedRoute).toBe('deep-reasoner')
+  })
+
+  it('preserves the legacy deep retry for a blocked pre-roster graph attempt', () => {
+    const legacyNode = node('legacy', 'Retry legacy work', {
+      effort: 'auto',
+      status: 'blocked',
+      route: undefined,
+      attempts: [{
+        id: 'legacy-attempt',
+        number: 1,
+        status: 'blocked',
+        startedAt: now(),
+        completedAt: now(),
+        behaviorMode: 'general',
+        executionPolicy: 'routine',
+      }],
+    })
+
+    expect(resolveWorkGraphDispatch(legacyNode)).toEqual({
+      behaviorMode: 'general',
+      requestedRoute: 'auto',
+      legacyExecutionPolicy: 'deep',
+    })
+  })
+
+  it('updates the active graph attempt when runtime availability fallback reroutes its model', () => {
+    const initial = claim(graphOf([node('runtime', 'Run the implementation')]))
+    const started = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'runtime',
+      initial.claims[0]!.attemptId,
+      'runtime-worker',
+      {
+        model: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.6-terra',
+          thinkingLevel: 'medium',
+        },
+      },
+    )
+    const rerouted = recordWorkGraphWorkerModelReroute(
+      started,
+      'runtime-worker',
+      {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-20250514',
+        thinkingLevel: 'high',
+      },
+    )
+
+    expect(rerouted.nodes[0]?.attempts[0]?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-20250514',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('honors an explicit route revision after a blocked attempt', () => {
+    const initial = claim(graphOf([node('hard', 'Resolve the hard abstraction')]))
+    const started = recordWorkGraphWorkerStarted(
+      initial.graph,
+      'hard',
+      initial.claims[0]!.attemptId,
+      'hard-worker',
+      { capabilityEscalationRouteId: 'deep-reasoner' },
+    )
+    const failed = recordWorkGraphDispatchFailure(
+      started,
+      'hard',
+      initial.claims[0]!.attemptId,
+      new Error('first approach failed'),
+      now,
+    )
+    const revised = normalizeWorkGraphInput({
+      nodes: [{
+        ...inputNode(failed.nodes[0]!, 'pending'),
+        route: 'independent-critic',
+      }],
+    }, failed)
+
+    expect(claim(revised).claims[0]?.requestedRoute).toBe('independent-critic')
   })
 
   it('9. identifies running workers cancelled by user steering', () => {
@@ -330,7 +508,7 @@ describe('progressive work graph scenarios', () => {
     })
   })
 
-  it('13. models the conversation-derived logic-app review as cheap breadth plus one synthesis', () => {
+  it('13. models the conversation-derived logic-app review as automatic breadth plus synthesis', () => {
     const researchNodes = Array.from({ length: 9 }, (_, index) => node(
       `logic_app_${index + 1}`,
       `Inspect logic app ${index + 1}`,
@@ -345,11 +523,11 @@ describe('progressive work graph scenarios', () => {
     ])
     const first = claim({ ...graph, maxConcurrency: 8 })
     expect(first.claims).toHaveLength(8)
-    expect(first.claims.every((entry) => entry.executionPolicy === 'support')).toBe(true)
-    expect(resolveWorkGraphRoute(graph.nodes.at(-1)!).executionPolicy).toBe('routine')
+    expect(first.claims.every((entry) => entry.requestedRoute === 'auto')).toBe(true)
+    expect(resolveWorkGraphDispatch(graph.nodes.at(-1)!).requestedRoute).toBe('auto')
   })
 
-  it('14. models the specialist redesign with mixed routing rather than all-deep workers', () => {
+  it('14. lets the active roster route ordinary work and pins only justified synthesis', () => {
     const graph = graphOf([
       node('history', 'Inspect delegation history', { kind: 'research' }),
       node('runtime', 'Design runtime mechanics', { kind: 'implementation' }),
@@ -358,15 +536,15 @@ describe('progressive work graph scenarios', () => {
       node('converge', 'Converge on the redesign', {
         kind: 'synthesis',
         dependsOn: ['history', 'runtime', 'ui', 'review'],
-        effort: 'deep',
+        route: 'deep-reasoner',
       }),
     ])
-    expect(graph.nodes.map((entry) => resolveWorkGraphRoute(entry).executionPolicy)).toEqual([
-      'support',
-      'routine',
-      'routine',
-      'routine',
-      'deep',
+    expect(graph.nodes.map((entry) => resolveWorkGraphDispatch(entry).requestedRoute)).toEqual([
+      'auto',
+      'auto',
+      'auto',
+      'auto',
+      'deep-reasoner',
     ])
   })
 
@@ -394,7 +572,7 @@ function node(
     kind: 'task',
     status: 'pending',
     dependsOn: [],
-    effort: 'auto',
+    route: 'auto',
     attempts: [],
     ...overrides,
   }
@@ -418,6 +596,7 @@ function inputNode(node: WorkGraphNode, status: WorkGraphNode['status']) {
     status,
     dependsOn: node.dependsOn,
     acceptanceCriteria: node.acceptanceCriteria,
-    effort: node.effort,
+    route: node.route,
+    ...(node.effort ? { effort: node.effort } : {}),
   }
 }

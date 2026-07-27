@@ -45,6 +45,23 @@ describe('Codex-style session plans', () => {
     })
   })
 
+  it('normalizes stable ids and rejects duplicate or malformed ids', () => {
+    expect(normalizeSessionPlanInput({
+      plan: [{ id: ' inspect_step ', step: 'Inspect', status: 'in_progress' }],
+    })).toEqual({
+      plan: [{ id: 'inspect_step', step: 'Inspect', status: 'in_progress' }],
+    })
+    expect(() => normalizeSessionPlanInput({
+      plan: [
+        { id: 'same', step: 'First', status: 'pending' },
+        { id: 'same', step: 'Second', status: 'pending' },
+      ],
+    })).toThrow('plan step ids must be unique')
+    expect(() => normalizeSessionPlanInput({
+      plan: [{ id: 'Not Valid', step: 'Inspect', status: 'pending' }],
+    })).toThrow('must use lowercase letters')
+  })
+
   it('creates a summary only when a completed snapshot is actually replaced', () => {
     const completed = {
       schemaVersion: 1 as const,

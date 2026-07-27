@@ -4,7 +4,10 @@ import type {
   ConversationAttachment,
   ConversationReplyTargetInput,
   ManagerExactModelSelection,
+  ManagerPosture,
+  ManagerPostureOrigin,
   ManagerReasoningLevel,
+  DelegationRosterOrigin,
   SessionModelUpdateMode,
 } from '@forge/protocol'
 import type { RefObject } from 'react'
@@ -37,6 +40,34 @@ export interface SessionModelPickerConfig {
   ) => void | Promise<void>
 }
 
+export interface SessionCoordinationPickerConfig {
+  originId: string
+  httpClientRef: RefObject<SettingsApiClient | null>
+  sessionAgentId: string
+  profileId: string
+  managerPosture: ManagerPosture
+  managerPostureOrigin?: ManagerPostureOrigin
+  projectDefaultManagerPosture?: ManagerPosture
+  delegationRosterId?: string
+  delegationRosterOrigin?: DelegationRosterOrigin
+  projectDefaultDelegationRosterId?: string
+  disabled?: boolean
+  onUpdateProjectDefaults: (
+    profileId: string,
+    updates: {
+      managerPosture?: ManagerPosture | null
+      delegationRosterId?: string | null
+    },
+  ) => void | Promise<void>
+  onUpdateSession: (
+    sessionAgentId: string,
+    updates: {
+      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: ManagerPosture }
+      delegationRoster?: { mode: 'inherit' } | { mode: 'override'; rosterId: string }
+    },
+  ) => void | Promise<void>
+}
+
 export interface MessageInputProps {
   onSend: (message: string, attachments?: ConversationAttachment[], options?: MessageInputSendOptions) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
@@ -59,6 +90,8 @@ export interface MessageInputProps {
   onClearReplyTarget?: () => void
   /** Builder manager sessions only: compact access to the existing session model override flow. */
   sessionModelPicker?: SessionModelPickerConfig
+  /** Builder manager sessions only: manager posture and delegation roster controls. */
+  sessionCoordinationPicker?: SessionCoordinationPickerConfig
   /** Builder-local Secure Session controls. Transport and secret values stay outside the composer. */
   secureSessionPicker?: SecureSessionPickerConfig
 }

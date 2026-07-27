@@ -6,6 +6,8 @@ import {
   type CliSessionMetadata,
   type ConversationMessageSource,
   type ConversationTimelineEntryMetadata,
+  type DelegationBehaviorMode,
+  type DelegationRosterOrigin,
   type AgentModelOrigin,
   type AgentSessionSurface,
   type ChoiceRequestEvent,
@@ -13,6 +15,8 @@ import {
   type ConversationReplyTarget,
   type PersistedMessageChannel as ProtocolPersistedMessageChannel,
   type ManagerProfile,
+  type ManagerPosture,
+  type ManagerPostureOrigin,
   type ExternalThreadInfo,
   type ExternalThreadMessageContext,
   type ProjectAgentInfo,
@@ -28,7 +32,17 @@ export type AgentRole = "manager" | "worker";
 export type AgentArchetypeId = string;
 
 export type { AgentStatus };
-export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, CliSessionMetadata, ManagerProfile };
+export type {
+  AgentCollaborationLink,
+  AgentModelOrigin,
+  AgentSessionSurface,
+  CliSessionMetadata,
+  DelegationBehaviorMode,
+  DelegationRosterOrigin,
+  ManagerPosture,
+  ManagerPostureOrigin,
+  ManagerProfile,
+};
 export type { ExternalThreadInfo, ExternalThreadMessageContext, ProjectAgentMessageContext };
 export type { PlanSummaryEvent } from "@forge/protocol";
 export {
@@ -81,6 +95,10 @@ export interface AgentDescriptor {
   cwd: string;
   model: AgentModelDescriptor;
   modelOrigin?: AgentModelOrigin;
+  managerPosture?: ManagerPosture;
+  managerPostureOrigin?: ManagerPostureOrigin;
+  delegationRosterId?: string;
+  delegationRosterOrigin?: DelegationRosterOrigin;
   sessionFile: string;
   contextUsage?: AgentContextUsage;
   profileId?: string;
@@ -104,6 +122,13 @@ export interface AgentDescriptor {
   specialistLens?: string;
   specialistDisplayName?: string;
   specialistColor?: string;
+  delegationRouteId?: string;
+  delegationRouteLabel?: string;
+  delegationRosterRevision?: number;
+  /** Captured availability fallback for this worker attempt. Not exposed publicly. */
+  delegationFallbackModel?: AgentModelDescriptor;
+  /** Captured capability-escalation target for graph retry routing. */
+  delegationCapabilityEscalationRouteId?: string;
   internalWorkerKind?: InternalWorkerKind;
   /**
    * Private persisted ownership for the worker's current assignment. This is
@@ -183,6 +208,8 @@ export interface SpawnAgentInput {
   specialist?: string;
   tier?: EffortTier;
   lens?: string;
+  behaviorMode?: DelegationBehaviorMode;
+  route?: string;
   /** Internal marker set by the manager-facing mode/policy adapter. */
   policyControlledModel?: boolean;
   /**

@@ -29,7 +29,7 @@ export function PlanView({ snapshot, compact = false }: PlanViewProps) {
       ) : null}
       <ol className="space-y-1.5" aria-label="Working plan steps">
         {snapshot.plan.map((item, index) => (
-          <li key={`${index}:${item.step}`} className="flex items-start gap-2 text-sm">
+          <li key={item.id ?? `${index}:${item.step}`} className="flex items-start gap-2 text-sm">
             {item.status === 'completed' ? (
               <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" aria-label="Completed" />
             ) : item.status === 'in_progress' ? (

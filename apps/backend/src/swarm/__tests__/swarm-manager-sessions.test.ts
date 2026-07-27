@@ -2397,10 +2397,11 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.updatePlan('manager', 'plan-context-1', {
+    const updatedPlan = await manager.updatePlan('manager', 'plan-context-1', {
       explanation: 'Implementation is ready for validation.',
       plan: [{ step: 'Run validation', status: 'in_progress' }],
     })
+    const stepId = updatedPlan.plan[0]?.id
     await manager.handleUserMessage('continue after recovery', { targetAgentId: 'manager' })
 
     const runtime = manager.runtimeByAgentId.get('manager')
@@ -2412,7 +2413,7 @@ Never use plain assistant text for user communication.`
     expect(JSON.parse(plannedContextLine!.slice('[workingPlan] '.length))).toEqual({
       revision: 1,
       explanation: 'Implementation is ready for validation.',
-      plan: [{ step: 'Run validation', status: 'in_progress' }],
+      plan: [{ id: stepId, step: 'Run validation', status: 'in_progress' }],
     })
 
     await manager.compactAgentContext('manager')
@@ -2428,7 +2429,7 @@ Never use plain assistant text for user communication.`
       revision: 1,
       updatedAt: expect.any(String),
       explanation: 'Implementation is ready for validation.',
-      plan: [{ step: 'Run validation', status: 'in_progress' }],
+      plan: [{ id: stepId, step: 'Run validation', status: 'in_progress' }],
       planSummaryId: expect.any(String),
     })])
     await manager.handleUserMessage('start fresh', { targetAgentId: 'manager' })
@@ -2447,9 +2448,10 @@ Never use plain assistant text for user communication.`
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-    await manager.updatePlan('manager', 'plan-before-restart', {
+    const updatedPlan = await manager.updatePlan('manager', 'plan-before-restart', {
       plan: [{ step: 'Resume after restart', status: 'in_progress' }],
     })
+    const stepId = updatedPlan.plan[0]?.id
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
@@ -2459,7 +2461,7 @@ Never use plain assistant text for user communication.`
     const contextLine = runtimeText.split('\n').find((line) => line.startsWith('[workingPlan] '))
     expect(JSON.parse(contextLine!.slice('[workingPlan] '.length))).toEqual({
       revision: 1,
-      plan: [{ step: 'Resume after restart', status: 'in_progress' }],
+      plan: [{ id: stepId, step: 'Resume after restart', status: 'in_progress' }],
     })
   })
 

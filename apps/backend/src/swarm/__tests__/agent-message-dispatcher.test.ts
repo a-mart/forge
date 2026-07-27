@@ -122,6 +122,9 @@ function createHarness() {
   let secureRuntimeAvailable = true;
   let secureAssignmentAdvanceHook: (() => void) | undefined;
   let secureAssignmentAdvanceError: Error | undefined;
+  const planAppend = vi.fn(async (_owner: AgentDescriptor, text: string) => text);
+  const goalAppend = vi.fn(async (_owner: AgentDescriptor, text: string) => text);
+  const delegationAppend = vi.fn(async (_owner: AgentDescriptor, text: string) => text);
   let activeParent: ReturnType<
     AgentMessageDispatcherOptions<TestGate>["turns"]["getActiveWorkerParentContext"]
   > = {
@@ -199,11 +202,14 @@ function createHarness() {
     },
     plans: {
       resolveAssignment: async () => ({ planRunId: "plan-1", stepKey: "step-1", step: "Step" }),
-      appendToManagerInput: async (_owner, text) => text,
+      appendToManagerInput: planAppend,
       recordWorkerAssignment: async () => undefined,
     },
     goals: {
-      appendToManagerInput: async (_owner, text) => text,
+      appendToManagerInput: goalAppend,
+    },
+    delegation: {
+      appendToManagerInput: delegationAppend,
     },
     projectAgents: {
       authorizeExternalDelivery: async () => null,
@@ -291,6 +297,9 @@ function createHarness() {
     agentMessages,
     observability,
     debugLogs,
+    delegationAppend,
+    planAppend,
+    goalAppend,
     secureWorkerCalls,
     setActiveParent: (value: typeof activeParent) => { activeParent = value; },
     setRuntimeError: (value: Error | undefined) => { runtimeError = value; },
@@ -313,6 +322,48 @@ function createHarness() {
 }
 
 describe("AgentMessageDispatcher worker assignments and results", () => {
+  it("adds the active delegation roster to manager-bound user input", async () => {
+    const harness = createHarness();
+    harness.delegationAppend.mockImplementationOnce(
+      async (_owner, text) => `${text}\n\n[delegationRoster] {"id":"balanced"}`,
+    );
+
+    const runtimeInput = await harness.dispatcher.prepareModelInboundMessage(
+      "manager-1",
+      { text: "Start the work", attachments: [] },
+      "user",
+    );
+
+    expect(runtimeInput).toContain('[delegationRoster] {"id":"balanced"}');
+    expect(harness.delegationAppend).toHaveBeenCalledWith(
+      harness.manager,
+      "Start the work",
+    );
+  });
+
+  it("adds roster context to Collaboration managers without adding Builder plan state", async () => {
+    const harness = createHarness();
+    harness.manager.sessionSurface = "collab";
+    harness.manager.collab = { workspaceId: "workspace-1", channelId: "channel-1" };
+    harness.delegationAppend.mockImplementationOnce(
+      async (_owner, text) => `${text}\n\n[delegationRoster] {"id":"balanced"}`,
+    );
+
+    const runtimeInput = await harness.dispatcher.prepareModelInboundMessage(
+      harness.manager.agentId,
+      { text: "Start the channel work", attachments: [] },
+      "user",
+    );
+
+    expect(runtimeInput).toContain('[delegationRoster] {"id":"balanced"}');
+    expect(harness.delegationAppend).toHaveBeenCalledWith(
+      harness.manager,
+      "Start the channel work",
+    );
+    expect(harness.goalAppend).not.toHaveBeenCalled();
+    expect(harness.planAppend).not.toHaveBeenCalled();
+  });
+
   it("persists a manager assignment with its parent route before starting the worker", async () => {
     const harness = createHarness();
 

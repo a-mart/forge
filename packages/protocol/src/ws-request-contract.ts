@@ -31,9 +31,11 @@ type ContractCommandType = Extract<
   | 'rename_session'
   | 'pin_session'
   | 'update_session_model'
+  | 'update_session_delegation'
   | 'fork_session'
   | 'merge_session_memory'
   | 'update_profile_default_model'
+  | 'update_project_delegation_defaults'
   | 'update_manager_model'
   | 'update_manager_cwd'
   | 'stop_all_agents'
@@ -86,9 +88,11 @@ type ContractSuccessEventType = Extract<
   | 'session_renamed'
   | 'session_pinned'
   | 'session_model_updated'
+  | 'session_delegation_updated'
   | 'session_forked'
   | 'session_memory_merged'
   | 'profile_default_model_updated'
+  | 'project_delegation_defaults_updated'
   | 'manager_model_updated'
   | 'manager_cwd_updated'
   | 'stop_all_agents_result'
@@ -279,6 +283,13 @@ export const WS_REQUEST_CONTRACTS = [
     errorCodeFragments: ['update_session_model'],
   },
   {
+    commandType: 'update_session_delegation',
+    resultFamily: 'session_delegation_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_delegation_updated'],
+    errorCodeFragments: ['update_session_delegation'],
+  },
+  {
     commandType: 'fork_session',
     resultFamily: 'session_fork',
     requestId: { ui: 'required', wire: 'optional' },
@@ -298,6 +309,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['profile_default_model_updated'],
     errorCodeFragments: ['update_profile_default_model'],
+  },
+  {
+    commandType: 'update_project_delegation_defaults',
+    resultFamily: 'project_delegation_defaults_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_delegation_defaults_updated'],
+    errorCodeFragments: ['update_project_delegation_defaults'],
   },
   {
     commandType: 'update_manager_model',

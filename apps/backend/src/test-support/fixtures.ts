@@ -9,6 +9,11 @@ export interface Deferred<T> {
   reject: (error: unknown) => void
 }
 
+export interface DelegationRosterRuntimeContext {
+  message: string
+  roster: Record<string, unknown>
+}
+
 const DEFAULT_TIMESTAMP = '2026-01-01T00:00:00.000Z'
 const DEFAULT_MODEL: AgentModelDescriptor = {
   provider: 'openai-codex',
@@ -25,6 +30,29 @@ export function createDeferred<T = void>(): Deferred<T> {
   })
 
   return { promise, resolve, reject }
+}
+
+export function splitDelegationRosterRuntimeContext(
+  input: string,
+): DelegationRosterRuntimeContext {
+  const marker = '\n\n[delegationRoster] '
+  const markerIndex = input.indexOf(marker)
+  if (markerIndex < 0) {
+    throw new Error('Expected manager runtime input to include a delegation roster context.')
+  }
+
+  const valueStart = markerIndex + marker.length
+  const lineEnd = input.indexOf('\n', valueStart)
+  const serialized = input.slice(valueStart, lineEnd < 0 ? input.length : lineEnd)
+  const parsed = JSON.parse(serialized) as unknown
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Expected delegation roster context to contain a JSON object.')
+  }
+
+  return {
+    message: `${input.slice(0, markerIndex)}${lineEnd < 0 ? '' : input.slice(lineEnd)}`,
+    roster: parsed as Record<string, unknown>,
+  }
 }
 
 export interface AgentDescriptorFixtureOptions extends Partial<AgentDescriptor> {

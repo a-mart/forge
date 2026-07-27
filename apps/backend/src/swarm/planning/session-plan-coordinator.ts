@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import {
   normalizePlanSummaryEntries,
+  type PlanStep,
   type PlanSummaryEvent,
   type SessionPlanSnapshotEvent,
   type WorkGraphSnapshot,
 } from '@forge/protocol'
-import type { AcceptedDeliveryMode } from '../types.js'
+import type { AcceptedDeliveryMode, AgentModelDescriptor } from '../types.js'
 import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
@@ -23,6 +24,7 @@ import {
 import { SessionPlanStore } from './session-plan-store.js'
 import type { UpdatePlanInput, UpdatePlanResult } from './update-plan-tool.js'
 import {
+  acceptWorkGraphNode,
   blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
@@ -30,6 +32,7 @@ import {
   projectWorkGraphPlan,
   recordWorkGraphDispatchFailure,
   recordWorkGraphWorkerResult,
+  recordWorkGraphWorkerModelReroute,
   recordWorkGraphWorkerStarted,
   recoverInterruptedWorkGraphDispatches,
   type UpdateWorkGraphInput,
@@ -49,6 +52,12 @@ export interface SessionPlanUpdateReceipt {
 export interface WorkGraphUpdateReceipt {
   input: UpdateWorkGraphInput
   cancelledWorkerIds: string[]
+  snapshot: SessionPlanSnapshotEvent
+}
+
+export interface WorkGraphNodeAcceptanceReceipt {
+  nodeId: string
+  alreadyAccepted: boolean
   snapshot: SessionPlanSnapshotEvent
 }
 
@@ -83,9 +92,14 @@ export class SessionPlanCoordinator {
   ): Promise<SessionPlanUpdateReceipt> {
     return this.withMutationLock(owner, async () => {
       const normalized = normalizeSessionPlanInput(input)
-      const snapshot = await this.write(owner, normalized)
+      const current = await this.getState(owner)
+      const reconciled = {
+        ...normalized,
+        plan: reconcilePlanStepIds(normalized.plan, current.plan),
+      }
+      const snapshot = await this.write(owner, reconciled)
       const result = this.toUpdateResult(owner, snapshot)
-      return { input: normalized, result }
+      return { input: reconciled, result }
     })
   }
 
@@ -112,13 +126,44 @@ export class SessionPlanCoordinator {
           status: node.status,
           dependsOn: [...node.dependsOn],
           ...(node.acceptanceCriteria ? { acceptanceCriteria: node.acceptanceCriteria } : {}),
-          effort: node.effort,
+          route: node.route,
+          ...(node.effort ? { effort: node.effort } : {}),
         })),
       }
       const snapshot = await this.writeGraph(owner, explanation, workGraph)
       return {
         input: normalizedInput,
         cancelledWorkerIds,
+        snapshot: this.toSnapshotEvent(owner, snapshot),
+      }
+    })
+  }
+
+  async acceptWorkGraphNode(
+    owner: SessionPlanOwner,
+    nodeId: string,
+  ): Promise<WorkGraphNodeAcceptanceReceipt> {
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) {
+        throw new Error('The current working plan is not a work graph.')
+      }
+      const accepted = acceptWorkGraphNode(current.workGraph, nodeId)
+      if (accepted.alreadyAccepted) {
+        return {
+          nodeId,
+          alreadyAccepted: true,
+          snapshot: this.toSnapshotEvent(owner, current),
+        }
+      }
+      const snapshot = await this.writeGraph(
+        owner,
+        current.explanation,
+        accepted.graph,
+      )
+      return {
+        nodeId,
+        alreadyAccepted: false,
         snapshot: this.toSnapshotEvent(owner, snapshot),
       }
     })
@@ -140,6 +185,7 @@ export class SessionPlanCoordinator {
     nodeId: string,
     attemptId: string,
     workerId: string,
+    resolution: Parameters<typeof recordWorkGraphWorkerStarted>[4] = {},
   ): Promise<void> {
     await this.withMutationLock(owner, async () => {
       const current = await this.getState(owner)
@@ -147,8 +193,28 @@ export class SessionPlanCoordinator {
       await this.writeGraph(
         owner,
         current.explanation,
-        recordWorkGraphWorkerStarted(current.workGraph, nodeId, attemptId, workerId),
+        recordWorkGraphWorkerStarted(
+          current.workGraph,
+          nodeId,
+          attemptId,
+          workerId,
+          resolution,
+        ),
       )
+    })
+  }
+
+  async recordWorkGraphWorkerModelReroute(
+    owner: SessionPlanOwner,
+    workerId: string,
+    model: AgentModelDescriptor,
+  ): Promise<void> {
+    await this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return
+      const graph = recordWorkGraphWorkerModelReroute(current.workGraph, workerId, model)
+      if (graph === current.workGraph) return
+      await this.writeGraph(owner, current.explanation, graph)
     })
   }
 
@@ -507,4 +573,37 @@ function isEmptyState(state: SessionPlanState): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function reconcilePlanStepIds(
+  next: readonly PlanStep[],
+  current: readonly PlanStep[],
+): PlanStep[] {
+  const reusableByText = new Map<string, string>()
+  const ambiguousText = new Set<string>()
+  for (const step of current) {
+    if (!step.id) continue
+    if (reusableByText.has(step.step)) {
+      reusableByText.delete(step.step)
+      ambiguousText.add(step.step)
+    } else if (!ambiguousText.has(step.step)) {
+      reusableByText.set(step.step, step.id)
+    }
+  }
+
+  const used = new Set(next.flatMap((step) => step.id ? [step.id] : []))
+  return next.map((step) => {
+    if (step.id) return { ...step }
+    const reusable = reusableByText.get(step.step)
+    if (reusable && !used.has(reusable)) {
+      used.add(reusable)
+      return { ...step, id: reusable }
+    }
+    let id: string
+    do {
+      id = `step-${randomUUID()}`
+    } while (used.has(id))
+    used.add(id)
+    return { ...step, id }
+  })
 }

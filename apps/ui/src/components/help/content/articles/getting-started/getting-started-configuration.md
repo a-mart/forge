@@ -20,18 +20,18 @@ Each manager has a default model set during creation. To change it, open Setting
 - **Claude Opus** is stronger for complex reasoning and code review.
 - **GPT models** work well and offer an alternative when you want model diversity.
 
-Delegated workers can use different models than the manager. Configure Support, Routine, and Deep under **Settings → Delegation**.
+Delegated workers can use different models than the manager. Configure model-backed worker profiles and their automatic task mappings under **Settings → Delegation → Worker Rosters**.
 
-## Profile basics
+## Project basics
 
-A profile groups settings, memory, and resources for a manager. When you create a manager, a profile is created automatically.
+A project groups settings, memory, and resources for a manager.
 
-Profile settings include:
+Project settings include:
 
 - **System prompt** — base instructions for the manager. You can customize this or use the default.
 - **Skills** — browse and configure optional skill-backed capabilities such as Brave search, image generation, and the separate `agent-browser` CLI workflow. The Automatic Browser is local to Forge Desktop, not a Skill; optional Chrome setup lives under **Use Chrome with Forge**.
-- **Delegation** — worker execution policies, behavior-mode prompts, and custom specialists.
-- **Memory** — canonical profile and session memory. This is distinct from profile-scoped Knowledge v2 entries.
+- **Delegation** — work mode, worker rosters, behavior-mode prompts, and custom specialists.
+- **Memory** — canonical project and session memory. This is distinct from project-scoped Knowledge v2 entries.
 
 Most of these work well with defaults. Adjust them as you learn what your workflow needs.
 

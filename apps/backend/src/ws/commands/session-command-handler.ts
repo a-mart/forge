@@ -54,6 +54,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "rename_session" &&
     command.type !== "pin_session" &&
     command.type !== "update_session_model" &&
+    command.type !== "update_session_delegation" &&
     command.type !== "set_session_project_agent" &&
     command.type !== "get_project_agent_config" &&
     command.type !== "list_project_agent_references" &&
@@ -443,6 +444,50 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       });
     }
 
+    return true;
+  }
+
+  if (command.type === "update_session_delegation") {
+    try {
+      requireNonSystemSessionProfile(
+        command.sessionAgentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+      await swarmManager.updateSessionDelegation(command.sessionAgentId, {
+        ...(command.managerPosture
+          ? { managerPosture: command.managerPosture }
+          : {}),
+        ...(command.delegationRoster
+          ? { delegationRoster: command.delegationRoster }
+          : {}),
+      });
+      const session = swarmManager.getAgent(command.sessionAgentId);
+      if (
+        !session?.managerPosture
+        || !session.managerPostureOrigin
+        || !session.delegationRosterId
+        || !session.delegationRosterOrigin
+      ) {
+        throw new Error("Session delegation state was not persisted.");
+      }
+      send(socket, {
+        type: "session_delegation_updated",
+        sessionAgentId: command.sessionAgentId,
+        managerPosture: session.managerPosture,
+        managerPostureOrigin: session.managerPostureOrigin,
+        delegationRosterId: session.delegationRosterId,
+        delegationRosterOrigin: session.delegationRosterOrigin,
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_SESSION_DELEGATION_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId,
+      });
+    }
     return true;
   }
 

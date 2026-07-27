@@ -1,4 +1,5 @@
 export * from './agents.js'
+export * from './delegation.js'
 export * from './specialists.js'
 export * from './prompts.js'
 export * from './memory.js'

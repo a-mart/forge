@@ -177,6 +177,13 @@ export interface AgentMessageGoalPort {
   ): Promise<string>;
 }
 
+export interface AgentMessageDelegationPort {
+  appendToManagerInput(
+    owner: AgentDescriptor & { role: "manager"; profileId: string },
+    text: string,
+  ): Promise<string>;
+}
+
 export interface AgentMessageProjectAgentPort {
   authorizeExternalDelivery(input: {
     senderAgentId: string;
@@ -223,6 +230,7 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
   observability: AgentMessageObservabilityPort;
   plans: AgentMessagePlanPort;
   goals: AgentMessageGoalPort;
+  delegation: AgentMessageDelegationPort;
   projectAgents: AgentMessageProjectAgentPort;
   codex: AgentMessageCodexPort<TCodexGate>;
   secureWorkers: SecureWorkerLifecyclePort;
@@ -1104,12 +1112,15 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
   private async appendCoordinationContext(target: AgentDescriptor, text: string): Promise<string> {
     if (
       !isSessionAgentDescriptor(target) ||
-      target.sessionSurface === "collab" ||
       normalizeArchetypeId(target.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
     ) {
       return text;
     }
-    const withGoal = await this.options.goals.appendToManagerInput(target, text);
+    const withRoster = await this.options.delegation.appendToManagerInput(target, text);
+    if (target.sessionSurface === "collab") {
+      return withRoster;
+    }
+    const withGoal = await this.options.goals.appendToManagerInput(target, withRoster);
     return this.options.plans.appendToManagerInput(target, withGoal);
   }
 

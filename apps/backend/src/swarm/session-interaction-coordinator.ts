@@ -6,9 +6,17 @@ import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-
 import { CODEX_PLUGIN_SPECIALIST_ID } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
+import {
+  normalizeAcceptWorkGraphNodeInput,
+  type AcceptWorkGraphNodeInput,
+  type AcceptWorkGraphNodeResult,
+} from "./planning/accept-work-graph-node-tool.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
 import type { UpdateWorkGraphResult } from "./planning/update-work-graph-tool.js";
-import type { UpdateWorkGraphInput, WorkGraphDispatchClaim } from "./planning/work-graph-state.js";
+import type {
+  UpdateWorkGraphInput,
+  WorkGraphDispatchClaim,
+} from "./planning/work-graph-state.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import { resolveManagerDelegation } from "./specialists/delegation-policy.js";
 import { normalizeSpecialistHandle } from "./specialists/specialist-registry.js";
@@ -81,6 +89,7 @@ export interface SessionInteractionCoordinatorOptions {
   >;
   plans: Pick<
     SessionPlanCoordinator,
+    | "acceptWorkGraphNode"
     | "claimReadyWorkGraphNodes"
     | "getSnapshot"
     | "preload"
@@ -196,6 +205,74 @@ export class SessionInteractionCoordinator {
       });
     }
 
+    const result = await this.dispatchReadyWorkGraphNodes(
+      callerAgentId,
+      descriptor,
+      updated.cancelledWorkerIds,
+    );
+    this.options.recordToolSideEffect(callerAgentId, {
+      toolName: "update_work_graph",
+      toolCallId,
+      phase: "side_effect",
+      input: updated.input,
+      output: result,
+      metadata: {
+        revision: result.revision,
+        nodeCount: result.workGraph?.nodes.length ?? 0,
+        dispatchedCount: result.dispatched.length,
+        dispatchFailureCount: result.dispatchFailures.length,
+      },
+    });
+    return result;
+  }
+
+  async acceptWorkGraphNode(
+    callerAgentId: string,
+    toolCallId: string,
+    rawInput: AcceptWorkGraphNodeInput,
+  ): Promise<AcceptWorkGraphNodeResult> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(
+      callerAgentId,
+      "accept_work_graph_node",
+    );
+    const descriptor = this.getPlanOwner(callerAgentId, "accept_work_graph_node");
+    const input = normalizeAcceptWorkGraphNodeInput(rawInput);
+    const accepted = await this.options.plans.acceptWorkGraphNode(
+      descriptor,
+      input.nodeId,
+    );
+    const graphResult = await this.dispatchReadyWorkGraphNodes(
+      callerAgentId,
+      descriptor,
+      [],
+    );
+    const result: AcceptWorkGraphNodeResult = {
+      ...graphResult,
+      acceptedNodeId: accepted.nodeId,
+      alreadyAccepted: accepted.alreadyAccepted,
+    };
+    this.options.recordToolSideEffect(callerAgentId, {
+      toolName: "accept_work_graph_node",
+      toolCallId,
+      phase: "side_effect",
+      input,
+      output: result,
+      metadata: {
+        revision: result.revision,
+        acceptedNodeId: result.acceptedNodeId,
+        alreadyAccepted: result.alreadyAccepted,
+        dispatchedCount: result.dispatched.length,
+        dispatchFailureCount: result.dispatchFailures.length,
+      },
+    });
+    return result;
+  }
+
+  private async dispatchReadyWorkGraphNodes(
+    callerAgentId: string,
+    descriptor: SessionOwner,
+    cancelledWorkerIds: string[],
+  ): Promise<UpdateWorkGraphResult> {
     const claims = await this.options.plans.claimReadyWorkGraphNodes(descriptor);
     const dispatched: UpdateWorkGraphResult["dispatched"] = [];
     const dispatchFailures: UpdateWorkGraphResult["dispatchFailures"] = [];
@@ -203,16 +280,41 @@ export class SessionInteractionCoordinator {
       try {
         const delegation = resolveGraphDispatch(claim, descriptor.cwd);
         const spawned = await this.spawnAgent(callerAgentId, delegation);
+        const internalWorker = this.options.descriptors.get(spawned.agentId) ?? spawned;
         await this.options.plans.recordWorkGraphWorkerStarted(
           descriptor,
           claim.nodeId,
           claim.attemptId,
           spawned.agentId,
+          {
+            ...(internalWorker.delegationRouteId
+              ? { resolvedRouteId: internalWorker.delegationRouteId }
+              : {}),
+            ...(internalWorker.delegationRouteLabel
+              ? { resolvedRouteLabel: internalWorker.delegationRouteLabel }
+              : {}),
+            ...(internalWorker.delegationRosterId
+              ? { rosterId: internalWorker.delegationRosterId }
+              : {}),
+            ...(internalWorker.delegationRosterRevision
+              ? { rosterRevision: internalWorker.delegationRosterRevision }
+              : {}),
+            model: { ...internalWorker.model },
+            ...(internalWorker.delegationCapabilityEscalationRouteId
+              ? {
+                  capabilityEscalationRouteId:
+                    internalWorker.delegationCapabilityEscalationRouteId,
+                }
+              : {}),
+          },
         );
         dispatched.push({
           nodeId: claim.nodeId,
           workerId: spawned.agentId,
-          executionPolicy: claim.executionPolicy,
+          requestedRoute: claim.requestedRoute,
+          ...(spawned.delegationRouteId
+            ? { resolvedRouteId: spawned.delegationRouteId }
+            : {}),
         });
       } catch (error) {
         await this.options.plans.recordWorkGraphDispatchFailure(
@@ -226,7 +328,7 @@ export class SessionInteractionCoordinator {
     }
 
     const snapshot = await this.options.plans.getSnapshot(descriptor);
-    const result: UpdateWorkGraphResult = {
+    return {
       sessionAgentId: descriptor.agentId,
       revision: snapshot.revision,
       updatedAt: snapshot.updatedAt,
@@ -236,22 +338,8 @@ export class SessionInteractionCoordinator {
       ...(snapshot.workGraph ? { workGraph: snapshot.workGraph } : {}),
       dispatched,
       dispatchFailures,
-      cancelledWorkerIds: updated.cancelledWorkerIds,
+      cancelledWorkerIds,
     };
-    this.options.recordToolSideEffect(callerAgentId, {
-      toolName: "update_work_graph",
-      toolCallId,
-      phase: "side_effect",
-      input: updated.input,
-      output: result,
-      metadata: {
-        revision: result.revision,
-        nodeCount: result.workGraph?.nodes.length ?? 0,
-        dispatchedCount: dispatched.length,
-        dispatchFailureCount: dispatchFailures.length,
-      },
-    });
-    return result;
   }
 
   async resolvePlanStepAssignment(
@@ -473,7 +561,8 @@ export class SessionInteractionCoordinator {
       | "speak_to_user"
       | "present_choices"
       | "update_plan"
-      | "update_work_graph",
+      | "update_work_graph"
+      | "accept_work_graph_node",
   ): void {
     const context = this.options.turns.getActiveExternalProjectAgentTurn(callerAgentId);
     if (!context) return;
@@ -485,7 +574,11 @@ export class SessionInteractionCoordinator {
 
   private getPlanOwner(
     callerAgentId: string,
-    operation: "update_plan" | "update_work_graph" | "planStep",
+    operation:
+      | "update_plan"
+      | "update_work_graph"
+      | "accept_work_graph_node"
+      | "planStep",
   ): SessionOwner {
     const descriptor = this.options.descriptors.get(callerAgentId);
     const operationLabel = operation === "planStep" ? "planStep" : operation;
@@ -571,8 +664,11 @@ function resolveGraphDispatch(claim: WorkGraphDispatchClaim, cwd: string): Spawn
       acceptance,
     ].filter(Boolean).join("\n\n"),
     mode: claim.behaviorMode,
-    executionPolicy: claim.executionPolicy,
-    planStep: claim.title,
+    route: claim.requestedRoute,
+    ...(claim.legacyExecutionPolicy
+      ? { executionPolicy: claim.legacyExecutionPolicy }
+      : {}),
+    planStep: claim.nodeId,
     cwd,
   }).spawnInput;
 }

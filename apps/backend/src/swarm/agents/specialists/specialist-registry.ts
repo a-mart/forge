@@ -26,7 +26,6 @@ import {
   getSessionSpecialistsDir,
   getSharedSpecialistsDir,
 } from "../../specialists/specialist-paths.js";
-import { supportsSecureRuntimeProvider } from "../../secure-sessions/runtime/secure-runtime-provider-policy.js";
 import {
   assertClaudeSdkProviderNotSelected,
   CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE,
@@ -118,12 +117,6 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     fallbackReasoningLevel: "medium",
   },
 };
-const EXECUTION_POLICY_CONFIGS = [
-  { policy: "support", tier: "fast", description: "low-cost, low-latency support work" },
-  { policy: "routine", tier: "standard", description: "ordinary well-specified implementation" },
-  { policy: "deep", tier: "deep", description: "complex, ambiguous, or high-risk work" },
-] as const satisfies ReadonlyArray<{ policy: string; tier: EffortTier; description: string }>;
-
 const BEHAVIOR_MODE_CONFIGS = [
   { mode: "plan", lens: "planner", description: "task breakdown, sequencing, and risk analysis" },
   { mode: "correctness-review", lens: "code-reviewer", description: "bugs, edge cases, and contract validation" },
@@ -467,40 +460,15 @@ export function generateRosterBlock(
 
 export function generateTierLensRosterBlock(
   roster: ResolvedSpecialistDefinition[],
-  tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
+  _tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
 ): string {
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Delegate workers with a behavior `mode` and an `executionPolicy`.",
+    "Delegate workers with a behavior `mode` and an execution `route`.",
     "",
-    "Execution policies:",
+    "Forge appends the active `[delegationRoster]` to manager-bound turns. Omit `route` to use the roster's baseline for the selected behavior mode; this is not a task-complexity classifier. Name a route only when its current guidance clearly fits an obviously cheaper or stronger executor.",
   ];
-
-  const configsByTier = new Map(tierConfigs.map((config) => [config.tier, config]));
-  for (const policyConfig of EXECUTION_POLICY_CONFIGS) {
-    const config = configsByTier.get(policyConfig.tier) ?? DEFAULT_TIER_CONFIGS[policyConfig.tier];
-    const primary = `${compactProvider(config.provider)}/${config.modelId}${config.reasoningLevel ? ` ${config.reasoningLevel}` : ""}`;
-    const fallbackProvider = config.fallbackModelId
-      ? config.fallbackProvider ?? inferProviderFromModelId(config.fallbackModelId)
-      : undefined;
-    const fallback = config.fallbackModelId
-      ? ` -> fb ${compactProvider(fallbackProvider ?? "unknown")}/${config.fallbackModelId}${
-          config.fallbackReasoningLevel ? ` ${config.fallbackReasoningLevel}` : ""
-        }`
-      : "";
-    const secureRoute =
-      supportsSecureRuntimeProvider(config.provider)
-        ? " [Secure Sessions]"
-        : config.fallbackModelId
-          && fallbackProvider
-          && supportsSecureRuntimeProvider(fallbackProvider)
-          ? " [Secure Sessions via fallback]"
-          : " [no Secure Sessions runtime]";
-    lines.push(
-      `- \`${policyConfig.policy}\`: ${policyConfig.description} [${primary}${fallback}]${secureRoute}`,
-    );
-  }
 
   // Shipped mode handles contribute prompts only; their persisted model fields
   // do not control policy routing and therefore must not hide a mode when a
@@ -510,8 +478,7 @@ export function generateTierLensRosterBlock(
   for (const modeConfig of BEHAVIOR_MODE_CONFIGS) {
     const lens = enabledById.get(modeConfig.lens);
     if (lens) {
-      const defaultPolicy = modeConfig.mode === "research" ? "support" : "deep";
-      lines.push(`- \`${modeConfig.mode}\` (default ${defaultPolicy}): ${modeConfig.description}`);
+      lines.push(`- \`${modeConfig.mode}\`: ${modeConfig.description}`);
     }
   }
 
@@ -519,7 +486,7 @@ export function generateTierLensRosterBlock(
     (entry) => !entry.builtin && !LEGACY_SPECIALIST_REWRITE_TABLE[entry.specialistId],
   );
   if (customSpecialists.length > 0) {
-    lines.push("", "Custom specialists (use `customSpecialist` instead of mode/policy):");
+    lines.push("", "Custom specialists (use `customSpecialist` instead of mode/route):");
     for (const s of customSpecialists) {
       const fallback = s.fallbackModelId
         ? ` -> fb ${compactProvider(s.fallbackProvider ?? "unknown")}/${s.fallbackModelId}${
@@ -537,10 +504,12 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- Match policy to task difficulty and risk; model availability fallback is automatic.",
-    "- For work that needs granted secrets, set `requiresSecureRuntime=true`; Forge selects a compatible configured fallback and rejects the assignment if it cannot preserve the secure boundary.",
+    "- Behavior mode controls the worker's operating contract; route controls only executor selection.",
+    "- Availability fallback is automatic, not capability escalation. For granted secrets, set `requiresSecureRuntime=true`; Forge fails closed without a compatible runtime.",
+    "- Omit `route` for the baseline. Name one before dispatch only when its roster guidance clearly matches. Use capability escalation only when evidence from an attempt shows the baseline was inadequate.",
+    "- Outside a work graph, escalation requires a fresh delegation on the stronger route; messaging the same worker does not change its pinned executor.",
     "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
-    "- Mode defaults are guidance, not a capability floor. A bounded plan or review may use `support`; raise the policy when ambiguity or risk warrants it.",
+    "- Do not choose stronger routes merely because work is large, planned, reviewed, or graph-shaped.",
   );
 
   return lines.join("\n");

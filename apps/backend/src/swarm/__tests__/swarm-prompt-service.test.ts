@@ -43,11 +43,10 @@ afterEach(async () => {
 });
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
-  expect(prompt).toContain("Worker results require same-turn disposition");
-  expect(prompt).toContain("they are not automatic user update triggers");
-  expect(prompt).toContain("Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.");
-  expect(prompt).toContain("otherwise end with exactly `NO_REPLY`");
-  expect(prompt).toContain("After `speak_to_user` fully delivers a response, end the provider cycle with exactly `NO_REPLY`");
+  expect(prompt).toContain("Worker results require disposition but are not automatic user updates");
+  expect(prompt).toContain("Direct request or accepted closeout: normal final text");
+  expect(prompt).toContain("Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`");
+  expect(prompt).toContain("Never duplicate a reply through two paths");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
   expect(prompt).not.toContain("an accepted outcome/material blocker reached from an internal callback");
 }
@@ -235,13 +234,13 @@ Never use plain assistant text for user communication.`;
     );
     expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
     expect(prompt).toContain(
-      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+      "Direct request or accepted closeout: normal final text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
+      "Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`"
     );
-    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
-    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
+    expect(prompt).not.toMatch(/Telegram|channelId|threadTs|explicit-target/i);
+    expect(prompt).toContain("use `NO_REPLY` to skip an unanswered direct request");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")
@@ -303,13 +302,13 @@ Custom project instruction: always mention the release train when summarizing de
     expect(prompt).toContain("Never use plain assistant text for user communication.");
     expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
     expect(prompt).toContain(
-      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+      "Direct request or accepted closeout: normal final text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
+      "Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`"
     );
-    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
-    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
+    expect(prompt).not.toMatch(/Telegram|channelId|threadTs|explicit-target/i);
+    expect(prompt).toContain("use `NO_REPLY` to skip an unanswered direct request");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")
@@ -411,14 +410,17 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("Keep one active coordination lane for the current phase")
     expect(resolved).toContain("**Checklist:** use `update_plan`")
     expect(resolved).toContain("**Graph:** use `update_work_graph`")
+    expect(resolved).toContain("call `accept_work_graph_node` with concise evidence")
     expect(resolved).toContain("all three conditions hold")
+    expect(resolved).toContain("choose Graph only when scheduler-owned release or retry materially helps")
     expect(resolved).toContain("smallest DAG that exposes useful concurrency")
+    expect(resolved).toContain("each dispatched node has one worker owner at a time")
     expect(resolved).toContain("Task size, step count, thoroughness, planning, review")
     expect(resolved).toContain("one bounded planning or discovery investigation")
     expect(resolved).toContain("never owns scheduler state or graph mutation")
     expect(resolved).toContain("Do not impose a mandatory planner, implementer, reviewer, or synthesis chain")
-    expect(resolved).toContain("Fan-in count alone is not a reason to spend Deep")
-    expect(resolved).toContain("pass that step's exact text as `planStep`")
+    expect(resolved).toContain("Graph size and fan-in do not justify a stronger executor")
+    expect(resolved).toContain("pass its stable `id` as `planStepId`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
     expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")
     expect(resolved).toContain("a goal may span multiple plans")
@@ -426,19 +428,94 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("A goal never expands authority")
   });
 
-  it("allows bounded read-only manager orientation without allowing project mutations", async () => {
+  it("composes exactly one concise manager posture block", async () => {
+    const { config } = await makeConfig();
+    const delegationFirst = createManagerDescriptor(config, repoRoot);
+    const handsOn = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+    });
+    const delegationPrompt = await createPromptServiceForDescriptor(
+      config,
+      delegationFirst,
+    ).buildResolvedManagerPrompt(delegationFirst);
+    const handsOnPrompt = await createPromptServiceForDescriptor(
+      config,
+      handsOn,
+    ).buildResolvedManagerPrompt(handsOn);
+
+    expect(delegationPrompt).toContain("Your posture is **Delegation-first**.")
+    expect(delegationPrompt).toContain("Manager direct project work is read-only.")
+    expect(delegationPrompt).toContain(
+      "Follow the active Work routing posture when deciding whether you or a worker owns implementation and investigation.",
+    );
+    expect(delegationPrompt).toContain("# Delegation protocol")
+    expect(delegationPrompt).toContain("## Working plans")
+    expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
+    expect(handsOnPrompt).toContain("Normally own one cohesive outcome directly")
+    expect(handsOnPrompt).toContain("This posture changes preference, not authority")
+    expect(handsOnPrompt).toContain("## Optional coordination")
+    expect(handsOnPrompt).toContain("One bounded worker remains Direct")
+    expect(handsOnPrompt).not.toContain("# Delegation protocol")
+    expect(handsOnPrompt).not.toContain("## Working plans")
+    expect(handsOnPrompt).not.toContain("Delegate workers with a behavior")
+    expect(handsOnPrompt).not.toContain(
+      "Workers should own substantial implementation and investigation",
+    );
+    expect(delegationPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
+    expect(handsOnPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
+    expect(delegationPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
+    expect(handsOnPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
+    expect(delegationPrompt).not.toContain("forge:manager-coordination")
+    expect(handsOnPrompt).not.toContain("forge:manager-coordination")
+    expect(delegationPrompt.length - handsOnPrompt.length).toBeGreaterThan(2_000)
+  });
+
+  it("replaces the legacy routing section in stale manager prompt overrides", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+      sessionSystemPrompt: `You are a customized manager.
+
+# Work routing
+For each substantive request, choose one route.
+
+Delegation remains the default for project-file mutations, sustained investigations, multi-step analysis, and substantial implementation. Manager direct project work is read-only.
+
+# Custom project policy
+Always preserve the user's release notes.`,
+    });
+    const prompt = await createPromptServiceForDescriptor(
+      config,
+      descriptor,
+    ).buildResolvedManagerPrompt(descriptor);
+
+    expect(prompt.match(/^# Work routing$/gm)).toHaveLength(1);
+    expect(prompt).toContain("Your posture is **Hands-on**.");
+    expect(prompt).not.toContain("Manager direct project work is read-only.");
+    expect(prompt).not.toContain("Delegation remains the default for project-file mutations");
+    expect(prompt).toContain("# Custom project policy");
+    expect(prompt).toContain("Always preserve the user's release notes.");
+  });
+
+  it("keeps tool authority aligned with the selected manager posture", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
     const service = createPromptServiceForDescriptor(config, descriptor);
+    const handsOnDescriptor = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+    });
+    const handsOnService = createPromptServiceForDescriptor(config, handsOnDescriptor);
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    const handsOn = await handsOnService.buildResolvedManagerPrompt(handsOnDescriptor);
 
     expect(resolved).toContain("bounded read-only orientation");
-    expect(resolved).toContain("If the lookup exposes implementation work");
+    expect(resolved).toContain("If a direct lookup exposes material implementation or investigation");
     expect(resolved).toContain("Manager direct project work is read-only");
-    expect(resolved).toContain("Do not use `edit`/`write` for project work");
-    expect(resolved).toContain("non-mutating focused `bash` or status commands");
-    expect(resolved).toContain("do not use shell or browser actions as an indirect way");
+    expect(resolved).toContain("In Delegation-first, direct project work is read-only");
+    expect(handsOn).toContain("In Hands-on, you may use normal project tools");
+    expect(handsOn).toContain("one bounded manager-owned outcome");
+    expect(handsOn).not.toContain("Do not use `edit`/`write` for project work");
   });
 
   it("requires an Other choice unless the user explicitly intends a closed confirmation", async () => {
@@ -697,6 +774,32 @@ Custom project instruction: always mention the release train when summarizing de
 
     expect(prompt).toContain("End your turn with a concise result using this structure:");
     expect(prompt).not.toContain("Custom standard specialist prompt");
+  });
+
+  it("does not resolve a route attribution id as a custom specialist prompt", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "route-worker",
+        managerId: "manager",
+        profileId: "manager",
+        archetypeId: undefined,
+      }),
+      role: "worker" as const,
+      delegationRouteId: "research-analyst",
+      specialistId: "route:research-analyst",
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker, {
+      specialistRoster: [{
+        specialistId: "research-analyst",
+        promptBody: "This route id must not become a behavior prompt.",
+      }],
+    });
+
+    const prompt = await service.resolveSystemPromptForDescriptor(worker);
+
+    expect(prompt).toContain("End your turn with a concise result using this structure:");
+    expect(prompt).not.toContain("This route id must not become a behavior prompt.");
   });
 
   it("does not append repository reference inventory to workers owned by collaboration managers", async () => {
@@ -1043,14 +1146,45 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved.indexOf("# User-Facing Visualizations")).toBeLessThan(
       resolved.indexOf("# Non-Negotiable Forge Routing Contract")
     );
-    expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
+    expect(resolved).toContain("Direct web request or accepted closeout");
     expectCurrentProjectAgentRoutingFooter(resolved);
-    expect(resolved.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(resolved.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
     expect(systemSection?.source).toBe("project-agent-base + base-only");
     expect(systemSection?.content).toContain("Forge Project Agent Operating Contract");
+  });
+
+  it("gives a Hands-on Project Agent one non-contradictory routing posture", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "hands-on-project-agent",
+      managerPosture: "hands_on",
+      projectAgent: {
+        handle: "hands-on-agent",
+        whenToUse: "testing project-agent posture composition",
+        capabilities: ["create_session"],
+      },
+    });
+
+    const resolved = await createPromptServiceForDescriptor(
+      config,
+      descriptor,
+    ).buildResolvedManagerPrompt(descriptor);
+
+    expect(resolved.match(/^# Work routing$/gm)).toHaveLength(1);
+    expect(resolved).toContain("Your posture is **Hands-on**.");
+    expect(resolved).toContain("Normally own one cohesive outcome directly");
+    expect(resolved).not.toContain(
+      "Delegate substantive implementation and investigation to appropriate workers",
+    );
+    expect(resolved).not.toContain("Manager direct project work is read-only.");
+    expect(resolved).not.toContain("Delegate workers with a behavior");
+    expect(resolved).not.toContain("## Working plans");
+    expect(resolved).toContain(
+      "This project agent can create new manager sessions via create_session.",
+    );
   });
 
   it("project-agent sessionSystemPrompt is composed as highest-precedence role instructions in preview", async () => {
@@ -1284,7 +1418,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("Repo reference body");
     expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
     expectCurrentProjectAgentRoutingFooter(resolved);
-    expect(resolved.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(resolved.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
   });
@@ -1398,7 +1532,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(finalPrompt).toContain("Local reference body");
     expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
     expectCurrentProjectAgentRoutingFooter(finalPrompt);
-    expect(finalPrompt.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);
+    expect(finalPrompt.trimEnd()).toMatch(/Never duplicate a reply through two paths or use `NO_REPLY` to skip an unanswered direct request\.$/);
   });
 
   it("getSwarmContextFiles walks parent directories and returns nearest-first ordering", async () => {

@@ -26,6 +26,7 @@ const graph: WorkGraphSnapshot = {
     kind: 'implementation',
     status: 'running',
     dependsOn: [],
+    route: 'auto',
     effort: 'routine',
     attempts: [
       {

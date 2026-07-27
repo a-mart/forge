@@ -6,6 +6,8 @@ import {
   buildHydrateArchiveLastUsedCommand,
   buildProfileArchiveActionCommand,
   buildSessionActionCommand,
+  buildUpdateProjectDelegationDefaultsCommand,
+  buildUpdateSessionDelegationCommand,
   buildSessionGoalControlCommand,
 } from './request-definitions'
 
@@ -117,6 +119,48 @@ describe('buildSessionGoalControlCommand', () => {
       action: 'edit',
       objective: 'Refined outcome',
       tokenBudget: null,
+    })
+  })
+})
+
+describe('delegation settings command builders', () => {
+  it('serializes project defaults without inventing untouched fields', () => {
+    expect(buildUpdateProjectDelegationDefaultsCommand(
+      ' project-a ',
+      { managerPosture: 'hands_on' },
+      'req-project-delegation',
+    )).toEqual({
+      type: 'update_project_delegation_defaults',
+      profileId: 'project-a',
+      managerPosture: 'hands_on',
+      requestId: 'req-project-delegation',
+    })
+    expect(buildUpdateProjectDelegationDefaultsCommand(
+      'project-a',
+      { delegationRosterId: null },
+      'req-clear-roster',
+    )).toEqual({
+      type: 'update_project_delegation_defaults',
+      profileId: 'project-a',
+      delegationRosterId: null,
+      requestId: 'req-clear-roster',
+    })
+  })
+
+  it('serializes session inheritance and trims explicit roster ids', () => {
+    expect(buildUpdateSessionDelegationCommand(
+      ' session-a ',
+      {
+        managerPosture: { mode: 'inherit' },
+        delegationRoster: { mode: 'override', rosterId: ' diverse ' },
+      },
+      'req-session-delegation',
+    )).toEqual({
+      type: 'update_session_delegation',
+      sessionAgentId: 'session-a',
+      managerPosture: { mode: 'inherit' },
+      delegationRoster: { mode: 'override', rosterId: 'diverse' },
+      requestId: 'req-session-delegation',
     })
   })
 })

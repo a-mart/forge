@@ -54,6 +54,7 @@ import {
   normalizeOptionalAgentId,
 } from "./swarm-manager-utils.js";
 import { composeBuiltinModeSystemPrompt } from "./worker-mode-prompt.js";
+import { buildManagerPostureBlock } from "./prompts/manager-posture.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
@@ -98,13 +99,17 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
 const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
-You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Direct-web progress before continuing work may use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work; if no same-turn action follows, assistant text ends the turn and must be final/standalone. Explicit publication to the current web session may use speak_to_user without a target. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
+You are a Forge Project Agent: a promoted peer manager session. Answer direct web requests and accepted closeouts with normal final text. Use brief direct progress only when an action follows in the same turn. Use speak_to_user for routed or proactive publication, send_message_to_agent for peer context, and NO_REPLY for internal turns with nothing user-visible. Never duplicate one reply or use NO_REPLY to skip an unanswered direct request.
 
-Treat messages beginning with [workerResult] as terminal worker results that require same-turn disposition. Results are internal decision points, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker; otherwise end with exactly NO_REPLY. Use send_message_to_agent for peer/context replies.
+Treat messages beginning with [workerResult] as terminal evidence requiring same-turn disposition, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work.
+
+\${MANAGER_POSTURE}
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
-\${SPECIALIST_ROSTER}`;
+<!-- forge:manager-coordination:start -->
+\${SPECIALIST_ROSTER}
+<!-- forge:manager-coordination:end -->`;
 const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 - Use a diagram only when it makes an important relationship materially easier to understand than prose or a short list.
 - Prefer the smallest diagram that answers the question. Keep one abstraction level, short labels, one dominant direction, and minimal cross-links.
@@ -112,21 +117,15 @@ const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 - Do not turn a request for a high-level view into an exhaustive implementation or dependency graph.
 - Before returning Mermaid, check whether long labels, distant cross-links, nested subgraphs, or excessive nodes will create a very wide or tall canvas. Simplify or split the diagram when labels would become unreadable at normal chat width.`;
 const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
-- Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text unless a structured choice or explicit routed delivery is needed.
-- Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
-- Explicit publication to the current web session may use \`speak_to_user\` without a target.
-- Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
-- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal direct web/session chat, use normal assistant final text for an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Use \`send_message_to_agent\` for peer/context replies when the surface requires it.
-- After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
-- Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
+- Direct request or accepted closeout: normal final text. Direct progress: only when same-turn action follows.
+- Routed or proactive publication: \`speak_to_user\`, then exactly \`NO_REPLY\` unless distinct new closeout content remains.
+- Peer context: \`send_message_to_agent\` to the sender. Worker results require disposition but are not automatic user updates.
+- Never duplicate a reply through two paths or use \`NO_REPLY\` to skip an unanswered direct request.`;
 const MANAGER_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
-- Normal direct web/session-transcript final replies: just answer normally with final assistant text. Do not use \`speak_to_user\` for normal final web replies.
-- Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
-- Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result.
-- Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender unless explicitly reporting to the end user.
-- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal web/session chat, answer normally with an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Peer contexts keep their \`send_message_to_agent\` reply contract.
-- After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
-- Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
+- Direct request or accepted closeout: normal final text. Direct progress: only when same-turn action follows.
+- Routed or proactive publication: \`speak_to_user\`, then exactly \`NO_REPLY\` unless distinct new closeout content remains.
+- Peer context: \`send_message_to_agent\` to the sender. Worker results require disposition but are not automatic user updates.
+- Never duplicate a reply through two paths or use \`NO_REPLY\` to skip an unanswered direct request.`;
 
 export type ProjectAgentPromptSource =
   | { kind: "project_agent_base"; sourcePath?: string; fallback?: boolean }
@@ -306,8 +305,12 @@ export class SwarmPromptService {
     ]);
 
     const delegationBlock = specialistRegistry.generateRosterBlock(roster, tierConfigs);
+    const projectAgentDirectoryEntries = await this.resolveProjectAgentDirectoryEntries(
+      profileId,
+      descriptor,
+    );
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
-      await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
+      projectAgentDirectoryEntries,
     );
     const createSessionCapabilityNote =
       descriptor.projectAgent?.capabilities?.includes("create_session")
@@ -315,6 +318,12 @@ export class SwarmPromptService {
         : "";
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
+    const managerPostureBlock = buildManagerPostureBlock(descriptor.managerPosture);
+    prompt = composeManagerPosture(
+      prompt,
+      managerPostureBlock,
+      descriptor.managerPosture === "hands_on",
+    );
 
     const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
     if (projectAgentReferenceDocs.length > 0) {
@@ -325,6 +334,14 @@ export class SwarmPromptService {
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
       // eslint-disable-next-line no-template-curly-in-string
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
+    } else if (descriptor.managerPosture === "hands_on") {
+      const projectAgentContext = [
+        projectAgentDirectoryEntries.length > 0 ? projectAgentDirectoryBlock : "",
+        createSessionCapabilityNote.trim(),
+      ].filter(Boolean).join("\n");
+      if (projectAgentContext) {
+        prompt = `${prompt.trimEnd()}\n\n${projectAgentContext}`;
+      }
     } else {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
@@ -460,7 +477,7 @@ export class SwarmPromptService {
 
     const requiredBehaviorPromptId = normalizeOptionalAgentId(descriptor.specialistLens)?.toLowerCase();
     const specialistId = requiredBehaviorPromptId ?? (
-      descriptor.specialistTier
+      descriptor.specialistTier || descriptor.delegationRouteId
         ? undefined
         : normalizeOptionalAgentId(
             descriptor.specialistId?.split(":")[1] ?? descriptor.specialistId
@@ -1168,6 +1185,64 @@ export class SwarmPromptService {
     skillLines.push("</available_skills>");
     return systemPrompt.trimEnd() + skillLines.join("\n");
   }
+}
+
+const MANAGER_COORDINATION_START = "<!-- forge:manager-coordination:start -->";
+const MANAGER_COORDINATION_END = "<!-- forge:manager-coordination:end -->";
+
+function composeManagerPosture(
+  prompt: string,
+  managerPostureBlock: string,
+  handsOn: boolean,
+): string {
+  let composed: string;
+  // eslint-disable-next-line no-template-curly-in-string
+  if (prompt.includes("${MANAGER_POSTURE}")) {
+    // eslint-disable-next-line no-template-curly-in-string
+    composed = prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
+  } else {
+    const isLegacyManagerPrompt = (
+      prompt.includes("Delegation remains the default for project-file mutations")
+      && prompt.includes("Manager direct project work is read-only")
+    );
+    const legacyHeading = isLegacyManagerPrompt
+      ? /^# Work routing[ \t]*$/m.exec(prompt)
+      : null;
+    if (!legacyHeading) {
+      composed = `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
+    } else {
+      const sectionStart = legacyHeading.index;
+      const afterHeading = sectionStart + legacyHeading[0].length;
+      const nextHeading = /\r?\n# [^\r\n]+/.exec(prompt.slice(afterHeading));
+      const sectionEnd = nextHeading
+        ? afterHeading + nextHeading.index
+        : prompt.length;
+      const before = prompt.slice(0, sectionStart).trimEnd();
+      const after = prompt.slice(sectionEnd).trimStart();
+      composed = [before, managerPostureBlock, after].filter(Boolean).join("\n\n");
+    }
+  }
+
+  const coordinationStart = composed.indexOf(MANAGER_COORDINATION_START);
+  const coordinationEnd = composed.indexOf(MANAGER_COORDINATION_END);
+  if (
+    coordinationStart < 0
+    || coordinationEnd < coordinationStart
+  ) {
+    return composed;
+  }
+
+  const before = composed.slice(0, coordinationStart).trimEnd();
+  const coordination = handsOn
+    ? ""
+    : composed.slice(
+        coordinationStart + MANAGER_COORDINATION_START.length,
+        coordinationEnd,
+      ).trim();
+  const after = composed.slice(
+    coordinationEnd + MANAGER_COORDINATION_END.length,
+  ).trimStart();
+  return [before, coordination, after].filter(Boolean).join("\n\n");
 }
 
 function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {

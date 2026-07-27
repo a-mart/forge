@@ -960,15 +960,12 @@ describe("specialist-registry", () => {
       },
     ]);
 
-    expect(markdown).toContain("Execution policies");
-    expect(markdown).toContain("`support`");
-    expect(markdown).toContain("`routine`");
-    expect(markdown).toContain("`deep`");
-    expect(markdown).not.toContain("`light`");
-    expect(markdown).not.toContain("`max`");
+    expect(markdown).toContain("execution `route`");
+    expect(markdown).toContain("Behavior modes");
+    expect(markdown).toContain("`general` (default)");
     expect(markdown).toContain("`domain-expert`");
     expect(markdown).toContain("Domain work");
-    expect(markdown).toContain("Custom specialists (use `customSpecialist` instead of mode/policy)");
+    expect(markdown).toContain("Custom specialists (use `customSpecialist` instead of mode/route)");
     expect(markdown).not.toContain("`disabled`");
     expect(markdown).not.toContain("`invalid`");
   });
@@ -1293,10 +1290,10 @@ describe("specialist-registry", () => {
 
   it("generates a compact message for an empty roster", () => {
     const markdown = generateRosterBlock([]);
-    expect(markdown).toContain("Execution policies");
-    expect(markdown).toContain("`support`");
+    expect(markdown).toContain("[delegationRoster]");
+    expect(markdown).toContain("execution `route`");
     expect(markdown).toContain("`general`");
-    expect(markdown).not.toContain("Lenses");
+    expect(markdown).not.toContain("Custom specialists");
   });
 
   it("rejects files with missing frontmatter fields", async () => {
@@ -1412,7 +1409,7 @@ describe("specialist-registry", () => {
     const profilePlan = profileRoster.find((entry) => entry.specialistId === "planner");
     expect(profilePlan).toMatchObject({ sourceKind: "profile", builtin: true, available: false });
     const profileBlock = generateRosterBlock(profileRoster);
-    expect(profileBlock).toContain("`plan` (default deep)");
+    expect(profileBlock).toContain("`plan`: task breakdown, sequencing, and risk analysis");
     expect(profileBlock).not.toContain("`planner`: Plan for this profile");
 
     await saveChannelSpecialist(dataDir, "channel-a", "planner", {
@@ -1430,7 +1427,7 @@ describe("specialist-registry", () => {
     const channelPlan = channelRoster.find((entry) => entry.specialistId === "planner");
     expect(channelPlan).toMatchObject({ sourceKind: "channel", builtin: true });
     const channelBlock = generateRosterBlock(channelRoster);
-    expect(channelBlock).toContain("`plan` (default deep)");
+    expect(channelBlock).toContain("`plan`: task breakdown, sequencing, and risk analysis");
     expect(channelBlock).not.toContain("`planner`: Plan for this channel");
   });
 
@@ -1604,7 +1601,7 @@ describe("specialist-registry", () => {
     });
   });
 
-  it("generates policy rows with the configured primary and fallback model", () => {
+  it("keeps legacy tier model bindings out of current route guidance", () => {
     const markdown = generateRosterBlock([], [{
       ...DEFAULT_TIER_CONFIGS.fast,
       modelId: "gpt-5.5",
@@ -1615,22 +1612,10 @@ describe("specialist-registry", () => {
       fallbackReasoningLevel: "medium",
     }]);
 
-    expect(markdown).toContain("`support`");
-    expect(markdown).toContain("[codex/gpt-5.5 high");
-    expect(markdown).toContain("-> fb codex/gpt-5.5 medium]");
-    expect(markdown).toContain("[Secure Sessions]");
+    expect(markdown).toContain("execution `route`");
+    expect(markdown).toContain("[delegationRoster]");
     expect(markdown).toContain("`requiresSecureRuntime=true`");
-  });
-
-  it("identifies secure fallback routing in execution policy rows", () => {
-    const markdown = generateRosterBlock([], [{
-      ...DEFAULT_TIER_CONFIGS.fast,
-      provider: "cursor-sdk",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-    }]);
-
-    expect(markdown).toContain("[Secure Sessions via fallback]");
+    expect(markdown).not.toContain("codex/gpt-5.5");
   });
 
   it("adds a web search tag to roster entries when enabled", () => {

@@ -67,6 +67,9 @@ import type {
 } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type {
+  AcceptWorkGraphNodeInput,
+} from "./planning/accept-work-graph-node-tool.js";
 import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
 import type { ProjectAgentRecommendations } from "./project-agent-analysis.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
@@ -100,7 +103,7 @@ import type { CompactAgentContextOptions } from "./swarm-compaction-coordinator.
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import type { SwarmRuntimeLifecycleCoordinator } from "./swarm-runtime-lifecycle-coordinator.js";
 import type { SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
-import { SwarmManagerSecureSessionsFacade } from "./secure-sessions/swarm-manager-secure-sessions-facade.js";
+import { SwarmManagerDelegationFacade } from "./swarm-manager-delegation-facade.js";
 import type {
   AppendConversationUserMessageOptions,
   AppendConversationUserMessageResult,
@@ -216,7 +219,7 @@ import type {
  * coordinators above, while this class keeps the manager's compatibility
  * surface explicit without forcing every delegate into the composition root.
  */
-export abstract class SwarmManagerFacade extends SwarmManagerSecureSessionsFacade {
+export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
   protected abstract getFacadeServices(): SwarmManagerFacadeServices;
   flushPendingPersistence(): Promise<void> { return this.services.persistence.flushPendingTurnSeqPersists(); }
   getSessionPlanSnapshot(
@@ -235,6 +238,7 @@ export abstract class SwarmManagerFacade extends SwarmManagerSecureSessionsFacad
   updateWorkGraph(callerAgentId: string, toolCallId: string, input: UpdateWorkGraphInput) {
     return this.services.interactions.updateWorkGraph(callerAgentId, toolCallId, input);
   }
+  acceptWorkGraphNode(callerAgentId: string, toolCallId: string, input: AcceptWorkGraphNodeInput) { return this.services.interactions.acceptWorkGraphNode(callerAgentId, toolCallId, input); }
   requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
     return this.services.interactions.requestUserChoice(agentId, questions);
   }

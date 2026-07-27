@@ -17,6 +17,8 @@ interface SessionCreationOptions {
   sessionAgentId?: string;
   sessionPurpose?: AgentDescriptor["sessionPurpose"];
   cli?: AgentDescriptor["cli"];
+  managerPosture?: AgentDescriptor["managerPosture"];
+  delegationRosterId?: string;
 }
 
 interface SessionCreationOverrides {
@@ -32,6 +34,10 @@ interface SessionCreationBaseDescriptor {
   cwd: string;
   archetypeId?: AgentDescriptor["archetypeId"];
   sessionSystemPrompt?: string;
+  managerPosture?: AgentDescriptor["managerPosture"];
+  managerPostureOrigin?: AgentDescriptor["managerPostureOrigin"];
+  delegationRosterId?: AgentDescriptor["delegationRosterId"];
+  delegationRosterOrigin?: AgentDescriptor["delegationRosterOrigin"];
 }
 
 interface PreparedSessionCreation {
@@ -53,6 +59,7 @@ export interface SwarmSessionServiceOptions {
     base: SessionCreationBaseDescriptor,
     options?: SessionCreationOptions
   ) => PreparedSessionCreation;
+  resolveGlobalDelegationRosterId: () => Promise<string>;
   getRequiredSessionDescriptor: (agentId: string) => ProvisionedSessionDescriptor;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>;
   stopSessionInternal: (
@@ -183,6 +190,7 @@ export class SwarmSessionService {
     sessionDescriptor: ProvisionedSessionDescriptor
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const shouldInitializeRuntime = sessionDescriptor.sessionSurface !== "collab";
+    await this.ensureEffectiveDelegationRoster(sessionDescriptor);
 
     await this.options.provisioner.provisionSession({
       descriptor: sessionDescriptor,
@@ -355,7 +363,13 @@ export class SwarmSessionService {
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
     forkedDescriptor.model = { ...sourceDescriptor.model };
     forkedDescriptor.modelOrigin = sourceDescriptor.modelOrigin;
+    forkedDescriptor.managerPosture = sourceDescriptor.managerPosture ?? "delegation_first";
+    forkedDescriptor.managerPostureOrigin =
+      sourceDescriptor.managerPostureOrigin ?? "product_default";
+    forkedDescriptor.delegationRosterId = sourceDescriptor.delegationRosterId;
+    forkedDescriptor.delegationRosterOrigin = sourceDescriptor.delegationRosterOrigin;
     forkedDescriptor.cli = sourceDescriptor.cli ? { ...sourceDescriptor.cli } : undefined;
+    await this.ensureEffectiveDelegationRoster(forkedDescriptor);
 
     await this.options.provisioner.provisionSession({
       descriptor: forkedDescriptor,
@@ -395,5 +409,13 @@ export class SwarmSessionService {
       profile: { ...profile },
       sessionAgent: cloneDescriptor(forkedDescriptor)
     };
+  }
+
+  private async ensureEffectiveDelegationRoster(
+    descriptor: ProvisionedSessionDescriptor,
+  ): Promise<void> {
+    if (descriptor.delegationRosterId) return;
+    descriptor.delegationRosterId = await this.options.resolveGlobalDelegationRosterId();
+    descriptor.delegationRosterOrigin = "global_default";
   }
 }

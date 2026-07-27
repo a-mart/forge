@@ -1,5 +1,6 @@
 import { normalizePersistedSwarmModelDescriptor } from "../../model-presets.js";
 import { normalizeOptionalAgentId } from "../../swarm-manager-utils.js";
+import { DEFAULT_MANAGER_POSTURE } from "../../prompts/manager-posture.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -131,6 +132,51 @@ export class ProfileBootReconciler {
       this.options.mutations.upsertProfile(profile);
     }
 
+    return changed;
+  }
+
+  reconcileDelegationStateOnBoot(defaultDelegationRosterId: string): boolean {
+    let changed = false;
+    for (const profile of this.options.profiles.values()) {
+      const inheritedPosture = profile.defaultManagerPosture ?? DEFAULT_MANAGER_POSTURE;
+      const inheritedPostureOrigin = profile.defaultManagerPosture
+        ? "project_default" as const
+        : "product_default" as const;
+      const inheritedRosterId = profile.defaultDelegationRosterId ?? defaultDelegationRosterId;
+      const inheritedRosterOrigin = profile.defaultDelegationRosterId
+        ? "project_default" as const
+        : "global_default" as const;
+
+      for (const session of this.getBuilderSessionsForProfile(profile.profileId)) {
+        let sessionChanged = false;
+        if (session.managerPosture === undefined) {
+          session.managerPosture = inheritedPosture;
+          session.managerPostureOrigin = inheritedPostureOrigin;
+          sessionChanged = true;
+        } else if (session.managerPostureOrigin === undefined) {
+          session.managerPostureOrigin = session.managerPosture === inheritedPosture
+            ? inheritedPostureOrigin
+            : "session_override";
+          sessionChanged = true;
+        }
+
+        if (session.delegationRosterId === undefined) {
+          session.delegationRosterId = inheritedRosterId;
+          session.delegationRosterOrigin = inheritedRosterOrigin;
+          sessionChanged = true;
+        } else if (session.delegationRosterOrigin === undefined) {
+          session.delegationRosterOrigin = session.delegationRosterId === inheritedRosterId
+            ? inheritedRosterOrigin
+            : "session_override";
+          sessionChanged = true;
+        }
+
+        if (sessionChanged) {
+          this.options.mutations.upsertDescriptor(session);
+          changed = true;
+        }
+      }
+    }
     return changed;
   }
 

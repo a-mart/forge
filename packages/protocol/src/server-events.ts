@@ -53,6 +53,7 @@ import type {
   ManagerDeletedEvent,
   ManagerModelUpdatedEvent,
   ProfileDefaultModelUpdatedEvent,
+  ProjectDelegationDefaultsUpdatedEvent,
   StopAllAgentsResultEvent,
 } from './manager-events.js'
 import type {
@@ -91,6 +92,7 @@ import type {
   SessionClearedEvent,
   SessionCreatedEvent,
   SessionDeletedEvent,
+  SessionDelegationUpdatedEvent,
   SessionForkedEvent,
   SessionMemoryMergeFailedEvent,
   SessionMemoryMergedEvent,
@@ -206,6 +208,7 @@ export type ServerEvent =
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | ProfileDefaultModelUpdatedEvent
+  | ProjectDelegationDefaultsUpdatedEvent
   | ManagerModelUpdatedEvent
   | ManagerCwdUpdatedEvent
   | RepositoryProjectCreationProgressEvent
@@ -219,6 +222,7 @@ export type ServerEvent =
   | SessionArchivedEvent
   | SessionRestoredEvent
   | SessionDeletedEvent
+  | SessionDelegationUpdatedEvent
   | SessionClearedEvent
   | SessionRenamedEvent
   | SessionPinnedEvent

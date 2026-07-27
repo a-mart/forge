@@ -68,6 +68,7 @@ function toolHost(): SwarmToolHost {
     invokeBrowserAutomation: noResult,
     updatePlan: noResult,
     updateWorkGraph: noResult,
+    acceptWorkGraphNode: noResult,
     createGoal: noResult,
     getGoal: noResult,
     updateGoal: noResult,

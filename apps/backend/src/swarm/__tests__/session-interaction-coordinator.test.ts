@@ -68,7 +68,7 @@ describe("SessionInteractionCoordinator", () => {
       task: "Inspect the current behavior.",
       dependencyContext: "[accepted-source: Accepted source]\nstatus: done\nsummary: Evidence.",
       behaviorMode: "research",
-      executionPolicy: "support",
+      requestedRoute: "auto",
     }]);
     vi.mocked(harness.options.plans.getSnapshot).mockResolvedValue({
       type: "session_plan_snapshot",
@@ -80,6 +80,19 @@ describe("SessionInteractionCoordinator", () => {
       plan: [{ step: "Research current behavior", status: "in_progress" }],
       workGraph: { maxConcurrency: 2, nodes: [] },
     });
+    harness.descriptors.set("graph-research-1", {
+      ...makeWorker("graph-research-1"),
+      delegationRouteId: "research-analyst",
+      delegationRouteLabel: "Research Analyst",
+      delegationRosterId: "balanced",
+      delegationRosterRevision: 3,
+      delegationCapabilityEscalationRouteId: "deep-reasoner",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.6-terra",
+        thinkingLevel: "medium",
+      },
+    });
 
     const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", input);
 
@@ -87,10 +100,10 @@ describe("SessionInteractionCoordinator", () => {
       "manager",
       expect.objectContaining({
         agentId: "graph-research-1",
-        tier: "fast",
+        route: "auto",
+        behaviorMode: "research",
         lens: "researcher",
-        policyControlledModel: true,
-        planStep: "Research current behavior",
+        planStep: "research",
         initialMessage: expect.stringContaining("Accepted dependency results"),
       }),
     );
@@ -99,19 +112,114 @@ describe("SessionInteractionCoordinator", () => {
       "research",
       "attempt-1",
       "graph-research-1",
+      {
+        resolvedRouteId: "research-analyst",
+        resolvedRouteLabel: "Research Analyst",
+        rosterId: "balanced",
+        rosterRevision: 3,
+        model: {
+          provider: "openai-codex",
+          modelId: "gpt-5.6-terra",
+          thinkingLevel: "medium",
+        },
+        capabilityEscalationRouteId: "deep-reasoner",
+      },
     );
     expect(result).toMatchObject({
       revision: 3,
       dispatched: [{
         nodeId: "research",
         workerId: "graph-research-1",
-        executionPolicy: "support",
+        requestedRoute: "auto",
       }],
       dispatchFailures: [],
     });
     expect(harness.options.recordToolSideEffect).toHaveBeenCalledWith(
       "manager",
       expect.objectContaining({ toolName: "update_work_graph", toolCallId: "graph-tool" }),
+    );
+  });
+
+  it("accepts one graph node, dispatches newly ready work, and records manager evidence", async () => {
+    const harness = createHarness();
+    vi.mocked(harness.options.plans.acceptWorkGraphNode).mockResolvedValue({
+      nodeId: "research",
+      alreadyAccepted: false,
+      snapshot: {
+        type: "session_plan_snapshot",
+        sessionAgentId: "manager",
+        profileId: "profile-1",
+        revision: 5,
+        updatedAt: NOW,
+        coordinationMode: "graph",
+        plan: [
+          { id: "research", step: "Research behavior", status: "completed" },
+          { id: "synthesize", step: "Synthesize result", status: "pending" },
+        ],
+        workGraph: { maxConcurrency: 2, nodes: [] },
+      },
+    });
+    vi.mocked(harness.options.plans.claimReadyWorkGraphNodes).mockResolvedValue([{
+      nodeId: "synthesize",
+      attemptId: "attempt-2",
+      agentId: "graph-synthesize-1",
+      title: "Synthesize result",
+      task: "Synthesize the accepted evidence.",
+      dependencyContext: "[research: Research behavior]\nstatus: done\nsummary: Evidence.",
+      behaviorMode: "general",
+      requestedRoute: "auto",
+    }]);
+    vi.mocked(harness.options.plans.getSnapshot).mockResolvedValue({
+      type: "session_plan_snapshot",
+      sessionAgentId: "manager",
+      profileId: "profile-1",
+      revision: 7,
+      updatedAt: NOW,
+      coordinationMode: "graph",
+      plan: [
+        { id: "research", step: "Research behavior", status: "completed" },
+        { id: "synthesize", step: "Synthesize result", status: "in_progress" },
+      ],
+      workGraph: { maxConcurrency: 2, nodes: [] },
+    });
+
+    const result = await harness.coordinator.acceptWorkGraphNode(
+      "manager",
+      "accept-tool",
+      {
+        nodeId: "research",
+        evidence: "  Verified the cited source path.  ",
+      },
+    );
+
+    expect(harness.options.plans.acceptWorkGraphNode).toHaveBeenCalledWith(
+      harness.descriptors.get("manager"),
+      "research",
+    );
+    expect(harness.options.lifecycle.spawnAgent).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        agentId: "graph-synthesize-1",
+        planStep: "synthesize",
+        initialMessage: expect.stringContaining("Accepted dependency results"),
+      }),
+    );
+    expect(result).toMatchObject({
+      acceptedNodeId: "research",
+      alreadyAccepted: false,
+      revision: 7,
+      dispatched: [{ nodeId: "synthesize", workerId: "graph-synthesize-1" }],
+    });
+    expect(harness.options.recordToolSideEffect).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        toolName: "accept_work_graph_node",
+        toolCallId: "accept-tool",
+        input: {
+          nodeId: "research",
+          evidence: "Verified the cited source path.",
+        },
+      }),
     );
   });
 
@@ -122,11 +230,23 @@ describe("SessionInteractionCoordinator", () => {
     await expect(
       harness.coordinator.updatePlan("manager", "tool", { plan: [] }),
     ).rejects.toThrow("not available for Collaboration sessions");
+    await expect(
+      harness.coordinator.acceptWorkGraphNode("manager", "tool", {
+        nodeId: "research",
+        evidence: "Verified.",
+      }),
+    ).rejects.toThrow("not available for Collaboration sessions");
 
     manager.sessionSurface = "builder";
     manager.archetypeId = "cortex";
     await expect(
       harness.coordinator.updatePlan("manager", "tool", { plan: [] }),
+    ).rejects.toThrow("not available for Cortex sessions");
+    await expect(
+      harness.coordinator.acceptWorkGraphNode("manager", "tool", {
+        nodeId: "research",
+        evidence: "Verified.",
+      }),
     ).rejects.toThrow("not available for Cortex sessions");
 
     manager.archetypeId = "manager";
@@ -396,6 +516,18 @@ function createHarness(): Harness {
       resolvePreferredManagerId: vi.fn(() => "manager"),
     },
     plans: {
+      acceptWorkGraphNode: vi.fn(async (_owner, nodeId) => ({
+        nodeId,
+        alreadyAccepted: false,
+        snapshot: {
+          type: "session_plan_snapshot",
+          sessionAgentId: "manager",
+          profileId: "profile-1",
+          revision: 0,
+          updatedAt: NOW,
+          plan: [],
+        },
+      })),
       claimReadyWorkGraphNodes: vi.fn(async () => []),
       getSnapshot: vi.fn(async (owner, requestId) => ({
         type: "session_plan_snapshot",

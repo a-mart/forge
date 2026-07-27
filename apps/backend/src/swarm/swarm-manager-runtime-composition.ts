@@ -56,7 +56,7 @@ import { getManagedModelProviderCredentialAvailability } from "./secrets-env-ser
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
-import { createWorkGraphResultRecorder, WorkerResultCoordinator } from "./worker-result-coordinator.js";
+import { createWorkGraphModelRerouteRecorder, createWorkGraphResultRecorder, WorkerResultCoordinator } from "./worker-result-coordinator.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -610,6 +610,7 @@ export class SwarmManagerRuntimeComposition {
         this.requireServices().knowledge.updateSessionMetaForWorkerDescriptor(descriptor, prompt ?? undefined),
       refreshSessionMetaStatsBySessionId: (agentId) =>
         this.requireServices().knowledge.refreshSessionMetaStatsBySessionId(agentId),
+      recordWorkGraphWorkerModelReroute: createWorkGraphModelRerouteRecorder({ descriptors: state.descriptors, getPlans: () => this.requirePlans() }),
       saveStore: events.saveStore,
       patchDescriptor: this.options.descriptors.transactionPatchDescriptor,
       patchDescriptorInLiveMaps: this.options.descriptors.patchDescriptorInLiveMaps,
@@ -1009,5 +1010,4 @@ export class SwarmManagerRuntimeComposition {
     return this.completed.projectExecutableTrust;
   }
 }
-export const createSwarmManagerRuntimeComposition = (options: SwarmManagerRuntimeCompositionOptions) =>
-  new SwarmManagerRuntimeComposition(options);
+export const createSwarmManagerRuntimeComposition = (options: SwarmManagerRuntimeCompositionOptions) => new SwarmManagerRuntimeComposition(options);

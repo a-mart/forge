@@ -29,6 +29,7 @@ import {
   type SwarmProjectAgentServiceOptions,
 } from "./swarm-project-agent-service.js";
 import { SwarmSessionService, type SwarmSessionServiceOptions } from "./swarm-session-service.js";
+import { resolveDelegationRosterSettings } from "./specialists/delegation-roster-store.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "./types.js";
 
 const LEGACY_CLAUDE_RUNTIME_STATE_ENTRY_TYPE = "swarm_claude_session_state";
@@ -49,7 +50,7 @@ export interface SwarmManagerSessionCompositionServices {
 }
 
 type ProvisionerOwnedKeys = "dataDir" | "runtimes" | "forgetPinnedMessages" | "conversationProjector";
-type SessionOwnedKeys = "profiles" | "runtimes" | "provisioner" | "prepareSessionCreation" | "prepareSessionCreationFromBase" | "deleteProjectAgentRecord" | "copySessionHistoryForFork" | "copyPinnedMessagesForFork" | "resetConversationHistory";
+type SessionOwnedKeys = "profiles" | "runtimes" | "provisioner" | "prepareSessionCreation" | "prepareSessionCreationFromBase" | "resolveGlobalDelegationRosterId" | "deleteProjectAgentRecord" | "copySessionHistoryForFork" | "copyPinnedMessagesForFork" | "resetConversationHistory";
 type ProjectAgentOwnedKeys = "dataDir" | "descriptors" | "provisioner" | "now" | "prepareSessionCreation";
 type SharingOwnedKeys = "dataDir" | "now" | "getProfiles" | "getDescriptor" | "getDescriptors";
 type ProjectCoordinatorOwnedKeys = "config" | "descriptors" | "profiles" | "projectAgents" | "sharing" | "now";
@@ -128,6 +129,8 @@ export function createSwarmManagerSessionComposition(
       services.descriptorFactory.prepareSessionCreation(profileId, creationOptions),
     prepareSessionCreationFromBase: (profileId, base, creationOptions) =>
       services.descriptorFactory.prepareSessionCreationFromBase(profileId, base, creationOptions),
+    resolveGlobalDelegationRosterId: async () =>
+      (await resolveDelegationRosterSettings(state.config.paths.dataDir)).defaultRosterId,
     deleteProjectAgentRecord: (profileId, handle) =>
       deleteProjectAgentRecord(state.config.paths.dataDir, profileId, handle),
     copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>

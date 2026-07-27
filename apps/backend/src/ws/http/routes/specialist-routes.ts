@@ -40,6 +40,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
 const SPECIALIST_TIERS_ENDPOINT_PATH = "/api/settings/specialists/tiers";
+const DELEGATION_ROSTERS_ENDPOINT_PATH = "/api/settings/delegation-rosters";
 const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
 const METHODS = "GET, PUT, DELETE, OPTIONS";
@@ -62,6 +63,13 @@ export function createSpecialistRoutes(options: {
     },
     {
       methods: ENABLED_METHODS,
+      matches: (pathname) => pathname === DELEGATION_ROSTERS_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        await handleDelegationRostersRequest(swarmManager, request, response);
+      },
+    },
+    {
+      methods: ENABLED_METHODS,
       matches: (pathname) => pathname === SPECIALIST_TIERS_ENDPOINT_PATH,
       handle: async (request, response) => {
         await handleSpecialistTiersRequest(swarmManager, broadcastEvent, request, response);
@@ -77,6 +85,44 @@ export function createSpecialistRoutes(options: {
       },
     },
   ];
+}
+
+async function handleDelegationRostersRequest(
+  swarmManager: SwarmManager,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, ENABLED_METHODS);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+  applyCorsHeaders(request, response, ENABLED_METHODS);
+  if (request.method === "GET") {
+    try {
+      sendJson(response, 200, { ...await swarmManager.getDelegationRosterSettings() });
+    } catch (error) {
+      sendJson(response, 500, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+  if (request.method === "PUT") {
+    try {
+      const saved = await swarmManager.saveDelegationRosterSettings(
+        await readJsonBody(request),
+      );
+      sendJson(response, 200, { ...saved });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, getErrorStatusCode(message), { error: message });
+    }
+    return;
+  }
+  response.setHeader("Allow", ENABLED_METHODS);
+  sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
 async function handleSettingsModelsRequest(

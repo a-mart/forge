@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -25,6 +25,7 @@ const specialistRegistryState = vi.hoisted(() => ({
   resolveRoster: vi.fn(async () => []),
   resolveSharedRoster: vi.fn(async () => []),
   resolveWorkspaceRoster: vi.fn(async () => []),
+  resolveTierConfigs: vi.fn(async () => []),
   generateRosterBlock: vi.fn(() => ""),
   getWorkerTemplate: vi.fn(async () => "# Worker template\n"),
   saveProfileSpecialist: vi.fn(async () => undefined),
@@ -38,6 +39,7 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
   resolveRoster: (...args: unknown[]) => specialistRegistryState.resolveRoster(...args),
   resolveSharedRoster: (...args: unknown[]) => specialistRegistryState.resolveSharedRoster(...args),
   resolveWorkspaceRoster: (...args: unknown[]) => specialistRegistryState.resolveWorkspaceRoster(...args),
+  resolveTierConfigs: (...args: unknown[]) => specialistRegistryState.resolveTierConfigs(...args),
   generateRosterBlock: (...args: unknown[]) => specialistRegistryState.generateRosterBlock(...args),
   getWorkerTemplate: (...args: unknown[]) => specialistRegistryState.getWorkerTemplate(...args),
   saveProfileSpecialist: (...args: unknown[]) => specialistRegistryState.saveProfileSpecialist(...args),
@@ -57,6 +59,10 @@ interface TestServer {
 const activeServers: TestServer[] = [];
 const tempDirs: string[] = [];
 
+beforeEach(() => {
+  specialistRegistryState.resolveTierConfigs.mockResolvedValue(defaultTierConfigs());
+});
+
 afterEach(async () => {
   vi.restoreAllMocks();
   Object.values(specialistRegistryState).forEach((mock) => {
@@ -68,6 +74,7 @@ afterEach(async () => {
   specialistRegistryState.generateRosterBlock.mockReturnValue("");
   specialistRegistryState.resolveRoster.mockResolvedValue([]);
   specialistRegistryState.resolveSharedRoster.mockResolvedValue([]);
+  specialistRegistryState.resolveTierConfigs.mockResolvedValue(defaultTierConfigs());
   specialistRegistryState.resolveWorkspaceRoster.mockImplementation(
     async (profileId: string, dataDir: string, _workspaceDir: string | undefined, targetSpace: string) =>
       specialistRegistryState.resolveRoster(profileId, dataDir, targetSpace)
@@ -79,6 +86,59 @@ afterEach(async () => {
 });
 
 describe("specialist routes", () => {
+  it("routes delegation roster reads and saves through the swarm facade", async () => {
+    const settings = {
+      version: 1,
+      defaultRosterId: "focused",
+      rosters: [{
+        rosterId: "focused",
+        revision: 1,
+        name: "Focused",
+        defaultRouteId: "builder",
+        modeRoutes: { general: "builder", research: "researcher" },
+        routes: [
+          {
+            routeId: "builder",
+            label: "Builder",
+            useWhen: "Use for ordinary implementation.",
+            provider: "openai-codex",
+            modelId: "gpt-5.5",
+            reasoningLevel: "medium",
+          },
+          {
+            routeId: "researcher",
+            label: "Researcher",
+            useWhen: "Use for source-backed investigation.",
+            provider: "openai-codex",
+            modelId: "gpt-5.5",
+            reasoningLevel: "high",
+          },
+        ],
+      }],
+    };
+    const getDelegationRosterSettings = vi.fn(async () => settings);
+    const saveDelegationRosterSettings = vi.fn(async () => settings);
+    const server = await createSpecialistRouteTestServer({
+      getDelegationRosterSettings,
+      saveDelegationRosterSettings,
+    });
+
+    const saveResponse = await fetch(`${server.baseUrl}/api/settings/delegation-rosters`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    const savedPayload = await saveResponse.json();
+    expect(saveResponse.status, JSON.stringify(savedPayload)).toBe(200);
+    expect(savedPayload).toMatchObject(settings);
+    expect(saveDelegationRosterSettings).toHaveBeenCalledWith(settings);
+
+    const loadResponse = await fetch(`${server.baseUrl}/api/settings/delegation-rosters`);
+    expect(loadResponse.status).toBe(200);
+    await expect(loadResponse.json()).resolves.toMatchObject(settings);
+    expect(getDelegationRosterSettings).toHaveBeenCalledOnce();
+  });
+
   it("shows Cursor SDK specialist rows from /api/settings/models when CURSOR_API_KEY is configured", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "specialist-routes-cursor-"));
     tempDirs.push(dataDir);
@@ -641,6 +701,16 @@ function validSpecialistPayload(): Record<string, unknown> {
   };
 }
 
+function defaultTierConfigs() {
+  return ["light", "fast", "standard", "deep", "max"].map((tier) => ({
+    tier,
+    provider: "openai-codex",
+    modelId: "gpt-5.5",
+    reasoningLevel: "medium",
+    color: "#64748b",
+  }));
+}
+
 async function createSpecialistRouteTestServer(options?: {
   profiles?: Array<{ profileId: string; displayName: string; profileType?: "user" | "system" }>;
   notifySpecialistRosterChanged?: (profileId: string, options?: { sessionAgentId?: string }) => Promise<void>;
@@ -648,6 +718,8 @@ async function createSpecialistRouteTestServer(options?: {
   agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string; cwd?: string }>;
   dataDir?: string;
   onReloadModelCatalog?: () => Promise<void>;
+  getDelegationRosterSettings?: () => Promise<unknown>;
+  saveDelegationRosterSettings?: (input: unknown) => Promise<unknown>;
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
   const dataDir = options?.dataDir ?? "/tmp/data";
@@ -665,6 +737,15 @@ async function createSpecialistRouteTestServer(options?: {
     listUserProfiles: () => profiles.filter((profile) => profile.profileType !== "system"),
     listAgents: () => options?.agents ?? [],
     reloadModelCatalogOverridesAndProjection: vi.fn(options?.onReloadModelCatalog ?? (async () => undefined)),
+    listManagerAgents: () => (options?.agents ?? []).filter((agent) => agent.role === "manager"),
+    getDelegationRosterSettings:
+      options?.getDelegationRosterSettings ?? vi.fn(async () => ({
+        version: 1,
+        defaultRosterId: "balanced",
+        rosters: [],
+      })),
+    saveDelegationRosterSettings:
+      options?.saveDelegationRosterSettings ?? vi.fn(async (input) => input),
     notifySpecialistRosterChanged: options?.notifySpecialistRosterChanged ?? vi.fn(async () => undefined),
   };
 

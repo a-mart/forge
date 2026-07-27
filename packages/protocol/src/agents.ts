@@ -1,4 +1,9 @@
 import type { CliSessionMetadata } from './cli.js'
+import type {
+  DelegationRosterOrigin,
+  ManagerPosture,
+  ManagerPostureOrigin,
+} from './delegation.js'
 import { CATALOG_FAMILY_IDS } from './model-catalog.js'
 
 export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'error'
@@ -135,6 +140,8 @@ export interface ManagerProfile {
   displayName: string
   defaultSessionAgentId: string
   defaultModel: AgentModelDescriptor
+  defaultManagerPosture?: ManagerPosture
+  defaultDelegationRosterId?: string
   createdAt: string
   updatedAt: string
   archivedAt?: string
@@ -178,6 +185,10 @@ export interface AgentDescriptor {
   cwd: string
   model: AgentModelDescriptor
   modelOrigin?: AgentModelOrigin
+  managerPosture?: ManagerPosture
+  managerPostureOrigin?: ManagerPostureOrigin
+  delegationRosterId?: string
+  delegationRosterOrigin?: DelegationRosterOrigin
   sessionFile: string
   contextUsage?: AgentContextUsage
   profileId?: string
@@ -200,6 +211,9 @@ export interface AgentDescriptor {
   specialistLens?: string
   specialistDisplayName?: string
   specialistColor?: string
+  delegationRouteId?: string
+  delegationRouteLabel?: string
+  delegationRosterRevision?: number
   internalWorkerKind?: InternalWorkerKind
   projectAgent?: ProjectAgentInfo
   agentCreatorResult?: AgentCreatorResult

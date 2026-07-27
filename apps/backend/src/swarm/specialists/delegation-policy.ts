@@ -1,23 +1,16 @@
-import type { EffortTier } from "@forge/protocol";
+import {
+  DELEGATION_BEHAVIOR_MODES,
+  type DelegationBehaviorMode,
+  type EffortTier,
+} from "@forge/protocol";
 import type { SpawnAgentInput } from "../types.js";
 import { resolveLegacySpecialistRewrite } from "./specialist-registry.js";
 
-export type WorkerBehaviorMode =
-  | "general"
-  | "plan"
-  | "correctness-review"
-  | "design-review"
-  | "research";
+export type WorkerBehaviorMode = DelegationBehaviorMode;
 
 export type WorkerExecutionPolicy = "support" | "routine" | "deep";
 
-export const WORKER_BEHAVIOR_MODES = [
-  "general",
-  "plan",
-  "correctness-review",
-  "design-review",
-  "research",
-] as const satisfies readonly WorkerBehaviorMode[];
+export const WORKER_BEHAVIOR_MODES = DELEGATION_BEHAVIOR_MODES;
 
 export const WORKER_EXECUTION_POLICIES = [
   "support",
@@ -32,28 +25,27 @@ const EXECUTION_POLICY_TIERS: Record<WorkerExecutionPolicy, EffortTier> = {
 };
 
 interface BehaviorModeConfig {
-  defaultPolicy: WorkerExecutionPolicy;
   lens?: string;
 }
 
 const BEHAVIOR_MODE_CONFIGS: Record<WorkerBehaviorMode, BehaviorModeConfig> = {
-  general: { defaultPolicy: "routine" },
-  plan: { defaultPolicy: "deep", lens: "planner" },
+  general: {},
+  plan: { lens: "planner" },
   "correctness-review": {
-    defaultPolicy: "deep",
     lens: "code-reviewer",
   },
   "design-review": {
-    defaultPolicy: "deep",
     lens: "code-reviewer-2",
   },
-  research: { defaultPolicy: "support", lens: "researcher" },
+  research: { lens: "researcher" },
 };
 
 export interface ManagerDelegationInput {
   agentId: string;
   initialMessage: string;
   mode?: WorkerBehaviorMode;
+  route?: string;
+  /** @deprecated Compatibility input for manager runtimes created before rosters. */
   executionPolicy?: WorkerExecutionPolicy;
   customSpecialist?: string;
   planStep?: string;
@@ -64,6 +56,7 @@ export interface ManagerDelegationInput {
 export interface ResolvedManagerDelegation {
   spawnInput: SpawnAgentInput;
   requestedMode?: WorkerBehaviorMode;
+  requestedRoute?: string;
   requestedExecutionPolicy?: WorkerExecutionPolicy;
 }
 
@@ -83,9 +76,9 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
     throw new Error("spawn_agent.customSpecialist must be a non-empty saved specialist handle");
   }
   if (customSpecialist) {
-    if (input.mode !== undefined || input.executionPolicy !== undefined) {
+    if (input.mode !== undefined || input.route !== undefined || input.executionPolicy !== undefined) {
       throw new Error(
-        "customSpecialist cannot be combined with mode or executionPolicy; its saved definition owns worker behavior and model selection.",
+        "customSpecialist cannot be combined with mode or route; its saved definition owns worker behavior and model selection.",
       );
     }
     if (resolveLegacySpecialistRewrite(customSpecialist)) {
@@ -119,17 +112,40 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
 
   const mode = input.mode ?? "general";
   const modeConfig = BEHAVIOR_MODE_CONFIGS[mode];
-  const executionPolicy = input.executionPolicy ?? modeConfig.defaultPolicy;
+  const route = input.route?.trim() || "auto";
+
+  if (input.route !== undefined && !input.route.trim()) {
+    throw new Error("spawn_agent.route must be auto or a non-empty route id");
+  }
+
+  // Compatibility for a manager runtime that was created with the immediately
+  // preceding policy schema. New prompts and tools never emit this branch.
+  if (input.executionPolicy !== undefined) {
+    return {
+      requestedMode: mode,
+      requestedExecutionPolicy: input.executionPolicy,
+      spawnInput: {
+        agentId,
+        initialMessage,
+        tier: EXECUTION_POLICY_TIERS[input.executionPolicy],
+        lens: modeConfig.lens,
+        policyControlledModel: true,
+        planStep: input.planStep,
+        cwd: input.cwd,
+        requiresSecureRuntime: input.requiresSecureRuntime,
+      },
+    };
+  }
 
   return {
     requestedMode: mode,
-    requestedExecutionPolicy: executionPolicy,
+    requestedRoute: route,
     spawnInput: {
       agentId,
       initialMessage,
-      tier: EXECUTION_POLICY_TIERS[executionPolicy],
+      route,
+      behaviorMode: mode,
       lens: modeConfig.lens,
-      policyControlledModel: true,
       planStep: input.planStep,
       cwd: input.cwd,
       requiresSecureRuntime: input.requiresSecureRuntime,
@@ -143,8 +159,9 @@ export function translateManagerDelegationError(
 ): Error {
   const original = error instanceof Error ? error : new Error(String(error));
   const mode = resolved.requestedMode;
+  const route = resolved.requestedRoute;
   const policy = resolved.requestedExecutionPolicy;
-  if (!mode || !policy) {
+  if (!mode) {
     return original;
   }
 
@@ -163,8 +180,11 @@ export function translateManagerDelegationError(
       ),
     );
   }
-  if (original.message.startsWith("Tier \"") || original.message.startsWith("Unknown tier:")) {
+  if (policy && (original.message.startsWith("Tier \"") || original.message.startsWith("Unknown tier:"))) {
     return new Error(`Execution policy "${policy}" is not available: ${original.message}`);
+  }
+  if (route && original.message.startsWith("Delegation ")) {
+    return new Error(`Execution route "${route}" is not available: ${original.message}`);
   }
   return original;
 }

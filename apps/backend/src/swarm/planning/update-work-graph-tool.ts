@@ -1,7 +1,6 @@
 import { Type } from '@sinclair/typebox'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import {
-  WORK_GRAPH_EFFORTS,
   WORK_GRAPH_NODE_KINDS,
   WORK_GRAPH_NODE_STATUSES,
   type SessionPlanSnapshot,
@@ -27,7 +26,8 @@ export interface UpdateWorkGraphResult extends SessionPlanSnapshot {
   dispatched: Array<{
     nodeId: string
     workerId: string
-    executionPolicy: 'support' | 'routine' | 'deep'
+    requestedRoute: string
+    resolvedRouteId?: string
   }>
   dispatchFailures: Array<{ nodeId: string; message: string }>
   cancelledWorkerIds: string[]
@@ -45,13 +45,6 @@ const nodeKindSchema = Type.Union(
     description: 'Semantic outcome kind used for economical routing. Use decision only for a real user gate.',
   },
 )
-const effortSchema = Type.Union(
-  WORK_GRAPH_EFFORTS.map((effort) => Type.Literal(effort)),
-  {
-    description: 'Risk override for this outcome. Prefer auto; graph size and fan-in do not justify deep.',
-  },
-)
-
 export const updateWorkGraphToolSchema = Type.Object({
   explanation: Type.Optional(Type.String({
     minLength: 1,
@@ -95,7 +88,12 @@ export const updateWorkGraphToolSchema = Type.Object({
       maxLength: MAX_WORK_GRAPH_ACCEPTANCE_LENGTH,
       description: 'Smallest manager-verifiable check that proves this independently acceptable outcome before marking it completed.',
     })),
-    effort: Type.Optional(effortSchema),
+    route: Type.Optional(Type.String({
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^(auto|[a-z0-9][a-z0-9-]{0,63})$',
+      description: 'Deliberate execution-route override from the active roster. Omit for the node-kind baseline; name a route only when its current guidance clearly fits. Graph size and fan-in do not justify a stronger route.',
+    })),
   }, { additionalProperties: false }), {
     minItems: 1,
     maxItems: MAX_WORK_GRAPH_NODES,
@@ -117,10 +115,9 @@ export function buildUpdateWorkGraphTool(
       'When risk warrants a distinct implement-then-independent-review handoff, encode that dependency here instead of combining update_plan with manual spawn_agent calls.',
       'For simple requests use no coordination tool; for a short visible checklist use update_plan.',
       'If one bounded planning investigation must happen before the graph is knowable, run and accept that delegation first; do not create speculative downstream nodes.',
-      'Forge automatically dispatches ready non-decision nodes and chooses economical models from node kind, explicit risk overrides, and blocked-attempt history.',
-      'Use effort=auto unless a concrete risk requires an override.',
-      'Worker success moves a node to awaiting_review; personally accept its result, then submit the complete graph with that node completed to release dependents.',
-      'Use waiting decision nodes for user gates. Re-submit a blocked node as pending to retry it; a blocked retry auto-escalates.',
+      'Forge automatically dispatches ready non-decision nodes. Follow the active roster guidance for route selection; graph size and fan-in do not justify a stronger executor.',
+      'Worker success moves a node to awaiting_review; personally verify its result, then use accept_work_graph_node to complete only that node and release dependents.',
+      'Use waiting decision nodes for user gates. Re-submit a blocked node as pending to retry it; Forge uses the prior route capability-escalation target when one was configured.',
     ].join(' '),
     parameters: updateWorkGraphToolSchema,
     async execute(toolCallId, params) {

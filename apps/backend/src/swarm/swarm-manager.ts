@@ -1195,9 +1195,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.sessionPlanCoordinator.recordWorkerAssignment(owner, assignment, input),
       },
       goals: { appendToManagerInput: (owner, text) => goals.appendToManagerInput(owner, text) },
+      delegation: { appendToManagerInput: (owner, text) => this.configurationCoordinator.appendDelegationRosterModelContext(owner, text) },
       projectAgents: {
-        authorizeExternalDelivery: (input) =>
-          this.projectAgentSharingService.authorizeExternalDelivery(input),
+        authorizeExternalDelivery: (input) => this.projectAgentSharingService.authorizeExternalDelivery(input),
         recordExternalContact: (sourceAgentId, targetProfileId, targetSessionAgentId) =>
           this.projectAgentSharingService.recordExternalContact(
             sourceAgentId,

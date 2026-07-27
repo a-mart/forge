@@ -15,6 +15,10 @@ import type {
   CodexPluginScopeRuntimeView,
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type {
+  AcceptWorkGraphNodeInput,
+  AcceptWorkGraphNodeResult,
+} from "./planning/accept-work-graph-node-tool.js";
 import type { UpdateWorkGraphResult } from "./planning/update-work-graph-tool.js";
 import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
 import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
@@ -122,6 +126,11 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: UpdateWorkGraphInput,
   ): Promise<UpdateWorkGraphResult>;
+  acceptWorkGraphNode(
+    callerAgentId: string,
+    toolCallId: string,
+    input: AcceptWorkGraphNodeInput,
+  ): Promise<AcceptWorkGraphNodeResult>;
   createGoal(
     callerAgentId: string,
     toolCallId: string,

@@ -2,6 +2,7 @@ import { migrateDataDirectory } from "../../data-migration.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "../../types.js";
 import type { ProfileBootReconciler } from "./profile-boot-reconciler.js";
 import { prunePersistedWorkerSidecars } from "./worker-boot-recovery.js";
+import { resolveDelegationRosterSettings } from "../../specialists/delegation-roster-store.js";
 
 interface BootReconcilerOptions {
   config: SwarmConfig;
@@ -54,11 +55,19 @@ export class BootReconciler {
     await this.options.preloadSessionPlanStates();
 
     const normalizedSessionModelState = this.options.profileReconciler.reconcileProfilesOnBoot();
+    const delegationRosterSettings = await resolveDelegationRosterSettings(
+      this.options.config.paths.dataDir,
+    );
+    const normalizedDelegationState =
+      this.options.profileReconciler.reconcileDelegationStateOnBoot(
+        delegationRosterSettings.defaultRosterId,
+      );
     const normalizedSystemProfileTypes = this.options.profileReconciler.normalizeSystemProfileTypes();
     if (
       cortexPruneResult.pruned ||
       workerSidecarPruneResult.pruned ||
       normalizedSessionModelState ||
+      normalizedDelegationState ||
       normalizedSystemProfileTypes
     ) {
       await this.options.saveStore();

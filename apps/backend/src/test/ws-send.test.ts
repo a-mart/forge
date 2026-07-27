@@ -4,6 +4,8 @@ import type { ServerEvent } from '@forge/protocol'
 import {
   BOOTSTRAP_CRITICAL_EVENT_TYPES,
   MAX_WS_BUFFERED_AMOUNT_BYTES,
+  MAX_WS_CATALOG_SNAPSHOT_BYTES,
+  MAX_WS_EVENT_BYTES,
   sendWsEvent,
   sendWsEventWithBackpressure,
   waitForSocketDrain,
@@ -269,6 +271,39 @@ describe('waitForSocketDrain', () => {
 })
 
 describe('sendWsEvent (live-path drop behavior is unchanged)', () => {
+  it('allows catalog snapshots beyond the general event cap', () => {
+    resetWsLogThrottleForTest()
+    const fake = createFakeSocket({ bufferedAmount: 0 })
+    const onDropSocket = vi.fn()
+    const event = {
+      type: 'agents_snapshot',
+      agents: [],
+      testPadding: 'x'.repeat(MAX_WS_EVENT_BYTES),
+    } as unknown as ServerEvent
+
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), 'utf8')
+    expect(eventBytes).toBeGreaterThan(MAX_WS_EVENT_BYTES)
+    expect(eventBytes).toBeLessThan(MAX_WS_CATALOG_SNAPSHOT_BYTES)
+
+    expect(sendWsEvent({ socket: fake.socket, event, onDropSocket })).toBe(eventBytes)
+    expect(fake.sendMock).toHaveBeenCalledTimes(1)
+    expect(onDropSocket).not.toHaveBeenCalled()
+  })
+
+  it('keeps the general event cap for non-catalog events', () => {
+    resetWsLogThrottleForTest()
+    const fake = createFakeSocket({ bufferedAmount: 0 })
+    const onDropSocket = vi.fn()
+    const event = {
+      ...liveEvent(),
+      text: 'x'.repeat(MAX_WS_EVENT_BYTES),
+    } as ServerEvent
+
+    expect(sendWsEvent({ socket: fake.socket, event, onDropSocket })).toBeNull()
+    expect(fake.sendMock).not.toHaveBeenCalled()
+    expect(onDropSocket).not.toHaveBeenCalled()
+  })
+
   it('drops over-cap events without terminating', () => {
     resetWsLogThrottleForTest()
     const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 1 })

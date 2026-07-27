@@ -16,6 +16,6 @@ Anthropic models (Claude) normalize reasoning levels differently. Setting "none"
 
 ## How to choose
 
-Start at **medium** or **high** and adjust from there. If workers rush complex work, raise the Deep policy's reasoning level. If simple delegated work is taking too long, lower Support or choose a faster model.
+Start at **medium** or **high** and adjust from there. If a worker route rushes complex work, raise that route's reasoning level or point its capability escalation at a stronger route. If simple delegated work is taking too long, lower its normal route or choose a faster model.
 
-Worker reasoning is configured per execution policy or direct custom specialist in Settings > Delegation. You can also set it for the manager model when creating or editing a session.
+Worker reasoning is configured per delegation route or direct custom specialist in Settings > Delegation. You can also set it for the manager model when creating or editing a session.

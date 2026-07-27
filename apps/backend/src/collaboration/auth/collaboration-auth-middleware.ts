@@ -89,6 +89,8 @@ const MEMBER_PROJECT_RESOURCES_PATH = "/api/settings/project-resources";
 const MEMBER_MODELS_LIST_PATH = "/api/settings/models";
 /** Model availability matrix read (R2) — feeds the same pickers; writes stay admin. */
 const MEMBER_MODEL_OVERRIDES_PATH = "/api/settings/model-overrides";
+/** Delegation roster read — feeds the per-session coordination picker; writes stay admin. */
+const MEMBER_DELEGATION_ROSTERS_PATH = "/api/settings/delegation-rosters";
 /** Terminal list/shell reads (R1); mutations and tickets are R2 surfaces. */
 const MEMBER_TERMINALS_COLLECTION_PATH = "/api/terminals";
 const MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells";
@@ -357,7 +359,11 @@ function isMemberProjectRoute(
       return true;
     }
 
-    if (pathname === MEMBER_MODELS_LIST_PATH || pathname === MEMBER_MODEL_OVERRIDES_PATH) {
+    if (
+      pathname === MEMBER_MODELS_LIST_PATH
+      || pathname === MEMBER_MODEL_OVERRIDES_PATH
+      || pathname === MEMBER_DELEGATION_ROSTERS_PATH
+    ) {
       return true;
     }
 

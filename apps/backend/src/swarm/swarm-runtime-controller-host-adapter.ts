@@ -96,6 +96,7 @@ export function createSwarmRuntimeControllerHost(
     invokeBrowserAutomation: toolHost.invokeBrowserAutomation.bind(toolHost),
     updatePlan: toolHost.updatePlan.bind(toolHost),
     updateWorkGraph: toolHost.updateWorkGraph.bind(toolHost),
+    acceptWorkGraphNode: toolHost.acceptWorkGraphNode.bind(toolHost),
     createGoal: toolHost.createGoal.bind(toolHost),
     getGoal: toolHost.getGoal.bind(toolHost),
     updateGoal: toolHost.updateGoal.bind(toolHost),

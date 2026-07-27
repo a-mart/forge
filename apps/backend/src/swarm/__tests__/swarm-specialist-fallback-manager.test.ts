@@ -708,6 +708,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       descriptors.set(agentId, updatedDescriptor);
       return updatedDescriptor;
     });
+    const recordWorkGraphWorkerModelReroute = vi.fn(async () => undefined);
 
     const manager = new SwarmSpecialistFallbackManager({
       descriptors,
@@ -728,6 +729,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       detachRuntime: vi.fn(),
       updateSessionMetaForWorkerDescriptor: vi.fn(),
       refreshSessionMetaStatsBySessionId: vi.fn(),
+      recordWorkGraphWorkerModelReroute,
       saveStore: vi.fn(),
       patchDescriptor,
       emitStatus: vi.fn(),
@@ -756,6 +758,15 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(current.terminateCalls.length).toBeGreaterThan(0);
     expect(patchDescriptor).toHaveBeenCalledTimes(1);
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("openai-codex");
+    expect(recordWorkGraphWorkerModelReroute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: worker.agentId,
+        model: expect.objectContaining({
+          provider: "openai-codex",
+          modelId: "gpt-5.5",
+        }),
+      }),
+    );
   });
 
   it.each([

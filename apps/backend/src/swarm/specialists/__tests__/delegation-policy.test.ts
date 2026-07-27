@@ -5,19 +5,19 @@ import {
 } from "../delegation-policy.js";
 
 describe("resolveManagerDelegation", () => {
-  it("defaults general work to the routine execution policy", () => {
+  it("defaults general work to the active roster's automatic route", () => {
     expect(resolveManagerDelegation({
       agentId: "implementer",
       initialMessage: "Implement the scoped change.",
     })).toEqual({
       requestedMode: "general",
-      requestedExecutionPolicy: "routine",
+      requestedRoute: "auto",
       spawnInput: {
         agentId: "implementer",
         initialMessage: "Implement the scoped change.",
-        tier: "standard",
+        route: "auto",
+        behaviorMode: "general",
         lens: undefined,
-        policyControlledModel: true,
         planStep: undefined,
         cwd: undefined,
         requiresSecureRuntime: undefined,
@@ -29,44 +29,53 @@ describe("resolveManagerDelegation", () => {
     ["plan", "planner"],
     ["correctness-review", "code-reviewer"],
     ["design-review", "code-reviewer-2"],
-  ] as const)("defaults %s work to deep", (mode, lens) => {
+    ["research", "researcher"],
+  ] as const)("keeps %s behavior separate from route choice", (mode, lens) => {
     expect(resolveManagerDelegation({
       agentId: "specialist",
       initialMessage: "Do the assigned work.",
       mode,
     })).toMatchObject({
       requestedMode: mode,
-      requestedExecutionPolicy: "deep",
-      spawnInput: { tier: "deep", lens },
+      requestedRoute: "auto",
+      spawnInput: { behaviorMode: mode, route: "auto", lens },
     });
   });
 
-  it("defaults research work to support", () => {
-    expect(resolveManagerDelegation({
-      agentId: "researcher",
-      initialMessage: "Verify the current docs.",
-      mode: "research",
-    })).toMatchObject({
-      requestedMode: "research",
-      requestedExecutionPolicy: "support",
-      spawnInput: { tier: "fast", lens: "researcher" },
-    });
-  });
-
-  it("allows the manager to choose support for bounded planning and review work", () => {
+  it("allows a named route from the active roster", () => {
     expect(resolveManagerDelegation({
       agentId: "planner",
       initialMessage: "Plan the work.",
       mode: "plan",
-      executionPolicy: "support",
+      route: "deep-reasoner",
     })).toMatchObject({
       requestedMode: "plan",
-      requestedExecutionPolicy: "support",
-      spawnInput: { tier: "fast", lens: "planner" },
+      requestedRoute: "deep-reasoner",
+      spawnInput: {
+        behaviorMode: "plan",
+        route: "deep-reasoner",
+        lens: "planner",
+      },
     });
   });
 
-  it("routes custom specialists without applying a mode or policy", () => {
+  it("keeps one compatibility branch for managers with the prior policy schema", () => {
+    expect(resolveManagerDelegation({
+      agentId: "legacy",
+      initialMessage: "Review the work.",
+      mode: "correctness-review",
+      executionPolicy: "deep",
+    })).toMatchObject({
+      requestedExecutionPolicy: "deep",
+      spawnInput: {
+        tier: "deep",
+        lens: "code-reviewer",
+        policyControlledModel: true,
+      },
+    });
+  });
+
+  it("routes custom specialists without applying a mode or route", () => {
     expect(resolveManagerDelegation({
       agentId: "domain-expert",
       initialMessage: "Inspect the domain behavior.",
@@ -104,7 +113,7 @@ describe("resolveManagerDelegation", () => {
       agentId: "domain-expert",
       initialMessage: "Inspect the domain behavior.",
       customSpecialist: "payments-expert",
-      executionPolicy: "deep",
+      route: "deep-reasoner",
     })).toThrow("customSpecialist cannot be combined");
   });
 
@@ -116,23 +125,33 @@ describe("resolveManagerDelegation", () => {
     })).toThrow('customSpecialist "planner" is reserved for Forge compatibility');
   });
 
-  it("requires concrete task text", () => {
+  it("requires concrete task and route text", () => {
     expect(() => resolveManagerDelegation({
       agentId: "worker",
       initialMessage: "   ",
     })).toThrow("spawn_agent requires a non-empty initialMessage");
+    expect(() => resolveManagerDelegation({
+      agentId: "worker",
+      initialMessage: "Do work.",
+      route: " ",
+    })).toThrow("spawn_agent.route must be auto or a non-empty route id");
   });
 
-  it("translates internal lens failures back to manager-facing mode language", () => {
+  it("translates internal lens and route failures into manager-facing language", () => {
     const resolved = resolveManagerDelegation({
       agentId: "reviewer",
       initialMessage: "Review the change.",
       mode: "correctness-review",
+      route: "critic",
     });
 
     expect(translateManagerDelegationError(
       new Error('Lens "code-reviewer" is disabled for this profile. Enable it before spawning.'),
       resolved,
     ).message).toBe('Behavior mode "correctness-review" is disabled in this session.');
+    expect(translateManagerDelegationError(
+      new Error('Delegation route "critic" is not available.'),
+      resolved,
+    ).message).toContain('Execution route "critic" is not available');
   });
 });

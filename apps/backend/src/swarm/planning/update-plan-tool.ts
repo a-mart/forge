@@ -5,6 +5,7 @@ import type { SwarmToolHost } from '../swarm-tool-host.js'
 import type { AgentDescriptor } from '../types.js'
 import {
   MAX_PLAN_EXPLANATION_LENGTH,
+  MAX_PLAN_STEP_ID_LENGTH,
   MAX_PLAN_STEP_LENGTH,
   MAX_PLAN_STEPS,
 } from './session-plan-state.js'
@@ -27,10 +28,16 @@ export const updatePlanToolSchema = Type.Object({
     description: 'Optional short explanation of why the plan changed.',
   })),
   plan: Type.Array(Type.Object({
+    id: Type.Optional(Type.String({
+      minLength: 1,
+      maxLength: MAX_PLAN_STEP_ID_LENGTH,
+      pattern: '^[a-z0-9][a-z0-9_-]*$',
+      description: 'Stable id returned by the previous update. Preserve it when revising an existing step; omit it only for a new step.',
+    })),
     step: Type.String({
       minLength: 1,
       maxLength: MAX_PLAN_STEP_LENGTH,
-      description: 'A concise, verifiable unit of work. Keep step text distinct within the plan so worker attribution is unambiguous.',
+      description: 'A concise, verifiable unit of work.',
     }),
     status: Type.Union([
       Type.Literal('pending'),

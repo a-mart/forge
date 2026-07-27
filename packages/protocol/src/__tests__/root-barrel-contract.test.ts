@@ -76,9 +76,11 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'cancel_repository_project_creation',
   'delete_manager',
   'update_profile_default_model',
+  'update_project_delegation_defaults',
   'update_manager_model',
   'update_manager_cwd',
   'update_session_model',
+  'update_session_delegation',
   'create_session',
   'stop_session',
   'resume_session',
@@ -142,9 +144,11 @@ const REQUEST_ID_COMMAND_TYPES = [
   'cancel_repository_project_creation',
   'delete_manager',
   'update_profile_default_model',
+  'update_project_delegation_defaults',
   'update_manager_model',
   'update_manager_cwd',
   'update_session_model',
+  'update_session_delegation',
   'create_session',
   'stop_session',
   'resume_session',
@@ -494,9 +498,11 @@ const requestIdCommands = [
   },
   { type: 'delete_manager', managerId: agent.agentId, requestId: 'request-4' },
   { type: 'update_profile_default_model', profileId: profile.profileId, model: 'pi-5.4', requestId: 'request-5' },
+  { type: 'update_project_delegation_defaults', profileId: profile.profileId, managerPosture: 'hands_on', delegationRosterId: 'balanced', requestId: 'request-5a' },
   { type: 'update_manager_model', managerId: agent.agentId, model: 'pi-5.4', requestId: 'request-6' },
   { type: 'update_manager_cwd', managerId: agent.agentId, cwd: '/tmp', requestId: 'request-7' },
   { type: 'update_session_model', sessionAgentId: agent.agentId, mode: 'inherit', requestId: 'request-8' },
+  { type: 'update_session_delegation', sessionAgentId: agent.agentId, managerPosture: { mode: 'inherit' }, delegationRoster: { mode: 'override', rosterId: 'balanced' }, requestId: 'request-8a' },
   { type: 'create_session', profileId: profile.profileId, requestId: 'request-9' },
   { type: 'stop_session', agentId: agent.agentId, requestId: 'request-10' },
   { type: 'resume_session', agentId: agent.agentId, requestId: 'request-11' },
@@ -580,9 +586,11 @@ describe('protocol root barrel contract', () => {
       'rename_session',
       'pin_session',
       'update_session_model',
+      'update_session_delegation',
       'fork_session',
       'merge_session_memory',
       'update_profile_default_model',
+      'update_project_delegation_defaults',
       'update_manager_model',
       'update_manager_cwd',
       'stop_all_agents',
@@ -679,6 +687,12 @@ describe('protocol root barrel contract', () => {
       successEvents: ['session_model_updated'],
       errorCodeFragments: ['update_session_model'],
     })
+    expect(getWsRequestContract('update_session_delegation')).toMatchObject({
+      commandType: 'update_session_delegation',
+      resultFamily: 'session_delegation_update',
+      successEvents: ['session_delegation_updated'],
+      errorCodeFragments: ['update_session_delegation'],
+    })
     expect(getWsRequestContract('fork_session')).toMatchObject({
       commandType: 'fork_session',
       resultFamily: 'session_fork',
@@ -696,6 +710,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'profile_default_model_update',
       successEvents: ['profile_default_model_updated'],
       errorCodeFragments: ['update_profile_default_model'],
+    })
+    expect(getWsRequestContract('update_project_delegation_defaults')).toMatchObject({
+      commandType: 'update_project_delegation_defaults',
+      resultFamily: 'project_delegation_defaults_update',
+      successEvents: ['project_delegation_defaults_updated'],
+      errorCodeFragments: ['update_project_delegation_defaults'],
     })
     expect(getWsRequestContract('update_manager_model')).toMatchObject({
       commandType: 'update_manager_model',
@@ -874,7 +894,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(73)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(75)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -885,7 +905,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(54)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(56)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

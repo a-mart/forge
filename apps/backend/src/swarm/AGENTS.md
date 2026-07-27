@@ -19,6 +19,7 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `swarm-choice-service.ts` - pending choice requests, resolution, cancellation, and user-choice events.
 - `session-interaction-coordinator.ts` - interactive manager command policy and cross-service ordering for working plans, choice continuations, agent spawn/kill, user publication, and conversation reset.
 - `swarm-manager-facade.ts` / `swarm-manager-facade-services.ts` - the single stateless inherited application API and its explicit typed capability map; delegates to focused owners while `SwarmManager` remains the composition root. Runtime-controller host callbacks, mutable worker-health maps, and test-only seams stay on their owners rather than becoming facade API.
+- `swarm-manager-delegation-facade.ts` - posture and delegation-roster settings surface layered into the public manager facade without widening the composition root.
 - `swarm-session-meta-service.ts` - session manifest/meta hydration, boot backfill, and initial meta writes.
 - `conversation-attachment-service.ts` - inbound attachment normalization, persistence, runtime projection, and binary artifact writes.
 - `user-message-coordinator.ts` - inbound user-message target/reply resolution, canonical conversation append, route short-circuits, and manager/worker runtime dispatch transaction ordering.
