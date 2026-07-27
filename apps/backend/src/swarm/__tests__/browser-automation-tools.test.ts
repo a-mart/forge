@@ -81,34 +81,19 @@ describe("browser automation tools", () => {
     expect(invoke).toHaveBeenCalledWith("manager-1", "evaluate", expect.objectContaining({ awaitPromise: true, returnByValue: true }));
   });
 
-  it("advertises hostKind in every strict schema branch and routes M3 External Chrome tools explicitly", async () => {
+  it("keeps every schema branch strict", async () => {
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
     const tools = buildBrowserAutomationTools(host(invoke), descriptor());
     for (const tool of tools) {
       const branches = schemaObjectBranches(tool.parameters as unknown as Record<string, unknown>);
       expect(branches.length, tool.name).toBeGreaterThan(0);
-      for (const branch of branches) {
-        expect(branch.additionalProperties, tool.name).toBe(false);
-        expect(branch.properties, tool.name).toHaveProperty("hostKind");
-      }
-      expect(Value.Check(tool.parameters, { ...validInputs[tool.name], hostKind: "external-chrome" }), tool.name).toBe(true);
+      for (const branch of branches) expect(branch.additionalProperties, tool.name).toBe(false);
+      expect(Value.Check(tool.parameters, { ...validInputs[tool.name], unexpectedSelector: "external-chrome" }), tool.name).toBe(false);
     }
-
-    for (const name of ["browser_status", "browser_open", "browser_navigate"] as const) {
-      await byName(tools, name).execute(`external-${name}`, {
-        ...validInputs[name],
-        hostKind: "external-chrome",
-      }, undefined, undefined, undefined as never);
-    }
-    await byName(tools, "browser_status").execute("managed-default-call", {}, undefined, undefined, undefined as never);
-    expect(invoke).toHaveBeenNthCalledWith(1, "manager-1", "status", { hostKind: "external-chrome" });
-    expect(invoke).toHaveBeenNthCalledWith(2, "manager-1", "open", expect.objectContaining({ hostKind: "external-chrome" }));
-    expect(invoke).toHaveBeenNthCalledWith(3, "manager-1", "navigate", expect.objectContaining({ hostKind: "external-chrome" }));
-    expect(invoke.mock.calls[3]?.[2]).not.toHaveProperty("hostKind");
   });
 
   it("preserves typed External Chrome attachment, restricted, conflict, and lost failures", async () => {
-    const failures = ["attachment-required", "restricted-target", "lease-conflict", "lease-lost"] as const;
+    const failures = ["target-not-found", "restricted-target", "lease-conflict", "lease-lost"] as const;
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({
       ok: false as const,
       operation,
@@ -117,9 +102,7 @@ describe("browser automation tools", () => {
     const tools = buildBrowserAutomationTools(host(invoke), descriptor());
     for (const [index, code] of failures.entries()) {
       const operation = (["browser_status", "browser_open", "browser_navigate", "browser_navigate"] as const)[index]!;
-      const result = await byName(tools, operation).execute(`failure-${code}`, {
-        ...validInputs[operation], hostKind: "external-chrome",
-      }, undefined, undefined, undefined as never) as { isError?: boolean; details?: unknown };
+      const result = await byName(tools, operation).execute(`failure-${code}`, validInputs[operation]!, undefined, undefined, undefined as never) as { isError?: boolean; details?: unknown };
       expect(result).toMatchObject({ isError: true, details: { error: { code } } });
     }
   });
@@ -175,8 +158,8 @@ describe("browser automation tools", () => {
       getDescriptor: () => current,
       getService: () => ({ invoke } as never),
     });
-    await managerInvoke("manager-1", "status", { hostKind: "external-chrome" });
-    expect(invoke).toHaveBeenCalledWith("manager-1", "profile-1", "status", { hostKind: "external-chrome" });
+    await managerInvoke("manager-1", "status", {});
+    expect(invoke).toHaveBeenCalledWith("manager-1", "profile-1", "status", {});
 
     current = descriptor({ sessionSurface: "collab" });
     await expect(managerInvoke("manager-1", "status", {})).resolves.toMatchObject({

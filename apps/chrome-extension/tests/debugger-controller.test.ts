@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DebuggerController, OopifAncestryTracker } from '../src/runtime/debugger-controller.js'
+import { DebuggerAttachConflictError, DebuggerController, OopifAncestryTracker } from '../src/runtime/debugger-controller.js'
 import { fakeChrome } from './fakes.js'
 
 describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening', () => {
@@ -85,7 +85,7 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     const chrome = fakeChrome()
     chrome.attached.add(7)
     const controller = new DebuggerController(chrome.debugger)
-    await expect(controller.attach(7)).rejects.toThrow('Another debugger')
+    await expect(controller.attach(7)).rejects.toBeInstanceOf(DebuggerAttachConflictError)
     expect(controller.state(7)).toBe('UNATTACHED')
     chrome.attached.delete(7)
     await controller.attach(7)

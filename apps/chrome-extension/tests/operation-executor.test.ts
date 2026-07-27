@@ -16,7 +16,7 @@ function request(operation: string, input: Record<string, unknown>, timeoutMs = 
 }
 
 async function harness(handler: (target: { tabId?: number; sessionId?: string }, method: string, params?: Record<string, unknown>) => unknown | Promise<unknown>) {
-  const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, groupId: 2, url: 'https://fixture.test/page', title: 'Fixture' }] })
+  const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, url: 'https://fixture.test/page', title: 'Fixture' }] })
   const original = chrome.debugger.sendCommand
   chrome.debugger.sendCommand = async (target, method, params) => {
     const handled = await handler(target, method, params)

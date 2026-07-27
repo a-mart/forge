@@ -4,13 +4,36 @@ import type {
   BrowserTabSnapshot,
 } from '@forge/protocol'
 import type {
+  BrowserTargetSession,
+  ExternalBrowserAcquireInput,
+  ExternalBrowserAcquireResult,
+  ExternalBrowserTargetAuthority,
+} from '../../browser-target-adapter.js'
+import type {
   ExternalChromeTransport,
   ExternalChromeTransportResult,
 } from '../../external-chrome-target-adapter.js'
 
 export class FakeExternalChromeTransport implements ExternalChromeTransport {
   readonly requests: BrowserAutomationRequest[] = []
+  readonly acquisitions: ExternalBrowserAcquireInput[] = []
+  readonly releases: Array<{ session: BrowserTargetSession; authority: ExternalBrowserTargetAuthority; reason: string }> = []
+  readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
   constructor(readonly maxResponseBytes = 1_000_000) {}
+
+  async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
+    this.acquisitions.push(structuredClone(input))
+    return { ok: true, authority: { ownerEpoch: input.ownerEpoch, tabId: input.preferredTabId ?? 'external-tab-1' } }
+  }
+
+  async releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void> {
+    this.releases.push({ session: structuredClone(session), authority: structuredClone(authority), reason })
+  }
+
+  async revealTarget(session: BrowserTargetSession, tabId: string): Promise<{ revealed: true; tabId: string }> {
+    this.reveals.push({ session: structuredClone(session), tabId })
+    return { revealed: true, tabId }
+  }
 
   async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
     this.requests.push(structuredClone(request))
@@ -18,7 +41,7 @@ export class FakeExternalChromeTransport implements ExternalChromeTransport {
     const results: BrowserAutomationResultByOperation = {
       status: {
         available: true,
-        host: { hostKind: 'external-chrome', connected: true, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: new Date(0).toISOString() },
+        host: { connected: true, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: new Date(0).toISOString() },
         panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: request.tabId ? tab : null,
       },
       open: { tab, created: request.tabId === null, panelRevealRequested: false },
@@ -46,7 +69,7 @@ export class FakeExternalChromeTransport implements ExternalChromeTransport {
 function fakeExternalTab(request: BrowserAutomationRequest): BrowserTabSnapshot {
   const now = new Date(0).toISOString()
   return {
-    hostKind: 'external-chrome',
+    targetAffinity: 'external-chrome',
     tabId: request.tabId ?? 'external-tab-1', sessionAgentId: request.sessionAgentId, profileId: request.profileId,
     url: 'https://example.test/', title: 'External Chrome fake', lifecycle: 'ready', loading: false, live: true,
     canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null,

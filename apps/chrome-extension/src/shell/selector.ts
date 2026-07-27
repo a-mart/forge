@@ -4,7 +4,7 @@ export interface PayloadSelector {
   payloadVersion: string
   payloadSha256: string
   payloadDirectory: string
-  payloadFiles: Record<'content-script.js' | 'service-worker.js' | 'side-panel.js', string>
+  payloadFiles: Record<'content-script.js' | 'service-worker.js', string>
 }
 
 const SAFE_VERSION = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
@@ -23,7 +23,7 @@ export function parsePayloadSelector(value: unknown): PayloadSelector {
   if (record.payloadDirectory !== expectedDirectory) throw new Error('payload directory does not bind version and hash')
   if (typeof record.payloadFiles !== 'object' || record.payloadFiles === null || Array.isArray(record.payloadFiles)) throw new Error('payload file metadata is invalid')
   const payloadFiles = record.payloadFiles as Record<string, unknown>
-  const expectedFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  const expectedFiles = ['content-script.js', 'service-worker.js']
   const fileNames = Object.keys(payloadFiles).sort()
   if (fileNames.length !== expectedFiles.length || fileNames.some((name, index) => name !== expectedFiles[index])) throw new Error('payload file metadata is incomplete')
   for (const name of expectedFiles) if (typeof payloadFiles[name] !== 'string' || !SHA256.test(payloadFiles[name])) throw new Error(`payload hash is invalid for ${name}`)

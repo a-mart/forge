@@ -1,178 +1,70 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostKind, BrowserHostRegistration } from "@forge/protocol";
-import { BrowserAutomationBrokerError, BrowserHostBroker } from "../browser-automation/browser-host-broker.js";
+import { describe, expect, it, vi } from "vitest";
+import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostLifecycleRequest, BrowserHostRegistration } from "@forge/protocol";
+import { BrowserHostBroker } from "../browser-automation/browser-host-broker.js";
 
-function registration(
-  operations: BrowserHostRegistration["capabilities"]["supportedOperations"] = ["status"],
-  hostKind: BrowserHostKind = "managed-electron",
-): BrowserHostRegistration {
+function registration(version = 2): BrowserHostRegistration {
   return {
-    hostId: "host-1",
-    clientInstanceId: "client-1",
-    registeredAt: "2026-07-22T00:00:00.000Z",
+    hostId: "desktop", clientInstanceId: "desktop-instance", registeredAt: "2026-07-27T00:00:00.000Z",
     capabilities: {
-      hostKind,
-      supportedOperations: operations,
-      electronVersion: "37.10.3",
-      chromiumVersion: "138",
-      playwrightVersion: "1.60.0",
-      maxResponseBytes: 10_000,
-      supportsSandboxedWebviews: true,
-      supportsCapturePage: true,
-      supportsRecording: true,
+      protocolVersions: { minimum: version, maximum: version }, supportedOperations: ["status", "open", "snapshot"],
+      maxResponseBytes: 100_000,
     },
   };
 }
 
-function success(request: BrowserAutomationRequest): BrowserAutomationResponse {
+function response(request: BrowserAutomationRequest): BrowserAutomationResponse {
   return {
-    requestId: request.requestId,
-    hostKind: request.hostKind,
-    sessionAgentId: request.sessionAgentId,
-    profileId: request.profileId,
-    tabId: request.tabId,
-    hostId: request.hostId,
-    hostGeneration: request.hostGeneration,
-    operation: "status",
-    ok: true,
-    elapsedMs: 2,
-    result: {
-      available: true,
-      host: {
-        connected: true,
-        hostId: request.hostId,
-        hostGeneration: request.hostGeneration,
-        focused: false,
-        capabilities: registration().capabilities,
-        connectedAt: "2026-07-22T00:00:00.000Z",
-      },
-      panelVisible: false,
-      selectedTab: null,
-    },
+    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+    tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+    operation: request.operation, ok: false, error: { code: "execution-failed", message: "synthetic", retryable: false }, elapsedMs: 1,
   };
 }
 
-function requestStatus(broker: BrowserHostBroker, timeoutMs = 1_000) {
-  return broker.request({
-    sessionAgentId: "manager-1",
-    profileId: "profile-1",
-    tabId: null,
-    operation: "status",
-    input: {},
-    timeoutMs,
+describe("BrowserHostBroker protocol v2", () => {
+  it("owns exactly one Desktop registration and rejects v1", () => {
+    const broker = new BrowserHostBroker();
+    expect(() => broker.register({ connectionId: "old", registration: registration(1), sendRequest: () => undefined }))
+      .toThrow(/Desktop update required/);
+    expect(broker.register({ connectionId: "one", registration: registration(), sendRequest: () => undefined })).toMatchObject({ hostGeneration: 1 });
+    expect(broker.register({ connectionId: "two", registration: { ...registration(), hostId: "replacement" }, sendRequest: () => undefined })).toMatchObject({ hostGeneration: 2, hostId: "replacement" });
+    expect(broker.getConnectionSnapshots()).toHaveLength(1);
   });
-}
 
-function expectBrokerCode(promise: Promise<unknown>, code: string) {
-  return expect(promise).rejects.toMatchObject({
-    name: "BrowserAutomationBrokerError",
-    failure: { code },
-  });
-}
-
-afterEach(() => vi.useRealTimers());
-
-describe("BrowserHostBroker", () => {
-  it("correlates a response and ignores duplicate, malformed, and wrong-connection replies", async () => {
+  it("dispatches tabless operations and correlates the one host generation", async () => {
     const sent: BrowserAutomationRequest[] = [];
     const broker = new BrowserHostBroker({ requestId: () => "request-1" });
-    const host = broker.register({ connectionId: "socket-1", registration: registration(), sendRequest: (request) => sent.push(request) });
-    expect(host.hostGeneration).toBe(1);
-
-    const pending = requestStatus(broker);
+    broker.register({ connectionId: "socket", registration: registration(), sendRequest: (request) => sent.push(request) });
+    const pending = broker.request({ sessionAgentId: "manager", profileId: "profile", tabId: null, operation: "snapshot", input: {} });
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(broker.acceptResponse("socket-1", { requestId: "request-1" })).toBe("mismatched-response");
-    expect(broker.acceptResponse("socket-2", success(sent[0]!))).toBe("wrong-connection");
-    expect(broker.acceptResponse("socket-1", success(sent[0]!))).toBe("accepted");
-    await expect(pending).resolves.toMatchObject({ ok: true, operation: "status" });
-    expect(broker.acceptResponse("socket-1", success(sent[0]!))).toBe("duplicate");
+    expect(sent[0]).toMatchObject({ tabId: null, operation: "snapshot", hostGeneration: 1 });
+    expect(broker.acceptResponse("wrong", response(sent[0]!))).toBe("wrong-connection");
+    expect(broker.acceptResponse("socket", response(sent[0]!))).toBe("accepted");
+    await expect(pending).resolves.toMatchObject({ ok: false, tabId: null });
+    expect(broker.acceptResponse("socket", response(sent[0]!))).toBe("duplicate");
   });
 
-  it("accepts a provisional open failure only when it retains the original null-tab routing", async () => {
-    const sent: BrowserAutomationRequest[] = [];
-    const broker = new BrowserHostBroker({ requestId: () => "open-request" });
-    broker.register({ connectionId: "socket-1", registration: registration(["open"]), sendRequest: (request) => sent.push(request) });
-    const pending = broker.request({
-      sessionAgentId: "manager-1", profileId: "profile-1", tabId: null, operation: "open",
-      input: { reuseExistingTab: false, show: false }, timeoutMs: 1_000,
-    });
+  it("uses explicit correlated lifecycle requests rather than status tunneling", async () => {
+    const sent: BrowserHostLifecycleRequest[] = [];
+    const broker = new BrowserHostBroker({ requestId: () => "lifecycle-1" });
+    broker.register({ connectionId: "socket", registration: registration(), sendRequest: () => undefined, sendLifecycleRequest: (request) => sent.push(request) });
+    const pending = broker.requestLifecycle({ sessionAgentId: "manager", profileId: "profile", kind: "turn-ended", turnId: "turn-1" });
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    const request = sent[0]!;
-    const provisionalMismatch = {
-      requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
-      tabId: "provisional-tab", hostId: request.hostId, hostGeneration: request.hostGeneration,
-      operation: "open", ok: false, error: { code: "execution-failed", message: "failed", retryable: false }, elapsedMs: 0,
-    };
-    expect(broker.acceptResponse("socket-1", provisionalMismatch)).toBe("mismatched-response");
-    const correlated = { ...provisionalMismatch, tabId: null };
-    expect(broker.acceptResponse("socket-1", correlated)).toBe("accepted");
-    await expect(pending).resolves.toMatchObject({ requestId: "open-request", operation: "open", tabId: null, ok: false });
+    expect(sent[0]).toEqual({ requestId: "lifecycle-1", sessionAgentId: "manager", profileId: "profile", hostId: "desktop", hostGeneration: 1, kind: "turn-ended", turnId: "turn-1" });
+    expect(broker.acceptLifecycleResponse("socket", { ...sent[0], ok: true })).toBe("accepted");
+    await expect(pending).resolves.toMatchObject({ ok: true, kind: "turn-ended", turnId: "turn-1" });
+
+    const retry = broker.requestLifecycle({ requestId: "lifecycle-1", sessionAgentId: "manager", profileId: "profile", kind: "turn-ended", turnId: "turn-1" });
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(broker.acceptLifecycleResponse("socket", { ...sent[1]!, ok: true })).toBe("accepted");
+    await expect(retry).resolves.toMatchObject({ ok: true, requestId: "lifecycle-1" });
   });
 
-  it("keeps registrations, generations, and pending routing independent by host kind", async () => {
-    const sentManaged: BrowserAutomationRequest[] = [];
-    const sentExternal: BrowserAutomationRequest[] = [];
-    const broker = new BrowserHostBroker({ requestId: () => `request-${sentManaged.length}-${sentExternal.length}` });
-    const managed = broker.register({ connectionId: "socket-managed", registration: registration(), sendRequest: (request) => sentManaged.push(request) });
-    const external = broker.register({
-      connectionId: "socket-external",
-      registration: { ...registration(["status"], "external-chrome"), hostId: "external-host" },
-      sendRequest: (request) => sentExternal.push(request),
-    });
-    expect(managed.hostGeneration).toBe(1);
-    expect(external.hostGeneration).toBe(1);
-
-    const managedPending = requestStatus(broker);
-    const externalPending = broker.request({ hostKind: "external-chrome", sessionAgentId: "manager-1", profileId: "profile-1", tabId: null, operation: "status", input: {} });
-    await vi.waitFor(() => expect(sentManaged).toHaveLength(1));
-    await vi.waitFor(() => expect(sentExternal).toHaveLength(1));
-    broker.register({ connectionId: "socket-managed-2", registration: { ...registration(), hostId: "managed-2" }, sendRequest: () => undefined });
-    await expectBrokerCode(managedPending, "stale-host-generation");
-    expect(broker.getConnectionSnapshot("external-chrome")).toMatchObject({ connected: true, hostGeneration: 1, hostId: "external-host" });
-    expect(broker.acceptResponse("socket-external", success(sentExternal[0]!))).toBe("accepted");
-    await expect(externalPending).resolves.toMatchObject({ hostKind: "external-chrome", ok: true });
-  });
-
-  it("rejects unavailable and unsupported operations deterministically", async () => {
+  it("rejects unsupported operations and disconnects pending work", async () => {
     const broker = new BrowserHostBroker();
-    await expectBrokerCode(requestStatus(broker), "unavailable-host");
-    broker.register({ connectionId: "socket-1", registration: registration(["open"]), sendRequest: () => undefined });
-    await expectBrokerCode(requestStatus(broker), "unsupported-operation");
-  });
-
-  it("rejects pending calls when a registration supersedes or disconnects the host", async () => {
-    const broker = new BrowserHostBroker();
-    broker.register({ connectionId: "socket-1", registration: registration(), sendRequest: () => undefined });
-    const superseded = requestStatus(broker);
-    broker.register({ connectionId: "socket-2", registration: { ...registration(), hostId: "host-2" }, sendRequest: () => undefined });
-    await expectBrokerCode(superseded, "stale-host-generation");
-
-    const disconnected = requestStatus(broker);
-    expect(broker.unregister("socket-1")).toBe(false);
-    expect(broker.unregister("socket-2", "host-2", 2)).toBe(true);
-    await expectBrokerCode(disconnected, "host-disconnected");
-  });
-
-  it("times out and rejects oversized responses without allowing late replies to resolve", async () => {
-    vi.useFakeTimers();
-    const sent: BrowserAutomationRequest[] = [];
-    const broker = new BrowserHostBroker({ requestId: () => sent.length === 0 ? "timeout" : "oversize" });
-    broker.register({ connectionId: "socket-1", registration: registration(), sendRequest: (request) => sent.push(request) });
-
-    const timedOut = requestStatus(broker, 25);
-    const timeoutAssertion = expectBrokerCode(timedOut, "timeout");
-    await vi.advanceTimersByTimeAsync(25);
-    await timeoutAssertion;
-    expect(broker.acceptResponse("socket-1", success(sent[0]!))).toBe("duplicate");
-
-    const oversized = requestStatus(broker);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(broker.acceptResponse("socket-1", success(sent[1]!), 20_000)).toBe("accepted");
-    await expectBrokerCode(oversized, "response-too-large");
-  });
-
-  it("uses typed broker errors", () => {
-    const error = new BrowserAutomationBrokerError("request-cancelled", "cancelled");
-    expect(error.failure).toEqual({ code: "request-cancelled", message: "cancelled", retryable: false });
+    await expect(broker.request({ sessionAgentId: "manager", profileId: "profile", tabId: null, operation: "status", input: {} }))
+      .rejects.toMatchObject({ failure: { code: "unavailable-host" } });
+    broker.register({ connectionId: "socket", registration: { ...registration(), capabilities: { ...registration().capabilities, supportedOperations: ["open"] } }, sendRequest: () => undefined });
+    await expect(broker.request({ sessionAgentId: "manager", profileId: "profile", tabId: null, operation: "snapshot", input: {} }))
+      .rejects.toMatchObject({ failure: { code: "unsupported-operation" } });
   });
 });

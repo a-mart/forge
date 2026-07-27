@@ -1,54 +1,134 @@
-import {
-  DEFAULT_BROWSER_HOST_KIND,
-  type BrowserAutomationFailure,
-  type BrowserAutomationRequest,
-  type BrowserAutomationResponse,
+import type {
+  BrowserAutomationRequest,
+  BrowserAutomationResponse,
+  BrowserHostLifecycleRequest,
+  BrowserHostLifecycleResponse,
+  BrowserSessionSnapshot,
+  BrowserTabSnapshot,
 } from '@forge/protocol'
-import type { BrowserTargetAdapter } from './browser-target-adapter.js'
+import {
+  AutomaticBrowserHost,
+  type AutomaticBrowserHostOptions,
+  type AutomaticBrowserRevealResult,
+} from './automatic-browser-host.js'
+import type { BrowserTargetAdapter, BrowserTargetSession } from './browser-target-adapter.js'
 import {
   ManagedElectronTargetAdapter,
+  type BrowserTabRegistration,
+  type BrowserWebContentsLike,
+  type BrowserWebviewRegistration,
   type ManagedElectronTargetAdapterOptions,
+  type PreparedRecording,
 } from './managed-electron-target-adapter.js'
+import type { BrowserPresentationAcknowledgement, BrowserPresentationRequest } from './browser-bridge-contract.js'
 
+export * from './automatic-browser-host.js'
+export * from './browser-target-adapter.js'
 export * from './managed-electron-target-adapter.js'
 
 export interface BrowserAutomationManagerOptions extends ManagedElectronTargetAdapterOptions {
   externalChromeAdapter?: BrowserTargetAdapter
+  ensureManagedTarget?: AutomaticBrowserHostOptions['ensureManagedTarget']
+  authorityBurst?: AutomaticBrowserHostOptions['authorityBurst']
 }
 
-/** Routes protocol-native requests to host adapters while retaining the Managed Browser control API. */
-export class BrowserAutomationManager extends ManagedElectronTargetAdapter {
-  private readonly externalChromeAdapter?: BrowserTargetAdapter
+/** Composition facade retaining the complete Managed Browser control API behind one automatic host. */
+export class BrowserAutomationManager {
+  private readonly managed: ManagedElectronTargetAdapter
+  private readonly automaticHost: AutomaticBrowserHost
 
   constructor(options: BrowserAutomationManagerOptions) {
-    super(options)
-    this.externalChromeAdapter = options.externalChromeAdapter
-  }
-
-  override async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
-    const hostKind = request.hostKind ?? DEFAULT_BROWSER_HOST_KIND
-    if (hostKind === 'managed-electron') return super.execute({ ...request, hostKind })
-    if (this.externalChromeAdapter?.hostKind === hostKind) return this.externalChromeAdapter.execute({ ...request, hostKind })
-    return unavailableResponse(request, {
-      code: 'unavailable-host',
-      message: 'No External Chrome adapter is connected.',
-      retryable: true,
+    this.managed = new ManagedElectronTargetAdapter(options)
+    this.automaticHost = new AutomaticBrowserHost({
+      managedAdapter: this.managed,
+      externalAdapter: options.externalChromeAdapter,
+      ensureManagedTarget: options.ensureManagedTarget,
+      authorityBurst: options.authorityBurst,
+      now: options.now,
     })
   }
-}
 
-function unavailableResponse(request: BrowserAutomationRequest, error: BrowserAutomationFailure): BrowserAutomationResponse {
-  return {
-    requestId: request.requestId,
-    hostKind: request.hostKind ?? DEFAULT_BROWSER_HOST_KIND,
-    sessionAgentId: request.sessionAgentId,
-    profileId: request.profileId,
-    tabId: request.tabId,
-    hostId: request.hostId,
-    hostGeneration: request.hostGeneration,
-    operation: request.operation,
-    ok: false,
-    error,
-    elapsedMs: 0,
+  get capabilities(): AutomaticBrowserHost['capabilities'] { return this.automaticHost.capabilities }
+  get supportedOperations() { return this.managed.supportedOperations }
+  get runtimeCount(): number { return this.managed.runtimeCount }
+
+  synchronizeSessions(snapshots: readonly BrowserSessionSnapshot[]): void {
+    this.automaticHost.synchronizeSessions(snapshots)
   }
+
+  registerTabWebContents(registration: BrowserTabRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
+    const tab = this.managed.registerTabWebContents(registration, webContents)
+    this.automaticHost.adoptTarget(tab)
+    return tab
+  }
+
+  /** @deprecated Main-owned tabs no longer register renderer webview IDs. */
+  registerWebview(registration: BrowserWebviewRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
+    return this.registerTabWebContents(registration, webContents)
+  }
+
+  hasTab(tabId: string): boolean { return this.managed.hasTab(tabId) }
+  captureScreenshot(tabId: string): Promise<string> { return this.managed.captureScreenshot(tabId) }
+  markGuestCrashed(tabId: string, reason?: string): void { this.managed.markGuestCrashed(tabId, reason) }
+  setTabPresentation(request: BrowserPresentationRequest): BrowserPresentationAcknowledgement {
+    return this.managed.setTabPresentation(request)
+  }
+  humanNavigate(tabId: string, rawUrl: string): Promise<BrowserTabSnapshot> {
+    return this.managed.humanNavigate(tabId, rawUrl)
+  }
+  humanHistory(tabId: string, direction: 'back' | 'forward'): BrowserTabSnapshot {
+    return this.managed.humanHistory(tabId, direction)
+  }
+  humanReload(tabId: string, hard: boolean): BrowserTabSnapshot { return this.managed.humanReload(tabId, hard) }
+  humanSetZoom(tabId: string, factor: number): BrowserTabSnapshot { return this.managed.humanSetZoom(tabId, factor) }
+  unregisterTabWebContents(tabId: string, webContentsId?: number): void {
+    this.managed.unregisterTabWebContents(tabId, webContentsId)
+  }
+  /** @deprecated Main-owned tabs use unregisterTabWebContents. */
+  unregisterWebview(tabId: string, webContentsId?: number): void {
+    this.unregisterTabWebContents(tabId, webContentsId)
+  }
+
+  execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    return this.automaticHost.perform(request)
+  }
+
+  handleLifecycle(request: BrowserHostLifecycleRequest): Promise<BrowserHostLifecycleResponse> {
+    return this.automaticHost.handleLifecycle(request)
+  }
+
+  endTurn(session: BrowserTargetSession, turnId: string): Promise<void> {
+    return this.automaticHost.endTurn(session, turnId)
+  }
+
+  releaseSession(
+    session: BrowserTargetSession,
+    reason: Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
+  ): Promise<void> {
+    return this.automaticHost.releaseSession(session, reason)
+  }
+
+  revealTarget(session: BrowserTargetSession, tabId: string): Promise<AutomaticBrowserRevealResult> {
+    return this.automaticHost.revealTarget(session, tabId)
+  }
+
+  prepareRecording(request: BrowserAutomationRequest & { operation: 'recordingStart' }): Promise<PreparedRecording> {
+    return this.managed.prepareRecording(request)
+  }
+  setRecordingMimeType(request: BrowserAutomationRequest & { operation: 'recordingStart' }, mimeType: string): void {
+    this.managed.setRecordingMimeType(request, mimeType)
+  }
+  stopRecordingCapture(request: BrowserAutomationRequest & { operation: 'recordingStop' }): Promise<PreparedRecording> {
+    return this.managed.stopRecordingCapture(request)
+  }
+  saveRecording(
+    request: BrowserAutomationRequest & { operation: 'recordingStop' },
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<BrowserAutomationResponse> {
+    return this.managed.saveRecording(request, mimeType, bytes)
+  }
+  cancelRecording(recordingId?: string): void { this.managed.cancelRecording(recordingId) }
+
+  destroy(): Promise<void> { return this.automaticHost.destroy() }
 }

@@ -157,7 +157,7 @@ void app.whenReady().then(async () => {
 
   const now = new Date().toISOString()
   const tab: BrowserTabSnapshot = {
-    tabId: 'popout-fixture-tab', sessionAgentId: 'popout-fixture-session', profileId: 'popout-fixture-profile',
+    targetAffinity: 'managed-electron', tabId: 'popout-fixture-tab', sessionAgentId: 'popout-fixture-session', profileId: 'popout-fixture-profile',
     url: fixtureUrl, title: 'WCV continuity fixture', lifecycle: 'loading', loading: true, live: false,
     canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null,
     recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null,
@@ -166,7 +166,6 @@ void app.whenReady().then(async () => {
   let requestSequence = 0
   const request = (operation: BrowserAutomationRequest['operation'], input: Record<string, unknown>, timeoutMs = 15_000): BrowserAutomationRequest => ({
     requestId: `popout-fixture-${++requestSequence}`,
-    hostKind: 'managed-electron',
     sessionAgentId: tab.sessionAgentId,
     profileId: tab.profileId,
     tabId: tab.tabId,

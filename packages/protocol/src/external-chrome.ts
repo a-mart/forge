@@ -6,7 +6,6 @@ import {
   BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
-  BROWSER_HOST_KINDS,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
@@ -49,7 +48,7 @@ export const EXTERNAL_CHROME_MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES = 64 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES = 1 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_ARRAY_ITEMS = 256
-export const EXTERNAL_CHROME_MAX_CANDIDATE_TABS = 128
+export const EXTERNAL_CHROME_MAX_AUTHORIZED_TABS = 128
 export const EXTERNAL_CHROME_MAX_OBJECT_PROPERTIES = 128
 export const EXTERNAL_CHROME_MAX_JSON_DEPTH = 32
 export const EXTERNAL_CHROME_MAX_STRING_LENGTH = 256 * 1_024
@@ -61,12 +60,11 @@ export const EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH = 1_024
 export const EXTERNAL_CHROME_REQUEST_METHODS = [
   'forge.runtime.hello',
   'forge.runtime.ping',
-  'forge.browser.listCandidates',
-  'forge.browser.claim',
-  'forge.browser.create',
+  'forge.browser.focusedEligibility',
+  'forge.browser.acquire',
   'forge.browser.release',
+  'forge.browser.reveal',
   'forge.browser.execute',
-  'forge.browser.turnEnded',
   'forge.runtime.prepareUpdate',
   'forge.runtime.reload',
 ] as const
@@ -125,7 +123,6 @@ export const EXTERNAL_CHROME_PROTOCOL_ERROR_CODES = [
   'extension-update-required',
 ] as const
 export const EXTERNAL_CHROME_LEASE_ERROR_CODES = [
-  'attachment-required',
   'lease-conflict',
   'lease-lost',
   'stale-lease-epoch',
@@ -193,7 +190,6 @@ export interface ExternalChromeFeatures {
   downloadOpen: boolean
   oopif: boolean
   humanInterruption: boolean
-  groups: boolean
 }
 
 export interface ExternalChromeHelloParams {
@@ -208,7 +204,6 @@ export interface ExternalChromeHelloParams {
   payloadSha256?: string
   extensionId: string
   extensionInstanceId: string
-  profileAlias?: string
   chromeVersion: string
   methods: ExternalChromeMethod[]
   maxMessageBytes: number
@@ -242,44 +237,14 @@ export interface ExternalChromePongResult {
   receivedAt: string
 }
 
-export interface ExternalChromeCandidateTab {
-  windowId: number
-  tabId: number
-  groupId: number | null
-  title: string
-  origin: string
-  active: boolean
-  attached: boolean
-  restricted: boolean
-  debuggerConflict: boolean
-}
-
-export interface ExternalChromeCandidateGroup {
-  groupId: number
-  title: string
-  collapsed: boolean
-}
-
-export interface ExternalChromeCandidateWindow {
-  windowId: number
-  focused: boolean
-  groups: ExternalChromeCandidateGroup[]
-  tabs: ExternalChromeCandidateTab[]
-}
-
-export interface ExternalChromeListCandidatesParams {
+export interface ExternalChromeFocusedEligibilityParams {
   protocolVersion: ExternalChromeProtocolVersion
-  sessionAgentId: string
 }
 
-export interface ExternalChromeListCandidatesResult {
+export interface ExternalChromeFocusedEligibilityResult {
   protocolVersion: ExternalChromeProtocolVersion
-  extensionInstanceId: string
-  profileAlias?: string
-  windows: ExternalChromeCandidateWindow[]
+  eligible: boolean
 }
-
-export type ExternalChromeChildPolicy = 'manual' | 'include-opened-by-leased-tabs'
 
 export interface ExternalChromeLeaseRouting {
   protocolVersion: ExternalChromeProtocolVersion
@@ -287,42 +252,25 @@ export interface ExternalChromeLeaseRouting {
   leaseEpoch: number
 }
 
-export interface ExternalChromeSelectedTab {
-  windowId: number
+export interface ExternalChromeAcquiredTab {
   tabId: number
-  groupId: number | null
   title: string
   url: string
-  origin: string
   active: boolean
 }
 
-export interface ExternalChromeClaimParams extends ExternalChromeLeaseRouting {
+export interface ExternalChromeAcquireParams extends ExternalChromeLeaseRouting {
   sessionAgentId: string
-  tabIds: number[]
-  groupId?: number
-  childPolicy: ExternalChromeChildPolicy
-}
-
-export interface ExternalChromeClaimResult extends ExternalChromeLeaseRouting {
-  sessionAgentId: string
-  extensionInstanceId: string
-  groupId: number | null
-  childPolicy: ExternalChromeChildPolicy
-  tabs: ExternalChromeSelectedTab[]
-}
-
-export interface ExternalChromeCreateParams extends ExternalChromeLeaseRouting {
-  sessionAgentId: string
+  tabId?: number
   url?: string
-  groupTitle: string
+  reuseFocused: boolean
 }
 
-export interface ExternalChromeCreateResult extends ExternalChromeLeaseRouting {
+export interface ExternalChromeAcquireResult extends ExternalChromeLeaseRouting {
   sessionAgentId: string
   extensionInstanceId: string
-  groupId: number
-  tab: ExternalChromeSelectedTab
+  tab: ExternalChromeAcquiredTab
+  created: boolean
 }
 
 export interface ExternalChromeReleaseParams extends ExternalChromeLeaseRouting {
@@ -335,7 +283,7 @@ export interface ExternalChromeReleaseResult extends ExternalChromeLeaseRouting 
 
 type ExternalChromeOperationInput<Operation extends BrowserAutomationOperation> = Omit<
   BrowserAutomationInputByOperation[Operation],
-  'hostKind' | 'tabId'
+  'tabId'
 >
 
 export type ExternalChromeExecuteParams = {
@@ -354,6 +302,30 @@ interface ExternalChromeExecuteResultRouting<Operation extends BrowserAutomation
   operation: Operation
 }
 
+export const EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS = {
+  failurePhase: 'debugger-attach',
+  mutationState: 'not-started',
+  fallbackReason: 'foreign-debugger',
+} as const
+
+/**
+ * Extension-private proof that Chrome rejected the initial debugger attach because another
+ * debugger already owned the tab. The Desktop adapter consumes this exact object and never
+ * forwards these host-specific fields to browser callers.
+ */
+export type ExternalChromeDebuggerAttachConflictDetails = typeof EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS
+
+export function isExternalChromeDebuggerAttachConflictDetails(
+  value: unknown,
+): value is ExternalChromeDebuggerAttachConflictDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).length === 3 &&
+    details.failurePhase === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.failurePhase &&
+    details.mutationState === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.mutationState &&
+    details.fallbackReason === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.fallbackReason
+}
+
 export type ExternalChromeExecuteResult = {
   [Operation in BrowserAutomationOperation]:
     | (ExternalChromeExecuteResultRouting<Operation> & {
@@ -366,16 +338,13 @@ export type ExternalChromeExecuteResult = {
       })
 }[BrowserAutomationOperation]
 
-export interface ExternalChromeTurnEndedParams extends ExternalChromeLeaseRouting {
-  turnId: string
-  finalTabs: number[]
-  handoffTabs: number[]
+export interface ExternalChromeRevealParams extends ExternalChromeLeaseRouting {
+  tabId: number
 }
 
-export interface ExternalChromeTurnEndedResult extends ExternalChromeLeaseRouting {
-  turnId: string
-  releasedTabs: number[]
-  handoffTabs: number[]
+export interface ExternalChromeRevealResult extends ExternalChromeLeaseRouting {
+  tabId: number
+  revealed: true
 }
 
 export interface ExternalChromePrepareUpdateParams {
@@ -427,7 +396,6 @@ export interface ExternalChromeTabChangedParams extends ExternalChromeLeaseRouti
   tabId: number
   change: {
     windowId?: number
-    groupId?: number | null
     url?: string
     title?: string
     active?: boolean
@@ -446,10 +414,8 @@ export interface ExternalChromeDownloadChangedParams extends ExternalChromeLease
 }
 
 export interface ExternalChromeLeaseChangedParams extends ExternalChromeLeaseRouting {
-  state: 'claimed' | 'released'
+  state: 'acquired' | 'released'
   tabIds: number[]
-  groupId: number | null
-  childPolicy: ExternalChromeChildPolicy
 }
 
 export interface ExternalChromeGoodbyeParams {
@@ -460,12 +426,11 @@ export interface ExternalChromeGoodbyeParams {
 export interface ExternalChromeRequestParamsByMethod {
   'forge.runtime.hello': ExternalChromeHelloParams
   'forge.runtime.ping': ExternalChromePingParams
-  'forge.browser.listCandidates': ExternalChromeListCandidatesParams
-  'forge.browser.claim': ExternalChromeClaimParams
-  'forge.browser.create': ExternalChromeCreateParams
+  'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityParams
+  'forge.browser.acquire': ExternalChromeAcquireParams
   'forge.browser.release': ExternalChromeReleaseParams
+  'forge.browser.reveal': ExternalChromeRevealParams
   'forge.browser.execute': ExternalChromeExecuteParams
-  'forge.browser.turnEnded': ExternalChromeTurnEndedParams
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateParams
   'forge.runtime.reload': ExternalChromeReloadParams
 }
@@ -473,12 +438,11 @@ export interface ExternalChromeRequestParamsByMethod {
 export interface ExternalChromeResultByMethod {
   'forge.runtime.hello': ExternalChromeWelcomeResult
   'forge.runtime.ping': ExternalChromePongResult
-  'forge.browser.listCandidates': ExternalChromeListCandidatesResult
-  'forge.browser.claim': ExternalChromeClaimResult
-  'forge.browser.create': ExternalChromeCreateResult
+  'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityResult
+  'forge.browser.acquire': ExternalChromeAcquireResult
   'forge.browser.release': ExternalChromeReleaseResult
+  'forge.browser.reveal': ExternalChromeRevealResult
   'forge.browser.execute': ExternalChromeExecuteResult
-  'forge.browser.turnEnded': ExternalChromeTurnEndedResult
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateResult
   'forge.runtime.reload': ExternalChromeReloadResult
 }
@@ -694,8 +658,8 @@ export function negotiateExternalChromeProtocolVersion(range: ExternalChromeProt
   const maximum = integer(range.max, 'protocol.max', 1)
   if (minimum > maximum) fail('unsupported-version', 'protocol.min must not exceed protocol.max', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.protocolOrVersion)
   for (let index = EXTERNAL_CHROME_PROTOCOL_VERSIONS.length - 1; index >= 0; index -= 1) {
-    const candidate = EXTERNAL_CHROME_PROTOCOL_VERSIONS[index]
-    if (candidate >= minimum && candidate <= maximum) return candidate
+    const version = EXTERNAL_CHROME_PROTOCOL_VERSIONS[index]
+    if (version >= minimum && version <= maximum) return version
   }
   return fail('unsupported-version', `protocol range ${minimum}-${maximum} has no supported version`, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.protocolOrVersion)
 }
@@ -710,7 +674,7 @@ function parseProtocolRange(value: unknown): ExternalChromeProtocolRange {
 
 function parseFeatures(value: unknown): ExternalChromeFeatures {
   const features = object(value, 'params.features')
-  const keys = ['resize', 'recording', 'downloadEvents', 'downloadArtifacts', 'downloadOpen', 'oopif', 'humanInterruption', 'groups'] as const
+  const keys = ['resize', 'recording', 'downloadEvents', 'downloadArtifacts', 'downloadOpen', 'oopif', 'humanInterruption'] as const
   strictKeys(features, 'params.features', keys)
   const parsed = Object.fromEntries(keys.map((key) => [key, boolean(features[key], `params.features.${key}`)])) as unknown as ExternalChromeFeatures
   if (parsed.resize || parsed.recording || parsed.downloadArtifacts || parsed.downloadOpen) {
@@ -774,28 +738,20 @@ function parseLeaseRouting(record: Record<string, unknown>, expected?: ExternalC
 }
 
 function parseNumericIdArray(value: unknown, path: string, allowEmpty = true): number[] {
-  const parsed = uniqueArray(boundedArray(value, path, EXTERNAL_CHROME_MAX_CANDIDATE_TABS).map((entry, index) => integer(entry, `${path}[${index}]`)), path)
+  const parsed = uniqueArray(boundedArray(value, path, EXTERNAL_CHROME_MAX_AUTHORIZED_TABS).map((entry, index) => integer(entry, `${path}[${index}]`)), path)
   if (!allowEmpty && parsed.length === 0) fail('invalid-envelope', `${path} must not be empty`)
   return parsed
 }
 
-function parseSelectedTab(value: unknown, path: string): ExternalChromeSelectedTab {
+function parseAcquiredTab(value: unknown, path: string): ExternalChromeAcquiredTab {
   const tab = object(value, path)
-  strictKeys(tab, path, ['windowId', 'tabId', 'groupId', 'title', 'url', 'origin', 'active'])
+  strictKeys(tab, path, ['tabId', 'title', 'url', 'active'])
   return {
-    windowId: integer(tab.windowId, `${path}.windowId`),
     tabId: integer(tab.tabId, `${path}.tabId`),
-    groupId: tab.groupId === null ? null : integer(tab.groupId, `${path}.groupId`),
     title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
     url: boundedString(tab.url, `${path}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH),
-    origin: boundedString(tab.origin, `${path}.origin`, EXTERNAL_CHROME_MAX_URL_LENGTH),
     active: boolean(tab.active, `${path}.active`),
   }
-}
-
-function parseChildPolicy(value: unknown, path: string): ExternalChromeChildPolicy {
-  if (value !== 'manual' && value !== 'include-opened-by-leased-tabs') fail('invalid-envelope', `${path} is not a child policy`)
-  return value
 }
 
 function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFailure {
@@ -815,6 +771,11 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
   if (error.details !== undefined) {
     const rawDetails = object(error.details, `${path}.details`)
     if (Object.keys(rawDetails).length > EXTERNAL_CHROME_MAX_OBJECT_PROPERTIES) fail('invalid-result', `${path}.details exceeds property bound`)
+    const hasAttachEvidenceField = ['failurePhase', 'mutationState', 'fallbackReason']
+      .some((key) => Object.prototype.hasOwnProperty.call(rawDetails, key))
+    if (hasAttachEvidenceField && (error.code !== 'debugger-unavailable' || !isExternalChromeDebuggerAttachConflictDetails(rawDetails))) {
+      fail('invalid-result', `${path}.details has malformed debugger attach conflict evidence`)
+    }
     details = Object.fromEntries(Object.entries(rawDetails).map(([key, entry]) => {
       boundedString(key, `${path}.details key`, EXTERNAL_CHROME_MAX_LABEL_LENGTH)
       if (entry === null || typeof entry === 'boolean') return [key, entry]
@@ -833,7 +794,7 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
 
 function parseHelloParams(value: unknown): ExternalChromeHelloParams {
   const params = object(value, 'params')
-  strictKeys(params, 'params', ['protocol', 'shellAbi', 'payloadVersion', 'extensionId', 'extensionInstanceId', 'chromeVersion', 'methods', 'maxMessageBytes', 'operations', 'features'], ['payloadSha256', 'profileAlias'])
+  strictKeys(params, 'params', ['protocol', 'shellAbi', 'payloadVersion', 'extensionId', 'extensionInstanceId', 'chromeVersion', 'methods', 'maxMessageBytes', 'operations', 'features'], ['payloadSha256'])
   const extensionId = identifier(params.extensionId, 'params.extensionId')
   if (extensionId !== EXTERNAL_CHROME_EXTENSION_ID) fail('invalid-params', 'params.extensionId does not match the pinned identity', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
   return {
@@ -847,7 +808,6 @@ function parseHelloParams(value: unknown): ExternalChromeHelloParams {
     })() }),
     extensionId,
     extensionInstanceId: identifier(params.extensionInstanceId, 'params.extensionInstanceId'),
-    ...(params.profileAlias === undefined ? {} : { profileAlias: boundedString(params.profileAlias, 'params.profileAlias', EXTERNAL_CHROME_MAX_LABEL_LENGTH) }),
     chromeVersion: boundedString(params.chromeVersion, 'params.chromeVersion', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH),
     methods: parseMethods(params.methods),
     maxMessageBytes: integer(params.maxMessageBytes, 'params.maxMessageBytes', 1, EXTERNAL_CHROME_MAX_MESSAGE_BYTES),
@@ -864,27 +824,33 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
       strictKeys(params, 'params', ['protocolVersion', 'nonce', 'sentAt'])
       return { protocolVersion: protocolVersion(params.protocolVersion, expected), nonce: identifier(params.nonce, 'params.nonce'), sentAt: boundedString(params.sentAt, 'params.sentAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) }
     }
-    case 'forge.browser.listCandidates': {
-      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId'])
-      return { protocolVersion: protocolVersion(params.protocolVersion, expected), sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId') }
+    case 'forge.browser.focusedEligibility': {
+      strictKeys(params, 'params', ['protocolVersion'])
+      return { protocolVersion: protocolVersion(params.protocolVersion, expected) }
     }
-    case 'forge.browser.claim': {
-      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'tabIds', 'childPolicy'], ['groupId'])
-      return { ...parseLeaseRouting(params, expected), sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId'), tabIds: parseNumericIdArray(params.tabIds, 'params.tabIds', false), ...(params.groupId === undefined ? {} : { groupId: integer(params.groupId, 'params.groupId') }), childPolicy: parseChildPolicy(params.childPolicy, 'params.childPolicy') }
-    }
-    case 'forge.browser.create': {
-      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'groupTitle'], ['url'])
-      return { ...parseLeaseRouting(params, expected), sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId'), ...(params.url === undefined ? {} : { url: boundedString(params.url, 'params.url', EXTERNAL_CHROME_MAX_URL_LENGTH) }), groupTitle: boundedString(params.groupTitle, 'params.groupTitle', EXTERNAL_CHROME_MAX_LABEL_LENGTH) }
+    case 'forge.browser.acquire': {
+      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'reuseFocused'], ['tabId', 'url'])
+      return {
+        ...parseLeaseRouting(params, expected),
+        sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId'),
+        ...(params.tabId === undefined ? {} : { tabId: integer(params.tabId, 'params.tabId') }),
+        ...(params.url === undefined ? {} : { url: boundedString(params.url, 'params.url', EXTERNAL_CHROME_MAX_URL_LENGTH) }),
+        reuseFocused: boolean(params.reuseFocused, 'params.reuseFocused'),
+      }
     }
     case 'forge.browser.release': {
       strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'reason'])
       return { ...parseLeaseRouting(params, expected), reason: boundedString(params.reason, 'params.reason', EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH) }
     }
+    case 'forge.browser.reveal': {
+      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId'])
+      return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId') }
+    }
     case 'forge.browser.execute': {
       strictKeys(params, 'params', ['protocolVersion', 'requestId', 'leaseId', 'leaseEpoch', 'tabId', 'operation', 'input', 'deadlineAt'])
       if (!isBrowserAutomationOperation(params.operation)) fail('invalid-params', 'params.operation is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       const rawInput = object(params.input, 'params.input')
-      if ('tabId' in rawInput || 'hostKind' in rawInput) fail('invalid-params', 'params.input must not duplicate routing fields', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      if ('tabId' in rawInput) fail('invalid-params', 'params.input must not duplicate routing fields', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       let parsedInput: BrowserAutomationInputByOperation[BrowserAutomationOperation]
       try {
         parsedInput = parseBrowserAutomationInput(params.operation, rawInput)
@@ -892,13 +858,6 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
         return fail('invalid-params', 'params.input is invalid for the operation', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       }
       return { ...parseLeaseRouting(params, expected), requestId: identifier(params.requestId, 'params.requestId'), tabId: integer(params.tabId, 'params.tabId'), operation: params.operation, input: parsedInput, deadlineAt: boundedString(params.deadlineAt, 'params.deadlineAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) } as ExternalChromeExecuteParams
-    }
-    case 'forge.browser.turnEnded': {
-      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'turnId', 'finalTabs', 'handoffTabs'])
-      const finalTabs = parseNumericIdArray(params.finalTabs, 'params.finalTabs')
-      const handoffTabs = parseNumericIdArray(params.handoffTabs, 'params.handoffTabs')
-      if (finalTabs.some((tabId) => handoffTabs.includes(tabId))) fail('invalid-params', 'finalTabs and handoffTabs must be disjoint', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
-      return { ...parseLeaseRouting(params, expected), turnId: identifier(params.turnId, 'params.turnId'), finalTabs, handoffTabs }
     }
     case 'forge.runtime.prepareUpdate': {
       strictKeys(params, 'params', ['protocolVersion', 'payloadVersion', 'sha256', 'deadlineAt'])
@@ -908,19 +867,6 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
       strictKeys(params, 'params', ['protocolVersion', 'payloadVersion', 'sha256'])
       return { protocolVersion: protocolVersion(params.protocolVersion, expected), ...parseUpdate({ payloadVersion: params.payloadVersion, sha256: params.sha256 }, 'params.update') }
     }
-  }
-}
-
-function parseCandidateTab(value: unknown, path: string): ExternalChromeCandidateTab {
-  const tab = object(value, path)
-  strictKeys(tab, path, ['windowId', 'tabId', 'groupId', 'title', 'origin', 'active', 'attached', 'restricted', 'debuggerConflict'])
-  return {
-    windowId: integer(tab.windowId, `${path}.windowId`), tabId: integer(tab.tabId, `${path}.tabId`),
-    groupId: tab.groupId === null ? null : integer(tab.groupId, `${path}.groupId`),
-    title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
-    origin: boundedString(tab.origin, `${path}.origin`, EXTERNAL_CHROME_MAX_URL_LENGTH),
-    active: boolean(tab.active, `${path}.active`), attached: boolean(tab.attached, `${path}.attached`), restricted: boolean(tab.restricted, `${path}.restricted`),
-    debuggerConflict: boolean(tab.debuggerConflict, `${path}.debuggerConflict`),
   }
 }
 
@@ -964,10 +910,8 @@ function validateRenderedViewport(value: unknown, path: string): void {
 function validateBrowserCapabilities(value: unknown, path: string): void {
   const capabilities = object(value, path)
   strictKeys(capabilities, path, ['supportedOperations', 'maxResponseBytes'], [
-    'hostKind', 'protocolVersions', 'features', 'runtimeVersions', 'electronVersion', 'chromiumVersion',
-    'playwrightVersion', 'supportsSandboxedWebviews', 'supportsCapturePage', 'supportsRecording',
+    'protocolVersions', 'features', 'runtimeVersions',
   ])
-  if (capabilities.hostKind !== undefined) enumeration(capabilities.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
   if (capabilities.protocolVersions !== undefined) {
     const versions = object(capabilities.protocolVersions, `${path}.protocolVersions`)
     strictKeys(versions, `${path}.protocolVersions`, ['minimum', 'maximum'])
@@ -990,18 +934,11 @@ function validateBrowserCapabilities(value: unknown, path: string): void {
     strictKeys(versions, `${path}.runtimeVersions`, [], ['electron', 'chromium', 'playwright', 'chrome', 'extension'])
     for (const [key, entry] of Object.entries(versions)) boundedString(entry, `${path}.runtimeVersions.${key}`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
   }
-  for (const key of ['electronVersion', 'chromiumVersion', 'playwrightVersion'] as const) {
-    if (capabilities[key] !== undefined) boundedString(capabilities[key], `${path}.${key}`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
-  }
-  for (const key of ['supportsSandboxedWebviews', 'supportsCapturePage', 'supportsRecording'] as const) {
-    if (capabilities[key] !== undefined) boolean(capabilities[key], `${path}.${key}`)
-  }
 }
 
 function validateBrowserHost(value: unknown, path: string): void {
   const host = object(value, path)
-  strictKeys(host, path, ['connected', 'hostId', 'hostGeneration', 'focused', 'capabilities', 'connectedAt'], ['hostKind'])
-  if (host.hostKind !== undefined) enumeration(host.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
+  strictKeys(host, path, ['connected', 'hostId', 'hostGeneration', 'focused', 'capabilities', 'connectedAt'])
   boolean(host.connected, `${path}.connected`)
   nullableIdentifier(host.hostId, `${path}.hostId`)
   if (host.hostGeneration !== null) integer(host.hostGeneration, `${path}.hostGeneration`, 1)
@@ -1013,11 +950,11 @@ function validateBrowserHost(value: unknown, path: string): void {
 function validateBrowserTab(value: unknown, path: string): void {
   const tab = object(value, path)
   strictKeys(tab, path, [
-    'tabId', 'sessionAgentId', 'profileId', 'url', 'title', 'lifecycle', 'loading', 'live', 'canGoBack',
+    'targetAffinity', 'tabId', 'sessionAgentId', 'profileId', 'url', 'title', 'lifecycle', 'loading', 'live', 'canGoBack',
     'canGoForward', 'zoomFactor', 'controller', 'agentCursor', 'recording', 'viewportSetting', 'renderedViewport',
     'error', 'createdAt', 'updatedAt',
-  ], ['hostKind', 'physicalVisible'])
-  if (tab.hostKind !== undefined) enumeration(tab.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
+  ], ['physicalVisible'])
+  enumeration(tab.targetAffinity, `${path}.targetAffinity`, ['managed-electron', 'external-chrome'])
   identifier(tab.tabId, `${path}.tabId`)
   identifier(tab.sessionAgentId, `${path}.sessionAgentId`)
   identifier(tab.profileId, `${path}.profileId`)
@@ -1289,39 +1226,30 @@ function parseResult(method: ExternalChromeRequestMethod, value: unknown, expect
       strictKeys(result, 'result', ['protocolVersion', 'nonce', 'receivedAt'])
       return { protocolVersion: protocolVersion(result.protocolVersion, expected), nonce: identifier(result.nonce, 'result.nonce'), receivedAt: boundedString(result.receivedAt, 'result.receivedAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) }
     }
-    case 'forge.browser.listCandidates': {
-      strictKeys(result, 'result', ['protocolVersion', 'extensionInstanceId', 'windows'], ['profileAlias'])
-      const windows = boundedArray(result.windows, 'result.windows').map((entry, windowIndex) => {
-        const window = object(entry, `result.windows[${windowIndex}]`)
-        strictKeys(window, `result.windows[${windowIndex}]`, ['windowId', 'focused', 'groups', 'tabs'])
-        const groups = boundedArray(window.groups, `result.windows[${windowIndex}].groups`).map((groupEntry, groupIndex) => {
-          const group = object(groupEntry, `result.windows[${windowIndex}].groups[${groupIndex}]`)
-          strictKeys(group, `result.windows[${windowIndex}].groups[${groupIndex}]`, ['groupId', 'title', 'collapsed'])
-          return { groupId: integer(group.groupId, `result.windows[${windowIndex}].groups[${groupIndex}].groupId`), title: boundedString(group.title, `result.windows[${windowIndex}].groups[${groupIndex}].title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true), collapsed: boolean(group.collapsed, `result.windows[${windowIndex}].groups[${groupIndex}].collapsed`) }
-        })
-        const tabs = boundedArray(window.tabs, `result.windows[${windowIndex}].tabs`, EXTERNAL_CHROME_MAX_CANDIDATE_TABS).map((tab, tabIndex) => parseCandidateTab(tab, `result.windows[${windowIndex}].tabs[${tabIndex}]`))
-        return { windowId: integer(window.windowId, `result.windows[${windowIndex}].windowId`), focused: boolean(window.focused, `result.windows[${windowIndex}].focused`), groups, tabs }
-      })
-      if (windows.reduce((count, window) => count + window.tabs.length, 0) > EXTERNAL_CHROME_MAX_CANDIDATE_TABS) fail('invalid-result', 'candidate tab total exceeds bound')
-      return { protocolVersion: protocolVersion(result.protocolVersion, expected), extensionInstanceId: identifier(result.extensionInstanceId, 'result.extensionInstanceId'), ...(result.profileAlias === undefined ? {} : { profileAlias: boundedString(result.profileAlias, 'result.profileAlias', EXTERNAL_CHROME_MAX_LABEL_LENGTH) }), windows }
+    case 'forge.browser.focusedEligibility': {
+      strictKeys(result, 'result', ['protocolVersion', 'eligible'])
+      return { protocolVersion: protocolVersion(result.protocolVersion, expected), eligible: boolean(result.eligible, 'result.eligible') }
     }
-    case 'forge.browser.claim': {
-      strictKeys(result, 'result', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'extensionInstanceId', 'groupId', 'childPolicy', 'tabs'])
-      return { ...parseLeaseRouting(result, expected), sessionAgentId: identifier(result.sessionAgentId, 'result.sessionAgentId'), extensionInstanceId: identifier(result.extensionInstanceId, 'result.extensionInstanceId'), groupId: result.groupId === null ? null : integer(result.groupId, 'result.groupId'), childPolicy: parseChildPolicy(result.childPolicy, 'result.childPolicy'), tabs: boundedArray(result.tabs, 'result.tabs', EXTERNAL_CHROME_MAX_CANDIDATE_TABS).map((tab, index) => parseSelectedTab(tab, `result.tabs[${index}]`)) }
-    }
-    case 'forge.browser.create': {
-      strictKeys(result, 'result', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'extensionInstanceId', 'groupId', 'tab'])
-      return { ...parseLeaseRouting(result, expected), sessionAgentId: identifier(result.sessionAgentId, 'result.sessionAgentId'), extensionInstanceId: identifier(result.extensionInstanceId, 'result.extensionInstanceId'), groupId: integer(result.groupId, 'result.groupId'), tab: parseSelectedTab(result.tab, 'result.tab') }
+    case 'forge.browser.acquire': {
+      strictKeys(result, 'result', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'extensionInstanceId', 'tab', 'created'])
+      return {
+        ...parseLeaseRouting(result, expected),
+        sessionAgentId: identifier(result.sessionAgentId, 'result.sessionAgentId'),
+        extensionInstanceId: identifier(result.extensionInstanceId, 'result.extensionInstanceId'),
+        tab: parseAcquiredTab(result.tab, 'result.tab'),
+        created: boolean(result.created, 'result.created'),
+      }
     }
     case 'forge.browser.release': {
       strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'releasedTabIds'])
       return { ...parseLeaseRouting(result, expected), releasedTabIds: parseNumericIdArray(result.releasedTabIds, 'result.releasedTabIds') }
     }
-    case 'forge.browser.execute': return parseExecuteResult(value, expected)
-    case 'forge.browser.turnEnded': {
-      strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'turnId', 'releasedTabs', 'handoffTabs'])
-      return { ...parseLeaseRouting(result, expected), turnId: identifier(result.turnId, 'result.turnId'), releasedTabs: parseNumericIdArray(result.releasedTabs, 'result.releasedTabs'), handoffTabs: parseNumericIdArray(result.handoffTabs, 'result.handoffTabs') }
+    case 'forge.browser.reveal': {
+      strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId', 'revealed'])
+      if (result.revealed !== true) fail('invalid-result', 'result.revealed must be true')
+      return { ...parseLeaseRouting(result, expected), tabId: integer(result.tabId, 'result.tabId'), revealed: true }
     }
+    case 'forge.browser.execute': return parseExecuteResult(value, expected)
     case 'forge.runtime.prepareUpdate': {
       strictKeys(result, 'result', ['protocolVersion', 'payloadVersion', 'quiesced'])
       if (result.quiesced !== true) fail('invalid-result', 'result.quiesced must be true')
@@ -1356,11 +1284,10 @@ function parseNotificationParams(method: ExternalChromeNotificationMethod, value
     case 'browser.tabChanged': {
       strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId', 'change'])
       const change = object(params.change, 'params.change')
-      strictKeys(change, 'params.change', [], ['windowId', 'groupId', 'url', 'title', 'active', 'loading'])
+      strictKeys(change, 'params.change', [], ['windowId', 'url', 'title', 'active', 'loading'])
       if (Object.keys(change).length === 0) fail('invalid-params', 'params.change must not be empty', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId'), change: {
         ...(change.windowId === undefined ? {} : { windowId: integer(change.windowId, 'params.change.windowId') }),
-        ...(change.groupId === undefined ? {} : { groupId: change.groupId === null ? null : integer(change.groupId, 'params.change.groupId') }),
         ...(change.url === undefined ? {} : { url: boundedString(change.url, 'params.change.url', EXTERNAL_CHROME_MAX_URL_LENGTH) }),
         ...(change.title === undefined ? {} : { title: boundedString(change.title, 'params.change.title', EXTERNAL_CHROME_MAX_LABEL_LENGTH, true) }),
         ...(change.active === undefined ? {} : { active: boolean(change.active, 'params.change.active') }),
@@ -1374,13 +1301,11 @@ function parseNotificationParams(method: ExternalChromeNotificationMethod, value
       return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId'), downloadId: integer(params.downloadId, 'params.downloadId'), state: params.state, danger: params.danger, ...(params.filename === undefined ? {} : { filename: boundedString(params.filename, 'params.filename', EXTERNAL_CHROME_MAX_URL_LENGTH) }), bytesReceived: finiteNumber(params.bytesReceived, 'params.bytesReceived'), totalBytes: finiteNumber(params.totalBytes, 'params.totalBytes') }
     }
     case 'browser.leaseChanged': {
-      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'state', 'tabIds', 'groupId', 'childPolicy'])
-      if (params.state !== 'claimed' && params.state !== 'released') fail('invalid-params', 'params.state is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'state', 'tabIds'])
+      if (params.state !== 'acquired' && params.state !== 'released') fail('invalid-params', 'params.state is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       return {
         ...parseLeaseRouting(params, expected), state: params.state,
         tabIds: parseNumericIdArray(params.tabIds, 'params.tabIds', params.state === 'released'),
-        groupId: params.groupId === null ? null : integer(params.groupId, 'params.groupId'),
-        childPolicy: parseChildPolicy(params.childPolicy, 'params.childPolicy'),
       }
     }
     case 'runtime.goodbye': {

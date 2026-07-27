@@ -29,7 +29,6 @@ async function fixture() {
   const payloadContents = {
     'content-script.js': Buffer.from('content payload'),
     'service-worker.js': Buffer.from('service worker payload'),
-    'side-panel.js': Buffer.from('side panel payload'),
   }
   const payloadFiles = Object.fromEntries(Object.entries(payloadContents).map(([file, bytes]) => [file, hash(bytes)]))
   const payloadSha = createHash('sha256')

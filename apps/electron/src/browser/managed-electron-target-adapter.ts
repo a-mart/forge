@@ -225,7 +225,13 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   private sequence = 0
   private destroyed = false
 
-  readonly hostKind = 'managed-electron' as const
+  readonly targetAffinity = 'managed-electron' as const
+  readonly capabilities = {
+    supportedOperations: BROWSER_AUTOMATION_OPERATIONS,
+    physicalViewport: true,
+    recording: true,
+    reveal: false,
+  } as const
 
   constructor(options: ManagedElectronTargetAdapterOptions) {
     this.approvedDataRoot = path.resolve(options.approvedDataRoot)
@@ -236,8 +242,9 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     void options.hostWebContentsId
   }
 
+  /** @deprecated Read capabilities.supportedOperations. */
   get supportedOperations(): BrowserAutomationOperation[] {
-    return [...BROWSER_AUTOMATION_OPERATIONS]
+    return [...this.capabilities.supportedOperations]
   }
 
   registerTabWebContents(registration: BrowserTabRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
@@ -247,12 +254,12 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     if (current && current.webContents.id !== webContents.id) this.disposeTabRuntime(current, true)
     if (current?.webContents.id === webContents.id && !current.destroyed) {
       current.visible = Boolean(registration.visible && current.snapshot.renderedViewport)
-      current.snapshot = { ...registration.tab, hostKind: 'managed-electron', live: true, renderedViewport: current.snapshot.renderedViewport, physicalVisible: current.visible }
+      current.snapshot = { ...registration.tab, targetAffinity: 'managed-electron', live: true, renderedViewport: current.snapshot.renderedViewport, physicalVisible: current.visible }
       return this.syncSnapshot(current)
     }
 
     const runtime: TabRuntime = {
-      snapshot: { ...registration.tab, hostKind: 'managed-electron', live: true, lifecycle: webContents.isLoading() ? 'loading' : 'ready', physicalVisible: false, updatedAt: new Date(this.now()).toISOString() },
+      snapshot: { ...registration.tab, targetAffinity: 'managed-electron', live: true, lifecycle: webContents.isLoading() ? 'loading' : 'ready', physicalVisible: false, updatedAt: new Date(this.now()).toISOString() },
       webContents,
       visible: false,
       queue: Promise.resolve(),
@@ -413,7 +420,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       const updatedTab = request.tabId ? this.tabs.get(request.tabId)?.snapshot : undefined
       return {
         requestId: request.requestId,
-        hostKind: 'managed-electron',
         sessionAgentId: request.sessionAgentId,
         profileId: request.profileId,
         tabId: request.tabId,
@@ -528,7 +534,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       }
       this.activeRecording = null
       return {
-        requestId: request.requestId, hostKind: 'managed-electron', sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+        requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
         tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
         operation: 'recordingStop', ok: true, result, elapsedMs: Math.max(0, this.now() - started),
         ...(tab ? { updatedTab: { ...tab.snapshot } } : {}),
@@ -600,7 +606,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       // Host connection fields are broker-authoritative; Electron only reports physical tab/panel data.
       available: !this.destroyed,
       host: {
-        hostKind: 'managed-electron',
         connected: false,
         hostId: null,
         hostGeneration: null,
@@ -1390,7 +1395,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   private record(value: unknown): UnknownRecord { return value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : {} }
 
   private errorResponse(request: BrowserAutomationRequest, error: BrowserAutomationFailure, started: number): BrowserAutomationResponse {
-    return { requestId: request.requestId, hostKind: 'managed-electron', sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false, error, elapsedMs: Math.max(0, this.now() - started), ...(request.tabId && this.tabs.get(request.tabId) ? { updatedTab: { ...this.tabs.get(request.tabId)!.snapshot } } : {}) }
+    return { requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false, error, elapsedMs: Math.max(0, this.now() - started), ...(request.tabId && this.tabs.get(request.tabId) ? { updatedTab: { ...this.tabs.get(request.tabId)!.snapshot } } : {}) }
   }
 
   private delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)) }

@@ -101,13 +101,11 @@ describe('ws command parser session commands', () => {
 
   it('parses request contracts while preserving optional wire requestId', () => {
     const payloadByType = {
-      browser_host_register: { type: 'browser_host_register', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(), capabilities: { hostKind: 'managed-electron', protocolVersions: { minimum: 1, maximum: 1 }, supportedOperations: BROWSER_AUTOMATION_OPERATIONS, features: { resize: true, recording: true, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false }, runtimeVersions: { electron: '1', chromium: '1', playwright: '1' }, electronVersion: '1', chromiumVersion: '1', playwrightVersion: '1', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true } } },
-      browser_host_hydrate: { type: 'browser_host_hydrate', hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 1 },
+      browser_host_register: { type: 'browser_host_register', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(), capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: BROWSER_AUTOMATION_OPERATIONS, features: { resize: true, recording: true, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false }, runtimeVersions: { electron: '1', chromium: '1', playwright: '1' }, electronVersion: '1', chromiumVersion: '1', playwrightVersion: '1', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true } } },
+      browser_host_hydrate: { type: 'browser_host_hydrate', hostId: 'host-1', hostGeneration: 1 },
       browser_tab_open: { type: 'browser_tab_open', sessionAgentId: 'session-a', profileId: 'profile-a' },
-      browser_host_select: { type: 'browser_host_select', sessionAgentId: 'session-a', profileId: 'profile-a', hostKind: 'external-chrome' },
-      browser_external_chrome_detach_confirmed: { type: 'browser_external_chrome_detach_confirmed', sessionAgentId: 'session-a', profileId: 'profile-a' },
-      browser_host_state_report: { type: 'browser_host_state_report', hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 1, sessions: [] },
-      browser_panel_reveal_acknowledge: { type: 'browser_panel_reveal_acknowledge', hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 1, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'tab-1', sequence: 1 },
+      browser_host_state_report: { type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] },
+      browser_panel_reveal_acknowledge: { type: 'browser_panel_reveal_acknowledge', hostId: 'host-1', hostGeneration: 1, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'tab-1', sequence: 1 },
       browser_tab_activate: { type: 'browser_tab_activate', sessionAgentId: 'session-a', tabId: 'tab-1' },
       browser_tab_close: { type: 'browser_tab_close', sessionAgentId: 'session-a', tabId: 'tab-1' },
       browser_tab_resize: { type: 'browser_tab_resize', sessionAgentId: 'session-a', tabId: 'tab-1', viewport: { mode: 'fill' } },

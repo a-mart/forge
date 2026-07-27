@@ -31,7 +31,6 @@ describe('External Chrome development resource staging', () => {
     const payloadContents = {
       'content-script.js': Buffer.from('content payload\n'),
       'service-worker.js': Buffer.from('service worker payload\n'),
-      'side-panel.js': Buffer.from('side panel payload\n'),
     }
     const payloadSha256 = treeHash(payloadContents)
     const payloadDirectory = `dev-${payloadSha256}`

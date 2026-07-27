@@ -7,7 +7,7 @@ function windowWithId(id: number) {
 }
 const projection = {
   workspaceEpoch: 7, sessionAgentId: 'local-session', profileId: 'local-profile',
-  snapshot: { schemaVersion: 1, sessionAgentId: 'local-session', profileId: 'local-profile', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision: 1, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() },
+  snapshot: { schemaVersion: 2, sessionAgentId: 'local-session', profileId: 'local-profile', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision: 1, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() },
   host: { connected: true, hostId: 'host', hostGeneration: 1, focused: true, capabilities: null, connectedAt: new Date(0).toISOString() },
   mode: 'docked' as const, popoutAvailable: true, connected: true, publishedAt: new Date(0).toISOString(),
 }

@@ -489,7 +489,7 @@ export class SwarmManagerRuntimeComposition {
       maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
         this.requireServices().configuration.maybeRecordModelCapacityBlock(agentId, descriptor, error),
       ...createRuntimeLifecycleControllerHostCallbacks(() => this.requireRuntimeLifecycle()),
-      handoffExternalChromeAtTurnEnd: (profileId, sessionAgentId, turnId) => this.options.browserAutomation.handoffExternalChromeAtTurnEnd(profileId, sessionAgentId, turnId),
+      endBrowserTurn: (profileId, sessionAgentId, turnId) => this.options.browserAutomation.endBrowserTurn(profileId, sessionAgentId, turnId),
       incrementSessionCompactionCount: (profileId, sessionId, failureLogKey) =>
         this.requireServices().knowledge.incrementSessionCompactionCount(
           profileId,

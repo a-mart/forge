@@ -115,7 +115,7 @@ function verifiedExtensionInventories(extensionManifest, selector) {
   const extension = extensionManifest?.extension
   const shellFiles = extension?.shellFiles
   const payloadFiles = extension?.payloadFiles
-  const expectedPayloadFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  const expectedPayloadFiles = ['content-script.js', 'service-worker.js']
   if (
     extension?.payloadVersion !== selector.payloadVersion || extension?.payloadSha256 !== selector.payloadSha256
     || extension?.payloadDirectory !== selector.payloadDirectory

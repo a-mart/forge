@@ -1,40 +1,19 @@
-Forge has two local Desktop browser hosts for normal local Builder managers: **Managed Browser** and **External Chrome (Local Beta)**. Neither is a Skill, and neither host, relay, nor browser IPC is forwarded to Remote Projects or Collaboration.
+Forge Desktop presents one **Browser** experience for local Builder managers. Browser is not a Skill and is not forwarded to Remote Projects or Collaboration.
 
-## Choose the Browser host
+Forge chooses the available local target automatically:
 
-Select **Browser** in the desktop activity rail, then use **Browser host**:
+- A Chrome-backed tab stays in Chrome. The Browser rail shows a compact card with **Show in Chrome**.
+- An embedded tab appears inside Forge and includes navigation, viewport, screenshot, recording, and dock/pop-out controls.
+- If Chrome is unavailable or an operation requires an embedded capability, Forge uses the embedded browser automatically.
 
-- **Managed Browser** controls Forge-owned Electron tabs rendered in the Browser workspace.
-- **External Chrome** controls the session's bounded leased tab set in a connected Chrome profile.
+There is no host picker, tab attachment flow, or lease management UI. If more than one genuinely eligible Chrome profile is available, Forge asks once which profile to use for the current Forge session.
 
-The choice is a session preference for subsequent browser operations. **Switching hosts does not detach an External Chrome lease.** Use **Detach now from Forge** when you intend to release it.
+## Chrome setup
 
-## Managed Browser
+Open **Settings → Use Chrome with Forge** for the one-time extension setup or repair. After setup, Forge creates or uses browser tabs automatically. Chrome-backed tabs do not show unsupported recording, viewport, screenshot-export, or dock/pop-out controls.
 
-Managed Browser supports tabs, navigation, zoom, fill/freeform/device viewport sizes, transient screenshot preview, visible-tab recording, and dock/pop-out. The manager can use typed status, open, navigate, resize, snapshot, click, type, press, scroll, evaluate, wait, and recording operations.
+## Privacy and persistence
 
-You and the agent share each tab. **Agent controlling** appears during an action. Real pointer or keyboard input gives control to you and interrupts the action rather than racing it.
+Chrome page URLs and titles are not persisted in Forge browser state. Embedded-browser cookies and site storage use Forge's persistent local browser partition. Successfully stopped embedded recordings persist under the session's `artifacts/browser/` directory.
 
-Its cookies and site storage use a persistent partition shared by sessions in the Forge profile and can outlive session deletion. Screenshot previews are transient. Successfully stopped recordings persist under the session's `artifacts/browser/` directory. Recordings are Managed Browser-only.
-
-## External Chrome Local Beta
-
-External Chrome requires Chrome 125+, Developer Mode, Forge's pinned unpacked extension, the main Forge Desktop window, and a connected native host. A dedicated Chrome profile containing only the accounts needed for Forge work is strongly recommended. Chrome or enterprise policy may block unpacked extensions.
-
-Set it up once per Chrome profile and Forge data directory in **Settings → External Chrome (Local Beta)**. Load the exact stable folder Forge shows, confirm extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`, and enable the coordinator. Compatible connected profiles auto-reload after update or rollback. Reload manually only when Settings reports **Manual extension reload required**.
-
-Choose a connected profile, edit its Forge-local alias if useful, select unrestricted candidate tabs, review the warning, and confirm attachment. The alias is not Chrome's official profile name. Restricted Chrome pages, debugger conflicts, and tabs leased elsewhere cannot be attached.
-
-External Chrome operates only the session's bounded leased tab set: tabs you confirm, tabs Forge creates through `open` in the selected or sole connected profile, and qualifying grouped child tabs when you explicitly enable that policy.
-
-Leases persist until turn disposition, **Detach now**, lifecycle release, bounded expiry, or loss. Human input interrupts agent control; DevTools or another debugger can end ownership. Detaching leaves tabs open.
-
-External Chrome supports status, grouped create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. Snapshot can expose page content, accessibility data, bounded diagnostics, and transient screenshot data. Arbitrary JavaScript and authenticated page actions are possible. External Chrome does not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or dock/pop-out. It has no standalone screenshot toolbar/export workflow.
-
-Forge does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. The V1 extension still declares broad all-sites and powerful browser permissions. Current code does not read bookmarks, history, or top sites or open downloaded files. Download-change notifications reach the startup shell but are ignored by the payload, so Forge provides no managed download workflow or saved download artifacts. Use a dedicated profile and treat page instructions as untrusted.
-
-## Local-only boundary and saved state
-
-Ordinary web clients cannot use either local Desktop host. A remote normal Builder manager may still expose browser tools, but without a host connected directly to that remote backend they return `unavailable-host`. Collaboration channels receive neither host.
-
-Both hosts use the session's `browser.json` for selected-host and privacy-bounded tab/action state. External Chrome page URLs/titles are not persisted there. Clearing conversation history does not clear browser state; a fork starts independently. Archive/restore preserves Managed Browser metadata, while archive releases External Chrome leases and removes their tab state. See the repository's [Browser automation guide](https://github.com/a-mart/forge/blob/main/docs/BROWSER_AUTOMATION.md) for setup, permissions, lifecycle, repair, and troubleshooting.
+Browser state is delivered through the same live, bootstrap, and replay paths as the rest of the session. Clearing conversation history does not clear browser state; archive and deletion release active browser authority.
