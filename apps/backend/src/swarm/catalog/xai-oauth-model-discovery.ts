@@ -2,9 +2,9 @@ import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { ForgeModelDefinition, ForgeReasoningLevel } from "@forge/protocol";
 import { getSharedAuthFilePath } from "../data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import { getForgeXaiOAuthProxyHeaders } from "./xai-oauth-proxy-compat.js";
 
 export const XAI_OAUTH_MODELS_ENDPOINT = "https://cli-chat-proxy.grok.com/v1/models";
-const XAI_OAUTH_HEADER = "xai-grok-cli";
 const MAX_CATALOG_BYTES = 1_000_000;
 const DISCOVERABLE_MODEL_IDS = new Set([
   "grok-4.5",
@@ -71,7 +71,7 @@ export async function refreshXaiOAuthModelDiscovery(
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${accessToken}`,
-          "X-XAI-Token-Auth": XAI_OAUTH_HEADER,
+          ...getForgeXaiOAuthProxyHeaders(),
         },
       });
       if (!response.ok || response.status < 200 || response.status >= 300) {
