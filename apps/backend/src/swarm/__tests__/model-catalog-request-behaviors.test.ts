@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
+import { modelCatalogService } from "../model-catalog-service.js";
+import { parseXaiOAuthModelCatalog } from "../catalog/xai-oauth-model-discovery.js";
 
 function installExtension(webSearchEnabled: boolean) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -14,6 +16,8 @@ function installExtension(webSearchEnabled: boolean) {
     beforeProviderRequest: handlers.get("before_provider_request"),
   };
 }
+
+afterEach(() => modelCatalogService.setXaiOAuthDiscoveredModels(null));
 
 describe("createCatalogRequestBehaviorExtensionFactory", () => {
   it("strips reasoning payload fields for xAI responses requests", () => {
@@ -38,6 +42,38 @@ describe("createCatalogRequestBehaviorExtensionFactory", () => {
       input: "hello",
       include: ["output_text.sources"],
     });
+  });
+
+  it.each(["low", "medium", "high", "xhigh"])("preserves Grok 4.5 reasoning effort %s", (effort) => {
+    const { beforeProviderRequest } = installExtension(false);
+    const payload = {
+      input: "hello",
+      reasoning: { effort, summary: "auto" },
+      include: ["reasoning.encrypted_content"],
+    };
+
+    expect(beforeProviderRequest?.(
+      { payload },
+      { model: { provider: "xai", id: "grok-4.5" } },
+    )).toBeUndefined();
+  });
+
+  it("preserves reasoning for an authenticated discovered dynamic xAI model", () => {
+    modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+      data: [{
+        id: "grok-build",
+        context_window: 400_000,
+        max_output_tokens: 40_000,
+        supported_reasoning_levels: ["low", "medium", "high"],
+      }],
+    }));
+    const { beforeProviderRequest } = installExtension(false);
+    const payload = { input: "hello", reasoning: { effort: "medium" } };
+
+    expect(beforeProviderRequest?.(
+      { payload },
+      { model: { provider: "xai", id: "grok-build" } },
+    )).toBeUndefined();
   });
 
   it("strips reasoning and injects native search tools when enabled", () => {

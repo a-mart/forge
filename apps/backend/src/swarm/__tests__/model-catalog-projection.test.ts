@@ -10,6 +10,9 @@ const modelRegistryMockState = vi.hoisted(() => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
+  AuthStorage: {
+    create: () => ({ get: () => undefined, getApiKey: async () => undefined }),
+  },
   ModelRegistry: new Proxy(class {}, {
     construct(_target, args) {
       modelRegistryMockState.construct(...args);
@@ -74,12 +77,19 @@ describe("model-catalog-projection", () => {
       }>;
     };
 
-    const upstreamXaiModelIds = getModels("xai")
-      .map((model) => model.id)
-      .sort();
     const projectedXaiModels = projection.providers.xai?.models ?? [];
 
-    expect(projectedXaiModels.map((model) => model.id).sort()).toEqual(upstreamXaiModelIds);
+    expect(projectedXaiModels.map((model) => model.id).sort()).toEqual([
+      "grok-4",
+      "grok-4-fast",
+      "grok-4.20-0309-non-reasoning",
+      "grok-4.20-0309-reasoning",
+      "grok-4.5",
+    ]);
+    expect(projectedXaiModels.map((model) => model.id)).not.toEqual(expect.arrayContaining([
+      "grok-4.3",
+      "grok-build-0.1",
+    ]));
     expect(projectedXaiModels.every((model) => model.api === "openai-responses")).toBe(true);
     expect(projection.providers.xai?.api).toBe("openai-responses");
     expect(projection.providers.xai?.apiKey).toBe("$XAI_API_KEY");

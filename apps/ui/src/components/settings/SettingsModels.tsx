@@ -545,6 +545,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
   const [overrides, setOverrides] = useState<Record<string, ModelOverrideEntry>>({})
   const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean>>({})
   const [providerCredentials, setProviderCredentials] = useState<Record<string, ForgeProviderCredentialSummary>>({})
+  const [discoveredModels, setDiscoveredModels] = useState<ForgeModelDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedModelIds, setExpandedModelIds] = useState<Record<string, boolean>>({})
@@ -574,6 +575,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
       setOverrides(response.overrides ?? {})
       setProviderAvailability(response.providerAvailability ?? {})
       setProviderCredentials(response.providerCredentials ?? {})
+      setDiscoveredModels(response.discoveredModels ?? [])
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
@@ -587,17 +589,29 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
 
   const providerGroups = useMemo<ProviderGroup[]>(() => {
     return Object.values(FORGE_MODEL_CATALOG.providers)
-      .map((provider) => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        availabilityMode: provider.availabilityMode,
-        models: Object.values(FORGE_MODEL_CATALOG.models).filter((model) => model.provider === provider.providerId),
-      }))
+      .map((provider) => {
+        const modelsByKey = new Map<string, ForgeModelDefinition>(
+          Object.values(FORGE_MODEL_CATALOG.models)
+            .filter((model) => model.provider === provider.providerId)
+            .map((model) => [getCatalogModelKey(model), model]),
+        )
+        for (const model of discoveredModels.filter((entry) => entry.provider === provider.providerId)) {
+          modelsByKey.set(getCatalogModelKey(model), model)
+        }
+        return {
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          availabilityMode: provider.availabilityMode,
+          models: [...modelsByKey.values()],
+        }
+      })
       .filter((group) => group.models.length > 0)
-  }, [])
+  }, [discoveredModels])
 
   useEffect(() => {
-    setCollapsedProviderIds(Object.fromEntries(providerGroups.map((group) => [group.providerId, true])))
+    setCollapsedProviderIds((current) => Object.fromEntries(
+      providerGroups.map((group) => [group.providerId, current[group.providerId] ?? true]),
+    ))
   }, [providerGroups])
 
   const hasAnyOverrides = Object.keys(overrides).length > 0

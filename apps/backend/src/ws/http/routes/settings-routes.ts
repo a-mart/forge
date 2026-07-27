@@ -335,6 +335,9 @@ async function handleSettingsAuthHttpRequest(
       return;
     }
     await swarmManager.updateSettingsAuth(payload);
+    if (Object.prototype.hasOwnProperty.call(payload, "xai")) {
+      await swarmManager.reloadModelCatalogOverridesAndProjection();
+    }
     await invalidateProviderUsage(...Object.keys(payload));
     const providers = await swarmManager.listSettingsAuth();
     const responsePayload: SettingsAuthMutationResponse = { ok: true, providers };
@@ -361,6 +364,9 @@ async function handleSettingsAuthHttpRequest(
     }
 
     await swarmManager.deleteSettingsAuth(provider);
+    if (provider.trim().toLowerCase() === "xai") {
+      await swarmManager.reloadModelCatalogOverridesAndProjection();
+    }
     await invalidateProviderUsage(provider);
     const providers = await swarmManager.listSettingsAuth();
     const payload: SettingsAuthMutationResponse = { ok: true, providers };
@@ -1047,6 +1053,9 @@ async function handleSettingsAuthLoginHttpRequest(
       type: "oauth",
       ...credentials
     });
+    if (providerId === "xai") {
+      await swarmManager.reloadModelCatalogOverridesAndProjection();
+    }
     await invalidateProviderUsage(providerId);
 
     sendSseEvent("complete", {

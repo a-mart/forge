@@ -151,7 +151,15 @@ function isModelVariantInfo(value: unknown): value is ModelVariantInfo {
   }
 
   const variant = value as Record<string, unknown>
-  return typeof variant.modelId === 'string' && typeof variant.label === 'string'
+  return typeof variant.modelId === 'string' &&
+    typeof variant.label === 'string' &&
+    (variant.defaultReasoningLevel === undefined ||
+      MANAGER_REASONING_LEVELS.includes(variant.defaultReasoningLevel as ManagerReasoningLevel)) &&
+    (variant.supportedReasoningLevels === undefined ||
+      (Array.isArray(variant.supportedReasoningLevels) &&
+        variant.supportedReasoningLevels.every((level) =>
+          MANAGER_REASONING_LEVELS.includes(level as ManagerReasoningLevel),
+        )))
 }
 
 /**
@@ -182,7 +190,7 @@ export function getModelDisplayLabel(modelId: string, presets: ModelPresetInfo[]
 
 /**
  * Look up the supported reasoning levels for a given modelId.
- * Checks both primary preset modelIds and variant modelIds (variants inherit parent's levels).
+ * Checks both primary preset modelIds and variant modelIds (using variant metadata when present).
  * Falls back to all levels if the modelId is unknown.
  */
 export function getSupportedReasoningLevelsForModelId(
@@ -203,7 +211,7 @@ export function getSupportedReasoningLevelsForModelId(
     if (preset.variants) {
       for (const variant of preset.variants) {
         if (variant.modelId === modelId) {
-          return preset.supportedReasoningLevels
+          return variant.supportedReasoningLevels ?? preset.supportedReasoningLevels
         }
       }
     }

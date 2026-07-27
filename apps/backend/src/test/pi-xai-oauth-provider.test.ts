@@ -6,6 +6,8 @@ import { stream as streamOpenAIResponses } from "@earendil-works/pi-ai/api/opena
 import { getOAuthProvider, resetOAuthProviders, xaiOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { buildPiModelsProjection } from "../swarm/catalog/model-catalog-projection.js";
+import { modelCatalogService } from "../swarm/catalog/model-catalog-service.js";
+import { parseXaiOAuthModelCatalog } from "../swarm/catalog/xai-oauth-model-discovery.js";
 
 const XAI_API_BASE_URL = "https://api.x.ai/v1";
 const XAI_OAUTH_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
@@ -15,6 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   resetOAuthProviders();
+  modelCatalogService.setXaiOAuthDiscoveredModels(null);
 });
 
 describe("patched Pi xAI OAuth provider", () => {
@@ -179,6 +182,74 @@ describe("patched Pi xAI OAuth provider", () => {
     expect(requests[0].url).toBe("https://api.x.ai/v1/responses");
     expect(requests[0].headers.get("authorization")).toBe("Bearer runtime-xai-api-key");
     expect(requests[0].headers.get("X-XAI-Token-Auth")).toBeNull();
+  });
+
+  it("rejects a discovered OAuth-only model after a runtime API-key override becomes effective", async () => {
+    modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+      data: ["grok-build", "grok-composer-2.5-fast"].map((id) => ({
+        id,
+        context_window: 300_000,
+        max_output_tokens: 30_000,
+        supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+        default_reasoning_level: "high",
+        input_modes: ["text"],
+        capabilities: { tools: true, structured_output: false },
+      })),
+    }));
+    const projection = buildPiModelsProjection();
+    for (const modelId of ["grok-build", "grok-composer-2.5-fast"]) {
+      expect(projection.providers.xai?.models?.find((model) => model.id === modelId)).toMatchObject({
+        authScope: "oauth",
+      });
+    }
+
+    const root = await mkdtemp(join(tmpdir(), "forge-xai-oauth-only-runtime-override-"));
+    const projectionPath = join(root, "pi-models.json");
+    await writeFile(projectionPath, JSON.stringify(projection), "utf8");
+    const authStorage = AuthStorage.inMemory({
+      xai: {
+        type: "oauth",
+        access: "stored-oauth-access-token",
+        refresh: "stored-oauth-refresh-token",
+        expires: Date.now() + 60_000,
+      },
+    });
+    const registry = ModelRegistry.create(authStorage, projectionPath);
+    const selectedModel = registry.find("xai", "grok-build");
+    expect(selectedModel).toMatchObject({
+      id: "grok-build",
+      baseUrl: XAI_OAUTH_BASE_URL,
+      authScope: "oauth",
+      headers: { "X-XAI-Token-Auth": "xai-grok-cli" },
+    });
+
+    authStorage.setRuntimeApiKey("xai", "must-not-pair-with-oauth-only-model");
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const modelId of ["grok-build", "grok-composer-2.5-fast"]) {
+      expect(registry.find("xai", modelId)).toBeUndefined();
+      expect(registry.getAll().some((model) => model.provider === "xai" && model.id === modelId)).toBe(false);
+      expect(registry.getAvailable().some((model) => model.provider === "xai" && model.id === modelId)).toBe(false);
+    }
+    await expect(registry.getApiKeyAndHeaders(selectedModel!)).resolves.toEqual({
+      ok: false,
+      error: 'Model "xai/grok-build" requires OAuth authentication.',
+    });
+    expect(selectedModel?.baseUrl).toBe(XAI_API_BASE_URL);
+    expect(selectedModel?.headers?.["X-XAI-Token-Auth"]).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const apiKeyRegistry = ModelRegistry.create(AuthStorage.inMemory({
+      xai: { type: "api_key", key: "api-key-auth" },
+    }), projectionPath);
+    expect(apiKeyRegistry.find("xai", "grok-build")).toBeUndefined();
+    expect(apiKeyRegistry.find("xai", "grok-composer-2.5-fast")).toBeUndefined();
+
+    vi.stubEnv("XAI_API_KEY", "environment-api-key-auth");
+    const environmentRegistry = ModelRegistry.create(AuthStorage.inMemory({}), projectionPath);
+    expect(environmentRegistry.find("xai", "grok-build")).toBeUndefined();
+    expect(environmentRegistry.find("xai", "grok-composer-2.5-fast")).toBeUndefined();
   });
 
   it("sends API keys to api.x.ai while OAuth uses the CLI proxy bearer contract", async () => {

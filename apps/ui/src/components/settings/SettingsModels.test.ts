@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsModels } from './SettingsModels'
-import type { ModelOverrideEntry } from '@forge/protocol'
+import type { ForgeModelDefinition, ModelOverrideEntry } from '@forge/protocol'
 
 const modelsApiMock = vi.hoisted(() => ({
   fetchModelOverrides: vi.fn(),
@@ -60,7 +60,10 @@ async function flushPromises(): Promise<void> {
   flushSync(() => {})
 }
 
-async function renderSettingsModels(overrides: Record<string, ModelOverrideEntry>): Promise<void> {
+async function renderSettingsModels(
+  overrides: Record<string, ModelOverrideEntry>,
+  discoveredModels: ForgeModelDefinition[] = [],
+): Promise<void> {
   modelsApiMock.fetchModelOverrides.mockResolvedValue({
     version: 1,
     overrides,
@@ -69,6 +72,7 @@ async function renderSettingsModels(overrides: Record<string, ModelOverrideEntry
       anthropic: true,
       xai: true,
     },
+    discoveredModels,
   })
 
   root = createRoot(container)
@@ -127,6 +131,40 @@ async function expandModel(displayName: string): Promise<void> {
 }
 
 describe('SettingsModels', () => {
+  it('renders entitlement-discovered native xAI models without conflating Composer identities', async () => {
+    const dynamicBase: Omit<ForgeModelDefinition, 'modelId' | 'displayName'> = {
+      provider: 'xai',
+      familyId: 'pi-grok',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 300_000,
+      maxOutputTokens: 30_000,
+      inputModes: ['text'],
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+      authScope: 'oauth',
+      discovered: true,
+      webSearchCapability: 'native',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes: null,
+    }
+    await renderSettingsModels({}, [
+      { ...dynamicBase, modelId: 'grok-build', displayName: 'Grok Build' },
+      { ...dynamicBase, modelId: 'grok-composer-2.5-fast', displayName: 'Grok Composer 2.5 Fast' },
+    ])
+
+    expect(container.textContent).toContain('Grok Build')
+    expect(container.textContent).toContain('grok-build')
+    expect(container.textContent).toContain('Grok Composer 2.5 Fast')
+    expect(container.textContent).toContain('grok-composer-2.5-fast')
+    expect(container.textContent).toContain('Composer 2.5')
+    expect(container.textContent).toContain('composer-2.5')
+  })
+
   it('shows no model-specific instructions when no override exists', async () => {
     await renderSettingsModels({})
     await expandProvider('OpenAI Codex')

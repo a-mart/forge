@@ -17,6 +17,10 @@ export interface ManagerExactModelSelection {
 export interface ModelVariantInfo {
   modelId: string
   label: string
+  /** Variant-specific levels when they differ from the family default (for example, discovered entitlements). */
+  supportedReasoningLevels?: ManagerReasoningLevel[]
+  /** Variant-specific default when advertised by the provider. */
+  defaultReasoningLevel?: ManagerReasoningLevel
 }
 
 export interface ModelPresetInfo {

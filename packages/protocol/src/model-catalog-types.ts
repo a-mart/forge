@@ -2,7 +2,7 @@ import type { OpenAIBrokerDegradedReason } from './openai-auth-broker.js'
 
 export type ForgeProviderAvailabilityMode = 'managed-auth' | 'external'
 export type ForgePiProjectionMode = 'built-in-overrides' | 'custom-provider-merge' | 'none'
-export type ForgeProjectionScope = 'catalog-only' | 'full-upstream-provider'
+export type ForgeProjectionScope = 'catalog-only' | 'approved-provider-models'
 export type ForgeRequestBehaviorId = 'xai-responses' | null
 export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
@@ -74,6 +74,15 @@ export interface ForgeModelDefinition {
   contextWindow: number
   maxOutputTokens: number
   inputModes: readonly ForgeInputMode[]
+  /** Output modalities advertised by the provider. Text-only when omitted by legacy rows. */
+  outputModes?: readonly ForgeInputMode[]
+  /** Provider capability metadata used by discovered catalogs and capability-aware UIs. */
+  supportsTools?: boolean
+  supportsStructuredOutput?: boolean
+  /** OAuth-scoped rows are entitlement-gated and must never be exposed for API-key auth. */
+  authScope?: 'any' | 'oauth'
+  /** True when metadata came from authenticated provider discovery rather than the checked-in baseline. */
+  discovered?: boolean
   webSearchCapability: ForgeWebSearchCapability
   thinkingLevelMap?: ForgeThinkingLevelMap
   enabledByDefault: boolean

@@ -149,8 +149,8 @@ function buildCompactionModelOptions(presets: ModelPresetInfo[]): CompactionMode
         providerLabel,
         modelId: variant.modelId,
         label: variant.label,
-        defaultReasoningLevel: (variantModel?.defaultReasoningLevel ?? preset.defaultReasoningLevel) as ManagerReasoningLevel,
-        supportedReasoningLevels: (variantModel?.supportedReasoningLevels ?? preset.supportedReasoningLevels) as ManagerReasoningLevel[],
+        defaultReasoningLevel: (variantModel?.defaultReasoningLevel ?? variant.defaultReasoningLevel ?? preset.defaultReasoningLevel) as ManagerReasoningLevel,
+        supportedReasoningLevels: (variantModel?.supportedReasoningLevels ?? variant.supportedReasoningLevels ?? preset.supportedReasoningLevels) as ManagerReasoningLevel[],
       })
     }
   }

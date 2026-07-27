@@ -1,5 +1,6 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { getCatalogProvider } from "@forge/protocol";
+import { modelCatalogService } from "./model-catalog-service.js";
 
 const RESPONSES_REASONING_INCLUDE = "reasoning.encrypted_content";
 
@@ -11,7 +12,7 @@ interface CatalogRequestBehaviorOptions {
  * Create a Pi extension factory that applies catalog-driven request behaviors.
  *
  * Currently handles:
- * - xAI: strip unsupported reasoning fields from Responses payloads
+ * - xAI: preserve reasoning effort for capable models and strip it from legacy rows
  * - xAI: inject native web_search / x_search tools when enabled
  */
 export function createCatalogRequestBehaviorExtensionFactory(options: CatalogRequestBehaviorOptions): ExtensionFactory {
@@ -27,7 +28,9 @@ export function createCatalogRequestBehaviorExtensionFactory(options: CatalogReq
       }
 
       if (provider.requestBehaviorId === "xai-responses") {
-        let payload = stripReasoningFromResponsesPayload(event.payload);
+        let payload = supportsXaiResponsesReasoning(ctx.model.id)
+          ? event.payload
+          : stripReasoningFromResponsesPayload(event.payload);
 
         if (options.webSearchEnabled) {
           payload = injectNativeSearchTools(payload);
@@ -39,6 +42,12 @@ export function createCatalogRequestBehaviorExtensionFactory(options: CatalogReq
       return undefined;
     });
   };
+}
+
+export function supportsXaiResponsesReasoning(modelId: string): boolean {
+  const model = modelCatalogService.getModel(modelId, "xai");
+  return model?.supportsReasoning === true
+    && (model.modelId === "grok-4.5" || model.discovered === true);
 }
 
 export function stripReasoningFromResponsesPayload(payload: unknown): unknown {

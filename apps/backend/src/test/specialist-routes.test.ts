@@ -46,6 +46,8 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
 }));
 
 import { createSpecialistRoutes } from "../ws/http/routes/specialist-routes.js";
+import { modelCatalogService } from "../swarm/model-catalog-service.js";
+import { parseXaiOAuthModelCatalog } from "../swarm/catalog/xai-oauth-model-discovery.js";
 
 interface TestServer {
   readonly baseUrl: string;
@@ -70,6 +72,7 @@ afterEach(async () => {
     async (profileId: string, dataDir: string, _workspaceDir: string | undefined, targetSpace: string) =>
       specialistRegistryState.resolveRoster(profileId, dataDir, targetSpace)
   );
+  modelCatalogService.setXaiOAuthDiscoveredModels(null);
   delete process.env.CURSOR_API_KEY;
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -90,6 +93,64 @@ describe("specialist routes", () => {
     expect(payload.models).toEqual(expect.arrayContaining([
       expect.objectContaining({ provider: "cursor-sdk", modelId: "composer-2.5", presetId: "cursor-composer" })
     ]));
+  });
+
+  it("returns only exact authenticated xAI entitlement models from /api/settings/models", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "specialist-routes-xai-oauth-"));
+    tempDirs.push(dataDir);
+    const authFile = join(dataDir, "shared", "config", "auth", "auth.json");
+    await mkdir(join(dataDir, "shared", "config", "auth"), { recursive: true });
+    await writeFile(authFile, JSON.stringify({
+      xai: { type: "oauth", access: "test-access", refresh: "test-refresh", expires: Date.now() + 60_000 },
+    }));
+    const server = await createSpecialistRouteTestServer({
+      dataDir,
+      onReloadModelCatalog: async () => {
+        modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+          data: [
+            {
+              id: "grok-build",
+              context_window: 420_000,
+              max_output_tokens: 42_000,
+              supported_reasoning_levels: ["low", "medium", "high"],
+            },
+            {
+              id: "grok-composer-2.5-fast",
+              context_window: 320_000,
+              max_output_tokens: 32_000,
+              supported_reasoning_levels: ["low", "high"],
+            },
+            {
+              id: "grok-build-0.1",
+              context_window: 1,
+              max_output_tokens: 1,
+              supported_reasoning_levels: ["high"],
+            },
+          ],
+        }));
+      },
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/models`);
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      models: Array<{
+        provider: string;
+        modelId: string;
+        variants?: Array<{ modelId: string; supportedReasoningLevels?: string[] }>;
+      }>;
+    };
+    const grok = payload.models.find((model) => model.provider === "xai");
+    expect(grok?.modelId).toBe("grok-4.5");
+    expect(grok?.variants?.map((variant) => variant.modelId)).toEqual(expect.arrayContaining([
+      "grok-build",
+      "grok-composer-2.5-fast",
+    ]));
+    expect(grok?.variants?.map((variant) => variant.modelId)).not.toContain("grok-build-0.1");
+    expect(
+      grok?.variants?.find((variant) => variant.modelId === "grok-composer-2.5-fast")
+        ?.supportedReasoningLevels,
+    ).toEqual(["low", "high"]);
   });
 
   it("returns the builtin worker template", async () => {
@@ -586,6 +647,7 @@ async function createSpecialistRouteTestServer(options?: {
   broadcastEvent?: (event: ServerEvent) => void;
   agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string; cwd?: string }>;
   dataDir?: string;
+  onReloadModelCatalog?: () => Promise<void>;
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
   const dataDir = options?.dataDir ?? "/tmp/data";
@@ -602,6 +664,7 @@ async function createSpecialistRouteTestServer(options?: {
     listProfiles: () => profiles,
     listUserProfiles: () => profiles.filter((profile) => profile.profileType !== "system"),
     listAgents: () => options?.agents ?? [],
+    reloadModelCatalogOverridesAndProjection: vi.fn(options?.onReloadModelCatalog ?? (async () => undefined)),
     notifySpecialistRosterChanged: options?.notifySpecialistRosterChanged ?? vi.fn(async () => undefined),
   };
 
