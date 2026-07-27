@@ -111,10 +111,9 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 | `composer-2.5` | Composer 2.5 | Cursor SDK | none |
 | `grok-4.5` | Grok 4.5 | Cursor SDK | low, medium, high |
 | `grok-4.5-fast` | Grok 4.5 Fast | Cursor SDK | low, medium, high |
-| `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
-| `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
-| `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
-| `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none, low, medium, high, xhigh |
+| `grok-4.5` | Grok 4.5 (native default) | xAI | API key: low, medium, high, xhigh; OAuth: authenticated metadata, or low, medium, high fallback |
+| `grok-build` | Grok Build (account entitlement) | xAI OAuth | authenticated account metadata |
+| `grok-composer-2.5-fast` | Grok Composer 2.5 Fast (account entitlement) | xAI OAuth | authenticated account metadata |
 
 **Notes:**
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
@@ -122,7 +121,7 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 - Claude models use the native `anthropic` provider. Former Claude SDK specialist frontmatter is unavailable and must be changed manually; Forge does not rewrite user-authored specialist files.
 - The visible `pi-fable` preset selects `anthropic/claude-fable-5` at `high` by default for manager and specialist selection. This is the Fable family default, not a builtin effort-tier default. Fable uses always-on adaptive thinking, so Forge exposes low, medium, high, xhigh, and max but not none.
 - Manager and specialist selectors expose `pi-sonnet` for native Anthropic Sonnet 5.
-- xAI models are available for specialists and explicit worker spawn choices, but not normal manager create, change, or per-session override selectors. They require either an API key or OAuth in Settings → Authentication. Settings manages one direct, non-pooled xAI credential slot, so configuring one method replaces the other. `XAI_API_KEY` remains an environment fallback when no Settings-managed xAI credential is configured; it is not a second account, and a stored OAuth refresh failure does not fall through to it.
+- xAI models are available for specialists and explicit worker spawn choices, but not normal manager create, change, or per-session override selectors. `grok-4.5` is the native xAI default. Under OAuth, authenticated discovery can add exactly `grok-build` and `grok-composer-2.5-fast` when the active account is entitled; the live response determines their reasoning options and they disappear if discovery or entitlement validation fails. Both are OAuth-only and are hidden or rejected under API-key auth. Native xAI `grok-composer-2.5-fast` is distinct from Cursor SDK `composer-2.5`. Settings manages one direct, non-pooled xAI credential slot, so configuring one method replaces the other. `XAI_API_KEY` remains an environment fallback when no Settings-managed xAI credential is configured; it is not a second account, and a stored OAuth refresh failure does not fall through to it.
 - Cursor SDK models can appear in manager and delegation policy selectors when credentials and model visibility allow them. The default stored `fast` tier (the Support policy) targets Composer 2.5 with a Codex fallback; Composer exposes only Cursor's `fast` toggle and stores reasoning as `none`. Cursor Grok 4.5 uses the SDK model id `grok-4.5` plus curated-from-live-discovery `effort` and `fast` params; Forge keeps `grok-4.5-fast` as a separate catalog id for attribution. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 

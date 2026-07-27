@@ -26,9 +26,11 @@ Cursor SDK uses Forge's Cursor SDK auth entry and exposes Composer 2.5 plus Curs
 
 xAI provides the native Grok model family. Settings manages one direct, non-pooled xAI credential slot: save an API key or use OAuth, with either choice replacing the other. Browser OAuth offers **Open authorization URL** and **Copy URL**, plus full callback-URL paste when needed. Device login supports remote or headless backends. Forge refreshes stored xAI OAuth tokens; retry or reauthorize if authentication cannot recover.
 
-- **Grok 4** — xAI's flagship. Strong general-purpose model.
-- **Grok 4 Fast** — Optimized for speed at some quality tradeoff.
-- **Grok 4.20** — A newer variant with expanded capabilities.
+- **Grok 4.5 (`grok-4.5`)** — The native xAI default. API-key auth supports low, medium, high, and xhigh reasoning. OAuth starts with a low/medium/high fallback; when authenticated discovery succeeds, the live account metadata determines the available reasoning choices.
+- **Grok Build (`grok-build`)** — An OAuth-only model that appears only when the active xAI account reports the entitlement.
+- **Grok Composer 2.5 Fast (`grok-composer-2.5-fast`)** — Another account-specific OAuth-only model. Despite the similar name, this native xAI model is not Cursor SDK's `composer-2.5`.
+
+OAuth model discovery is dynamic and account-specific, so the two entitlement models and their reasoning choices may differ by account or disappear after a refresh. Forge exposes only those exact approved IDs. If discovery fails, a row is invalid, or API-key auth is effective, OAuth-only models stay hidden and cannot be routed to the provider.
 
 You need provider credentials for each provider configured in Settings > Authentication before its models appear in eligible selectors. For OpenAI/Codex, those credentials can come from local auth or Forge Auth broker mode. Cursor SDK uses Forge's Cursor SDK auth entry, and models can be disabled in Settings > Models if you do not want to see them. Native xAI Grok models are eligible for specialist and spawn usage when auth is configured and those models are visible, but they are excluded from normal manager create, change, and override selectors. Manager-facing availability for eligible providers is also controlled in Settings > Models. Codex selector mentions are plugin-scoped turns that delegate to the visible Codex Plugin specialist, not the manager model selector list. Compaction settings apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic; they do not apply to Cursor SDK or xAI/Grok.
 
