@@ -611,14 +611,17 @@ describe('MessageInput', () => {
     it('stays hidden without a parent-provided Builder manager configuration', async () => {
       renderMessageInput()
       await flush()
-      expect(container.querySelector('[aria-label^="Coordination:"]')).toBeNull()
+      expect(container.querySelector('[aria-label^="Work mode:"]')).toBeNull()
     })
 
     it('renders a non-submitting control for an eligible Builder manager', async () => {
       renderMessageInput({ sessionCoordinationPicker: baseCoordinationPicker })
       await flush()
 
-      const trigger = getByLabelText(container, 'Coordination: Delegation-first, balanced')
+      const trigger = getByLabelText(
+        container,
+        'Work mode: Delegate first. Worker roster: balanced.',
+      )
       expect(trigger).toBeInstanceOf(HTMLButtonElement)
       expect((trigger as HTMLButtonElement).type).toBe('button')
     })
@@ -632,7 +635,10 @@ describe('MessageInput', () => {
       })
       await flush()
 
-      const trigger = getByLabelText(container, 'Coordination: Delegation-first, balanced')
+      const trigger = getByLabelText(
+        container,
+        'Work mode: Delegate first. Worker roster: balanced.',
+      )
       expect((trigger as HTMLButtonElement).disabled).toBe(true)
     })
   })

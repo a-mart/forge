@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, GitBranch, Loader2 } from 'lucide-react'
+import { ChevronDown, GitBranch } from 'lucide-react'
 import type { ManagerPosture } from '@forge/protocol'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -152,7 +151,7 @@ export function SessionCoordinationPicker({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50 sm:max-w-44',
           )}
-          aria-label={`Coordination: ${postureLabel}, ${currentRosterLabel}`}
+          aria-label={`Work mode: ${postureLabel}. Worker roster: ${currentRosterLabel}.`}
           title={`${postureLabel} · ${currentRosterLabel}`}
         >
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
@@ -161,15 +160,9 @@ export function SessionCoordinationPicker({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="flex items-center gap-2 text-xs text-muted-foreground">
-          Coordination
-          {(loading || saving) && <Loader2 className="ml-auto size-3 animate-spin" />}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-
         <DropdownMenuSub>
           <DropdownMenuSubTrigger disabled={saving}>
-            <span className="shrink-0">Manager posture</span>
+            <span className="shrink-0">Work mode</span>
             <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
               {postureLabel}
             </span>
@@ -210,7 +203,7 @@ export function SessionCoordinationPicker({
 
         <DropdownMenuSub>
           <DropdownMenuSubTrigger disabled={loading || saving || !!error}>
-            <span className="shrink-0">Delegation roster</span>
+            <span className="shrink-0">Worker roster</span>
             <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
               {loading ? 'Loading…' : currentRosterLabel}
             </span>
@@ -278,7 +271,7 @@ function DefaultSuffix() {
 }
 
 function formatPosture(posture: ManagerPosture): string {
-  return posture === 'hands_on' ? 'Hands-on' : 'Delegation-first'
+  return posture === 'hands_on' ? 'Hands-on' : 'Delegate first'
 }
 
 function rosterLabel(rosters: RosterOption[], rosterId: string): string {

@@ -77,7 +77,7 @@ function renderPicker(config: SessionCoordinationPickerConfig) {
 
 async function openPicker() {
   flushSync(() => {
-    fireEvent.pointerDown(getByRole(container, 'button', { name: /coordination:/i }), {
+    fireEvent.pointerDown(getByRole(container, 'button', { name: /work mode:/i }), {
       button: 0,
       ctrlKey: false,
       pointerType: 'mouse',
@@ -111,12 +111,12 @@ describe('SessionCoordinationPicker', () => {
     expect(queryByRole(document.body, 'button', { name: 'Apply' })).toBeNull()
     expect(document.body.textContent).not.toContain('prompt-cache miss')
 
-    await openSubmenu(/Manager posture/)
+    await openSubmenu(/Work mode/)
     expect(getAllByRole(document.body, 'menuitemradio', {
-      name: /Delegation-first/,
+      name: /Delegate first/,
     })).toHaveLength(1)
     expect(getByRole(document.body, 'menuitemradio', {
-      name: /Delegation-first.*Project default/,
+      name: /Delegate first.*Project default/,
     })).toBeTruthy()
   })
 
@@ -124,7 +124,7 @@ describe('SessionCoordinationPicker', () => {
     const config = makeConfig()
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Manager posture/)
+    await openSubmenu(/Work mode/)
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'Hands-on' }))
@@ -144,7 +144,7 @@ describe('SessionCoordinationPicker', () => {
     })
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Manager posture/)
+    await openSubmenu(/Work mode/)
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'menuitem', { name: 'Use project default' }))
@@ -163,7 +163,7 @@ describe('SessionCoordinationPicker', () => {
     })
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Manager posture/)
+    await openSubmenu(/Work mode/)
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'menuitem', {
@@ -184,7 +184,7 @@ describe('SessionCoordinationPicker', () => {
     const config = makeConfig()
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Delegation roster/)
+    await openSubmenu(/Worker roster/)
 
     expect(getAllByRole(document.body, 'menuitemradio', {
       name: /Balanced.*Project default/,

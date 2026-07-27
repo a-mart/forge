@@ -1,18 +1,18 @@
-Forge delegates work by separating manager posture, worker behavior, and the model route used to execute an assignment. This keeps each decision narrow while allowing different providers and models behind the scenes.
+Forge delegates work by separating work mode, worker behavior, and the worker profile used to execute an assignment. The delegation tool identifies that profile with its `route` field. This keeps each decision narrow while allowing different providers and models behind the scenes.
 
-## Manager posture
+## Work mode
 
-Delegation-first is the default and prefers workers for substantive project work. Hands-on prefers one cohesive bounded manager-owned outcome, but still delegates when independent context, parallelism, diversity, or graph scheduling adds real value.
+Delegate first is the default and prefers workers for substantive project work. Hands-on prefers one cohesive bounded manager-owned outcome, but still delegates when independent context, parallelism, diversity, or graph scheduling adds real value.
 
 ## Behavior modes
 
 The manager chooses the output contract that fits the task: General, Plan, Correctness Review, Design Review, or Research. General uses the normal worker prompt. The other modes use concise, editable builtin prompts.
 
-## Delegation rosters
+## Worker rosters
 
-A roster is a selectable catalog of named model routes. Each route contains concise use/avoid guidance, a primary model and reasoning level, an optional availability fallback, and an optional capability-escalation route. A roster maps each behavior mode to a baseline route. The manager normally omits `route` and lets that mapping apply; it names a route only when the current guidance clearly fits an obviously cheaper or stronger executor.
+A worker roster is a selectable catalog of named worker profiles. Each profile contains concise use/avoid guidance, a primary model and reasoning level, an optional availability fallback, and an optional escalation profile. A roster maps each behavior mode to a baseline profile. The manager normally omits `route` and lets that mapping apply; it names a profile's route only when the current guidance clearly fits an obviously cheaper or stronger executor.
 
-Rosters contain no worker personas, tools, permissions, ownership, or graph topology. Those concerns remain in behavior modes, specialists, and the work graph.
+Worker profiles contain no saved persona, tools, permissions, ownership, or graph topology. Those concerns remain in behavior modes, specialists, and the work graph.
 
 ## Custom specialists
 

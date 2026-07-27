@@ -1,4 +1,4 @@
-Forge separates manager ownership, worker behavior, and worker model selection. The manager decides whether delegation helps, chooses a behavior mode for delegated work, and normally omits `route` so the selected roster applies its baseline. Forge then pins the route, model, reasoning, fallback, and saved prompt for that attempt.
+Forge separates manager ownership, worker behavior, and worker model selection. The manager decides whether delegation helps, chooses a behavior mode for delegated work, and normally omits `route` so the selected roster applies its baseline worker profile. Forge then pins the profile's route, model, reasoning, fallback, and saved prompt for that attempt.
 
 ## Manager model
 
@@ -6,17 +6,17 @@ The manager model owns routing, task framing, coordination, and acceptance. Pick
 
 You can set the project default from the project header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**. In eligible Builder manager sessions, the compact model pill beside **Send** shows the effective model and reasoning level and opens a compact nested menu for either choice. Choosing **Use Project Default** clears the session override so it inherits future project-default changes again. New Project/Create Project uses the same model-aware reasoning selector, with unsupported options hidden and defaults applied when reasoning is omitted.
 
-## Manager posture
+## Work mode
 
-Delegation-first is the default posture and prefers workers for substantive project work. Hands-on asks the manager to own one cohesive bounded outcome directly while retaining delegation for useful parallelism, isolation, model diversity, independent review, or work-graph scheduling.
+Delegate first is the default work mode and prefers workers for substantive project work. Hands-on asks the manager to own one cohesive bounded outcome directly while retaining delegation for useful parallelism, isolation, model diversity, independent review, or work-graph scheduling.
 
-Set a project default or use the coordination control beside Send for a session override. Posture is part of the manager system prompt. Changing it mid-session replaces the runtime before the next turn and may cause one prompt-cache miss.
+Set a project default or use the work-mode control beside Send for a session override. Work mode is part of the manager system prompt. Changing it mid-session replaces the runtime before the next turn and may cause one prompt-cache miss.
 
-## Worker behavior and model routes
+## Worker behavior and profiles
 
-Behavior mode controls the output contract: General, Plan, Correctness Review, Design Review, or Research. A delegation roster controls model capability and cost. Each roster contains named routes with concise use/avoid guidance and automatic mappings from behavior modes.
+Behavior mode controls the output contract: General, Plan, Correctness Review, Design Review, or Research. A worker roster controls model capability and cost. Each roster contains named worker profiles with concise use/avoid guidance and automatic mappings from behavior modes. The manager's `route` argument selects a profile by its stable ID.
 
-Omitting `route` uses the roster's baseline mapping for the selected behavior mode; it does not infer task complexity. A manager names a route when its current guidance clearly fits an obviously cheaper or stronger executor. Capability escalation is a separate later-attempt decision after evidence that the selected route was inadequate. Graph size, fan-in, planning, research, or review alone does not justify a stronger executor.
+Omitting `route` uses the roster's baseline mapping for the selected behavior mode; it does not infer task complexity. A manager names a profile's route when its current guidance clearly fits an obviously cheaper or stronger executor. Capability escalation is a separate later-attempt decision after evidence that the selected profile was inadequate. Graph size, fan-in, planning, research, or review alone does not justify a stronger executor.
 
 The roster selection order is global default → project default → session override. The manager receives the selected roster as compact dynamic context, outside the stable system-prompt prefix. Switching rosters therefore does not require a manager runtime replacement. Running attempts stay pinned; only future attempts see the new roster.
 
@@ -26,9 +26,9 @@ A saved custom specialist is an escape hatch for a durable domain-specific promp
 
 ## Fallback behavior
 
-Each route and direct custom specialist can define an availability fallback. Recoverable provider or model availability failures are handled inside the runtime before an error reaches the manager. Fallback does not imply greater capability.
+Each worker profile and direct custom specialist can define an availability fallback. Recoverable provider or model availability failures are handled inside the runtime before an error reaches the manager. Fallback does not imply greater capability.
 
-A route may separately name a capability-escalation route for a later attempt after evidence that the original executor was insufficient. The resolved worker descriptor and usage telemetry retain the concrete roster, route, model, and specialist attribution.
+A worker profile may separately name an escalation profile for a later attempt after evidence that the original executor was insufficient. The resolved worker descriptor and usage telemetry retain the concrete roster, route, model, and specialist attribution.
 
 ## Compatibility
 

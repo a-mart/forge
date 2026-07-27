@@ -147,7 +147,7 @@ export function DelegationRosterSettingsView({
     return (
       <div className="flex items-center py-3 text-xs text-muted-foreground">
         <Loader2 className="mr-2 size-3.5 animate-spin" />
-        Loading delegation rosters
+        Loading worker rosters
       </div>
     )
   }
@@ -155,14 +155,14 @@ export function DelegationRosterSettingsView({
   if (!settings || !selectedRoster) {
     return (
       <p className="text-xs text-destructive">
-        {error ?? 'No delegation roster is available.'}
+        {error ?? 'No worker roster is available.'}
       </p>
     )
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-56 flex-1 space-y-1.5">
           <Label className="text-xs text-muted-foreground">Roster</Label>
           <Select value={selectedRosterId} onValueChange={setSelectedRosterId}>
@@ -179,23 +179,25 @@ export function DelegationRosterSettingsView({
             </SelectContent>
           </Select>
         </div>
-        <Button variant="outline" size="sm" onClick={duplicateRoster} className="gap-1.5">
-          <Copy className="size-3.5" />
-          Duplicate
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={deleteRoster}
-          disabled={settings.rosters.length <= 1}
-          aria-label="Delete roster"
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
-        <Button size="sm" onClick={save} disabled={saving} className="gap-1.5">
-          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          Save rosters
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={duplicateRoster} className="gap-1.5">
+            <Copy className="size-3.5" />
+            Duplicate
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={deleteRoster}
+            disabled={settings.rosters.length <= 1}
+            aria-label="Delete roster"
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving} className="gap-1.5">
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            Save rosters
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 sm:grid-cols-2">
@@ -216,7 +218,7 @@ export function DelegationRosterSettingsView({
             value={settings.defaultRosterId}
             onValueChange={(defaultRosterId) => setSettings({ ...settings, defaultRosterId })}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -242,11 +244,11 @@ export function DelegationRosterSettingsView({
       </div>
 
       <div className="rounded-lg border border-border/60 p-3">
-        <p className="text-sm font-medium">Automatic route mapping</p>
+        <p className="text-sm font-medium">Default workers by task</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          `route: auto` uses the work type below. The manager can still choose any named route.
+          Forge uses these worker profiles unless the manager has a clear reason to choose another.
         </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-3">
           <RouteSelect
             label="Default"
             value={selectedRoster.defaultRouteId}
@@ -272,21 +274,21 @@ export function DelegationRosterSettingsView({
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-sm font-medium">Routes</p>
+            <p className="text-sm font-medium">Worker profiles</p>
             <p className="text-xs text-muted-foreground">
-              Describe capability and cost in plain language; keep worker personas in Specialists.
+              Each profile defines a model policy. The delegated task still defines the worker's job.
             </p>
           </div>
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5"
+            className="shrink-0 gap-1.5"
             onClick={() => updateSelectedRoster(addRoute)}
           >
             <Plus className="size-3.5" />
-            Add route
+            Add worker profile
           </Button>
         </div>
         {selectedRoster.routes.map((route) => (
@@ -345,33 +347,54 @@ function RouteEditor({
     : MANAGER_REASONING_LEVELS
 
   return (
-    <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-3">
-      <div className="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)_220px_140px_auto]">
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Label</Label>
+    <div className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Profile name</Label>
           <Input
             value={route.label}
             onChange={(event) => onChange({ ...route, label: event.target.value })}
           />
           <p className="font-mono text-[11px] text-muted-foreground">{route.routeId}</p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onDelete}
+          disabled={roster.routes.length <= 1}
+          aria-label={`Delete ${route.label} worker profile`}
+          className="mt-5 shrink-0"
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Use when</Label>
-          <Input
+          <Label className="text-xs text-muted-foreground">Best for</Label>
+          <Textarea
             value={route.useWhen}
+            rows={2}
             onChange={(event) => onChange({ ...route, useWhen: event.target.value })}
           />
-          <Input
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Avoid for</Label>
+          <Textarea
             value={route.avoidWhen ?? ''}
-            placeholder="Avoid when (optional)"
+            rows={2}
+            placeholder="Optional"
             onChange={(event) => onChange({
               ...route,
               avoidWhen: event.target.value || undefined,
             })}
           />
         </div>
+      </div>
+
+      <div className="grid gap-3 border-t border-border/50 pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)]">
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Executor model</Label>
+          <Label className="text-xs text-muted-foreground">Primary model</Label>
           <ModelIdSelect
             modelId={route.modelId}
             provider={route.provider}
@@ -396,76 +419,69 @@ function RouteEditor({
           levels={supportedLevels}
           onChange={(reasoningLevel) => onChange({ ...route, reasoningLevel })}
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onDelete}
-          disabled={roster.routes.length <= 1}
-          aria-label={`Delete ${route.label}`}
-          className="self-end"
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
       </div>
 
-      <div className="grid gap-3 border-t border-border/50 pt-3 lg:grid-cols-[220px_140px_220px_minmax(0,1fr)]">
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Availability fallback</Label>
-          <ModelIdSelect
-            modelId={route.availabilityFallback?.modelId ?? ''}
-            provider={route.availabilityFallback?.provider ?? ''}
-            models={selectableModels}
-            presets={modelPresets}
-            placeholder="None"
-            allowNone
-            onValueChange={(model) => onChange({
-              ...route,
-              availabilityFallback: model.modelId
-                ? {
-                    ...model,
-                    reasoningLevel: keepSupportedReasoning(
-                      route.availabilityFallback?.reasoningLevel ?? route.reasoningLevel,
-                      getSupportedReasoningLevelsForModelId(
-                        model.modelId,
-                        modelPresets,
-                        model.provider,
+      <div className="space-y-2 border-t border-border/50 pt-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Fallback model</Label>
+            <ModelIdSelect
+              modelId={route.availabilityFallback?.modelId ?? ''}
+              provider={route.availabilityFallback?.provider ?? ''}
+              models={selectableModels}
+              presets={modelPresets}
+              placeholder="None"
+              allowNone
+              onValueChange={(model) => onChange({
+                ...route,
+                availabilityFallback: model.modelId
+                  ? {
+                      ...model,
+                      reasoningLevel: keepSupportedReasoning(
+                        route.availabilityFallback?.reasoningLevel ?? route.reasoningLevel,
+                        getSupportedReasoningLevelsForModelId(
+                          model.modelId,
+                          modelPresets,
+                          model.provider,
+                        ),
                       ),
-                    ),
-                  }
-                : undefined,
+                    }
+                  : undefined,
+              })}
+            />
+          </div>
+          <ReasoningSelect
+            label="Fallback reasoning"
+            value={route.availabilityFallback?.reasoningLevel ?? route.reasoningLevel}
+            levels={fallbackLevels}
+            disabled={!route.availabilityFallback}
+            onChange={(reasoningLevel) => {
+              if (!route.availabilityFallback) return
+              onChange({
+                ...route,
+                availabilityFallback: { ...route.availabilityFallback, reasoningLevel },
+              })
+            }}
+          />
+          <RouteSelect
+            label="Escalates to"
+            value={route.capabilityEscalationRouteId ?? '__none__'}
+            roster={roster}
+            allowNone
+            excludeRouteId={route.routeId}
+            onChange={(capabilityEscalationRouteId) => onChange({
+              ...route,
+              capabilityEscalationRouteId:
+                capabilityEscalationRouteId === '__none__'
+                  ? undefined
+                  : capabilityEscalationRouteId,
             })}
           />
         </div>
-        <ReasoningSelect
-          label="Fallback reasoning"
-          value={route.availabilityFallback?.reasoningLevel ?? route.reasoningLevel}
-          levels={fallbackLevels}
-          disabled={!route.availabilityFallback}
-          onChange={(reasoningLevel) => {
-            if (!route.availabilityFallback) return
-            onChange({
-              ...route,
-              availabilityFallback: { ...route.availabilityFallback, reasoningLevel },
-            })
-          }}
-        />
-        <RouteSelect
-          label="Capability escalation"
-          value={route.capabilityEscalationRouteId ?? '__none__'}
-          roster={roster}
-          allowNone
-          excludeRouteId={route.routeId}
-          onChange={(capabilityEscalationRouteId) => onChange({
-            ...route,
-            capabilityEscalationRouteId:
-              capabilityEscalationRouteId === '__none__'
-                ? undefined
-                : capabilityEscalationRouteId,
-          })}
-        />
-        <p className="self-end pb-2 text-[11px] leading-relaxed text-muted-foreground">
-          Fallback handles model unavailability. Escalation is a new attempt after a capability
-          failure; it is never an automatic provider fallback.
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Fallback changes models only when the primary model is unavailable. Escalation starts a
+          new attempt with another worker profile after evidence that this profile was not capable
+          enough.
         </p>
       </div>
     </div>
@@ -491,7 +507,7 @@ function RouteSelect({
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="text-xs">
+        <SelectTrigger className="w-full min-w-0 text-xs">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -530,7 +546,7 @@ function ReasoningSelect({
         disabled={disabled}
         onValueChange={(level) => onChange(level as ManagerReasoningLevel)}
       >
-        <SelectTrigger className="text-xs">
+        <SelectTrigger className="w-full min-w-0 text-xs">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -546,7 +562,7 @@ function ReasoningSelect({
 }
 
 function addRoute(roster: DelegationRoster): DelegationRoster {
-  const routeId = nextId('route', new Set(roster.routes.map((route) => route.routeId)))
+  const routeId = nextId('worker-profile', new Set(roster.routes.map((route) => route.routeId)))
   const source = roster.routes.find((route) => route.routeId === roster.defaultRouteId)
     ?? roster.routes[0]!
   return {
@@ -556,8 +572,8 @@ function addRoute(roster: DelegationRoster): DelegationRoster {
       {
         ...cloneRoute(source),
         routeId,
-        label: `Route ${roster.routes.length + 1}`,
-        useWhen: 'Describe when the manager should choose this route.',
+        label: `Worker Profile ${roster.routes.length + 1}`,
+        useWhen: 'Describe the work this profile handles well.',
         capabilityEscalationRouteId: undefined,
       },
     ],

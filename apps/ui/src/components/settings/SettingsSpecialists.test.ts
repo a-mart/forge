@@ -286,20 +286,21 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Enabled')
     })
 
-    it('renders editable model routes without mixing them into specialist personas', async () => {
+    it('renders editable worker profiles without mixing them into specialist personas', async () => {
       renderSpecialists([makeSpecialist()])
       await flush()
       await flush()
 
       expect(specialistsApiMock.fetchDelegationRosterSettings)
         .toHaveBeenCalledWith('ws://127.0.0.1:47187')
-      expect(container.textContent).toContain('Delegation Rosters')
-      expect(container.textContent).toContain('Automatic route mapping')
+      expect(container.textContent).toContain('Worker Rosters')
+      expect(container.textContent).toContain('Default workers by task')
       expect(container.textContent).toContain('Fast Builder')
       expect(container.textContent).toContain('Research Analyst')
       expect(container.textContent).toContain('composer-2.5')
       expect(container.textContent).toContain('Save rosters')
-      expect(container.textContent).toContain('keep worker personas in Specialists')
+      expect(container.textContent).toContain('Each profile defines a model policy')
+      expect(container.textContent).toContain('Escalates to')
     })
   })
 

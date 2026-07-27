@@ -57,9 +57,35 @@ describe("delegation roster settings", () => {
       "independent-critic",
       "deep-reasoner",
     ]);
+    expect(settings.rosters[0]?.description).toBe(
+      "General-purpose worker profiles derived from the existing Forge model bindings.",
+    );
     await expect(readFile(getDelegationRostersPath(dataDir), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("updates the generated legacy roster description without changing custom copy", async () => {
+    const dataDir = await makeDataDir();
+    const settings = await resolveDelegationRosterSettings(dataDir);
+    const roster = settings.rosters[0]!;
+
+    const legacy = normalizeDelegationRosterSettings({
+      ...settings,
+      rosters: [{
+        ...roster,
+        description: "General-purpose routes migrated from the existing Forge worker model bindings.",
+      }],
+    });
+    const custom = normalizeDelegationRosterSettings({
+      ...settings,
+      rosters: [{ ...roster, description: "My own route terminology." }],
+    });
+
+    expect(legacy.rosters[0]?.description).toBe(
+      "General-purpose worker profiles derived from the existing Forge model bindings.",
+    );
+    expect(custom.rosters[0]?.description).toBe("My own route terminology.");
   });
 
   it("resolves automatic and named routes from the manager's active roster", async () => {

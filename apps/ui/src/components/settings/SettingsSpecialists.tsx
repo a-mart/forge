@@ -394,8 +394,8 @@ export function SettingsSpecialists({
 
       {!isCollab && (
         <SettingsSection
-          label="Delegation Rosters"
-          description="Define model routes and the situations where managers should use them. Projects and sessions can select a roster without changing its definition."
+          label="Worker Rosters"
+          description="Define the worker profiles available for delegated work. Projects and sessions can select a roster without changing its definition."
         >
           <DelegationRosterSettingsView
             clientOrWsUrl={clientOrWsUrl}

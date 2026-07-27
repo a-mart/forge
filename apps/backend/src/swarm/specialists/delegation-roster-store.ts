@@ -22,6 +22,10 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const MAX_ROSTERS = 24;
 const MAX_ROUTES = 24;
 const DEFAULT_ROSTER_ID = "balanced";
+const LEGACY_BALANCED_DESCRIPTION =
+  "General-purpose routes migrated from the existing Forge worker model bindings.";
+const BALANCED_DESCRIPTION =
+  "General-purpose worker profiles derived from the existing Forge model bindings.";
 
 type ManagerRouteDescriptor = Pick<
   AgentDescriptor,
@@ -170,7 +174,10 @@ function normalizeRoster(input: unknown, index: number): DelegationRoster {
   const rosterId = normalizeId(input.rosterId, `${prefix}.rosterId`, ROSTER_ID_PATTERN);
   const revision = normalizePositiveInteger(input.revision ?? 1, `${prefix}.revision`);
   const name = normalizeText(input.name, `${prefix}.name`, 80);
-  const description = normalizeOptionalText(input.description, `${prefix}.description`, 240);
+  const storedDescription = normalizeOptionalText(input.description, `${prefix}.description`, 240);
+  const description = storedDescription === LEGACY_BALANCED_DESCRIPTION
+    ? BALANCED_DESCRIPTION
+    : storedDescription;
   const defaultRouteId = normalizeId(input.defaultRouteId, `${prefix}.defaultRouteId`, ROUTE_ID_PATTERN);
   if (!Array.isArray(input.routes) || input.routes.length === 0) {
     throw new Error(`${prefix}.routes must contain at least one route.`);
@@ -294,7 +301,7 @@ function buildMigratedDelegationRosterSettings(
       rosterId: DEFAULT_ROSTER_ID,
       revision: 1,
       name: "Balanced",
-      description: "General-purpose routes migrated from the existing Forge worker model bindings.",
+      description: BALANCED_DESCRIPTION,
       defaultRouteId: "fast-builder",
       modeRoutes: {
         general: "fast-builder",

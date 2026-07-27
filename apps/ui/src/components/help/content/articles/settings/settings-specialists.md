@@ -1,11 +1,11 @@
-Delegation separates manager ownership, worker behavior, and model selection. The manager chooses whether to own bounded work directly, which worker behavior fits delegated work, and which route in the selected model roster should execute it.
+Delegation separates manager ownership, worker behavior, and model selection. The manager chooses whether to own bounded work directly, which worker behavior fits delegated work, and which worker profile in the selected roster should execute it. The delegation tool identifies that profile with its `route` field.
 
-## Manager posture
+## Work mode
 
-- **Delegation-first** — the default. The manager delegates substantial project work and keeps direct work to answers, bounded read-only orientation, and acceptance checks.
+- **Delegate first** — the default. The manager delegates substantial project work and keeps direct work to answers, bounded read-only orientation, and acceptance checks.
 - **Hands-on** — the manager normally owns one cohesive bounded outcome itself, while retaining delegation for useful parallelism, isolation, model diversity, specialized behavior, independent review, or work-graph scheduling.
 
-Projects can set a default posture. An eligible Builder manager session can inherit it or override it from the coordination control beside Send. A mid-session posture change replaces the manager runtime before its next turn and may cause one prompt-cache miss. It does not stop workers or alter an active graph.
+Projects can set a default work mode. An eligible Builder manager session can inherit it or override it from the work-mode control beside Send. A mid-session work-mode change replaces the manager runtime before its next turn and may cause one prompt-cache miss. It does not stop workers or alter an active graph.
 
 ## Behavior modes
 
@@ -17,15 +17,15 @@ Projects can set a default posture. An eligible Builder manager session can inhe
 
 Behavior describes the job; it does not choose model capability.
 
-## Delegation rosters
+## Worker rosters
 
-A delegation roster is a selectable catalog of model routes. Each route has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional capability-escalation route.
+A worker roster is a selectable catalog of worker profiles. Each profile has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional escalation profile.
 
-Each roster maps behavior modes to baseline routes. Managers normally omit `route` and let the selected mode's baseline apply; they name a route only when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger route.
+Each roster maps behavior modes to baseline worker profiles. Managers normally omit `route` and let the selected mode's baseline apply; they name a profile's route only when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger profile.
 
 The selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned route, model, fallback, and escalation target. Availability fallback handles provider/model unavailability. Capability escalation is a separate later attempt and never happens merely because a provider is rate-limited.
 
-Configure definitions and the global default in **Delegation Rosters**. Use the compact coordination menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
+Configure definitions and the global default in **Worker Rosters**. Use the compact work menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
 
 ## Global, project, and Collaboration scopes
 
