@@ -24,6 +24,7 @@ import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contr
 import { LifecycleLog } from './lifecycle-log.js'
 import {
   createSecureVaultController,
+  initializeSecureVaultAtStartup,
   installSecureVaultChildBridge,
   installSecureVaultRendererIpc,
 } from './secure-vault-ipc.js'
@@ -723,6 +724,8 @@ if (!hasSingleInstanceLock) {
       isPackaged: app.isPackaged,
       version: app.getVersion(),
     })
+    const secureVaultStartupInitialization =
+      initializeSecureVaultAtStartup(secureVaultController)
     nativeTheme.themeSource = 'dark'
     fixPath()
     createApplicationMenu()
@@ -748,6 +751,8 @@ if (!hasSingleInstanceLock) {
       app.exit(1)
       return
     }
+
+    await secureVaultStartupInitialization
 
     const externalChromeResources = resolveExternalChromeResources({
       isPackaged: app.isPackaged,

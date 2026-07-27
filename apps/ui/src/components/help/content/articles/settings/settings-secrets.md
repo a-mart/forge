@@ -151,11 +151,12 @@ The readiness panel checks Secure Bash, private entry, and configured sources.
 configured automatic-grant state only. It never includes values, ciphertext, provider output,
 raw errors, credentials, locators, or aliases.
 
-If private storage is locked, **Unlock private storage** opens the operating-system
-credential prompt and immediately verifies the local vault after a successful unlock.
-Starting Team Secure Mode also performs this check when the current project's automatic
-grants require the local vault. You do not need to run **Test vault** as a routine second
-step.
+Forge Desktop initializes private storage during application startup. If that startup
+attempt is unavailable or cancelled, **Unlock private storage** retries the
+operating-system credential request and immediately verifies the local vault after a
+successful unlock. Starting Team Secure Mode also retries when the current project's
+automatic grants require the local vault. You do not need to run **Test vault** as a
+routine second step.
 
 After copying a Forge data directory to another machine, aliases and configuration can
 remain valid while operating-system-sealed values cannot. Under **Sources**:

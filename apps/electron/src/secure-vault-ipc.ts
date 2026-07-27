@@ -118,15 +118,26 @@ export interface SecureVaultController {
   decryptPayload(payload: string): Promise<PayloadOperationResult>
 }
 
+export async function initializeSecureVaultAtStartup(
+  controller: Pick<SecureVaultController, 'unlock'>,
+): Promise<void> {
+  try {
+    await controller.unlock()
+  } catch {
+    // Startup remains available without private storage. The renderer's manual
+    // unlock action provides a bounded retry path if initialization fails.
+  }
+}
+
 /**
  * Owns Electron safeStorage access for both renderer entry and backend use.
  *
  * `status()` deliberately remains passive: it never initializes the async
  * encryptor—or calls the synchronous availability API—and therefore never
  * opens or blocks on a native credential prompt merely because Settings
- * refreshed. `unlock()` is the only availability probe that may initialize the
- * provider. Encrypt/decrypt use Electron's non-blocking API after that explicit
- * unlock succeeds.
+ * refreshed. Forge Desktop calls `unlock()` once during startup; the same
+ * operation remains available for a manual retry. Encrypt/decrypt use Electron's
+ * non-blocking API after initialization succeeds.
  */
 export function createSecureVaultController(options: {
   safeStorage: SafeStoragePort

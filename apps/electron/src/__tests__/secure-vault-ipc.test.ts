@@ -5,6 +5,7 @@ import {
   SECURE_VAULT_RENDERER_CHANNEL,
   createSecureVaultController,
   createSecureVaultRequestHandler,
+  initializeSecureVaultAtStartup,
   installSecureVaultChildBridge,
   installSecureVaultRendererIpc,
 } from '../secure-vault-ipc.js'
@@ -50,7 +51,7 @@ function createController(
 }
 
 describe('secure vault controller', () => {
-  it('keeps status passive and initializes only for an explicit unlock', async () => {
+  it('keeps status passive until startup initializes private storage', async () => {
     const safeStorage = createSafeStorage({ available: false })
     const controller = createController(safeStorage)
 
@@ -61,9 +62,18 @@ describe('secure vault controller', () => {
     expect(safeStorage.isEncryptionAvailable).not.toHaveBeenCalled()
     expect(safeStorage.isAsyncEncryptionAvailable).not.toHaveBeenCalled()
 
-    expect(await controller.unlock()).toEqual({ available: true })
+    await initializeSecureVaultAtStartup(controller)
     expect(safeStorage.isAsyncEncryptionAvailable).toHaveBeenCalledTimes(1)
     expect(controller.status()).toEqual({ available: true })
+  })
+
+  it('keeps startup available when private-storage initialization rejects', async () => {
+    const unlock = vi.fn().mockRejectedValue(new Error('native failure'))
+
+    await expect(
+      initializeSecureVaultAtStartup({ unlock }),
+    ).resolves.toBeUndefined()
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
   it('coalesces concurrent native unlock prompts and permits a clean retry', async () => {
