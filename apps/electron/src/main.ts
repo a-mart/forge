@@ -1031,7 +1031,7 @@ async function createBrowserPopoutWindow(): Promise<BrowserWindow> {
     defaultState: { width: 1180, height: 820, isMaximized: false, isFullScreen: false },
   })
   const window = new BrowserWindow({
-    title: 'Forge Managed Browser',
+    title: 'Forge Automatic Browser',
     width: saved.width,
     height: saved.height,
     ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
@@ -1368,7 +1368,7 @@ function createApplicationMenu(): void {
       { role: 'minimize', ...(isMac ? { accelerator: 'CmdOrCtrl+M' } : {}) },
       { role: 'zoom' },
       {
-        label: 'Pop Out / Dock Managed Browser',
+        label: 'Pop Out / Dock Automatic Browser',
         accelerator: 'CmdOrCtrl+Shift+B',
         enabled: isManagedBrowserPopoutAvailable(),
         click: () => {
