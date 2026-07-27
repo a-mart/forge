@@ -1057,7 +1057,7 @@ async function createBrowserPopoutWindow(): Promise<BrowserWindow> {
     if (allowPopoutClose || appIsQuitting || mainWindowClosing) return
     event.preventDefault()
     const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
-    if (epoch !== undefined) void dockManagedBrowser(epoch).catch((error) => console.error('Failed to dock Managed Browser', error))
+    if (epoch !== undefined) void dockManagedBrowser(epoch).catch((error) => console.error('Failed to dock Automatic Browser', error))
   })
   window.on('closed', () => {
     if (browserPopoutWindow === window) browserPopoutWindow = null
@@ -1085,13 +1085,13 @@ function popOutManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMod
       return browserWorkspaceMode
     }
     const host = browserViewHost
-    if (!host) throw new Error('Managed Browser host is unavailable')
+    if (!host) throw new Error('Automatic Browser host is unavailable')
     browserWorkspaceMode = 'opening'
     browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
     const window = await createBrowserPopoutWindow()
     await waitForBrowserTarget('popout', epoch)
     const transferred = await host.transferOwner('popout', epoch)
-    if (!transferred) throw new Error('Managed Browser pop-out viewport was not physically ready')
+    if (!transferred) throw new Error('Automatic Browser pop-out viewport was not physically ready')
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
@@ -1116,12 +1116,12 @@ function dockManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMode>
       return browserWorkspaceMode
     }
     const host = browserViewHost
-    if (!host) throw new Error('Managed Browser host is unavailable')
+    if (!host) throw new Error('Automatic Browser host is unavailable')
     browserWorkspaceMode = 'docking'
     browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
     await waitForBrowserTarget('docked', epoch)
     const transferred = await host.transferOwner('docked', epoch)
-    if (!transferred) throw new Error('Managed Browser dock viewport was not physically ready')
+    if (!transferred) throw new Error('Automatic Browser dock viewport was not physically ready')
     const popout = browserPopoutWindow
     if (popout && !popout.isDestroyed()) {
       allowPopoutClose = true
@@ -1145,7 +1145,7 @@ async function waitForBrowserTarget(owner: 'docked' | 'popout', epoch: number): 
     if (browserViewHost?.hasPresentationTarget(owner, epoch)) return
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error(`Managed Browser ${owner} viewport did not become ready`)
+  throw new Error(`Automatic Browser ${owner} viewport did not become ready`)
 }
 
 function handleManagedBrowserCloseShortcut(
@@ -1649,7 +1649,7 @@ async function deployExternalChrome(resources: ExternalChromeResourceLocation): 
   try {
     await new ExternalChromeDeploymentRecovery(deployer).deployAtStartup({ development: resources.development })
   } catch (error) {
-    // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
+    // External Chrome is optional; deployment failure must not disable the embedded browser or Desktop.
     console.warn('[external-chrome] Resource deployment failed', error instanceof Error ? error.message : String(error))
   }
   return deployer
