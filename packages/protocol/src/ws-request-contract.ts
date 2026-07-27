@@ -64,8 +64,6 @@ type ContractCommandType = Extract<
   | 'browser_host_hydrate'
   | 'browser_host_state_report'
   | 'browser_panel_reveal_acknowledge'
-  | 'browser_host_select'
-  | 'browser_external_chrome_detach_confirmed'
   | 'browser_tab_open'
   | 'browser_tab_activate'
   | 'browser_tab_close'
@@ -121,7 +119,6 @@ type ContractSuccessEventType = Extract<
   | 'browser_host_hydration_chunk'
   | 'browser_host_state_report_result'
   | 'browser_panel_reveal_acknowledged'
-  | 'browser_session_command_succeeded'
   | 'browser_tab_command_succeeded'
   | 'browser_recording_command_succeeded'
 >
@@ -147,20 +144,6 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'required' },
     successEvents: ['browser_panel_reveal_acknowledged'],
     errorCodeFragments: ['browser_panel_reveal_acknowledge', 'stale_host_generation', 'intent_mismatch'],
-  },
-  {
-    commandType: 'browser_host_select',
-    resultFamily: 'browser_session_mutation',
-    requestId: { ui: 'required', wire: 'required' },
-    successEvents: ['browser_session_command_succeeded'],
-    errorCodeFragments: ['browser_host_select'],
-  },
-  {
-    commandType: 'browser_external_chrome_detach_confirmed',
-    resultFamily: 'browser_session_mutation',
-    requestId: { ui: 'required', wire: 'required' },
-    successEvents: ['browser_session_command_succeeded'],
-    errorCodeFragments: ['browser_external_chrome_detach_confirmed'],
   },
   {
     commandType: 'browser_host_state_report',

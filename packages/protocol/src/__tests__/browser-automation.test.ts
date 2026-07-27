@@ -9,6 +9,7 @@ import {
   BROWSER_AUTOMATION_MAX_URL_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_HOST_KINDS,
+  BROWSER_HOST_PROTOCOL_VERSION,
   DEFAULT_BROWSER_HOST_KIND,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_PRESETS,
@@ -70,39 +71,15 @@ describe('browser automation operation contract', () => {
     expect(isBrowserAutomationOperation('launch')).toBe(false)
   })
 
-  it('defaults old and omitted host payloads to Managed Electron without changing old tool shapes', () => {
+  it('exposes protocol v2 and rejects caller-selected hosts and tunneled lifecycle fields', () => {
+    expect(BROWSER_HOST_PROTOCOL_VERSION).toBe(2)
     expect(BROWSER_HOST_KINDS).toEqual(['managed-electron', 'external-chrome'])
     expect(DEFAULT_BROWSER_HOST_KIND).toBe('managed-electron')
     expect(resolveBrowserHostKind(undefined)).toBe('managed-electron')
-    expect(resolveBrowserHostKind('external-chrome')).toBe('external-chrome')
     expect(parseBrowserAutomationInput('status', {})).toEqual({})
-    expect(parseBrowserAutomationInput('status', { hostKind: 'external-chrome' })).toEqual({ hostKind: 'external-chrome' })
-    expect(() => parseBrowserAutomationInput('status', { hostKind: 'other' })).toThrow(BrowserAutomationContractError)
-  })
-
-  it('strictly parses opaque two-phase External Chrome lifecycle authority', () => {
-    const lifecycle = {
-      phase: 'prepare', releaseId: 'release-1', reason: 'delete',
-      originalHostId: 'external-host', originalHostGeneration: 4,
-    }
-    expect(parseBrowserAutomationInput('status', {
-      hostKind: 'external-chrome', tabId: 'ext.instance.7', externalChromeLifecycleRelease: lifecycle,
-    })).toEqual({ hostKind: 'external-chrome', tabId: 'ext.instance.7', externalChromeLifecycleRelease: lifecycle })
-    expect(() => parseBrowserAutomationInput('status', {
-      hostKind: 'external-chrome', externalChromeLifecycleRelease: { ...lifecycle, originalHostGeneration: 0 },
-    })).toThrow(BrowserAutomationContractError)
-    expect(() => parseBrowserAutomationInput('status', {
-      hostKind: 'external-chrome', externalChromeLifecycleRelease: { ...lifecycle, token: 'leak' },
-    })).toThrow(BrowserAutomationContractError)
-    const turn = { turnId: 'turn-9', disposition: 'handoff' as const }
-    expect(parseBrowserAutomationInput('status', { hostKind: 'external-chrome', externalChromeTurnDisposition: turn }))
-      .toEqual({ hostKind: 'external-chrome', externalChromeTurnDisposition: turn })
-    expect(() => parseBrowserAutomationInput('status', {
-      externalChromeLifecycleRelease: lifecycle, externalChromeTurnDisposition: turn,
-    })).toThrow(BrowserAutomationContractError)
-    expect(() => parseBrowserAutomationInput('status', {
-      externalChromeTurnDisposition: { ...turn, disposition: 'final' },
-    })).toThrow(BrowserAutomationContractError)
+    expect(() => parseBrowserAutomationInput('status', { hostKind: 'external-chrome' })).toThrow(BrowserAutomationContractError)
+    expect(() => parseBrowserAutomationInput('status', { externalChromeLifecycleRelease: {} })).toThrow(BrowserAutomationContractError)
+    expect(() => parseBrowserAutomationInput('status', { externalChromeTurnDisposition: {} })).toThrow(BrowserAutomationContractError)
   })
 
   it('applies T3-compatible defaults', () => {
@@ -203,7 +180,7 @@ describe('browser host, session, and routing wire contract', () => {
   }
 
   const session: BrowserSessionSnapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionAgentId: 'session-1',
     profileId: 'profile-1',
     hostingState: 'hosted',
@@ -221,7 +198,6 @@ describe('browser host, session, and routing wire contract', () => {
   it('requires request, session, profile, tab, host, generation, deadline, and artifact routing', () => {
     const request: BrowserAutomationRequest = {
       requestId: 'request-1',
-      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -238,7 +214,6 @@ describe('browser host, session, and routing wire contract', () => {
   it('serializes mutually exclusive success and typed failure responses', () => {
     const success: BrowserAutomationResponse = {
       requestId: 'request-1',
-      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -265,7 +240,6 @@ describe('browser host, session, and routing wire contract', () => {
     }
     const failure: BrowserAutomationResponse = {
       requestId: 'request-2',
-      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: 'tab-1',
@@ -284,7 +258,6 @@ describe('browser host, session, and routing wire contract', () => {
   it('exports every browser client command and server event through the unions', () => {
     const routedRequest = {
       requestId: 'request-1',
-      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -297,7 +270,6 @@ describe('browser host, session, and routing wire contract', () => {
     } as const satisfies BrowserAutomationRequest
     const routedResponse = {
       requestId: routedRequest.requestId,
-      hostKind: routedRequest.hostKind,
       sessionAgentId: routedRequest.sessionAgentId,
       profileId: routedRequest.profileId,
       tabId: null,
@@ -319,8 +291,7 @@ describe('browser host, session, and routing wire contract', () => {
         tabs: session.tabs,
       }] },
       { type: 'browser_panel_reveal_acknowledge', requestId: 'reveal-1', hostId: host.hostId, hostGeneration: 4, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 1 },
-      { type: 'browser_host_select', requestId: 'select-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostKind: 'external-chrome' },
-      { type: 'browser_external_chrome_detach_confirmed', requestId: 'detach-1', sessionAgentId: 'session-1', profileId: 'profile-1' },
+      { type: 'browser_host_lifecycle_response', response: { requestId: 'life-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostId: host.hostId, hostGeneration: 4, ok: true, kind: 'turn-ended', turnId: 'turn-1' } },
       { type: 'browser_tab_open', requestId: '1', sessionAgentId: 'session-1', profileId: 'profile-1' },
       { type: 'browser_tab_activate', requestId: '2', sessionAgentId: 'session-1', tabId: 'tab-1' },
       { type: 'browser_tab_close', requestId: '3', sessionAgentId: 'session-1', tabId: 'tab-1' },
@@ -336,16 +307,16 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_session_snapshot', snapshot: session },
       { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
       { type: 'browser_panel_reveal_acknowledged', requestId: 'reveal-1', snapshot: session },
-      { type: 'browser_session_command_succeeded', requestId: 'select-1', commandType: 'browser_host_select', snapshot: session },
+      { type: 'browser_host_lifecycle_request', request: { requestId: 'life-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostId: host.hostId, hostGeneration: 4, kind: 'turn-ended', turnId: 'turn-1' } },
       { type: 'browser_tab_command_succeeded', requestId: '1', commandType: 'browser_tab_open', snapshot: session },
       { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
     ] satisfies ServerEvent[]
-    expect(commands).toHaveLength(13)
+    expect(commands).toHaveLength(12)
     expect(events).toHaveLength(10)
   })
 
   it('makes browser state reports and human tab mutations required wire requests', () => {
-    for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_host_select', 'browser_external_chrome_detach_confirmed', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
+    for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({
         commandType,
         requestId: { ui: 'required', wire: 'required' },
@@ -353,8 +324,6 @@ describe('browser host, session, and routing wire contract', () => {
           ? 'browser_host_state_report_result'
           : commandType === 'browser_panel_reveal_acknowledge'
             ? 'browser_panel_reveal_acknowledged'
-            : commandType === 'browser_host_select' || commandType === 'browser_external_chrome_detach_confirmed'
-              ? 'browser_session_command_succeeded'
             : commandType.startsWith('browser_recording_')
             ? 'browser_recording_command_succeeded'
             : 'browser_tab_command_succeeded'],

@@ -5,7 +5,7 @@ import type { SidebarPerfRecorder } from '../../stats/sidebar-perf-types.js'
 import { sendSubscriptionBootstrap } from '../ws-bootstrap.js'
 
 const snapshot: BrowserSessionSnapshot = {
-  schemaVersion: 1, sessionAgentId: 'session', profileId: 'project', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null,
+  schemaVersion: 2, sessionAgentId: 'session', profileId: 'project', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null,
   panelVisible: false, recentActions: [], revision: 7, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
 }
 

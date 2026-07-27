@@ -1,15 +1,13 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_HOST_PROTOCOL_VERSION,
-  DEFAULT_BROWSER_HOST_KIND,
-  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
-  isBrowserHostKind,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
   BROWSER_VIEWPORT_PRESETS,
   type BrowserAutomationResponse,
   type BrowserHostCapabilities,
+  type BrowserHostLifecycleResponse,
   type BrowserHostStateReportCommand,
   type BrowserViewportSetting,
 } from "@forge/protocol";
@@ -21,10 +19,9 @@ const TYPES = new Set([
   "browser_host_hydrate",
   "browser_host_focus",
   "browser_host_response",
+  "browser_host_lifecycle_response",
   "browser_host_state_report",
   "browser_panel_reveal_acknowledge",
-  "browser_host_select",
-  "browser_external_chrome_detach_confirmed",
   "browser_tab_open",
   "browser_tab_activate",
   "browser_tab_close",
@@ -56,20 +53,20 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
-          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
         });
       case "browser_host_focus":
         return ok({
           type: command.type,
-          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           focused: boolean(value.focused, "focused"),
         });
       case "browser_host_response":
         return ok({ type: command.type, response: parseResponseEnvelope(value.response) });
+      case "browser_host_lifecycle_response":
+        return ok({ type: command.type, response: parseLifecycleResponse(value.response) });
       case "browser_host_state_report": {
         const sessions = array(value.sessions, "sessions", 500);
         const parsed = sessions.map((entry, index) => {
@@ -77,7 +74,6 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
           const tabs = array(session.tabs, `sessions[${index}].tabs`, 100);
           tabs.forEach((tab, tabIndex) => record(tab, `sessions[${index}].tabs[${tabIndex}]`));
           return {
-            hostKind: hostKind(session.hostKind ?? value.hostKind),
             sessionAgentId: identifier(session.sessionAgentId, `sessions[${index}].sessionAgentId`),
             profileId: identifier(session.profileId, `sessions[${index}].profileId`),
             baseRevision: integer(session.baseRevision, `sessions[${index}].baseRevision`, 0, Number.MAX_SAFE_INTEGER),
@@ -87,7 +83,6 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
-          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           sessions: parsed,
@@ -97,28 +92,12 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
-          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
           profileId: identifier(value.profileId, "profileId"),
           tabId: identifier(value.tabId, "tabId"),
           sequence: integer(value.sequence, "sequence", 1, Number.MAX_SAFE_INTEGER),
-        });
-      case "browser_host_select":
-        return ok({
-          type: command.type,
-          requestId: identifier(value.requestId, "requestId"),
-          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
-          profileId: identifier(value.profileId, "profileId"),
-          hostKind: hostKind(value.hostKind),
-        });
-      case "browser_external_chrome_detach_confirmed":
-        return ok({
-          type: command.type,
-          requestId: identifier(value.requestId, "requestId"),
-          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
-          profileId: identifier(value.profileId, "profileId"),
         });
       case "browser_tab_open": {
         const url = optionalString(value.url, "url", 2_048);
@@ -165,7 +144,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
 
 function parseCapabilities(value: unknown): BrowserHostCapabilities {
   const capabilities = record(value, "registration.capabilities");
-  const resolvedHostKind = hostKind(capabilities.hostKind);
+  if (capabilities.hostKind !== undefined) throw new Error("registration.capabilities.hostKind is not supported by protocol v2");
   const operations = array(capabilities.supportedOperations, "registration.capabilities.supportedOperations", BROWSER_AUTOMATION_OPERATIONS.length);
   if (operations.length === 0 || operations.some((operation) => !(BROWSER_AUTOMATION_OPERATIONS as readonly unknown[]).includes(operation))) {
     throw new Error("registration.capabilities.supportedOperations contains an unsupported operation");
@@ -189,18 +168,7 @@ function parseCapabilities(value: unknown): BrowserHostCapabilities {
         ...(typeof capabilities.playwrightVersion === "string" ? { playwright: boundedString(capabilities.playwrightVersion, "registration.capabilities.playwrightVersion", 64) } : {}),
       }
     : parseRuntimeVersions(capabilities.runtimeVersions);
-  if (resolvedHostKind === "external-chrome") {
-    const qualified = EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS as readonly unknown[];
-    if (operations.some((operation) => !qualified.includes(operation))) {
-      throw new Error("External Chrome may advertise only M4-qualified operations");
-    }
-    if (features.resize || features.recording || features.capturePage || features.downloadEvents
-      || features.downloadArtifacts || features.downloadOpen) {
-      throw new Error("External Chrome may not advertise physical viewport, recording, capture, or download features");
-    }
-  }
   return {
-    hostKind: resolvedHostKind,
     protocolVersions: versions,
     supportedOperations: [...new Set(operations)] as BrowserHostCapabilities["supportedOperations"],
     maxResponseBytes,
@@ -246,7 +214,7 @@ function parseRuntimeVersions(value: unknown): NonNullable<BrowserHostCapabiliti
 function parseResponseEnvelope(value: unknown): BrowserAutomationResponse {
   const response = record(value, "response");
   identifier(response.requestId, "response.requestId");
-  response.hostKind = hostKind(response.hostKind);
+  if (response.hostKind !== undefined) throw new Error("response.hostKind is not supported by protocol v2");
   identifier(response.sessionAgentId, "response.sessionAgentId");
   identifier(response.profileId, "response.profileId");
   if (response.tabId !== null) identifier(response.tabId, "response.tabId");
@@ -265,6 +233,27 @@ function parseResponseEnvelope(value: unknown): BrowserAutomationResponse {
   }
   if (response.updatedTab !== undefined) record(response.updatedTab, "response.updatedTab");
   return response as unknown as BrowserAutomationResponse;
+}
+
+function parseLifecycleResponse(value: unknown): BrowserHostLifecycleResponse {
+  const response = record(value, "response");
+  identifier(response.requestId, "response.requestId");
+  identifier(response.sessionAgentId, "response.sessionAgentId");
+  identifier(response.profileId, "response.profileId");
+  identifier(response.hostId, "response.hostId");
+  generation(response.hostGeneration);
+  if (response.kind !== "turn-ended" && response.kind !== "release-session") throw new Error("response.kind is invalid");
+  if (typeof response.ok !== "boolean") throw new Error("response.ok must be boolean");
+  if (response.ok) {
+    if (response.kind === "turn-ended") identifier(response.turnId, "response.turnId");
+    else if (!["stop", "archive", "delete", "host-replaced", "desktop-quit", "desktop-update"].includes(response.reason as string)) throw new Error("response.reason is invalid");
+  } else {
+    const error = record(response.error, "response.error");
+    boundedString(error.code, "response.error.code", 128);
+    boundedString(error.message, "response.error.message", 4_096);
+    boolean(error.retryable, "response.error.retryable");
+  }
+  return response as unknown as BrowserHostLifecycleResponse;
 }
 
 function parseViewport(value: unknown): BrowserViewportSetting {
@@ -306,11 +295,6 @@ function boundedString(value: unknown, field: string, maximum: number): string {
 }
 function boolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} must be boolean`);
-  return value;
-}
-function hostKind(value: unknown) {
-  if (value === undefined || value === null) return DEFAULT_BROWSER_HOST_KIND;
-  if (!isBrowserHostKind(value)) throw new Error("hostKind must be managed-electron or external-chrome");
   return value;
 }
 function generation(value: unknown): number {

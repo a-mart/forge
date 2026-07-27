@@ -13,7 +13,7 @@ import { getCollaborationSocketAuthContext } from "../collaboration/auth/collabo
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
+import { isEligibleLocalBuilderManager, type BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
@@ -819,7 +819,11 @@ export class WsSubscriptions {
       send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
-      resolveBrowserSessionAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
+      resolveBrowserSessionAgentId: (agentId) => {
+        const managerAgentId = this.resolveManagerContextAgentId(agentId);
+        const descriptor = managerAgentId ? this.swarmManager.getAgent(managerAgentId) : undefined;
+        return descriptor && isEligibleLocalBuilderManager(descriptor) ? managerAgentId : undefined;
+      },
       includeAgentsSnapshot:
         deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion ||
         selectedWorkerSnapshotMissing,

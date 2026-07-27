@@ -1,20 +1,17 @@
 import { access, readFile, rename, rm } from "node:fs/promises";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  BROWSER_TARGET_AFFINITIES,
   BROWSER_VIEWPORT_PRESETS,
-  DEFAULT_BROWSER_HOST_KIND,
   isBrowserAutomationOperation,
-  isBrowserHostKind,
+  type BrowserHostCleanupTransaction,
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
+  type BrowserTargetAffinity,
   type BrowserViewportSetting,
 } from "@forge/protocol";
-import {
-  getSessionBrowserArtifactsDir,
-  getSessionBrowserStatePath,
-  getSessionDir,
-} from "../storage/data-paths.js";
+import { getSessionBrowserArtifactsDir, getSessionBrowserStatePath, getSessionDir } from "../storage/data-paths.js";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 const MAX_TABS = 100;
@@ -37,19 +34,13 @@ export class BrowserSessionStore {
     this.logDebug = options.logDebug ?? (() => undefined);
   }
 
-  getStatePath(profileId: string, sessionAgentId: string): string {
-    return getSessionBrowserStatePath(this.dataDir, profileId, sessionAgentId);
-  }
-
-  getArtifactsDirectory(profileId: string, sessionAgentId: string): string {
-    return getSessionBrowserArtifactsDir(this.dataDir, profileId, sessionAgentId);
-  }
+  getStatePath(profileId: string, sessionAgentId: string): string { return getSessionBrowserStatePath(this.dataDir, profileId, sessionAgentId); }
+  getArtifactsDirectory(profileId: string, sessionAgentId: string): string { return getSessionBrowserArtifactsDir(this.dataDir, profileId, sessionAgentId); }
 
   createEmpty(profileId: string, sessionAgentId: string): BrowserSessionSnapshot {
     const timestamp = this.now();
     return {
-      schemaVersion: 1,
-      hostKind: DEFAULT_BROWSER_HOST_KIND,
+      schemaVersion: 2,
       sessionAgentId,
       profileId,
       hostingState: "hosted",
@@ -74,24 +65,23 @@ export class BrowserSessionStore {
       if (isNodeError(error, "ENOENT")) return this.createEmpty(profileId, sessionAgentId);
       throw error;
     }
-
     try {
       const parsed: unknown = JSON.parse(source);
       const snapshot = normalizeSnapshot(parsed, profileId, sessionAgentId);
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
-        ...(tab.hostKind === "external-chrome" ? { url: "", title: "", error: null } : {}),
+        ...(tab.targetAffinity === "external-chrome" ? { url: "", title: "", error: null } : {}),
         live: false,
         controller: "none",
         recording: null,
         lifecycle: tab.lifecycle === "closed" ? "closed" : "restoring",
       }));
+      if (isRecord(parsed) && parsed.schemaVersion === 1) {
+        await writeJsonFileAtomic(path, privacyBoundSnapshot(snapshot));
+      }
       return snapshot;
     } catch (error) {
-      this.logDebug("browser-session-store:corrupt-state", {
-        path,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logDebug("browser-session-store:corrupt-state", { path, error: error instanceof Error ? error.message : String(error) });
       await this.preserveCorruptState(path);
       return this.createEmpty(profileId, sessionAgentId);
     }
@@ -107,11 +97,7 @@ export class BrowserSessionStore {
     const previous = this.writeChains.get(path) ?? Promise.resolve();
     const current = previous.catch(() => undefined).then(() => writeJsonFileAtomic(path, privacyBoundSnapshot(normalized)));
     this.writeChains.set(path, current);
-    try {
-      await current;
-    } finally {
-      if (this.writeChains.get(path) === current) this.writeChains.delete(path);
-    }
+    try { await current; } finally { if (this.writeChains.get(path) === current) this.writeChains.delete(path); }
   }
 
   async delete(profileId: string, sessionAgentId: string): Promise<void> {
@@ -127,23 +113,13 @@ export class BrowserSessionStore {
     const suffix = this.now().replace(/[^0-9A-Za-z.-]/g, "-");
     let target = `${path}.corrupt-${suffix}`;
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      try {
-        await access(target);
-        target = `${path}.corrupt-${suffix}-${attempt + 1}`;
-        continue;
-      } catch (error) {
-        if (!isNodeError(error, "ENOENT")) return;
-      }
-      try {
-        // eslint-disable-next-line no-restricted-syntax -- This moves corrupt input aside; it is not a hand-rolled atomic write.
-        await rename(path, target);
-        return;
-      } catch (error) {
+      try { await access(target); target = `${path}.corrupt-${suffix}-${attempt + 1}`; continue; }
+      catch (error) { if (!isNodeError(error, "ENOENT")) return; }
+      // eslint-disable-next-line no-restricted-syntax -- This quarantines corrupt input; it is not a temp-file write.
+      try { await rename(path, target); return; }
+      catch (error) {
         if (isNodeError(error, "ENOENT")) return;
-        this.logDebug("browser-session-store:preserve-corrupt-failed", {
-          path,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.logDebug("browser-session-store:preserve-corrupt-failed", { path, error: error instanceof Error ? error.message : String(error) });
         return;
       }
     }
@@ -151,65 +127,62 @@ export class BrowserSessionStore {
 }
 
 function privacyBoundSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
-  if (snapshot.hostKind !== "external-chrome" && snapshot.tabs.every((tab) => tab.hostKind !== "external-chrome")) return snapshot;
+  const externalIds = new Set(snapshot.tabs.filter((tab) => tab.targetAffinity === "external-chrome").map((tab) => tab.tabId));
   return {
-    ...snapshot,
-    tabs: snapshot.tabs.map((tab) => tab.hostKind === "external-chrome"
-      ? { ...tab, url: "", title: "", error: null }
-      : tab),
+    schemaVersion: 2,
+    ...(snapshot.hostCleanup ? { hostCleanup: snapshot.hostCleanup } : {}),
+    sessionAgentId: snapshot.sessionAgentId,
+    profileId: snapshot.profileId,
+    hostingState: snapshot.hostingState,
+    tabs: snapshot.tabs.map((tab) => {
+      const canonical = { ...tab };
+      delete canonical.hostKind;
+      return tab.targetAffinity === "external-chrome" ? { ...canonical, url: "", title: "", error: null } : canonical;
+    }),
+    activeTabId: snapshot.activeTabId,
+    defaultTabId: snapshot.defaultTabId,
+    panelVisible: snapshot.panelVisible,
+    panelReveal: snapshot.panelReveal,
     recentActions: snapshot.recentActions.map((action) => {
-      if (action.tabId === null || !snapshot.tabs.some((tab) => tab.hostKind === "external-chrome" && tab.tabId === action.tabId)) return action;
+      if (action.tabId === null || !externalIds.has(action.tabId)) return action;
       const { url: _url, title: _title, ...safe } = action;
-      void _url;
-      void _title;
       return safe;
     }),
+    revision: snapshot.revision,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
   };
 }
 
 function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: string): BrowserSessionSnapshot {
   const record = requiredRecord(value, "browser session");
-  if (record.schemaVersion !== 1) throw new Error("Unsupported browser session schema version");
-  if (record.profileId !== profileId || record.sessionAgentId !== sessionAgentId) {
-    throw new Error("Browser session identity does not match its canonical path");
-  }
+  if (record.schemaVersion !== 1 && record.schemaVersion !== 2) throw new Error("Unsupported browser session schema version");
+  if (record.profileId !== profileId || record.sessionAgentId !== sessionAgentId) throw new Error("Browser session identity does not match its canonical path");
   if (!Array.isArray(record.tabs) || record.tabs.length > MAX_TABS) throw new Error("Invalid browser tabs");
 
-  const hostKind = normalizeHostKind(record.hostKind);
-  const tabs = record.tabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, hostKind));
-  const tabIds = new Set<string>();
-  const hostTabIds = new Set<string>();
+  const v1 = record.schemaVersion === 1;
+  const legacySessionAffinity = targetAffinity(record.hostKind, "managed-electron");
+  // v1 Chrome page records are privacy-bounded recovery hints. Desktop v2 must
+  // prove and re-project them; backend never reinterprets a v1 lease as authority.
+  const sourceTabs = v1
+    ? record.tabs.filter((value) => targetAffinity(isRecord(value) ? value.hostKind : undefined, legacySessionAffinity) === "managed-electron")
+    : record.tabs;
+  const tabs = sourceTabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, legacySessionAffinity));
+  const ids = new Set<string>();
   for (const tab of tabs) {
-    const key = `${tab.hostKind ?? DEFAULT_BROWSER_HOST_KIND}\u0000${tab.tabId}`;
-    if (hostTabIds.has(key)) throw new Error("Duplicate browser tab id for host kind");
-    hostTabIds.add(key);
-    tabIds.add(tab.tabId);
+    if (ids.has(tab.tabId)) throw new Error("Duplicate browser logical tab id");
+    ids.add(tab.tabId);
   }
-
-  const activeTabId = nullableId(record.activeTabId, "activeTabId");
-  const defaultTabId = nullableId(record.defaultTabId, "defaultTabId");
-  if (activeTabId !== null && !tabIds.has(activeTabId)) throw new Error("Active browser tab is missing");
-  if (defaultTabId !== null && !tabIds.has(defaultTabId)) throw new Error("Default browser tab is missing");
+  const requestedActive = nullableId(record.activeTabId, "activeTabId");
+  const requestedDefault = nullableId(record.defaultTabId, "defaultTabId");
+  const fallback = tabs.find((tab) => tab.lifecycle !== "closed")?.tabId ?? null;
+  const activeTabId = requestedActive !== null && ids.has(requestedActive) ? requestedActive : fallback;
+  const defaultTabId = requestedDefault !== null && ids.has(requestedDefault) ? requestedDefault : activeTabId;
   if (!Array.isArray(record.recentActions)) throw new Error("Invalid recent browser actions");
-  const panelReveal = normalizePanelReveal(record.panelReveal);
-  if (panelReveal.sequence > panelReveal.acknowledgedSequence && !tabIds.has(panelReveal.tabId!)) {
-    throw new Error("Pending panel reveal tab is missing");
-  }
-
-  const externalChromeLifecycleRelease = normalizeExternalChromeLifecycleRelease(record.externalChromeLifecycleRelease);
-  if (externalChromeLifecycleRelease?.phase === "preparing" && !tabs.some((tab) => (
-    tab.hostKind === "external-chrome" && tab.tabId === externalChromeLifecycleRelease.tabId
-  ))) throw new Error("Preparing External Chrome release tab is missing");
-  const externalChromeTurnDisposition = normalizeExternalChromeTurnDisposition(record.externalChromeTurnDisposition);
-  if (externalChromeTurnDisposition?.phase === "pending" && !tabs.some((tab) => (
-    tab.hostKind === "external-chrome" && tab.tabId === externalChromeTurnDisposition.tabId
-  ))) throw new Error("Pending External Chrome turn disposition tab is missing");
-
+  const panelReveal = normalizePanelReveal(record.panelReveal, ids);
   return {
-    schemaVersion: 1,
-    hostKind,
-    ...(externalChromeLifecycleRelease ? { externalChromeLifecycleRelease } : {}),
-    ...(externalChromeTurnDisposition ? { externalChromeTurnDisposition } : {}),
+    schemaVersion: 2,
+    ...(v1 ? {} : normalizeHostCleanup(record.hostCleanup)),
     profileId,
     sessionAgentId,
     hostingState: normalizeHostingState(record.hostingState),
@@ -218,66 +191,42 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     defaultTabId,
     panelVisible: requiredBoolean(record.panelVisible, "panelVisible"),
     panelReveal,
-    recentActions: record.recentActions
-      .slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS)
-      .map(normalizeSafeAction),
+    recentActions: record.recentActions.slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS).map(normalizeSafeAction),
     revision: nonNegativeInteger(record.revision, "revision"),
     createdAt: requiredString(record.createdAt, "createdAt", 128),
     updatedAt: requiredString(record.updatedAt, "updatedAt", 128),
   };
 }
 
-function normalizeExternalChromeLifecycleRelease(value: unknown): BrowserSessionSnapshot["externalChromeLifecycleRelease"] {
-  if (value === undefined || value === null) return undefined;
-  const release = requiredRecord(value, "External Chrome lifecycle release");
-  if (release.reason !== "stop" && release.reason !== "archive" && release.reason !== "delete"
-    && release.reason !== "detach" && release.reason !== "host-replaced") throw new Error("Invalid External Chrome lifecycle release reason");
-  if (release.phase !== "preparing" && release.phase !== "prepared") throw new Error("Invalid External Chrome lifecycle release phase");
-  const releaseId = requiredId(release.releaseId, "releaseId");
-  const tabId = requiredId(release.tabId, "tabId");
-  const hostId = requiredId(release.hostId, "hostId");
-  if (!/^[A-Za-z0-9._-]+$/u.test(releaseId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
-    throw new Error("Invalid External Chrome lifecycle release authority");
+function normalizeHostCleanup(value: unknown): { hostCleanup?: BrowserHostCleanupTransaction } {
+  if (value === undefined || value === null) return {};
+  const cleanup = requiredRecord(value, "host cleanup");
+  if (cleanup.kind !== "turn-ended" && cleanup.kind !== "release-session") throw new Error("Invalid host cleanup kind");
+  if (cleanup.phase !== "pending" && cleanup.phase !== "acknowledged") throw new Error("Invalid host cleanup phase");
+  const requestId = requiredId(cleanup.requestId, "requestId");
+  const hostId = requiredId(cleanup.hostId, "hostId");
+  const hostGeneration = positiveInteger(cleanup.hostGeneration, "hostGeneration");
+  if (cleanup.kind === "turn-ended") {
+    const turnId = requiredId(cleanup.turnId, "turnId");
+    return { hostCleanup: { requestId, kind: cleanup.kind, turnId, hostId, hostGeneration, phase: cleanup.phase } };
   }
-  return {
-    releaseId, reason: release.reason, tabId, hostId,
-    hostGeneration: positiveInteger(release.hostGeneration, "hostGeneration"), phase: release.phase,
-  };
+  const reasons = ["stop", "archive", "delete", "host-replaced", "desktop-quit", "desktop-update"];
+  if (!reasons.includes(cleanup.reason as string)) throw new Error("Invalid host cleanup reason");
+  return { hostCleanup: { requestId, kind: cleanup.kind, reason: cleanup.reason as BrowserHostCleanupTransaction["reason"], hostId, hostGeneration, phase: cleanup.phase } };
 }
 
-function normalizeExternalChromeTurnDisposition(value: unknown): BrowserSessionSnapshot["externalChromeTurnDisposition"] {
-  if (value === undefined || value === null) return undefined;
-  const turn = requiredRecord(value, "External Chrome turn disposition");
-  if (turn.disposition !== "handoff" || (turn.phase !== "pending" && turn.phase !== "completed")) {
-    throw new Error("Invalid External Chrome turn disposition");
-  }
-  const turnId = requiredId(turn.turnId, "turnId");
-  const tabId = requiredId(turn.tabId, "tabId");
-  if (!/^[A-Za-z0-9._:@/-]+$/u.test(turnId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
-    throw new Error("Invalid External Chrome turn disposition authority");
-  }
-  return { turnId, tabId, disposition: "handoff", phase: turn.phase };
-}
-
-function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapshot["panelReveal"]> {
-  // Persisted snapshots from before durable reveal intent are already satisfied;
-  // panelVisible alone must never cause an upgrade-time surprise reveal.
-  if (value === undefined || value === null) {
-    return { sequence: 0, acknowledgedSequence: 0, tabId: null };
-  }
+function normalizePanelReveal(value: unknown, tabIds: Set<string>): NonNullable<BrowserSessionSnapshot["panelReveal"]> {
+  if (value === undefined || value === null) return { sequence: 0, acknowledgedSequence: 0, tabId: null };
   const reveal = requiredRecord(value, "panel reveal intent");
   const sequence = nonNegativeInteger(reveal.sequence, "panelReveal.sequence");
   const acknowledgedSequence = nonNegativeInteger(reveal.acknowledgedSequence, "panelReveal.acknowledgedSequence");
   if (acknowledgedSequence > sequence) throw new Error("Panel reveal acknowledgement exceeds its sequence");
   const tabId = nullableId(reveal.tabId, "panelReveal.tabId");
-  if (sequence > acknowledgedSequence && tabId === null) throw new Error("Pending panel reveal is missing its tab");
+  if (sequence > acknowledgedSequence && (tabId === null || !tabIds.has(tabId))) {
+    // Migration may have dropped an unproven external target. Satisfy, do not reveal it.
+    return { sequence, acknowledgedSequence: sequence, tabId: null };
+  }
   return { sequence, acknowledgedSequence, tabId };
-}
-
-function normalizeHostKind(value: unknown) {
-  if (value === undefined || value === null) return DEFAULT_BROWSER_HOST_KIND;
-  if (isBrowserHostKind(value)) return value;
-  throw new Error("Invalid browser host kind");
 }
 
 function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingState"] {
@@ -286,60 +235,41 @@ function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingS
   throw new Error("Invalid browser session hosting state");
 }
 
-function normalizeTab(value: unknown, profileId: string, sessionAgentId: string, sessionHostKind = DEFAULT_BROWSER_HOST_KIND): BrowserTabSnapshot {
+function normalizeTab(value: unknown, profileId: string, sessionAgentId: string, legacyAffinity: BrowserTargetAffinity): BrowserTabSnapshot {
   const tab = requiredRecord(value, "browser tab");
-  if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) {
-    throw new Error("Browser tab identity does not match its session");
-  }
-  const lifecycle = tab.lifecycle;
-  if (lifecycle !== "restoring" && lifecycle !== "loading" && lifecycle !== "ready" && lifecycle !== "failed" && lifecycle !== "closed") {
-    throw new Error("Invalid browser tab lifecycle");
-  }
-  const controller = tab.controller;
-  if (controller !== "human" && controller !== "agent" && controller !== "none") throw new Error("Invalid browser controller");
-
+  if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) throw new Error("Browser tab identity does not match its session");
+  if (tab.lifecycle !== "restoring" && tab.lifecycle !== "loading" && tab.lifecycle !== "ready" && tab.lifecycle !== "failed" && tab.lifecycle !== "closed") throw new Error("Invalid browser tab lifecycle");
+  if (tab.controller !== "human" && tab.controller !== "agent" && tab.controller !== "none") throw new Error("Invalid browser controller");
   return {
-    hostKind: tab.hostKind === undefined ? sessionHostKind : normalizeHostKind(tab.hostKind),
-    tabId: requiredId(tab.tabId, "tabId"),
-    sessionAgentId,
-    profileId,
-    url: requiredString(tab.url, "url", 2_048, true),
-    title: requiredString(tab.title, "title", 4_096, true),
-    lifecycle,
-    loading: requiredBoolean(tab.loading, "loading"),
-    live: requiredBoolean(tab.live, "live"),
-    canGoBack: requiredBoolean(tab.canGoBack, "canGoBack"),
-    canGoForward: requiredBoolean(tab.canGoForward, "canGoForward"),
-    zoomFactor: finiteNumber(tab.zoomFactor, "zoomFactor"),
-    controller,
-    agentCursor: normalizeCursor(tab.agentCursor),
-    recording: normalizeRecording(tab.recording),
-    viewportSetting: normalizeViewport(tab.viewportSetting),
-    renderedViewport: normalizeRenderedViewport(tab.renderedViewport),
+    targetAffinity: targetAffinity(tab.targetAffinity ?? tab.hostKind, legacyAffinity),
+    tabId: requiredId(tab.tabId, "tabId"), sessionAgentId, profileId,
+    url: requiredString(tab.url, "url", 2_048, true), title: requiredString(tab.title, "title", 4_096, true),
+    lifecycle: tab.lifecycle, loading: requiredBoolean(tab.loading, "loading"), live: requiredBoolean(tab.live, "live"),
+    canGoBack: requiredBoolean(tab.canGoBack, "canGoBack"), canGoForward: requiredBoolean(tab.canGoForward, "canGoForward"),
+    zoomFactor: finiteNumber(tab.zoomFactor, "zoomFactor"), controller: tab.controller,
+    agentCursor: normalizeCursor(tab.agentCursor), recording: normalizeRecording(tab.recording),
+    viewportSetting: normalizeViewport(tab.viewportSetting), renderedViewport: normalizeRenderedViewport(tab.renderedViewport),
     physicalVisible: tab.physicalVisible === undefined ? false : requiredBoolean(tab.physicalVisible, "physicalVisible"),
-    error: normalizeTabError(tab.error),
-    createdAt: requiredString(tab.createdAt, "createdAt", 128),
-    updatedAt: requiredString(tab.updatedAt, "updatedAt", 128),
+    error: normalizeTabError(tab.error), createdAt: requiredString(tab.createdAt, "createdAt", 128), updatedAt: requiredString(tab.updatedAt, "updatedAt", 128),
   };
+}
+
+function targetAffinity(value: unknown, fallback: BrowserTargetAffinity): BrowserTargetAffinity {
+  if (value === undefined || value === null) return fallback;
+  if ((BROWSER_TARGET_AFFINITIES as readonly unknown[]).includes(value)) return value as BrowserTargetAffinity;
+  throw new Error("Invalid browser target affinity");
 }
 
 function normalizeViewport(value: unknown): BrowserViewportSetting {
   const viewport = requiredRecord(value, "viewport setting");
   if (viewport.mode === "fill") return { mode: "fill" };
-  if (viewport.mode === "freeform") {
-    return { mode: "freeform", width: positiveInteger(viewport.width, "width"), height: positiveInteger(viewport.height, "height") };
-  }
+  if (viewport.mode === "freeform") return { mode: "freeform", width: positiveInteger(viewport.width, "width"), height: positiveInteger(viewport.height, "height") };
   if (viewport.mode === "preset") {
     if (viewport.orientation !== "portrait" && viewport.orientation !== "landscape") throw new Error("Invalid viewport orientation");
     const presetId = requiredString(viewport.presetId, "presetId", 128);
     if (!(presetId in BROWSER_VIEWPORT_PRESETS)) throw new Error("Invalid viewport preset");
-    return {
-      mode: "preset",
-      presetId: presetId as keyof typeof BROWSER_VIEWPORT_PRESETS,
-      orientation: viewport.orientation,
-      width: positiveInteger(viewport.width, "width"),
-      height: positiveInteger(viewport.height, "height"),
-    };
+    return { mode: "preset", presetId: presetId as keyof typeof BROWSER_VIEWPORT_PRESETS, orientation: viewport.orientation,
+      width: positiveInteger(viewport.width, "width"), height: positiveInteger(viewport.height, "height") };
   }
   throw new Error("Invalid viewport mode");
 }
@@ -347,61 +277,34 @@ function normalizeViewport(value: unknown): BrowserViewportSetting {
 function normalizeRenderedViewport(value: unknown): BrowserTabSnapshot["renderedViewport"] {
   if (value === null) return null;
   const viewport = requiredRecord(value, "rendered viewport");
-  return {
-    width: positiveInteger(viewport.width, "width"),
-    height: positiveInteger(viewport.height, "height"),
-    deviceScaleFactor: finiteNumber(viewport.deviceScaleFactor, "deviceScaleFactor"),
-  };
+  return { width: positiveInteger(viewport.width, "width"), height: positiveInteger(viewport.height, "height"), deviceScaleFactor: finiteNumber(viewport.deviceScaleFactor, "deviceScaleFactor") };
 }
-
 function normalizeCursor(value: unknown): BrowserTabSnapshot["agentCursor"] {
   if (value === null) return null;
   const cursor = requiredRecord(value, "agent cursor");
   if (cursor.phase !== "move" && cursor.phase !== "click") throw new Error("Invalid cursor phase");
-  return {
-    x: finiteNumber(cursor.x, "x"),
-    y: finiteNumber(cursor.y, "y"),
-    phase: cursor.phase,
-    sequence: nonNegativeInteger(cursor.sequence, "sequence"),
-    createdAt: requiredString(cursor.createdAt, "createdAt", 128),
-  };
+  return { x: finiteNumber(cursor.x, "x"), y: finiteNumber(cursor.y, "y"), phase: cursor.phase, sequence: nonNegativeInteger(cursor.sequence, "sequence"), createdAt: requiredString(cursor.createdAt, "createdAt", 128) };
 }
-
 function normalizeRecording(value: unknown): BrowserTabSnapshot["recording"] {
   if (value === null) return null;
   const recording = requiredRecord(value, "recording");
-  return {
-    recordingId: requiredId(recording.recordingId, "recordingId"),
-    startedAt: requiredString(recording.startedAt, "startedAt", 128),
-    mimeType: requiredString(recording.mimeType, "mimeType", 256),
-  };
+  return { recordingId: requiredId(recording.recordingId, "recordingId"), startedAt: requiredString(recording.startedAt, "startedAt", 128), mimeType: requiredString(recording.mimeType, "mimeType", 256) };
 }
-
 function normalizeTabError(value: unknown): BrowserTabSnapshot["error"] {
   if (value === null) return null;
   const error = requiredRecord(value, "tab error");
-  return {
-    code: requiredString(error.code, "code", 128),
-    message: requiredString(error.message, "message", 4_096),
-  };
+  return { code: requiredString(error.code, "code", 128), message: requiredString(error.message, "message", 4_096) };
 }
-
 function normalizeSafeAction(value: unknown): BrowserSafeActionSummary {
   const action = requiredRecord(value, "safe action");
-  const status = action.status;
-  if (status !== "running" && status !== "succeeded" && status !== "failed" && status !== "interrupted") throw new Error("Invalid action status");
+  if (action.status !== "running" && action.status !== "succeeded" && action.status !== "failed" && action.status !== "interrupted") throw new Error("Invalid action status");
   const operation = requiredString(action.operation, "operation", 64);
   if (!isBrowserAutomationOperation(operation)) throw new Error("Invalid action operation");
   return {
-    id: requiredId(action.id, "id"),
-    operation,
-    tabId: nullableId(action.tabId, "tabId"),
-    status,
+    id: requiredId(action.id, "id"), operation, tabId: nullableId(action.tabId, "tabId"), status: action.status,
     ...(typeof action.url === "string" ? { url: action.url.slice(0, 2_048) } : {}),
     ...(typeof action.title === "string" ? { title: action.title.slice(0, 4_096) } : {}),
-    ...(isRecord(action.dimensions)
-      ? { dimensions: { width: positiveInteger(action.dimensions.width, "width"), height: positiveInteger(action.dimensions.height, "height") } }
-      : {}),
+    ...(isRecord(action.dimensions) ? { dimensions: { width: positiveInteger(action.dimensions.width, "width"), height: positiveInteger(action.dimensions.height, "height") } } : {}),
     ...(typeof action.artifactPath === "string" ? { artifactPath: action.artifactPath.slice(0, 8_192) } : {}),
     ...(typeof action.errorCode === "string" ? { errorCode: action.errorCode as BrowserSafeActionSummary["errorCode"] } : {}),
     startedAt: requiredString(action.startedAt, "startedAt", 128),
@@ -410,48 +313,13 @@ function normalizeSafeAction(value: unknown): BrowserSafeActionSummary {
   };
 }
 
-function requiredRecord(value: unknown, field: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`Invalid ${field}`);
-  return value;
-}
-
-function requiredString(value: unknown, field: string, maxLength: number, allowEmpty = false): string {
-  if (typeof value !== "string" || value.length > maxLength || (!allowEmpty && value.length === 0)) throw new Error(`Invalid ${field}`);
-  return value;
-}
-
-function requiredId(value: unknown, field: string): string {
-  return requiredString(value, field, 128);
-}
-
-function nullableId(value: unknown, field: string): string | null {
-  return value === null ? null : requiredId(value, field);
-}
-
-function requiredBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`Invalid ${field}`);
-  return value;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid ${field}`);
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${field}`);
-  return value as number;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`Invalid ${field}`);
-  return value as number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === code;
-}
+function requiredRecord(value: unknown, field: string): Record<string, unknown> { if (!isRecord(value)) throw new Error(`Invalid ${field}`); return value; }
+function requiredString(value: unknown, field: string, max: number, empty = false): string { if (typeof value !== "string" || value.length > max || (!empty && value.length === 0)) throw new Error(`Invalid ${field}`); return value; }
+function requiredId(value: unknown, field: string): string { return requiredString(value, field, 128); }
+function nullableId(value: unknown, field: string): string | null { return value === null ? null : requiredId(value, field); }
+function requiredBoolean(value: unknown, field: string): boolean { if (typeof value !== "boolean") throw new Error(`Invalid ${field}`); return value; }
+function finiteNumber(value: unknown, field: string): number { if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid ${field}`); return value; }
+function nonNegativeInteger(value: unknown, field: string): number { if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${field}`); return value as number; }
+function positiveInteger(value: unknown, field: string): number { if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`Invalid ${field}`); return value as number; }
+function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
+function isNodeError(error: unknown, code: string): boolean { return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === code; }
