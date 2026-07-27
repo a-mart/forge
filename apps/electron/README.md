@@ -52,7 +52,7 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 | `src/external-chrome/coordinator.ts` | Optional adapter deployment, current-user authentication, registration, update, recovery, and repair coordinator |
 | `src/external-chrome/relay-runtime.ts` | Authenticated private profile selection, exact per-tab checkpoints, operation transport, release, reveal, and recovery |
 | `src/external-chrome/registration.ts` | Forge-owned native-host manifest/registry inspection, repair, transfer, and removal |
-| `src/external-chrome/data-paths.ts` | Canonical External Chrome integration paths under the active Forge data directory |
+| `src/external-chrome/data-paths.ts` | Canonical optional Chrome adapter integration paths under the active Forge data directory |
 | `scripts/stage-external-chrome.mjs` | Combines verified extension and native-host inventories into the Electron stage |
 | `scripts/external-chrome-package-content-smoke.mjs` | Verifies staged/packaged inventory, target metadata, hashes, and signature policy |
 | `src/auto-updater.ts` | Auto-update logic using `electron-updater` and GitHub Releases |
