@@ -13,7 +13,7 @@ describe('Desktop browser product copy', () => {
     expect(source.match(/'Automatic Browser host is unavailable'/g)).toHaveLength(2)
     expect(source).toContain("'Automatic Browser pop-out viewport was not physically ready'")
     expect(source).toContain("'Automatic Browser dock viewport was not physically ready'")
-    expect(source).toContain('`Automatic Browser ${owner} viewport did not become ready`')
+    expect(source).toContain(['`Automatic Browser $', '{owner} viewport did not become ready`'].join(''))
     expect(source).toContain(
       '// External Chrome is optional; deployment failure must not disable the embedded browser or Desktop.',
     )
