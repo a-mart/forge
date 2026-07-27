@@ -19,16 +19,22 @@ afterEach(async () => {
 });
 
 describe("Secure Sessions server lifecycle", () => {
-  it("recovers orphaned execution before readiness and closes secure sessions on stop", async () => {
+  it("recovers orphaned execution without delaying readiness and closes secure sessions on stop", async () => {
     const order: string[] = [];
     const tempConfig = await createTempConfig({ runtimeTarget: "builder" });
     tempConfigs.push(tempConfig);
+    let finishRecovery: ((value: { destroyedSandboxIds: string[] }) => void) | undefined;
+    const recoveryGate = new Promise<{ destroyedSandboxIds: string[] }>((resolve) => {
+      finishRecovery = resolve;
+    });
 
     vi.spyOn(DockerSecureExecutionBackend.prototype, "recoverOrphans")
       .mockImplementation(async (liveTasks) => {
         order.push("recover");
         expect(liveTasks).toEqual([]);
-        return { destroyedSandboxIds: ["opaque-orphan-id"] };
+        const result = await recoveryGate;
+        order.push("recover-finished");
+        return result;
       });
     const originalClose = SecureSessionsService.prototype.closeSecureSessions;
     const closeSpy = vi.spyOn(SecureSessionsService.prototype, "closeSecureSessions")
@@ -51,6 +57,12 @@ describe("Secure Sessions server lifecycle", () => {
 
     expect(order.indexOf("recover")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("recover")).toBeLessThan(order.indexOf("ready"));
+    expect(order).not.toContain("recover-finished");
+
+    finishRecovery?.({ destroyedSandboxIds: ["opaque-orphan-id"] });
+    await vi.waitFor(() => {
+      expect(order).toContain("recover-finished");
+    });
 
     await activeServer.stop();
     activeServer = null;

@@ -391,6 +391,14 @@ passes a fresh manager-lease and assignment check. Forge removes legacy worker-o
 state during startup recovery and destroys orphaned managed containers rather than
 attaching them to an unrelated session.
 
+Startup recovery begins in the background and does not delay normal Forge readiness.
+The Docker scan selects only containers carrying both Forge's managed label and the
+current local execution-scope label. The first attempt to authorize Team Secure Mode
+joins that same recovery promise and remains fail-closed until cleanup succeeds, so
+startup stays responsive without allowing an orphaned container to overlap new secret
+authority. Shutdown also joins an in-progress recovery before closing Secure Sessions
+storage.
+
 Each running container also receives a read-only bind mount of a host-owned dead-man
 heartbeat file. Forge refreshes that file directly; the guest can only inspect its
 modification time. If the Forge backend is terminated without cleanup, PID 1 exits

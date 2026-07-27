@@ -136,10 +136,21 @@ export class SwarmBootCoordinator {
     await domains.reconcileProjectAgentMirror();
     await domains.reconcileProjectAgentSharing();
     try {
-      const recovery = await this.options.secureSessions.initializeForBoot();
-      this.options.logDebug("boot:secure_sessions:reconciled", {
-        destroyedSandboxCount: recovery.destroyedSandboxIds.length,
-      });
+      // Begin Docker orphan cleanup immediately without delaying ordinary
+      // readiness. Secure Session authorization joins this same promise and
+      // remains fail-closed until recovery completes.
+      void this.options.secureSessions.initializeForBoot().then(
+        (recovery) => {
+          this.options.logDebug("boot:secure_sessions:reconciled", {
+            destroyedSandboxCount: recovery.destroyedSandboxIds.length,
+          });
+        },
+        (error: unknown) => {
+          this.options.logDebug("boot:secure_sessions:reconcile_error", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        },
+      );
     } catch (error) {
       this.options.logDebug("boot:secure_sessions:reconcile_error", {
         message: error instanceof Error ? error.message : String(error),

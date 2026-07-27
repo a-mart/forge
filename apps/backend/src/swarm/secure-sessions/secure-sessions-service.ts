@@ -499,15 +499,18 @@ export class SecureSessionsService {
         return this.startupRecoveryResult;
       })
       .catch(async (error: unknown) => {
-        this.startupRecoveryPromise = null;
-        const store = await this.store();
-        for (const state of store.listSessionStates()) {
-          store.updateSessionRuntimeState({
-            sessionAgentId: state.sessionAgentId,
-            profileId: state.profileId,
-            executionMode: "standard",
-            environmentStatus: "degraded",
-          });
+        try {
+          const store = await this.store();
+          for (const state of store.listSessionStates()) {
+            store.updateSessionRuntimeState({
+              sessionAgentId: state.sessionAgentId,
+              profileId: state.profileId,
+              executionMode: "standard",
+              environmentStatus: "degraded",
+            });
+          }
+        } finally {
+          this.startupRecoveryPromise = null;
         }
         throw error;
       });
@@ -2519,6 +2522,9 @@ export class SecureSessionsService {
       this.authorityMutationTail,
       ...this.sessionMutationTails.values(),
     ]);
+    if (this.startupRecoveryPromise) {
+      await Promise.allSettled([this.startupRecoveryPromise]);
+    }
 
     const store = this.storePromise ? await this.storePromise.catch(() => null) : null;
     const activeEntries = [...this.activeSessions.entries()];
