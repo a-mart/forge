@@ -111,6 +111,10 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 | `composer-2.5` | Composer 2.5 | Cursor SDK | none |
 | `grok-4.5` | Grok 4.5 | Cursor SDK | low, medium, high |
 | `grok-4.5-fast` | Grok 4.5 Fast | Cursor SDK | low, medium, high |
+| `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
+| `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
+| `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
+| `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none |
 | `grok-4.5` | Grok 4.5 (native default) | xAI | API key: low, medium, high, xhigh; OAuth: authenticated metadata, or low, medium, high fallback |
 | `grok-build` | Grok Build (account entitlement) | xAI OAuth | authenticated account metadata |
 | `grok-composer-2.5-fast` | Grok Composer 2.5 Fast (account entitlement) | xAI OAuth | authenticated account metadata |

@@ -18,7 +18,7 @@ This lets one project use a fast, inexpensive model for clear work and a stronge
 
 Plan and review modes default to Deep, Research defaults to Support, and General work defaults to Routine. These defaults are guidance rather than capability floors: the manager may use Support for any bounded mode and raise the policy when task difficulty, ambiguity, or risk warrants it.
 
-Native xAI routing also follows the effective credential. `grok-4.5` remains the family default, while authenticated OAuth discovery can add `grok-build` and `grok-composer-2.5-fast` only for entitled accounts. Those two models fail closed: switching to API-key auth, losing the entitlement, or failing discovery removes them from choices and prevents a stale selection from reaching the provider. The xAI Composer ID is separate from Cursor SDK `composer-2.5`.
+Native xAI routing also follows the effective credential. `grok-4.5` remains the family default, while authenticated OAuth discovery can add `grok-build` and `grok-composer-2.5-fast` only for entitled accounts. Switching to API-key auth hides these models and rejects stale selections before a provider request. Losing entitlement or failing discovery removes them from refreshed catalog, projection, and selector results. The xAI Composer ID is separate from Cursor SDK `composer-2.5`.
 
 ## Custom specialists
 
