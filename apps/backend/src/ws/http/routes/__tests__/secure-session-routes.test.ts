@@ -148,6 +148,41 @@ describe("secure session routes", () => {
     );
   });
 
+  it("dismisses an access request through a denial-only DELETE contract", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const endpoint =
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1`;
+
+    const dismissed = await fetch(endpoint, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 6 }),
+    });
+
+    expect(dismissed.status).toBe(200);
+    expect(service.resolveSecureAccessRequest).toHaveBeenCalledWith(
+      "manager-1",
+      "request-1",
+      {
+        baseRevision: 6,
+        requestId: "request-1",
+        decision: "deny",
+      },
+    );
+
+    const unsafe = await fetch(endpoint, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 6,
+        decision: "approve",
+      }),
+    });
+    expect(unsafe.status).toBe(400);
+    expect(service.resolveSecureAccessRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards one strict atomic batch grant request", async () => {
     const service = fakeService();
     const server = await createRouteServer(createSecureSessionRoutes({ service }));

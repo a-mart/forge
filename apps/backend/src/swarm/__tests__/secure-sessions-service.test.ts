@@ -3277,6 +3277,68 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("automatically expires pending requests without an active secure environment", async () => {
+    vi.useFakeTimers();
+    let logicalNow = Date.parse(NOW);
+    const harness = createHarness({
+      now: () => new Date(logicalNow).toISOString(),
+    });
+    try {
+      await harness.service.requestSecureSecretAccess(
+        "manager-a",
+        "automatic-expiry-tool",
+        {
+          displayAlias: "automatic-expiry",
+          exposures: [{ deliveryKind: "stdin" }],
+          leaseKind: "task",
+          purposeSummary: "Exercise autonomous request expiry",
+        },
+      );
+      logicalNow += 5 * 60 * 1000;
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await harness.service.requestSecureSecretAccess(
+        "manager-a",
+        "later-expiry-tool",
+        {
+          displayAlias: "later-expiry",
+          exposures: [{ deliveryKind: "stdin" }],
+          leaseKind: "task",
+          purposeSummary: "Verify the next request is rescheduled",
+        },
+      );
+      const pending = harness.store.getSnapshot("manager-a");
+      expect(pending.requests).toHaveLength(2);
+      expect(harness.execution.ensured).toEqual([]);
+
+      logicalNow += 25 * 60 * 1000;
+      await vi.advanceTimersByTimeAsync(25 * 60 * 1000);
+
+      const afterFirstExpiry = harness.store.getSnapshot("manager-a");
+      expect(afterFirstExpiry.requests).toEqual([
+        expect.objectContaining({ displayAlias: "later-expiry" }),
+      ]);
+      expect(harness.snapshots.at(-1)).toEqual(expect.objectContaining({
+        revision: pending.state.revision + 1,
+        pendingRequests: [
+          expect.objectContaining({ displayAlias: "later-expiry" }),
+        ],
+      }));
+
+      logicalNow += 5 * 60 * 1000;
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      expect(harness.store.getSnapshot("manager-a").requests).toEqual([]);
+      expect(harness.snapshots.at(-1)).toEqual(expect.objectContaining({
+        revision: pending.state.revision + 2,
+        pendingRequests: [],
+      }));
+      expect(harness.execution.ensured).toEqual([]);
+    } finally {
+      await harness.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("approves a missing-alias request with a newly saved selected secret", async () => {
     const harness = createHarness();
     await harness.service.requestSecureSecretAccess("manager-a", "selected-tool", {

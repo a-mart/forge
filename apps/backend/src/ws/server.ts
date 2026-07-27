@@ -113,6 +113,7 @@ import {
 } from "./http/routes/secure-secret-routes.js";
 import {
   createSecureSessionRoutes,
+  isWebSafeSecureAccessRequestDismissal,
   type SecureSessionsTransportService,
 } from "./http/routes/secure-session-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
@@ -1196,6 +1197,10 @@ export class SwarmWebSocketServer {
           request.method !== "GET"
           && request.method !== "HEAD"
           && request.method !== "OPTIONS"
+          && !isWebSafeSecureAccessRequestDismissal(
+            request.method,
+            requestUrl.pathname,
+          )
           && !validateSecureBuilderControlCapability(
             request,
             this.secureControlToken,

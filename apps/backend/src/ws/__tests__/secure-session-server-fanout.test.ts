@@ -71,6 +71,53 @@ describe("secure session server transport", () => {
     );
     expect(authorizedMissingSecretMutation.status).not.toBe(403);
 
+    await manager.requestSecureSecretAccess("manager", "web-dismissal-tool", {
+      displayAlias: "WEB_DISMISSAL_TEST",
+      exposures: [{
+        deliveryKind: "environment",
+        targetName: "WEB_DISMISSAL_TEST",
+      }],
+      leaseKind: "task",
+      purposeSummary: "Verify web-safe request dismissal",
+    });
+    const pending = await manager.getSecureSessionSnapshot("manager");
+    const requestId = pending.pendingRequests[0]!.requestId;
+    const requestUrl =
+      `http://${config.host}:${config.port}/api/secure-sessions/manager/access-requests/${requestId}`;
+    const dismissed = await fetch(requestUrl, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: pending.revision }),
+    });
+    expect(dismissed.status).toBe(200);
+    expect((await dismissed.json() as {
+      pendingRequests: unknown[];
+    }).pendingRequests).toEqual([]);
+
+    const unauthorizedApproval = await fetch(`${requestUrl}/resolve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: pending.revision + 1,
+        decision: "approve",
+      }),
+    });
+    expect(unauthorizedApproval.status).toBe(403);
+    expect(await unauthorizedApproval.json()).toEqual({
+      code: "SECURE_PRIVATE_API_UNAVAILABLE",
+      error: "SECURE_PRIVATE_API_UNAVAILABLE",
+    });
+
+    const hostileDismissal = await fetch(requestUrl, {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        Origin: "https://evil.example",
+      },
+      body: JSON.stringify({ baseRevision: pending.revision + 1 }),
+    });
+    expect(hostileDismissal.status).toBe(403);
+
     const hostileWebSocketStatus = await rejectedWebSocketStatus(
       `ws://${config.host}:${config.port}`,
       "https://evil.example",

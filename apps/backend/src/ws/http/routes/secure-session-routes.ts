@@ -37,6 +37,14 @@ const MAX_SECURE_REQUEST_BYTES = 256 * 1024;
 const MAX_LABEL_LENGTH = 256;
 const MAX_ENCRYPTED_PAYLOAD_LENGTH = 2 * 1024 * 1024;
 
+export function isWebSafeSecureAccessRequestDismissal(
+  method: string | undefined,
+  pathname: string,
+): boolean {
+  return method === "DELETE"
+    && /^\/api\/secure-sessions\/[^/]+\/access-requests\/[^/]+$/.test(pathname);
+}
+
 export interface StartSecureSessionInput {
   baseRevision?: number;
 }
@@ -243,6 +251,45 @@ export function createSecureSessionRoutes(options: {
             response,
             200,
             await options.service.revokeSecureSessionLease(sessionAgentId, input),
+          );
+          return;
+        }
+
+        const accessRequestMatch = requestUrl.pathname.match(
+          /^\/api\/secure-sessions\/([^/]+)\/access-requests\/([^/]+)$/,
+        );
+        if (
+          isWebSafeSecureAccessRequestDismissal(
+            request.method,
+            requestUrl.pathname,
+          )
+          && accessRequestMatch
+        ) {
+          const sessionAgentId = parsePathId(
+            accessRequestMatch[1],
+            "sessionAgentId",
+          );
+          const requestId = parsePathId(
+            accessRequestMatch[2],
+            "requestId",
+          );
+          const body = requireObject(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          assertKnownKeys(body, ["baseRevision"]);
+          const baseRevision = parseBaseRevision(body.baseRevision) as number;
+          sendSecureJson(
+            response,
+            200,
+            await options.service.resolveSecureAccessRequest(
+              sessionAgentId,
+              requestId,
+              {
+                baseRevision,
+                requestId,
+                decision: "deny",
+              },
+            ),
           );
           return;
         }
