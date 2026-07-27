@@ -1,0 +1,308 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {
+  BrowserAutomationFailure,
+  BrowserAutomationOperation,
+  BrowserAutomationRequest,
+  BrowserAutomationResponse,
+  BrowserHostLifecycleRequest,
+  BrowserSessionSnapshot,
+  BrowserTabSnapshot,
+} from '@forge/protocol'
+import { BROWSER_AUTOMATION_OPERATIONS, EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS } from '@forge/protocol'
+import { AutomaticBrowserHost } from '../automatic-browser-host.js'
+import type {
+  AutomaticExternalBrowserAdapter,
+  BrowserTargetAdapter,
+  BrowserTargetExecution,
+  BrowserTargetSession,
+  ExternalBrowserAcquireInput,
+  ExternalBrowserAcquireResult,
+  ExternalBrowserTargetAuthority,
+} from '../browser-target-adapter.js'
+
+class FakeManagedAdapter implements BrowserTargetAdapter {
+  readonly targetAffinity = 'managed-electron' as const
+  readonly capabilities = { supportedOperations: BROWSER_AUTOMATION_OPERATIONS, physicalViewport: true, recording: true, reveal: false } as const
+  readonly requests: BrowserAutomationRequest[] = []
+  readonly ended: Array<{ session: BrowserTargetSession; turnId: string }> = []
+  readonly released: Array<{ session: BrowserTargetSession; reason: string }> = []
+
+  async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    this.requests.push(structuredClone(request))
+    return success(request, 'managed-electron')
+  }
+  async endTurn(session: BrowserTargetSession, turnId: string): Promise<void> { this.ended.push({ session, turnId }) }
+  async releaseSession(session: BrowserTargetSession, reason: string): Promise<void> { this.released.push({ session, reason }) }
+}
+
+class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
+  readonly targetAffinity = 'external-chrome' as const
+  readonly capabilities = { supportedOperations: EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const
+  readonly acquisitions: ExternalBrowserAcquireInput[] = []
+  readonly executions: BrowserAutomationRequest[] = []
+  readonly authorityReleases: Array<{ authority: ExternalBrowserTargetAuthority; reason: string }> = []
+  readonly ended: Array<{ session: BrowserTargetSession; turnId: string }> = []
+  readonly sessionReleases: Array<{ session: BrowserTargetSession; reason: string }> = []
+  readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
+  acquireResults: ExternalBrowserAcquireResult[] = []
+  executionResults: BrowserTargetExecution[] = []
+  sequence = 0
+
+  async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
+    this.acquisitions.push(structuredClone(input))
+    return this.acquireResults.shift() ?? {
+      ok: true,
+      authority: { ownerEpoch: input.ownerEpoch, tabId: input.preferredTabId ?? `chrome-tab-${++this.sequence}` },
+    }
+  }
+  async executeWithAuthority(input: { authority: ExternalBrowserTargetAuthority; request: BrowserAutomationRequest }): Promise<BrowserTargetExecution> {
+    this.executions.push(structuredClone(input.request))
+    return this.executionResults.shift() ?? { response: success(input.request, 'external-chrome') }
+  }
+  execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    return Promise.resolve(success(request, 'external-chrome'))
+  }
+  async releaseAuthority(_session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void> {
+    this.authorityReleases.push({ authority: structuredClone(authority), reason })
+  }
+  async revealTarget(session: BrowserTargetSession, tabId: string) {
+    this.reveals.push({ session: structuredClone(session), tabId })
+    return { revealed: true as const, tabId }
+  }
+  async endTurn(session: BrowserTargetSession, turnId: string): Promise<void> { this.ended.push({ session, turnId }) }
+  async releaseSession(session: BrowserTargetSession, reason: string): Promise<void> { this.sessionReleases.push({ session, reason }) }
+}
+
+afterEach(() => vi.useRealTimers())
+
+describe('AutomaticBrowserHost', () => {
+  it('routes explicit target affinity without silently moving browser identity', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('chrome-explicit', 'external-chrome')], 'chrome-explicit')])
+
+    await expect(host.perform(request('snapshot', {}, 'chrome-explicit'))).resolves.toMatchObject({
+      ok: true,
+      updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-explicit' },
+    })
+    await expect(host.perform(request('resize', { mode: 'fill', timeoutMs: 1_000 }, 'chrome-explicit'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'unsupported-operation', details: { mutationState: 'not-started', noReplay: false } },
+    })
+    expect(managed.requests).toHaveLength(0)
+  })
+
+  it('honors reuseExistingTab=false and allocates a fresh target under automatic policy', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('selected', 'external-chrome')], 'selected')])
+
+    await host.perform(request('open', { show: false, reuseExistingTab: false }, null))
+    expect(external.acquisitions).toMatchObject([{ preferredTabId: null, reuseExisting: false, createIfNeeded: true }])
+    expect(external.executions[0]?.tabId).not.toBe('selected')
+  })
+
+  it('decides managed-only operations before allocating even with Chrome session affinity', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const ensureManagedTarget = vi.fn(async () => 'managed-new')
+    const host = createHost(managed, external, ensureManagedTarget)
+    host.synchronizeSessions([session([tab('chrome-selected', 'external-chrome')], 'chrome-selected')])
+
+    await expect(host.perform(request('recordingStart', {}, null))).resolves.toMatchObject({
+      ok: true,
+      updatedTab: { targetAffinity: 'managed-electron', tabId: 'managed-new' },
+    })
+    expect(external.acquisitions).toHaveLength(0)
+    expect(ensureManagedTarget).toHaveBeenCalledOnce()
+  })
+
+  it('retries a pre-mutation Chrome race on one dedicated target before using Managed Browser', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.executionResults.push({
+      response: failure(request('click', { x: 1, y: 1, timeoutMs: 100 }, 'chrome-tab-1'), 'debugger-unavailable'),
+      failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+    })
+    const host = createHost(managed, external)
+
+    await expect(host.perform(request('click', { x: 1, y: 1, timeoutMs: 100 }, null))).resolves.toMatchObject({ ok: true })
+    expect(external.acquisitions).toHaveLength(2)
+    expect(external.acquisitions[1]).toMatchObject({ preferredTabId: null, reuseExisting: false })
+    expect(external.executions).toHaveLength(2)
+    expect(managed.requests).toHaveLength(0)
+  })
+
+  it('falls back to Managed only while mutation is proven not started', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.acquireResults.push(acquireFailure('restricted-target'), acquireFailure('no-eligible-target'))
+    const ensureManagedTarget = vi.fn(async () => 'managed-fallback')
+    const host = createHost(managed, external, ensureManagedTarget)
+
+    await expect(host.perform(request('navigate', { url: 'https://example.test', readiness: 'load', timeoutMs: 100 }, null))).resolves.toMatchObject({
+      ok: true,
+      updatedTab: { targetAffinity: 'managed-electron', tabId: 'managed-fallback' },
+    })
+    expect(external.acquisitions).toHaveLength(2)
+    expect(managed.requests).toHaveLength(1)
+  })
+
+  it('never replays a failure after possible mutation and returns typed no-replay metadata', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const original = request('click', { x: 1, y: 1, timeoutMs: 100 }, null)
+    external.executionResults.push({
+      response: failure({ ...original, tabId: 'chrome-tab-1' } as BrowserAutomationRequest, 'host-disconnected'),
+      failure: { phase: 'execution', mutationState: 'possible', fallbackReason: 'transport-disconnected' },
+    })
+    const host = createHost(managed, external, vi.fn(async () => 'must-not-run'))
+
+    await expect(host.perform(original)).resolves.toMatchObject({
+      ok: false,
+      error: { details: { automaticPolicyPhase: 'execution', mutationState: 'possible', noReplay: true, fallbackReason: 'transport-disconnected' } },
+    })
+    expect(external.executions).toHaveLength(1)
+    expect(managed.requests).toHaveLength(0)
+    expect(external.authorityReleases).toMatchObject([{ reason: 'operation-failed' }])
+  })
+
+  it('retains authority for an adaptive operation burst, then releases at bounded idle', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = new AutomaticBrowserHost({
+      managedAdapter: managed,
+      externalAdapter: external,
+      authorityBurst: { initialIdleMs: 100, incrementMs: 50, maximumIdleMs: 200 },
+    })
+
+    const opened = await host.perform(request('open', { show: false, reuseExistingTab: true }, null))
+    const tabId = opened.updatedTab?.tabId ?? null
+    await vi.advanceTimersByTimeAsync(50)
+    await host.perform(request('snapshot', {}, tabId))
+    expect(external.acquisitions).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(149)
+    expect(external.authorityReleases).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
+  })
+
+  it('centralizes generic turn/session cleanup and Show in Chrome reveal', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('chrome', 'external-chrome')], 'chrome')])
+    await host.perform(request('snapshot', {}, 'chrome'))
+
+    await expect(host.revealTarget({ sessionAgentId: 'session', profileId: 'profile' }, 'chrome')).resolves.toEqual({
+      targetAffinity: 'external-chrome', revealed: true, tabId: 'chrome',
+    })
+    await expect(host.handleLifecycle(lifecycle('turn-ended'))).resolves.toMatchObject({ ok: true, kind: 'turn-ended', turnId: 'turn-1' })
+    await expect(host.handleLifecycle(lifecycle('release-session'))).resolves.toMatchObject({ ok: true, kind: 'release-session', reason: 'archive' })
+    expect(external.authorityReleases).toMatchObject([{ reason: 'turn-ended' }])
+    expect(external.ended).toHaveLength(1)
+    expect(external.sessionReleases).toHaveLength(1)
+    expect(managed.ended).toHaveLength(1)
+    expect(managed.released).toHaveLength(1)
+  })
+
+  it('advertises one v2 host with typed private target capabilities', () => {
+    const host = createHost(new FakeManagedAdapter(), new FakeExternalAdapter())
+    expect(host.capabilities).toMatchObject({
+      protocolVersions: { minimum: 2, maximum: 2 },
+      supportedOperations: BROWSER_AUTOMATION_OPERATIONS,
+      targets: {
+        'managed-electron': { available: true, physicalViewport: true, recording: true, reveal: false },
+        'external-chrome': { available: true, physicalViewport: false, recording: false, reveal: true },
+      },
+    })
+  })
+})
+
+function createHost(
+  managed: FakeManagedAdapter,
+  external: FakeExternalAdapter,
+  ensureManagedTarget?: (request: BrowserAutomationRequest) => Promise<string | null>,
+): AutomaticBrowserHost {
+  return new AutomaticBrowserHost({ managedAdapter: managed, externalAdapter: external, ensureManagedTarget })
+}
+
+function request(operation: BrowserAutomationOperation, input: Record<string, unknown>, tabId: string | null): BrowserAutomationRequest {
+  return {
+    requestId: `request-${operation}-${Math.random()}`, sessionAgentId: 'session', profileId: 'profile', tabId,
+    hostId: 'automatic-host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    artifactDirectory: null, operation, input,
+  } as BrowserAutomationRequest
+}
+
+function tab(tabId: string, targetAffinity: BrowserTabSnapshot['targetAffinity']): BrowserTabSnapshot {
+  const now = new Date(0).toISOString()
+  return {
+    targetAffinity, tabId, sessionAgentId: 'session', profileId: 'profile', url: 'https://example.test', title: 'Example',
+    lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1,
+    controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null,
+    physicalVisible: targetAffinity === 'managed-electron', error: null, createdAt: now, updatedAt: now,
+  }
+}
+
+function session(tabs: BrowserTabSnapshot[], activeTabId: string | null): BrowserSessionSnapshot {
+  const now = new Date(0).toISOString()
+  return {
+    schemaVersion: 2, sessionAgentId: 'session', profileId: 'profile', hostingState: 'hosted', tabs,
+    activeTabId, defaultTabId: activeTabId, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now,
+  }
+}
+
+function success(requestValue: BrowserAutomationRequest, targetAffinity: BrowserTabSnapshot['targetAffinity']): BrowserAutomationResponse {
+  const target = tab(requestValue.tabId ?? `${targetAffinity}-created`, targetAffinity)
+  const routing = {
+    requestId: requestValue.requestId, sessionAgentId: requestValue.sessionAgentId, profileId: requestValue.profileId,
+    tabId: target.tabId, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration,
+    operation: requestValue.operation, elapsedMs: 1, updatedTab: target, ok: true as const,
+  }
+  if (requestValue.operation === 'open') return { ...routing, operation: 'open', result: { tab: target, created: true, panelRevealRequested: requestValue.input.show } }
+  if (requestValue.operation === 'navigate') return { ...routing, operation: 'navigate', result: { tab: target, readiness: requestValue.input.readiness } }
+  if (requestValue.operation === 'status') return { ...routing, operation: 'status', result: { available: true, host: { connected: true, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration, focused: true, capabilities: null, connectedAt: new Date(0).toISOString() }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: target } }
+  return { ...routing, result: resultFor(requestValue.operation, target.tabId) } as BrowserAutomationResponse
+}
+
+function resultFor(operation: BrowserAutomationOperation, tabId: string): unknown {
+  switch (operation) {
+    case 'resize': return { tabId, setting: { mode: 'fill' }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 } }
+    case 'snapshot': return { tabId, url: '', title: '', loading: false, viewportSetting: { mode: 'fill' }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 }, visibleText: '', interactiveElements: [], accessibility: null, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: 'image/png', data: 'eA==', width: 1, height: 1 } }
+    case 'click': return { tabId, point: { x: 1, y: 1 } }
+    case 'type': return { tabId, characters: 1, cleared: false }
+    case 'press': return { tabId, key: 'Enter', modifiers: [] }
+    case 'scroll': return { tabId, deltaX: 0, deltaY: 1, scrollX: 0, scrollY: 1 }
+    case 'evaluate': return { tabId, value: null, serializedBytes: 4 }
+    case 'waitFor': return { tabId, matched: true, elapsedMs: 1 }
+    case 'recordingStart': return { recordingId: 'recording', tabId, recording: true, startedAt: new Date(0).toISOString(), mimeType: 'video/webm', width: 800, height: 600 }
+    case 'recordingStop': return { recordingId: 'recording', tabId, path: '/tmp/a.webm', mimeType: 'video/webm', extension: 'webm', sizeBytes: 1, width: 800, height: 600, createdAt: new Date(0).toISOString() }
+    default: throw new Error(`unexpected ${operation}`)
+  }
+}
+
+function failure(requestValue: BrowserAutomationRequest, code: BrowserAutomationFailure['code']): BrowserAutomationResponse {
+  return {
+    requestId: requestValue.requestId, sessionAgentId: requestValue.sessionAgentId, profileId: requestValue.profileId,
+    tabId: requestValue.tabId, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration,
+    operation: requestValue.operation, ok: false, error: { code, message: code, retryable: true }, elapsedMs: 1,
+  }
+}
+
+function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-target'): ExternalBrowserAcquireResult {
+  return {
+    ok: false,
+    error: { code: fallbackReason === 'restricted-target' ? 'restricted-target' : 'unavailable-host', message: fallbackReason, retryable: true },
+    metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason },
+  }
+}
+
+function lifecycle(kind: 'turn-ended' | 'release-session'): BrowserHostLifecycleRequest {
+  const routing = { requestId: `lifecycle-${kind}`, sessionAgentId: 'session', profileId: 'profile', hostId: 'automatic-host', hostGeneration: 1 }
+  return kind === 'turn-ended' ? { ...routing, kind, turnId: 'turn-1' } : { ...routing, kind, reason: 'archive' }
+}

@@ -78,7 +78,6 @@ describe('trusted browser recording bridge', () => {
 function request(requestId: string, operation: 'recordingStart' | 'recordingStop'): BrowserAutomationRequest {
   return {
     requestId,
-    hostKind: 'managed-electron',
     sessionAgentId: 'session-1',
     profileId: 'profile-1',
     tabId: 'tab-1',

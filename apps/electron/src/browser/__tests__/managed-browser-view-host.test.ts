@@ -28,8 +28,8 @@ import type { BrowserSessionSnapshot, BrowserTabSnapshot } from '@forge/protocol
 import { ManagedBrowserViewHost } from '../managed-browser-view-host.js'
 
 const now = new Date(0).toISOString()
-function tab(id: string): BrowserTabSnapshot { return { tabId: id, sessionAgentId: 'session', profileId: 'profile', url: 'about:blank', title: id, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now } }
-function session(tabs: BrowserTabSnapshot[], hostingState: 'hosted' | 'unhosted' = 'hosted'): BrowserSessionSnapshot { return { schemaVersion: 1, sessionAgentId: 'session', profileId: 'profile', hostingState, tabs, activeTabId: tabs[0]?.tabId ?? null, defaultTabId: tabs[0]?.tabId ?? null, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now } }
+function tab(id: string): BrowserTabSnapshot { return { targetAffinity: 'managed-electron', tabId: id, sessionAgentId: 'session', profileId: 'profile', url: 'about:blank', title: id, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now } }
+function session(tabs: BrowserTabSnapshot[], hostingState: 'hosted' | 'unhosted' = 'hosted'): BrowserSessionSnapshot { return { schemaVersion: 2, sessionAgentId: 'session', profileId: 'profile', hostingState, tabs, activeTabId: tabs[0]?.tabId ?? null, defaultTabId: tabs[0]?.tabId ?? null, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now } }
 function fakeWindow() {
   const children = new Set<FakeView>()
   return {
@@ -43,7 +43,7 @@ function fakeWindow() {
 function makeHost(onGuestBeforeInput?: ConstructorParameters<typeof ManagedBrowserViewHost>[0]['onGuestBeforeInput']) {
   const manager = {
     registerTabWebContents: vi.fn(({ tab: value }) => value), unregisterTabWebContents: vi.fn(), setTabPresentation: vi.fn((request) => ({ applied: true, tab: { ...tab(request.tabId), physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence })),
-    captureScreenshot: vi.fn(), markGuestCrashed: vi.fn(), destroy: vi.fn(async () => undefined),
+    captureScreenshot: vi.fn(), markGuestCrashed: vi.fn(), synchronizeSessions: vi.fn(), destroy: vi.fn(async () => undefined),
   }
   const host = new ManagedBrowserViewHost({ manager: manager as never, sessions: { getSession: vi.fn(() => ({})) } as never, guestPreloadPath: '/guest.js', onGuestBeforeInput })
   return { host, manager }
@@ -55,21 +55,21 @@ describe('ManagedBrowserViewHost', () => {
     const { host, manager } = makeHost()
     await host.reconcile({
       controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 1, workspaceEpoch: 2,
-      sessions: [{ ...session([{ ...tab('same'), hostKind: 'external-chrome' }]), hostKind: 'external-chrome' }],
+      sessions: [session([{ ...tab('same'), targetAffinity: 'external-chrome' }])],
     })
     expect(host.tabCount).toBe(0)
     expect(manager.registerTabWebContents).not.toHaveBeenCalled()
 
-    const managed = { ...tab('same'), hostKind: 'managed-electron' as const, title: 'managed' }
-    const external = { ...tab('same'), hostKind: 'external-chrome' as const, title: 'external' }
+    const managed = { ...tab('same'), targetAffinity: 'managed-electron' as const, title: 'managed' }
+    const external = { ...tab('same'), targetAffinity: 'external-chrome' as const, title: 'external' }
     await host.reconcile({
       controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 2, workspaceEpoch: 2,
-      sessions: [{ ...session([managed, external]), hostKind: 'managed-electron' }],
+      sessions: [session([managed, external])],
     })
     expect(host.tabCount).toBe(1)
     expect(manager.registerTabWebContents).toHaveBeenCalledOnce()
     expect(manager.registerTabWebContents).toHaveBeenCalledWith(
-      expect.objectContaining({ tab: expect.objectContaining({ hostKind: 'managed-electron', title: 'managed' }) }),
+      expect.objectContaining({ tab: expect.objectContaining({ targetAffinity: 'managed-electron', title: 'managed' }) }),
       expect.anything(),
     )
     await expect(host.ensureProvisional(external, 2)).rejects.toMatchObject({ code: 'invalid-input' })
