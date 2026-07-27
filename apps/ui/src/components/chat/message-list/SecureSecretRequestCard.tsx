@@ -23,6 +23,7 @@ interface SecureSecretRequestCardProps {
   secrets: SecureSecretOption[]
   project?: SecureSessionProjectContext
   disabled?: boolean
+  canApprove?: boolean
   onGrant: (
     grant: SecureGrantInput,
   ) => boolean | void | Promise<boolean | void>
@@ -55,6 +56,7 @@ export function SecureSecretRequestCard({
   secrets,
   project,
   disabled = false,
+  canApprove = true,
   onGrant,
   onDeny,
   onPrivateFulfill,
@@ -82,7 +84,8 @@ export function SecureSecretRequestCard({
       ? null
       : availability.reason ?? formatSecureAvailability(availability.state)
   const canPrivateFulfill =
-    Boolean(onPrivateFulfill)
+    canApprove
+    && Boolean(onPrivateFulfill)
     && Boolean(project)
     && !request.secretId
     && compatibleSecrets.length === 0
@@ -172,7 +175,7 @@ export function SecureSecretRequestCard({
               <span className="text-muted-foreground">{unavailableReason}</span>
             </p>
           </div>
-        ) : compatibleSecrets.length > 0 ? (
+        ) : canApprove && compatibleSecrets.length > 0 ? (
           <label className="block space-y-1.5 text-xs font-medium text-foreground">
             Approve with saved secret
             <select
@@ -192,7 +195,9 @@ export function SecureSecretRequestCard({
           </label>
         ) : (
           <p className="text-xs text-muted-foreground">
-            No saved secret supports the requested binding.
+            {canApprove
+              ? 'No saved secret supports the requested binding.'
+              : 'Open Forge Desktop to approve or add a secret. You can dismiss this request here.'}
           </p>
         )}
 
@@ -202,7 +207,7 @@ export function SecureSecretRequestCard({
         </p>
 
         <div className="flex flex-wrap gap-2">
-          {availability.state === 'available' && selectedSecret ? (
+          {canApprove && availability.state === 'available' && selectedSecret ? (
             <Button
               type="button"
               size="sm"
@@ -234,7 +239,7 @@ export function SecureSecretRequestCard({
             disabled={disabled || Boolean(resolving)}
             onClick={() => void denyRequest()}
           >
-            Deny
+            Dismiss request
           </Button>
         </div>
       </div>

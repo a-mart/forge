@@ -183,7 +183,7 @@ export class SecureSessionsService {
     string,
     Map<string, SecureSessionProjectDefaultStatus>
   >();
-  private readonly leaseExpiryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly sessionExpiryTimers = new Map<string, NodeJS.Timeout>();
   private readonly activeExecutionCounts = new Map<string, number>();
   private readonly executionSettlers = new Map<string, Set<() => void>>();
   private readonly sessionMutationTails = new Map<string, Promise<void>>();
@@ -290,7 +290,7 @@ export class SecureSessionsService {
           }
         }
         store.revokeSessionLeases(workerAgentId, "session_stopped");
-        this.clearLeaseExpiryTimer(workerAgentId);
+        this.clearSessionExpiryTimer(workerAgentId);
         this.outputStates.delete(workerAgentId);
         this.projectDefaultStatuses.delete(workerAgentId);
         if (!destroyed) {
@@ -1309,6 +1309,7 @@ export class SecureSessionsService {
       }).snapshot;
       this.options.emitSnapshot(toSnapshotEvent(this.toPublicSnapshot(store, snapshot)));
     }
+    this.scheduleSessionExpiry(store, sessionAgentId);
     return this.toPublicSnapshot(store, snapshot);
   }
 
@@ -1499,7 +1500,7 @@ export class SecureSessionsService {
       if (storedSnapshot.leases.some((lease) => lease.state === "active")) {
         await this.ensureGuardForActiveLeases(store, sessionAgentId);
       }
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, storedSnapshot);
       if (runtime.changed || preparedProjectDefaults.length > 0 || !bindingWasActive) {
         if (options.recycleRuntime !== false) {
@@ -1648,7 +1649,7 @@ export class SecureSessionsService {
       }
     }
     const revoke = store.revokeSessionLeases(sessionAgentId, "session_stopped");
-    this.clearLeaseExpiryTimer(sessionAgentId);
+    this.clearSessionExpiryTimer(sessionAgentId);
     this.outputStates.delete(sessionAgentId);
     this.projectDefaultStatuses.delete(sessionAgentId);
     if (
@@ -1807,7 +1808,7 @@ export class SecureSessionsService {
         this.releaseSession(normalizedSessionAgentId);
         this.outputStates.delete(normalizedSessionAgentId);
         this.projectDefaultStatuses.delete(normalizedSessionAgentId);
-        this.clearLeaseExpiryTimer(normalizedSessionAgentId);
+        this.clearSessionExpiryTimer(normalizedSessionAgentId);
         if (catalogChanged) this.emitCatalog(store);
       })
     );
@@ -1923,7 +1924,7 @@ export class SecureSessionsService {
         await this.failClosedSession(store, descriptor);
         throw error;
       }
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, result.snapshot);
       this.options.emitSnapshot(toSnapshotEvent(snapshot));
       return snapshot;
@@ -2005,7 +2006,7 @@ export class SecureSessionsService {
       if (result.changed) {
         await this.reconcileAfterLeaseLoss(store, [sessionAgentId]);
       }
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, store.getSnapshot(sessionAgentId));
       if (result.changed) this.options.emitSnapshot(toSnapshotEvent(snapshot));
       return snapshot;
@@ -2056,6 +2057,7 @@ export class SecureSessionsService {
         throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       }
       const resolved = store.resolveRequest({ requestId, state: "denied" });
+      this.scheduleSessionExpiry(store, sessionAgentId);
       const result = this.toPublicSnapshot(store, resolved);
       this.options.emitSnapshot(toSnapshotEvent(result));
       return result;
@@ -2110,7 +2112,7 @@ export class SecureSessionsService {
       this.cachedLeaseSecrets.set(leaseId, material);
       this.cachedLeaseOwners.set(leaseId, sessionAgentId);
       await this.ensureGuardForActiveLeases(store, sessionAgentId);
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       const result = this.toPublicSnapshot(store, lease.snapshot);
       this.options.emitSnapshot(toSnapshotEvent(result));
       return result;
@@ -2302,7 +2304,7 @@ export class SecureSessionsService {
       active.guard = prospectiveGuard;
       active.guardRequired = true;
       prospectiveGuard = null;
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       this.emitCatalog(store);
       const result = this.toPublicSnapshot(store, lease.snapshot);
       this.options.emitSnapshot(toSnapshotEvent(result));
@@ -2417,6 +2419,7 @@ export class SecureSessionsService {
         requestedByDisplayName: bounded(requestedBy.displayName, 256),
         expiresAt: new Date(Date.parse(this.now()) + REQUEST_TTL_MS).toISOString(),
       });
+      this.scheduleSessionExpiry(store, sessionAgentId);
       this.options.emitSnapshot(toSnapshotEvent(this.toPublicSnapshot(store, snapshot)));
     } catch (error) {
       throw this.publicError(error);
@@ -2512,8 +2515,8 @@ export class SecureSessionsService {
 
   private async performCloseSecureSessions(): Promise<void> {
     this.closing = true;
-    for (const timer of this.leaseExpiryTimers.values()) clearTimeout(timer);
-    this.leaseExpiryTimers.clear();
+    for (const timer of this.sessionExpiryTimers.values()) clearTimeout(timer);
+    this.sessionExpiryTimers.clear();
 
     // Every mutation admitted before `closing` became true owns a tail. Drain
     // those operations before taking the final active-task snapshot so a
@@ -2745,7 +2748,7 @@ export class SecureSessionsService {
           )
         );
       }
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
       this.options.emitSnapshot(toSnapshotEvent(
         this.toPublicSnapshot(store, store.getSnapshot(sessionAgentId)),
       ));
@@ -2988,7 +2991,7 @@ export class SecureSessionsService {
             throw error;
           }
         }
-        this.scheduleLeaseExpiry(store, sessionAgentId);
+        this.scheduleSessionExpiry(store, sessionAgentId);
       }
 
       const snapshot = this.toPublicSnapshot(store, storedSnapshot);
@@ -3220,7 +3223,7 @@ export class SecureSessionsService {
       })
       .catch(() => false);
     store.revokeSessionLeases(descriptor.agentId, "policy_changed");
-    this.clearLeaseExpiryTimer(descriptor.agentId);
+    this.clearSessionExpiryTimer(descriptor.agentId);
     this.releaseSession(descriptor.agentId);
     this.projectDefaultStatuses.delete(descriptor.agentId);
     const failed = store.updateSessionRuntimeState({
@@ -3248,7 +3251,7 @@ export class SecureSessionsService {
         store,
         [mutation.snapshot.state.sessionAgentId],
       );
-      this.scheduleLeaseExpiry(store, mutation.snapshot.state.sessionAgentId);
+      this.scheduleSessionExpiry(store, mutation.snapshot.state.sessionAgentId);
       this.options.emitSnapshot(toSnapshotEvent(
         this.toPublicSnapshot(
           store,
@@ -3271,7 +3274,7 @@ export class SecureSessionsService {
   ): Promise<void> {
     const active = this.activeSessions.get(sessionAgentId);
     if (!active) {
-      this.clearLeaseExpiryTimer(sessionAgentId);
+      this.clearSessionExpiryTimer(sessionAgentId);
       this.releaseSession(sessionAgentId);
       const state = store.getSnapshot(sessionAgentId).state;
       if (
@@ -3299,7 +3302,7 @@ export class SecureSessionsService {
     } catch {
       destroyFailed = true;
     }
-    this.clearLeaseExpiryTimer(sessionAgentId);
+    this.clearSessionExpiryTimer(sessionAgentId);
     this.releaseSession(sessionAgentId);
     if (waitForExecutions) {
       await this.waitForSessionExecutionsToSettle(sessionAgentId);
@@ -3516,18 +3519,28 @@ export class SecureSessionsService {
     }
   }
 
-  private scheduleLeaseExpiry(
+  private scheduleSessionExpiry(
     store: SecureSessionStore,
     sessionAgentId: string,
   ): void {
-    this.clearLeaseExpiryTimer(sessionAgentId);
-    if (this.closing || this.closed || !this.activeSessions.has(sessionAgentId)) {
+    this.clearSessionExpiryTimer(sessionAgentId);
+    if (this.closing || this.closed) {
       return;
     }
-    const expirations = store.getSnapshot(sessionAgentId).leases
-      .filter((lease) => lease.state === "active" && lease.expiresAt !== null)
-      .map((lease) => Date.parse(lease.expiresAt!))
-      .filter(Number.isFinite);
+    const snapshot = store.getSnapshot(sessionAgentId);
+    const expirations = [
+      ...(this.activeSessions.has(sessionAgentId)
+        ? snapshot.leases
+            .filter((lease) =>
+              lease.state === "active" && lease.expiresAt !== null
+            )
+            .map((lease) => Date.parse(lease.expiresAt!))
+        : []),
+      ...snapshot.requests
+        .filter((request) => request.expiresAt !== null)
+        .map((request) => Date.parse(request.expiresAt!))
+        .filter(Number.isFinite),
+    ].filter(Number.isFinite);
     if (expirations.length === 0) {
       return;
     }
@@ -3537,24 +3550,24 @@ export class SecureSessionsService {
       Math.min(2_147_483_647, nextExpiration - Date.parse(this.now())),
     );
     const timer = setTimeout(() => {
-      if (this.leaseExpiryTimers.get(sessionAgentId) !== timer) {
+      if (this.sessionExpiryTimers.get(sessionAgentId) !== timer) {
         return;
       }
-      this.leaseExpiryTimers.delete(sessionAgentId);
-      void this.expireTimedLeasesFromTimer(sessionAgentId);
+      this.sessionExpiryTimers.delete(sessionAgentId);
+      void this.expireSessionFromTimer(sessionAgentId);
     }, delayMs);
     timer.unref?.();
-    this.leaseExpiryTimers.set(sessionAgentId, timer);
+    this.sessionExpiryTimers.set(sessionAgentId, timer);
   }
 
-  private async expireTimedLeasesFromTimer(sessionAgentId: string): Promise<void> {
+  private async expireSessionFromTimer(sessionAgentId: string): Promise<void> {
     if (this.closing || this.closed) return;
     try {
       const store = await this.store();
       await this.withAuthorityMutation(async () =>
         await this.withSessionMutation(sessionAgentId, async () => {
           await this.expireAndPublish(store, sessionAgentId);
-          this.scheduleLeaseExpiry(store, sessionAgentId);
+          this.scheduleSessionExpiry(store, sessionAgentId);
         })
       );
     } catch {
@@ -3566,10 +3579,10 @@ export class SecureSessionsService {
     }
   }
 
-  private clearLeaseExpiryTimer(sessionAgentId: string): void {
-    const timer = this.leaseExpiryTimers.get(sessionAgentId);
+  private clearSessionExpiryTimer(sessionAgentId: string): void {
+    const timer = this.sessionExpiryTimers.get(sessionAgentId);
     if (timer) clearTimeout(timer);
-    this.leaseExpiryTimers.delete(sessionAgentId);
+    this.sessionExpiryTimers.delete(sessionAgentId);
   }
 
   private toPublicSnapshot(
@@ -4044,7 +4057,7 @@ export class SecureSessionsService {
           },
         );
       }
-      this.scheduleLeaseExpiry(store, sessionAgentId);
+      this.scheduleSessionExpiry(store, sessionAgentId);
     }
   }
 

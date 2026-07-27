@@ -1,18 +1,9 @@
 export interface ChromeTab {
   id?: number
   windowId?: number
-  groupId?: number
-  openerTabId?: number
   active?: boolean
   title?: string
   url?: string
-}
-
-export interface ChromeTabGroup {
-  id: number
-  windowId: number
-  title?: string
-  collapsed: boolean
 }
 
 export interface ChromeWindow {
@@ -74,11 +65,6 @@ export interface ChromeApi {
     get(tabId: number): Promise<ChromeTab>
     create(createProperties: { url?: string; active?: boolean }): Promise<ChromeTab>
     remove(tabIds: number | number[]): Promise<void>
-    group(options: { tabIds: number[]; groupId?: number; createProperties?: { windowId?: number } }): Promise<number>
-  }
-  tabGroups: {
-    query(queryInfo: Record<string, unknown>): Promise<ChromeTabGroup[]>
-    update(groupId: number, updateProperties: { title?: string; color?: string; collapsed?: boolean }): Promise<ChromeTabGroup>
   }
   windows: {
     getAll(getInfo?: Record<string, unknown>): Promise<ChromeWindow[]>
@@ -95,10 +81,6 @@ export interface ChromeApi {
     }): Promise<unknown[]>
   }
   debugger: ChromeDebuggerApi
-  sidePanel: {
-    open(options: { windowId?: number; tabId?: number }): Promise<void>
-    setPanelBehavior(options: { openPanelOnActionClick: boolean }): Promise<void>
-  }
   alarms: {
     create(name: string, alarmInfo: { periodInMinutes?: number; delayInMinutes?: number }): void
     clear(name: string): Promise<boolean>

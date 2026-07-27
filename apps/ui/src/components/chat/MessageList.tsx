@@ -1377,6 +1377,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               secrets={secureSessionRequests.secrets}
               project={secureSessionRequests.project}
               disabled={secureSessionRequests.disabled}
+              canApprove={secureSessionRequests.canApprove}
               onGrant={(grant) =>
                 secureSessionRequests.onGrant(request.sessionAgentId, grant)}
               onDeny={(requestId) =>

@@ -5,7 +5,6 @@ import type {
   AgentToolCallEvent,
   ApiProxyCommand,
   BrowserClientCommand,
-  BrowserHostKind,
   BuilderTimelineChannelView,
   ChoiceRequestEvent,
   CollaborationServerEvent,
@@ -35,7 +34,7 @@ import {
   resolveSharedRoster,
 } from "../swarm/specialists/specialist-registry.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { BrowserAutomationService } from "../swarm/browser-automation/index.js";
+import { BrowserAutomationService, isEligibleLocalBuilderManager } from "../swarm/browser-automation/index.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
@@ -364,10 +363,14 @@ export class WsHandler {
         browserAutomationService: this.browserAutomationService,
         resolveManagerContextAgentId: (agentId) => this.subscriptionManager.resolveManagerContextAgentId(agentId),
         resolveProfileIdForAgent: (agentId) => this.subscriptionManager.resolveProfileIdForAgent(agentId),
+        isEligibleLocalBuilderManager: (agentId) => {
+          const descriptor = this.swarmManager.getAgent(agentId);
+          return !!descriptor && isEligibleLocalBuilderManager(descriptor);
+        },
         send: (targetSocket, event) => this.send(targetSocket, event),
         sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event),
         broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
-        hydrateHostSessions: (hostKind) => this.hydrateBrowserHostSessions(hostKind),
+        hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
         logDebug: (message, details) => this.logDebug(message, details),
       });
       return;
@@ -782,16 +785,15 @@ export class WsHandler {
     if (connectionId) this.browserAutomationService.unregisterHost(connectionId);
   }
 
-  private async hydrateBrowserHostSessions(hostKind: BrowserHostKind = "managed-electron") {
+  private async hydrateBrowserHostSessions() {
     const sessions = new Map<string, Awaited<ReturnType<BrowserAutomationService["getSessionSnapshot"]>>>();
     await Promise.all(this.swarmManager.listAgents()
-      .filter((descriptor) => descriptor.role === "manager")
+      .filter((descriptor) => descriptor.role === "manager" && isEligibleLocalBuilderManager(descriptor))
       .map(async (descriptor) => {
         const profileId = descriptor.profileId ?? descriptor.agentId;
         const snapshot = await this.browserAutomationService.getHostHydrationSnapshot(
           profileId,
           descriptor.agentId,
-          hostKind,
         );
         sessions.set(`${profileId}:${descriptor.agentId}`, snapshot);
       }));

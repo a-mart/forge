@@ -149,7 +149,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   isRuntimeRecoveryActive(agentId: string): boolean;
   beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   getActiveTurnId?(agentId: string, runtimeToken?: number): string | undefined;
-  handoffExternalChromeAtTurnEnd?(profileId: string, sessionAgentId: string, turnId: string): Promise<void>;
+  endBrowserTurn?(profileId: string, sessionAgentId: string, turnId: string): Promise<void>;
   recordManagerTurnWatchdogStatus?(
     agentId: string,
     runtimeToken: number | undefined,
@@ -892,11 +892,10 @@ export class SwarmRuntimeController {
     const descriptor = terminalTurnId ? this.descriptors.get(agentId) : undefined;
     if (terminalTurnId && descriptor?.profileId) {
       try {
-        await this.host.handoffExternalChromeAtTurnEnd?.(descriptor.profileId, agentId, terminalTurnId);
+        await this.host.endBrowserTurn?.(descriptor.profileId, agentId, terminalTurnId);
       } catch (error) {
-        // The browser service persisted opaque pending authority before transport.
-        // Runtime settlement must remain available while reconnect/retry completes it.
-        this.host.logDebug("external-chrome:turn-disposition-pending", { agentId, turnId: terminalTurnId, error: String(error) });
+        // Runtime settlement remains available while generic Desktop cleanup retries.
+        this.host.logDebug("browser:turn-cleanup-pending", { agentId, turnId: terminalTurnId, error: String(error) });
       }
     }
     return true;

@@ -136,6 +136,7 @@ export function applyTerminalCorsHeaders(
   }
 
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  response.setHeader("Access-Control-Allow-Credentials", "true");
   response.setHeader("Vary", "Origin");
   response.setHeader("Access-Control-Allow-Methods", methods);
   response.setHeader("Access-Control-Allow-Headers", "content-type");

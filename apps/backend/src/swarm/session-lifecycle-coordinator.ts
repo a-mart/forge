@@ -141,7 +141,6 @@ export interface SessionLifecycleCoordinatorOptions {
     BrowserAutomationService,
     | "cancelSession"
     | "releaseSessionForLifecycle"
-    | "recordFailedLifecycleRelease"
     | "archiveSession"
     | "restoreSession"
     | "deleteSession"
@@ -701,10 +700,13 @@ export class SessionLifecycleCoordinator {
     try {
       await this.options.browser.releaseSessionForLifecycle(profileId, agentId, "stop");
     } catch (error) {
-      // Stop is the only lifecycle that may proceed after a bounded release
-      // failure. Persist and publish the failure first; archive/delete and host
-      // replacement remain fail closed.
-      await this.options.browser.recordFailedLifecycleRelease(profileId, agentId, "stop", error);
+      // Stop is the generic emergency path and may proceed after a bounded
+      // browser release failure. Archive/delete and host replacement remain fail closed.
+      this.options.logDebug("browser:lifecycle_release:stop_failed", {
+        profileId,
+        agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

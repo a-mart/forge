@@ -18,6 +18,7 @@ describe('main-owned browser IPC role and lifecycle', () => {
     }
     const mainWindow = { isDestroyed: () => false, webContents: { id: 10 } }
     const dispose = installBrowserIpc({ ipcMain: ipcMain as never, mainWindow: mainWindow as never, manager: manager as never, viewHost: viewHost as never })
+    const installedHandlerCount = handlers.size
 
     await expect(handlers.get(BROWSER_IPC.reconcile)!({ sender: { id: 10 } }, { updateSequence: 1 })).resolves.toMatchObject({ ok: true, value: { applied: true } })
     await expect(handlers.get(BROWSER_IPC.reconcile)!({ sender: { id: 11 } }, {})).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
@@ -25,6 +26,6 @@ describe('main-owned browser IPC role and lifecycle', () => {
 
     dispose(); dispose(); await Promise.resolve()
     expect(viewHost.destroy).toHaveBeenCalledOnce()
-    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(16)
+    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(installedHandlerCount)
   })
 })

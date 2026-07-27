@@ -84,7 +84,7 @@ export function parseExternalChromePackageManifest(
   const shellFiles = hashInventory(extension.shellFiles, 'extension.shellFiles')
   const payloadFiles = hashInventory(extension.payloadFiles, 'extension.payloadFiles')
   if (Object.keys(shellFiles).length === 0) throw new Error('External Chrome package inventory must not be empty')
-  const requiredPayloadFiles = ['content-script.js', 'service-worker.js', 'side-panel.js']
+  const requiredPayloadFiles = ['content-script.js', 'service-worker.js']
   if (Object.keys(payloadFiles).sort().join('\0') !== requiredPayloadFiles.join('\0')) {
     throw new Error('External Chrome payload inventory does not match the shell ABI')
   }

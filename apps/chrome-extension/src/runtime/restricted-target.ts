@@ -17,13 +17,3 @@ export function restrictedTargetReason(url: string | undefined): RestrictedTarge
   }
   return ALLOWED_PROTOCOLS.has(parsed.protocol) ? null : 'unsupported-scheme'
 }
-
-export function candidateOrigin(url: string | undefined): string {
-  if (url === undefined) return ''
-  try {
-    const parsed = new URL(url)
-    return parsed.origin === 'null' ? `${parsed.protocol}//` : parsed.origin
-  } catch {
-    return ''
-  }
-}

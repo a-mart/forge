@@ -1,3 +1,3 @@
 # Payload boundary
 
-Versioned service-worker, content-script, and side-panel implementation belongs here. Stable shell bootstrap code does not.
+Versioned service-worker and content-script implementation belongs here. Stable shell bootstrap code does not.

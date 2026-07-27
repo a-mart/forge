@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { loadVerifiedPayloadSelector, parsePayloadSelector, payloadResourcePath } from '../src/shell/selector.js'
 
 const hash = 'a'.repeat(64)
-const payloadFiles = { 'content-script.js': hash, 'service-worker.js': hash, 'side-panel.js': hash }
+const payloadFiles = { 'content-script.js': hash, 'service-worker.js': hash }
 
 describe('versioned local payload selector', () => {
   it('binds the selected directory to shell ABI, version, and hash', () => {
@@ -35,17 +35,17 @@ describe('versioned local payload selector', () => {
     expect(() => parsePayloadSelector(selector)).toThrow()
   })
 
-  it.each(['content-script.js', 'service-worker.js', 'side-panel.js'])('fails closed before loading when %s is corrupt or missing', async (corruptFile) => {
+  it.each(['content-script.js', 'service-worker.js'])('fails closed before loading when %s is corrupt or missing', async (corruptFile) => {
     const bytes = new TextEncoder().encode('verified payload')
     const goodHash = createHash('sha256').update(bytes).digest('hex')
     const selector = {
       schemaVersion: 1, shellAbi: 1, payloadVersion: 'm1', payloadSha256: hash, payloadDirectory: `m1-${hash}`,
-      payloadFiles: { 'content-script.js': goodHash, 'service-worker.js': goodHash, 'side-panel.js': goodHash },
+      payloadFiles: { 'content-script.js': goodHash, 'service-worker.js': goodHash },
     }
     const fetchValue = async (url: string | URL | Request): Promise<Response> => {
       const path = String(url)
       if (path.endsWith('current.json')) return new Response(JSON.stringify(selector))
-      if (path.endsWith(corruptFile)) return corruptFile === 'side-panel.js' ? new Response('corrupt') : new Response(null, { status: 404 })
+      if (path.endsWith(corruptFile)) return new Response(null, { status: 404 })
       return new Response(bytes)
     }
     await expect(loadVerifiedPayloadSelector((path) => `chrome-extension://fixture/${path}`, 'service-worker.js', fetchValue as typeof fetch)).rejects.toThrow(/payload (file unavailable|integrity mismatch)/)
@@ -56,7 +56,7 @@ describe('versioned local payload selector', () => {
     const goodHash = createHash('sha256').update(bytes).digest('hex')
     const selector = {
       schemaVersion: 1, shellAbi: 1, payloadVersion: 'm1', payloadSha256: hash, payloadDirectory: `m1-${hash}`,
-      payloadFiles: { 'content-script.js': goodHash, 'service-worker.js': goodHash, 'side-panel.js': goodHash },
+      payloadFiles: { 'content-script.js': goodHash, 'service-worker.js': goodHash },
     }
     const fetched: string[] = []
     const fetchValue = async (url: string | URL | Request): Promise<Response> => {
@@ -64,6 +64,6 @@ describe('versioned local payload selector', () => {
       return String(url).endsWith('current.json') ? new Response(JSON.stringify(selector)) : new Response(bytes)
     }
     await expect(loadVerifiedPayloadSelector((path) => `chrome-extension://fixture/${path}`, 'service-worker.js', fetchValue as typeof fetch)).resolves.toEqual(selector)
-    expect(fetched.filter((url) => url.includes('/payloads/'))).toHaveLength(3)
+    expect(fetched.filter((url) => url.includes('/payloads/'))).toHaveLength(2)
   })
 })

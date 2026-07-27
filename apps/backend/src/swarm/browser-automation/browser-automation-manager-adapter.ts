@@ -39,8 +39,10 @@ export function createBrowserAutomationManagerInvoker(options: BrowserAutomation
   };
 }
 
-function isEligibleLocalBuilderManager(descriptor: AgentDescriptor): boolean {
-  return descriptor.sessionSurface !== "collab"
+export function isEligibleLocalBuilderManager(descriptor: AgentDescriptor): boolean {
+  return descriptor.role === "manager"
+    && !!descriptor.profileId
+    && descriptor.sessionSurface !== "collab"
     && descriptor.sessionPurpose === undefined
     && descriptor.cli === undefined
     && descriptor.externalThread === undefined

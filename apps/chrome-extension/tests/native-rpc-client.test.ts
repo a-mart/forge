@@ -62,7 +62,7 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     const hello = port.sent[0] as { params: Record<string, unknown> }
     expect(hello.params).toMatchObject({
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd',
-      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true, groups: true },
+      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true },
     })
     expect((hello.params.operations as Array<{ operation: string; supported: boolean }>).filter((entry) => entry.supported).map((entry) => entry.operation)).toEqual(['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'])
     scheduler.advance(1_000)

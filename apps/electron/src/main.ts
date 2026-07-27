@@ -20,6 +20,7 @@ import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 import { createBackendForkOptions } from './backend-fork-options.js'
 import { resolveDevBetterSqlite3Binding } from './dev-native-binding.js'
+import type { BrowserAutomationRequest, BrowserTabSnapshot } from '@forge/protocol'
 import { BrowserAutomationManager } from './browser/browser-automation-manager.js'
 import { installBrowserIpc } from './browser/browser-ipc.js'
 import { BrowserSessionRegistry } from './browser/browser-session.js'
@@ -39,7 +40,8 @@ import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
 import { resolveExternalChromeResources, type ExternalChromeResourceLocation } from './external-chrome/resources.js'
-import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
+import { ExternalChromeTargetAdapter, type ExternalChromeTransport } from './browser/external-chrome-target-adapter.js'
+import { withSessionProfileConfirmation } from './browser/automatic-chrome-profile-confirmation.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
 import { getStreamDeckPluginStatus, resolveStreamDeckAppPath, resolveStreamDeckPluginPath } from './stream-deck-install.js'
 
@@ -802,13 +804,22 @@ if (!hasSingleInstanceLock) {
         lifecycleLog.record(`electron_main_renderer_${event.type}`, event)
       },
     })
+    const automaticChromeTransport = createAutomaticChromeTransport(externalChromeCoordinator.transport(), mainWindow)
     const browserManager = new BrowserAutomationManager({
       approvedDataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
       hostWebContentsId: mainWindow.webContents.id,
       sendToRenderer: (channel, payload) => {
         sendToRendererWindow(mainWindow, channel, payload)
       },
-      externalChromeAdapter: new ExternalChromeTargetAdapter(externalChromeCoordinator.transport()),
+      externalChromeAdapter: new ExternalChromeTargetAdapter(automaticChromeTransport),
+      ensureManagedTarget: async (request) => {
+        const host = browserViewHost
+        if (!host) return null
+        const tab = createAutomaticManagedTab(request)
+        await host.ensureProvisional(tab, host.currentWorkspaceEpoch)
+        await host.commitProvisional(tab.tabId, host.currentWorkspaceEpoch)
+        return tab.tabId
+      },
     })
     browserViewHost = new ManagedBrowserViewHost({
       manager: browserManager,
@@ -1431,6 +1442,62 @@ function isTrustedMainRenderer(event: unknown): boolean {
   }
 
   return isTrustedRendererUrl(mainWindow.webContents.getURL())
+}
+
+function createAutomaticChromeTransport(
+  transport: ReturnType<ExternalChromeHostCoordinator['transport']>,
+  window: BrowserWindow,
+): ExternalChromeTransport {
+  return withSessionProfileConfirmation(transport, async (labels) => {
+    if (window.isDestroyed()) return null
+    const choice = await dialog.showMessageBox(window, {
+      type: 'question',
+      title: 'Choose a Chrome profile',
+      message: 'Which Chrome profile should Forge use for this session?',
+      detail: 'Forge remembers this choice only until you quit Forge.',
+      buttons: [...labels, 'Use embedded browser'],
+      cancelId: labels.length,
+      defaultId: 0,
+      noLink: true,
+    })
+    return choice.response < labels.length ? choice.response : null
+  })
+}
+
+function createAutomaticManagedTab(request: BrowserAutomationRequest): BrowserTabSnapshot {
+  const now = new Date().toISOString()
+  const url = request.operation === 'open' && request.input.url ? normalizeAutomaticBrowserUrl(request.input.url) : 'about:blank'
+  return {
+    targetAffinity: 'managed-electron',
+    tabId: `tab-${randomBytes(12).toString('hex')}`,
+    sessionAgentId: request.sessionAgentId,
+    profileId: request.profileId,
+    url,
+    title: 'New tab',
+    lifecycle: 'restoring',
+    loading: false,
+    live: false,
+    canGoBack: false,
+    canGoForward: false,
+    zoomFactor: 1,
+    controller: 'none',
+    agentCursor: null,
+    recording: null,
+    viewportSetting: { mode: 'fill' },
+    renderedViewport: null,
+    physicalVisible: false,
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function normalizeAutomaticBrowserUrl(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === 'about:blank') return 'about:blank'
+  if (/^https?:\/\//iu.test(trimmed)) return trimmed
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/iu.test(trimmed)) return `http://${trimmed}`
+  return `https://${trimmed}`
 }
 
 function buildBackendBootstrap(

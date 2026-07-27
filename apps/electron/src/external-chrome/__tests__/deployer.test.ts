@@ -40,7 +40,6 @@ async function fixture(
   const payloadContents = {
     'content-script.js': Buffer.from(`content-${payloadText}\n`),
     'service-worker.js': Buffer.from(`${payloadText}\n`),
-    'side-panel.js': Buffer.from(`panel-${payloadText}\n`),
   }
   const native = Buffer.from(nativeText)
   shellFiles['manifest.json'] = sha256(Buffer.from(manifestJson))
@@ -353,7 +352,6 @@ describe('ExternalChromeDeployer', () => {
       payloadDirectory: '../../outside', payloadFiles: {
         'content-script.js': sha256(Buffer.from('outside')),
         'service-worker.js': sha256(Buffer.from('outside')),
-        'side-panel.js': sha256(Buffer.from('outside')),
       },
     }
     await fs.writeFile(path.join(guarded.paths.extension, 'current.json'), JSON.stringify(malicious))

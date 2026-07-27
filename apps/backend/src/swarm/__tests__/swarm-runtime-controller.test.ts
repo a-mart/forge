@@ -376,7 +376,7 @@ describe("SwarmRuntimeController", () => {
     const { host, descriptors } = createRuntimeControllerHarness(config);
     const handoff = vi.fn(async () => undefined);
     host.getActiveTurnId = vi.fn(() => "turn-production-9");
-    host.handoffExternalChromeAtTurnEnd = handoff;
+    host.endBrowserTurn = handoff;
     const controller = new SwarmRuntimeController(host);
     const manager = baseDescriptor({
       agentId: "manager-turn-boundary", role: "manager", managerId: "manager-turn-boundary",

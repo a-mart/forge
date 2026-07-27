@@ -164,6 +164,19 @@ export interface DebuggerDetachNotice {
   devtoolsContention: boolean
 }
 
+/** Raised only when Chrome's initial debugger attach reports its exact ownership conflict. */
+export class DebuggerAttachConflictError extends Error {
+  constructor(message: string) {
+    super(message.slice(0, 1_024))
+    this.name = 'DebuggerAttachConflictError'
+  }
+}
+
+function isDebuggerAttachConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /^Another debugger is already attached(?: to the tab with id: [0-9]+)?\.?$/u.test(message)
+}
+
 export interface DebuggerRoute {
   targetId: string
   sessionId?: string
@@ -205,7 +218,14 @@ export class DebuggerController {
     const target: ChromeDebuggerTarget = { tabId }
     let didAttach = false
     try {
-      await this.debuggerApi.attach(target, '1.3')
+      try {
+        await this.debuggerApi.attach(target, '1.3')
+      } catch (error) {
+        if (isDebuggerAttachConflict(error)) {
+          throw new DebuggerAttachConflictError(error instanceof Error ? error.message : String(error))
+        }
+        throw error
+      }
       didAttach = true
       const tracker = new OopifAncestryTracker()
       await this.debuggerApi.sendCommand(target, 'Page.enable')

@@ -5,10 +5,12 @@ import type { SettingsApiClient } from '@/components/settings/settings-api-clien
 import type { SecureAccessRequestSummary, SecureSessionSnapshot } from '@forge/protocol'
 import {
   applySecureSessionProjectDefaults,
+  denySecureAccessRequest,
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
   grantSecureSessionLease,
   grantSecureSessionLeases,
+  isSecureControlAvailable,
   resolveSecureSecretsForProfile,
   secureSessionUiErrorMessage,
   SecureSessionUiError,
@@ -225,6 +227,28 @@ describe('Secure Sessions API', () => {
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get(
       'X-Forge-Secure-Control',
     )).toBe('test-secure-control-token-that-is-long-enough')
+  })
+
+  it('dismisses a request in the web UI without a Desktop capability token', async () => {
+    Reflect.deleteProperty(window, 'electronBridge')
+    const fetch = vi.fn(async (_path: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(snapshot(5)), { status: 200 }))
+
+    expect(isSecureControlAvailable()).toBe(false)
+    await denySecureAccessRequest(
+      makeClient(fetch),
+      'manager/one',
+      'request/one',
+      4,
+    )
+
+    const init = fetch.mock.calls[0]?.[1]
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      '/api/secure-sessions/manager%2Fone/access-requests/request%2Fone',
+    )
+    expect(init?.method).toBe('DELETE')
+    expect(JSON.parse(String(init?.body))).toEqual({ baseRevision: 4 })
+    expect(new Headers(init?.headers).has('X-Forge-Secure-Control')).toBe(false)
   })
 
   it('maps a fixed output-quarantine state without exposing match details', () => {
