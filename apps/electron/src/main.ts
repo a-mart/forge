@@ -70,6 +70,7 @@ const PACKAGED_RESOURCES_DIRNAME = 'forge-resources'
 const APP_PROTOCOL_SCHEME = 'app'
 const APP_PROTOCOL_HOST = 'forge'
 const EXTERNAL_PROTOCOL_SCHEME = 'forge'
+const ELECTRON_STARTED_AT = new Date(Date.now() - process.uptime() * 1_000).toISOString()
 
 type BackendReadyMessage = {
   type: 'ready'
@@ -83,6 +84,8 @@ type BackendBootstrap = {
   backendWsUrl: string
   version: string
   platform: string
+  appRuntime: 'development' | 'installed'
+  appStartedAt: string
   windowRole: 'main' | 'managed-browser-popout'
   managedBrowserPopoutAvailable: boolean
   secureControlToken: string
@@ -615,6 +618,8 @@ if (!hasSingleInstanceLock) {
           backendWsUrl: bootstrap.backendWsUrl,
           version: bootstrap.version,
           platform: bootstrap.platform,
+          appRuntime: bootstrap.appRuntime,
+          appStartedAt: bootstrap.appStartedAt,
           windowRole,
           managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
         }
@@ -1510,6 +1515,8 @@ function buildBackendBootstrap(
     backendWsUrl: `ws://127.0.0.1:${port}`,
     version: app.getVersion(),
     platform: process.platform,
+    appRuntime: app.isPackaged ? 'installed' : 'development',
+    appStartedAt: ELECTRON_STARTED_AT,
     windowRole: 'main',
     managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
     secureControlToken,

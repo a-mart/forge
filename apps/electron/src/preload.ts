@@ -17,6 +17,8 @@ type BackendBootstrap = {
   backendWsUrl: string
   version: string
   platform: string
+  appRuntime: 'development' | 'installed'
+  appStartedAt: string
   windowRole: ElectronWindowRole
   managedBrowserPopoutAvailable: boolean
   secureControlToken?: string
@@ -41,6 +43,8 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       backendUrl: bootstrap.backendUrl,
       backendWsUrl: bootstrap.backendWsUrl,
       getVersion: (): string => bootstrap.version,
+      appRuntime: bootstrap.appRuntime,
+      appStartedAt: bootstrap.appStartedAt,
       platform: bootstrap.platform,
       secureControlToken: bootstrap.secureControlToken,
       markRendererReady: (): void => ipcRenderer.send(MAIN_RENDERER_READY_CHANNEL),
@@ -103,6 +107,8 @@ function readBootstrap(): BackendBootstrap {
   if (!value) throw new Error('Electron bridge bootstrap was not available from the main process')
   if (value.windowRole !== 'main' && value.windowRole !== 'managed-browser-popout') throw new Error('Electron bridge bootstrap did not include a valid windowRole')
   if (typeof value.platform !== 'string' || value.platform.length === 0) throw new Error('Electron bridge bootstrap did not include a valid platform')
+  if (value.appRuntime !== 'development' && value.appRuntime !== 'installed') throw new Error('Electron bridge bootstrap did not include a valid appRuntime')
+  if (typeof value.appStartedAt !== 'string' || !Number.isFinite(Date.parse(value.appStartedAt))) throw new Error('Electron bridge bootstrap did not include a valid appStartedAt')
   if (typeof value.managedBrowserPopoutAvailable !== 'boolean') throw new Error('Electron bridge bootstrap did not include Managed Browser capability')
   if (value.windowRole === 'main') {
     if (typeof value.backendUrl !== 'string' || value.backendUrl.length === 0) throw new Error('Electron bridge bootstrap did not include a valid backendUrl')
@@ -115,6 +121,8 @@ function readBootstrap(): BackendBootstrap {
     backendWsUrl: value.backendWsUrl ?? '',
     version: value.version ?? '',
     platform: value.platform,
+    appRuntime: value.appRuntime,
+    appStartedAt: value.appStartedAt,
     windowRole: value.windowRole,
     managedBrowserPopoutAvailable: value.managedBrowserPopoutAvailable,
     ...(value.secureControlToken ? { secureControlToken: value.secureControlToken } : {}),

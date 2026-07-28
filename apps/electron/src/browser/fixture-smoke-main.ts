@@ -27,7 +27,7 @@ async function listen(server: http.Server): Promise<number> {
 void app.whenReady().then(async () => {
   const server = http.createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); response.end(fixtureHtml) })
   const port = await listen(server)
-  ipcMain.on('forge:get-backend-bootstrap', (event) => { event.returnValue = { backendUrl: 'http://127.0.0.1:1', backendWsUrl: 'ws://127.0.0.1:1', version: 'fixture', platform: process.platform, windowRole: 'main', managedBrowserPopoutAvailable: true, secureControlToken: 'fixture-secure-control-token-that-is-long-enough' } })
+  ipcMain.on('forge:get-backend-bootstrap', (event) => { event.returnValue = { backendUrl: 'http://127.0.0.1:1', backendWsUrl: 'ws://127.0.0.1:1', version: 'fixture', platform: process.platform, appRuntime: 'development', appStartedAt: new Date().toISOString(), windowRole: 'main', managedBrowserPopoutAvailable: true, secureControlToken: 'fixture-secure-control-token-that-is-long-enough' } })
   const window = new BrowserWindow({ show: false, width: 1_000, height: 800, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false } })
   const sessions = new BrowserSessionRegistry()
   const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
