@@ -77,25 +77,9 @@ function renderPicker(config: SessionCoordinationPickerConfig) {
 
 async function openPicker() {
   flushSync(() => {
-    fireEvent.pointerDown(getByRole(container, 'button', { name: /work mode:/i }), {
-      button: 0,
-      ctrlKey: false,
-      pointerType: 'mouse',
-    })
+    fireEvent.click(getByRole(container, 'button', { name: /work mode:/i }))
   })
   await flushAsyncWork()
-}
-
-async function openSubmenu(name: RegExp) {
-  const trigger = getByRole(document.body, 'menuitem', { name })
-  flushSync(() => {
-    fireEvent.pointerMove(trigger, {
-      pointerType: 'mouse',
-      clientX: 10,
-      clientY: 10,
-    })
-  })
-  await new Promise((resolve) => setTimeout(resolve, 150))
 }
 
 async function flushAsyncWork() {
@@ -103,31 +87,34 @@ async function flushAsyncWork() {
 }
 
 describe('SessionCoordinationPicker', () => {
-  it('uses a compact menu with one posture item per value and marks the project default', async () => {
+  it('shows work mode and roster choices together without nested menus', async () => {
     renderPicker(makeConfig())
     await openPicker()
 
-    expect(getByRole(document.body, 'menu')).toBeTruthy()
+    expect(getByRole(document.body, 'group', { name: 'Work mode' })).toBeTruthy()
+    expect(getByRole(document.body, 'group', { name: 'Worker roster' })).toBeTruthy()
+    expect(queryByRole(document.body, 'menu')).toBeNull()
     expect(queryByRole(document.body, 'button', { name: 'Apply' })).toBeNull()
     expect(document.body.textContent).not.toContain('prompt-cache miss')
 
-    await openSubmenu(/Work mode/)
-    expect(getAllByRole(document.body, 'menuitemradio', {
+    expect(getAllByRole(document.body, 'radio', {
       name: /Delegate first/,
     })).toHaveLength(1)
-    expect(getByRole(document.body, 'menuitemradio', {
+    expect(getByRole(document.body, 'radio', {
       name: /Delegate first.*Project default/,
+    })).toBeTruthy()
+    expect(getByRole(document.body, 'radio', {
+      name: /Balanced.*Project default/,
     })).toBeTruthy()
   })
 
-  it('applies a session posture override immediately', async () => {
+  it('applies a session posture override immediately and keeps the popover open', async () => {
     const config = makeConfig()
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Work mode/)
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'Hands-on' }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: 'Hands-on' }))
     })
     await flushAsyncWork()
 
@@ -135,19 +122,21 @@ describe('SessionCoordinationPicker', () => {
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
       managerPosture: { mode: 'override', value: 'hands_on' },
     })
+    expect(getByRole(document.body, 'group', { name: 'Worker roster' })).toBeTruthy()
   })
 
-  it('returns an overridden posture to the project default without duplicating values', async () => {
+  it('returns an overridden posture to inheritance by selecting the project-default value', async () => {
     const config = makeConfig({
       managerPosture: 'hands_on',
       managerPostureOrigin: 'session_override',
     })
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Work mode/)
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'menuitem', { name: 'Use project default' }))
+      fireEvent.click(getByRole(document.body, 'radio', {
+        name: /Delegate first.*Project default/,
+      }))
     })
     await flushAsyncWork()
 
@@ -163,10 +152,9 @@ describe('SessionCoordinationPicker', () => {
     })
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Work mode/)
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'menuitem', {
+      fireEvent.click(getByRole(document.body, 'button', {
         name: 'Make Hands-on project default',
       }))
     })
@@ -184,13 +172,12 @@ describe('SessionCoordinationPicker', () => {
     const config = makeConfig()
     renderPicker(config)
     await openPicker()
-    await openSubmenu(/Worker roster/)
 
-    expect(getAllByRole(document.body, 'menuitemradio', {
+    expect(getAllByRole(document.body, 'radio', {
       name: /Balanced.*Project default/,
     })).toHaveLength(1)
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'menuitemradio', {
+      fireEvent.click(getByRole(document.body, 'radio', {
         name: 'Provider Diverse',
       }))
     })
@@ -199,5 +186,21 @@ describe('SessionCoordinationPicker', () => {
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
       delegationRoster: { mode: 'override', rosterId: 'diverse' },
     })
+  })
+
+  it('shows a single roster as compact metadata instead of a one-item picker', async () => {
+    apiMock.fetchDelegationRosterSettings.mockResolvedValue({
+      version: 1,
+      defaultRosterId: 'balanced',
+      rosters: [
+        { rosterId: 'balanced', name: 'Balanced', revision: 1, defaultRouteId: 'fast', routes: [] },
+      ],
+    })
+    renderPicker(makeConfig())
+    await openPicker()
+
+    expect(queryByRole(document.body, 'radio', { name: /Balanced/ })).toBeNull()
+    expect(getByRole(document.body, 'group', { name: 'Worker roster' }).textContent)
+      .toContain('Balanced')
   })
 })

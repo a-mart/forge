@@ -1,18 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, GitBranch } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Check, ChevronDown, GitBranch } from 'lucide-react'
 import type { ManagerPosture } from '@forge/protocol'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { fetchDelegationRosterSettings } from '@/components/settings/specialists-api'
 import { cn } from '@/lib/utils'
 import { resolveSessionModelPickerApiClient } from './session-model-picker-target'
@@ -84,15 +73,28 @@ export function SessionCoordinationPicker({
     () => rosterLabel(rosters, currentRosterId),
     [currentRosterId, rosters],
   )
-  const postureLabel = formatPosture(config.managerPosture)
+  const [selectedPosture, setSelectedPosture] = useState<ManagerPosture>(config.managerPosture)
+  const [selectedRosterId, setSelectedRosterId] = useState(currentRosterId)
+  const postureLabel = formatPosture(selectedPosture)
 
-  const runUpdate = async (update: () => void | Promise<void>) => {
+  useEffect(() => {
+    setSelectedPosture(config.managerPosture)
+  }, [config.managerPosture])
+
+  useEffect(() => {
+    setSelectedRosterId(currentRosterId)
+  }, [currentRosterId])
+
+  const runUpdate = async (
+    update: () => void | Promise<void>,
+    rollback?: () => void,
+  ) => {
     setSaving(true)
     setError(null)
     try {
       await update()
-      setOpen(false)
     } catch (updateError) {
+      rollback?.()
       setError(updateError instanceof Error ? updateError.message : String(updateError))
       setOpen(true)
     } finally {
@@ -102,23 +104,33 @@ export function SessionCoordinationPicker({
 
   const selectPosture = (value: string) => {
     const posture = value as ManagerPosture
-    void runUpdate(() => config.onUpdateSession(config.sessionAgentId, {
-      managerPosture: posture === projectPosture
-        ? { mode: 'inherit' }
-        : { mode: 'override', value: posture },
-    }))
+    const previousPosture = selectedPosture
+    setSelectedPosture(posture)
+    void runUpdate(
+      () => config.onUpdateSession(config.sessionAgentId, {
+        managerPosture: posture === projectPosture
+          ? { mode: 'inherit' }
+          : { mode: 'override', value: posture },
+      }),
+      () => setSelectedPosture(previousPosture),
+    )
   }
 
   const selectRoster = (rosterId: string) => {
-    void runUpdate(() => config.onUpdateSession(config.sessionAgentId, {
-      delegationRoster: rosterId === projectRosterId
-        ? { mode: 'inherit' }
-        : { mode: 'override', rosterId },
-    }))
+    const previousRosterId = selectedRosterId
+    setSelectedRosterId(rosterId)
+    void runUpdate(
+      () => config.onUpdateSession(config.sessionAgentId, {
+        delegationRoster: rosterId === projectRosterId
+          ? { mode: 'inherit' }
+          : { mode: 'override', rosterId },
+      }),
+      () => setSelectedRosterId(previousRosterId),
+    )
   }
 
   const makePostureProjectDefault = () => {
-    const posture = config.managerPosture
+    const posture = selectedPosture
     void runUpdate(async () => {
       await config.onUpdateProjectDefaults(config.profileId, { managerPosture: posture })
       await config.onUpdateSession(config.sessionAgentId, {
@@ -128,10 +140,10 @@ export function SessionCoordinationPicker({
   }
 
   const makeRosterProjectDefault = () => {
-    if (!currentRosterId) return
+    if (!selectedRosterId) return
     void runUpdate(async () => {
       await config.onUpdateProjectDefaults(config.profileId, {
-        delegationRosterId: currentRosterId,
+        delegationRosterId: selectedRosterId,
       })
       await config.onUpdateSession(config.sessionAgentId, {
         delegationRoster: { mode: 'inherit' },
@@ -140,8 +152,8 @@ export function SessionCoordinationPicker({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
-      <DropdownMenuTrigger asChild>
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
         <button
           type="button"
           disabled={config.disabled}
@@ -151,120 +163,218 @@ export function SessionCoordinationPicker({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50 sm:max-w-44',
           )}
-          aria-label={`Work mode: ${postureLabel}. Worker roster: ${currentRosterLabel}.`}
-          title={`${postureLabel} · ${currentRosterLabel}`}
+          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Worker roster: ${currentRosterLabel}.`}
+          title={`${formatPosture(config.managerPosture)} · ${currentRosterLabel}`}
         >
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">{postureLabel}</span>
+          <span className="truncate">{formatPosture(config.managerPosture)}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
         </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger disabled={saving}>
-            <span className="shrink-0">Work mode</span>
-            <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
-              {postureLabel}
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-72 space-y-3 p-2"
+        aria-label="Session work settings"
+      >
+        <fieldset className="space-y-1.5" disabled={saving}>
+          <legend className="sr-only">Work mode</legend>
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Work mode
             </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-60">
-            <DropdownMenuRadioGroup
-              value={config.managerPosture}
-              onValueChange={selectPosture}
+            {saving && (
+              <span className="text-[10px] text-muted-foreground" aria-live="polite">
+                Saving…
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-1 rounded-md bg-muted/65 p-1">
+            {(['delegation_first', 'hands_on'] as const).map((posture) => {
+              const selected = selectedPosture === posture
+              const isProjectDefault = posture === projectPosture
+              return (
+                <label
+                  key={posture}
+                  className={cn(
+                    'flex min-h-10 cursor-pointer flex-col items-center justify-center rounded-sm px-2 py-1 text-center transition-colors',
+                    'hover:bg-background/65',
+                    'has-[:focus-visible]:outline-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                    selected
+                      ? 'bg-background text-foreground shadow-sm ring-1 ring-emerald-500/45'
+                      : 'text-muted-foreground',
+                    saving && 'pointer-events-none opacity-60',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`work-mode-${config.sessionAgentId}`}
+                    value={posture}
+                    checked={selected}
+                    disabled={saving}
+                    onChange={(event) => selectPosture(event.currentTarget.value)}
+                    className="sr-only"
+                  />
+                  <span className="text-xs font-medium">{formatPosture(posture)}</span>
+                  {isProjectDefault && <DefaultSuffix compact />}
+                </label>
+              )
+            })}
+          </div>
+          {selectedPosture !== projectPosture ? (
+            <InlineAction
+              disabled={saving}
+              onClick={makePostureProjectDefault}
             >
-              {(['delegation_first', 'hands_on'] as const).map((posture) => (
-                <DropdownMenuRadioItem key={posture} value={posture} disabled={saving}>
-                  <span>{formatPosture(posture)}</span>
-                  {posture === projectPosture && <DefaultSuffix />}
-                </DropdownMenuRadioItem>
+              Make {postureLabel} project default
+            </InlineAction>
+          ) : config.managerPostureOrigin === 'session_override' ? (
+            <InlineAction
+              disabled={saving}
+              onClick={() => void runUpdate(() => config.onUpdateSession(
+                config.sessionAgentId,
+                { managerPosture: { mode: 'inherit' } },
               ))}
-            </DropdownMenuRadioGroup>
-            {config.managerPostureOrigin === 'session_override' && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={saving}
-                  onSelect={() => void runUpdate(() => config.onUpdateSession(
-                    config.sessionAgentId,
-                    { managerPosture: { mode: 'inherit' } },
-                  ))}
-                >
-                  Use project default
-                </DropdownMenuItem>
-              </>
-            )}
-            {config.managerPosture !== projectPosture && (
-              <DropdownMenuItem disabled={saving} onSelect={makePostureProjectDefault}>
-                Make {postureLabel} project default
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+            >
+              Use project default
+            </InlineAction>
+          ) : null}
+        </fieldset>
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger disabled={loading || saving || !!error}>
-            <span className="shrink-0">Worker roster</span>
-            <span className="min-w-0 flex-1 whitespace-nowrap text-right text-xs text-muted-foreground">
-              {loading ? 'Loading…' : currentRosterLabel}
+        <div className="h-px bg-border/75" />
+
+        <fieldset className="space-y-1.5" disabled={loading || saving || !!error}>
+          <legend className="sr-only">Worker roster</legend>
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Worker roster
             </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-64">
-            <DropdownMenuRadioGroup value={currentRosterId} onValueChange={selectRoster}>
-              {rosters.map((roster) => (
-                <DropdownMenuRadioItem
-                  key={roster.rosterId}
-                  value={roster.rosterId}
-                  disabled={saving}
-                >
-                  <span className="truncate">{roster.name}</span>
-                  {roster.rosterId === projectRosterId && <DefaultSuffix />}
-                </DropdownMenuRadioItem>
+            {loading && (
+              <span className="text-[10px] text-muted-foreground" aria-live="polite">
+                Loading…
+              </span>
+            )}
+          </div>
+
+          {!loading && rosters.length === 1 ? (
+            <div className="flex min-h-9 items-center rounded-md border border-border/60 bg-muted/35 px-2.5">
+              <span className="truncate text-xs font-medium text-foreground">
+                {rosters[0]?.name}
+              </span>
+              {rosters[0]?.rosterId === projectRosterId && <DefaultSuffix />}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {rosters.map((roster) => {
+                const selected = selectedRosterId === roster.rosterId
+                return (
+                  <label
+                    key={roster.rosterId}
+                    className={cn(
+                      'flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2.5 transition-colors',
+                      'hover:bg-accent/70 has-[:focus-visible]:outline-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                      selected ? 'bg-accent text-accent-foreground' : 'text-muted-foreground',
+                      saving && 'pointer-events-none opacity-60',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={`worker-roster-${config.sessionAgentId}`}
+                      value={roster.rosterId}
+                      checked={selected}
+                      disabled={saving}
+                      onChange={(event) => selectRoster(event.currentTarget.value)}
+                      className="sr-only"
+                    />
+                    <span
+                      className={cn(
+                        'flex size-4 shrink-0 items-center justify-center rounded-full border',
+                        selected
+                          ? 'border-foreground/50 bg-background/80'
+                          : 'border-border',
+                      )}
+                      aria-hidden="true"
+                    >
+                      {selected && <Check className="size-2.5" />}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {roster.name}
+                    </span>
+                    {roster.rosterId === projectRosterId && <DefaultSuffix />}
+                  </label>
+                )
+              })}
+            </div>
+          )}
+
+          {!loading && selectedRosterId !== projectRosterId ? (
+            <InlineAction
+              disabled={saving}
+              onClick={makeRosterProjectDefault}
+            >
+              Make {rosterLabel(rosters, selectedRosterId)} project default
+            </InlineAction>
+          ) : config.delegationRosterOrigin === 'session_override' ? (
+            <InlineAction
+              disabled={saving}
+              onClick={() => void runUpdate(() => config.onUpdateSession(
+                config.sessionAgentId,
+                { delegationRoster: { mode: 'inherit' } },
               ))}
-            </DropdownMenuRadioGroup>
-            {config.delegationRosterOrigin === 'session_override' && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={saving}
-                  onSelect={() => void runUpdate(() => config.onUpdateSession(
-                    config.sessionAgentId,
-                    { delegationRoster: { mode: 'inherit' } },
-                  ))}
-                >
-                  Use project default
-                </DropdownMenuItem>
-              </>
-            )}
-            {currentRosterId && currentRosterId !== projectRosterId && (
-              <DropdownMenuItem disabled={saving} onSelect={makeRosterProjectDefault}>
-                Make {currentRosterLabel} project default
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+            >
+              Use project default
+            </InlineAction>
+          ) : null}
+        </fieldset>
 
         {error && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={(event) => {
-                event.preventDefault()
-                loadRosters()
-              }}
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+          >
+            <span className="min-w-0 flex-1 truncate">{error}</span>
+            <button
+              type="button"
+              className="shrink-0 font-medium underline-offset-2 hover:underline"
+              onClick={loadRosters}
             >
-              Could not load rosters · Retry
-            </DropdownMenuItem>
-          </>
+              Reload choices
+            </button>
+          </div>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverContent>
+    </Popover>
   )
 }
 
-function DefaultSuffix() {
+function InlineAction({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode
+  disabled?: boolean
+  onClick: () => void
+}) {
   return (
-    <span className="ml-auto text-[10px] text-muted-foreground">
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="block w-full px-1 text-right text-[10px] text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+    >
+      {children}
+    </button>
+  )
+}
+
+function DefaultSuffix({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'text-[10px] text-muted-foreground',
+        compact ? 'leading-tight' : 'ml-auto',
+      )}
+    >
       Project default
     </span>
   )
