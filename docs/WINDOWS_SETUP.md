@@ -22,6 +22,10 @@ pnpm i
 # Development (hot reload)
 pnpm dev
 
+# Electron plus trusted-network browser access
+pnpm.cmd dev:electron:remote
+# Remote UI: http://<station-address>:47188
+
 # Production daemon
 pnpm prod:daemon
 
@@ -29,7 +33,11 @@ pnpm prod:daemon
 pnpm prod:restart
 ```
 
-All core `pnpm` commands (`dev`, `build`, `test`, `prod:daemon`, `prod:restart`) work natively on Windows without WSL.
+All core `pnpm` commands (`dev`, `dev:electron:remote`, `build`, `test`,
+`prod:daemon`, `prod:restart`) work natively on Windows without WSL. The
+remote Electron command exposes the unauthenticated local Builder only to a
+trusted network; see [Configuration](CONFIGURATION.md#remote--network-access)
+before using it beyond that boundary.
 
 ## Data Directory
 

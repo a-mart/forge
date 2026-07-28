@@ -302,7 +302,7 @@ cp .env.example .env
 The `.env.example` file documents all available options with comments. Key categories:
 
 - **Core** — host, port, data directory, debug mode
-- **UI** — WebSocket URL override (dev only, production auto-resolves)
+- **UI** — WebSocket URL or backend-port override (dev only, production auto-resolves)
 - **Skills** — API keys for Brave Search, Gemini image generation
 - **Skill sharing** — anonymous worker origin and disable flag
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`. Builder web supports both plain Codex sidecar text turns and manager-routed selector turns: the plain `@Codex` / `[@Codex]` path uses the Codex CLI app-server sidecar, while `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager, inject guidance, and delegate to the visible `Codex Plugin` specialist for plugin-scoped Codex tools. The sidecar path remains text-only and excluded from Collaboration; the manager-routed path stays in the normal manager audit trail. Normal scoped tool output is bounded, while full redacted connector exports are written to session artifacts and returned to chat only as path/metadata plus a bounded preview.
@@ -318,6 +318,10 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration re
 pnpm dev
 # Backend: http://127.0.0.1:47187
 # UI:      http://127.0.0.1:47188
+
+# Start Electron and expose its development UI on a trusted network
+pnpm dev:electron:remote
+# Remote UI: http://<station-address>:47188
 
 # Build everything
 pnpm build

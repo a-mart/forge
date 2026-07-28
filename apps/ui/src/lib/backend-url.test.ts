@@ -50,11 +50,42 @@ describe('resolveBackendWsUrlFromLocation', () => {
     ).toBe('ws://127.0.0.1:47287')
   })
 
+  it('combines an explicit backend port with the browser hostname for remote Electron development', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '10.128.4.7', port: '47188' },
+        { envPort: '47287', webBaseMode: 'auto' },
+      ),
+    ).toBe('ws://10.128.4.7:47287')
+  })
+
+  it('uses secure websockets with the explicit backend port on HTTPS pages', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'https:', hostname: 'forge.example.test', port: '47188' },
+        { envPort: '47287', webBaseMode: 'auto' },
+      ),
+    ).toBe('wss://forge.example.test:47287')
+  })
+
+  it('ignores an invalid explicit backend port', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '10.128.4.7', port: '47188' },
+        { envPort: 'not-a-port', webBaseMode: 'auto' },
+      ),
+    ).toBe('ws://10.128.4.7:47187')
+  })
+
   it('electronWsUrl takes priority over envUrl', () => {
     expect(
       resolveBackendWsUrlFromLocation(
         { protocol: 'http:', hostname: '127.0.0.1', port: '47188' },
-        { electronWsUrl: 'ws://127.0.0.1:47287', envUrl: 'ws://127.0.0.1:9999' },
+        {
+          electronWsUrl: 'ws://127.0.0.1:47287',
+          envUrl: 'ws://127.0.0.1:9999',
+          envPort: '9998',
+        },
       ),
     ).toBe('ws://127.0.0.1:47287')
   })

@@ -4,7 +4,8 @@
  * Resolution priority:
  *   1. window.electronBridge.backendWsUrl  (Electron preload injection)
  *   2. VITE_FORGE_WS_URL / VITE_MIDDLEMAN_WS_URL  (build-time env var)
- *   3. Port-based heuristic from window.location  (web fallback)
+ *   3. VITE_FORGE_WS_PORT / VITE_MIDDLEMAN_WS_PORT combined with window.location
+ *   4. Port-based heuristic from window.location  (web fallback)
  */
 
 import '@/lib/electron-bridge' // ensure global Window augmentation is loaded
@@ -20,6 +21,17 @@ interface LocationLike {
   protocol: string
   hostname: string
   port: string
+}
+
+function parseBackendPort(value: string | undefined): number | undefined {
+  if (!value?.trim()) {
+    return undefined
+  }
+
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535
+    ? parsed
+    : undefined
 }
 
 function resolveLocationPort(locationLike: LocationLike): number {
@@ -47,6 +59,7 @@ export function resolveBackendWsUrlFromLocation(
   options?: {
     electronWsUrl?: string
     envUrl?: string
+    envPort?: string
     webBaseMode?: UiWebBaseMode
   },
 ): string {
@@ -61,13 +74,15 @@ export function resolveBackendWsUrlFromLocation(
   const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:'
   const hostname = locationLike.hostname
   const uiPort = resolveLocationPort(locationLike)
-  const backendPort = resolveBackendPort(uiPort, options?.webBaseMode ?? 'auto')
+  const backendPort =
+    parseBackendPort(options?.envPort) ??
+    resolveBackendPort(uiPort, options?.webBaseMode ?? 'auto')
 
   return `${protocol}//${hostname}:${backendPort}`
 }
 
 /**
- * Resolve the backend WebSocket URL using the 3-tier priority chain.
+ * Resolve the backend WebSocket URL using the priority chain above.
  *
  * Safe to call at module scope or inside components — handles SSR
  * (typeof window === 'undefined') by returning the dev default.
@@ -88,6 +103,9 @@ export function resolveBackendWsUrl(): string {
     envUrl:
       (import.meta.env.VITE_FORGE_WS_URL as string | undefined) ??
       (import.meta.env.VITE_MIDDLEMAN_WS_URL as string | undefined),
+    envPort:
+      (import.meta.env.VITE_FORGE_WS_PORT as string | undefined) ??
+      (import.meta.env.VITE_MIDDLEMAN_WS_PORT as string | undefined),
     webBaseMode: getConfiguredUiWebBaseMode(),
   })
 }

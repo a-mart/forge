@@ -26,6 +26,7 @@
     "dev:backend": "pnpm run dev:preflight && pnpm --filter @forge/backend dev",
     "dev:ui": "pnpm run dev:preflight && pnpm --filter @forge/ui dev",
     "dev:electron": "pnpm run streamdeck:build && pnpm run streamdeck:pack && concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"cross-env VITE_FORGE_WS_URL=ws://127.0.0.1:47287 pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
+    "dev:electron:remote": "pnpm run streamdeck:build && pnpm run streamdeck:pack && cross-env FORGE_HOST=0.0.0.0 FORGE_DISABLE_TANSTACK_DEVTOOLS=true VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS=true VITE_FORGE_WS_PORT=47287 concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/cli build && pnpm --filter @forge/skill-share-worker build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build && pnpm --filter @forge/stream-deck build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "lint": "eslint . --max-warnings 0",

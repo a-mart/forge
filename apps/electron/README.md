@@ -93,6 +93,22 @@ If no matching prebuilt binary is available, preparation falls back to a local s
 
 Changes to UI code hot-reload. Changes to Electron main process code (`src/main.ts`, etc.) require restarting the app.
 
+To launch the same Electron-owned backend while also exposing the development
+UI to another device on a trusted network:
+
+```bash
+pnpm dev:electron:remote
+```
+
+On Windows PowerShell or Command Prompt, use
+`pnpm.cmd dev:electron:remote`. The remote browser opens
+`http://<station-address>:47188`; its WebSocket connection uses the same
+hostname on backend port `47287`. The Electron renderer continues to receive
+the loopback backend URL from preload. Do not run `pnpm dev:remote` beside this
+command: that would start a second standalone backend instead of sharing the
+Electron-owned backend. Remote private secret entry requires HTTPS even though
+the general development UI can be reached over HTTP on a trusted network.
+
 Focused Automatic Browser Host validation commands:
 
 ```bash
