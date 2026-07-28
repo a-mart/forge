@@ -7,9 +7,17 @@ import {
   EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
   EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_EXECUTION_ERROR_CODES,
   EXTERNAL_CHROME_EXTENSION_ID,
+  EXTERNAL_CHROME_JSON_RPC_ERROR_CODES,
+  EXTERNAL_CHROME_LEASE_ERROR_CODES,
+  EXTERNAL_CHROME_PROTOCOL_ERROR_CODES,
+  EXTERNAL_CHROME_TARGET_ERROR_CODES,
+  EXTERNAL_CHROME_TRANSPORT_ERROR_CODES,
   parseExternalChromeJsonRpcFrame,
+  type ExternalChromeErrorCode,
   type ExternalChromeHelloParams,
+  type ExternalChromeJsonRpcError,
   type ExternalChromeJsonRpcMessage,
   type ExternalChromeRequestMethod,
   type ExternalChromeWelcomeResult,
@@ -52,6 +60,30 @@ function serializeMessage(message: unknown): { serialized: string; bytes: number
   const serialized = JSON.stringify(message)
   if (typeof serialized !== 'string') throw new Error('message is not JSON serializable')
   return { serialized, bytes: new TextEncoder().encode(serialized).byteLength }
+}
+
+const ERROR_FAMILIES: ReadonlyArray<readonly [readonly string[], number]> = [
+  [EXTERNAL_CHROME_TRANSPORT_ERROR_CODES, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.transportOrAuthentication],
+  [EXTERNAL_CHROME_PROTOCOL_ERROR_CODES, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.protocolOrVersion],
+  [EXTERNAL_CHROME_LEASE_ERROR_CODES, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.leaseOrScope],
+  [EXTERNAL_CHROME_TARGET_ERROR_CODES, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.targetOrDebugger],
+  [EXTERNAL_CHROME_EXECUTION_ERROR_CODES, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.execution],
+]
+
+function requestFailure(error: unknown): ExternalChromeJsonRpcError {
+  const record = typeof error === 'object' && error !== null ? error as Record<string, unknown> : null
+  const candidate = typeof record?.code === 'string' ? record.code : 'execution-failed'
+  const family = ERROR_FAMILIES.find(([codes]) => codes.includes(candidate))
+  const code = (family === undefined ? 'execution-failed' : candidate) as ExternalChromeErrorCode
+  const detail = error instanceof Error && error.message.length > 0 ? error.message : 'Extension request failed'
+  return {
+    code: family?.[1] ?? EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.execution,
+    message: detail.slice(0, 256),
+    data: {
+      code,
+      retryable: typeof record?.retryable === 'boolean' ? record.retryable : true,
+    },
+  }
 }
 
 export class NativeRpcClient {
@@ -248,10 +280,7 @@ export class NativeRpcClient {
       void Promise.resolve(handler(parsed)).then(
         (result) => this.postBounded({ jsonrpc: '2.0', id: parsed.id, result }),
         (error: unknown) => this.postBounded({
-          jsonrpc: '2.0', id: parsed.id, error: {
-            code: -32050,
-            message: error instanceof Error ? error.message.slice(0, 256) : 'Extension request failed',
-          },
+          jsonrpc: '2.0', id: parsed.id, error: requestFailure(error),
         }),
       ).catch(() => this.disconnectInvalid('failed to send extension response'))
       return

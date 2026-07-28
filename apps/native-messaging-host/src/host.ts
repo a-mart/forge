@@ -61,13 +61,21 @@ export async function runNativeHost(dependencies: NativeHostDependencies): Promi
     }
   }
 
+  const pumps = [extensionToDesktop(), desktopToExtension()]
   try {
-    await Promise.race([extensionToDesktop(), desktopToExtension()])
+    await Promise.race(pumps)
     return 0
   } catch (error) {
     diagnosticLine(dependencies.diagnostic, error instanceof Error ? error.message : String(error))
     return 1
   } finally {
+    // Whichever transport closes first must cancel the other pump. In
+    // particular, a relay EOF otherwise leaves the async stdin iterator alive,
+    // pinning the native process and Chrome Port until a later extension write.
+    // Chrome cannot deliver onDisconnect (and reconnect to a fresh epoch) while
+    // that orphaned process still owns the native-messaging pipes.
     relay.close()
+    dependencies.input.destroy()
+    await Promise.allSettled(pumps)
   }
 }
