@@ -119,6 +119,11 @@ export interface SwarmSettingsServiceOptions {
   saveStore: () => Promise<void>;
   emitAgentsSnapshot: () => void;
   emitProfilesSnapshot: () => void;
+  emitModelChangeNotice?: (
+    agentId: string,
+    sourceModel: SessionDescriptor["model"],
+    targetModel: SessionDescriptor["model"],
+  ) => void;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
 }
 
@@ -1388,6 +1393,8 @@ export class SwarmSettingsService {
         const createdAt = now();
         return {
           session: mutation.session,
+          sourceModel: cloneModelDescriptor(mutation.session.model),
+          targetModel: cloneModelDescriptor(mutation.targetModel),
           request: createModelChangeContinuityRequest({
             requestId: randomUUID(),
             createdAt,
@@ -1443,6 +1450,16 @@ export class SwarmSettingsService {
         throw error;
       }
     });
+
+    // The descriptor transaction has committed: this notice records the accepted effective
+    // configuration change, not confirmation that the best-effort runtime recycle completed.
+    for (const pendingWrite of continuityWrites) {
+      this.options.emitModelChangeNotice?.(
+        pendingWrite.session.agentId,
+        pendingWrite.sourceModel,
+        pendingWrite.targetModel,
+      );
+    }
 
     for (const pendingWrite of continuityWrites) {
       try {

@@ -137,6 +137,7 @@ export interface SwarmConfigurationCoordinatorOptions {
     agentId: string,
     reason: ManagerRuntimeRecycleReason,
   ): Promise<"recycled" | "deferred" | "none">;
+  emitModelChangeNotice?: SwarmSettingsServiceOptions["emitModelChangeNotice"];
   now: () => string;
   logDebug(message: string, details?: unknown): void;
 }
@@ -201,6 +202,7 @@ export class SwarmConfigurationCoordinator {
       saveStore: options.persistence.saveStore,
       emitAgentsSnapshot: options.persistence.emitAgentsSnapshot,
       emitProfilesSnapshot: options.persistence.emitProfilesSnapshot,
+      emitModelChangeNotice: options.emitModelChangeNotice,
       logDebug: options.logDebug,
     });
     this.prompts = new SwarmPromptService({
