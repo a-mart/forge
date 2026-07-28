@@ -114,7 +114,7 @@ export function CategoryDefaultsView({
   return (
     <SettingsSection
       label={`Category: ${category.name}`}
-      description="Default behavior modes and custom specialists for new channels in this category. Existing system-managed selections are preserved but not offered here."
+      description="Default task instructions and custom specialists for new channels in this category. Existing system-managed selections are preserved but not offered here."
       cta={
         hasChanges ? (
           <Button
@@ -138,7 +138,7 @@ export function CategoryDefaultsView({
         </div>
       ) : globalSpecialists.length === 0 ? (
         <p className="py-3 text-sm text-muted-foreground/70 italic">
-          No shared behavior modes or custom specialists available.
+          No shared task instructions or custom specialists available.
         </p>
       ) : (
         <div className="space-y-2">
@@ -174,7 +174,7 @@ export function CategoryDefaultsView({
 
       {!hasVisibleSelection && !loading && (
         <p className="mt-2 text-xs text-muted-foreground/70 italic">
-          No behavior modes or custom specialists selected for new channels. Channel-local custom specialists can still be added later.
+          No task instructions or custom specialists selected for new channels. Channel-local custom specialists can still be added later.
         </p>
       )}
 

@@ -148,7 +148,7 @@ describe("resolveManagerDelegation", () => {
     expect(translateManagerDelegationError(
       new Error('Lens "code-reviewer" is disabled for this profile. Enable it before spawning.'),
       resolved,
-    ).message).toBe('Behavior mode "correctness-review" is disabled in this session.');
+    ).message).toBe('Task mode "correctness-review" is disabled in this session.');
     expect(translateManagerDelegationError(
       new Error('Delegation route "critic" is not available.'),
       resolved,

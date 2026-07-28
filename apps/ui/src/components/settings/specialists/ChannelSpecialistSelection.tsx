@@ -115,7 +115,7 @@ export function ChannelSpecialistSelection({
   return (
     <SettingsSection
       label="Delegation Availability"
-      description={`Choose which shared behavior modes and custom specialists are available to #${channelLabel}. Existing system-managed selections are preserved but not offered here.`}
+      description={`Choose which shared task instructions and custom specialists are available to #${channelLabel}. Existing system-managed selections are preserved but not offered here.`}
       cta={
         hasChanges ? (
           <Button
@@ -139,7 +139,7 @@ export function ChannelSpecialistSelection({
         </div>
       ) : globalSpecialists.length === 0 ? (
         <p className="py-3 text-sm text-muted-foreground/70 italic">
-          No shared behavior modes or custom specialists available.
+          No shared task instructions or custom specialists available.
         </p>
       ) : (
         <div className="space-y-2">

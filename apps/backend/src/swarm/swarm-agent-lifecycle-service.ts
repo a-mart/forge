@@ -579,7 +579,7 @@ export class SwarmAgentLifecycleService {
     }
 
     if (requestedSpecialistId && (input.tier !== undefined || requestedLensId || requestedRoute)) {
-      throw new Error("Cannot combine custom specialist with route, tier, or behavior mode.");
+      throw new Error("Cannot combine custom specialist with an execution profile, tier, or task mode.");
     }
     if (requestedRoute && input.tier !== undefined) {
       throw new Error("Cannot combine route with legacy tier selection.");

@@ -22,10 +22,22 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const MAX_ROSTERS = 24;
 const MAX_ROUTES = 24;
 const DEFAULT_ROSTER_ID = "balanced";
-const LEGACY_BALANCED_DESCRIPTION =
-  "General-purpose routes migrated from the existing Forge worker model bindings.";
+const LEGACY_BALANCED_DESCRIPTIONS = new Set([
+  "General-purpose routes migrated from the existing Forge worker model bindings.",
+  "General-purpose worker profiles derived from the existing Forge model bindings.",
+]);
 const BALANCED_DESCRIPTION =
-  "General-purpose worker profiles derived from the existing Forge model bindings.";
+  "General-purpose execution profiles derived from the existing Forge model bindings.";
+const LEGACY_EXECUTION_PROFILE_LABELS: Readonly<Record<string, {
+  legacy: string;
+  current: string;
+}>> = {
+  "quick-scout": { legacy: "Quick Scout", current: "Quick Lookup" },
+  "fast-builder": { legacy: "Fast Builder", current: "Fast Execution" },
+  "research-analyst": { legacy: "Research Analyst", current: "Analysis" },
+  "independent-critic": { legacy: "Independent Critic", current: "Independent Review" },
+  "deep-reasoner": { legacy: "Deep Executor", current: "Deep Reasoning" },
+};
 
 type ManagerRouteDescriptor = Pick<
   AgentDescriptor,
@@ -114,7 +126,7 @@ export async function resolveDelegationRoute(
   const route = roster.routes.find((candidate) => candidate.routeId === routeId);
   if (!route) {
     const requestLabel = normalizedRequest === "auto"
-      ? `automatic route for behavior mode "${behaviorMode}"`
+      ? `automatic execution profile for task mode "${behaviorMode}"`
       : `route "${normalizedRequest}"`;
     throw new Error(
       `Delegation ${requestLabel} is not available in roster "${roster.name}" (${roster.rosterId}).`,
@@ -175,7 +187,7 @@ function normalizeRoster(input: unknown, index: number): DelegationRoster {
   const revision = normalizePositiveInteger(input.revision ?? 1, `${prefix}.revision`);
   const name = normalizeText(input.name, `${prefix}.name`, 80);
   const storedDescription = normalizeOptionalText(input.description, `${prefix}.description`, 240);
-  const description = storedDescription === LEGACY_BALANCED_DESCRIPTION
+  const description = storedDescription && LEGACY_BALANCED_DESCRIPTIONS.has(storedDescription)
     ? BALANCED_DESCRIPTION
     : storedDescription;
   const defaultRouteId = normalizeId(input.defaultRouteId, `${prefix}.defaultRouteId`, ROUTE_ID_PATTERN);
@@ -221,6 +233,10 @@ function normalizeRoster(input: unknown, index: number): DelegationRoster {
 
 function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
   if (!isRecord(input)) throw new Error(`${prefix} must be an object.`);
+  const routeId = normalizeId(input.routeId, `${prefix}.routeId`, ROUTE_ID_PATTERN);
+  const storedLabel = normalizeText(input.label, `${prefix}.label`, 80);
+  const legacyLabel = LEGACY_EXECUTION_PROFILE_LABELS[routeId];
+  const label = legacyLabel?.legacy === storedLabel ? legacyLabel.current : storedLabel;
   const color = normalizeOptionalText(input.color, `${prefix}.color`, 7);
   const avoidWhen = normalizeOptionalText(input.avoidWhen, `${prefix}.avoidWhen`, 240);
   if (color && !HEX_COLOR_PATTERN.test(color)) {
@@ -230,8 +246,8 @@ function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
     ? undefined
     : normalizeFallback(input.availabilityFallback, `${prefix}.availabilityFallback`);
   return {
-    routeId: normalizeId(input.routeId, `${prefix}.routeId`, ROUTE_ID_PATTERN),
-    label: normalizeText(input.label, `${prefix}.label`, 80),
+    routeId,
+    label,
     useWhen: normalizeText(input.useWhen, `${prefix}.useWhen`, 240),
     ...(avoidWhen ? { avoidWhen } : {}),
     ...(color ? { color } : {}),
@@ -284,11 +300,11 @@ function buildMigratedDelegationRosterSettings(
 ): DelegationRosterSettings {
   const byTier = new Map(tiers.map((tier) => [tier.tier, tier]));
   const routes = [
-    routeFromTier(byTier.get("light"), "quick-scout", "Quick Scout", "Cheap lookups, file discovery, and bounded source gathering."),
-    routeFromTier(byTier.get("fast"), "fast-builder", "Fast Builder", "Well-specified implementation and focused fixes with clear acceptance."),
-    routeFromTier(byTier.get("standard"), "research-analyst", "Research Analyst", "Ordinary planning, source gathering, analysis, and balanced synthesis."),
-    routeFromTier(byTier.get("deep"), "independent-critic", "Independent Critic", "Correctness, regression, security, and design review where independent judgment matters."),
-    routeFromTier(byTier.get("max"), "deep-reasoner", "Deep Executor", "Difficult architecture, cross-cutting implementation, ambiguous remediation, and high-risk synthesis."),
+    routeFromTier(byTier.get("light"), "quick-scout", "Quick Lookup", "Cheap lookups, file discovery, and bounded source gathering."),
+    routeFromTier(byTier.get("fast"), "fast-builder", "Fast Execution", "Well-specified implementation and focused fixes with clear acceptance."),
+    routeFromTier(byTier.get("standard"), "research-analyst", "Analysis", "Ordinary planning, source gathering, analysis, and balanced synthesis."),
+    routeFromTier(byTier.get("deep"), "independent-critic", "Independent Review", "Correctness, regression, security, and design review where independent judgment matters."),
+    routeFromTier(byTier.get("max"), "deep-reasoner", "Deep Reasoning", "Difficult architecture, cross-cutting implementation, ambiguous remediation, and high-risk synthesis."),
   ];
   routes[0]!.capabilityEscalationRouteId = "research-analyst";
   routes[1]!.capabilityEscalationRouteId = "deep-reasoner";

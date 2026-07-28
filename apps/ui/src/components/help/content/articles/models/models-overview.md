@@ -1,4 +1,4 @@
-Forge connects to multiple AI providers and models. Each model has different strengths — some are fast and cheap, others are slower but produce better results on hard problems. You pick a model for the manager session and configure worker profiles for delegated work.
+Forge connects to multiple AI providers and models. Each model has different strengths — some are fast and cheap, others are slower but produce better results on hard problems. You pick a model for the manager session and configure execution profiles for delegated work.
 
 ## What matters when choosing a model
 
@@ -12,8 +12,8 @@ Three things affect the quality and speed of what you get back:
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
 - **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose concrete models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first.
-- **Worker profiles:** Each profile in a Worker Roster has a model and reasoning level. Different rosters can optimize for speed, cost, provider diversity, or deeper capability without changing worker behavior.
-- **Fallback models:** Worker profiles and direct custom specialists can define a fallback model that activates if the primary is unavailable or rate-limited.
+- **Execution profiles:** Each profile in a Worker Roster has a model and reasoning level. Different rosters can optimize for speed, cost, provider diversity, or deeper capability without changing task instructions.
+- **Fallback models:** Execution profiles and direct custom specialists can define a fallback model that activates if the primary is unavailable or rate-limited.
 
 ## Model-specific instructions
 
