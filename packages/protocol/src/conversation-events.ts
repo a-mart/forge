@@ -139,7 +139,7 @@ export interface ConversationReplyTargetInput {
  * final outcome when the manager did not summarize it — informational, not an
  * error, and must not masquerade as manager prose.
  */
-export type SystemNoticeKind = 'worker_outcome_backstop'
+export type SystemNoticeKind = 'worker_outcome_backstop' | 'model_change'
 
 export interface ConversationMessageEvent {
   type: 'conversation_message'

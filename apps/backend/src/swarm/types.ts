@@ -386,7 +386,7 @@ export interface ConversationMessageEvent extends ConversationTimelineEntryMetad
   pinned?: boolean;
   replyTo?: ConversationReplyTarget;
   /** Presentation discriminator for system notices (see protocol SystemNoticeKind). */
-  systemNoticeKind?: "worker_outcome_backstop";
+  systemNoticeKind?: "worker_outcome_backstop" | "model_change";
 }
 
 export type ConversationLogKind =

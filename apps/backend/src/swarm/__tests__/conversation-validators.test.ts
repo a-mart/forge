@@ -33,6 +33,21 @@ function makeModelCacheObservation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("conversation validators", () => {
+  it("accepts model-change system notices excluded from model context", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "system",
+        text: "Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.4 (reasoning: high).",
+        timestamp: FIXED_NOW,
+        source: "system",
+        excludeFromModelContext: true,
+        systemNoticeKind: "model_change",
+      }),
+    ).toBe(true);
+  });
+
   it("accepts assistant output sources and rejects unknown conversation message sources", () => {
     expect(
       isConversationEntryEvent({

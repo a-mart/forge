@@ -5,10 +5,7 @@ import type { VersioningMutation, VersioningMutationSink } from "../versioning/v
 import type { PromptRegistry } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
-import {
-  createLiveCompactionRuntimeSettingsProvider,
-  type CompactionRuntimeSettingsProvider,
-} from "./compaction-runtime-settings-provider.js";
+import { createLiveCompactionRuntimeSettingsProvider, type CompactionRuntimeSettingsProvider } from "./compaction-runtime-settings-provider.js";
 import { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import { KnowledgeService } from "./knowledge-service.js";
 import { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
@@ -83,6 +80,7 @@ import { SwarmSessionService } from "./swarm-session-service.js";
 import { ProjectAgentSharingService } from "./project-agent-sharing-service.js";
 import { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import { SessionActiveToolsState } from "./session-active-tools.js";
+import { createModelChangeNoticeEvent } from "./runtime/model-change-continuity.js";
 import { ConversationAttachmentService } from "./conversation-attachment-service.js";
 import {
   InboundConversationAppender,
@@ -890,6 +888,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         ),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
         this.projectExecutableTrustCoordinator.applyManagerRuntimeRecyclePolicy(agentId, reason),
+      emitModelChangeNotice: (agentId, sourceModel, targetModel) =>
+        this.conversationProjector.emitConversationMessage(createModelChangeNoticeEvent(agentId, sourceModel, targetModel, this.now())),
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
     });
