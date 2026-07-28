@@ -97,8 +97,15 @@ export function installMainRendererRecovery(options: {
     }, readyTimeoutMs)
   }
 
-  const onDidStartLoading = (): void => {
-    armReadyTimer()
+  const onDidStartNavigation = (
+    event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+  ): void => {
+    // `did-start-loading` follows the tab spinner and also fires for Vite's
+    // module activity. Fast Refresh preserves the mounted React tree, so that
+    // activity does not produce a new readiness IPC and must not arm recovery.
+    if (event.isMainFrame && !event.isSameDocument) {
+      armReadyTimer()
+    }
   }
   const onRenderProcessGone = (): void => {
     scheduleRecovery('render-process-gone')
@@ -115,13 +122,13 @@ export function installMainRendererRecovery(options: {
     }
   }
 
-  options.window.webContents.on('did-start-loading', onDidStartLoading)
+  options.window.webContents.on('did-start-navigation', onDidStartNavigation)
   options.window.webContents.on('render-process-gone', onRenderProcessGone)
   options.window.webContents.on('did-fail-load', onDidFailLoad)
 
   return {
     markReady(sender) {
-      // Require a readiness watchdog armed by did-start-loading. This prevents
+      // Require a readiness watchdog armed by a top-level navigation. This prevents
       // a queued signal from the renderer that just exited from cancelling the
       // recovery scheduled for its replacement.
       if (!canRecover() || !readyTimer || sender !== options.window.webContents) return false
@@ -137,7 +144,7 @@ export function installMainRendererRecovery(options: {
       disposed = true
       clearReadyTimer()
       clearRecoveryTimer()
-      options.window.webContents.off('did-start-loading', onDidStartLoading)
+      options.window.webContents.off('did-start-navigation', onDidStartNavigation)
       options.window.webContents.off('render-process-gone', onRenderProcessGone)
       options.window.webContents.off('did-fail-load', onDidFailLoad)
     },

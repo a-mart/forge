@@ -18,6 +18,10 @@ function createWindow() {
   return { window, webContents }
 }
 
+function emitMainFrameNavigation(webContents: EventEmitter): void {
+  webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+}
+
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -35,7 +39,7 @@ describe('installMainRendererRecovery', () => {
       recoveryDelayMs: 10,
     })
 
-    webContents.emit('did-start-loading')
+    emitMainFrameNavigation(webContents)
     expect(controller.markReady({} as WebContents)).toBe(false)
     expect(controller.markReady(webContents as unknown as WebContents)).toBe(true)
     vi.advanceTimersByTime(200)
@@ -60,7 +64,7 @@ describe('installMainRendererRecovery', () => {
 
     webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 9 })
     await vi.advanceTimersByTimeAsync(10)
-    webContents.emit('did-start-loading')
+    emitMainFrameNavigation(webContents)
     expect(controller.markReady(webContents as unknown as WebContents)).toBe(true)
 
     expect(loadRenderer).toHaveBeenCalledTimes(1)
@@ -80,7 +84,7 @@ describe('installMainRendererRecovery', () => {
       recoveryDelayMs: 10,
     })
 
-    webContents.emit('did-start-loading')
+    emitMainFrameNavigation(webContents)
     webContents.emit('render-process-gone')
     expect(controller.markReady(webContents as unknown as WebContents)).toBe(false)
     await vi.advanceTimersByTimeAsync(10)
@@ -111,12 +115,34 @@ describe('installMainRendererRecovery', () => {
     controller.dispose()
   })
 
+  it('ignores spinner activity, subframe navigations, and same-document navigations', async () => {
+    vi.useFakeTimers()
+    const { window, webContents } = createWindow()
+    const loadRenderer = vi.fn(async () => undefined)
+    const controller = installMainRendererRecovery({
+      window,
+      loadRenderer,
+      isClosing: () => false,
+      readyTimeoutMs: 20,
+      recoveryDelayMs: 5,
+    })
+
+    webContents.emit('did-start-loading')
+    webContents.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
+    webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
+    await vi.advanceTimersByTimeAsync(30)
+
+    expect(loadRenderer).not.toHaveBeenCalled()
+    expect(controller.markReady(webContents as unknown as WebContents)).toBe(false)
+    controller.dispose()
+  })
+
   it('caps recovery when renderer loads never mount React', async () => {
     vi.useFakeTimers()
     const { window, webContents } = createWindow()
     const events: MainRendererRecoveryEvent[] = []
     const loadRenderer = vi.fn(async () => {
-      webContents.emit('did-start-loading')
+      emitMainFrameNavigation(webContents)
     })
     const controller = installMainRendererRecovery({
       window,
@@ -128,7 +154,7 @@ describe('installMainRendererRecovery', () => {
       onEvent: (event) => events.push(event),
     })
 
-    webContents.emit('did-start-loading')
+    emitMainFrameNavigation(webContents)
     await vi.advanceTimersByTimeAsync(100)
 
     expect(loadRenderer).toHaveBeenCalledTimes(3)
