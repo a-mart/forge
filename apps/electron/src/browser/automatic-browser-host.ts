@@ -272,6 +272,15 @@ export class AutomaticBrowserHost {
 
     if (managedOnly) return this.performManaged(request, selectedAffinity === 'managed-electron' ? selectedTabId : null)
     if (request.operation === 'status' && !selectedAffinity) return this.performManaged(request, null)
+    if (request.operation === 'open' && request.input.reuseExistingTab && selectedAffinity === 'external-chrome') {
+      const external = this.external
+      if (isAutomaticExternalBrowserAdapter(external) && supports(external, request.operation)) {
+        // A tabless open is an explicit re-selection boundary. Release any
+        // completed burst before probing the uniquely focused eligible tab;
+        // non-open operations continue to use exact sticky affinity.
+        return this.performExternal(request, external, false, null, true, false, true)
+      }
+    }
     if (selectedAffinity) {
       const selectedRequest = { ...request, tabId: selectedTabId } as BrowserAutomationRequest
       return this.performAtAffinity(selectedRequest, selectedAffinity, false)
@@ -307,11 +316,12 @@ export class AutomaticBrowserHost {
     preferredTabId: string | null,
     reuseExisting: boolean,
     dedicatedAttempt = false,
+    forceReacquire = false,
   ): Promise<BrowserAutomationResponse> {
     const session = { sessionAgentId: request.sessionAgentId, profileId: request.profileId }
     const burstKey = sessionKey(session)
     let burst = this.bursts.get(burstKey)
-    const canReuseBurst = Boolean(burst
+    const canReuseBurst = !forceReacquire && Boolean(burst
       && burst.pendingReleaseReason === null
       && reuseExisting
       && (!preferredTabId || preferredTabId === burst.authority.tabId))

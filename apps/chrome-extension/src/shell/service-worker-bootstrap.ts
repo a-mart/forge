@@ -20,12 +20,13 @@ interface ShellChrome {
   alarms: { onAlarm: ChromeEvent }
   debugger: { onEvent: ChromeEvent; onDetach: ChromeEvent }
   tabs: { onRemoved: ChromeEvent }
-  webNavigation: { onCommitted: ChromeEvent }
+  webNavigation: { onCommitted: ChromeEvent; onDOMContentLoaded: ChromeEvent; onCompleted: ChromeEvent }
 }
 
 export type ShellEventName =
   | 'runtime.installed' | 'runtime.startup' | 'runtime.message' | 'runtime.connect'
-  | 'alarm' | 'debugger.event' | 'debugger.detach' | 'tab.removed' | 'navigation.committed'
+  | 'alarm' | 'debugger.event' | 'debugger.detach' | 'tab.removed'
+  | 'navigation.committed' | 'navigation.domContentLoaded' | 'navigation.completed'
 
 export interface ServiceWorkerPayload {
   onShellEvent(name: ShellEventName, args: unknown[]): unknown
@@ -72,6 +73,8 @@ register(chromeApi.debugger.onEvent, 'debugger.event')
 register(chromeApi.debugger.onDetach, 'debugger.detach')
 register(chromeApi.tabs.onRemoved, 'tab.removed')
 register(chromeApi.webNavigation.onCommitted, 'navigation.committed')
+register(chromeApi.webNavigation.onDOMContentLoaded, 'navigation.domContentLoaded')
+register(chromeApi.webNavigation.onCompleted, 'navigation.completed')
 
 async function boot(): Promise<void> {
   const selector = await loadVerifiedPayloadSelector((path) => chromeApi.runtime.getURL(path), 'service-worker.js')

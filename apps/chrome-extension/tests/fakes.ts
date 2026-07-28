@@ -24,6 +24,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
   attached: Set<number>
   commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }>
   injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }>
+  updates: Array<{ tabId: number; properties: { url?: string; active?: boolean } }>
 } {
   const tabs = options.tabs ?? []
   const session = options.session ?? new FakeStorage()
@@ -31,11 +32,13 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
   const attached = new Set<number>()
   const commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> = []
   const injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }> = []
+  const updates: Array<{ tabId: number; properties: { url?: string; active?: boolean } }> = []
   let nextTabId = Math.max(0, ...tabs.map((tab) => tab.id ?? 0)) + 1
   return {
     attached,
     commands,
     injections,
+    updates,
     runtime: {
       id: 'fcchfcnadajoejfbiclihglkmbcfhajd',
       getURL: (value) => `chrome-extension://fcchfcnadajoejfbiclihglkmbcfhajd/${value}`,
@@ -53,8 +56,16 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
         return structuredClone(tab)
       },
       create: async (properties) => {
-        const tab = { id: nextTabId++, windowId: 1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created' }
+        const tab: ChromeTab = { id: nextTabId++, windowId: 1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created' }
         tabs.push(tab)
+        return structuredClone(tab)
+      },
+      update: async (tabId, properties) => {
+        const tab = tabs.find((entry) => entry.id === tabId)
+        if (tab === undefined) throw new Error('missing tab')
+        updates.push({ tabId, properties: structuredClone(properties) })
+        if (properties.url !== undefined) { tab.url = properties.url; tab.status = 'loading' }
+        if (properties.active !== undefined) tab.active = properties.active
         return structuredClone(tab)
       },
       remove: async (tabIds) => {

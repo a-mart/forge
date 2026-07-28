@@ -136,9 +136,11 @@ export class BrowserAutomationService {
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       if (!this.isMutable(key, generation)) return cancelled(operation);
       const requestedTabId = (input as { tabId?: string }).tabId;
+      // A tabless open is an explicit selection boundary owned by Desktop.
+      // Subsequent operations still resolve the canonical selected tab here.
       const target = requestedTabId
         ? snapshot.tabs.find((tab) => tab.tabId === requestedTabId && tab.lifecycle !== "closed")
-        : operation === "open" && !(input as BrowserAutomationInputByOperation["open"]).reuseExistingTab
+        : operation === "open"
           ? undefined
           : selectedTab(snapshot);
       if (requestedTabId && !target) {

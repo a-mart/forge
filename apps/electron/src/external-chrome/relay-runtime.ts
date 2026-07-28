@@ -877,7 +877,6 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const leaseEpoch = mapped?.leaseEpoch ?? (Math.max(0, ...leases.filter((lease) => lease.extensionInstanceId === extensionInstanceId).map((lease) => lease.leaseEpoch)) + 1)
     const acquired = await this.connection(extensionInstanceId).request('forge.browser.acquire', {
       protocolVersion: 1, sessionAgentId: request.sessionAgentId, leaseId, leaseEpoch,
-      ...(input.url ? { url: input.url } : {}),
       reuseFocused: input.reuseExistingTab && reuseFocused,
     })
     if (acquired.extensionInstanceId !== extensionInstanceId || acquired.sessionAgentId !== request.sessionAgentId ||
@@ -891,12 +890,16 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
     await this.checkpoints.put(checkpoint)
     this.sessionAffinities.set(affinityKey, extensionInstanceId)
-    const opaqueTabId = encodeTabId(extensionInstanceId, acquired.tab.tabId)
-    const tab = checkpointTab(checkpoint, opaqueTabId, request, acquired.tab.url, acquired.tab.title)
-    return { ok: true, result: { tab, created: acquired.created, panelRevealRequested: false }, updatedTab: tab }
+    return this.openCheckpoint(request, checkpoint, acquired.tab.tabId, input.url, acquired.created)
   }
 
-  private async openCheckpoint(request: BrowserAutomationRequest, checkpoint: ExternalChromeLeaseCheckpoint, tabId: number, url?: string): Promise<ExternalChromeTransportResult> {
+  private async openCheckpoint(
+    request: BrowserAutomationRequest,
+    checkpoint: ExternalChromeLeaseCheckpoint,
+    tabId: number,
+    url?: string,
+    created = false,
+  ): Promise<ExternalChromeTransportResult> {
     const opaqueTabId = encodeTabId(checkpoint.extensionInstanceId, tabId)
     if (url) {
       const navigated = await this.navigateResult({
@@ -905,7 +908,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       } as BrowserAutomationRequest)
       if (!navigated.ok) return navigated
       const tab = navigated.updatedTab!
-      return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+      return { ok: true, result: { tab, created, panelRevealRequested: false }, updatedTab: tab }
     }
     const inspected = await this.statusResult({
       ...request, operation: 'status', tabId: opaqueTabId, input: {},
@@ -913,7 +916,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (!inspected.ok) return inspected
     const selected = (inspected.result as BrowserAutomationResultByOperation['status']).selectedTab
     const tab = selected ?? checkpointTab(checkpoint, opaqueTabId, request, '', 'External Chrome tab')
-    return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+    return { ok: true, result: { tab, created, panelRevealRequested: false }, updatedTab: tab }
   }
 
   private async navigateResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {

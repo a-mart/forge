@@ -101,6 +101,34 @@ describe("Automatic Browser Host service", () => {
     });
   });
 
+  it("treats tabless open reuse as reselection while later operations remain sticky", async () => {
+    const instance = await service();
+    const requests: BrowserAutomationRequest[] = [];
+    register(instance, (request) => requests.push(request));
+
+    const initial = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: false });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const neutral = tab(requests[0]!, "external-neutral", "external-chrome");
+    accept(instance, { ...routing(requests[0]!), ok: true, updatedTab: neutral, result: { tab: neutral, created: true, panelRevealRequested: false } });
+    await initial;
+
+    const reselect = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: true });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ operation: "open", tabId: null, input: { reuseExistingTab: true } });
+    const focused = tab(requests[1]!, "external-focused", "external-chrome");
+    accept(instance, { ...routing(requests[1]!), ok: true, updatedTab: focused, result: { tab: focused, created: false, panelRevealRequested: false } });
+    await reselect;
+
+    const snapshot = instance.invoke("manager-1", "profile-1", "snapshot", {});
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests[2]).toMatchObject({ operation: "snapshot", tabId: "external-focused" });
+    accept(instance, {
+      ...routing(requests[2]!), ok: true, updatedTab: focused,
+      result: { tabId: "external-focused", url: "https://private.invalid/path", title: "Private", loading: false, viewportSetting: { mode: "fill" }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 }, visibleText: "focused page", interactiveElements: [], accessibility: {}, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: "image/png", data: "AA==", width: 1, height: 1 } },
+    });
+    await expect(snapshot).resolves.toMatchObject({ ok: true, result: { tabId: "external-focused" } });
+  });
+
   it("dispatches every tabless operation once and adopts the target returned by Desktop", async () => {
     const instance = await service();
     const requests: BrowserAutomationRequest[] = [];

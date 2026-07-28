@@ -153,6 +153,25 @@ describe('per-tab compare-and-set authority', () => {
     expect(chrome.attached.size).toBe(0)
   })
 
+  it('recovers only exact Forge-created neutral authority and completes it after an eligible commit', async () => {
+    const session = new FakeStorage()
+    const tabs = [{ id: 1, windowId: 1, active: false, url: 'about:blank' }]
+    const chrome = fakeChrome({ tabs, session })
+    const first = new LeaseManager(chrome, 'payload')
+    await first.acquire({
+      tabId: 1, ownerId: 'owner', ownerEpoch: 2, sessionAgentId: 'session', expectedOwnerEpoch: 0, createdByForge: true,
+    })
+
+    await first.releaseOwner('owner', 2)
+    const recovered = new LeaseManager(chrome, 'payload')
+    await expect(recovered.recover()).resolves.toEqual([])
+    await expect(recovered.acquire({
+      tabId: 1, ownerId: 'next-owner', ownerEpoch: 3, sessionAgentId: 'session', expectedOwnerEpoch: 0,
+    })).resolves.toMatchObject({ authority: { createdByForge: true, initialNavigationPending: true, state: 'human' } })
+    await chrome.tabs.update(1, { url: 'https://fixture.invalid/ready' })
+    await expect(recovered.completeInitialNavigation('next-owner', 3, 1)).resolves.toMatchObject({ initialNavigationPending: false })
+  })
+
   it('reports and reuses only one focused eligible tab without exposing an inventory', async () => {
     const chrome = fakeChrome({ tabs: [tab(1, true), tab(2)], windows: [{ id: 1, focused: true, tabs: [tab(1, true), tab(2)] }] })
     const manager = new LeaseManager(chrome, 'payload')
@@ -162,22 +181,35 @@ describe('per-tab compare-and-set authority', () => {
     })
   })
 
-  it('allocates a dedicated ungrouped tab when focused reuse is requested but unavailable', async () => {
+  it('allocates a neutral background tab when focused reuse is unavailable', async () => {
     const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
     const manager = new LeaseManager(chrome, 'payload')
-    await expect(manager.allocateAutomaticTab({ reuseFocused: true })).resolves.toMatchObject({
-      tab: { id: 2, active: true, url: 'https://forge.invalid/' }, createdByForge: true,
+    const allocated = await manager.allocateAutomaticTab({ reuseFocused: true })
+    expect(allocated).toMatchObject({
+      tab: { id: 2, active: false, url: 'about:blank' }, createdByForge: true,
     })
+    await expect(manager.acquire({
+      tabId: 2, ownerId: 'owner', ownerEpoch: 1, sessionAgentId: 'session', expectedOwnerEpoch: 0, createdByForge: true,
+    })).resolves.toMatchObject({ authority: { createdByForge: true, initialNavigationPending: true } })
   })
 
-  it('waits for Chrome to expose a created tab URL before applying the unchanged restriction check', async () => {
+  it('blocks ordinary restricted tabs without exact Forge-created neutral authority', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 1, windowId: 1, active: true, url: 'about:blank' }] })
+    const manager = new LeaseManager(chrome, 'payload')
+    await expect(manager.acquire({
+      tabId: 1, ownerId: 'owner', ownerEpoch: 1, sessionAgentId: 'session', expectedOwnerEpoch: 0,
+    })).rejects.toMatchObject({ code: 'restricted-target' })
+    expect(manager.all()).toEqual([])
+  })
+
+  it('keeps a URL-bearing allocation neutral and inactive while Chrome exposes its created-tab URL', async () => {
     const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
     const create = chrome.tabs.create
     chrome.tabs.create = async (properties) => ({ ...await create(properties), url: undefined })
     const manager = new LeaseManager(chrome, 'payload')
 
     await expect(manager.allocateAutomaticTab({ reuseFocused: false, url: 'https://fixture.invalid/' })).resolves.toMatchObject({
-      tab: { id: 2, url: 'https://fixture.invalid/' }, createdByForge: true,
+      tab: { id: 2, active: false, url: 'about:blank' }, createdByForge: true,
     })
   })
 })

@@ -177,11 +177,6 @@ function isDebuggerAttachConflict(error: unknown): boolean {
   return /^Another debugger is already attached(?: to the tab with id: [0-9]+)?\.?$/u.test(message)
 }
 
-function isChromeErrorPageFrameFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /^Frame with ID \S{1,128} is showing error page$/u.test(message)
-}
-
 export interface DebuggerRoute {
   targetId: string
   sessionId?: string
@@ -217,7 +212,7 @@ export class DebuggerController {
     this.states.set(tabId, target.extensionId === extensionId ? 'ATTACHED' : 'LOST')
   }
 
-  async attach(tabId: number, options: { allowInitialErrorPage?: boolean } = {}): Promise<{ initialErrorPage: boolean }> {
+  async attach(tabId: number): Promise<void> {
     if (this.state(tabId) !== 'UNATTACHED') throw new Error(`debugger is ${this.state(tabId)}`)
     this.states.set(tabId, 'ATTACHING')
     const target: ChromeDebuggerTarget = { tabId }
@@ -238,15 +233,8 @@ export class DebuggerController {
       const targetInfo = record(targetInfoResult?.targetInfo)
       const rootTargetId = typeof targetInfo?.targetId === 'string' ? targetInfo.targetId : undefined
       if (rootTargetId === undefined) throw new Error('Chrome did not prove the root target identity')
-      let initialErrorPage = false
-      let frameTree: Record<string, unknown> | null = null
-      try {
-        const frameTreeResult = record(await this.debuggerApi.sendCommand(target, 'Page.getFrameTree'))
-        frameTree = record(frameTreeResult?.frameTree)
-      } catch (error) {
-        if (options.allowInitialErrorPage !== true || !isChromeErrorPageFrameFailure(error)) throw error
-        initialErrorPage = true
-      }
+      const frameTreeResult = record(await this.debuggerApi.sendCommand(target, 'Page.getFrameTree'))
+      const frameTree = record(frameTreeResult?.frameTree)
       const rootFrame = record(frameTree?.frame)
       const rootFrameId = typeof rootFrame?.id === 'string' ? rootFrame.id : undefined
       tracker.registerRoot(rootTargetId, rootFrameId)
@@ -259,7 +247,6 @@ export class DebuggerController {
         flatten: true,
       })
       this.states.set(tabId, 'ATTACHED')
-      return { initialErrorPage }
     } catch (error) {
       this.states.set(tabId, 'UNATTACHED')
       this.trackers.delete(tabId)

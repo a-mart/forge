@@ -166,7 +166,7 @@ async function fakeExtensionLoop(
         },
       } : operation === 'status' ? {
         available: true,
-        host: { targetAffinity: 'external-chrome', connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
+        host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
         panelVisible: false, panelRevealRequested: false, physicalTabVisible: false,
         selectedTab: {
           targetAffinity: 'external-chrome', tabId: String(params.tabId), sessionAgentId: 'session-a', profileId: 'instance_profile_a',
@@ -313,11 +313,19 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     await expect(concurrent.ready()).rejects.toThrow()
   })
 
-  it('routes create and navigate through the real adapter transport and persists only opaque lease scope', async () => {
+  it('routes URL-bearing create through neutral acquire then authorized navigate and persists only opaque lease scope', async () => {
     const { runtime, client, root } = await connectedRuntime()
-    const loop = fakeExtensionLoop(client)
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
     const opened = await runtime.execute(request('open', null, { url: 'https://fixture.invalid/', show: false, reuseExistingTab: false }))
     expect(opened).toMatchObject({ ok: true, result: { created: true, tab: { tabId: 'ext.instance_profile_a.41' } } })
+    expect(requests.slice(0, 3).map(({ method }) => method)).toEqual([
+      'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.execute',
+    ])
+    expect(requests[1]?.params).not.toHaveProperty('url')
+    expect(requests[2]?.params).toMatchObject({
+      operation: 'navigate', tabId: 41, input: { url: 'https://fixture.invalid/', readiness: 'load' },
+    })
     const checkpoint = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
     expect(checkpoint).toContain('instance_profile_a')
     expect(checkpoint).not.toContain('fixture.invalid')
@@ -499,8 +507,12 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     await expect(runtime.execute(request('open', null, { show: false, reuseExistingTab }))).resolves.toMatchObject({
       ok: true, result: { created: true, tab: { tabId: 'ext.instance_profile_a.41' } },
     })
-    expect(requests.map(({ method }) => method)).toEqual(['forge.browser.focusedEligibility', 'forge.browser.acquire'])
+    expect(requests.map(({ method }) => method)).toEqual([
+      'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.execute',
+    ])
     expect(requests[1]?.params).toMatchObject({ reuseFocused: false })
+    expect(requests[1]?.params).not.toHaveProperty('url')
+    expect(requests[2]?.params).toMatchObject({ operation: 'status', tabId: 41 })
     runtime.deactivate(); client.close(); await loop
   })
 

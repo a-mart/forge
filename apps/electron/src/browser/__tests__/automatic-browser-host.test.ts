@@ -124,6 +124,30 @@ describe('AutomaticBrowserHost', () => {
     expect(external.executions[0]?.tabId).not.toBe('selected')
   })
 
+  it('reselects focused Chrome on explicit tabless open and keeps subsequent operations sticky', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    const stale = tab('chrome-neutral', 'external-chrome')
+    stale.url = 'about:blank'
+    host.synchronizeSessions([session([stale], stale.tabId)])
+
+    await host.perform(request('snapshot', {}, stale.tabId))
+    external.acquireResults.push({ ok: true, authority: { ownerEpoch: 2, tabId: 'chrome-focused' } })
+    await expect(host.perform(request('open', { show: false, reuseExistingTab: true }, null))).resolves.toMatchObject({
+      ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-focused' },
+    })
+    expect(external.authorityReleases).toMatchObject([{ authority: { tabId: 'chrome-neutral' }, reason: 'idle' }])
+    expect(external.acquisitions).toMatchObject([
+      { preferredTabId: 'chrome-neutral', reuseExisting: true },
+      { preferredTabId: null, reuseExisting: true },
+    ])
+
+    await host.perform(request('snapshot', {}, null))
+    expect(external.acquisitions).toHaveLength(2)
+    expect(external.executions.map(({ tabId }) => tabId)).toEqual(['chrome-neutral', 'chrome-focused', 'chrome-focused'])
+  })
+
   it('decides managed-only operations before allocating even with Chrome session affinity', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
