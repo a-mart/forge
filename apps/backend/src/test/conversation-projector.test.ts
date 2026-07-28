@@ -199,6 +199,44 @@ async function buildCacheMetadata(
 }
 
 describe('ConversationProjector session tree continuity', () => {
+  it('persists and replays model-change notices while emitting the live event', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-model-change-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const emitted: ServerEvent[] = []
+    const projector = new ConversationProjector({
+      descriptors: new Map([[descriptor.agentId, descriptor]]),
+      runtimes: new Map(),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: (_eventName, event) => emitted.push(event),
+      logDebug: () => {},
+    })
+    const notice = {
+      type: 'conversation_message' as const,
+      agentId: descriptor.agentId,
+      role: 'system' as const,
+      text: 'Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.4 (reasoning: high).',
+      timestamp: FIXED_NOW,
+      source: 'system' as const,
+      excludeFromModelContext: true as const,
+      systemNoticeKind: 'model_change' as const,
+    }
+
+    projector.emitConversationMessage(notice)
+
+    expect(emitted).toContainEqual(expect.objectContaining(notice))
+    const persisted = JSON.parse((await readFile(sessionFile, 'utf8')).trim().split(/\r?\n/u).at(-1)!) as {
+      data?: Record<string, unknown>
+    }
+    expect(persisted.data).toMatchObject(notice)
+
+    const replayProjector = makeProjector({ descriptor })
+    expect(replayProjector.getConversationHistory(descriptor.agentId)).toContainEqual(
+      expect.objectContaining(notice),
+    )
+  })
+
   it('pages the canonical source without gaps when newer entries append between pages', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-memory-page-'))
     const sessionFile = join(root, 'manager.jsonl')

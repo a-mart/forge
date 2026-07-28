@@ -123,6 +123,7 @@ function createService(options: {
   transactionDescriptors?: (callback: any) => Promise<any>;
   emitAgentsSnapshot?: ReturnType<typeof vi.fn>;
   emitProfilesSnapshot?: ReturnType<typeof vi.fn>;
+  emitModelChangeNotice?: ReturnType<typeof vi.fn>;
   logDebug?: ReturnType<typeof vi.fn>;
   now?: () => string;
   secretsEnvService?: any;
@@ -155,6 +156,7 @@ function createService(options: {
     saveStore: options.saveStore ?? vi.fn(async () => {}),
     emitAgentsSnapshot: options.emitAgentsSnapshot ?? vi.fn(),
     emitProfilesSnapshot: options.emitProfilesSnapshot ?? vi.fn(),
+    emitModelChangeNotice: options.emitModelChangeNotice,
     logDebug: options.logDebug ?? vi.fn()
   });
 }
@@ -538,6 +540,131 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       sourceModel: resolveModelDescriptorFromPreset("pi-codex"),
       targetModel: resolveModelDescriptorFromPreset("pi-5.4")
     });
+  });
+
+  it("emits one marker per effective change, including reasoning-only changes", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const emitModelChangeNotice = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      emitModelChangeNotice,
+    });
+
+    await service.updateManagerModel(session.agentId, "pi-codex", "high");
+
+    expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
+    expect(emitModelChangeNotice).toHaveBeenCalledWith(
+      session.agentId,
+      resolveModelDescriptorFromPreset("pi-codex"),
+      { ...resolveModelDescriptorFromPreset("pi-codex"), thinkingLevel: "high" },
+    );
+
+    await service.updateManagerModel(session.agentId, "pi-codex", "high");
+    expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks only effectively changed inherited sessions during a profile-default cascade", async () => {
+    const root = await createTempRoot();
+    const inheritedChanged = createSession(root, "manager--changed");
+    const inheritedNoop = createSession(root, "manager--noop", resolveModelDescriptorFromPreset("pi-5.4"));
+    const overridden = createSession(root, "manager--override", resolveModelDescriptorFromPreset("pi-codex"), "session_override");
+    const emitModelChangeNotice = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [inheritedChanged, inheritedNoop, overridden],
+      emitModelChangeNotice,
+    });
+
+    await service.updateProfileDefaultModel("manager", "pi-5.4");
+
+    expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
+    expect(emitModelChangeNotice).toHaveBeenCalledWith(
+      inheritedChanged.agentId,
+      resolveModelDescriptorFromPreset("pi-codex"),
+      resolveModelDescriptorFromPreset("pi-5.4"),
+    );
+    expect(inheritedNoop.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(overridden.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+  });
+
+  it("marks an effective session override-to-inherit change but not metadata-only changes", async () => {
+    const root = await createTempRoot();
+    const overridden = createSession(root, "manager--override", resolveModelDescriptorFromPreset("pi-opus"), "session_override");
+    const sameAsDefault = createSession(root, "manager--same", resolveModelDescriptorFromPreset("pi-codex"));
+    const emitModelChangeNotice = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [overridden, sameAsDefault],
+      emitModelChangeNotice,
+    });
+
+    await service.updateSessionModel(overridden.agentId, "inherit");
+    await service.updateSessionModel(sameAsDefault.agentId, "override", "pi-codex");
+
+    expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
+    expect(emitModelChangeNotice).toHaveBeenCalledWith(
+      overridden.agentId,
+      resolveModelDescriptorFromPreset("pi-opus"),
+      resolveModelDescriptorFromPreset("pi-codex"),
+    );
+  });
+
+  it("emits the accepted-change notice before a deferred or failed recycle", async () => {
+    const root = await createTempRoot();
+    const deferred = createSession(root, "manager--deferred");
+    const failed = createSession(root, "manager--failed");
+    const order: string[] = [];
+    const emitModelChangeNotice = vi.fn(() => order.push("notice"));
+    const saveStore = vi.fn(async () => order.push("save"));
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async (agentId: string) => {
+      order.push(`recycle:${agentId}`);
+      if (agentId === failed.agentId) {
+        throw new Error("recycle failed");
+      }
+      return "deferred" as const;
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [deferred, failed],
+      emitModelChangeNotice,
+      saveStore,
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateManagerModel("manager", "pi-5.4");
+
+    expect(emitModelChangeNotice).toHaveBeenCalledTimes(2);
+    expect(order[0]).toBe("save");
+    const firstRecycleIndex = order.findIndex((entry) => entry.startsWith("recycle:"));
+    expect(order.slice(1, firstRecycleIndex)).toEqual(["notice", "notice"]);
+    expect(order).toContain(`recycle:${deferred.agentId}`);
+    expect(order).toContain(`recycle:${failed.agentId}`);
+    expect(deferred.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(failed.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+  });
+
+  it("does not emit a notice when descriptor persistence fails", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const emitModelChangeNotice = vi.fn();
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled" as const);
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      emitModelChangeNotice,
+      saveStore: vi.fn(async () => {
+        throw new Error("descriptor save failed");
+      }),
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await expect(service.updateManagerModel("manager", "pi-5.4")).rejects.toThrow("descriptor save failed");
+
+    expect(emitModelChangeNotice).not.toHaveBeenCalled();
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+    expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
   });
 
   it("legacy session-targeted updateManagerModel creates sticky same-as-default overrides without recycling", async () => {

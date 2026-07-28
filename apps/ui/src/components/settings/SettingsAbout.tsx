@@ -22,6 +22,8 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
     [apiClient, wsUrl],
   )
   const appVersion = inElectron ? (bridge?.getVersion?.() ?? null) : null
+  const appRuntime = inElectron ? (bridge?.appRuntime ?? null) : null
+  const appStartedAt = inElectron ? (bridge?.appStartedAt ?? null) : null
   const [backendVersion, setBackendVersion] = useState<string | null>(null)
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [betaChannel, setBetaChannel] = useState(false)
@@ -95,14 +97,30 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
     <div className="flex flex-col gap-8">
       <SettingsSection label="About Forge">
         <div className="flex flex-col gap-6">
-          {/* App version (Electron only) */}
+          {/* Electron app details */}
           {inElectron && (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">App version</span>
-              <Badge variant="secondary" className="font-mono text-xs">
-                {appVersion ? `v${appVersion}` : 'Unknown'}
-              </Badge>
-            </div>
+            <>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">App version</span>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {appVersion ? `v${appVersion}` : 'Unknown'}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">Runtime</span>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {formatAppRuntime(appRuntime)}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">App started</span>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  <time dateTime={appStartedAt ?? undefined} title={appStartedAt ?? undefined}>
+                    {formatAppStartedAt(appStartedAt)}
+                  </time>
+                </Badge>
+              </div>
+            </>
           )}
 
           {/* Backend version */}
@@ -162,6 +180,22 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
       </SettingsSection>
     </div>
   )
+}
+
+function formatAppRuntime(runtime: 'development' | 'installed' | null): string {
+  if (runtime === 'development') return 'Electron dev'
+  if (runtime === 'installed') return 'Installed Electron app'
+  return 'Unknown'
+}
+
+function formatAppStartedAt(startedAt: string | null): string {
+  if (!startedAt) return 'Unknown'
+  const date = new Date(startedAt)
+  if (!Number.isFinite(date.getTime())) return 'Unknown'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  }).format(date)
 }
 
 function UpdateStatusDisplay({

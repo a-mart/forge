@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import type { AgentModelDescriptor } from "../types.js";
+import type { AgentModelDescriptor, ConversationMessageEvent } from "../types.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
 import {
   appendImmediateCustomEntry,
   type ImmediateCustomEntryWriteResult
@@ -43,6 +44,37 @@ export interface ModelChangeContinuityApplied {
 export interface ModelChangeContinuityState {
   requests: ModelChangeContinuityRequest[];
   applied: ModelChangeContinuityApplied[];
+}
+
+export function formatModelChangeNoticeText(
+  sourceModel: Pick<AgentModelDescriptor, "provider" | "modelId" | "thinkingLevel">,
+  targetModel: Pick<AgentModelDescriptor, "provider" | "modelId" | "thinkingLevel">,
+): string {
+  const formatModel = (model: Pick<AgentModelDescriptor, "provider" | "modelId" | "thinkingLevel">): string => {
+    const displayName = modelCatalogService.getModelDisplayName(model.modelId, model.provider).trim() || model.modelId;
+    const thinkingLevel = normalizeThinkingLevel(model.thinkingLevel);
+    return `${displayName} (reasoning: ${thinkingLevel || "default"})`;
+  };
+
+  return `Model changed from ${formatModel(sourceModel)} to ${formatModel(targetModel)}.`;
+}
+
+export function createModelChangeNoticeEvent(
+  agentId: string,
+  sourceModel: Pick<AgentModelDescriptor, "provider" | "modelId" | "thinkingLevel">,
+  targetModel: Pick<AgentModelDescriptor, "provider" | "modelId" | "thinkingLevel">,
+  timestamp: string,
+): ConversationMessageEvent {
+  return {
+    type: "conversation_message",
+    agentId,
+    role: "system",
+    text: formatModelChangeNoticeText(sourceModel, targetModel),
+    timestamp,
+    source: "system",
+    excludeFromModelContext: true,
+    systemNoticeKind: "model_change",
+  };
 }
 
 export function inferModelChangeContinuityRuntimeKind(

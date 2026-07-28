@@ -8,6 +8,7 @@ import {
   appendModelChangeContinuityRequest,
   createModelChangeContinuityApplied,
   createModelChangeContinuityRequest,
+  formatModelChangeNoticeText,
   findLatestPendingModelChangeContinuityRequest,
   inferModelChangeContinuityRuntimeKind,
   loadModelChangeContinuityState
@@ -38,6 +39,15 @@ describe("model-change-continuity", () => {
     expect(inferModelChangeContinuityRuntimeKind({ provider: "cursor-sdk" })).toBe("cursor-sdk");
     expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex-app-server" })).toBe("pi");
     expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex" })).toBe("pi");
+  });
+
+  it("formats notices with catalog display names and reasoning levels", () => {
+    expect(formatModelChangeNoticeText(
+      { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh" },
+      { provider: "private", modelId: "custom-model", thinkingLevel: "medium" },
+    )).toBe(
+      "Model changed from GPT-5.5 (reasoning: xhigh) to custom-model (reasoning: medium).",
+    );
   });
 
   it("persists and reloads request/applied continuity metadata", async () => {

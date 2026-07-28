@@ -114,6 +114,8 @@ export interface ElectronBridge {
   backendUrl?: string
   backendWsUrl?: string
   secureControlToken?: string
+  appRuntime?: 'development' | 'installed'
+  appStartedAt?: string
   markRendererReady?(): void
   getVersion?(): string
   platform: string

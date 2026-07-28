@@ -45,6 +45,29 @@ function buildMessage(): ConversationMessageEvent {
 }
 
 describe('ConversationMessageRow', () => {
+  it('renders model-change notices with neutral informational styling', () => {
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'manager-1',
+      id: 'model-change-1',
+      role: 'system',
+      text: 'Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.4 (reasoning: high).',
+      timestamp: '2026-05-30T10:30:00.000Z',
+      source: 'system',
+      excludeFromModelContext: true,
+      systemNoticeKind: 'model_change',
+    }
+
+    flushSync(() => {
+      root.render(createElement(ConversationMessageRow, { message }))
+    })
+
+    expect(container.textContent).toContain('Model change')
+    expect(container.textContent).toContain(message.text)
+    expect(container.querySelector('.border-slate-300\\/70')).toBeTruthy()
+    expect(container.querySelector('.border-amber-300\\/70')).toBeNull()
+  })
+
   it('renders external-thread card even when system message text is empty', () => {
     flushSync(() => {
       root.render(
