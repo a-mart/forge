@@ -30,6 +30,7 @@ import type {
 } from '@/components/chat/secure-session/types'
 import { isSessionModelPickerEligible } from '@/components/chat/message-input/session-model-picker-eligibility'
 import { isSecureSessionRuntimeSupported } from '@/components/index-page/secure-session-runtime-eligibility'
+import { shouldShowSecureSessionPicker } from '@/components/index-page/secure-session-picker-visibility'
 import { type MessageListHandle } from '@/components/chat/MessageList'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
@@ -1401,7 +1402,7 @@ export function BuilderSurface({
 
   const secureSessionPicker = useMemo<SecureSessionPickerConfig | undefined>(() => {
     if (!activeAgentId) return undefined
-    return {
+    const config: SecureSessionPickerConfig = {
       originId: activeOriginId,
       availability: secureSessionAvailability,
       snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
@@ -1434,6 +1435,7 @@ export function BuilderSurface({
             onRevoke: handleRevokeSecureSession,
           }),
     }
+    return shouldShowSecureSessionPicker(config) ? config : undefined
   }, [
     activeAgentId,
     activeOriginId,
