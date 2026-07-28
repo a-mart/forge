@@ -148,6 +148,77 @@ describe('AutomaticBrowserHost', () => {
     expect(external.executions.map(({ tabId }) => tabId)).toEqual(['chrome-neutral', 'chrome-focused', 'chrome-focused'])
   })
 
+  it('reselects focused Chrome from a managed fallback and keeps non-open operations sticky', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    const fallback = tab('managed-fallback', 'managed-electron')
+    fallback.url = 'about:blank'
+    host.synchronizeSessions([session([fallback], fallback.tabId)])
+    external.acquireResults.push({ ok: true, authority: { ownerEpoch: 1, tabId: 'chrome-focused' } })
+
+    await expect(host.perform(request('open', { show: false, reuseExistingTab: true }, null))).resolves.toMatchObject({
+      ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-focused' },
+    })
+    expect(external.acquisitions).toMatchObject([{
+      preferredTabId: null, reuseExisting: true, createIfNeeded: false,
+    }])
+    expect(managed.requests).toEqual([])
+
+    await expect(host.perform(request('snapshot', {}, null))).resolves.toMatchObject({
+      ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-focused' },
+    })
+    await expect(host.perform(request('status', {}, null))).resolves.toMatchObject({
+      ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-focused' },
+    })
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.executions.map(({ operation, tabId }) => ({ operation, tabId }))).toEqual([
+      { operation: 'open', tabId: 'chrome-focused' },
+      { operation: 'snapshot', tabId: 'chrome-focused' },
+      { operation: 'status', tabId: 'chrome-focused' },
+    ])
+    await host.endTurn({ sessionAgentId: 'session', profileId: 'profile' }, 'selection-complete')
+    expect(external.authorityReleases).toMatchObject([{ authority: { tabId: 'chrome-focused' }, reason: 'turn-ended' }])
+    expect(managed.requests).toEqual([])
+  })
+
+  it.each(['no-eligible-target', 'ambiguous-instance'] as const)(
+    'retains the exact managed fallback when focused Chrome selection fails with %s',
+    async (fallbackReason) => {
+      const managed = new FakeManagedAdapter()
+      const external = new FakeExternalAdapter()
+      external.acquireResults.push(acquireFailure(fallbackReason))
+      const host = createHost(managed, external)
+      const fallback = tab('managed-fallback', 'managed-electron')
+      fallback.url = 'about:blank'
+      host.synchronizeSessions([session([fallback], fallback.tabId)])
+
+      await expect(host.perform(request('open', { show: false, reuseExistingTab: true }, null))).resolves.toMatchObject({
+        ok: true, updatedTab: { targetAffinity: 'managed-electron', tabId: 'managed-fallback' },
+      })
+      expect(external.acquisitions).toMatchObject([{ createIfNeeded: false, reuseExisting: true }])
+      expect(external.executions).toEqual([])
+      expect(managed.requests).toMatchObject([{ operation: 'open', tabId: 'managed-fallback' }])
+    },
+  )
+
+  it('still allocates one automatic target for open reuse false from managed affinity', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('managed-selected', 'managed-electron')], 'managed-selected')])
+
+    await expect(host.perform(request('open', { show: false, reuseExistingTab: false }, null))).resolves.toMatchObject({
+      ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-tab-1' },
+    })
+    await host.perform(request('snapshot', {}, null))
+    expect(external.acquisitions).toMatchObject([{
+      preferredTabId: null, reuseExisting: false, createIfNeeded: true,
+    }])
+    expect(external.executions.map(({ tabId }) => tabId)).toEqual(['chrome-tab-1', 'chrome-tab-1'])
+    expect(managed.requests).toEqual([])
+  })
+
   it('decides managed-only operations before allocating even with Chrome session affinity', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
@@ -425,10 +496,13 @@ function failure(requestValue: BrowserAutomationRequest, code: BrowserAutomation
   }
 }
 
-function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-target'): ExternalBrowserAcquireResult {
+function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-target' | 'ambiguous-instance'): ExternalBrowserAcquireResult {
+  const code = fallbackReason === 'restricted-target'
+    ? 'restricted-target'
+    : fallbackReason === 'ambiguous-instance' ? 'target-not-found' : 'unavailable-host'
   return {
     ok: false,
-    error: { code: fallbackReason === 'restricted-target' ? 'restricted-target' : 'unavailable-host', message: fallbackReason, retryable: true },
+    error: { code, message: fallbackReason, retryable: true },
     metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason },
   }
 }

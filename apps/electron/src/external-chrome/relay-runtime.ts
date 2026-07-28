@@ -711,6 +711,9 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     } else if (decoded === null && input.reuseExisting) {
       reuseFocused = (await this.uniquelyFocusedInstances([extensionInstanceId])).length === 1
     }
+    if (decoded === null && !reuseFocused && !input.createIfNeeded) {
+      return acquireFailure('no-eligible-target', 'No uniquely focused eligible Chrome target is available.', true)
+    }
     const leaseId = randomUUID()
     const leaseEpoch = input.ownerEpoch
     try {

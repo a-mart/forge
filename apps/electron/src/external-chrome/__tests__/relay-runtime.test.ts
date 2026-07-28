@@ -487,6 +487,23 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close(); await loop
   })
 
+  it('keeps a focused-only acquisition mutation-free when the affine profile has no eligible focus', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests, 'instance_profile_a', false)
+
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: false, ownerEpoch: 27,
+    })).resolves.toMatchObject({
+      ok: false,
+      metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'no-eligible-target' },
+    })
+    expect(requests.map(({ method }) => method)).toEqual(['forge.browser.focusedEligibility'])
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it.each([true, false])('acquires a dedicated tab from the sole ready profile without focus when reuseExisting is %s', async (reuseExisting) => {
     const { runtime, client } = await connectedRuntime()
     const requests: Array<{ method: string; params: Record<string, unknown> }> = []
