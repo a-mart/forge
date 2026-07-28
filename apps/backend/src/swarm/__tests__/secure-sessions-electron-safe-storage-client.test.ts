@@ -84,6 +84,66 @@ describe("ElectronSafeStorageClient", () => {
     client.dispose();
   });
 
+  it("relays one-use remote entry challenges and sealed envelopes without plaintext", async () => {
+    const transport = new FakeTransport();
+    const client = new ElectronSafeStorageClient(transport as never, 100);
+    const challengeRequest = client.createRemoteEntryChallenge(
+      "secure-browser:device-1",
+      "challenge-1",
+    );
+    transport.emit("message", {
+      type: "secure_vault_response",
+      requestId: "challenge-1",
+      ok: true,
+      result: {
+        challengeId: "d3e39ee9-3dd2-46c6-b820-ae041d4bb088",
+        keyId: "remote-entry-key-id",
+        publicKey: Buffer.alloc(65, 7).toString("base64"),
+        expiresAt: "2026-07-28T16:02:00.000Z",
+      },
+    });
+    await expect(challengeRequest).resolves.toMatchObject({
+      keyId: "remote-entry-key-id",
+    });
+
+    const sealedEntry = {
+      challengeId: "d3e39ee9-3dd2-46c6-b820-ae041d4bb088",
+      keyId: "remote-entry-key-id",
+      ephemeralPublicKey: Buffer.alloc(65, 8).toString("base64"),
+      iv: Buffer.alloc(12, 9).toString("base64"),
+      ciphertext: Buffer.from("sealed-browser-value").toString("base64"),
+    };
+    const encryptRequest = client.encryptRemoteEntry(
+      "secure-browser:device-1",
+      sealedEntry,
+      "remote-encrypt-1",
+    );
+    const sent = transport.sent[1] as {
+      payload: string;
+      operation: string;
+    };
+    expect(sent.operation).toBe("remote_entry_encrypt");
+    const envelope = JSON.parse(
+      Buffer.from(sent.payload, "base64").toString("utf8"),
+    ) as Record<string, unknown>;
+    expect(envelope).toEqual({
+      context: Buffer.from("secure-browser:device-1").toString("base64"),
+      ...sealedEntry,
+    });
+    expect(JSON.stringify(transport.sent)).not.toContain("plaintext-canary");
+
+    transport.emit("message", {
+      type: "secure_vault_response",
+      requestId: "remote-encrypt-1",
+      ok: true,
+      result: { payload: Buffer.from("desktop-ciphertext").toString("base64") },
+    });
+    await expect(encryptRequest).resolves.toEqual(
+      Buffer.from("desktop-ciphertext"),
+    );
+    client.dispose();
+  });
+
   it("uses a caller-stable id and times out without logging payloads", async () => {
     vi.useFakeTimers();
     const transport = new FakeTransport();

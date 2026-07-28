@@ -86,6 +86,11 @@ import {
   unlockLocalProjectDefaultsIfNeeded,
 } from '@/lib/secure-sessions-api'
 import type { SecureSecretsCatalog } from '@/lib/secure-secrets-api'
+import {
+  claimSecureBrowserPairing,
+  createSecureBrowserPairingRequest,
+  fetchSecureBrowserControlStatus,
+} from '@/lib/secure-browser-control-api'
 import { hydrateSessionWorkers } from './worker-hydration'
 import {
   reconcileSecureBatchGrantFailure,
@@ -124,6 +129,7 @@ import {
   type AgentDescriptor,
   type ProjectAgentExternalDirectoryEntry,
   type RemoteUpdateAwarenessProjectSnapshot,
+  type SecureBrowserControlStatus,
   type SecureSessionSnapshot,
 } from '@forge/protocol'
 
@@ -344,6 +350,8 @@ export function BuilderSurface({
   const [secureCatalogLoading, setSecureCatalogLoading] = useState(false)
   const [secureCatalogUnavailable, setSecureCatalogUnavailable] = useState(false)
   const [secureRuntimeUnsupported, setSecureRuntimeUnsupported] = useState(false)
+  const [secureBrowserControl, setSecureBrowserControl] =
+    useState<SecureBrowserControlStatus | null>(null)
 
   // ── Active-agent derivation + route→subscription sync ──
   const {
@@ -446,6 +454,27 @@ export function BuilderSurface({
     state.connected,
     state.secureSecretCatalogRevision,
   ])
+
+  const refreshSecureBrowserControl = useCallback(async () => {
+    if (isRemoteOriginActive || !state.connected) {
+      setSecureBrowserControl(null)
+      return null
+    }
+    const apiClient = httpClientRef.current
+    if (!apiClient) return null
+    try {
+      const status = await fetchSecureBrowserControlStatus(apiClient)
+      setSecureBrowserControl(status)
+      return status
+    } catch {
+      setSecureBrowserControl(null)
+      return null
+    }
+  }, [httpClientRef, isRemoteOriginActive, state.connected])
+
+  useEffect(() => {
+    void refreshSecureBrowserControl()
+  }, [refreshSecureBrowserControl])
 
   useEffect(() => {
     if (
@@ -1400,6 +1429,29 @@ export function BuilderSurface({
     reportSecureMutationError,
   ])
 
+  const handleCreateSecureBrowserPairing = useCallback(async () => {
+    const apiClient = httpClientRef.current
+    if (!apiClient || isRemoteOriginActive) {
+      throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+    }
+    return await createSecureBrowserPairingRequest(apiClient)
+  }, [httpClientRef, isRemoteOriginActive])
+
+  const handleClaimSecureBrowserPairing = useCallback(async (
+    requestId: string,
+    claimSecret: string,
+  ) => {
+    const apiClient = httpClientRef.current
+    if (!apiClient || isRemoteOriginActive) {
+      throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+    }
+    return await claimSecureBrowserPairing(apiClient, requestId, claimSecret)
+  }, [httpClientRef, isRemoteOriginActive])
+
+  const handleSecureBrowserPaired = useCallback(async () => {
+    await refreshSecureBrowserControl()
+  }, [refreshSecureBrowserControl])
+
   const secureSessionPicker = useMemo<SecureSessionPickerConfig | undefined>(() => {
     if (!activeAgentId) return undefined
     const config: SecureSessionPickerConfig = {
@@ -1494,13 +1546,29 @@ export function BuilderSurface({
               : {}),
           }),
       disabled: !state.connected || secureCatalogLoading,
-      canApprove: !isRemoteOriginActive && isSecureControlAvailable(),
+      canApprove:
+        !isRemoteOriginActive
+        && isSecureControlAvailable(secureBrowserControl?.authorized === true),
       onGrant: handleGrantSecureSession,
       onDeny: handleDenySecureRequest,
       ...(isActiveManager ? { onRevoke: handleRevokeSecureSession } : {}),
-      ...(!isRemoteOriginActive && isPrivateSecureFulfillmentAvailable()
+      ...(!isRemoteOriginActive && isPrivateSecureFulfillmentAvailable(
+        secureBrowserControl?.privateEntryAvailable === true,
+      )
         ? { onPrivateFulfill: handlePrivateSecureFulfillment }
         : {}),
+      ...(
+        !isRemoteOriginActive
+        && !isSecureControlAvailable(secureBrowserControl?.authorized === true)
+        && secureBrowserControl?.available === true
+        && secureBrowserControl.secureContextRequired === false
+          ? {
+              onCreateBrowserPairing: handleCreateSecureBrowserPairing,
+              onClaimBrowserPairing: handleClaimSecureBrowserPairing,
+              onBrowserPaired: handleSecureBrowserPaired,
+            }
+          : {}
+      ),
     }
   }, [
     activeAgentId,
@@ -1508,6 +1576,9 @@ export function BuilderSurface({
     handleDenySecureRequest,
     handleGrantSecureSession,
     handlePrivateSecureFulfillment,
+    handleCreateSecureBrowserPairing,
+    handleClaimSecureBrowserPairing,
+    handleSecureBrowserPaired,
     handleRevokeSecureSession,
     isActiveManager,
     isRemoteOriginActive,
@@ -1518,6 +1589,7 @@ export function BuilderSurface({
     secureSessionAvailability,
     secureSessionSnapshot,
     secureSessionSnapshotView,
+    secureBrowserControl,
     state.profiles,
     state.connected,
   ])

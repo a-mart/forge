@@ -54,6 +54,10 @@ export function validateSecureBuilderControlOrigin(
     return { ok: true, allowedOrigin: rawOrigin };
   }
 
+  if (isSecureSameOriginBrowserRequest(request, originUrl)) {
+    return { ok: true, allowedOrigin: rawOrigin };
+  }
+
   const allowedOrigins = secureBuilderControlOrigins(options);
   if (
     (originUrl.protocol === "http:" || originUrl.protocol === "https:")
@@ -63,6 +67,22 @@ export function validateSecureBuilderControlOrigin(
   }
 
   return { ok: false, allowedOrigin: null, errorMessage: "Origin not allowed" };
+}
+
+function isSecureSameOriginBrowserRequest(
+  request: IncomingMessage,
+  originUrl: URL,
+): boolean {
+  if (originUrl.protocol !== "https:" && originUrl.protocol !== "http:") {
+    return false;
+  }
+  const hostHeader = typeof request.headers.host === "string"
+    ? request.headers.host.trim().toLowerCase()
+    : "";
+  if (!hostHeader || originUrl.host.toLowerCase() !== hostHeader) {
+    return false;
+  }
+  return originUrl.protocol === "https:" || isLoopbackHost(originUrl.hostname);
 }
 
 export function validateTerminalHttpOrigin(

@@ -8,6 +8,7 @@ import {
   bootWsServerTestManager,
   makeWsServerTempConfig,
 } from "../../test-support/ws-integration-harness.js";
+import { SecureBrowserAccessService } from "../../swarm/secure-browser-access-service.js";
 import { SwarmWebSocketServer } from "../server.js";
 
 describe("secure session server transport", () => {
@@ -17,6 +18,10 @@ describe("secure session server transport", () => {
     const config = await makeWsServerTempConfig(port, true);
     const manager = new WsServerTestSwarmManager(config);
     await bootWsServerTestManager(manager, config);
+    const secureBrowserAccessService = new SecureBrowserAccessService({
+      dataDir: config.paths.dataDir,
+      generateVerificationCode: () => "482913",
+    });
     const worker = await manager.spawnAgent("manager", { agentId: "worker-1" });
     const sibling = await manager.spawnAgent("manager", { agentId: "worker-2" });
     const { sessionAgent: otherSession } = await manager.createSession("manager", {
@@ -28,6 +33,7 @@ describe("secure session server transport", () => {
       port: config.port,
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
       secureControlToken,
+      secureBrowserAccessService,
     });
 
     expect(server.listRegisteredHttpRoutes().some((route) =>
@@ -70,6 +76,79 @@ describe("secure session server transport", () => {
       },
     );
     expect(authorizedMissingSecretMutation.status).not.toBe(403);
+
+    const browserOrigin = `http://${config.host}:${config.port}`;
+    const pairingCreated = await fetch(
+      `${browserOrigin}/api/secure-browser-control/pairing/requests`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Origin: browserOrigin,
+        },
+        body: JSON.stringify({
+          deviceId: "browser-installation-1",
+          deviceName: "Remote test browser",
+        }),
+      },
+    );
+    expect(pairingCreated.status).toBe(201);
+    const pairing = await pairingCreated.json() as {
+      requestId: string;
+      claimSecret: string;
+    };
+    const desktopSettingsPreflight = await fetch(
+      `${browserOrigin}/api/settings/secure-browsers`,
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: browserOrigin,
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "x-forge-secure-control",
+        },
+      },
+    );
+    expect(desktopSettingsPreflight.status).toBe(204);
+    expect(desktopSettingsPreflight.headers.get("access-control-allow-headers"))
+      .toContain("x-forge-secure-control");
+    await secureBrowserAccessService.approvePairing(pairing.requestId);
+    const pairingClaimed = await fetch(
+      `${browserOrigin}/api/secure-browser-control/pairing/requests/${encodeURIComponent(pairing.requestId)}/claim`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Origin: browserOrigin,
+        },
+        body: JSON.stringify({ claimSecret: pairing.claimSecret }),
+      },
+    );
+    expect(pairingClaimed.status).toBe(200);
+    const pairedCookie = pairingClaimed.headers.get("set-cookie")?.split(";")[0];
+    expect(pairedCookie).toMatch(/^forge_secure_browser=/u);
+    const pairedBrowserMutation = await fetch(
+      `http://${config.host}:${config.port}/api/secure-secrets/project-defaults/manager/secret-1`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: pairedCookie ?? "",
+          Origin: browserOrigin,
+        },
+        body: JSON.stringify({ enabled: true }),
+      },
+    );
+    expect(pairedBrowserMutation.status).not.toBe(403);
+    const pairedBrowserSettings = await fetch(
+      `${browserOrigin}/api/settings/secure-browsers`,
+      {
+        headers: {
+          cookie: pairedCookie ?? "",
+          Origin: browserOrigin,
+        },
+      },
+    );
+    expect(pairedBrowserSettings.status).toBe(403);
 
     await manager.requestSecureSecretAccess("manager", "web-dismissal-tool", {
       displayAlias: "WEB_DISMISSAL_TEST",

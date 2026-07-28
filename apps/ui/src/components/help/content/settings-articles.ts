@@ -258,7 +258,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-secrets',
     title: 'Secrets and Secure Sessions',
     category: 'settings',
-    summary: 'Scope local or Bitwarden secrets by project, configure automatic grants, and approve principal-bound agent requests.',
+    summary: 'Scope local or Bitwarden secrets by project, pair secure browsers, and privately fulfill agent requests.',
     content: settingsSecretsContent,
     keywords: [
       'secure session',
@@ -286,6 +286,9 @@ export const settingsArticles: HelpArticle[] = [
       'recovery',
       'readiness',
       'add secret and approve',
+      'pair browser',
+      'paired browser',
+      'remote private entry',
     ],
     relatedIds: ['settings-auth', 'settings-skills', 'chat-overview'],
     contextKeys: ['settings.secrets'],

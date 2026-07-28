@@ -1,4 +1,5 @@
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
+import { encryptRemoteSecureValue } from './secure-browser-control-api'
 import type {
   SecureSecretBinding,
   SecureSecretAutomaticGrantPolicy,
@@ -206,7 +207,7 @@ export async function createLocalSecret(
   input: CreateLocalSecretInput,
 ): Promise<SecureSecretSummary> {
   assertBuilderTarget(apiClient)
-  const encryptedMaterial = await encryptMaterial(input.material)
+  const encryptedMaterial = await encryptMaterial(apiClient, input.material)
   return requestJson<SecureSecretSummary>(apiClient, '/api/secure-secrets/local', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -227,7 +228,7 @@ export async function updateSecureSecret(
   assertBuilderTarget(apiClient)
   const encryptedMaterial = input.material === undefined
     ? undefined
-    : await encryptMaterial(input.material)
+    : await encryptMaterial(apiClient, input.material)
 
   return requestJson<SecureSecretSummary>(
     apiClient,
@@ -263,7 +264,7 @@ export async function connectBitwardenProvider(
   input: ConnectBitwardenInput,
 ): Promise<SecureSecretProviderSummary> {
   assertBuilderTarget(apiClient)
-  const encryptedAccessToken = await encryptMaterial(input.accessToken)
+  const encryptedAccessToken = await encryptMaterial(apiClient, input.accessToken)
 
   return requestJson<SecureSecretProviderSummary>(
     apiClient,
@@ -288,7 +289,7 @@ export async function reconnectBitwardenProvider(
   accessToken: string,
 ): Promise<SecureSecretProviderSummary> {
   assertBuilderTarget(apiClient)
-  const encryptedAccessToken = await encryptMaterial(accessToken)
+  const encryptedAccessToken = await encryptMaterial(apiClient, accessToken)
   return requestJson<SecureSecretProviderSummary>(
     apiClient,
     `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/credential`,
@@ -395,9 +396,18 @@ function getPrivateBridge(): SecureVaultPrivateBridge | null {
     : null
 }
 
-async function encryptMaterial(material: string): Promise<string> {
+async function encryptMaterial(
+  apiClient: SettingsApiClient,
+  material: string,
+): Promise<string> {
   const bridge = getPrivateBridge()
-  if (!bridge) throw new SecureSecretsError('SECURE_PRIVATE_API_UNAVAILABLE')
+  if (!bridge) {
+    try {
+      return await encryptRemoteSecureValue(apiClient, material)
+    } catch {
+      throw new SecureSecretsError('SECURE_PRIVATE_API_UNAVAILABLE')
+    }
+  }
   try {
     const status = await bridge.status()
     if (!status.ok || !status.available) {
@@ -431,6 +441,7 @@ async function requestEmpty(
     response = await apiClient.fetch(path, {
       ...controlledInit,
       cache: 'no-store',
+      credentials: 'include',
     })
   } catch {
     throw new SecureSecretsError('SECURE_SOURCE_UNAVAILABLE')
@@ -449,6 +460,7 @@ async function requestJson<T>(
     response = await apiClient.fetch(path, {
       ...controlledInit,
       cache: 'no-store',
+      credentials: 'include',
     })
   } catch {
     throw new SecureSecretsError('SECURE_SOURCE_UNAVAILABLE')
@@ -498,7 +510,7 @@ function withSecureControl(init?: RequestInit): RequestInit | undefined {
   const token = typeof window === 'undefined'
     ? undefined
     : window.electronBridge?.secureControlToken
-  if (!token) throw new SecureSecretsError('SECURE_PRIVATE_API_UNAVAILABLE')
+  if (!token) return init
   const headers = new Headers(init?.headers)
   headers.set('X-Forge-Secure-Control', token)
   return { ...init, headers }

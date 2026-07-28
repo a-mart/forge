@@ -132,8 +132,10 @@ describe('SecureSecretRequestCard', () => {
       fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
     })
     const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    const nameInput = getByLabelText(document.body, 'Secret name') as HTMLInputElement
     flushSync(() => {
       fireEvent.change(input, { target: { value: 'private-value-123' } })
+      fireEvent.change(nameInput, { target: { value: 'Production deploy token' } })
     })
     expect(input.value).toBe('private-value-123')
 
@@ -143,6 +145,7 @@ describe('SecureSecretRequestCard', () => {
 
     expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
       value: 'private-value-123',
+      displayName: 'Production deploy token',
       retention: 'saved',
       scope: { kind: 'profile', profileId: 'profile-1' },
     })
@@ -176,6 +179,7 @@ describe('SecureSecretRequestCard', () => {
 
     expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
       value: 'shared-private-value',
+      displayName: 'deploy-token',
       retention: 'saved',
       scope: { kind: 'instance' },
       makeProjectDefault: true,
@@ -214,6 +218,7 @@ describe('SecureSecretRequestCard', () => {
 
     expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
       value: 'saved-without-default',
+      displayName: 'deploy-token',
       retention: 'saved',
       scope: { kind: 'profile', profileId: 'profile-1' },
     })
@@ -396,6 +401,46 @@ describe('SecureSecretRequestCard', () => {
       fireEvent.click(getByRole(container, 'button', { name: 'Dismiss request' }))
     })
     expect(onDeny).toHaveBeenCalledWith('request-1')
+  })
+
+  it('offers one-time browser pairing and displays the Desktop verification code', async () => {
+    const onCreateBrowserPairing = vi.fn(async () => ({
+      requestId: 'pairing-1',
+      verificationCode: '482913',
+      claimSecret: 'one-use-claim-secret',
+      expiresAt: '2026-07-28T16:10:00.000Z',
+    }))
+    renderCard({
+      canApprove: false,
+      onCreateBrowserPairing,
+      onClaimBrowserPairing: vi.fn(async () => ({ status: 'pending' as const })),
+      onBrowserPaired: vi.fn(),
+    })
+
+    expect(container.textContent).toContain(
+      'Pair this browser once in Forge Desktop',
+    )
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pair this browser' }))
+    })
+    await waitFor(() => expect(onCreateBrowserPairing).toHaveBeenCalledOnce())
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('482 913')
+      expect(document.body.textContent).toContain(
+        'Settings → Secrets → Paired browsers',
+      )
+    })
+
+    const replacementCreate = vi.fn(onCreateBrowserPairing)
+    renderCard({
+      canApprove: false,
+      onCreateBrowserPairing: replacementCreate,
+      onClaimBrowserPairing: vi.fn(async () => ({ status: 'pending' as const })),
+      onBrowserPaired: vi.fn(),
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 25))
+    expect(onCreateBrowserPairing).toHaveBeenCalledOnce()
+    expect(replacementCreate).not.toHaveBeenCalled()
   })
 
   it('allows ephemeral fulfillment while the saved-secret source is unavailable', () => {

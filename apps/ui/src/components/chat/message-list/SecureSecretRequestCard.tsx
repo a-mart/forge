@@ -2,6 +2,11 @@ import { useMemo, useState } from 'react'
 import { KeyRound, Loader2, ShieldAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PrivateSecretValueDialog } from '../secure-session/PrivateSecretValueDialog'
+import { SecureBrowserPairingDialog } from '../secure-session/SecureBrowserPairingDialog'
+import type {
+  SecureBrowserPairingClaimResponse,
+  SecureBrowserPairingRequestCreated,
+} from '@forge/protocol'
 import {
   formatSecureAvailability,
   formatSecureBinding,
@@ -32,6 +37,12 @@ interface SecureSecretRequestCardProps {
     requestId: string,
     input: SecurePrivateFulfillmentInput,
   ) => void | Promise<void>
+  onCreateBrowserPairing?: () => Promise<SecureBrowserPairingRequestCreated>
+  onClaimBrowserPairing?: (
+    requestId: string,
+    claimSecret: string,
+  ) => Promise<SecureBrowserPairingClaimResponse>
+  onBrowserPaired?: () => void | Promise<void>
 }
 
 function matchesRequest(
@@ -60,6 +71,9 @@ export function SecureSecretRequestCard({
   onGrant,
   onDeny,
   onPrivateFulfill,
+  onCreateBrowserPairing,
+  onClaimBrowserPairing,
+  onBrowserPaired,
 }: SecureSecretRequestCardProps) {
   const compatibleSecrets = useMemo(
     () => secrets.filter((secret) => matchesRequest(secret, request)),
@@ -72,6 +86,7 @@ export function SecureSecretRequestCard({
     suggestedSecret?.secretId ?? compatibleSecrets[0]?.secretId ?? '',
   )
   const [privateValueOpen, setPrivateValueOpen] = useState(false)
+  const [browserPairingOpen, setBrowserPairingOpen] = useState(false)
   const [resolving, setResolving] = useState<'approve' | 'deny' | null>(null)
   const effectiveSecretId = compatibleSecrets.some((secret) => secret.secretId === secretId)
     ? secretId
@@ -93,6 +108,11 @@ export function SecureSecretRequestCard({
     && availability.state !== 'unsupported_runtime'
   const requestedByLabel =
     request.requestedByLabel ?? request.requestedByAgentId
+  const canPairBrowser =
+    !canApprove
+    && Boolean(onCreateBrowserPairing)
+    && Boolean(onClaimBrowserPairing)
+    && Boolean(onBrowserPaired)
 
   if (request.status !== 'pending') return null
 
@@ -197,7 +217,9 @@ export function SecureSecretRequestCard({
           <p className="text-xs text-muted-foreground">
             {canApprove
               ? 'No saved secret supports the requested binding.'
-              : 'Open Forge Desktop to approve or add a secret. You can dismiss this request here.'}
+              : canPairBrowser
+                ? 'Pair this browser once in Forge Desktop to approve or add secrets here.'
+                : 'Open Forge Desktop to approve or add a secret. You can dismiss this request here.'}
           </p>
         )}
 
@@ -232,6 +254,16 @@ export function SecureSecretRequestCard({
               Add secret and approve
             </Button>
           ) : null}
+          {canPairBrowser ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled || Boolean(resolving)}
+              onClick={() => setBrowserPairingOpen(true)}
+            >
+              Pair this browser
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -254,6 +286,17 @@ export function SecureSecretRequestCard({
           onClose={() => setPrivateValueOpen(false)}
         />
       ) : null}
+      {browserPairingOpen
+        && onCreateBrowserPairing
+        && onClaimBrowserPairing
+        && onBrowserPaired ? (
+          <SecureBrowserPairingDialog
+            onCreate={onCreateBrowserPairing}
+            onClaim={onClaimBrowserPairing}
+            onPaired={onBrowserPaired}
+            onClose={() => setBrowserPairingOpen(false)}
+          />
+        ) : null}
     </>
   )
 }

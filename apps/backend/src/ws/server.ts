@@ -48,6 +48,7 @@ import { CompactionSettingsService } from "../swarm/compaction-settings-service.
 import { KnowledgeV2SettingsService } from "../swarm/knowledge-v2-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import { StreamDeckAccessService } from "../swarm/stream-deck-access-service.js";
+import { SecureBrowserAccessService } from "../swarm/secure-browser-access-service.js";
 import {
   NotificationSettingsService,
   isCliOriginatedSession,
@@ -116,6 +117,16 @@ import {
   isWebSafeSecureAccessRequestDismissal,
   type SecureSessionsTransportService,
 } from "./http/routes/secure-session-routes.js";
+import {
+  createSecureBrowserControlRoutes,
+  isDesktopOnlySecureBrowserPath,
+  isPublicSecureBrowserPairingPath,
+  isSecureBrowserControlPath,
+  isSecureBrowserStatusPath,
+  readSecureBrowserCookie,
+  setSecureBrowserRequestDevice,
+  type SecureBrowserVaultService,
+} from "./http/routes/secure-browser-control-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
 import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
@@ -151,6 +162,7 @@ function isSecureBuilderControlPath(pathname: string): boolean {
     || pathname.startsWith("/api/secure-secrets/")
     || pathname === "/api/secure-sessions"
     || pathname.startsWith("/api/secure-sessions/")
+    || isSecureBrowserControlPath(pathname)
   );
 }
 
@@ -182,6 +194,7 @@ export class SwarmWebSocketServer {
   private readonly cliWsHandler: CliWsHandler;
   private readonly cliAccessService: CliAccessService;
   private readonly streamDeckAccessService: StreamDeckAccessService;
+  private readonly secureBrowserAccessService: SecureBrowserAccessService;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
@@ -510,6 +523,7 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     streamDeckAccessService?: StreamDeckAccessService;
+    secureBrowserAccessService?: SecureBrowserAccessService;
     notificationSettingsService?: NotificationSettingsService;
     remoteBuildSettingsService?: RemoteBuildSettingsService;
     builderSidebarOrderService?: BuilderSidebarOrderService;
@@ -548,6 +562,11 @@ export class SwarmWebSocketServer {
     this.streamDeckAccessService = options.streamDeckAccessService ?? new StreamDeckAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
     });
+    this.secureBrowserAccessService =
+      options.secureBrowserAccessService ??
+      new SecureBrowserAccessService({
+        dataDir: this.swarmManager.getConfig().paths.dataDir,
+      });
     this.notificationSettingsService =
       options.notificationSettingsService ??
       new NotificationSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
@@ -679,7 +698,9 @@ export class SwarmWebSocketServer {
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
 
     const secureTransportService = this.swarmManager as unknown as
-      SecureSecretTransportService & SecureSessionsTransportService;
+      SecureSecretTransportService
+      & SecureSessionsTransportService
+      & SecureBrowserVaultService;
 
     this.httpRoutes = [
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
@@ -715,6 +736,11 @@ export class SwarmWebSocketServer {
       }),
       ...(isBuilder
         ? [
+            ...createSecureBrowserControlRoutes({
+              accessService: this.secureBrowserAccessService,
+              vaultService: secureTransportService,
+              secureControlAvailable: this.secureControlToken.length >= 32,
+            }),
             ...createSecureSecretRoutes({ service: secureTransportService }),
             ...createSecureSessionRoutes({ service: secureTransportService }),
           ]
@@ -1193,7 +1219,37 @@ export class SwarmWebSocketServer {
           sendJson(response, 403, { error: originValidation.errorMessage });
           return;
         }
+        const hasDesktopCapability = validateSecureBuilderControlCapability(
+          request,
+          this.secureControlToken,
+        );
+        let hasSecureBrowserCapability = false;
         if (
+          isSecureBrowserStatusPath(request.method, requestUrl.pathname)
+          || (
+            !hasDesktopCapability
+            && isSecureBrowserControlPath(requestUrl.pathname)
+          )
+          || (
+            !hasDesktopCapability
+            && request.method !== "GET"
+            && request.method !== "HEAD"
+            && request.method !== "OPTIONS"
+          )
+        ) {
+          const authentication = await this.secureBrowserAccessService.authenticateToken(
+            readSecureBrowserCookie(request.headers.cookie),
+          );
+          if (authentication.ok) {
+            hasSecureBrowserCapability = true;
+            setSecureBrowserRequestDevice(request, authentication.device);
+          }
+        }
+        const isPreflight = request.method === "OPTIONS";
+        const desktopOnlyPath = isDesktopOnlySecureBrowserPath(
+          requestUrl.pathname,
+        );
+        const mutationRequiresControl =
           request.method !== "GET"
           && request.method !== "HEAD"
           && request.method !== "OPTIONS"
@@ -1201,9 +1257,16 @@ export class SwarmWebSocketServer {
             request.method,
             requestUrl.pathname,
           )
-          && !validateSecureBuilderControlCapability(
-            request,
-            this.secureControlToken,
+          && !isPublicSecureBrowserPairingPath(
+            request.method,
+            requestUrl.pathname,
+          );
+        if (
+          (desktopOnlyPath && !isPreflight && !hasDesktopCapability)
+          || (
+            mutationRequiresControl
+            && !hasDesktopCapability
+            && !hasSecureBrowserCapability
           )
         ) {
           sendJson(response, 403, {

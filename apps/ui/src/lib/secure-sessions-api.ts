@@ -12,6 +12,7 @@ import {
   unlockSecureMaterialEntry,
   type SecureSecretsCatalog,
 } from './secure-secrets-api'
+import { encryptRemoteSecureValue } from './secure-browser-control-api'
 import type {
   ApplySecureSessionProjectDefaultsRequest,
   GrantSecureSecretLeaseRequest,
@@ -66,6 +67,10 @@ interface SecureVaultPrivateBridge {
     | { ok: true; available: true }
     | { ok: false; errorCode: SecureVaultErrorCode }
   >
+  unlock(): Promise<
+    | { ok: true; available: true }
+    | { ok: false; errorCode: SecureVaultErrorCode }
+  >
   encryptLocalValue(value: string): Promise<
     | { ok: true; encryptedPayloadBase64: string }
     | { ok: false; errorCode: SecureVaultErrorCode }
@@ -96,14 +101,21 @@ export function shouldRefreshAfterProjectDefaultsApplyError(
     )
 }
 
-export function isPrivateSecureFulfillmentAvailable(): boolean {
-  return getPrivateBridge() !== null
+export function isPrivateSecureFulfillmentAvailable(
+  remotePrivateEntryAvailable = false,
+): boolean {
+  return getPrivateBridge() !== null || remotePrivateEntryAvailable
 }
 
-export function isSecureControlAvailable(): boolean {
+export function isSecureControlAvailable(remoteAuthorized = false): boolean {
   return typeof window !== 'undefined'
-    && typeof window.electronBridge?.secureControlToken === 'string'
-    && window.electronBridge.secureControlToken.length > 0
+    && (
+      (
+        typeof window.electronBridge?.secureControlToken === 'string'
+        && window.electronBridge.secureControlToken.length > 0
+      )
+      || remoteAuthorized
+    )
 }
 
 export async function fetchSecureSessionCatalog(
@@ -308,7 +320,7 @@ export async function fulfillSecureAccessRequestPrivately(
     privateValue = typeof input.value === 'string'
       ? input.value
       : new TextDecoder('utf-8', { fatal: true }).decode(input.value)
-    encryptedMaterial = await encryptPrivateValue(privateValue)
+    encryptedMaterial = await encryptPrivateValue(apiClient, privateValue)
   } finally {
     if (typeof input.value !== 'string') input.value.fill(0)
     privateValue = ''
@@ -323,6 +335,7 @@ export async function fulfillSecureAccessRequestPrivately(
       body: JSON.stringify({
         baseRevision,
         displayAlias: request.displayAlias,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
         encryptedMaterial,
         retention: input.retention,
         scope: input.scope,
@@ -520,16 +533,30 @@ function getPrivateBridge(): SecureVaultPrivateBridge | null {
       | { secureVault?: SecureVaultPrivateBridge }
       | undefined
   )?.secureVault
-  return typeof bridge?.encryptLocalValue === 'function' && typeof bridge.status === 'function'
+  return typeof bridge?.encryptLocalValue === 'function'
+    && typeof bridge.status === 'function'
+    && typeof bridge.unlock === 'function'
     ? bridge
     : null
 }
 
-async function encryptPrivateValue(value: string): Promise<string> {
+async function encryptPrivateValue(
+  apiClient: SettingsApiClient,
+  value: string,
+): Promise<string> {
   const bridge = getPrivateBridge()
-  if (!bridge) throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+  if (!bridge) {
+    try {
+      return await encryptRemoteSecureValue(apiClient, value)
+    } catch {
+      throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+    }
+  }
   try {
-    const status = await bridge.status()
+    let status = await bridge.status()
+    if (!status.ok || !status.available) {
+      status = await bridge.unlock()
+    }
     if (!status.ok || !status.available) {
       throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
     }
@@ -578,6 +605,7 @@ async function performSnapshotRequest(
     response = await apiClient.fetch(path, {
       ...init,
       cache: 'no-store',
+      credentials: 'include',
     })
   } catch {
     throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
@@ -629,7 +657,7 @@ function withSecureControl(init?: RequestInit): RequestInit | undefined {
   const token = typeof window === 'undefined'
     ? undefined
     : window.electronBridge?.secureControlToken
-  if (!token) throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+  if (!token) return init
   const headers = new Headers(init?.headers)
   headers.set('X-Forge-Secure-Control', token)
   return { ...init, headers }

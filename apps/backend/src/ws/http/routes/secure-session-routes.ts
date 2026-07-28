@@ -57,6 +57,7 @@ export interface StopSecureSessionInput {
 export type FulfillSecureAccessRequestInput = {
   baseRevision: number;
   displayAlias: string;
+  displayName?: string;
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];
   retention: SecureSecretRetention;
@@ -371,6 +372,7 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
   assertKnownKeys(input, [
     "baseRevision",
     "displayAlias",
+    "displayName",
     "encryptedMaterial",
     "leaseKind",
     "durationSeconds",
@@ -389,6 +391,9 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
       : { durationSeconds: input.durationSeconds }),
   });
   const displayAlias = parseDisplayAlias(input.displayAlias);
+  const displayName = input.displayName === undefined
+    ? undefined
+    : parseDisplayAlias(input.displayName);
   const encryptedMaterial = parseEncryptedMaterial(input.encryptedMaterial);
   const retention = parseRetention(input.retention);
   const scope = input.scope === undefined
@@ -418,6 +423,7 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
   return {
     baseRevision: grant.baseRevision,
     displayAlias,
+    ...(displayName === undefined ? {} : { displayName }),
     encryptedMaterial,
     exposures: grant.exposures.map((exposure) =>
       parseSecureSecretBinding(exposure)
