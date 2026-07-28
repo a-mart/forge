@@ -1022,7 +1022,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const ready = (): boolean => extensionInstanceId === undefined
       ? this.readyConnectionIds().length > 0
       : this.isInstanceReady(extensionInstanceId)
-    if (ready() || !this.hadReadyConnection) return Promise.resolve(ready())
+    // A newly activated Desktop relay has no prior ready connection, but its
+    // authenticated context proves that External Chrome is enabled. Wait in
+    // that startup case; an inactive relay must remain an immediate no-op.
+    if (ready() || (!this.hadReadyConnection && this.context === null)) return Promise.resolve(ready())
     const remaining = Number.isFinite(deadlineAt)
       ? Math.min(RECONNECT_ACQUISITION_WAIT_MS, Math.max(0, (deadlineAt as number) - Date.now()))
       : RECONNECT_ACQUISITION_WAIT_MS

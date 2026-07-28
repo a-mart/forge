@@ -85,6 +85,22 @@ async function connectedRuntime(
   return { runtime, client, root }
 }
 
+async function activatedRuntime(
+  expected = { payloadVersion: 'm4-runtime.1', sha256: 'a'.repeat(64), shellAbi: 1 },
+): Promise<{ runtime: ExternalChromeRelayRuntime; root: string }> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-cold-start-'))
+  roots.push(root)
+  const endpoint = path.join(root, 'relay.sock')
+  const key = Buffer.alloc(32, 0x44)
+  const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'))
+  runtime.configureExpectedRuntime(expected)
+  runtime.activate({ epoch: 'epoch_1234567890abcdef', desktopInstanceId: 'desktop_1234567890abcdef', keyId: 'key-test', secret: key })
+  const server = createServer((socket) => runtime.accept(socket))
+  servers.push(server)
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve) })
+  return { runtime, root }
+}
+
 function request(operation: BrowserAutomationRequest['operation'], tabId: string | null, input: Record<string, unknown> = {}): BrowserAutomationRequest {
   return {
     requestId: `request-${operation}`, targetAffinity: 'external-chrome', sessionAgentId: 'session-a', profileId: 'profile-a',
@@ -195,6 +211,54 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     const acquired = await reacquiring
     if (acquired.ok) await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
     runtime.deactivate(); reconnected.close(); await loop
+  })
+
+  it('waits on a freshly activated relay when the extension connects after acquisition begins', async () => {
+    const { runtime, root } = await activatedRuntime()
+    const reacquiring = runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 12, deadlineAt: Date.now() + 3_000,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const loop = fakeExtensionLoop(reconnected)
+    await expect(reacquiring).resolves.toMatchObject({ ok: true, authority: { tabId: 'ext.instance_profile_a.40' } })
+    const acquired = await reacquiring
+    if (acquired.ok) await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    runtime.deactivate(); reconnected.close(); await loop
+  })
+
+  it('keeps a fresh activated relay bounded when the extension remains absent', async () => {
+    const { runtime } = await activatedRuntime()
+    const startedAt = Date.now()
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 13, deadlineAt: Date.now() + 20,
+    })).resolves.toMatchObject({ ok: false, metadata: { fallbackReason: 'no-eligible-target' } })
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+    runtime.deactivate()
+  })
+
+  it('cancels a fresh-start readiness waiter when the relay deactivates', async () => {
+    const { runtime } = await activatedRuntime()
+    const waiting = runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 14,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    runtime.deactivate()
+    await expect(waiting).resolves.toMatchObject({ ok: false, metadata: { fallbackReason: 'no-eligible-target' } })
+  })
+
+  it('does not add reconnect latency when the relay has never been activated', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-no-integration-'))
+    roots.push(root)
+    const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'))
+    const startedAt = Date.now()
+    await expect(runtime.execute(request('status', null))).resolves.toMatchObject({ ok: true, result: { available: false } })
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+    runtime.deactivate()
   })
 
   it('bounds reconnect waiting by the browser request deadline', async () => {
