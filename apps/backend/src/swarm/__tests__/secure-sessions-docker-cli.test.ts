@@ -13,6 +13,7 @@ describe("DockerCli", () => {
     const cli = new DockerCli({
       command: process.execPath,
       environment: { DOCKER_HOST: dockerHost },
+      platform: "linux",
       onInvocation: ({ args }) => invocations.push([...args]),
     });
 
@@ -26,6 +27,7 @@ describe("DockerCli", () => {
     const cli = new DockerCli({
       command: process.execPath,
       environment: { DOCKER_HOST: endpoint },
+      platform: "linux",
       onInvocation: ({ args }) => invocations.push([...args]),
     });
 
