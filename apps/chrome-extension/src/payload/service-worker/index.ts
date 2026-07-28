@@ -216,15 +216,22 @@ export class Runtime implements ServiceWorkerPayload {
       let syntheticOperationId: string | null = null
       try {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= Date.now()) return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
+        let initialErrorPage = false
         try {
-          await this.debuggers.attach(params.tabId)
+          const attachment = await this.debuggers.attach(params.tabId, { allowInitialErrorPage: params.operation === 'navigate' })
+          initialErrorPage = attachment.initialErrorPage
         } catch (error) {
           if (error instanceof DebuggerAttachConflictError) {
             return this.executeFailure(params, 'debugger-unavailable', error.message, true, EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS)
           }
           throw error
         }
-        await this.chrome.scripting.executeScript({ target: { tabId: params.tabId, allFrames: true }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
+        // Chrome blocks frame-tree inspection and extension injection on its
+        // internal network-error document. Navigation alone may pass that
+        // preflight; the committed destination is injected by webNavigation.
+        if (!initialErrorPage) {
+          await this.chrome.scripting.executeScript({ target: { tabId: params.tabId, allFrames: true }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
+        }
         controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
         const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
         if (params.operation === 'click' || params.operation === 'type' || params.operation === 'press') {
