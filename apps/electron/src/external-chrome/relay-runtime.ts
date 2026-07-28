@@ -32,6 +32,10 @@ const CHECKPOINT_TTL_MS = 15 * 60_000
 const MAX_LEASE_CHECKPOINTS = MAX_CONNECTIONS * 128
 const MAX_CHECKPOINT_FILE_BYTES = 1 * 1_024 * 1_024
 const MAX_PROFILE_CHOICE_SESSIONS = 64
+// NativeRpcClient retries the native port after 250 ms; one hello negotiation is
+// bounded by its 10 s request timeout. Keep the automatic wait within that first
+// reconnect attempt while still respecting the caller's browser deadline.
+const RECONNECT_ACQUISITION_WAIT_MS = 11_000
 
 interface RelayContext {
   epoch: string
@@ -443,6 +447,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private activatedRuntimeKey: string | null = null
   private failedActivationRuntimeKey: string | null = null
   private lifecycleBarrierRecovery: RuntimeRecovery | null = null
+  private hadReadyConnection = false
+  private readonly readinessWaiters = new Set<{ wake: () => void; cancel: () => void }>()
   /** Desktop-private session affinity. Never exposed as a caller-selectable host. */
   private readonly sessionAffinities = new Map<string, string>()
   private readonly profileChoiceTokens = new Map<string, {
@@ -507,6 +513,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.profileChoiceTokens.clear()
     this.profileChoiceSessions.clear()
     this.runtimeStateRevision += 1
+    this.cancelReadinessWaiters()
     this.context?.secret.fill(0)
     this.context = null
     this.operationsQuiesced = true
@@ -685,9 +692,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     let extensionInstanceId = decoded?.extensionInstanceId ?? this.sessionAffinities.get(affinityKey)
     let reuseFocused = false
     if (extensionInstanceId !== undefined && !this.isInstanceReady(extensionInstanceId)) {
-      return acquireFailure('runtime-not-ready', 'The session-affine Chrome instance is not ready.', true)
+      await this.waitForReady(extensionInstanceId, input.deadlineAt)
+      if (!this.isInstanceReady(extensionInstanceId)) return acquireFailure('runtime-not-ready', 'The session-affine Chrome instance is not ready.', true)
     }
     if (extensionInstanceId === undefined) {
+      await this.waitForReady(undefined, input.deadlineAt)
       const selected = await this.selectAutomaticInstance()
       if (selected.kind === 'unavailable') return acquireFailure('no-eligible-target', 'No ready Chrome profile is available.', true)
       if (selected.kind === 'ambiguous') {
@@ -793,6 +802,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private async statusResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
     const leases = await this.activeCheckpoints()
     const checkpoint = request.tabId ? findCheckpoint(leases, request.tabId, request.sessionAgentId, request.profileId) : undefined
+    if (checkpoint && !this.isInstanceReady(checkpoint.extensionInstanceId)) await this.waitForReady(checkpoint.extensionInstanceId, Date.parse(request.deadlineAt))
+    else if (!checkpoint && this.readyConnectionIds().length === 0) await this.waitForReady(undefined, Date.parse(request.deadlineAt))
     const checkpointReady = checkpoint ? this.isInstanceReady(checkpoint.extensionInstanceId) : false
     let selectedTab = checkpoint && request.tabId && checkpointReady ? checkpointTab(checkpoint, request.tabId, request, '', 'External Chrome tab') : null
     if (checkpoint && request.tabId && checkpointReady) {
@@ -842,7 +853,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const mapped = leases.find((lease) => lease.sessionAgentId === request.sessionAgentId && lease.profileId === request.profileId)
     const priorAffinity = mapped?.extensionInstanceId ?? this.sessionAffinities.get(affinityKey)
     if (priorAffinity !== undefined && !this.isInstanceReady(priorAffinity)) {
-      return failure('extension-update-required', 'The session-affine Chrome instance is updating or reconnecting.', true)
+      await this.waitForReady(priorAffinity, Date.parse(request.deadlineAt))
+      if (!this.isInstanceReady(priorAffinity)) return failure('extension-update-required', 'The session-affine Chrome instance is updating or reconnecting.', true)
     }
     let extensionInstanceId: string
     let reuseFocused = false
@@ -852,6 +864,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         reuseFocused = (await this.uniquelyFocusedInstances([extensionInstanceId])).length === 1
       }
     } else {
+      await this.waitForReady(undefined, Date.parse(request.deadlineAt))
       const selected = await this.selectAutomaticInstance()
       if (selected.kind === 'unavailable') return failure('target-not-found', 'No ready Chrome profile is available.', true)
       if (selected.kind === 'ambiguous') {
@@ -998,6 +1011,47 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
 
   private readyConnectionIds(): string[] {
     return [...this.connections.keys()].filter((id) => this.isInstanceReady(id))
+  }
+
+  /**
+   * A Chrome MV3 worker can briefly drop its native port while waking. Keep a
+   * request in the automatic path alive for that bounded reconnect window
+   * instead of treating the transient empty ready set as target absence.
+   */
+  private waitForReady(extensionInstanceId?: string, deadlineAt?: number): Promise<boolean> {
+    const ready = (): boolean => extensionInstanceId === undefined
+      ? this.readyConnectionIds().length > 0
+      : this.isInstanceReady(extensionInstanceId)
+    if (ready() || !this.hadReadyConnection) return Promise.resolve(ready())
+    const remaining = Number.isFinite(deadlineAt)
+      ? Math.min(RECONNECT_ACQUISITION_WAIT_MS, Math.max(0, (deadlineAt as number) - Date.now()))
+      : RECONNECT_ACQUISITION_WAIT_MS
+    if (remaining <= 0) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => finish(false), remaining)
+      timer.unref?.()
+      const waiter = {
+        wake: (): void => { if (ready()) finish(true) },
+        cancel: (): void => finish(false),
+      }
+      const finish = (value: boolean): void => {
+        if (timer === null) return
+        clearTimeout(timer)
+        timer = null
+        this.readinessWaiters.delete(waiter)
+        resolve(value)
+      }
+      this.readinessWaiters.add(waiter)
+      waiter.wake()
+    })
+  }
+
+  private notifyReadinessChanged(): void {
+    for (const waiter of [...this.readinessWaiters]) waiter.wake()
+  }
+
+  private cancelReadinessWaiters(): void {
+    for (const waiter of [...this.readinessWaiters]) waiter.cancel()
   }
 
   private async selectAutomaticInstance(): Promise<
@@ -1207,6 +1261,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           }
           this.instanceStates.set(extensionInstanceId, state)
           this.runtimeStateRevision += 1
+          if (state.recovery === 'ready') this.hadReadyConnection = true
+          this.notifyReadinessChanged()
           if (state.recovery === 'ready') {
             const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId) }, 0)
             reconciliation.unref?.()
@@ -1239,6 +1295,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
             if (state?.connection === connection) {
               this.instanceStates.delete(id)
               this.runtimeStateRevision += 1
+              this.notifyReadinessChanged()
               this.scheduleRuntimeUpdateBarrier()
             }
           }

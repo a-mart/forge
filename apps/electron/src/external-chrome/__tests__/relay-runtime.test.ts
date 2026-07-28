@@ -177,6 +177,52 @@ async function fakeExtensionLoop(
 }
 
 describe('authenticated External Chrome Desktop relay runtime', () => {
+  it('waits through a transient extension disconnect before reacquiring automatic authority', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const endpoint = path.join(root, 'relay.sock')
+    client.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+
+    const reacquiring = runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open',
+      preferredTabId: null, reuseExisting: true, createIfNeeded: true, ownerEpoch: 9,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+    const reconnected = await connectRelayClient(endpoint)
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const loop = fakeExtensionLoop(reconnected)
+    await expect(reacquiring).resolves.toMatchObject({ ok: true, authority: { tabId: 'ext.instance_profile_a.40' } })
+    const acquired = await reacquiring
+    if (acquired.ok) await runtime.releaseAuthority({ sessionAgentId: 'session-a', profileId: 'profile-a' }, acquired.authority, 'idle')
+    runtime.deactivate(); reconnected.close(); await loop
+  })
+
+  it('bounds reconnect waiting by the browser request deadline', async () => {
+    const { runtime, client } = await connectedRuntime()
+    client.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    const startedAt = Date.now()
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 10, deadlineAt: Date.now() + 20,
+    })).resolves.toMatchObject({ ok: false, metadata: { fallbackReason: 'no-eligible-target' } })
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+    runtime.deactivate()
+  })
+
+  it('cancels reconnect waiters when the relay is deactivated', async () => {
+    const { runtime, client } = await connectedRuntime()
+    client.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    const waiting = runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 11,
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    runtime.deactivate()
+    await expect(waiting).resolves.toMatchObject({ ok: false, metadata: { fallbackReason: 'no-eligible-target' } })
+  })
+
   it.each([
     ['corrupt JSON', '{not-json'],
     ['invalid schema', JSON.stringify({ schemaVersion: 2, leases: [] })],
