@@ -161,6 +161,17 @@ async function readSmallRegularFile(filePath: string): Promise<string> {
 async function resolveExternalGitCommonDir(
   workspacePath: string,
 ): Promise<{ commonDirectory: string; gitDirectory: string } | null> {
+  try {
+    return await resolveExternalGitCommonDirUnchecked(workspacePath);
+  } catch (error) {
+    if (error instanceof SecureExecutionError) throw error;
+    throw new SecureExecutionError("INVALID_TASK");
+  }
+}
+
+async function resolveExternalGitCommonDirUnchecked(
+  workspacePath: string,
+): Promise<{ commonDirectory: string; gitDirectory: string } | null> {
   const dotGitPath = join(workspacePath, ".git");
   let dotGitStat;
   try {
