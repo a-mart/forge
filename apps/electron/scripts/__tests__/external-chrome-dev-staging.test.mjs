@@ -98,8 +98,22 @@ describe('External Chrome development resource staging', () => {
     expect(sha256(await readFile(workerPath))).toBe(deployedSelector.payloadFiles['service-worker.js'])
   })
 
-  it('fails closed on Windows rather than producing an unusable Chrome launcher', async () => {
-    await expect(prepareExternalChromeDevelopmentResources({ platform: 'win32' }))
-      .rejects.toThrow('Windows dev host preparation is unsupported')
+  it('skips Windows staging and removes stale resources rather than producing an unusable Chrome launcher', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'forge-external-chrome-dev-windows-'))
+    roots.push(root)
+    const outputRoot = path.join(root, 'prepared')
+    await mkdir(outputRoot, { recursive: true })
+    await writeFile(path.join(outputRoot, 'stale-host.exe'), 'stale')
+
+    await expect(prepareExternalChromeDevelopmentResources({
+      outputRoot,
+      platform: 'win32',
+    })).resolves.toEqual({
+      outputRoot,
+      skipped: true,
+      reason: 'External Chrome development requires a native Windows launcher',
+    })
+    await expect(readFile(path.join(outputRoot, 'stale-host.exe')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

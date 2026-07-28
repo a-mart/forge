@@ -24,7 +24,12 @@ export async function prepareExternalChromeDevelopmentResources({
   smoke = smokeDevelopmentHost,
 } = {}) {
   if (platform === 'win32') {
-    throw new Error('External Chrome development native host currently requires a POSIX shebang launcher; Windows dev host preparation is unsupported')
+    await rm(outputRoot, { recursive: true, force: true })
+    return {
+      outputRoot,
+      skipped: true,
+      reason: 'External Chrome development requires a native Windows launcher',
+    }
   }
   if (nodeExecutable.includes('\n') || nodeExecutable.includes('\r') || nodeExecutable.includes(' ')) {
     throw new Error('External Chrome development native host requires a Node executable path without whitespace or line breaks')
@@ -150,8 +155,16 @@ function stableJson(value) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  buildInputs()
-    .then(() => prepareExternalChromeDevelopmentResources())
-    .then(({ outputRoot }) => process.stdout.write(`[external-chrome-dev] prepared ${outputRoot}\n`))
+  const preparation = process.platform === 'win32'
+    ? prepareExternalChromeDevelopmentResources()
+    : buildInputs().then(() => prepareExternalChromeDevelopmentResources())
+  preparation
+    .then((result) => {
+      if (result.skipped) {
+        process.stdout.write(`[external-chrome-dev] skipped: ${result.reason}; Forge Desktop will use its embedded browser\n`)
+        return
+      }
+      process.stdout.write(`[external-chrome-dev] prepared ${result.outputRoot}\n`)
+    })
     .catch((error) => { console.error(error); process.exitCode = 1 })
 }
