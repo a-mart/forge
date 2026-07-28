@@ -332,6 +332,7 @@ export class AutomaticBrowserHost {
         preferredTabId,
         reuseExisting,
         createIfNeeded: true,
+        deadlineAt: Date.parse(request.deadlineAt),
         ownerEpoch: ++this.ownerEpoch,
       })
       if (!acquired.ok) {

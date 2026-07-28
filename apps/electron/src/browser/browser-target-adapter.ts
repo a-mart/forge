@@ -68,6 +68,8 @@ export interface ExternalBrowserAcquireInput extends BrowserTargetSession {
   readonly preferredTabId: string | null
   readonly reuseExisting: boolean
   readonly createIfNeeded: boolean
+  /** Absolute request deadline, when acquisition is part of a browser call. */
+  readonly deadlineAt?: number
   readonly ownerEpoch: number
 }
 
