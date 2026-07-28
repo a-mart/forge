@@ -468,10 +468,10 @@ export class SessionInteractionCoordinator {
     source: PublishToUserSource = "speak_to_user",
     targetContext?: MessageTargetContext,
   ): Promise<PublishToUserResult> {
-    if (source === "speak_to_user") {
-      this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "speak_to_user");
-    }
-
+    // speak_to_user is intentionally allowed during external project-agent turns:
+    // it publishes only to this session's own user, so it cannot leak across the
+    // profile boundary, and it is the sole path for surfacing a blocker to that
+    // user while the turn's final output is routed back to the external peer.
     let resolvedTargetContext: MessageSourceContext;
     let normalizedText = text;
 
@@ -558,7 +558,6 @@ export class SessionInteractionCoordinator {
       | "kill_agent"
       | "create_session"
       | "create_project_agent"
-      | "speak_to_user"
       | "present_choices"
       | "update_plan"
       | "update_work_graph"

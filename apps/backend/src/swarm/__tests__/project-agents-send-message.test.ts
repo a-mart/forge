@@ -307,7 +307,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     });
   });
 
-  it("allows a contacted shared project agent to reply directly back to the originating external session and suppresses other turn actions", async () => {
+  it("lets a contacted shared project agent reply to the originator and notify its own user while other turn actions stay suppressed", async () => {
     const config = await makeTempConfig(8898);
     const manager = new TestSwarmManager(config);
 
@@ -342,7 +342,22 @@ describe("SwarmManager project-agent sendMessage routing", () => {
       message: { role: "user", content: targetRuntimeText }
     });
 
-    await expect(manager.publishToUser(target.agentId, "Should stay internal")).rejects.toThrow(/disabled for this turn/i);
+    await expect(
+      manager.publishToUser(target.agentId, "Blocker for this session's own user"),
+    ).resolves.toMatchObject({
+      targetContext: { channel: "web" },
+      published: true,
+    });
+    expect(
+      manager.getConversationHistory(target.agentId).find(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.source === "speak_to_user" &&
+          entry.text === "Blocker for this session's own user"
+      )
+    ).toMatchObject({
+      sourceContext: { channel: "web" },
+    });
     await expect(manager.sendMessage(target.agentId, other.agentId, "Fan out elsewhere", "auto")).rejects.toThrow(/direct reply back/i);
 
     const replyReceipt = await manager.sendMessage(target.agentId, sender.agentId, "Reply back", "auto");
