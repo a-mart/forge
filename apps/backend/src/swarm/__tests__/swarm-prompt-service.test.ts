@@ -43,9 +43,11 @@ afterEach(async () => {
 });
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
-  expect(prompt).toContain("Worker results require disposition but are not automatic user updates");
+  expect(prompt).toContain("Worker results require disposition but are not automatic user or peer updates");
   expect(prompt).toContain("Direct request or accepted closeout: normal final text");
   expect(prompt).toContain("Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`");
+  expect(prompt).toContain("Peer context: honor the sender's stated response expectation");
+  expect(prompt).toContain("Never send courtesy-only acknowledgments or closure replies");
   expect(prompt).toContain("Never duplicate a reply through two paths");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
   expect(prompt).not.toContain("an accepted outcome/material blocker reached from an internal callback");
@@ -906,7 +908,9 @@ Always preserve the user's release notes.`,
     const manager = createManagerDescriptor(config, repoRoot, { archetypeId: "manager" });
     const managerPrompt = await createPromptServiceForDescriptor(config, manager)
       .resolveSystemPromptForDescriptor(manager);
-    expect(managerPrompt).toContain("respond with `send_message_to_agent` to the source `fromAgentId`");
+    expect(managerPrompt).toContain("When a peer response is warranted, use `send_message_to_agent` to the source `fromAgentId`");
+    expect(managerPrompt).toContain("If the message says no reply is needed (an information or ownership handoff), stay silent");
+    expect(managerPrompt).toContain("Never send courtesy-only acknowledgments");
   });
 
   it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {
@@ -1137,6 +1141,9 @@ Always preserve the user's release notes.`,
     expect(composition.rolePrompt).toBeUndefined();
     expect(composition.sources.map((source) => source.kind)).toEqual(["project_agent_base", "base_only"]);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
+    expect(composition.content).toContain("No reply needed (an information or ownership handoff): stay silent");
+    expect(composition.content).toContain("A specific result requested: send that one terminal result when accepted");
+    expect(composition.content).toContain("Coordination invited: necessary back-and-forth is allowed");
     expect(composition.content).toContain("messages beginning with `[workerResult]`");
     expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
 

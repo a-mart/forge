@@ -784,7 +784,10 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('Treat new user messages as high-priority steering input')
     expect(managerPrompt).toContain('Hand control to the user only after confirming that shared resource is stable')
     expect(managerPrompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i)
-    expect(managerPrompt).toContain('respond with `send_message_to_agent` to the source `fromAgentId`')
+    expect(managerPrompt).toContain('When a peer response is warranted, use `send_message_to_agent` to the source `fromAgentId`')
+    expect(managerPrompt).toContain('If the message says no reply is needed (an information or ownership handoff), stay silent')
+    expect(managerPrompt).toContain('Never send courtesy-only acknowledgments')
+    expect(managerPrompt).toContain('Explicitly requested approvals, decisions, and other confirmations that materially advance the work are allowed')
     expect(managerPrompt).toContain('This does not require extra confirmation for direct replies to the user in the channel they used')
     expect(managerPrompt).toContain(managerMemoryPath)
 

@@ -61,7 +61,7 @@ export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirector
 
   if (visibleExternalEntries.length === 0) {
     const lines = [
-      "Project agents in this profile — use `send_message_to_agent` for async cross-session coordination.",
+      "Project agents in this profile — use `send_message_to_agent` for async cross-session coordination. State your response expectation in the message: say when no reply is needed, name the specific result you need, or invite coordination.",
       ...visibleLocalEntries.map((entry) => {
         const displayName = formatTrustedProjectAgentPromptValue(entry.displayName) || entry.agentId;
         const whenToUse = formatTrustedProjectAgentPromptValue(entry.whenToUse);
@@ -76,8 +76,8 @@ export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirector
 
   const lines = [
     ...(visibleLocalEntries.length > 0
-      ? ["Project agents in this profile — use `send_message_to_agent` for async cross-session coordination."]
-      : ["Project agents available to this session via sharing — use `send_message_to_agent` for async cross-session coordination."]),
+      ? ["Project agents in this profile — use `send_message_to_agent` for async cross-session coordination. State your response expectation in the message: say when no reply is needed, name the specific result you need, or invite coordination."]
+      : ["Project agents available to this session via sharing — use `send_message_to_agent` for async cross-session coordination. State your response expectation in the message: say when no reply is needed, name the specific result you need, or invite coordination."]),
     ...visibleLocalEntries.map((entry) => {
       const displayName = formatTrustedProjectAgentPromptValue(entry.displayName) || entry.agentId;
       const whenToUse = formatTrustedProjectAgentPromptValue(entry.whenToUse);
