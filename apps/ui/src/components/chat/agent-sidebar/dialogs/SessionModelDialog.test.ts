@@ -208,14 +208,14 @@ describe('SessionModelDialog', () => {
   })
 
   describe('hidden current model (regression)', () => {
-    // xAI/Grok models are not in getChangeManagerFamilies() but can
-    // be the session's current model. The dialog must preserve them instead of
+    // OAuth-discovered xAI worker models are not in getChangeManagerFamilies() but
+    // can be the session's current model. The dialog must preserve them instead of
     // silently falling back to the first visible model.
     it('preserves hidden current model without auto-fallback', async () => {
       await renderDialog({
         currentModel: {
           provider: 'xai',
-          modelId: 'grok-4',
+          modelId: 'grok-build',
           thinkingLevel: 'high',
         },
         currentReasoningLevel: 'high',
@@ -261,7 +261,7 @@ describe('SessionModelDialog', () => {
       await renderDialog({
         currentModel: {
           provider: 'xai',
-          modelId: 'grok-4',
+          modelId: 'grok-build',
           thinkingLevel: 'high',
         },
         currentReasoningLevel: 'high',
@@ -282,7 +282,7 @@ describe('SessionModelDialog', () => {
       const props = await renderDialog({
         currentModel: {
           provider: 'xai',
-          modelId: 'grok-4',
+          modelId: 'grok-build',
           thinkingLevel: 'high',
         },
         currentReasoningLevel: 'high',

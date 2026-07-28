@@ -1369,6 +1369,50 @@ Never use plain assistant text for user communication.`
     vi.unstubAllEnvs()
   })
 
+  it('creates a native xAI manager with exact Grok 4.5 selection when xAI API auth is available', async () => {
+    vi.stubEnv('XAI_API_KEY', 'xai-test-exact-selection')
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'Exact Grok Manager',
+      cwd: config.defaultCwd,
+      modelSelection: {
+        provider: 'xai',
+        modelId: 'grok-4.5',
+      },
+      reasoningLevel: 'xhigh',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'xai',
+      modelId: 'grok-4.5',
+      thinkingLevel: 'xhigh',
+    })
+    vi.unstubAllEnvs()
+  })
+
+  it('changes a manager to native xAI while preserving the selected reasoning level', async () => {
+    vi.stubEnv('XAI_API_KEY', 'xai-test-model-change')
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const updated = await manager.updateManagerExactModel('manager', {
+      provider: 'xai',
+      modelId: 'grok-4.5',
+    }, 'medium')
+
+    expect(updated).toEqual({
+      provider: 'xai',
+      modelId: 'grok-4.5',
+      thinkingLevel: 'medium',
+    })
+    expect(manager.getAgent('manager')?.model).toEqual(updated)
+    vi.unstubAllEnvs()
+  })
+
   it('honors create_manager reasoningLevel for exact model selections when supported', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'sk-test-exact-reasoning')
     const config = await makeTempConfig()

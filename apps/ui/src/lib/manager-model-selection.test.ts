@@ -73,6 +73,31 @@ describe('buildManagerModelRows provider availability gating', () => {
     }
   })
 
+  it('includes native xAI Grok 4.5 in manager selectors when xAI auth is available', () => {
+    const rows = buildManagerModelRows('create', {}, { xai: true })
+    const grokRows = rows.filter((row) => row.provider === 'xai')
+    const grok = rows.find((row) => row.key === 'xai::grok-4.5')
+
+    expect(grokRows.length).toBeGreaterThan(0)
+    expect(grok).toMatchObject({
+      provider: 'xai',
+      familyId: 'pi-grok',
+      modelId: 'grok-4.5',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningLevel: 'high',
+    })
+    expect(grok?.unavailableReason).toBeUndefined()
+    expect(rows.some((row) => row.modelId === 'grok-build' || row.modelId === 'grok-composer-2.5-fast')).toBe(false)
+  })
+
+  it('gates native xAI manager rows on stored credential availability', () => {
+    const rows = buildManagerModelRows('change', {}, {})
+    const grokRows = rows.filter((row) => row.provider === 'xai')
+
+    expect(grokRows.length).toBeGreaterThan(0)
+    expect(grokRows.every((row) => row.unavailableReason)).toBe(true)
+  })
+
   it('includes Claude Fable 5 with its catalog reasoning levels', () => {
     const rows = buildManagerModelRows('create', {}, { anthropic: true })
     const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5')

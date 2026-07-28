@@ -85,9 +85,9 @@ describe('settings-api auth changed events', () => {
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
-  it('describes xAI credentials as specialist/spawn-only for Grok', () => {
+  it('describes xAI credentials as available for manager, specialist, and spawn Grok usage', () => {
     expect(SETTINGS_AUTH_PROVIDER_META.xai.description).toBe(
-      'Native xAI credentials enable Grok for specialist and spawn usage, but Grok is excluded from normal manager create/change selectors.',
+      'Native xAI credentials enable Grok for manager, specialist, and spawn usage.'
     )
   })
 

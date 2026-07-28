@@ -85,8 +85,8 @@ const EXPECTED_FAMILIES = {
   'pi-grok': {
     provider: 'xai',
     defaultModelId: 'grok-4.5',
-    visibleInCreateManager: false,
-    visibleInChangeManager: false,
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
@@ -533,9 +533,13 @@ describe('model-catalog', () => {
     expect(getDefaultManagerEnabled(anthropicOpus47, 'create')).toBe(true)
     expect(getEffectiveManagerEnabled(anthropicOpus47, undefined, 'create')).toBe(true)
     expect(getEffectiveManagerEnabled(anthropicOpus47, { managerEnabled: false }, 'create')).toBe(false)
-    expect(isCatalogModelManagerSupported(grok, 'create')).toBe(false)
-    expect(getDefaultManagerEnabled(grok, 'create')).toBe(false)
-    expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(false)
+    expect(isCatalogModelManagerSupported(grok, 'create')).toBe(true)
+    expect(getDefaultManagerEnabled(grok, 'create')).toBe(true)
+    expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(true)
+
+    const discoveredGrok = { ...grok, modelId: 'grok-build', discovered: true }
+    expect(isCatalogModelManagerSupported(discoveredGrok, 'create')).toBe(false)
+    expect(getEffectiveManagerEnabled(discoveredGrok, { managerEnabled: true }, 'change')).toBe(false)
   })
 
   it('derives compaction eligibility from the dedicated provider allowlist instead of manager visibility', () => {
@@ -565,6 +569,7 @@ describe('model-catalog', () => {
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
+      'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
     ])
@@ -576,6 +581,7 @@ describe('model-catalog', () => {
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
+      'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
     ])

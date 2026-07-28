@@ -6,6 +6,7 @@ import { resolveModelDescriptorFromPreset } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { writeModelOverrides } from "../model-overrides.js";
 import { resolveExactManagerModelSelection } from "../catalog/manager-model-selection.js";
+import { parseXaiOAuthModelCatalog } from "../catalog/xai-oauth-model-discovery.js";
 
 const tempDirs: string[] = [];
 
@@ -19,6 +20,7 @@ afterEach(async () => {
   const cleanDirectory = await mkdtemp(join(tmpdir(), "forge-manager-model-selection-clean-"));
   tempDirs.push(cleanDirectory);
   await modelCatalogService.loadOverrides(cleanDirectory);
+  modelCatalogService.setXaiOAuthDiscoveredModels(null);
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -87,6 +89,43 @@ describe("manager model selection", () => {
     });
   });
 
+  it("resolves native xAI Grok 4.5 for every API-supported reasoning level", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    for (const reasoningLevel of ["low", "medium", "high", "xhigh"] as const) {
+      expect(resolveExactManagerModelSelection(
+        { provider: "xai", modelId: "grok-4.5" },
+        { surface: "change", providerAvailability: new Map([["xai", true]]), reasoningLevel },
+      )).toEqual({ provider: "xai", modelId: "grok-4.5", thinkingLevel: reasoningLevel });
+    }
+  });
+
+  it("uses OAuth-advertised Grok 4.5 reasoning levels while keeping dynamic models worker-only", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+    modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+      data: [
+        { id: "grok-4.5", supported_reasoning_levels: ["low", "medium"], default_reasoning_level: "medium" },
+        { id: "grok-build", context_window: 400_000, max_output_tokens: 40_000, supported_reasoning_levels: ["low", "medium"] },
+      ],
+    }));
+
+    expect(resolveExactManagerModelSelection(
+      { provider: "xai", modelId: "grok-4.5" },
+      { surface: "create", providerAvailability: new Map([["xai", true]]), reasoningLevel: "medium" },
+    )).toEqual({ provider: "xai", modelId: "grok-4.5", thinkingLevel: "medium" });
+    expect(resolveExactManagerModelSelection(
+      { provider: "xai", modelId: "grok-4.5" },
+      { surface: "create", providerAvailability: new Map([["xai", true]]), reasoningLevel: "xhigh" },
+    )).toEqual({ provider: "xai", modelId: "grok-4.5", thinkingLevel: "medium" });
+    expect(() => resolveExactManagerModelSelection(
+      { provider: "xai", modelId: "grok-build" },
+      { surface: "create", providerAvailability: new Map([["xai", true]]) },
+    )).toThrow("Unknown manager model selection: xai/grok-build");
+    modelCatalogService.setXaiOAuthDiscoveredModels(null);
+  });
+
   it("rejects exact manager selection when provider availability is explicitly false", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
@@ -97,6 +136,13 @@ describe("manager model selection", () => {
         { surface: "change", providerAvailability: new Map([["anthropic", false]]) },
       )
     ).toThrow("Provider anthropic is not configured for manager model selection");
+
+    expect(() =>
+      resolveExactManagerModelSelection(
+        { provider: "xai", modelId: "grok-4.5" },
+        { surface: "change", providerAvailability: new Map([["xai", false]]) },
+      )
+    ).toThrow("Provider xai is not configured for manager model selection");
   });
 
   it("rejects exact manager selection when managerEnabled is false", async () => {

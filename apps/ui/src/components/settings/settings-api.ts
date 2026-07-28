@@ -57,7 +57,7 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
   },
   xai: {
     label: 'xAI',
-    description: 'Native xAI credentials enable Grok for specialist and spawn usage, but Grok is excluded from normal manager create/change selectors.',
+    description: 'Native xAI credentials enable Grok for manager, specialist, and spawn usage.',
     placeholder: 'xai-...',
     helpUrl: 'https://console.x.ai/',
     oauthSupported: true,

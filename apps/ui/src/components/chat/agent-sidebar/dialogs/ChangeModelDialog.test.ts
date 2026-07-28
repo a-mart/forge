@@ -85,7 +85,7 @@ describe('ChangeModelDialog', () => {
       await renderDialog({
         currentModel: {
           provider: 'xai',
-          modelId: 'grok-4',
+          modelId: 'grok-build',
           thinkingLevel: 'high',
         },
         currentReasoningLevel: 'high',

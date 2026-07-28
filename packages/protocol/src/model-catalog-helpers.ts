@@ -171,6 +171,12 @@ export function isCatalogModelManagerSupported(
   model: ForgeModelDefinition,
   surface: ManagerModelSurface,
 ): boolean {
+  // Authenticated entitlement rows are intentionally worker/specialist-only until
+  // separately promoted into the checked-in manager catalog policy.
+  if (model.discovered) {
+    return false
+  }
+
   const family = getCatalogFamily(model.familyId)
   if (!family) {
     return false

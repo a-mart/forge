@@ -84,7 +84,7 @@ describe('SettingsAuth xAI OAuth', () => {
     expect(getByRole(container, 'heading', { name: 'Authentication' })).toBeTruthy()
     expect(container.textContent).not.toContain('API Keys')
     expect(container.textContent).toContain(
-      'Native xAI credentials enable Grok for specialist and spawn usage, but Grok is excluded from normal manager create/change selectors.',
+      'Native xAI credentials enable Grok for manager, specialist, and spawn usage.'
     )
     fireEvent.click(getByRole(container, 'button', { name: 'Login with OAuth' }))
 

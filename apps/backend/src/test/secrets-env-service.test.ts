@@ -240,6 +240,22 @@ describe('SecretsEnvService path migration', () => {
     }
   })
 
+  it('reports xAI manager availability for stored OAuth credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-xai-oauth-availability-test-'));
+    const paths = buildPaths(root);
+
+    await mkdir(join(root, 'shared', 'config', 'auth'), { recursive: true });
+    AuthStorage.create(paths.sharedAuthFile).set('xai', {
+      type: 'oauth',
+      access: 'xai-oauth-access',
+      refresh: 'xai-oauth-refresh',
+      expires: Date.now() + 60_000,
+    } as any);
+
+    const availability = await getManagedModelProviderCredentialAvailability(createConfig(paths));
+    expect(availability.get('xai')).toBe(true);
+  });
+
   it('resolves Cursor SDK API keys from auth, secrets, then env without leaking secret values in errors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-cursor-sdk-auth-'))
     const paths = buildPaths(root)
