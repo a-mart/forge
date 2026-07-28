@@ -19,6 +19,7 @@ import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
 const HEARTBEAT_ALARM = 'forge.externalChrome.heartbeat.v2'
 const TRANSPORT_GRACE_ALARM = 'forge.externalChrome.transportGrace.v2'
+const TRANSPORT_GRACE_DELAY_MINUTES = 0.5
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
@@ -65,7 +66,13 @@ export class Runtime implements ServiceWorkerPayload {
       extensionInstanceId: this.extensionInstanceId,
       chromeVersion: chromeVersion(),
       payloadSha256: identity.sha256,
-      onDisconnected: () => this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: 0.1 }),
+      onDisconnected: () => {
+        this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: TRANSPORT_GRACE_DELAY_MINUTES })
+        // Chrome's Native Messaging port disconnect is the prompt reconnect
+        // edge. The 30s-compliant alarm is only a durable fallback for a
+        // worker that suspends before the in-memory retry can run.
+        this.native?.reconnectNow()
+      },
       onConnected: () => { void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM) },
       onRequest: (message) => this.handleDesktopRequest(message),
     })
@@ -82,7 +89,13 @@ export class Runtime implements ServiceWorkerPayload {
       case 'alarm': {
         const alarm = args[0] as { name?: string } | undefined
         if (alarm?.name === HEARTBEAT_ALARM) void this.expireAuthorities()
-        if (alarm?.name === TRANSPORT_GRACE_ALARM && this.native?.isConnected() !== true) void this.detachAllOperations()
+        if (alarm?.name === TRANSPORT_GRACE_ALARM && this.native?.isConnected() !== true) {
+          // A suspended MV3 worker can lose NativeRpcClient's in-memory retry timer.
+          // The durable alarm is the recovery edge after Desktop closes an old epoch.
+          this.native?.stop()
+          this.native?.start()
+          void this.detachAllOperations()
+        }
         return undefined
       }
       case 'runtime.message': {

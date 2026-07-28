@@ -60,6 +60,7 @@ export class NativeRpcClient {
   private port: ChromeRuntimePort | null = null
   private stopped = true
   private reconnectAttempt = 0
+  private immediateReconnectAttempted = false
   private reconnectTimer: unknown = null
   private heartbeatTimer: unknown = null
   private heartbeatMs = 10_000
@@ -85,6 +86,7 @@ export class NativeRpcClient {
     this.clearTimers()
     this.rejectPending('native port stopped')
     this.resetNegotiatedState()
+    this.immediateReconnectAttempted = false
     const port = this.port
     this.port = null
     if (port !== null) port.disconnect()
@@ -92,6 +94,23 @@ export class NativeRpcClient {
 
   isConnected(): boolean {
     return this.port !== null && this.reconnectAttempt === 0 && this.lastInboundAt > 0
+  }
+
+  /**
+   * Give a live runtime one bounded reconnect edge before MV3 can suspend it.
+   * A failed immediate attempt falls back to the normal exponential schedule;
+   * repeated disconnects cannot spin connectNative in a tight loop.
+   */
+  reconnectNow(): void {
+    if (this.stopped || this.port !== null) return
+    if (this.immediateReconnectAttempted) {
+      this.scheduleReconnect('immediate reconnect already attempted')
+      return
+    }
+    this.immediateReconnectAttempted = true
+    if (this.reconnectTimer !== null) this.scheduler.clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.connect()
   }
 
   sendNotification(method: string, params: Record<string, unknown>): void {
@@ -168,6 +187,7 @@ export class NativeRpcClient {
     this.outboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES, welcome.maxMessageBytes)
     this.heartbeatMs = welcome.heartbeatMs
     this.reconnectAttempt = 0
+    this.immediateReconnectAttempted = false
     this.lastInboundAt = this.scheduler.now()
     this.options.onConnected?.(welcome)
     this.scheduleHeartbeat()
