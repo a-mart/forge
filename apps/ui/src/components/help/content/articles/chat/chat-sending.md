@@ -15,6 +15,12 @@ Eligible Builder manager sessions show a compact model pill beside **Send**. The
 
 For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
 
+### Model-change notices
+
+When a model or reasoning change is accepted for a session, Forge adds a neutral **Model change** notice to that session's conversation. It appears live and remains visible after reload or replay. The notice records the effective before-and-after values, for example: `Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.4 (reasoning: high).` It is informational conversation history, not an assistant or user message.
+
+A notice is added only when the effective model or reasoning changes. Choosing the same effective settings again does not add one. Changing a project default affects sessions that still inherit it, so each inherited session that actually changes can receive a notice; sessions with an override are unaffected. **Use Project Default** can add a notice when it changes the session's effective model or reasoning, but not when the session already matches the project default.
+
 ## Replying to a message
 
 Hover a visible normal user or assistant message and click **Reply** to attach it as the target for your next send. The composer preview means your message will include that quoted context. Use the clear control to remove the target, or click Reply on a different message to change it before sending.
