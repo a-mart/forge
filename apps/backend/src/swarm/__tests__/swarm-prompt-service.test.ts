@@ -459,7 +459,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(handsOnPrompt).toContain("One bounded worker remains Direct")
     expect(handsOnPrompt).not.toContain("# Delegation protocol")
     expect(handsOnPrompt).not.toContain("## Working plans")
-    expect(handsOnPrompt).not.toContain("Delegate workers with a behavior")
+    expect(handsOnPrompt).not.toContain("Delegate workers with a task")
     expect(handsOnPrompt).not.toContain(
       "Workers should own substantial implementation and investigation",
     );
@@ -1187,7 +1187,7 @@ Always preserve the user's release notes.`,
       "Delegate substantive implementation and investigation to appropriate workers",
     );
     expect(resolved).not.toContain("Manager direct project work is read-only.");
-    expect(resolved).not.toContain("Delegate workers with a behavior");
+    expect(resolved).not.toContain("Delegate workers with a task");
     expect(resolved).not.toContain("## Working plans");
     expect(resolved).toContain(
       "This project agent can create new manager sessions via create_session.",

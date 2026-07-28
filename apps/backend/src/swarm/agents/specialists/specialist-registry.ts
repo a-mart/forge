@@ -465,16 +465,16 @@ export function generateTierLensRosterBlock(
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Delegate workers with a behavior `mode` and an execution `route`.",
+    "Delegate workers with a task `mode` and execution profile (`route`).",
     "",
-    "Forge appends the active `[delegationRoster]` to manager-bound turns. Omit `route` to use the roster's baseline for the selected behavior mode; this is not a task-complexity classifier. Name a route only when its current guidance clearly fits an obviously cheaper or stronger executor.",
+    "Forge appends the active `[delegationRoster]` to manager-bound turns. Omit `route` to use the roster's baseline execution profile for the selected task type; this is not a task-complexity classifier. Name a route only when its current guidance clearly fits an obviously cheaper or stronger executor.",
   ];
 
   // Shipped mode handles contribute prompts only; their persisted model fields
   // do not control policy routing and therefore must not hide a mode when a
   // stale legacy model is unavailable.
   const enabledById = new Map(enabled.map((entry) => [entry.specialistId, entry]));
-  lines.push("", "Behavior modes:", "- `general` (default): implementation, debugging, and other outcome-focused work");
+  lines.push("", "Task types:", "- `general` (Build & execute; default): implementation, debugging, and other outcome-focused work");
   for (const modeConfig of BEHAVIOR_MODE_CONFIGS) {
     const lens = enabledById.get(modeConfig.lens);
     if (lens) {
@@ -504,7 +504,7 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- Behavior mode controls the worker's operating contract; route controls only executor selection.",
+    "- Task type controls the worker's operating contract; route selects only the execution profile.",
     "- Availability fallback is automatic, not capability escalation. For granted secrets, set `requiresSecureRuntime=true`; Forge fails closed without a compatible runtime.",
     "- Omit `route` for the baseline. Name one before dispatch only when its roster guidance clearly matches. Use capability escalation only when evidence from an attempt shows the baseline was inadequate.",
     "- Outside a work graph, escalation requires a fresh delegation on the stronger route; messaging the same worker does not change its pinned executor.",

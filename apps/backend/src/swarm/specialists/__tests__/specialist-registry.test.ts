@@ -960,9 +960,9 @@ describe("specialist-registry", () => {
       },
     ]);
 
-    expect(markdown).toContain("execution `route`");
-    expect(markdown).toContain("Behavior modes");
-    expect(markdown).toContain("`general` (default)");
+    expect(markdown).toContain("execution profile (`route`)");
+    expect(markdown).toContain("Task types");
+    expect(markdown).toContain("`general` (Build & execute; default)");
     expect(markdown).toContain("`domain-expert`");
     expect(markdown).toContain("Domain work");
     expect(markdown).toContain("Custom specialists (use `customSpecialist` instead of mode/route)");
@@ -1291,7 +1291,7 @@ describe("specialist-registry", () => {
   it("generates a compact message for an empty roster", () => {
     const markdown = generateRosterBlock([]);
     expect(markdown).toContain("[delegationRoster]");
-    expect(markdown).toContain("execution `route`");
+    expect(markdown).toContain("execution profile (`route`)");
     expect(markdown).toContain("`general`");
     expect(markdown).not.toContain("Custom specialists");
   });
@@ -1612,7 +1612,7 @@ describe("specialist-registry", () => {
       fallbackReasoningLevel: "medium",
     }]);
 
-    expect(markdown).toContain("execution `route`");
+    expect(markdown).toContain("execution profile (`route`)");
     expect(markdown).toContain("[delegationRoster]");
     expect(markdown).toContain("`requiresSecureRuntime=true`");
     expect(markdown).not.toContain("codex/gpt-5.5");

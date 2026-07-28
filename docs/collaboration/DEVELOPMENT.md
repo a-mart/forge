@@ -180,7 +180,7 @@ Specialists:
 
 - Use `TargetSpace` frontmatter for new specialist files.
 - Missing target space is Builder-only compatibility.
-- Collaboration uses the same manager-facing behavior modes and execution policies with TargetSpace-filtered prompt/custom-specialist definitions. Legacy tiers, lenses, and `collab-*` handles remain compatibility rewrites.
+- Collaboration uses the same manager-facing task modes and execution policies with TargetSpace-filtered prompt/custom-specialist definitions. Legacy tiers, lenses, and `collab-*` handles remain compatibility rewrites.
 - UI and runtime rosters must filter by target space.
 - Selected global handles are SQLite state; definitions stay markdown files.
 - Channel-local specialist markdown is collaboration-scoped by location.

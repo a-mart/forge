@@ -370,8 +370,8 @@ export function SettingsSpecialists({
       <SettingsSection
         label="Delegation Configuration"
         description={isCollab
-          ? 'Configure worker behavior modes and custom specialists shared across collaboration channels.'
-          : 'Configure how managers delegate work. Global behavior modes and custom specialists are shared across all projects.'}
+          ? 'Configure task instructions and custom specialists shared across collaboration channels.'
+          : 'Configure how managers delegate work. Global task instructions and custom specialists are shared across all projects.'}
       >
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
@@ -395,7 +395,7 @@ export function SettingsSpecialists({
       {!isCollab && (
         <SettingsSection
           label="Worker Rosters"
-          description="Define the worker profiles available for delegated work. Projects and sessions can select a roster without changing its definition."
+          description="Define the execution profiles available for delegated work. Projects and sessions can select a roster without changing its definition."
         >
           <DelegationRosterSettingsView
             clientOrWsUrl={clientOrWsUrl}
@@ -463,10 +463,10 @@ export function SettingsSpecialists({
       {!loading && !error && isGlobal && (
         <div>
         <SettingsSection
-          label={isCollab ? 'Collaboration Behavior Modes & Custom Specialists' : 'Behavior Modes & Custom Specialists'}
+          label={isCollab ? 'Collaboration Task Instructions & Custom Specialists' : 'Task Instructions & Custom Specialists'}
           description={isCollab
-            ? 'Shared mode prompts and custom specialist definitions available to collaboration channels.'
-            : 'Builtin mode prompts and custom specialist definitions inherited by all profiles. Builtins are editable but cannot be deleted.'}
+            ? 'Shared task-instruction prompts and custom specialist definitions available to collaboration channels.'
+            : 'Builtin task-instruction prompts and custom specialist definitions inherited by all projects. Builtins are editable but cannot be deleted.'}
           cta={headerButtons}
         >
           {newFormElement}
@@ -475,7 +475,7 @@ export function SettingsSpecialists({
             <p className="py-3 text-sm text-muted-foreground/70 italic">
               {hideDisabled && visibleSpecialists.length > 0
                 ? `All ${visibleSpecialists.length} specialist${visibleSpecialists.length === 1 ? '' : 's'} hidden by filter.`
-                : 'No behavior modes or custom specialists found.'}
+                : 'No task instructions or custom specialists found.'}
             </p>
           ) : (
             <div className="space-y-2">
@@ -617,7 +617,7 @@ export function SettingsSpecialists({
       {!loading && !error && !isCategory && systemSpecialists.length > 0 && (
         <SettingsSection
           label="System & Compatibility"
-          description="Retained legacy and system-managed definitions. They are not offered as normal manager behavior modes, but remain configurable so existing customizations are not stranded."
+          description="Retained legacy and system-managed definitions. They are not offered as normal task types, but remain configurable so existing customizations are not stranded."
         >
           <details>
             <summary className="cursor-pointer text-sm text-muted-foreground">

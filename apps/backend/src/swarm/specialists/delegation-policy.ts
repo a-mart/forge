@@ -83,7 +83,7 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
     }
     if (resolveLegacySpecialistRewrite(customSpecialist)) {
       throw new Error(
-        `customSpecialist "${customSpecialist}" is reserved for Forge compatibility; use a behavior mode or a different saved custom handle.`,
+        `customSpecialist "${customSpecialist}" is reserved for Forge compatibility; use a task mode or a different saved custom handle.`,
       );
     }
     return {
@@ -167,16 +167,16 @@ export function translateManagerDelegationError(
 
   const lens = BEHAVIOR_MODE_CONFIGS[mode].lens;
   if (lens && original.message.startsWith(`Unknown lens: ${lens}`)) {
-    return new Error(`Behavior mode "${mode}" is not available in this session.`);
+    return new Error(`Task mode "${mode}" is not available in this session.`);
   }
   if (lens && original.message.startsWith(`Lens "${lens}" is disabled`)) {
-    return new Error(`Behavior mode "${mode}" is disabled in this session.`);
+    return new Error(`Task mode "${mode}" is disabled in this session.`);
   }
   if (lens && original.message.startsWith(`Lens "${lens}" is currently unavailable:`)) {
     return new Error(
       original.message.replace(
         `Lens "${lens}" is currently unavailable:`,
-        `Behavior mode "${mode}" is currently unavailable:`,
+        `Task mode "${mode}" is currently unavailable:`,
       ),
     );
   }

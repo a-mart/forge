@@ -83,7 +83,7 @@ describe("SessionInteractionCoordinator", () => {
     harness.descriptors.set("graph-research-1", {
       ...makeWorker("graph-research-1"),
       delegationRouteId: "research-analyst",
-      delegationRouteLabel: "Research Analyst",
+      delegationRouteLabel: "Analysis",
       delegationRosterId: "balanced",
       delegationRosterRevision: 3,
       delegationCapabilityEscalationRouteId: "deep-reasoner",
@@ -114,7 +114,7 @@ describe("SessionInteractionCoordinator", () => {
       "graph-research-1",
       {
         resolvedRouteId: "research-analyst",
-        resolvedRouteLabel: "Research Analyst",
+        resolvedRouteLabel: "Analysis",
         rosterId: "balanced",
         rosterRevision: 3,
         model: {

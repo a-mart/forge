@@ -89,7 +89,7 @@ export function SpecialistCard({
               </span>
               {behaviorMode && (
                 <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  Behavior mode
+                  Task instructions
                 </span>
               )}
               {specialist.builtin && (

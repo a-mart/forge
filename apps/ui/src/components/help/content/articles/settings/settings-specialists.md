@@ -1,4 +1,4 @@
-Delegation separates manager ownership, worker behavior, and model selection. The manager chooses whether to own bounded work directly, which worker behavior fits delegated work, and which worker profile in the selected roster should execute it. The delegation tool identifies that profile with its `route` field.
+Delegation separates manager ownership, task instructions, and model selection. The manager chooses whether to own bounded work directly, which task type fits delegated work, and which execution profile in the selected roster should run it. The delegation tool identifies the task type with `mode` and the profile with its internal `route` field.
 
 ## Work mode
 
@@ -7,21 +7,21 @@ Delegation separates manager ownership, worker behavior, and model selection. Th
 
 Projects can set a default work mode. An eligible Builder manager session can inherit it or override it from the work-mode control beside Send. A mid-session work-mode change replaces the manager runtime before its next turn and may cause one prompt-cache miss. It does not stop workers or alter an active graph.
 
-## Behavior modes
+## Task types
 
-- **General** — implementation, debugging, and other outcome-focused work. This is the default.
-- **Plan** — task breakdown, sequencing, design analysis, and risks.
+- **Build & execute** — implementation, debugging, and other outcome-focused work. This is the default.
+- **Planning** — task breakdown, sequencing, design analysis, and risks.
 - **Correctness review** — bugs, edge cases, invariants, and contract validation.
 - **Design review** — maintainability, API design, architecture fit, and consistency.
 - **Research** — fact-checking, documentation, and source-backed investigation.
 
-Behavior describes the job; it does not choose model capability.
+Task type describes the job; it does not choose model capability.
 
 ## Worker rosters
 
-A worker roster is a selectable catalog of worker profiles. Each profile has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional escalation profile.
+A worker roster is a selectable catalog of execution profiles. Each profile has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional escalation profile.
 
-Each roster maps behavior modes to baseline worker profiles. Managers normally omit `route` and let the selected mode's baseline apply; they name a profile's route only when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger profile.
+Each roster maps task types to baseline execution profiles. Build & execute also supplies the hidden compatibility fallback for an incomplete mapping, so there is no separate Default choice. Managers normally omit `route` and let the selected task type's baseline apply; they name a profile's route only when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger profile.
 
 The selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned route, model, fallback, and escalation target. Availability fallback handles provider/model unavailability. Capability escalation is a separate later attempt and never happens merely because a provider is rate-limited.
 
@@ -31,17 +31,17 @@ Configure definitions and the global default in **Worker Rosters**. Use the comp
 
 Use the scope selector to edit shared definitions or narrower overrides:
 
-- **Global** — behavior-mode prompts and custom specialists shared by all Builder projects.
+- **Global** — task-instruction prompts and custom specialists shared by all Builder projects.
 - **Project** — overrides for one Builder project.
 - **Collaboration global** — shared definitions available to collaboration channels.
-- **Category** — default behavior-mode and custom-specialist availability for new channels in a category.
-- **Channel** — available shared behavior modes and custom specialists plus channel-local definitions for one channel.
+- **Category** — default task-instruction and custom-specialist availability for new channels in a category.
+- **Channel** — available shared task instructions and custom specialists plus channel-local definitions for one channel.
 
 Definitions use `TargetSpace` to stay in Builder, Collaboration, or both. Channel-local files shadow the same global handle only inside that channel. Skill selection is managed on the **Skills** settings page.
 
 ## Custom specialists
 
-Use **New Specialist** when a durable domain-specific worker needs a complete fixed execution template with its own saved prompt and model configuration. A manager selects it through the custom-specialist path instead of combining it with a behavior mode or roster route.
+Use **New Specialist** when a durable domain-specific worker needs a complete fixed execution template with its own saved prompt and model configuration. A manager selects it through the custom-specialist path instead of combining it with a task type or roster route.
 
 1. Enter a kebab-case handle and display name.
 2. Describe when the manager should use it.
@@ -51,7 +51,7 @@ Use **New Specialist** when a durable domain-specific worker needs a complete fi
 
 Builtin mode prompts can be customized per project. Pin a builtin customization to prevent a future Forge update from replacing it. Use **Revert** to remove a project override and return to the inherited definition.
 
-Legacy Architect and system-managed Codex Plugin definitions live in the collapsed **System & Compatibility** section. They are not offered as normal manager behavior modes, but remain inspectable so existing customizations can be repaired or reverted.
+Legacy Architect and system-managed Codex Plugin definitions live in the collapsed **System & Compatibility** section. They are not offered as normal task types, but remain inspectable so existing customizations can be repaired or reverted.
 
 ## Multi-model coordination
 
@@ -61,7 +61,7 @@ Each scenario declares whether autonomous use needs confirmation and shows one a
 
 ## Dedicated Codex Plugin delegation
 
-Codex Plugin is not a normal behavior mode or custom specialist. When a user includes an active `@Codex` plugin selector, Forge provides a dedicated delegation tool and binds its worker to the server-owned selector scope. The model cannot supply or widen selectors. Explicit retry turns can reuse a stopped or failed worker's stored scope; unrelated turns require a fresh selector tag.
+Codex Plugin is not a normal task type or custom specialist. When a user includes an active `@Codex` plugin selector, Forge provides a dedicated delegation tool and binds its worker to the server-owned selector scope. The model cannot supply or widen selectors. Explicit retry turns can reuse a stopped or failed worker's stored scope; unrelated turns require a fresh selector tag.
 
 ## Roster prompt
 

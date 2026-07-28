@@ -34,7 +34,7 @@ import { ModelIdSelect } from './ModelIdSelect'
 import { REASONING_LEVEL_LABELS } from './types'
 
 const MODE_LABELS: Record<DelegationBehaviorMode, string> = {
-  general: 'General',
+  general: 'Build & execute',
   plan: 'Planning',
   'correctness-review': 'Correctness review',
   'design-review': 'Design review',
@@ -244,20 +244,11 @@ export function DelegationRosterSettingsView({
       </div>
 
       <div className="rounded-lg border border-border/60 p-3">
-        <p className="text-sm font-medium">Default workers by task</p>
+        <p className="text-sm font-medium">Automatic worker selection</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Forge uses these worker profiles unless the manager has a clear reason to choose another.
+          Choose the execution profile Forge normally uses for each type of delegated task.
         </p>
         <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-3">
-          <RouteSelect
-            label="Default"
-            value={selectedRoster.defaultRouteId}
-            roster={selectedRoster}
-            onChange={(defaultRouteId) => updateSelectedRoster((roster) => ({
-              ...roster,
-              defaultRouteId,
-            }))}
-          />
           {DELEGATION_BEHAVIOR_MODES.map((mode) => (
             <RouteSelect
               key={mode}
@@ -266,6 +257,7 @@ export function DelegationRosterSettingsView({
               roster={selectedRoster}
               onChange={(routeId) => updateSelectedRoster((roster) => ({
                 ...roster,
+                ...(mode === 'general' ? { defaultRouteId: routeId } : {}),
                 modeRoutes: { ...roster.modeRoutes, [mode]: routeId },
               }))}
             />
@@ -276,9 +268,9 @@ export function DelegationRosterSettingsView({
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-sm font-medium">Worker profiles</p>
+            <p className="text-sm font-medium">Execution profiles</p>
             <p className="text-xs text-muted-foreground">
-              Each profile defines a model policy. The delegated task still defines the worker's job.
+              Each profile defines model capability, cost, fallback, and escalation—not the worker's task.
             </p>
           </div>
           <Button
@@ -288,7 +280,7 @@ export function DelegationRosterSettingsView({
             onClick={() => updateSelectedRoster(addRoute)}
           >
             <Plus className="size-3.5" />
-            Add worker profile
+            Add execution profile
           </Button>
         </div>
         {selectedRoster.routes.map((route) => (
@@ -350,7 +342,7 @@ function RouteEditor({
     <div className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1 space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Profile name</Label>
+          <Label className="text-xs text-muted-foreground">Execution profile name</Label>
           <Input
             value={route.label}
             onChange={(event) => onChange({ ...route, label: event.target.value })}
@@ -362,7 +354,7 @@ function RouteEditor({
           size="icon"
           onClick={onDelete}
           disabled={roster.routes.length <= 1}
-          aria-label={`Delete ${route.label} worker profile`}
+          aria-label={`Delete ${route.label} execution profile`}
           className="mt-5 shrink-0"
         >
           <Trash2 className="size-3.5" />
@@ -480,7 +472,7 @@ function RouteEditor({
         </div>
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           Fallback changes models only when the primary model is unavailable. Escalation starts a
-          new attempt with another worker profile after evidence that this profile was not capable
+          new attempt with another execution profile after evidence that this profile was not capable
           enough.
         </p>
       </div>
@@ -562,7 +554,7 @@ function ReasoningSelect({
 }
 
 function addRoute(roster: DelegationRoster): DelegationRoster {
-  const routeId = nextId('worker-profile', new Set(roster.routes.map((route) => route.routeId)))
+  const routeId = nextId('execution-profile', new Set(roster.routes.map((route) => route.routeId)))
   const source = roster.routes.find((route) => route.routeId === roster.defaultRouteId)
     ?? roster.routes[0]!
   return {
@@ -572,7 +564,7 @@ function addRoute(roster: DelegationRoster): DelegationRoster {
       {
         ...cloneRoute(source),
         routeId,
-        label: `Worker Profile ${roster.routes.length + 1}`,
+        label: `Execution Profile ${roster.routes.length + 1}`,
         useWhen: 'Describe the work this profile handles well.',
         capabilityEscalationRouteId: undefined,
       },

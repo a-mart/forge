@@ -3,10 +3,10 @@
 Forge keeps three decisions separate:
 
 - **Work mode** decides whether the manager normally delegates or owns bounded work itself.
-- **Behavior mode** chooses a worker's role and output contract.
-- **Worker profile** chooses a model, reasoning level, fallback, and escalation policy from the selected roster. The manager tool identifies that profile with its `route` field.
+- **Task type** chooses a worker's instructions and output contract. The manager tool identifies it with the `mode` field.
+- **Execution profile** chooses a model, reasoning level, fallback, and escalation policy from the selected roster. The manager tool identifies that profile with its internal `route` field.
 
-The manager-facing `spawn_agent` tool accepts `mode`, an optional `route`, and a required concrete `initialMessage`. Omitting `route` uses the selected roster's baseline mapping for that behavior mode; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Explicit `route: auto`, older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
+The manager-facing `spawn_agent` tool accepts a task `mode`, an optional execution-profile `route`, and a required concrete `initialMessage`. Omitting `route` uses the selected roster's baseline mapping for that task type; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Explicit `route: auto`, older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
 
 Work-graph nodes use the same optional named-route override. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest route.
 
@@ -18,11 +18,11 @@ Work-graph nodes use the same optional named-route override. Forge pins the rost
 
 A project can set its default work mode. A session can inherit that default or override it from the compact work-mode control beside Send. Changing work mode during a session replaces the manager runtime before its next turn, so the next request may miss the prompt cache once. It does not stop workers or rewrite an active work graph.
 
-## Behavior Modes
+## Task Types
 
 | Mode | Purpose |
 |---|---|
-| `general` | Implementation, debugging, and other outcome-focused work |
+| `general` | Build and execute: implementation, debugging, and other outcome-focused work |
 | `plan` | Task breakdown, sequencing, design analysis, and risks |
 | `correctness-review` | Bugs, edge cases, invariants, and contract validation |
 | `design-review` | Maintainability, API design, architecture fit, and consistency |
@@ -30,7 +30,7 @@ A project can set its default work mode. A session can inherit that default or o
 
 ## Worker Rosters
 
-A worker roster is a selectable catalog of model-backed worker profiles. It is not a set of live workers, a persona library, a permissions bundle, or graph topology. Each profile is stored as a delegation route and contains only:
+A worker roster is a selectable catalog of model-backed execution profiles. It is not a set of live workers, a persona library, a permissions bundle, or graph topology. Each profile is stored internally as a delegation route and contains only:
 
 - a stable ID and label;
 - concise `useWhen` and optional `avoidWhen` guidance;
@@ -38,7 +38,7 @@ A worker roster is a selectable catalog of model-backed worker profiles. It is n
 - an optional availability fallback; and
 - an optional capability-escalation route for a later attempt.
 
-Each roster maps behavior modes to baseline worker profiles and has one general default. The manager normally omits `route` and lets that mapping apply. It names a profile's route up front only when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; capability escalation is reserved for a later attempt after evidence that the selected profile was inadequate.
+Each roster maps task types to baseline execution profiles. Build & execute also supplies the compatibility fallback for an incomplete mapping, but Forge does not expose that fallback as a separate user choice. The manager normally omits `route` and lets the task mapping apply. It names a profile's route up front only when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; capability escalation is reserved for a later attempt after evidence that the selected profile was inadequate.
 
 The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Roster changes affect only pending or future attempts.
 
@@ -104,16 +104,16 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 
 Tier settings remain global at `~/.forge/shared/specialists/tier-configs.json` for persisted workers and compatibility. When `~/.forge/shared/config/delegation-rosters.json` does not exist, Forge derives the Balanced roster from all five tier bindings. Saving rosters writes the new roster file; normal manager delegation then uses routes rather than tier names.
 
-## Shipped Mode Prompts and Dedicated Capabilities
+## Shipped Task Instructions and Dedicated Capabilities
 
-Forge uses four editable builtin prompts for non-general behavior modes:
+Forge uses four editable builtin prompts for non-general task types:
 
 - `planner` (`defaultTier: deep`, Builder and Collaboration)
 - `code-reviewer` (`defaultTier: deep`, Builder and Collaboration)
 - `code-reviewer-2` (`defaultTier: deep`, Builder and Collaboration)
 - `researcher` (`defaultTier: standard`, Builder and Collaboration)
 
-General workers use the worker archetype prompt. The legacy `architect` prompt remains readable for existing descriptors, but new architecture work uses `mode: general` with `route` omitted or a clearly matching named route. Codex Plugin delegation is a dedicated contextual tool and server-owned authorization path, not a normal behavior mode or custom specialist.
+Build & execute workers use the worker archetype prompt. The legacy `architect` prompt remains readable for existing descriptors, but new architecture work uses `mode: general` with `route` omitted or a clearly matching named route. Codex Plugin delegation is a dedicated contextual tool and server-owned authorization path, not a normal task type or custom specialist.
 
 Older builtin handles and tier/lens inputs are still rewritten internally for compatibility. They are not exposed in the current manager tool schema.
 
@@ -193,7 +193,7 @@ You are not user-facing. Return status, summary, changed files, verification, an
 
 Go to **Settings → Delegation** to manage worker delegation:
 
-- **Worker Rosters**: Define worker profiles, automatic task mappings, availability fallbacks, capability escalation, and the global default roster.
+- **Worker Rosters**: Define execution profiles, automatic task mappings, availability fallbacks, capability escalation, and the global default roster.
 - **Global scope**: View and edit shared specialists. Create new global specialists. Builtins are editable but cannot be deleted.
 - **Project scope**: View inherited specialists and create project-specific overrides or new project-only specialists.
 
@@ -207,11 +207,11 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 
 ### Fallback Models
 
-Each worker profile (delegation route), and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry. The fallback binding is pinned when the attempt starts.
+Each execution profile (delegation route), and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry. The fallback binding is pinned when the attempt starts.
 
 Only exhausted fallback failures surface upward.
 
-**Availability fallback is not capability escalation.** A provider outage or rate limit may use the configured fallback at equivalent intended capability; it must not silently buy a stronger worker profile. Capability escalation creates a new attempt with the profile explicitly linked for that purpose.
+**Availability fallback is not capability escalation.** A provider outage or rate limit may use the configured fallback at equivalent intended capability; it must not silently buy a stronger execution profile. Capability escalation creates a new attempt with the profile explicitly linked for that purpose.
 
 **Cross-provider fallback is supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 

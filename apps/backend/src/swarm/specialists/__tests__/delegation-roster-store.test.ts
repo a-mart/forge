@@ -47,7 +47,7 @@ describe("delegation roster settings", () => {
     });
     expect(settings.rosters[0]?.routes.find((route) => route.routeId === "deep-reasoner"))
       .toMatchObject({
-        label: "Deep Executor",
+        label: "Deep Reasoning",
         useWhen: expect.stringContaining("cross-cutting implementation"),
       });
     expect(settings.rosters[0]?.routes.map((route) => route.routeId)).toEqual([
@@ -58,7 +58,7 @@ describe("delegation roster settings", () => {
       "deep-reasoner",
     ]);
     expect(settings.rosters[0]?.description).toBe(
-      "General-purpose worker profiles derived from the existing Forge model bindings.",
+      "General-purpose execution profiles derived from the existing Forge model bindings.",
     );
     await expect(readFile(getDelegationRostersPath(dataDir), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -83,9 +83,34 @@ describe("delegation roster settings", () => {
     });
 
     expect(legacy.rosters[0]?.description).toBe(
-      "General-purpose worker profiles derived from the existing Forge model bindings.",
+      "General-purpose execution profiles derived from the existing Forge model bindings.",
     );
     expect(custom.rosters[0]?.description).toBe("My own route terminology.");
+  });
+
+  it("updates canonical legacy profile labels without changing custom labels", async () => {
+    const dataDir = await makeDataDir();
+    const settings = await resolveDelegationRosterSettings(dataDir);
+    const roster = settings.rosters[0]!;
+
+    const migrated = normalizeDelegationRosterSettings({
+      ...settings,
+      rosters: [{
+        ...roster,
+        routes: roster.routes.map((route) => (
+          route.routeId === "fast-builder"
+            ? { ...route, label: "Fast Builder" }
+            : route.routeId === "research-analyst"
+              ? { ...route, label: "My Planning Model" }
+              : route
+        )),
+      }],
+    });
+
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "fast-builder")?.label)
+      .toBe("Fast Execution");
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "research-analyst")?.label)
+      .toBe("My Planning Model");
   });
 
   it("resolves automatic and named routes from the manager's active roster", async () => {

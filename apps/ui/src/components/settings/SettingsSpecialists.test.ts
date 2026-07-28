@@ -138,7 +138,7 @@ const DELEGATION_ROSTERS: DelegationRosterSettings = {
     routes: [
       {
         routeId: 'fast-builder',
-        label: 'Fast Builder',
+        label: 'Fast Execution',
         useWhen: 'Well-specified implementation.',
         provider: 'cursor-sdk',
         modelId: 'composer-2.5',
@@ -147,7 +147,7 @@ const DELEGATION_ROSTERS: DelegationRosterSettings = {
       },
       {
         routeId: 'research-analyst',
-        label: 'Research Analyst',
+        label: 'Analysis',
         useWhen: 'Source-backed investigation.',
         provider: 'openai-codex',
         modelId: 'gpt-5.5',
@@ -275,7 +275,7 @@ describe('SettingsSpecialists', () => {
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('No behavior modes or custom specialists found')
+      expect(container.textContent).toContain('No task instructions or custom specialists found')
     })
 
     it('renders enabled toggle on each specialist card', async () => {
@@ -286,7 +286,7 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Enabled')
     })
 
-    it('renders editable worker profiles without mixing them into specialist personas', async () => {
+    it('renders execution profiles separately from task instructions', async () => {
       renderSpecialists([makeSpecialist()])
       await flush()
       await flush()
@@ -294,13 +294,75 @@ describe('SettingsSpecialists', () => {
       expect(specialistsApiMock.fetchDelegationRosterSettings)
         .toHaveBeenCalledWith('ws://127.0.0.1:47187')
       expect(container.textContent).toContain('Worker Rosters')
-      expect(container.textContent).toContain('Default workers by task')
-      expect(container.textContent).toContain('Fast Builder')
-      expect(container.textContent).toContain('Research Analyst')
+      expect(container.textContent).toContain('Automatic worker selection')
+      expect(container.textContent).toContain('Build & execute')
+      const automaticSelection = Array.from(container.querySelectorAll('p'))
+        .find((element) => element.textContent === 'Automatic worker selection')
+        ?.parentElement
+      expect(automaticSelection).toBeTruthy()
+      expect(Array.from(automaticSelection!.querySelectorAll('label')).map((label) => label.textContent))
+        .toEqual([
+          'Build & execute',
+          'Planning',
+          'Correctness review',
+          'Design review',
+          'Research',
+        ])
+      expect(container.textContent).toContain('Execution profiles')
+      expect(container.textContent).toContain('Fast Execution')
+      expect(container.textContent).toContain('Analysis')
       expect(container.textContent).toContain('composer-2.5')
       expect(container.textContent).toContain('Save rosters')
-      expect(container.textContent).toContain('Each profile defines a model policy')
+      expect(container.textContent).toContain('Each profile defines model capability')
       expect(container.textContent).toContain('Escalates to')
+    })
+
+    it('uses Build & execute as the hidden fallback when its profile changes', async () => {
+      renderSpecialists([makeSpecialist()])
+      await flush()
+      await flush()
+
+      const buildLabel = Array.from(container.querySelectorAll('label'))
+        .find((label) => label.textContent === 'Build & execute')
+      const trigger = buildLabel?.parentElement?.querySelector('[role="combobox"]')
+      expect(trigger).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.pointerDown(trigger!, {
+          button: 0,
+          ctrlKey: false,
+          pointerType: 'mouse',
+        })
+      })
+      await flush()
+
+      const analysisOption = Array.from(document.body.querySelectorAll('[role="option"]'))
+        .find((option) => option.textContent === 'Analysis')
+      expect(analysisOption).toBeTruthy()
+      flushSync(() => {
+        fireEvent.click(analysisOption!)
+      })
+      await flush()
+
+      const saveButton = Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Save rosters'))
+      expect(saveButton).toBeTruthy()
+      flushSync(() => {
+        fireEvent.click(saveButton!)
+      })
+      await flush()
+
+      expect(specialistsApiMock.saveDelegationRosterSettingsApi).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        expect.objectContaining({
+          rosters: [
+            expect.objectContaining({
+              defaultRouteId: 'research-analyst',
+              modeRoutes: expect.objectContaining({ general: 'research-analyst' }),
+            }),
+          ],
+        }),
+      )
     })
   })
 
@@ -810,7 +872,7 @@ describe('SettingsSpecialists (collab mode)', () => {
     await flush()
     await flush()
 
-    expect(container.textContent).toContain('Collaboration Behavior Modes & Custom Specialists')
+    expect(container.textContent).toContain('Collaboration Task Instructions & Custom Specialists')
   })
 
   it('fetches specialists with collaboration targetSpace in collab mode', async () => {

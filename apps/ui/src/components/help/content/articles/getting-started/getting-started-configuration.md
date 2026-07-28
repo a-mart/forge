@@ -20,7 +20,7 @@ Each manager has a default model set during creation. To change it, open Setting
 - **Claude Opus** is stronger for complex reasoning and code review.
 - **GPT models** work well and offer an alternative when you want model diversity.
 
-Delegated workers can use different models than the manager. Configure model-backed worker profiles and their automatic task mappings under **Settings → Delegation → Worker Rosters**.
+Delegated workers can use different models than the manager. Configure model-backed execution profiles and their automatic task mappings under **Settings → Delegation → Worker Rosters**.
 
 ## Project basics
 
