@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
+import { createCipheriv, createECDH, hkdfSync, randomBytes } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SECURE_VAULT_MAX_PLAINTEXT_BYTES,
+  SECURE_VAULT_REMOTE_ENTRY_TTL_MS,
   SECURE_VAULT_RENDERER_CHANNEL,
   createSecureVaultController,
   createSecureVaultRequestHandler,
@@ -124,7 +126,147 @@ describe('secure vault controller', () => {
       },
     })
   })
+
+  it('turns a one-use remote browser envelope directly into safeStorage ciphertext', async () => {
+    const safeStorage = createSafeStorage()
+    const controller = createController(safeStorage)
+    expect(await controller.unlock()).toEqual({ available: true })
+    const context = 'secure-browser:device-1'
+    const challenge = await controller.createRemoteEntryChallenge(
+      Buffer.from(context).toString('base64'),
+    )
+    if (!challenge.ok) throw new Error('Expected remote entry challenge')
+    const secret = 'remote-only-secret-value'
+    const envelope = sealRemoteEntry(
+      secret,
+      context,
+      challenge.result,
+    )
+
+    const encrypted = await controller.encryptRemoteEntry(
+      Buffer.from(JSON.stringify(envelope)).toString('base64'),
+    )
+    expect(encrypted).toEqual({
+      ok: true,
+      result: {
+        payload: Buffer.from(
+          `sealed:${Buffer.from(secret).toString('base64')}`,
+        ).toString('base64'),
+      },
+    })
+    expect(JSON.stringify(encrypted)).not.toContain(secret)
+    expect(safeStorage.encryptStringAsync).toHaveBeenCalledWith(
+      Buffer.from(secret).toString('base64'),
+    )
+
+    const replay = await controller.encryptRemoteEntry(
+      Buffer.from(JSON.stringify(envelope)).toString('base64'),
+    )
+    expect(replay).toEqual({
+      ok: false,
+      errorCode: 'SECURE_VAULT_INVALID_REQUEST',
+    })
+  })
+
+  it('binds remote entry challenges to one browser context', async () => {
+    const safeStorage = createSafeStorage()
+    const controller = createController(safeStorage)
+    expect(await controller.unlock()).toEqual({ available: true })
+    const context = 'secure-browser:device-1'
+    const challenge = await controller.createRemoteEntryChallenge(
+      Buffer.from(context).toString('base64'),
+    )
+    if (!challenge.ok) throw new Error('Expected remote entry challenge')
+    const envelope = sealRemoteEntry('context-bound-secret', context, challenge.result)
+    const wrongContext = {
+      ...envelope,
+      context: Buffer.from('secure-browser:device-2').toString('base64'),
+    }
+
+    await expect(controller.encryptRemoteEntry(
+      Buffer.from(JSON.stringify(wrongContext)).toString('base64'),
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'SECURE_VAULT_INVALID_REQUEST',
+    })
+    await expect(controller.encryptRemoteEntry(
+      Buffer.from(JSON.stringify(envelope)).toString('base64'),
+    )).resolves.toMatchObject({ ok: true })
+  })
+
+  it('expires unused remote entry challenges before decrypting anything', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T16:00:00.000Z'))
+    try {
+      const safeStorage = createSafeStorage()
+      const controller = createController(safeStorage)
+      expect(await controller.unlock()).toEqual({ available: true })
+      const context = 'secure-browser:device-1'
+      const challenge = await controller.createRemoteEntryChallenge(
+        Buffer.from(context).toString('base64'),
+      )
+      if (!challenge.ok) throw new Error('Expected remote entry challenge')
+      const envelope = sealRemoteEntry('expired-secret', context, challenge.result)
+      vi.setSystemTime(new Date(
+        Date.now() + SECURE_VAULT_REMOTE_ENTRY_TTL_MS + 1,
+      ))
+
+      await expect(controller.encryptRemoteEntry(
+        Buffer.from(JSON.stringify(envelope)).toString('base64'),
+      )).resolves.toEqual({
+        ok: false,
+        errorCode: 'SECURE_VAULT_INVALID_REQUEST',
+      })
+      expect(safeStorage.encryptStringAsync).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
+
+function sealRemoteEntry(
+  value: string,
+  context: string,
+  challenge: {
+    challengeId: string
+    keyId: string
+    publicKey: string
+  },
+) {
+  const ephemeral = createECDH('prime256v1')
+  ephemeral.generateKeys()
+  const sharedSecret = ephemeral.computeSecret(
+    Buffer.from(challenge.publicKey, 'base64'),
+  )
+  const aad = Buffer.from(
+    `forge-secure-browser-private-entry:v1:${challenge.keyId}:${challenge.challengeId}`,
+  )
+  const key = Buffer.from(hkdfSync(
+    'sha256',
+    sharedSecret,
+    Buffer.alloc(32),
+    aad,
+    32,
+  ))
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  cipher.setAAD(aad)
+  const ciphertext = Buffer.concat([
+    cipher.update(Buffer.from(value)),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ])
+  sharedSecret.fill(0)
+  key.fill(0)
+  return {
+    context: Buffer.from(context).toString('base64'),
+    challengeId: challenge.challengeId,
+    keyId: challenge.keyId,
+    ephemeralPublicKey: ephemeral.getPublicKey().toString('base64'),
+    iv: iv.toString('base64'),
+    ciphertext: ciphertext.toString('base64'),
+  }
+}
 
 describe('secure vault backend child IPC', () => {
   it('rejects Linux basic_text even when Electron reports encryption available', async () => {

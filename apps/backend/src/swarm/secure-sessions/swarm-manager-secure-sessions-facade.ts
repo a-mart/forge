@@ -10,6 +10,8 @@ import type {
   SecureSecretSummary,
   SecureSessionSnapshot,
   SecureSessionReadiness,
+  SecureBrowserPrivateEntryChallenge,
+  SecureBrowserSealedPrivateEntry,
 } from "@forge/protocol";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
@@ -44,6 +46,23 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
     return this.secureSessions.getSecureSessionReadiness();
+  }
+
+  isSecurePrivateEntryAvailable(): Promise<boolean> {
+    return this.secureSessions.isSecurePrivateEntryAvailable();
+  }
+
+  createRemotePrivateEntryChallenge(
+    deviceId: string,
+  ): Promise<SecureBrowserPrivateEntryChallenge> {
+    return this.secureSessions.createRemotePrivateEntryChallenge(deviceId);
+  }
+
+  encryptRemotePrivateEntry(
+    deviceId: string,
+    sealedEntry: SecureBrowserSealedPrivateEntry,
+  ): Promise<string> {
+    return this.secureSessions.encryptRemotePrivateEntry(deviceId, sealedEntry);
   }
 
   connectBitwardenSecureSecretProvider(

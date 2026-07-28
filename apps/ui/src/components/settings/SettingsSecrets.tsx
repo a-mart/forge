@@ -13,11 +13,16 @@ import {
   type SecureSecretsCatalog,
   type SecureSessionReadiness,
 } from '@/lib/secure-secrets-api'
+import { fetchSecureBrowserControlStatus } from '@/lib/secure-browser-control-api'
 import { SecretBindingsPanel } from './secrets/SecretBindingsPanel'
 import { SecretCatalogPanel } from './secrets/SecretCatalogPanel'
 import { SecretSourcesPanel } from './secrets/SecretSourcesPanel'
 import { SecureSessionsReadinessPanel } from './secrets/SecureSessionsReadinessPanel'
-import type { ManagerProfile } from '@forge/protocol'
+import { SecureBrowserAccessPanel } from './secrets/SecureBrowserAccessPanel'
+import type {
+  ManagerProfile,
+  SecureBrowserControlStatus,
+} from '@forge/protocol'
 
 interface SettingsSecretsProps {
   apiClient: SettingsApiClient
@@ -68,7 +73,12 @@ function BuilderSecretsSettings({
   const [unlockingPrivateEntry, setUnlockingPrivateEntry] = useState(false)
   const [privateEntryUnlockMessage, setPrivateEntryUnlockMessage] =
     useState<string | null>(null)
-  const materialEntrySupported = isSecureMaterialEntryAvailable()
+  const [secureBrowserControl, setSecureBrowserControl] =
+    useState<SecureBrowserControlStatus | null>(null)
+  const localMaterialEntrySupported = isSecureMaterialEntryAvailable()
+  const materialEntrySupported =
+    localMaterialEntrySupported
+    || secureBrowserControl?.privateEntryAvailable === true
   const [readiness, setReadiness] = useState<SecureSessionReadiness | null>(null)
   const projectProfiles = useMemo(
     () => profiles.filter((profile) =>
@@ -113,11 +123,17 @@ function BuilderSecretsSettings({
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const [catalogResult, readinessResult, materialEntryResult] =
+    const [
+      catalogResult,
+      readinessResult,
+      materialEntryResult,
+      secureBrowserResult,
+    ] =
       await Promise.allSettled([
         fetchSecureSecretsCatalog(apiClient),
         fetchSecureSessionReadiness(apiClient),
         checkSecureMaterialEntryAvailability(),
+        fetchSecureBrowserControlStatus(apiClient),
       ])
     if (catalogResult.status === 'fulfilled') {
       const nextCatalog = catalogResult.value
@@ -131,8 +147,17 @@ function BuilderSecretsSettings({
     setReadiness(readinessResult.status === 'fulfilled'
       ? readinessResult.value
       : { available: false, code: 'backend_unavailable' })
+    const nextSecureBrowserControl =
+      secureBrowserResult.status === 'fulfilled'
+        ? secureBrowserResult.value
+        : null
+    setSecureBrowserControl(nextSecureBrowserControl)
     setMaterialEntryAvailable(
-      materialEntryResult.status === 'fulfilled' && materialEntryResult.value,
+      (
+        materialEntryResult.status === 'fulfilled'
+        && materialEntryResult.value
+      )
+      || nextSecureBrowserControl?.privateEntryAvailable === true,
     )
     setLoading(false)
   }, [apiClient])
@@ -249,6 +274,12 @@ function BuilderSecretsSettings({
           : undefined}
         onRefresh={refresh}
         onUnlockPrivateEntry={handleUnlockPrivateEntry}
+      />
+
+      <SecureBrowserAccessPanel
+        apiClient={apiClient}
+        status={secureBrowserControl}
+        onAccessChanged={refresh}
       />
 
       {loading && catalog.providers.length === 0 && catalog.secrets.length === 0 ? (

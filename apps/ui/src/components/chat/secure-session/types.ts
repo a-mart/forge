@@ -1,4 +1,6 @@
 import type {
+  SecureBrowserPairingClaimResponse,
+  SecureBrowserPairingRequestCreated,
   SecureSecretLeaseGrantSource,
   SecureSecretRetention,
   SecureSecretScope,
@@ -107,12 +109,14 @@ export interface SecureSessionProjectContext {
 export type SecurePrivateFulfillmentInput =
   | {
       value: string | Uint8Array
+      displayName?: string
       retention: 'session'
       scope: Extract<SecureSecretScope, { kind: 'profile' }>
       makeProjectDefault?: false
     }
   | {
       value: string | Uint8Array
+      displayName?: string
       retention: Extract<SecureSecretRetention, 'saved'>
       scope: SecureSecretScope
       makeProjectDefault?: boolean
@@ -157,6 +161,12 @@ export interface SecureSessionRequestConfig {
   project?: SecureSessionProjectContext
   disabled?: boolean
   canApprove?: boolean
+  onCreateBrowserPairing?: () => Promise<SecureBrowserPairingRequestCreated>
+  onClaimBrowserPairing?: (
+    requestId: string,
+    claimSecret: string,
+  ) => Promise<SecureBrowserPairingClaimResponse>
+  onBrowserPaired?: () => void | Promise<void>
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
   onGrant: (

@@ -204,7 +204,10 @@ describe('Secure Sessions API', () => {
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/secure-sessions/manager%2Fone',
-      expect.objectContaining({ cache: 'no-store' }),
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'include',
+      }),
     )
   })
 

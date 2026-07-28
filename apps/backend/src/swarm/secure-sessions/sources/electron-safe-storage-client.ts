@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type {
+  SecureBrowserPrivateEntryChallenge,
+  SecureBrowserSealedPrivateEntry,
+} from "@forge/protocol";
 import { HostOnlySecret, SecureSourceError } from "./host-only-secret.js";
 
 const REQUEST_TYPE = "secure_vault_request";
@@ -7,7 +11,12 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_PLAINTEXT_BYTES = 256 * 1024;
 const MAX_CIPHERTEXT_BYTES = 512 * 1024;
 
-type SecureVaultOperation = "status" | "encrypt" | "decrypt";
+type SecureVaultOperation =
+  | "status"
+  | "encrypt"
+  | "decrypt"
+  | "remote_entry_challenge"
+  | "remote_entry_encrypt";
 
 type SecureVaultResponse =
   | {
@@ -16,7 +25,8 @@ type SecureVaultResponse =
       ok: true;
       result:
         | { available: true }
-        | { payload: string; reEncryptedPayload?: string };
+        | { payload: string; reEncryptedPayload?: string }
+        | SecureBrowserPrivateEntryChallenge;
     }
   | {
       type: typeof RESPONSE_TYPE;
@@ -32,6 +42,15 @@ export interface SecureVaultCipher {
     ciphertext: Uint8Array,
     requestId?: string,
   ): Promise<SecureVaultDecryption>;
+  createRemoteEntryChallenge?(
+    context: string,
+    requestId?: string,
+  ): Promise<SecureBrowserPrivateEntryChallenge>;
+  encryptRemoteEntry?(
+    context: string,
+    sealedEntry: SecureBrowserSealedPrivateEntry,
+    requestId?: string,
+  ): Promise<Buffer>;
 }
 
 export interface SecureVaultDecryption {
@@ -106,6 +125,49 @@ export class ElectronSafeStorageClient implements SecureVaultCipher {
       throw error;
     } finally {
       bytes.fill(0);
+    }
+  }
+
+  async createRemoteEntryChallenge(
+    context: string,
+    requestId = randomUUID(),
+  ): Promise<SecureBrowserPrivateEntryChallenge> {
+    const contextBytes = Buffer.from(context, "utf8");
+    try {
+      const response = await this.request(
+        "remote_entry_challenge",
+        contextBytes.toString("base64"),
+        requestId,
+      );
+      if (!response.ok) throw mapVaultError(response.errorCode);
+      if (!isRemoteEntryChallenge(response.result)) {
+        throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
+      }
+      return response.result;
+    } finally {
+      contextBytes.fill(0);
+    }
+  }
+
+  async encryptRemoteEntry(
+    context: string,
+    sealedEntry: SecureBrowserSealedPrivateEntry,
+    requestId = randomUUID(),
+  ): Promise<Buffer> {
+    const envelopeBytes = Buffer.from(JSON.stringify({
+      context: Buffer.from(context, "utf8").toString("base64"),
+      ...sealedEntry,
+    }), "utf8");
+    try {
+      const response = await this.request(
+        "remote_entry_encrypt",
+        envelopeBytes.toString("base64"),
+        requestId,
+      );
+      if (!response.ok) throw mapVaultError(response.errorCode);
+      return decodePayload(response.result, MAX_CIPHERTEXT_BYTES);
+    } finally {
+      envelopeBytes.fill(0);
     }
   }
 
@@ -233,6 +295,14 @@ function parseResponse(value: unknown): SecureVaultResponse | null {
         },
       };
     }
+    if (isRemoteEntryChallenge(record)) {
+      return {
+        type: RESPONSE_TYPE,
+        requestId: response.requestId,
+        ok: true,
+        result: record,
+      };
+    }
     return null;
   }
 
@@ -246,13 +316,29 @@ function parseResponse(value: unknown): SecureVaultResponse | null {
 }
 
 function decodePayload(
-  result: { available: true } | { payload: string },
+  result:
+    | { available: true }
+    | { payload: string }
+    | SecureBrowserPrivateEntryChallenge,
   maxBytes: number,
 ): Buffer {
   if (!("payload" in result)) {
     throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
   }
   return decodeCanonicalPayload(result.payload, maxBytes);
+}
+
+function isRemoteEntryChallenge(
+  value: unknown,
+): value is SecureBrowserPrivateEntryChallenge {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const challenge = value as Record<string, unknown>;
+  return Object.keys(challenge).length === 4
+    && typeof challenge.challengeId === "string"
+    && typeof challenge.keyId === "string"
+    && typeof challenge.publicKey === "string"
+    && typeof challenge.expiresAt === "string"
+    && Number.isFinite(Date.parse(challenge.expiresAt));
 }
 
 function decodeCanonicalPayload(value: string, maxBytes: number): Buffer {

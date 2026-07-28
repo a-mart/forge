@@ -115,8 +115,19 @@ mode; a future remote backend must have its own explicit trust and transport con
 
 ## Add a private source
 
-Open **Settings → Secrets** in Forge Desktop. The browser-only UI can display metadata,
-but private value entry requires the Desktop bridge.
+Open **Settings → Secrets** in Forge Desktop or a paired HTTPS browser connected to
+that same running local Builder. Desktop private entry uses its direct bridge. A
+paired browser encrypts the value to a one-use Electron key before the Builder backend
+relays it, so the backend receives only public-key material and ciphertext. Electron
+then seals the value with operating-system secure storage.
+
+Browser pairing starts in the remote UI and produces a six-digit verification code.
+Forge Desktop lists that pending request under **Settings → Secrets → Paired
+browsers**. Approval creates a revocable, browser-scoped token whose hash is persisted;
+the token itself is delivered once in an HttpOnly, SameSite cookie. Pairing does not
+expose the per-launch Desktop capability. Non-loopback browser control requires
+same-origin HTTPS. Remote Projects and Collaboration remain separate authority
+boundaries and do not inherit this local Desktop vault connection.
 
 Every saved secret has an availability scope:
 
@@ -275,11 +286,13 @@ a stable guest path; environment, stdin, and askpass deliveries remain concurren
 An agent can inspect safe session status and request an alias, binding, and lease
 shape. If the alias does not exist, the agent can propose the missing secret by alias,
 purpose, delivery, and lease only. The tool has no field for protected material.
-Forge shows **Add secret and approve**, which opens a Desktop-only private entry dialog
-that saves the value to the local vault and defaults to the current project. The
+Forge shows **Add secret and approve**, which opens a private entry dialog that saves
+the value to the local vault and defaults to the current project. The requested alias,
+delivery, and lease remain fixed while the prefilled display name can be edited. The
 dialog can instead save it for all projects, mark it automatic for the current
 project, or choose **Use for this task only** without keeping a reusable saved secret.
-The requested delivery and lease remain visible under the advanced review.
+A browser that is not yet paired can start pairing from the request card, obtain
+Desktop approval, and continue the same request without navigating to Settings.
 
 The missing-secret dialog currently accepts local-vault material. To use Bitwarden,
 first import its reference under **Settings → Secrets**; the agent can then request and
@@ -374,13 +387,21 @@ being prepared. Forge makes a best-effort zeroization of owned buffers after use
 JavaScript, operating-system, vault client, Docker daemon, and same-user process
 boundaries remain part of the trusted computing base.
 
-The initial Secure Sessions release assumes a trusted, single-user local machine.
-Every mutation of secret or lease authority requires a random per-launch capability
-shared only between the Electron main renderer and its backend child. The capability
-is not persisted, logged, included in agent runtime state, or given to managed-browser
-popouts. Origin and loopback checks remain defense in depth. Same-user process
-inspection, Electron compromise, and the Docker daemon remain inside the trusted
-computing base.
+Secure Sessions assume a trusted, single-user local machine. Desktop mutations use a
+random per-launch capability shared only between the Electron renderer and its backend
+child. Approved HTTPS browsers receive a separate revocable token with only Secure
+Sessions control, secure-secret write, and private-entry write scope. The Desktop
+capability is not persisted, logged, included in agent runtime state, or given to the
+browser. Browser tokens are stored only as hashes, carried in HttpOnly SameSite
+cookies, and are rejected for Desktop-only pairing administration.
+
+Remote private entry uses a process-lifetime P-256 Electron key and a two-minute,
+context-bound, one-use challenge. The browser derives an ephemeral shared key and
+AES-GCM encrypts the value before HTTP. The backend cannot decrypt the envelope;
+Electron decrypts it and immediately returns only operating-system-sealed ciphertext.
+Same-origin HTTPS, pairing verification, request revision checks, and fixed secure
+errors remain defense in depth. Same-user process inspection, Electron compromise,
+the approved browser, and the Docker daemon remain inside the trusted computing base.
 
 Each manager session keeps separate state, leases, requests, cached material, guard,
 and container. A fork or different manager session never gains an active lease merely

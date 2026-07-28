@@ -204,6 +204,7 @@ describe('secure secrets API', () => {
     })
 
     const requestBody = String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe('include')
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Forge-Secure-Control'))
       .toBe('test-secure-control-token-that-is-long-enough')
     expect(requestBody).toContain('"encryptedMaterial":"ciphertext-only"')

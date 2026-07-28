@@ -68,6 +68,7 @@ export type ApplySecureSessionProjectDefaultsInput =
 export type FulfillSecureAccessRequestInput = {
   baseRevision: number;
   displayAlias: string;
+  displayName?: string;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];

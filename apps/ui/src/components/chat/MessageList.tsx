@@ -1389,6 +1389,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     input,
                   )
                 : undefined}
+              onCreateBrowserPairing={secureSessionRequests.onCreateBrowserPairing}
+              onClaimBrowserPairing={secureSessionRequests.onClaimBrowserPairing}
+              onBrowserPaired={secureSessionRequests.onBrowserPaired}
             />
           ))}
         </section>

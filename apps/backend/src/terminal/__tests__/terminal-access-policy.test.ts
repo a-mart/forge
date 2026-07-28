@@ -88,6 +88,48 @@ describe('terminal-access-policy', () => {
     })
   })
 
+  it('allows same-origin HTTPS secure control from a remote browser', () => {
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'https://forge.example.com',
+        host: 'forge.example.com',
+        remoteAddress: '192.0.2.20',
+        encrypted: true,
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      allowedOrigin: 'https://forge.example.com',
+    })
+  })
+
+  it('rejects same-origin remote HTTP secure control', () => {
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://forge.example.com',
+        host: 'forge.example.com',
+        remoteAddress: '192.0.2.20',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+  })
+
   it('rejects no-Origin secure control requests from non-loopback clients', () => {
     const result = validateSecureBuilderControlOrigin(
       createRequest({

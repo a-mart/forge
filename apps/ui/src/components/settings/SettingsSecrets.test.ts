@@ -246,6 +246,45 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('generated environment delivery')
   })
 
+  it('treats an approved browser as a private-entry surface for the local Builder', async () => {
+    vi.stubGlobal('crypto', {
+      subtle: { deriveKey: vi.fn() },
+    })
+    secureSecretsApiMock.isSecureMaterialEntryAvailable.mockReturnValue(false)
+    secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(false)
+    const client = makeClient()
+    vi.mocked(client.fetch).mockImplementation(async (path) => {
+      if (path === '/api/secure-browser-control/status') {
+        return new Response(JSON.stringify({
+          available: true,
+          authorized: true,
+          privateEntryAvailable: true,
+          secureContextRequired: false,
+          device: {
+            id: 'device-1',
+            deviceId: 'browser-installation-1',
+            deviceName: 'Forge browser on macOS',
+            createdAt: '2026-07-28T16:00:00.000Z',
+          },
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    render(client)
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'Paired as Forge browser on macOS',
+      )
+      expect(container.textContent).toContain('Private entry')
+      expect(container.textContent).toContain('Available')
+    })
+    activateTab('Secrets')
+    expect((
+      getByLabelText(container, 'Private value') as HTMLInputElement
+    ).disabled).toBe(false)
+  })
+
   it('unlocks private storage in place and supports cancel then retry', async () => {
     secureSecretsApiMock.checkSecureMaterialEntryAvailability
       .mockResolvedValueOnce(false)

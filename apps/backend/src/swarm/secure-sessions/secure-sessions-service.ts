@@ -13,6 +13,8 @@ import type {
   SecureSecretProviderSummary,
   SecureSecretProviderTestResult,
   SecureSecretSummary,
+  SecureBrowserPrivateEntryChallenge,
+  SecureBrowserSealedPrivateEntry,
   SecureSessionReadiness,
   SecureSessionProjectDefaultStatus,
   SecureSessionSnapshot as PublicSecureSessionSnapshot,
@@ -197,6 +199,55 @@ export class SecureSessionsService {
   private closed = false;
 
   constructor(private readonly options: SecureSessionsServiceOptions) {}
+
+  async isSecurePrivateEntryAvailable(): Promise<boolean> {
+    try {
+      await this.options.cipher.status();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async createRemotePrivateEntryChallenge(
+    deviceId: string,
+  ): Promise<SecureBrowserPrivateEntryChallenge> {
+    const createChallenge = this.options.cipher.createRemoteEntryChallenge;
+    if (!createChallenge) {
+      throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
+    }
+    try {
+      return await createChallenge.call(
+        this.options.cipher,
+        remotePrivateEntryContext(deviceId),
+      );
+    } catch (error) {
+      throw this.publicError(error);
+    }
+  }
+
+  async encryptRemotePrivateEntry(
+    deviceId: string,
+    sealedEntry: SecureBrowserSealedPrivateEntry,
+  ): Promise<string> {
+    const encryptRemoteEntry = this.options.cipher.encryptRemoteEntry;
+    if (!encryptRemoteEntry) {
+      throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
+    }
+    let encrypted: Buffer | null = null;
+    try {
+      encrypted = await encryptRemoteEntry.call(
+        this.options.cipher,
+        remotePrivateEntryContext(deviceId),
+        sealedEntry,
+      );
+      return encrypted.toString("base64");
+    } catch (error) {
+      throw this.publicError(error);
+    } finally {
+      encrypted?.fill(0);
+    }
+  }
 
   isTeamSecureMode(managerAgentId: string): boolean {
     const descriptor = this.options.getDescriptor(managerAgentId);
@@ -2274,6 +2325,7 @@ export class SecureSessionsService {
             secretId,
             providerId: LOCAL_PROVIDER_ID,
             displayAlias: request.displayAlias,
+            ...(input.displayName ? { displayName: input.displayName } : {}),
             ...scope,
             retention: input.retention,
             sourceLocator,
@@ -4335,6 +4387,10 @@ function bounded(value: string, maximum: number): string {
     throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
   }
   return value.trim();
+}
+
+function remotePrivateEntryContext(deviceId: string): string {
+  return `secure-browser:${bounded(deviceId, 256)}`;
 }
 
 function optionalBounded(value: string | null | undefined, maximum: number): string | null {

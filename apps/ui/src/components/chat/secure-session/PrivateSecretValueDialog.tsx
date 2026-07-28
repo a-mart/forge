@@ -55,11 +55,13 @@ export function PrivateSecretValueDialog({
   onClose,
 }: PrivateSecretValueDialogProps) {
   const inputId = useId()
+  const displayNameId = useId()
   const projectScopeId = useId()
   const instanceScopeId = useId()
   const projectDefaultId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const [hasValue, setHasValue] = useState(false)
+  const [displayName, setDisplayName] = useState(alias ?? '')
   const [savedScope, setSavedScope] = useState<SavedScope>('project')
   const [makeProjectDefault, setMakeProjectDefault] = useState(false)
   const [submitMode, setSubmitMode] = useState<SubmitMode | null>(null)
@@ -102,6 +104,7 @@ export function PrivateSecretValueDialog({
       } else {
         await onFulfill({
           value: privateValue,
+          ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
           retention: 'saved',
           scope: savedScope === 'project'
             ? { kind: 'profile', profileId: project.profileId }
@@ -119,7 +122,7 @@ export function PrivateSecretValueDialog({
       const nextStep =
         error instanceof SecureSessionUiError
         && error.code === 'SECURE_SECRET_ALIAS_CONFLICT'
-          ? 'Close this dialog and approve the newly saved secret.'
+          ? 'Close this dialog to choose the existing saved secret in this request.'
           : 'Re-enter the value to try again.'
       setErrorMessage(
         `${secureSessionUiErrorMessage(error)} ${nextStep}`,
@@ -154,6 +157,21 @@ export function PrivateSecretValueDialog({
               chat. The agent receives only the requested secure delivery.
             </DialogDescription>
           </DialogHeader>
+
+          <div className="space-y-1.5">
+            <Label htmlFor={displayNameId}>Secret name</Label>
+            <Input
+              id={displayNameId}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.currentTarget.value)}
+              maxLength={256}
+              disabled={Boolean(submitMode)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Saved as <span className="font-mono">{alias ?? 'the requested alias'}</span>.
+              The name is only for you and can be changed.
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor={inputId}>{alias ? `Value for ${alias}` : 'Private value'}</Label>
