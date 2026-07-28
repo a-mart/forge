@@ -31,14 +31,14 @@ describe('builder protocol contract', () => {
   })
 
   it('handshake fields are additive: pre-Wave-R status payloads remain valid', () => {
-    const legacyServerStatus = {
+    const legacyServerStatus: CollaborationStatus = {
       enabled: true,
       adminExists: true,
       ready: true,
       bootstrapState: 'ready',
-    } satisfies CollaborationStatus
+    }
 
-    const waveRServerStatus = {
+    const waveRServerStatus: CollaborationStatus = {
       enabled: true,
       adminExists: true,
       ready: true,
@@ -47,11 +47,11 @@ describe('builder protocol contract', () => {
       forgeVersion: '0.9.0',
       protocolVersion: 1,
       capabilities: { collab: true, remoteBuild: true },
-    } satisfies CollaborationStatus
+    }
 
     expect(legacyServerStatus.protocolVersion).toBeUndefined()
     expect(legacyServerStatus.capabilities).toBeUndefined()
-    expect(waveRServerStatus.capabilities.remoteBuild).toBe(true)
+    expect(waveRServerStatus.capabilities?.remoteBuild).toBe(true)
     // A client treats a missing protocolVersion as a pre-Wave-R instance —
     // never version-blocked (blocking only applies to versions ABOVE the
     // client ceiling).
@@ -59,10 +59,10 @@ describe('builder protocol contract', () => {
   })
 
   it('user_message.clientRequestId is optional on the command', () => {
-    const withoutId = {
+    const withoutId: Extract<ClientCommand, { type: 'user_message' }> = {
       type: 'user_message',
       text: 'hello',
-    } satisfies Extract<ClientCommand, { type: 'user_message' }>
+    }
 
     const withId = {
       type: 'user_message',
@@ -75,21 +75,21 @@ describe('builder protocol contract', () => {
   })
 
   it('adds optional bootstrap correlation without changing legacy subscribe or event shapes', () => {
-    const legacySubscribe = {
+    const legacySubscribe: Extract<ClientCommand, { type: 'subscribe' }> = {
       type: 'subscribe',
       agentId: 'manager-1',
       conversationView: 'web',
-    } satisfies Extract<ClientCommand, { type: 'subscribe' }>
+    }
     const correlatedSubscribe = {
       ...legacySubscribe,
       subscriptionId: 'renderer-1:generation-7',
     } satisfies Extract<ClientCommand, { type: 'subscribe' }>
 
-    const legacyReady = {
+    const legacyReady: ReadyEvent = {
       type: 'ready',
       serverTime: '2026-07-23T00:00:00.000Z',
       subscribedAgentId: 'manager-1',
-    } satisfies ReadyEvent
+    }
     const correlatedReady = {
       ...legacyReady,
       subscriptionId: correlatedSubscribe.subscriptionId,
@@ -129,23 +129,23 @@ describe('builder protocol contract', () => {
   })
 
   it('conversation_message echoes clientRequestId and carries builder attribution', () => {
-    const collabAuthor = {
+    const collabAuthor: CollaborationAuthor = {
       userId: 'user-1',
       displayName: 'Ada',
       role: 'member',
       workspaceId: 'ws-1',
       channelId: 'chan-1',
-    } satisfies CollaborationAuthor
+    }
 
     // Builder attribution: identity without channel context. Absence of
     // channelId is the "not a collab channel" discriminator.
-    const builderAuthor = {
+    const builderAuthor: CollaborationAuthor = {
       userId: 'user-1',
       displayName: 'Ada',
       role: 'member',
-    } satisfies CollaborationAuthor
+    }
 
-    const event = {
+    const event: ConversationMessageEvent = {
       type: 'conversation_message',
       agentId: 'agent-1',
       role: 'user',
@@ -154,16 +154,16 @@ describe('builder protocol contract', () => {
       source: 'user_input',
       collaborationAuthor: builderAuthor,
       clientRequestId: '3e4f9d34-4a17-4c30-9be6-2f1c7c8e2f10',
-    } satisfies ConversationMessageEvent
+    }
 
-    const legacyEvent = {
+    const legacyEvent: ConversationMessageEvent = {
       type: 'conversation_message',
       agentId: 'agent-1',
       role: 'user',
       text: 'hello',
       timestamp: '2026-07-07T12:00:00.000Z',
       source: 'user_input',
-    } satisfies ConversationMessageEvent
+    }
 
     expect(collabAuthor.channelId).toBe('chan-1')
     expect(builderAuthor.channelId).toBeUndefined()
@@ -175,7 +175,7 @@ describe('builder protocol contract', () => {
 
 describe('project_presence contract (R3)', () => {
   it('carries a full viewer snapshot per session and tolerates empty sets', () => {
-    const populated = {
+    const populated: ProjectPresenceEvent = {
       type: 'project_presence',
       sessionAgentId: 'agent-1',
       profileId: 'profile-1',
@@ -183,13 +183,13 @@ describe('project_presence contract (R3)', () => {
         { userId: 'u1', displayName: 'Ada', role: 'member' },
         { userId: 'u2', displayName: 'Root', role: 'admin' },
       ],
-    } satisfies ProjectPresenceEvent
+    }
 
-    const empty = {
+    const empty: ProjectPresenceEvent = {
       type: 'project_presence',
       sessionAgentId: 'agent-1',
       viewers: [],
-    } satisfies ProjectPresenceEvent
+    }
 
     expect(populated.viewers).toHaveLength(2)
     expect(empty.profileId).toBeUndefined()
@@ -198,14 +198,14 @@ describe('project_presence contract (R3)', () => {
 
 describe('remote build settings response contract', () => {
   it('keeps legacy { settings } payloads assignable to RemoteBuildSettingsResponse', () => {
-    const legacy = {
+    const legacy: RemoteBuildSettingsResponse = {
       settings: {
         enabled: false,
         terminalsEnabled: true,
         instanceName: null,
         updatedAt: null,
       },
-    } satisfies RemoteBuildSettingsResponse
+    }
 
     expect(legacy.settings.enabled).toBe(false)
     expect(legacy.persistedSettings).toBeUndefined()

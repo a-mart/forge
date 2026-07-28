@@ -16,22 +16,25 @@ export type RemoteUpdateAwarenessProjectOverride = 'inherit' | 'on' | 'off'
  * dismissal only changes `attentionRequired`, never this observation. The
  * other relationship states must not be presented as ordinary advancement.
  */
-export type RemoteUpdateAwarenessProjectState =
-  | 'disabled'
-  | 'not_git'
-  | 'unobserved'
-  | 'checking'
-  | 'up_to_date'
-  | 'update_available'
-  | 'local_ahead'
-  | 'diverged'
-  | 'rewound'
-  | 'missing'
-  | 'detached'
-  | 'stale'
-  | 'unresolved'
-  | 'unknown'
-  | 'error'
+export const REMOTE_UPDATE_AWARENESS_PROJECT_STATES = [
+  'disabled',
+  'not_git',
+  'unobserved',
+  'checking',
+  'up_to_date',
+  'update_available',
+  'local_ahead',
+  'diverged',
+  'rewound',
+  'missing',
+  'detached',
+  'stale',
+  'unresolved',
+  'unknown',
+  'error',
+] as const
+
+export type RemoteUpdateAwarenessProjectState = (typeof REMOTE_UPDATE_AWARENESS_PROJECT_STATES)[number]
 
 /** Sanitized failure classification; never carries a Git command or output. */
 export type RemoteUpdateAwarenessFailureCode =

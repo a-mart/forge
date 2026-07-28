@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { CollaborationChoiceRequestEvent } from '../collaboration.js'
 
+const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+
 describe('CollaborationChoiceRequestEvent contract', () => {
   it('accepts optional request.sessionAgentId', () => {
-    const withSessionAgentId = {
+    const withSessionAgentId: CollaborationChoiceRequestEvent = {
       type: 'collab_choice_request',
       channelId: 'channel-1',
       request: {
@@ -14,9 +16,9 @@ describe('CollaborationChoiceRequestEvent contract', () => {
         status: 'pending',
         timestamp: '2026-04-14T12:00:00.000Z',
       },
-    } satisfies CollaborationChoiceRequestEvent
+    }
 
-    const withoutSessionAgentId = {
+    const withoutSessionAgentId: CollaborationChoiceRequestEvent = {
       type: 'collab_choice_request',
       channelId: 'channel-1',
       request: {
@@ -27,9 +29,13 @@ describe('CollaborationChoiceRequestEvent contract', () => {
         answers: [{ questionId: 'q1', selectedOptionIds: ['a'] }],
         timestamp: '2026-04-14T12:01:00.000Z',
       },
-    } satisfies CollaborationChoiceRequestEvent
+    }
+    const withWireSessionAgentId = roundTrip(withSessionAgentId)
+    const withoutWireSessionAgentId = roundTrip(withoutSessionAgentId)
 
-    expect(withSessionAgentId.request.sessionAgentId).toBe('session-1')
-    expect(withoutSessionAgentId.request.sessionAgentId).toBeUndefined()
+    expect(withWireSessionAgentId).toEqual(withSessionAgentId)
+    expect(withoutWireSessionAgentId).toEqual(withoutSessionAgentId)
+    expect(withWireSessionAgentId.request.sessionAgentId).toBe('session-1')
+    expect(withoutWireSessionAgentId.request.sessionAgentId).toBeUndefined()
   })
 })

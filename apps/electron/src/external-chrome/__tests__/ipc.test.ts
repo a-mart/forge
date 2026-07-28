@@ -33,4 +33,26 @@ describe('trusted External Chrome IPC', () => {
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(1)
     expect(handlers.has('forge:external-chrome-control')).toBe(true)
   })
+
+  it('dispatches each capability-gated operation, reveal, and failures', async () => {
+    const { handlers, ipcMain, mainWindow, coordinator } = fixture()
+    const revealed = vi.fn(async () => undefined)
+    const errors: unknown[] = []
+    installExternalChromeIpc({ ipcMain, mainWindow, coordinator, revealExtensionFolder: revealed, onError: (error) => errors.push(error) })
+    const control = handlers.get('forge:external-chrome-control')!
+    for (const operation of ['enable', 'disable', 'repair', 'rollback', 'remove', 'takeover'] as const) {
+      await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation })).resolves.toEqual({ ok: true, status })
+      expect(coordinator[operation]).toHaveBeenCalledOnce()
+    }
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'reveal-extension-folder' })).resolves.toEqual({ ok: true, status })
+    expect(coordinator.validatedLoadUnpackedPath).toHaveBeenCalledOnce()
+    expect(revealed).toHaveBeenCalledWith(status.setup.loadUnpackedPath)
+
+    status.canEnable = false
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'enable' })).resolves.toEqual({ ok: false, error: 'operation-failed' })
+    coordinator.repair.mockRejectedValueOnce(new Error('repair failed'))
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'repair' })).resolves.toEqual({ ok: false, error: 'operation-failed' })
+    expect(errors).toHaveLength(1)
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'unknown' })).resolves.toEqual({ ok: false, error: 'invalid-request' })
+  })
 })

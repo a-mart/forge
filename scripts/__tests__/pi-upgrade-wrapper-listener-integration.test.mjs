@@ -1,139 +1,138 @@
-#!/usr/bin/env node
 /**
- * Integration test: pnpm-like wrapper vs actual TCP listener ownership.
- * Spawns a wrapper that launches a child listener, validates ancestry/nonce
- * recording semantics used by start/stop-isolated-instance.sh.
+ * Integration tests for the actual isolated-instance launcher and stopper.
+ *
+ * A disposable fake pnpm executable supplies tiny HTTP listeners so these tests
+ * exercise the production shell ownership/nonce/data-dir checks without
+ * starting the full backend or UI.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
-async function getFreePort() {
+const execFileAsync = promisify(execFile);
+const repoRoot = join(import.meta.dirname, "..", "..");
+const startScript = join(repoRoot, "scripts/pi-upgrade/start-isolated-instance.sh");
+const stopScript = join(repoRoot, "scripts/pi-upgrade/stop-isolated-instance.sh");
+
+async function freePort() {
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  const port = typeof address === "object" && address ? address.port : 0;
+  const port = address && typeof address === "object" ? address.port : 0;
   await new Promise((resolve) => server.close(resolve));
   return port;
 }
 
-function readPpid(pid) {
-  const result = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" });
-  if (result.status !== 0) return null;
-  const ppid = Number(String(result.stdout || "").replace(/\D/g, ""));
-  return Number.isFinite(ppid) ? ppid : null;
-}
-
-function isDescendantOf(childPid, ancestorPid) {
-  let current = childPid;
-  for (let i = 0; i < 64; i++) {
-    if (current === ancestorPid) return true;
-    const ppid = readPpid(current);
-    if (ppid == null) return false;
-    current = ppid;
-    if (current === 0 || current === 1) return false;
+async function command(file, args, options) {
+  try {
+    return await execFileAsync(file, args, options);
+  } catch (error) {
+    return { ...error, failed: true, stdout: error.stdout ?? "", stderr: error.stderr ?? "" };
   }
-  return false;
 }
 
-describe("pi-upgrade wrapper/listener ownership integration", () => {
-  it("records the actual listener PID under a pnpm-like wrapper ancestry with nonce", async () => {
-    const root = await mkdtemp(join(tmpdir(), "forge-pi-isolation-"));
-    const port = await getFreePort();
-    const nonce = `nonce-${Date.now()}`;
+async function waitFor(predicate, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("timed out waiting for isolated instance state");
+}
+
+describe("pi-upgrade isolated instance ownership integration", () => {
+  it("runs the real start/stop scripts and refuses a nonce-mismatched listener", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-real-scripts-"));
+    const home = join(root, "home");
+    const tempDir = join(root, "tmp");
     const dataDir = join(root, "data");
-    const logDir = join(root, "logs");
-    await mkdir(dataDir, { recursive: true });
-    await mkdir(logDir, { recursive: true });
+    const scriptRoot = join(root, "repo");
+    const fakeBin = join(home, "Library/pnpm");
+    const backendPort = await freePort();
+    const uiPort = await freePort();
+    const env = {
+      ...process.env,
+      HOME: home,
+      TMPDIR: tempDir,
+      FORGE_PORT: String(backendPort),
+      FORGE_UI_PORT: String(uiPort),
+      FORGE_DATA_DIR: dataDir,
+      VITE_FORGE_WS_URL: `ws://127.0.0.1:${backendPort}`,
+    };
+    await mkdir(join(scriptRoot, "scripts/pi-upgrade"), { recursive: true });
+    await mkdir(join(dataDir, "shared/config/auth"), { recursive: true });
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(join(dataDir, "shared/config/auth/auth.json"), "{}\n", { mode: 0o600 });
+    await writeFile(join(scriptRoot, ".env"), `FORGE_DATA_DIR=${dataDir}\nFORGE_PORT=${backendPort}\nFORGE_UI_PORT=${uiPort}\nVITE_FORGE_WS_URL=ws://127.0.0.1:${backendPort}\n`);
+    await cp(startScript, join(scriptRoot, "scripts/pi-upgrade/start-isolated-instance.sh"));
+    await cp(stopScript, join(scriptRoot, "scripts/pi-upgrade/stop-isolated-instance.sh"));
+    await cp(join(repoRoot, "scripts/pi-upgrade/assert-isolation.mjs"), join(scriptRoot, "scripts/pi-upgrade/assert-isolation.mjs"));
 
-    const listenerScript = join(root, "listener.mjs");
-    await writeFile(
-      listenerScript,
-      `
-import { createServer } from 'node:net';
-const server = createServer();
-server.listen(${port}, '127.0.0.1', () => {
-  process.stdout.write('listening\\n');
-});
-setInterval(() => {}, 1000);
-`,
-      "utf8",
-    );
+    const listener = join(root, "listener.mjs");
+    await writeFile(listener, `
+      import { createServer } from "node:http";
+      const port = Number(process.env.FORGE_FAKE_PORT);
+      const server = createServer((_request, response) => { response.writeHead(200); response.end("ok"); });
+      server.listen(port, "127.0.0.1");
+      process.on("SIGTERM", () => server.close(() => process.exit(0)));
+    `);
+    const fakePnpm = join(fakeBin, "pnpm");
+    await writeFile(fakePnpm, `#!/bin/sh
+      if printf '%s' "$*" | grep -q '@forge/backend'; then
+        FORGE_FAKE_PORT="$FORGE_PORT" node "$FORGE_FAKE_LISTENER" &
+      else
+        FORGE_FAKE_PORT="$FORGE_UI_PORT" node "$FORGE_FAKE_LISTENER" &
+      fi
+      child=$!
+      trap 'kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 0' TERM INT
+      wait "$child"
+    `, { mode: 0o755 });
+    // The copied start script resolves its root from the temporary script tree.
+    env.FORGE_FAKE_LISTENER = listener;
 
-    const wrapperScript = join(root, "wrapper.mjs");
-    await writeFile(
-      wrapperScript,
-      `
-import { spawn } from 'node:child_process';
-const child = spawn(process.execPath, [${JSON.stringify(listenerScript)}], {
-  env: {
-    ...process.env,
-    FORGE_PI_UPGRADE_INSTANCE_NONCE: ${JSON.stringify(nonce)},
-    FORGE_DATA_DIR: ${JSON.stringify(dataDir)},
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-child.stdout.on('data', () => {});
-process.on('SIGTERM', () => {
-  child.kill('SIGTERM');
-  process.exit(0);
-});
-setInterval(() => {}, 1000);
-`,
-      "utf8",
-    );
-
-    const wrapper = spawn(process.execPath, [wrapperScript], {
-      env: {
-        ...process.env,
-        FORGE_PI_UPGRADE_INSTANCE_NONCE: nonce,
-        FORGE_DATA_DIR: dataDir,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
+    const logDir = join(tempDir, "forge-pi-upgrade-isolated");
     try {
-      let listenerPid = null;
-      for (let i = 0; i < 50; i++) {
-        const result = spawnSync("lsof", ["-i", `:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" });
-        const pids = String(result.stdout || "")
-          .trim()
-          .split(/\s+/)
-          .map((value) => Number(value))
-          .filter((value) => Number.isFinite(value) && value > 0);
-        if (pids.length > 0) {
-          listenerPid = pids[0];
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      const started = await command("bash", [join(scriptRoot, "scripts/pi-upgrade/start-isolated-instance.sh")], { cwd: scriptRoot, env });
+      expect(started.failed, `${started.stdout}\n${started.stderr}`).toBeFalsy();
+      expect(started.stdout).toContain("Isolated instance ready");
 
-      expect(listenerPid, "listener must bind").toBeTruthy();
-      expect(listenerPid).not.toBe(wrapper.pid);
-      expect(isDescendantOf(listenerPid, wrapper.pid)).toBe(true);
+      const backendPidFile = join(logDir, `backend-${backendPort}.pid`);
+      const wrapperPidFile = join(logDir, `backend-${backendPort}.wrapper.pid`);
+      const nonceFile = join(logDir, `backend-${backendPort}.nonce`);
+      const listenerPid = (await readFile(backendPidFile, "utf8")).trim();
+      const wrapperPid = (await readFile(wrapperPidFile, "utf8")).trim();
+      const nonce = (await readFile(nonceFile, "utf8")).trim();
+      expect(listenerPid).toMatch(/^\d+$/);
+      expect(wrapperPid).toMatch(/^\d+$/);
+      expect(listenerPid).not.toBe(wrapperPid);
+      expect(nonce).toMatch(/^[0-9a-f-]{36}$/u);
 
-      await writeFile(join(logDir, `backend-${port}.pid`), String(listenerPid));
-      await writeFile(join(logDir, `backend-${port}.wrapper.pid`), String(wrapper.pid));
-      await writeFile(join(logDir, `backend-${port}.nonce`), nonce);
+      const refused = await command("bash", [join(scriptRoot, "scripts/pi-upgrade/start-isolated-instance.sh")], { cwd: scriptRoot, env });
+      expect(refused.failed).toBe(true);
+      expect(refused.stderr).toMatch(/already in use/u);
 
-      const recordedListener = Number((await readFile(join(logDir, `backend-${port}.pid`), "utf8")).trim());
-      const recordedWrapper = Number((await readFile(join(logDir, `backend-${port}.wrapper.pid`), "utf8")).trim());
-      expect(recordedListener).toBe(listenerPid);
-      expect(recordedWrapper).toBe(wrapper.pid);
-      expect(recordedListener).not.toBe(recordedWrapper);
+      await writeFile(nonceFile, "wrong-nonce\n");
+      const rejectedStop = await command("bash", [join(scriptRoot, "scripts/pi-upgrade/stop-isolated-instance.sh")], { cwd: scriptRoot, env });
+      expect(rejectedStop.failed).toBe(true);
+      expect(rejectedStop.stderr).toMatch(/nonce mismatch/u);
+      expect((await readFile(backendPidFile, "utf8")).trim()).toBe(listenerPid);
+
+      await writeFile(nonceFile, `${nonce}\n`);
+      const stopped = await command("bash", [join(scriptRoot, "scripts/pi-upgrade/stop-isolated-instance.sh")], { cwd: scriptRoot, env });
+      expect(stopped.failed, `${stopped.stdout}\n${stopped.stderr}`).toBeFalsy();
+      await waitFor(async () => {
+        const probe = await command("lsof", ["-i", `:${backendPort}`, "-sTCP:LISTEN", "-t"]);
+        return probe.stdout.trim() === "";
+      });
+      await expect(readFile(backendPidFile, "utf8")).rejects.toThrow();
     } finally {
-      wrapper.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      try {
-        process.kill(wrapper.pid, 0);
-        wrapper.kill("SIGKILL");
-      } catch {
-        // already exited
-      }
+      // Best effort cleanup if an assertion fails before the normal stop.
+      await command("bash", [join(scriptRoot, "scripts/pi-upgrade/stop-isolated-instance.sh")], { cwd: scriptRoot, env });
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

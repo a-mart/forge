@@ -28,22 +28,6 @@ function activeAssistantOutputTarget(manager: TestSwarmManager, agentId: string)
   return (manager as any).assistantOutputRouter.getActiveTarget(agentId);
 }
 
-function oldAgentMessageContextActivationEligible(input: {
-  targetRole: "manager" | "worker";
-  hasObservabilityInput: boolean;
-  assistantOutputTarget: AssistantOutputTarget;
-  assistantOutputProjectionTarget: AssistantOutputTarget;
-  isAssistantOutputEligibleWorkerReport: boolean;
-}): boolean {
-  return (
-    input.targetRole === "manager" &&
-    (input.hasObservabilityInput ||
-      input.assistantOutputProjectionTarget.kind !== "internal_only" ||
-      input.assistantOutputTarget.kind !== "internal_only" ||
-      input.isAssistantOutputEligibleWorkerReport)
-  );
-}
-
 async function createWorkerHarness(agentId: string, runtimeToken: number): Promise<{
   manager: TestSwarmManager;
   sessionId: string;
@@ -103,56 +87,16 @@ describe("server-owned turn ids", () => {
       .rejects.toThrow(/newer user message superseded/i);
   });
 
-  it("preserves pre-turn-id assistant-output activation semantics for guarded agent_message flows", async () => {
-    const sessionTranscriptTarget: AssistantOutputTarget = {
-      kind: "session_transcript",
-      channel: "web",
-      sourceContext: { channel: "web" },
-    };
-    const internalOnlyTarget: AssistantOutputTarget = { kind: "internal_only", reason: "matrix" };
+  it("derives activation through the real AgentMessageDispatcher policy matrix", async () => {
     const cases: Array<{
       name: string;
       targetRole: "manager" | "worker";
-      hasObservabilityInput: boolean;
-      assistantOutputTarget: AssistantOutputTarget;
-      assistantOutputProjectionTarget: AssistantOutputTarget;
-      isAssistantOutputEligibleWorkerReport: boolean;
-      expectedActiveTarget?: AssistantOutputTarget;
+      origin: "user" | "internal";
+      expectedActive: boolean;
     }> = [
-      {
-        name: "non-manager target",
-        targetRole: "worker",
-        hasObservabilityInput: false,
-        assistantOutputTarget: sessionTranscriptTarget,
-        assistantOutputProjectionTarget: sessionTranscriptTarget,
-        isAssistantOutputEligibleWorkerReport: false,
-      },
-      {
-        name: "manager internal_only without observability",
-        targetRole: "manager",
-        hasObservabilityInput: false,
-        assistantOutputTarget: internalOnlyTarget,
-        assistantOutputProjectionTarget: internalOnlyTarget,
-        isAssistantOutputEligibleWorkerReport: false,
-      },
-      {
-        name: "manager with observabilityInput",
-        targetRole: "manager",
-        hasObservabilityInput: true,
-        assistantOutputTarget: internalOnlyTarget,
-        assistantOutputProjectionTarget: internalOnlyTarget,
-        isAssistantOutputEligibleWorkerReport: false,
-        expectedActiveTarget: internalOnlyTarget,
-      },
-      {
-        name: "eligible worker report",
-        targetRole: "manager",
-        hasObservabilityInput: false,
-        assistantOutputTarget: sessionTranscriptTarget,
-        assistantOutputProjectionTarget: sessionTranscriptTarget,
-        isAssistantOutputEligibleWorkerReport: true,
-        expectedActiveTarget: sessionTranscriptTarget,
-      },
+      { name: "worker user delivery", targetRole: "worker", origin: "user", expectedActive: false },
+      { name: "manager internal delivery", targetRole: "manager", origin: "internal", expectedActive: false },
+      { name: "manager user peer delivery", targetRole: "manager", origin: "user", expectedActive: false }
     ];
 
     for (const matrixCase of cases) {
@@ -160,29 +104,33 @@ describe("server-owned turn ids", () => {
       const manager = new TestSwarmManager(config);
       const session = await bootWithDefaultManager(manager, config);
       const worker = await manager.spawnAgent(session.agentId, { agentId: `worker-${matrixCase.name}` });
-      const targetAgentId = matrixCase.targetRole === "manager" ? session.agentId : worker.agentId;
-      const activationEligible = oldAgentMessageContextActivationEligible(matrixCase);
-
-      const queuedTurn = await (manager as any).turnContextCoordinator.enqueue(targetAgentId, {
-        source: "agent_message",
-        runtimeMessageText: `runtime input for ${matrixCase.name}`,
-        rootTurnId: matrixCase.hasObservabilityInput ? `root-${matrixCase.name}` : undefined,
-        assistantOutputTarget: matrixCase.assistantOutputTarget,
-        assistantOutputProjectionTarget: matrixCase.assistantOutputProjectionTarget,
-        activationEligible,
-      });
-      const turnId = queuedTurn.turnId;
+      const secondManager = matrixCase.targetRole === "manager"
+        ? (await manager.createSession("manager", { label: `Target ${matrixCase.name}` })).sessionAgent
+        : undefined;
+      const targetAgentId = secondManager?.agentId ?? worker.agentId;
+      const receipt = await (manager as any).agentMessageDispatcher.sendMessage(
+        session.agentId,
+        targetAgentId,
+        `runtime input for ${matrixCase.name}`,
+        "auto",
+        { origin: matrixCase.origin },
+      );
+      const turnId = manager.getActiveTurnId(targetAgentId);
+      expect(receipt.targetAgentId).toBe(targetAgentId);
 
       manager.beforeRuntimeEventProjection(targetAgentId, undefined, { type: "turn_start" });
       expect(activeAssistantOutputTarget(manager, targetAgentId), `${matrixCase.name}: turn_start`).toBeUndefined();
-
       manager.beforeRuntimeEventProjection(targetAgentId, undefined, {
         type: "message_start",
         message: { role: "user", content: `runtime input for ${matrixCase.name}` },
       });
 
-      expect(activeAssistantOutputTarget(manager, targetAgentId), matrixCase.name).toEqual(matrixCase.expectedActiveTarget);
-      expect(manager.getActiveTurnId(targetAgentId), matrixCase.name).toBe(turnId);
+      expect(Boolean(activeAssistantOutputTarget(manager, targetAgentId)), matrixCase.name).toBe(matrixCase.expectedActive);
+      if (matrixCase.targetRole === "manager") {
+        expect(manager.getActiveTurnId(targetAgentId), matrixCase.name).toBeUndefined();
+      } else {
+        expect(manager.getActiveTurnId(targetAgentId), matrixCase.name).toBe(turnId);
+      }
     }
   });
 

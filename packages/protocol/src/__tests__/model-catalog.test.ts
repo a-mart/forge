@@ -338,8 +338,9 @@ describe('model-catalog', () => {
     const keys = entries.map(([modelId]) => modelId)
 
     expect(new Set(keys).size).toBe(keys.length)
-    for (const [modelId, model] of entries) {
-      expect(model.catalogId ?? model.modelId).toBe(modelId)
+    for (const [modelId] of entries) {
+      const model = getCatalogModel(modelId)
+      expect(model?.catalogId ?? model?.modelId).toBe(modelId)
     }
   })
 

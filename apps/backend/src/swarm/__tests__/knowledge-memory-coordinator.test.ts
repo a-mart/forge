@@ -2,6 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as piAiCompat from "../pi/pi-ai-compat.js";
+import * as piModelRegistry from "../pi-model-registry.js";
 import {
   createLiveCompactionRuntimeSettingsProvider,
 } from "../compaction-runtime-settings-provider.js";
@@ -198,6 +200,62 @@ describe("KnowledgeMemoryCoordinator", () => {
       manager,
       { channel: "web" },
     );
+  });
+
+  it("runs the capture judge through candidate, auth, and response extraction paths", async () => {
+    const harness = await createHarness();
+    const model = { provider: "openai-codex", id: "gpt-5.4-mini" };
+    const registry = {
+      find: vi.fn()
+        .mockReturnValueOnce(undefined)
+        .mockReturnValueOnce(model),
+      getApiKeyAndHeaders: vi.fn().mockResolvedValue({ ok: true, apiKey: "test-key" }),
+    };
+    vi.spyOn(piModelRegistry, "createPiModelRegistry").mockReturnValue(registry as never);
+    vi.spyOn(piAiCompat, "getModel").mockReturnValue(undefined as never);
+    vi.spyOn(piAiCompat, "complete").mockResolvedValue({
+      content: [{ type: "thinking", thinking: "ignored" }, { type: "text", text: "YES" }, { type: "text", text: "\n" }],
+    } as never);
+
+    await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt")).resolves.toBe("YES");
+    expect(registry.find).toHaveBeenNthCalledWith(1, "openai-codex", "gpt-5.4-mini");
+    expect(registry.find).toHaveBeenNthCalledWith(2, "openai-codex", "gpt-5.4");
+    expect(registry.getApiKeyAndHeaders).toHaveBeenCalledWith(model);
+    expect(piAiCompat.complete).toHaveBeenCalledWith(
+      model,
+      expect.objectContaining({ messages: [{ role: "user", timestamp: expect.any(Number), content: [{ type: "text", text: "candidate prompt" }] }] }),
+      { apiKey: "test-key" },
+    );
+  });
+
+  it("fails closed when every capture judge candidate is unavailable", async () => {
+    const harness = await createHarness();
+    const registry = {
+      find: vi.fn().mockReturnValue(undefined),
+      getApiKeyAndHeaders: vi.fn(),
+    };
+    vi.spyOn(piModelRegistry, "createPiModelRegistry").mockReturnValue(registry as never);
+    vi.spyOn(piAiCompat, "getModel").mockReturnValue(undefined as never);
+    await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt"))
+      .rejects.toThrow("No configured cheap model is available");
+    expect(registry.getApiKeyAndHeaders).not.toHaveBeenCalled();
+  });
+
+  it("skips an unauthorized candidate and uses the next configured model", async () => {
+    const harness = await createHarness();
+    const firstModel = { provider: "openai-codex", id: "gpt-5.4-mini" };
+    const secondModel = { provider: "openai-codex", id: "gpt-5.4" };
+    const registry = {
+      find: vi.fn().mockReturnValueOnce(firstModel).mockReturnValueOnce(secondModel),
+      getApiKeyAndHeaders: vi.fn()
+        .mockResolvedValueOnce({ ok: false, error: "not configured" })
+        .mockResolvedValueOnce({ ok: true, headers: { Authorization: "Bearer test" } }),
+    };
+    vi.spyOn(piModelRegistry, "createPiModelRegistry").mockReturnValue(registry as never);
+    vi.spyOn(piAiCompat, "getModel").mockReturnValue(undefined as never);
+    vi.spyOn(piAiCompat, "complete").mockResolvedValue({ content: [{ type: "text", text: "NO" }] } as never);
+    await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt")).resolves.toBe("NO");
+    expect(piAiCompat.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "gpt-5.4" }), expect.anything(), { headers: { Authorization: "Bearer test" } });
   });
 
   it("loads Builder compaction settings once and attaches only the selected live provider", async () => {

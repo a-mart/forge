@@ -67,6 +67,7 @@ describe('external thread helpers', () => {
       cwd: '/tmp',
       model,
       sessionFile: '/tmp/workers/worker-1.jsonl',
+      externalThread: undefined,
     } satisfies AgentDescriptor
 
     expect(isExternalThreadDescriptor(descriptor)).toBe(false)

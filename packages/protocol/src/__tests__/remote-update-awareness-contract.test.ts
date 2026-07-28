@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import { REMOTE_UPDATE_AWARENESS_PROJECT_STATES } from '../index.js'
 import type {
   ActivateRemoteUpdateAwarenessProjectRequest,
   DismissRemoteUpdateAwarenessProjectUpdateRequest,
@@ -64,22 +65,28 @@ const incoming = {
 
 describe('remote update awareness protocol contract', () => {
   it('models the local global master and local per-project overrides', () => {
-    const global = { globalEnabled: true } satisfies UpdateRemoteUpdateAwarenessSettingsRequest
-    const inherit = {
+    const global: UpdateRemoteUpdateAwarenessSettingsRequest = { globalEnabled: true }
+    const inherit: UpdateRemoteUpdateAwarenessProjectOverrideRequest = {
       projectId: 'project-1',
       override: 'inherit',
-    } satisfies UpdateRemoteUpdateAwarenessProjectOverrideRequest
-    const on = {
+    }
+    const on: UpdateRemoteUpdateAwarenessProjectOverrideRequest = {
       projectId: 'project-1',
       override: 'on',
-    } satisfies UpdateRemoteUpdateAwarenessProjectOverrideRequest
-    const off = {
+    }
+    const off: UpdateRemoteUpdateAwarenessProjectOverrideRequest = {
       projectId: 'project-1',
       override: 'off',
-    } satisfies UpdateRemoteUpdateAwarenessProjectOverrideRequest
+    }
+    const wire = JSON.parse(JSON.stringify({ global, inherit, on, off })) as {
+      global: UpdateRemoteUpdateAwarenessSettingsRequest
+      inherit: UpdateRemoteUpdateAwarenessProjectOverrideRequest
+      on: UpdateRemoteUpdateAwarenessProjectOverrideRequest
+      off: UpdateRemoteUpdateAwarenessProjectOverrideRequest
+    }
 
-    expect(global.globalEnabled).toBe(true)
-    expect([inherit.override, on.override, off.override]).toEqual(['inherit', 'on', 'off'])
+    expect(wire.global.globalEnabled).toBe(true)
+    expect([wire.inherit.override, wire.on.override, wire.off.override]).toEqual(['inherit', 'on', 'off'])
     expect(snapshot.globalEnabled).toBe(false)
     expect(snapshot.effectiveEnabled).toBe(false)
   })
@@ -164,27 +171,12 @@ describe('remote update awareness protocol contract', () => {
   })
 
   it('pins the exhaustive sanitized state vocabulary', () => {
-    const states = [
-      'disabled',
-      'not_git',
-      'unobserved',
-      'checking',
-      'up_to_date',
-      'update_available',
-      'local_ahead',
-      'diverged',
-      'rewound',
-      'missing',
-      'detached',
-      'stale',
-      'unresolved',
-      'unknown',
-      'error',
-    ] as const satisfies readonly RemoteUpdateAwarenessProjectState[]
+    const states: readonly RemoteUpdateAwarenessProjectState[] = REMOTE_UPDATE_AWARENESS_PROJECT_STATES
 
     expectTypeOf<Exclude<RemoteUpdateAwarenessProjectState, (typeof states)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof states)[number], RemoteUpdateAwarenessProjectState>>().toEqualTypeOf<never>()
     expect(states).toHaveLength(15)
     expect(states).toEqual(expect.arrayContaining(['update_available', 'rewound', 'missing', 'detached', 'stale']))
+    expect(JSON.parse(JSON.stringify(REMOTE_UPDATE_AWARENESS_PROJECT_STATES))).toEqual(states)
   })
 })

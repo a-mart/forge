@@ -74,7 +74,19 @@ describe("MessageRouter", () => {
         channel: "collab",
       },
       {
+        name: "targetCollab takes precedence over an external target",
+        input: { targetCollab: true, targetKind: "external_channel" },
+        reasonCode: "route:collab",
+        channel: "collab",
+      },
+      {
+        name: "non-retired external channel routes externally",
+        input: { targetKind: "external_channel", sourceContext: { channel: "web" } },
+        reasonCode: "route:external_channel",
+      },
+      {
         name: "D5 collaboration profile",
+
         input: { targetProfileId: "_collaboration" },
         reasonCode: "deny:collaboration_profile",
       },
@@ -128,6 +140,16 @@ describe("MessageRouter", () => {
       {
         name: "worker health nudge routes by internal origin",
         input: { origin: "internal", internalDeliveryKind: "worker_health" },
+        reasonCode: "route:internal_origin",
+      },
+      {
+        name: "internal_only denies after internal provenance is absent",
+        input: { targetKind: "internal_only", origin: "user" },
+        reasonCode: "deny:internal_only",
+      },
+      {
+        name: "internal origin takes precedence over internal_only",
+        input: { targetKind: "internal_only", origin: "internal" },
         reasonCode: "route:internal_origin",
       },
       {

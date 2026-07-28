@@ -1,11 +1,13 @@
 /** @vitest-environment jsdom */
 
-import { getByDisplayValue, getByRole } from '@testing-library/dom'
-import { createElement, type ComponentProps } from 'react'
+import { fireEvent, getByDisplayValue, getByRole, queryByText, waitFor } from '@testing-library/dom'
+import { act, createElement, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OnboardingCallout } from './OnboardingCallout'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -65,6 +67,45 @@ describe('OnboardingCallout', () => {
     expect(getByRole(container, 'combobox', { name: 'Technical Level' })).toBeTruthy()
     expect(getByRole(container, 'textbox', { name: 'Additional preferences' })).toBeTruthy()
     expect(getByRole(container, 'button', { name: 'Save & Continue' })).toBeTruthy()
+  })
+
+  it('validates required fields before saving', () => {
+    const { onSave } = renderCallout()
+    act(() => fireEvent.submit(container.querySelector('form')!))
+    expect(queryByText(container, 'Name is required.')).toBeTruthy()
+    expect(onSave).not.toHaveBeenCalled()
+
+    act(() => {
+      fireEvent.input(getByRole(container, 'textbox', { name: 'Name' }), { target: { value: 'Ada' } })
+      fireEvent.submit(container.querySelector('form')!)
+    })
+    expect(queryByText(container, 'Technical level is required.')).toBeTruthy()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('submits trimmed values and null-normalizes blank preferences', async () => {
+    const { onSave } = renderCallout()
+    act(() => {
+      fireEvent.input(getByRole(container, 'textbox', { name: 'Name' }), { target: { value: '  Ada Lovelace  ' } })
+      const technicalSelect = container.querySelector('select')!
+      fireEvent.change(technicalSelect, { target: { value: 'developer' } })
+      fireEvent.input(getByRole(container, 'textbox', { name: 'Additional preferences' }), { target: { value: '   ' } })
+      fireEvent.submit(container.querySelector('form')!)
+    })
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith({
+      preferredName: 'Ada Lovelace',
+      technicalLevel: 'developer',
+      additionalPreferences: null,
+    }))
+  })
+
+  it('disables all form actions while busy', () => {
+    renderCallout({ isBusy: true })
+    expect(getByRole(container, 'textbox', { name: 'Name' })).toHaveProperty('disabled', true)
+    expect(getByRole(container, 'combobox', { name: 'Technical Level' }).getAttribute('data-disabled')).not.toBeNull()
+    expect(getByRole(container, 'button', { name: 'Save & Continue' })).toHaveProperty('disabled', true)
+    expect(getByRole(container, 'button', { name: 'Skip for now' })).toHaveProperty('disabled', true)
   })
 
   it('fires the skip action in first-launch mode', () => {

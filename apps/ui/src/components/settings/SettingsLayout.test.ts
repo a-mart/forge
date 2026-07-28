@@ -109,6 +109,35 @@ describe('SettingsLayout', () => {
     expect(header?.textContent).not.toContain('Collab backend')
   })
 
+  it('wires desktop/mobile tab changes and Back navigation', () => {
+    const onTabChange = vi.fn()
+    const onBack = vi.fn()
+    renderLayout({ activeTab: 'general', onTabChange })
+    // There are two responsive copies of each tab; both invoke the same callback.
+    const appearanceButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.trim() === 'Appearance')
+    expect(appearanceButtons).toHaveLength(2)
+    appearanceButtons[0]!.click()
+    appearanceButtons[1]!.click()
+    expect(onTabChange).toHaveBeenNthCalledWith(1, 'appearance')
+    expect(onTabChange).toHaveBeenNthCalledWith(2, 'appearance')
+
+    // Back is optional but must be an exact, accessible navigation callback.
+    flushSync(() => root?.render(createElement(SettingsLayout, {
+      activeTab: 'appearance', onTabChange, onBack,
+      children: createElement('div', null, 'Content'),
+    })))
+    const back = container.querySelector('button[aria-label="Back to chat"]') as HTMLButtonElement
+    expect(back).toBeTruthy()
+    back.click()
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the active tab in both responsive navigations', () => {
+    renderLayout({ activeTab: 'appearance' })
+    const appearanceButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.trim() === 'Appearance')
+    expect(appearanceButtons.every((button) => button.className.includes('bg-muted'))).toBe(true)
+  })
+
   it('mobile nav also filters tabs', () => {
     renderLayout({ availableTabs: ['general', 'auth', 'about'] as SettingsTab[] })
 

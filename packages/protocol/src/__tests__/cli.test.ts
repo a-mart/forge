@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { CliCapabilities, CliSessionCompactionResult, CliSessionTranscriptResponse, CliWsCommand } from '../cli.js'
+import {
+  CLI_EXIT_CODES,
+  CLI_PROTOCOL_VERSION,
+  type CliCapabilities,
+  type CliSessionCompactionResult,
+  type CliSessionTranscriptResponse,
+  type CliWsCommand,
+} from '../cli.js'
+
+const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 describe('CLI protocol DTOs', () => {
   it('includes the additive session transcript feature flag', () => {
@@ -22,18 +31,22 @@ describe('CLI protocol DTOs', () => {
       },
     }
 
-    expect(capabilities.features.sessionTranscript).toBe(true)
-    expect(capabilities.features.sessionCompaction).toBe(true)
+    const wireCapabilities = roundTrip(capabilities)
+    expect(wireCapabilities).toEqual(capabilities)
+    expect(wireCapabilities.protocolVersion).toBe(CLI_PROTOCOL_VERSION)
+    expect(wireCapabilities.features.sessionTranscript).toBe(true)
+    expect(wireCapabilities.features.sessionCompaction).toBe(true)
+    expect(CLI_EXIT_CODES.success).toBe(0)
   })
 
   it('models first-class CLI compaction commands and normalized result DTOs', () => {
-    const command = {
+    const command: CliWsCommand = {
       type: 'smart_compact_session',
       requestId: 'compact-1',
       agentId: 'session-a',
       customInstructions: 'Preserve TODOs',
-    } satisfies CliWsCommand
-    const result = {
+    }
+    const result: CliSessionCompactionResult = {
       action: 'smart_compact',
       sessionAgentId: 'session-a',
       profileId: 'profile-a',
@@ -42,10 +55,14 @@ describe('CLI protocol DTOs', () => {
       reason: 'claude_runtime_below_compaction_threshold',
       customInstructionsProvided: true,
       completedAt: '2026-06-22T00:00:00.000Z',
-    } satisfies CliSessionCompactionResult
+    }
+    const wireCommand = roundTrip(command)
+    const wireResult = roundTrip(result)
 
-    expect(command.type).toBe('smart_compact_session')
-    expect(result.outcome).toBe('skipped')
+    expect(wireCommand).toEqual(command)
+    expect(wireResult).toEqual(result)
+    expect(wireCommand.type).toBe('smart_compact_session')
+    expect(wireResult.outcome).toBe('skipped')
   })
 
   it('models transcript responses without raw source context or attachment bodies', () => {
@@ -88,7 +105,9 @@ describe('CLI protocol DTOs', () => {
       ],
     }
 
-    const json = JSON.stringify(response)
+    const wireResponse = roundTrip(response)
+    const json = JSON.stringify(wireResponse)
+    expect(wireResponse).toEqual(response)
     expect(json).not.toContain('sourceContext')
     expect(json).not.toContain('data')
     expect(json).not.toContain('filePath')

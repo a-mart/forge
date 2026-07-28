@@ -10,7 +10,7 @@ import { getConversationHistoryCacheFilePath } from '../conversation-history-cac
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import {
   getCommonKnowledgePath,
-  getCortexPromotionManifestsDir,
+  getCortexConsolidationRunsPath,
   getCortexReviewLogPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -539,20 +539,28 @@ describe('SwarmManager', () => {
     verifiedDatabase.pragma('foreign_keys = ON')
     runSecureSessionMigrations(verifiedDatabase)
     const verified = new SecureSessionStore(verifiedDatabase)
+    // Unknown profile-bound secrets are retained until their owning profile is explicitly deleted;
+    // boot still removes the stale session state and keeps the live bindings intact.
     expect(verified.listSecrets().map(({ secretId }) => secretId).sort()).toEqual([
       'live-instance-secret',
       'live-project-secret',
+      'orphaned-project-secret',
+      'orphaned-session-secret',
     ])
     expect(verified.listProjectDefaults()).toEqual([
       expect.objectContaining({
         profileId: 'cortex',
         secretId: 'live-project-secret',
       }),
+      expect.objectContaining({
+        profileId: 'deleted-project',
+        secretId: 'orphaned-project-secret',
+      }),
     ])
     expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
       .toContain('cortex')
     expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
-      .not.toContain('deleted-session')
+      .toContain('deleted-session')
     verified.close()
     await restarted.closeSecureSessions()
   })
@@ -958,7 +966,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it.skip('bootstraps common Cortex knowledge file when missing', async () => {
+  it('bootstraps common Cortex knowledge and operational files when missing', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
 
@@ -970,8 +978,8 @@ describe('SwarmManager', () => {
     const reviewLog = await readFile(getCortexReviewLogPath(config.paths.dataDir), 'utf8')
     expect(reviewLog).toBe('')
 
-    const promotionManifestsDir = getCortexPromotionManifestsDir(config.paths.dataDir)
-    await expect(stat(promotionManifestsDir)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
+    const consolidationRuns = getCortexConsolidationRunsPath(config.paths.dataDir)
+    await expect(readFile(consolidationRuns, 'utf8')).resolves.toBe(`${JSON.stringify({ version: 1, runs: [] }, null, 2)}\n`)
   })
 
   it('materializes descriptor-backed project-agent storage on boot and stays idempotent across reboots', async () => {

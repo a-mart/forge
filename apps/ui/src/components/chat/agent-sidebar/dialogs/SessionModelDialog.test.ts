@@ -324,19 +324,20 @@ describe('SessionModelDialog', () => {
   })
 
   describe('availability loading/error', () => {
-    it('disables selectors and submit while availability is loading', async () => {
-      // We can't easily test the transient loading state with the current mock
-      // (it resolves immediately), but we verify that after load, selectors are enabled.
+    it('disables selectors and submit while availability is loading, then enables them after resolution', async () => {
+      type Availability = { 'openai-codex': boolean; anthropic: boolean; xai: boolean }
+      let resolveAvailability!: (value: { version: number; overrides: Record<string, never>; providerAvailability: Availability }) => void
+      const pending = new Promise<{ version: number; overrides: Record<string, never>; providerAvailability: Availability }>((resolve) => { resolveAvailability = resolve })
+      modelsApiMock.fetchModelOverrides.mockReturnValueOnce(pending)
+
       await renderDialog({ modelOrigin: 'profile_default' })
 
-      // After load completes, model selector should be enabled
-      const modelTrigger = findModelTrigger()
-      expect(modelTrigger).toBeTruthy()
-      expect(modelTrigger!.disabled).toBe(false)
-
-      const reasoningTrigger = findReasoningTrigger()
-      expect(reasoningTrigger).toBeTruthy()
-      expect(reasoningTrigger!.disabled).toBe(false)
+      expect(findModelTrigger()?.disabled).toBe(true)
+      expect(findReasoningTrigger()?.disabled).toBe(true)
+      expect(findSubmitButton()?.disabled).toBe(true)
+      await act(async () => resolveAvailability({ version: 1, overrides: {}, providerAvailability: { 'openai-codex': true, anthropic: true, xai: true } }))
+      expect(findModelTrigger()?.disabled).toBe(false)
+      expect(findReasoningTrigger()?.disabled).toBe(false)
     })
   })
 })

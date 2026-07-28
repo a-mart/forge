@@ -468,7 +468,7 @@ const serverEventsByLeafModule = [
 ] as const satisfies readonly ServerEvent[]
 
 const requestIdCommands = [
-  { type: 'browser_host_register', requestId: 'browser-register-request-1', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: now, capabilities: { supportedOperations: BROWSER_AUTOMATION_OPERATIONS, electronVersion: '1', chromiumVersion: '1', playwrightVersion: '1', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true } } },
+  { type: 'browser_host_register', requestId: 'browser-register-request-1', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: now, capabilities: { supportedOperations: [...BROWSER_AUTOMATION_OPERATIONS], runtimeVersions: { electron: '1', chromium: '1', playwright: '1' }, maxResponseBytes: 1024 } } },
   { type: 'browser_host_hydrate', requestId: 'browser-hydrate-request-1', hostId: 'host-1', hostGeneration: 1 },
   { type: 'browser_host_state_report', requestId: 'browser-state-request-1', hostId: 'host-1', hostGeneration: 1, sessions: [] },
   { type: 'browser_panel_reveal_acknowledge', requestId: 'browser-reveal-request-1', hostId: 'host-1', hostGeneration: 1, sessionAgentId: agent.agentId, profileId: profile.profileId, tabId: 'tab-1', sequence: 1 },
@@ -891,8 +891,8 @@ describe('protocol root barrel contract', () => {
   })
 
   it('pins current ClientCommand discriminator coverage', () => {
-    expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
-    expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>(undefined as never).toEqualTypeOf<never>(undefined as never)
+    expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>(undefined as never).toEqualTypeOf<never>(undefined as never)
 
     expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(75)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
@@ -902,8 +902,8 @@ describe('protocol root barrel contract', () => {
   })
 
   it('pins request-id-bearing ClientCommand variants and proves requestId payloads are accepted', () => {
-    expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
-    expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>(undefined as never).toEqualTypeOf<never>(undefined as never)
+    expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>(undefined as never).toEqualTypeOf<never>(undefined as never)
 
     expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(56)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)

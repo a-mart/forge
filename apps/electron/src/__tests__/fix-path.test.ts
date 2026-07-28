@@ -1,113 +1,72 @@
-/**
- * Tests for the macOS/Linux PATH fix utility.
- *
- * These tests validate the merge logic and the overall fixPath behavior.
- * The shell invocation is tested via the actual shell when available.
- */
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }))
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-
-// We test the internal merge logic by importing the module and exercising
-// the public API. Since fixPath() mutates process.env.PATH, we save/restore it.
+let mockedExec: ReturnType<typeof vi.fn>
 
 describe('fix-path', () => {
-  let originalPath: string | undefined;
-  let originalPlatform: PropertyDescriptor | undefined;
-  let originalShell: string | undefined;
+  let originalPath: string | undefined
+  let originalShell: string | undefined
 
-  beforeEach(() => {
-    originalPath = process.env.PATH;
-    originalShell = process.env.SHELL;
-    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-  });
+  beforeEach(async () => {
+    vi.resetModules()
+    mockedExec = vi.mocked((await import('node:child_process')).execFileSync)
+    mockedExec.mockReset()
+    originalPath = process.env.PATH
+    originalShell = process.env.SHELL
+  })
 
   afterEach(() => {
-    if (originalPath !== undefined) {
-      process.env.PATH = originalPath;
-    }
-    if (originalShell !== undefined) {
-      process.env.SHELL = originalShell;
-    } else {
-      delete process.env.SHELL;
-    }
-    if (originalPlatform) {
-      Object.defineProperty(process, 'platform', originalPlatform);
-    }
-  });
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+    if (originalShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = originalShell
+  })
 
-  describe('fixPath()', () => {
-    it('is a no-op on Windows', async () => {
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-      const before = process.env.PATH;
+  it('is a no-op on Windows without invoking a shell', async () => {
+    if (process.platform !== 'win32') return
+    process.env.PATH = '/inherited'
+    const { fixPath, getFixedPath } = await import('../fix-path.js')
+    fixPath()
+    expect(getFixedPath()).toBeUndefined()
+    expect(process.env.PATH).toBe('/inherited')
+    expect(mockedExec).not.toHaveBeenCalled()
+  })
 
-      const { fixPath } = await import('../fix-path.js');
-      fixPath();
+  it('extracts an ANSI-wrapped PATH and merges shell precedence without duplicates', async () => {
+    if (process.platform === 'win32') return
+    process.env.SHELL = '/bin/zsh'
+    process.env.PATH = '/gui/bin:/shared:/gui/bin'
+    mockedExec.mockReturnValue('notice\n\x1b[32mPATH=/shell/bin:/shared:/shell/bin\x1b[0m\n' as never)
+    const { fixPath, getFixedPath } = await import('../fix-path.js')
 
-      expect(process.env.PATH).toBe(before);
-    });
+    expect(getFixedPath()).toBe('/shell/bin:/shared:/gui/bin')
+    fixPath()
+    expect(process.env.PATH).toBe('/shell/bin:/shared:/gui/bin')
+    expect(mockedExec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'echo PATH="$PATH"'], expect.objectContaining({ timeout: 5000 }))
+  })
 
-    it('does not crash when SHELL is not set', async () => {
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-      delete process.env.SHELL;
+  it('uses fish login syntax and leaves PATH unchanged when extraction fails', async () => {
+    if (process.platform === 'win32') return
+    process.env.SHELL = '/usr/bin/fish'
+    process.env.PATH = '/inherited'
+    mockedExec.mockReturnValue('fish startup output\n' as never)
+    const { getFixedPath, fixPath: apply } = await import('../fix-path.js')
 
-      // Re-import to pick up the new platform
-      // Note: dynamic import caching means we test the live env reads
-      const { fixPath } = await import('../fix-path.js');
-      expect(() => fixPath()).not.toThrow();
-    });
+    expect(getFixedPath()).toBeUndefined()
+    apply()
+    expect(process.env.PATH).toBe('/inherited')
+    expect(mockedExec).toHaveBeenCalledWith('/usr/bin/fish', ['-l', '-c', 'echo PATH="$PATH"'], expect.anything())
+  })
 
-    it('enriches PATH on macOS/Linux when a valid shell is available', async () => {
-      if (process.platform === 'win32') return; // skip on Windows CI
-
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-      // Set a minimal PATH to see if the shell adds more entries
-      process.env.PATH = '/usr/bin';
-      process.env.SHELL = process.env.SHELL || '/bin/zsh';
-
-      const { fixPath } = await import('../fix-path.js');
-      fixPath();
-
-      // The shell should add at least /usr/local/bin or similar
-      const entries = (process.env.PATH || '').split(':');
-      expect(entries.length).toBeGreaterThanOrEqual(1);
-      // Original entry should still be present
-      expect(entries).toContain('/usr/bin');
-    });
-  });
-
-  describe('getFixedPath()', () => {
-    it('returns undefined on Windows', async () => {
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-      const { getFixedPath } = await import('../fix-path.js');
-      expect(getFixedPath()).toBeUndefined();
-    });
-
-    it('returns a string with PATH entries on macOS/Linux', async () => {
-      if (process.platform === 'win32') return;
-
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-      process.env.SHELL = process.env.SHELL || '/bin/zsh';
-
-      const { getFixedPath } = await import('../fix-path.js');
-      const result = getFixedPath();
-
-      if (result !== undefined) {
-        expect(result).toContain('/');
-        expect(typeof result).toBe('string');
-      }
-    });
-
-    it('does not modify process.env.PATH', async () => {
-      if (process.platform === 'win32') return;
-
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-      const before = process.env.PATH;
-
-      const { getFixedPath } = await import('../fix-path.js');
-      getFixedPath();
-
-      expect(process.env.PATH).toBe(before);
-    });
-  });
-});
+  it('fails closed for missing shell and shell execution errors', async () => {
+    if (process.platform === 'win32') return
+    delete process.env.SHELL
+    process.env.PATH = '/inherited'
+    const { getFixedPath } = await import('../fix-path.js')
+    expect(getFixedPath()).toBeUndefined()
+    process.env.SHELL = '/invalid/shell'
+    mockedExec.mockImplementation(() => { throw new Error('timeout') })
+    expect(getFixedPath()).toBeUndefined()
+    expect(process.env.PATH).toBe('/inherited')
+  })
+})

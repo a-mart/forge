@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -31,12 +31,26 @@ describe('installed native relay discovery', () => {
     expect(await new InstalledRendezvousProvider(files.rendezvous).read()).toEqual({ marker: true })
   })
 
-  it('fails closed for an unexpected deployment layout, wrong key id, symlink, and public permissions', async () => {
+  it('fails closed for an unexpected deployment layout, wrong key id, symlinks, and public permissions', async () => {
     expect(() => resolveInstalledRelayPaths('/tmp/not-forge/host')).toThrow(/deployment layout/u)
     const files = await deployment()
     const key = Buffer.alloc(32, 8)
     await writeFile(files.authKey, `${key.toString('base64')}\n`, { mode: 0o600 })
     await expect(new InstalledSecretProvider(files.authKey).getSecret('key-wrong')).rejects.toThrow(/does not match/u)
+
+    const keyTarget = `${files.authKey}.target`
+    await writeFile(keyTarget, `${key.toString('base64')}\n`, { mode: 0o600 })
+    await rm(files.authKey)
+    await symlink(keyTarget, files.authKey)
+    await expect(new InstalledSecretProvider(files.authKey).getSecret('key-wrong')).rejects.toThrow(/regular file/u)
+
+    const rendezvousTarget = `${files.rendezvous}.target`
+    await writeFile(rendezvousTarget, JSON.stringify({ marker: true }), { mode: 0o600 })
+    await symlink(rendezvousTarget, files.rendezvous)
+    await expect(new InstalledRendezvousProvider(files.rendezvous).read()).rejects.toThrow(/regular file/u)
+
+    await rm(files.authKey)
+    await writeFile(files.authKey, `${key.toString('base64')}\n`, { mode: 0o600 })
     if (process.platform !== 'win32') {
       await chmod(files.authKey, 0o644)
       await expect(new InstalledSecretProvider(files.authKey).getSecret('key-wrong')).rejects.toThrow(/private/u)

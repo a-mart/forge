@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { makeTempConfig } from "../../test-support/index.js";
 import { PersistenceService } from "../persistence-service.js";
+import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
+import { getSharedKnowledgeDir } from "../data-paths.js";
 import { extractDescriptorAgentId, validateAgentDescriptor } from "../swarm-manager-utils.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 
@@ -23,12 +25,17 @@ function descriptor(config: SwarmConfig, overrides: Partial<AgentDescriptor> = {
   };
 }
 
-function createPersistenceService(config: SwarmConfig): PersistenceService {
+function createPersistenceService(
+  config: SwarmConfig,
+  agents: AgentDescriptor[] = [],
+  profiles: ManagerProfile[] = [],
+): PersistenceService {
+  const descriptors = new Map(agents.map((agent) => [agent.agentId, agent]));
   return new PersistenceService({
     config,
-    descriptors: new Map<string, AgentDescriptor>(),
-    sortedDescriptors: () => [],
-    sortedProfiles: () => [],
+    descriptors,
+    sortedDescriptors: () => agents,
+    sortedProfiles: () => profiles,
     getConfiguredManagerId: () => config.managerId,
     resolveMemoryOwnerAgentId: (agent) => agent.managerId,
     validateAgentDescriptor,
@@ -42,7 +49,46 @@ async function writeStore(config: SwarmConfig, agents: unknown[], profiles: Mana
   await writeFile(config.paths.agentsStoreFile, `${JSON.stringify({ agents, profiles }, null, 2)}\n`, "utf8");
 }
 
-describe("PersistenceService.loadStore", () => {
+describe("PersistenceService", () => {
+  it("provisions directories and saves the canonical descriptor store", async () => {
+    const config = await makeTempConfig();
+    const agent = descriptor(config);
+    const profile: ManagerProfile = {
+      profileId: "manager",
+      displayName: "Manager",
+      defaultSessionAgentId: "manager",
+      createdAt: agent.createdAt,
+      updatedAt: agent.updatedAt,
+      defaultModel: config.defaultModel,
+    };
+    const service = createPersistenceService(config, [agent], [profile]);
+    await service.ensureDirectories();
+    await service.ensureProfileDirectories("manager");
+    await expect(stat(getSharedKnowledgeDir(config.paths.dataDir))).resolves.toBeTruthy();
+    await expect(stat(join(config.paths.dataDir, "profiles", "manager", "pi", "skills"))).resolves.toBeTruthy();
+    await service.saveStore();
+    expect(JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8"))).toEqual({ agents: [agent], profiles: [profile] });
+  });
+
+  it("does not overwrite memory files and deletes paired session/cache files", async () => {
+    const config = await makeTempConfig();
+    const service = createPersistenceService(config);
+    const memoryPath = join(config.paths.dataDir, "profiles", "manager", "memory.md");
+    await service.ensureAgentMemoryFile(memoryPath, "initial");
+    await writeFile(memoryPath, "user-authored", "utf8");
+    await service.ensureAgentMemoryFile(memoryPath, "replacement");
+    expect(await readFile(memoryPath, "utf8")).toBe("user-authored");
+
+    const sessionFile = join(config.paths.sessionsDir, "manager.jsonl");
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    await mkdir(join(config.paths.sessionsDir, "..", "cache"), { recursive: true });
+    await writeFile(sessionFile, "session", "utf8");
+    await writeFile(cacheFile, "cache", "utf8");
+    await service.deleteManagerSessionFile(sessionFile);
+    await expect(stat(sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(cacheFile)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("preserves persisted descriptor fields that future descriptor seams must not drop", async () => {
     const config = await makeTempConfig();
     const persisted = descriptor(config, {

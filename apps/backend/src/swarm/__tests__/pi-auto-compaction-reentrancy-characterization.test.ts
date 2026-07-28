@@ -115,7 +115,7 @@ describe("pi auto-compaction reentrancy characterization (0.80.6 patch)", () => 
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
     const patchPath = join(repoRoot, "patches/@earendil-works__pi-coding-agent@0.80.6.patch");
     const digest = createHash("sha256").update(readFileSync(patchPath)).digest("hex");
-    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(digest).toBe("39f5f02939e5b9eed7ccf6892f263051c9d56587c5933645f555f70dc344ab84");
   });
 
   it("second concurrent _runAutoCompaction is a no-op while the first owns the controller", async () => {

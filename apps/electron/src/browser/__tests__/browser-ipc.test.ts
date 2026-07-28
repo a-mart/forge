@@ -28,4 +28,44 @@ describe('main-owned browser IPC role and lifecycle', () => {
     expect(viewHost.destroy).toHaveBeenCalledOnce()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(installedHandlerCount)
   })
+
+  it('dispatches every registered privileged route and maps sender denial', async () => {
+    const handlers = new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>()
+    const ipcMain = { handle: vi.fn((channel, handler) => handlers.set(channel, handler)), removeHandler: vi.fn() }
+    const manager = {
+      prepareRecording: vi.fn(async () => ({ recordingId: 'r' })), stopRecordingCapture: vi.fn(async () => ({ recordingId: 'r' })),
+      saveRecording: vi.fn(async () => ({ saved: true })), cancelRecording: vi.fn(), setRecordingMimeType: vi.fn(),
+      humanNavigate: vi.fn(async () => ({ tabId: 'tab' })), humanHistory: vi.fn(async () => ({ tabId: 'tab' })),
+      humanReload: vi.fn(async () => ({ tabId: 'tab' })), humanSetZoom: vi.fn(async () => ({ tabId: 'tab' })),
+      execute: vi.fn(async (request) => request), handleLifecycle: vi.fn(async (request) => request),
+      revealTarget: vi.fn(async () => ({ targetAffinity: 'managed-electron', revealed: true, tabId: 'tab' })),
+    }
+    const viewHost = {
+      reconcile: vi.fn(async () => ({ applied: true, tabCount: 1 })), ensureProvisional: vi.fn(async () => ({ tabId: 'tab' })),
+      commitProvisional: vi.fn(async () => undefined), abortProvisional: vi.fn(async () => undefined), setPresentationTarget: vi.fn(),
+      present: vi.fn(async () => ({ applied: true })), captureScreenshot: vi.fn(async () => 'data'), destroy: vi.fn(async () => undefined),
+    }
+    const mainWindow = { isDestroyed: () => false, webContents: { id: 10 } }
+    installBrowserIpc({ ipcMain: ipcMain as never, mainWindow: mainWindow as never, manager: manager as never, viewHost: viewHost as never })
+    const trusted = { sender: { id: 10 } }
+    const routeInputs: Array<[string, unknown]> = [
+      [BROWSER_IPC.reconcile, {}], [BROWSER_IPC.ensureProvisional, { tab: {}, workspaceEpoch: 1 }],
+      [BROWSER_IPC.commitProvisional, { tabId: 'tab', workspaceEpoch: 1 }], [BROWSER_IPC.abortProvisional, 'tab'],
+      [BROWSER_IPC.viewport, {}], [BROWSER_IPC.presentation, {}], [BROWSER_IPC.capture, 'tab'],
+      [BROWSER_IPC.humanNavigate, { tabId: 'tab', url: 'https://example.com' }], [BROWSER_IPC.humanHistory, { tabId: 'tab', direction: 'back' }],
+      [BROWSER_IPC.humanReload, { tabId: 'tab', hard: true }], [BROWSER_IPC.humanZoom, { tabId: 'tab', factor: 1 }],
+      [BROWSER_IPC.execute, { operation: 'status' }], [BROWSER_IPC.lifecycle, { type: 'ready' }],
+      [BROWSER_IPC.reveal, { sessionAgentId: 'session', profileId: 'profile', tabId: 'tab' }],
+      [BROWSER_IPC.prepareRecording, { operation: 'recordingStart' }], [BROWSER_IPC.stopRecordingCapture, { operation: 'recordingStop' }],
+      [BROWSER_IPC.saveRecording, { request: { operation: 'recordingStop' }, mimeType: 'video/webm', bytes: new Uint8Array() }],
+      [BROWSER_IPC.cancelRecording, 'recording'],
+    ]
+    for (const [channel, input] of routeInputs) {
+      await expect(handlers.get(channel)!(trusted, input)).resolves.toMatchObject({ __forgeBrowserIpcResult: true, ok: true })
+      await expect(handlers.get(channel)!({ sender: { id: 99 } }, input)).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    }
+    expect(manager.humanNavigate).toHaveBeenCalledWith('tab', 'https://example.com')
+    expect(manager.humanReload).toHaveBeenCalledWith('tab', true)
+    expect(manager.saveRecording).toHaveBeenCalledOnce()
+  })
 })

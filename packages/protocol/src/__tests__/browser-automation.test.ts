@@ -162,13 +162,8 @@ describe('browser host, session, and routing wire contract', () => {
     registeredAt: '2026-07-22T00:00:00.000Z',
     capabilities: {
       supportedOperations: [...BROWSER_AUTOMATION_OPERATIONS],
-      electronVersion: '37.10.3',
-      chromiumVersion: '138.0.7204.251',
-      playwrightVersion: '1.60.0',
+      runtimeVersions: { chromium: '138.0.7204.251', playwright: '1.60.0' },
       maxResponseBytes: 8_000_000,
-      supportsSandboxedWebviews: true,
-      supportsCapturePage: true,
-      supportsRecording: true,
     },
   }
 
