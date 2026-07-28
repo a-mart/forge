@@ -20,7 +20,7 @@ Omitting `route` uses the roster's baseline mapping for the selected task type; 
 
 The roster selection order is global default → project default → session override. The manager receives the selected roster as compact dynamic context, outside the stable system-prompt prefix. Switching rosters therefore does not require a manager runtime replacement. Running attempts stay pinned; only future attempts see the new roster.
 
-Native xAI routing also follows the effective credential. `grok-4.5` remains the family default, while authenticated OAuth discovery can add `grok-build` and `grok-composer-2.5-fast` only for entitled accounts. Switching to API-key auth hides these models and rejects stale selections before a provider request. Losing entitlement or failing discovery removes them from refreshed catalog, projection, and selector results. The xAI Composer ID is separate from Cursor SDK `composer-2.5`.
+Native xAI routing also follows the effective credential. `grok-4.5` remains the family default and is available to normal manager create, change, and exact per-session override selectors when xAI auth is configured. Authenticated OAuth discovery can add `grok-build` and `grok-composer-2.5-fast` only for entitled accounts; these remain OAuth-only worker/specialist choices excluded from normal manager selectors. Switching to API-key auth hides the entitlement models and rejects stale selections before a provider request. Losing entitlement or failing discovery removes them from refreshed catalog, projection, and selector results. The xAI Composer ID is separate from Cursor SDK `composer-2.5`. xAI/Grok is not eligible for manager compaction.
 
 ## Custom specialists
 
