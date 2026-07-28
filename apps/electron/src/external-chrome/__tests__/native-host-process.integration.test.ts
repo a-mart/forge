@@ -8,15 +8,22 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { build } from 'esbuild'
 import {
+  BROWSER_AUTOMATION_OPERATIONS,
   EXTERNAL_CHROME_EXTENSION_ORIGIN,
   EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES,
   EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES,
+  type BrowserAutomationRequest,
+  type BrowserAutomationResponse,
 } from '@forge/protocol'
 import { Runtime } from '../../../../chrome-extension/src/payload/service-worker/index.js'
+import type { ChromeTab } from '../../../../chrome-extension/src/runtime/chrome-api.js'
 import { PAYLOAD_VERSION } from '../../../../chrome-extension/src/runtime/identity.js'
 import { fakeChrome } from '../../../../chrome-extension/tests/fakes.js'
 import { encodeNativeMessage, NativeMessageDecoder } from '../../../../native-messaging-host/src/framing.js'
 import { installedUserScope } from '../../../../native-messaging-host/src/installed-discovery.js'
+import { AutomaticBrowserHost } from '../../browser/automatic-browser-host.js'
+import type { BrowserTargetAdapter } from '../../browser/browser-target-adapter.js'
+import { ExternalChromeTargetAdapter } from '../../browser/external-chrome-target-adapter.js'
 import { ExternalChromeRelayRuntime } from '../relay-runtime.js'
 
 const EXTENSION_INSTANCE_ID = 'extension_instance_process_1234567890'
@@ -84,6 +91,36 @@ interface ProcessFixture {
   host: string
   startRelay(suffix: string): Promise<RelayFixture>
   publish(relay: RelayFixture): Promise<void>
+}
+
+class RejectingManagedAdapter implements BrowserTargetAdapter {
+  readonly targetAffinity = 'managed-electron' as const
+  readonly capabilities = {
+    supportedOperations: BROWSER_AUTOMATION_OPERATIONS,
+    physicalViewport: true,
+    recording: true,
+    reveal: false,
+  } as const
+
+  async execute(_request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    throw new Error('integration unexpectedly fell back to Managed Browser')
+  }
+}
+
+function browserRequest(operation: BrowserAutomationRequest['operation'], input: Record<string, unknown>): BrowserAutomationRequest {
+  return {
+    requestId: `request-${operation}-${randomUUID()}`,
+    targetAffinity: 'external-chrome',
+    sessionAgentId: 'session-process',
+    profileId: 'profile-process',
+    tabId: null,
+    operation,
+    input,
+    hostId: 'host-process',
+    hostGeneration: 1,
+    deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    artifactDirectory: null,
+  } as BrowserAutomationRequest
 }
 
 async function createProcessFixture(): Promise<ProcessFixture> {
@@ -193,7 +230,8 @@ describe('spawned native host relay lifecycle', () => {
     await fixture.publish(old)
     const ports: NativeProcessPort[] = []
     const exits: Array<{ code: number | null; signal: NodeJS.Signals | null }> = []
-    const chrome = fakeChrome()
+    const tabs: ChromeTab[] = []
+    const chrome = fakeChrome({ tabs })
     await chrome.storage.local.set({ 'forge.externalChrome.instanceId.v1': EXTENSION_INSTANCE_ID })
     chrome.runtime.connectNative = () => {
       const child = spawn(process.execPath, [
@@ -213,6 +251,26 @@ describe('spawned native host relay lifecycle', () => {
     vi.stubGlobal('chrome', chrome)
     vi.stubGlobal('navigator', { userAgent: 'Chrome/125.0.0.0' })
     const extension = new Runtime()
+    const update = chrome.tabs.update.bind(chrome.tabs)
+    const updatePreconditions: Array<{ url: string | undefined; active: boolean | undefined }> = []
+    let documentSequence = 0
+    chrome.tabs.update = async (tabId, properties) => {
+      if (properties.url !== undefined) {
+        const before = await chrome.tabs.get(tabId)
+        updatePreconditions.push({ url: before.url, active: before.active })
+      }
+      const updated = await update(tabId, properties)
+      if (properties.url !== undefined) queueMicrotask(() => {
+        const documentId = `native-document-${++documentSequence}`
+        const details = { tabId, frameId: 0, documentId, url: properties.url }
+        extension.onShellEvent('navigation.committed', [details])
+        extension.onShellEvent('navigation.domContentLoaded', [details])
+        const tab = tabs.find((candidate) => candidate.id === tabId)
+        if (tab) tab.status = 'complete'
+        extension.onShellEvent('navigation.completed', [details])
+      })
+      return updated
+    }
     await extension.initialize({
       directory: `${PAYLOAD_VERSION}-${PAYLOAD_SHA256}`,
       sha256: PAYLOAD_SHA256,
@@ -240,30 +298,81 @@ describe('spawned native host relay lifecycle', () => {
     expect(exits[0]).toEqual({ code: 0, signal: null })
 
     const session = { sessionAgentId: 'session-process', profileId: 'profile-process' }
-    const acquired = await next.runtime.acquireTarget({
-      ...session,
-      operation: 'open',
-      preferredTabId: null,
-      reuseExisting: false,
-      createIfNeeded: true,
-      ownerEpoch: 101,
-      deadlineAt: Date.now() + 3_000,
+    const host = new AutomaticBrowserHost({
+      managedAdapter: new RejectingManagedAdapter(),
+      externalAdapter: new ExternalChromeTargetAdapter(next.runtime),
+      authorityBurst: { initialIdleMs: 60_000, incrementMs: 0, maximumIdleMs: 60_000 },
     })
-    expect(acquired).toEqual({
-      ok: true,
-      authority: { ownerEpoch: 101, tabId: `ext.${EXTENSION_INSTANCE_ID}.1` },
-    })
-    if (!acquired.ok) throw new Error('fresh relay acquisition failed')
-    await next.runtime.releaseAuthority(session, acquired.authority, 'idle')
+    const extensionAuthorities = (extension as unknown as {
+      authorities: { all(): Array<{ tabId: number; ownerEpoch: number }> }
+    }).authorities
 
+    const neutral = await host.perform(browserRequest('open', { show: false, reuseExistingTab: false }))
+    expect(neutral).toMatchObject({
+      ok: true,
+      result: { tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.1`, url: 'about:blank' } },
+    })
+    expect(tabs).toMatchObject([{ id: 1, active: false, url: 'about:blank' }])
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ tabIds: [1] }])
+    await host.endTurn(session, 'neutral-release')
+    expect(await next.runtime.leaseCheckpoints()).toEqual([])
+    expect(extensionAuthorities.all()).toEqual([])
+
+    // The host still remembers the released neutral affinity. A later explicit
+    // tabless open must probe through relay and extension, then adopt the one
+    // focused eligible Chrome tab rather than reacquiring the placeholder.
+    tabs.push({
+      id: 7, windowId: 1, active: true, url: 'https://focused.example.test/private',
+      title: 'Focused private tab', status: 'complete',
+    })
+    const focused = await host.perform(browserRequest('open', { show: false, reuseExistingTab: true }))
+    expect(focused).toMatchObject({
+      ok: true,
+      result: { created: false, tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.7`, url: 'https://focused.example.test/private' } },
+    })
+    expect(tabs).toHaveLength(2)
+    expect(chrome.updates).toEqual([])
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 2, tabIds: [7] }])
+
+    const sticky = await host.perform(browserRequest('status', {}))
+    expect(sticky).toMatchObject({
+      ok: true,
+      result: { selectedTab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.7` } },
+    })
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 2, tabIds: [7] }])
+    expect(chrome.updates).toEqual([])
+    await host.endTurn(session, 'focused-release')
+    expect(await next.runtime.leaseCheckpoints()).toEqual([])
+    expect(extensionAuthorities.all()).toEqual([])
+
+    // A URL-bearing open still allocates about:blank in the background. The
+    // destination is dispatched once through the authorized initial transition.
+    const destination = 'https://destination.example.test/path'
+    const opened = await host.perform(browserRequest('open', {
+      url: destination, show: false, reuseExistingTab: false,
+    }))
+    expect(opened).toMatchObject({
+      ok: true,
+      result: { tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.2`, url: destination } },
+    })
+    expect(updatePreconditions).toEqual([{ url: 'about:blank', active: false }])
+    expect(chrome.updates).toEqual([{ tabId: 2, properties: { url: destination } }])
+    expect(chrome.commands).toEqual([])
+    expect(chrome.attached).toEqual(new Set())
+    await host.endTurn(session, 'url-open-release')
+    expect(await next.runtime.leaseCheckpoints()).toEqual([])
+    expect(extensionAuthorities.all()).toEqual([])
+
+    if (!opened.ok || opened.operation !== 'open') throw new Error('URL-bearing host open failed')
+    const openedTabId = opened.result.tab.tabId
     // A released sticky logical tab may later disappear while the freshly
     // authenticated runtime remains healthy. Reproduce that target-local
     // rejection, then prove a new tabless acquisition still reaches Chrome.
-    await chrome.tabs.remove(1)
+    await chrome.tabs.remove(2)
     await expect(next.runtime.acquireTarget({
       ...session,
       operation: 'status',
-      preferredTabId: acquired.authority.tabId,
+      preferredTabId: openedTabId,
       reuseExisting: true,
       createIfNeeded: true,
       ownerEpoch: 102,
@@ -290,10 +399,12 @@ describe('spawned native host relay lifecycle', () => {
     })
     expect(replacement).toEqual({
       ok: true,
-      authority: { ownerEpoch: 103, tabId: `ext.${EXTENSION_INSTANCE_ID}.2` },
+      authority: { ownerEpoch: 103, tabId: `ext.${EXTENSION_INSTANCE_ID}.3` },
     })
     if (!replacement.ok) throw new Error('replacement acquisition failed')
+    expect(tabs.find((tab) => tab.id === 3)).toMatchObject({ active: false, url: 'about:blank' })
     await next.runtime.releaseAuthority(session, replacement.authority, 'idle')
+    await host.destroy()
 
     extension.shutdown()
     next.runtime.deactivate()

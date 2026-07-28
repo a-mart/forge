@@ -105,11 +105,11 @@ describe('installMainRendererRecovery', () => {
     })
 
     webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://frame.invalid', false)
-    webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://forge.invalid', true)
+    webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://renderer.invalid', true)
     await vi.advanceTimersByTimeAsync(20)
     expect(loadRenderer).not.toHaveBeenCalled()
 
-    webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://forge.invalid', true)
+    webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://renderer.invalid', true)
     await vi.advanceTimersByTimeAsync(10)
     expect(loadRenderer).toHaveBeenCalledTimes(1)
     controller.dispose()

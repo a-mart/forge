@@ -35,6 +35,23 @@ describe('service-worker execution safety evidence', () => {
     expect(chrome.injections).toEqual([])
   })
 
+  it('fails closed when an eligible network-error tab rejects injection after FrameTree succeeds', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://unresolvable.invalid/' }] })
+    chrome.scripting.executeScript = async () => { throw new Error('Frame with ID 0 is showing error page') }
+    vi.stubGlobal('chrome', chrome)
+    const { execute } = await authorizedRuntime()
+
+    await expect(execute(navigateRequest())).resolves.toMatchObject({
+      ok: false, error: { code: 'execution-failed', message: 'Frame with ID 0 is showing error page' },
+    })
+    await expect(execute({ ...navigateRequest(), requestId: 'request-snapshot', operation: 'snapshot', input: {} })).resolves.toMatchObject({
+      ok: false, error: { code: 'execution-failed', message: 'Frame with ID 0 is showing error page' },
+    })
+    expect(chrome.commands.filter(({ method }) => method === 'Page.getFrameTree')).toHaveLength(2)
+    expect(chrome.commands.filter(({ method }) => method === 'Page.navigate')).toEqual([])
+    expect(chrome.attached).toEqual(new Set())
+  })
+
   it('keeps failures after page-command dispatch free of attach-conflict evidence', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)

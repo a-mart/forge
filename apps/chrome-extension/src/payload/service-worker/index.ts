@@ -23,6 +23,34 @@ const TRANSPORT_GRACE_DELAY_MINUTES = 0.5
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
+interface Deferred<Value> {
+  promise: Promise<Value>
+  resolve(value: Value): void
+  reject(error: unknown): void
+}
+
+interface InitialNavigationTransition {
+  dispatchStarted: boolean
+  commitStarted: boolean
+  documentId: string | null
+  authorityCurrent(): boolean
+  completeAuthority(): Promise<void>
+  committed: Deferred<ChromeTab>
+  domContentLoaded: Deferred<ChromeTab>
+  completed: Deferred<ChromeTab>
+}
+
+function deferred<Value>(): Deferred<Value> {
+  let resolve!: (value: Value) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  void promise.catch(() => undefined)
+  return { promise, resolve, reject }
+}
+
 function chromeVersion(): string { return /Chrom(?:e|ium)\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? 'unknown' }
 function acquiredTab(tab: ChromeTab): Record<string, unknown> {
   return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? '', active: tab.active === true }
@@ -41,6 +69,7 @@ export class Runtime implements ServiceWorkerPayload {
     resolve: () => void
   }>()
   private readonly activeOperations = new Map<number, Promise<void>>()
+  private readonly initialNavigations = new Map<number, InitialNavigationTransition>()
   private native: NativeRpcClient | null = null
   private directory = ''
   private extensionInstanceId = ''
@@ -85,7 +114,9 @@ export class Runtime implements ServiceWorkerPayload {
       case 'debugger.event': void this.handleDebuggerEvent(args); return undefined
       case 'debugger.detach': void this.handleDebuggerDetach(args); return undefined
       case 'tab.removed': void this.handleTabRemoved(args[0]); return undefined
-      case 'navigation.committed': void this.injectContentScript(args[0]); return undefined
+      case 'navigation.committed': void this.handleNavigationCommitted(args[0]); return undefined
+      case 'navigation.domContentLoaded': void this.handleNavigationMilestone(args[0], 'domContentLoaded'); return undefined
+      case 'navigation.completed': void this.handleNavigationMilestone(args[0], 'completed'); return undefined
       case 'alarm': {
         const alarm = args[0] as { name?: string } | undefined
         if (alarm?.name === HEARTBEAT_ALARM) void this.expireAuthorities()
@@ -120,6 +151,9 @@ export class Runtime implements ServiceWorkerPayload {
       case 'forge.browser.focusedEligibility':
         return { protocolVersion: 1, eligible: await this.authorities.focusedEligibleTab() !== null }
       case 'forge.browser.acquire': {
+        // URL dispatch belongs to forge.browser.execute so it receives exact
+        // operation authority, deadline, readiness, and no-replay handling.
+        if (request.params.url !== undefined) throw new LeaseError('scope-mismatch', 'acquire cannot dispatch a URL')
         let tab: ChromeTab
         let createdByForge = false
         if (request.params.tabId !== undefined) {
@@ -132,10 +166,7 @@ export class Runtime implements ServiceWorkerPayload {
           })
           tab = acquired.tab
         } else {
-          const allocated = await this.authorities.allocateAutomaticTab({
-            reuseFocused: request.params.reuseFocused,
-            ...(request.params.url === undefined ? {} : { url: request.params.url }),
-          })
+          const allocated = await this.authorities.allocateAutomaticTab({ reuseFocused: request.params.reuseFocused })
           tab = allocated.tab
           createdByForge = allocated.createdByForge
           if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a tab ID')
@@ -174,9 +205,8 @@ export class Runtime implements ServiceWorkerPayload {
       case 'forge.browser.reveal': {
         this.authorities.assertScope(request.params.leaseId, request.params.leaseEpoch, request.params.tabId)
         const tab = await this.chrome.tabs.get(request.params.tabId)
-        const tabs = this.chrome.tabs as unknown as { update(tabId: number, properties: { active: boolean }): Promise<unknown> }
         const windows = this.chrome.windows as unknown as { update(windowId: number, properties: { focused: boolean }): Promise<unknown> }
-        await tabs.update(request.params.tabId, { active: true })
+        await this.chrome.tabs.update(request.params.tabId, { active: true })
         if (tab.windowId !== undefined) await windows.update(tab.windowId, { focused: true })
         return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, tabId: request.params.tabId, revealed: true }
       }
@@ -211,44 +241,70 @@ export class Runtime implements ServiceWorkerPayload {
       let resolveTracked!: () => void
       const tracked = new Promise<void>((resolve) => { resolveTracked = resolve })
       this.activeOperations.set(params.tabId, tracked)
-      const expectedEpoch = authority.controlEpoch
       let controlEpoch: number | null = null
       let syntheticOperationId: string | null = null
       try {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= Date.now()) return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
-        let initialErrorPage = false
+        let operationAuthority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
+        const currentTab = await this.chrome.tabs.get(params.tabId)
+        const neutralInitialTarget = operationAuthority.createdByForge && operationAuthority.initialNavigationPending && currentTab.url === 'about:blank'
+        const currentRestriction = restrictedTargetReason(currentTab.url)
+        if (currentRestriction !== null && !neutralInitialTarget) {
+          return this.executeFailure(params, 'restricted-target', `Current target is restricted (${currentRestriction}).`, false)
+        }
+        if (operationAuthority.initialNavigationPending && currentRestriction === null) {
+          operationAuthority = await this.authorities.completeInitialNavigation(params.leaseId, params.leaseEpoch, params.tabId)
+        }
+        const navigateInput = params.operation === 'navigate'
+          ? params.input as { url?: string; readiness: 'load' | 'domContentLoaded' | 'none'; timeoutMs: number }
+          : null
+        if (navigateInput !== null && (!navigateInput.url || restrictedTargetReason(navigateInput.url) !== null)) {
+          return this.executeFailure(params, 'restricted-target', 'Navigation target is missing or restricted.', false)
+        }
+        if (neutralInitialTarget && navigateInput === null) {
+          return this.executeFailure(params, 'restricted-target', 'The neutral target requires an initial navigation.', false)
+        }
+
+        const expectedEpoch = operationAuthority.controlEpoch
+        if (neutralInitialTarget && navigateInput !== null) {
+          controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
+          const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const authorityCurrent = () => this.authorities.isAuthorityCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + navigateInput.timeoutMs)
+          try {
+            const tab = await this.navigateInitialTarget(params, navigateInput.url as string, navigateInput.readiness, deadline, isCurrent, authorityCurrent)
+            if (!isCurrent()) return this.executeFailure(params, 'control-interrupted', 'Human input interrupted navigation.', true)
+            const result: BrowserAutomationResultByOperation['navigate'] = { tab: this.browserTab(tab, operationAuthority), readiness: navigateInput.readiness }
+            return this.executeResponse(params, true, result)
+          } catch {
+            return this.executeFailure(params, isCurrent() ? 'timeout' : 'control-interrupted', isCurrent() ? 'Navigation timed out.' : 'Human input interrupted navigation.', true)
+          }
+        }
+
         try {
-          const attachment = await this.debuggers.attach(params.tabId, { allowInitialErrorPage: params.operation === 'navigate' })
-          initialErrorPage = attachment.initialErrorPage
+          await this.debuggers.attach(params.tabId)
         } catch (error) {
           if (error instanceof DebuggerAttachConflictError) {
             return this.executeFailure(params, 'debugger-unavailable', error.message, true, EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS)
           }
           throw error
         }
-        // Chrome blocks frame-tree inspection and extension injection on its
-        // internal network-error document. Navigation alone may pass that
-        // preflight; the committed destination is injected by webNavigation.
-        if (!initialErrorPage) {
-          await this.chrome.scripting.executeScript({ target: { tabId: params.tabId, allFrames: true }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
-        }
+        await this.chrome.scripting.executeScript({ target: { tabId: params.tabId, allFrames: true }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
         controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
         const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
         if (params.operation === 'click' || params.operation === 'type' || params.operation === 'press') {
           syntheticOperationId = crypto.randomUUID()
           await this.signalSyntheticStart(params.tabId, syntheticOperationId, controlEpoch)
         }
-        if (params.operation === 'navigate') {
-          const input = params.input as { url?: string; readiness: 'load' | 'domContentLoaded' | 'none'; timeoutMs: number }
-          if (!input.url || restrictedTargetReason(input.url) !== null) return this.executeFailure(params, 'restricted-target', 'Navigation target is missing or restricted.', false)
-          const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
-          try { await this.debuggers.navigateAndWait(params.tabId, input.url, input.readiness, deadline, isCurrent) }
+        if (navigateInput !== null) {
+          const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + navigateInput.timeoutMs)
+          try { await this.debuggers.navigateAndWait(params.tabId, navigateInput.url as string, navigateInput.readiness, deadline, isCurrent) }
           catch {
             return this.executeFailure(params, isCurrent() ? 'timeout' : 'control-interrupted', isCurrent() ? 'Navigation timed out.' : 'Human input interrupted navigation.', true)
           }
           if (!isCurrent()) return this.executeFailure(params, 'control-interrupted', 'Human input interrupted navigation.', true)
           const tab = await this.chrome.tabs.get(params.tabId)
-          const result: BrowserAutomationResultByOperation['navigate'] = { tab: this.browserTab(tab, authority), readiness: input.readiness }
+          const result: BrowserAutomationResultByOperation['navigate'] = { tab: this.browserTab(tab, operationAuthority), readiness: navigateInput.readiness }
           return this.executeResponse(params, true, result)
         }
         const outcome = await this.operations.executeNow(params, {
@@ -375,6 +431,137 @@ export class Runtime implements ServiceWorkerPayload {
     this.native?.sendNotification('browser.userControl', { protocolVersion: 1, leaseId: authority.ownerId, leaseEpoch: authority.ownerEpoch, tabId, controlEpoch: authority.controlEpoch, event: ['pointer', 'key', 'wheel', 'touch'].includes(String(event)) ? event as string : 'pointer', at: new Date().toISOString() })
   }
 
+  private async navigateInitialTarget(
+    params: ExternalChromeExecuteParams,
+    url: string,
+    readiness: 'load' | 'domContentLoaded' | 'none',
+    deadline: number,
+    isCurrent: () => boolean,
+    authorityCurrent: () => boolean,
+  ): Promise<ChromeTab> {
+    if (this.initialNavigations.has(params.tabId)) throw new Error('initial navigation is already active')
+    const transition: InitialNavigationTransition = {
+      dispatchStarted: false,
+      commitStarted: false,
+      documentId: null,
+      authorityCurrent,
+      completeAuthority: async () => { await this.authorities.completeInitialNavigation(params.leaseId, params.leaseEpoch, params.tabId) },
+      committed: deferred<ChromeTab>(),
+      domContentLoaded: deferred<ChromeTab>(),
+      completed: deferred<ChromeTab>(),
+    }
+    this.initialNavigations.set(params.tabId, transition)
+    let keepUntilCommit = false
+    try {
+      // The thunk makes deadline and operation authority a synchronous
+      // preflight immediately before the one target mutation.
+      const updated = await this.awaitInitialNavigationStep(() => {
+        transition.dispatchStarted = true
+        return this.chrome.tabs.update(params.tabId, { url })
+      }, deadline, isCurrent)
+      if (readiness === 'none') {
+        keepUntilCommit = true
+        this.monitorInitialNavigation(params.tabId, transition, deadline)
+        return updated
+      }
+      await this.awaitInitialNavigationStep(() => transition.committed.promise, deadline, isCurrent)
+      const milestone = readiness === 'domContentLoaded' ? transition.domContentLoaded : transition.completed
+      return await this.awaitInitialNavigationStep(() => milestone.promise, deadline, isCurrent)
+    } finally {
+      if (!keepUntilCommit && this.initialNavigations.get(params.tabId) === transition) {
+        this.rejectInitialNavigation(transition, new Error('initial navigation waiter closed'))
+        this.initialNavigations.delete(params.tabId)
+      }
+    }
+  }
+
+  private monitorInitialNavigation(tabId: number, transition: InitialNavigationTransition, deadline: number): void {
+    void this.awaitInitialNavigationStep(() => transition.committed.promise, deadline, transition.authorityCurrent)
+      .catch((error: unknown) => this.rejectInitialNavigation(transition, error))
+      .finally(() => {
+        if (this.initialNavigations.get(tabId) === transition) this.initialNavigations.delete(tabId)
+      })
+  }
+
+  private rejectInitialNavigation(transition: InitialNavigationTransition, error: unknown): void {
+    transition.committed.reject(error)
+    transition.domContentLoaded.reject(error)
+    transition.completed.reject(error)
+  }
+
+  private async awaitInitialNavigationStep<Value>(operation: () => Promise<Value>, deadline: number, isCurrent: () => boolean): Promise<Value> {
+    if (!isCurrent()) throw new Error('initial navigation authority was interrupted')
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) throw new Error('initial navigation deadline elapsed')
+    const promise = operation()
+    return new Promise<Value>((resolve, reject) => {
+      let settled = false
+      const finish = (outcome: { value: Value } | { error: unknown }): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        clearInterval(authorityCheck)
+        if ('error' in outcome) reject(outcome.error)
+        else resolve(outcome.value)
+      }
+      const timeout = setTimeout(() => finish({ error: new Error('initial navigation deadline elapsed') }), remaining)
+      const authorityCheck = setInterval(() => {
+        if (!isCurrent()) finish({ error: new Error('initial navigation authority was interrupted') })
+      }, 10)
+      promise.then((value) => {
+        if (!isCurrent()) finish({ error: new Error('initial navigation authority was interrupted') })
+        else if (Date.now() >= deadline) finish({ error: new Error('initial navigation deadline elapsed') })
+        else finish({ value })
+      }, (error) => finish({ error }))
+    })
+  }
+
+  private async handleNavigationCommitted(value: unknown): Promise<void> {
+    const details = value as { tabId?: unknown; frameId?: unknown; documentId?: unknown; url?: unknown }
+    if (!Number.isSafeInteger(details.tabId) || !Number.isSafeInteger(details.frameId)) return
+    const tabId = details.tabId as number
+    const transition = this.initialNavigations.get(tabId)
+    if (transition !== undefined) {
+      if (!transition.dispatchStarted || details.frameId !== 0 || transition.commitStarted) return
+      transition.commitStarted = true
+      if (typeof details.documentId !== 'string' || details.documentId.length === 0 || details.documentId.length > 128 ||
+        typeof details.url !== 'string' || restrictedTargetReason(details.url) !== null || !transition.authorityCurrent()) {
+        this.rejectInitialNavigation(transition, new Error('initial navigation committed without eligible exact authority'))
+        return
+      }
+      transition.documentId = details.documentId
+      try {
+        if (!await this.injectContentScript(details, transition)) throw new Error('initial destination injection was not authorized')
+        const tab = await this.chrome.tabs.get(tabId)
+        if (restrictedTargetReason(tab.url) !== null || !transition.authorityCurrent()) throw new Error('initial destination remained unauthorized')
+        await transition.completeAuthority()
+        transition.committed.resolve(tab)
+      } catch (error) {
+        this.rejectInitialNavigation(transition, error)
+      }
+      return
+    }
+    await this.injectContentScript(details).catch(() => false)
+  }
+
+  private async handleNavigationMilestone(value: unknown, milestone: 'domContentLoaded' | 'completed'): Promise<void> {
+    const details = value as { tabId?: unknown; frameId?: unknown; documentId?: unknown; url?: unknown }
+    if (!Number.isSafeInteger(details.tabId) || details.frameId !== 0 || typeof details.documentId !== 'string' || typeof details.url !== 'string') return
+    const transition = this.initialNavigations.get(details.tabId as number)
+    if (transition === undefined || transition.documentId !== details.documentId) return
+    if (restrictedTargetReason(details.url) !== null || !transition.authorityCurrent()) {
+      this.rejectInitialNavigation(transition, new Error(`initial navigation ${milestone} lost exact authority`))
+      return
+    }
+    try {
+      const tab = await this.chrome.tabs.get(details.tabId as number)
+      if (restrictedTargetReason(tab.url) !== null || !transition.authorityCurrent()) throw new Error(`initial navigation ${milestone} was not eligible`)
+      transition[milestone].resolve(tab)
+    } catch (error) {
+      this.rejectInitialNavigation(transition, error)
+    }
+  }
+
   private async handleDebuggerEvent(args: unknown[]): Promise<void> {
     const source = args[0] as { tabId?: number; sessionId?: string }
     if (source.tabId === undefined || !this.activeOperations.has(source.tabId)) return
@@ -395,15 +582,28 @@ export class Runtime implements ServiceWorkerPayload {
 
   private async handleTabRemoved(value: unknown): Promise<void> {
     if (!Number.isSafeInteger(value)) return
+    const transition = this.initialNavigations.get(value as number)
+    if (transition !== undefined) {
+      this.rejectInitialNavigation(transition, new Error('initial navigation target was removed'))
+      this.initialNavigations.delete(value as number)
+    }
     const authority = this.authorities.forTab(value as number)
     if (authority !== null) await this.authorities.release(authority.ownerId, authority.ownerEpoch, authority.tabId)
+    await this.authorities.forgetNeutralTarget(value as number)
     this.operations.clear(value as number)
   }
 
-  private async injectContentScript(value: unknown): Promise<void> {
-    const details = value as { tabId?: unknown; frameId?: unknown }
-    if (!Number.isSafeInteger(details.tabId) || !Number.isSafeInteger(details.frameId) || !this.activeOperations.has(details.tabId as number)) return
-    await this.chrome.scripting.executeScript({ target: { tabId: details.tabId as number, frameIds: [details.frameId as number] }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' }).catch(() => [])
+  private async injectContentScript(value: unknown, transition?: InitialNavigationTransition): Promise<boolean> {
+    const details = value as { tabId?: unknown; frameId?: unknown; url?: unknown }
+    if (!Number.isSafeInteger(details.tabId) || !Number.isSafeInteger(details.frameId) || typeof details.url !== 'string' ||
+      restrictedTargetReason(details.url) !== null) return false
+    const tabId = details.tabId as number
+    const transitionAuthorized = transition !== undefined && this.initialNavigations.get(tabId) === transition && transition.authorityCurrent()
+    if (!transitionAuthorized && !this.activeOperations.has(tabId)) return false
+    const tab = await this.chrome.tabs.get(tabId)
+    if (restrictedTargetReason(tab.url) !== null || transition !== undefined && !transition.authorityCurrent()) return false
+    await this.chrome.scripting.executeScript({ target: { tabId, frameIds: [details.frameId as number] }, files: [`payloads/${this.directory}/content-script.js`], world: 'ISOLATED' })
+    return true
   }
 
   private async expireAuthorities(): Promise<void> {

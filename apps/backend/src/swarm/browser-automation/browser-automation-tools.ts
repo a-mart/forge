@@ -147,7 +147,7 @@ const labels: Record<BrowserAutomationOperation, string> = {
 
 const descriptions: Record<BrowserAutomationOperation, string> = {
   status: "Inspect the Forge browser and the selected tab for this Forge session.",
-  open: "Open or reuse a persistent Forge browser tab. A URL is optional; show defaults to true and reuseExistingTab defaults to true.",
+  open: "Open or reselect a persistent Forge browser tab. A URL is optional; omitting tabId with reuseExistingTab enabled lets the Automatic Browser reuse the uniquely focused eligible target.",
   navigate: "Navigate the selected Forge browser tab to a URL or local environment port and optionally wait for readiness.",
   resize: "Resize the selected Forge browser tab using fill, freeform dimensions, or a device preset.",
   snapshot: "Inspect visible page text, semantic elements, accessibility and diagnostics, and receive a native PNG screenshot.",

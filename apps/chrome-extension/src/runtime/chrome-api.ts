@@ -4,6 +4,7 @@ export interface ChromeTab {
   active?: boolean
   title?: string
   url?: string
+  status?: 'unloaded' | 'loading' | 'complete'
 }
 
 export interface ChromeWindow {
@@ -64,6 +65,7 @@ export interface ChromeApi {
     query(queryInfo: Record<string, unknown>): Promise<ChromeTab[]>
     get(tabId: number): Promise<ChromeTab>
     create(createProperties: { url?: string; active?: boolean }): Promise<ChromeTab>
+    update(tabId: number, updateProperties: { url?: string; active?: boolean }): Promise<ChromeTab>
     remove(tabIds: number | number[]): Promise<void>
   }
   windows: {
