@@ -336,12 +336,12 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       return { available: false, code: "backend_unavailable" };
     }
 
-    const version = await this.cli.run([
+    const serverOs = await this.cli.run([
       "version",
       "--format",
-      "{{.Server.Version}}",
+      "{{json .Server.Os}}",
     ]);
-    if (version.exitCode !== 0 || version.stdout.byteLength === 0) {
+    if (!isLinuxDockerServer(serverOs.exitCode, serverOs.stdout)) {
       return { available: false, code: "backend_unavailable" };
     }
 
@@ -1323,6 +1323,16 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     ]);
     if (listed.exitCode !== 0) return false;
     return listed.stdout.toString("utf8").trim().length === 0;
+  }
+}
+
+function isLinuxDockerServer(exitCode: number, stdout: Buffer): boolean {
+  if (exitCode !== 0 || stdout.byteLength === 0) return false;
+  try {
+    const serverOs: unknown = JSON.parse(stdout.toString("utf8").trim());
+    return typeof serverOs === "string" && serverOs.toLowerCase() === "linux";
+  } catch {
+    return false;
   }
 }
 

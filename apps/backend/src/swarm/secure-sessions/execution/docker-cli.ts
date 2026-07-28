@@ -21,6 +21,11 @@ const DOCKER_ENVIRONMENT_ALLOWLIST = [
   "XDG_RUNTIME_DIR",
 ] as const;
 
+const WINDOWS_LOCAL_DOCKER_ENDPOINTS = new Set([
+  "npipe:////./pipe/docker_engine",
+  "npipe:////./pipe/dockerdesktoplinuxengine",
+]);
+
 export interface DockerInvocation {
   args: readonly string[];
 }
@@ -88,10 +93,11 @@ export class DockerCli {
   }
 
   /**
-   * Resolve Docker's effective endpoint once, require a local Unix socket, and
-   * pin every later invocation with an explicit --host argument. This prevents
-   * a context or environment change from redirecting secret-bearing exec stdin
-   * to a remote daemon after the initial availability check.
+   * Resolve Docker's effective endpoint once, require an explicitly recognized
+   * local endpoint, and pin every later invocation with an explicit --host
+   * argument. This prevents a context or environment change from redirecting
+   * secret-bearing exec stdin to a remote daemon after the initial availability
+   * check.
    */
   async pinLocalEndpoint(): Promise<boolean> {
     if (this.pinnedEndpoint !== null) return true;
@@ -191,7 +197,7 @@ function isLocalDockerEndpoint(
   platform: NodeJS.Platform,
 ): boolean {
   if (platform === "win32") {
-    return endpoint.toLowerCase() === "npipe:////./pipe/docker_engine";
+    return WINDOWS_LOCAL_DOCKER_ENDPOINTS.has(endpoint.toLowerCase());
   }
   if (
     endpoint.includes("\0")

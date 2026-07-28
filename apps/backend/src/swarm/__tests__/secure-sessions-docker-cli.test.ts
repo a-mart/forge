@@ -38,22 +38,49 @@ describe("DockerCli", () => {
     ]);
   });
 
-  it("pins only Docker Desktop's local named pipe on Windows", async () => {
-    const invocations: string[][] = [];
-    const endpoint = "npipe:////./pipe/docker_engine";
-    const cli = new DockerCli({
-      command: process.execPath,
-      environment: { DOCKER_HOST: endpoint },
-      platform: "win32",
-      onInvocation: ({ args }) => invocations.push([...args]),
-    });
+  it.each([
+    "npipe:////./pipe/docker_engine",
+    "npipe:////./pipe/dockerDesktopLinuxEngine",
+  ])(
+    "pins an accepted local Docker Desktop named pipe on Windows: %s",
+    async (endpoint) => {
+      const invocations: string[][] = [];
+      const cli = new DockerCli({
+        command: process.execPath,
+        environment: { DOCKER_HOST: endpoint },
+        platform: "win32",
+        onInvocation: ({ args }) => invocations.push([...args]),
+      });
 
-    await expect(cli.pinLocalEndpoint()).resolves.toBe(true);
-    await cli.run(["-e", "process.exit(0)"]);
-    expect(invocations).toEqual([
-      ["--host", endpoint, "-e", "process.exit(0)"],
-    ]);
-  });
+      await expect(cli.pinLocalEndpoint()).resolves.toBe(true);
+      await cli.run(["-e", "process.exit(0)"]);
+      expect(invocations).toEqual([
+        ["--host", endpoint, "-e", "process.exit(0)"],
+      ]);
+    },
+  );
+
+  it.each([
+    "npipe:////./pipe/dockerDesktopWindowsEngine",
+    "npipe:////./pipe/dockerDesktopLinuxEngine-extra",
+    "npipe:////./pipe/forge-controlled-engine",
+    "ssh://builder@example.test",
+    "tcp://127.0.0.1:2376",
+  ])(
+    "rejects an unrecognized Windows Docker endpoint: %s",
+    async (endpoint) => {
+      const invocations: string[][] = [];
+      const cli = new DockerCli({
+        command: process.execPath,
+        environment: { DOCKER_HOST: endpoint },
+        platform: "win32",
+        onInvocation: ({ args }) => invocations.push([...args]),
+      });
+
+      await expect(cli.pinLocalEndpoint()).resolves.toBe(false);
+      expect(invocations).toEqual([]);
+    },
+  );
 
   it("bounds a hung control-plane invocation and discards its output", async () => {
     const cli = new DockerCli({
