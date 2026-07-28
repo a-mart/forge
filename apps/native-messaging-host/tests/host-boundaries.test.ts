@@ -15,6 +15,7 @@ import {
 import { NativeMessageDecoder } from '../src/framing.js'
 import { runNativeHost } from '../src/host.js'
 import { normalizeNativeHostLaunchArguments, resolveNativeHostExecutable, validateChromeLaunchArguments } from '../src/launch.js'
+import type { AuthenticatedRelayClient } from '../src/relay-client.js'
 import { DesktopUnavailableError, validateRendezvous, type RendezvousDocument } from '../src/transport.js'
 
 function capture(): { stream: PassThrough; chunks: Buffer[] } {
@@ -148,6 +149,29 @@ describe('native host trust and process boundaries', () => {
     }])
     expect(stdoutBytes.toString('utf8')).not.toContain('private diagnostic')
     expect(Buffer.concat(stderr.chunks).toString('utf8')).toContain('private diagnostic')
+  })
+
+  it('cancels a still-open native input pump when the Desktop relay reaches EOF', async () => {
+    const input = new PassThrough()
+    const stdout = capture()
+    let relayCloses = 0
+    const relay = {
+      send: async () => undefined,
+      receive: async () => null,
+      close: () => { relayCloses += 1 },
+    } as unknown as AuthenticatedRelayClient
+
+    await expect(runNativeHost({
+      input,
+      output: stdout.stream,
+      diagnostic: capture().stream,
+      platform: 'darwin',
+      launchArguments: [HOST_EXTENSION_ORIGIN],
+      connectRelay: async () => relay,
+    })).resolves.toBe(0)
+    expect(input.destroyed).toBe(true)
+    expect(relayCloses).toBe(1)
+    expect(Buffer.concat(stdout.chunks)).toHaveLength(0)
   })
 
   it('writes no protocol bytes for a wrong origin', async () => {

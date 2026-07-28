@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXTERNAL_CHROME_MAX_MESSAGE_BYTES } from '@forge/protocol'
+import { EXTERNAL_CHROME_MAX_MESSAGE_BYTES, parseExternalChromeJsonRpcFrame } from '@forge/protocol'
 import { NativeRpcClient, type NativeRpcScheduler } from '../src/runtime/native-rpc-client.js'
 import { FakePort } from './fakes.js'
 
@@ -69,6 +69,49 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     await Promise.resolve()
     expect(port.sent).toHaveLength(2)
     expect(port.sent[1]).toMatchObject({ method: 'forge.runtime.ping', params: { protocolVersion: 1 } })
+    client.stop()
+  })
+
+  it('returns contract-valid typed failures without disconnecting the native port', async () => {
+    const scheduler = new FakeScheduler()
+    const port = welcomePort()
+    const client = new NativeRpcClient({
+      connect: () => port,
+      extensionInstanceId: 'instance',
+      chromeVersion: '125',
+      scheduler,
+      onRequest: async () => {
+        throw Object.assign(new Error('tab no longer exists'), { code: 'target-not-found' })
+      },
+    })
+    client.start()
+    await Promise.resolve()
+
+    port.emitMessage({
+      jsonrpc: '2.0',
+      id: 'desktop-acquire-1',
+      method: 'forge.browser.acquire',
+      params: {
+        protocolVersion: 1,
+        sessionAgentId: 'session-fixture',
+        leaseId: 'lease-fixture',
+        leaseEpoch: 1,
+        tabId: 7,
+        reuseFocused: false,
+      },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const response = port.sent.at(-1)
+    expect(parseExternalChromeJsonRpcFrame(JSON.stringify(response))).toMatchObject({
+      id: 'desktop-acquire-1',
+      error: {
+        code: -32040,
+        data: { code: 'target-not-found', retryable: true },
+      },
+    })
+    expect(port.disconnected).toBe(false)
     client.stop()
   })
 
