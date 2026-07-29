@@ -19,6 +19,7 @@ import type {
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
+  ResolveSecureSshHostTrustRequest,
   SecureAccessRequestSummary,
   SecureSecretBinding,
   SecureSecretLeaseKind,
@@ -32,6 +33,8 @@ export type SecureSessionUiErrorCode =
   | 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED'
   | 'SECURE_REQUEST_INVALID'
   | 'SECURE_SECRET_ALIAS_CONFLICT'
+  | 'SECURE_SSH_HOST_KEY_CONFLICT'
+  | 'SECURE_SSH_HOST_NOT_FOUND'
   | 'SECURE_SESSION_UNSUPPORTED'
   | 'SECURE_SOURCE_UNAVAILABLE'
   | 'SECURE_STALE_REVISION'
@@ -45,6 +48,10 @@ const ERROR_MESSAGES: Record<SecureSessionUiErrorCode, string> = {
   SECURE_REQUEST_INVALID: 'The secure session request is no longer valid.',
   SECURE_SECRET_ALIAS_CONFLICT:
     'A secret with this name was saved elsewhere. Refresh and choose the saved secret.',
+  SECURE_SSH_HOST_KEY_CONFLICT:
+    'This SSH alias already has different connection details or a different host key. Review it in Settings before replacing it.',
+  SECURE_SSH_HOST_NOT_FOUND:
+    'This SSH host request is no longer available. Refresh and try again.',
   SECURE_SESSION_UNSUPPORTED: 'This runtime does not support Secure Sessions.',
   SECURE_SOURCE_UNAVAILABLE: 'The secure secret source is currently unavailable.',
   SECURE_STALE_REVISION: 'Secure session access changed elsewhere. Refresh and try again.',
@@ -312,6 +319,48 @@ export async function denySecureAccessRequest(
   )
 }
 
+export async function approveSecureSshHostTrustRequest(
+  apiClient: SettingsApiClient,
+  sessionAgentId: string,
+  requestId: string,
+  baseRevision: number,
+): Promise<SecureSessionSnapshot> {
+  const input: ResolveSecureSshHostTrustRequest = {
+    baseRevision,
+    requestId,
+    decision: 'approve',
+  }
+  return requestSnapshot(
+    apiClient,
+    `${sessionPath(sessionAgentId)}/ssh-trust-requests/${encodeURIComponent(requestId)}/resolve`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        baseRevision: input.baseRevision,
+        decision: input.decision,
+      }),
+    },
+  )
+}
+
+export async function dismissSecureSshHostTrustRequest(
+  apiClient: SettingsApiClient,
+  sessionAgentId: string,
+  requestId: string,
+  baseRevision: number,
+): Promise<SecureSessionSnapshot> {
+  return requestWebSafeSnapshot(
+    apiClient,
+    `${sessionPath(sessionAgentId)}/ssh-trust-requests/${encodeURIComponent(requestId)}`,
+    {
+      method: 'DELETE',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ baseRevision }),
+    },
+  )
+}
+
 export async function fulfillSecureAccessRequestPrivately(
   apiClient: SettingsApiClient,
   sessionAgentId: string,
@@ -439,6 +488,8 @@ export function toSecureSessionSnapshotView(
       ),
       status: 'pending',
     })),
+    trustedSshHosts: snapshot.trustedSshHosts ?? [],
+    pendingSshTrustRequests: snapshot.pendingSshTrustRequests ?? [],
     projectDefaults: (snapshot.projectDefaults ?? []).map((projectDefault) => ({
       secretId: projectDefault.secretId,
       displayAlias: projectDefault.displayAlias,

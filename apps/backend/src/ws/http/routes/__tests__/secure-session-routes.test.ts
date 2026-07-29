@@ -43,6 +43,7 @@ function fakeService(): SecureSessionsTransportService {
     revokeSecureSessionLease: vi.fn(async () => snapshot),
     resolveSecureAccessRequest: vi.fn(async () => snapshot),
     fulfillSecureAccessRequest: vi.fn(async () => snapshot),
+    resolveSecureSshHostTrustRequest: vi.fn(async () => snapshot),
   };
 }
 
@@ -204,6 +205,61 @@ describe("secure session routes", () => {
     });
     expect(unsafe.status).toBe(400);
     expect(service.resolveSecureAccessRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("approves or dismisses SSH trust through strict revision-checked routes", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const base =
+      `${server.baseUrl}/api/secure-sessions/manager-1/ssh-trust-requests/ssh-request-1`;
+
+    const approved = await postJson(`${base}/resolve`, {
+      baseRevision: 7,
+      decision: "approve",
+    });
+    const dismissed = await fetch(base, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 8 }),
+    });
+
+    expect(approved.status).toBe(200);
+    expect(dismissed.status).toBe(200);
+    expect(service.resolveSecureSshHostTrustRequest).toHaveBeenNthCalledWith(
+      1,
+      "manager-1",
+      {
+        baseRevision: 7,
+        requestId: "ssh-request-1",
+        decision: "approve",
+      },
+    );
+    expect(service.resolveSecureSshHostTrustRequest).toHaveBeenNthCalledWith(
+      2,
+      "manager-1",
+      {
+        baseRevision: 8,
+        requestId: "ssh-request-1",
+        decision: "deny",
+      },
+    );
+
+    const unsafeResolve = await postJson(`${base}/resolve`, {
+      baseRevision: 9,
+      decision: "approve",
+      hostKeyBase64: "must-not-pass",
+    });
+    const unsafeDismiss = await fetch(base, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 9,
+        decision: "approve",
+      }),
+    });
+    expect(unsafeResolve.status).toBe(400);
+    expect(unsafeDismiss.status).toBe(400);
+    expect(service.resolveSecureSshHostTrustRequest).toHaveBeenCalledTimes(2);
   });
 
   it("forwards one strict atomic batch grant request", async () => {

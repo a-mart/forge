@@ -6,6 +6,8 @@ import type {
   SecureSecretScope,
   SecureSessionProjectDefaultState,
   SecureSessionProjectDefaultStatusCode,
+  SecureSshTrustedHostSummary,
+  SecureSshTrustRequestSummary,
 } from '@forge/protocol'
 
 export type SecureSessionAvailabilityState =
@@ -83,6 +85,8 @@ export interface SecureSessionSnapshotView {
   outputStateCode?: 'SECURE_OUTPUT_QUARANTINED'
   leases: SecureLeaseView[]
   pendingRequests: SecureAccessRequestView[]
+  trustedSshHosts?: SecureSshTrustedHostSummary[]
+  pendingSshTrustRequests?: SecureSshTrustRequestSummary[]
   projectDefaults?: SecureProjectDefaultStatusView[]
   updatedAt: string
 }
@@ -157,6 +161,7 @@ export interface SecureSessionRequestConfig {
   sessionAgentId?: string
   availability: SecureSessionAvailability
   requests: SecureAccessRequestView[]
+  sshTrustRequests?: SecureSshTrustRequestSummary[]
   secrets: SecureSecretOption[]
   project?: SecureSessionProjectContext
   disabled?: boolean
@@ -174,6 +179,14 @@ export interface SecureSessionRequestConfig {
     grant: SecureGrantInput,
   ) => boolean | void | Promise<boolean | void>
   onDeny: (sessionAgentId: string, requestId: string) => void | Promise<void>
+  onTrustSshHost?: (
+    sessionAgentId: string,
+    requestId: string,
+  ) => boolean | void | Promise<boolean | void>
+  onDismissSshTrustRequest?: (
+    sessionAgentId: string,
+    requestId: string,
+  ) => boolean | void | Promise<boolean | void>
   onRevoke?: (
     sessionAgentId: string,
     leaseId?: string,

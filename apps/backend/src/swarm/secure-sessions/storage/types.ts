@@ -167,6 +167,7 @@ export interface DeleteSecureSessionProjectStateResult {
   projectDefaultsDeleted: number;
   secretsDeleted: number;
   secretsUpdated: number;
+  trustedSshHostsDeleted: number;
 }
 
 export interface SecureSessionEncryptedSecret extends SecureSessionSecret {
@@ -272,6 +273,75 @@ export interface SecureSessionRequest {
   resolvedAt: string | null;
 }
 
+export interface SecureSessionSshTrustedHost {
+  trustedHostId: string;
+  profileId: string;
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyBase64: string;
+  hostKeyFingerprint: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PutSecureSessionSshTrustedHostInput {
+  trustedHostId: string;
+  profileId: string;
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyBase64: string;
+  hostKeyFingerprint: string;
+}
+
+export interface SecureSessionSshTrustRequest {
+  requestId: string;
+  sessionAgentId: string;
+  profileId: string;
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyBase64: string;
+  hostKeyFingerprint: string;
+  purposeSummary: string;
+  requestedByAgentId: string;
+  requestedByDisplayName: string;
+  state: SecureSessionRequestState;
+  requestedAt: string;
+  expiresAt: string | null;
+  resolvedAt: string | null;
+}
+
+export interface CreateSecureSessionSshTrustRequestInput {
+  requestId: string;
+  sessionAgentId: string;
+  profileId: string;
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyBase64: string;
+  hostKeyFingerprint: string;
+  purposeSummary: string;
+  requestedByAgentId: string;
+  requestedByDisplayName: string;
+  expiresAt?: string | null;
+}
+
+export interface ResolveSecureSessionSshTrustRequestInput {
+  requestId: string;
+  baseRevision?: number;
+  state: Exclude<SecureSessionRequestState, "pending">;
+}
+
 export interface SecureSessionUseReservation {
   operationId: string;
   leaseId: string;
@@ -294,6 +364,7 @@ export interface SecureSessionSnapshot {
   state: SecureSessionState;
   leases: SecureSessionLease[];
   requests: SecureSessionRequest[];
+  sshTrustRequests: SecureSessionSshTrustRequest[];
 }
 
 export interface SecureSessionMutationResult {

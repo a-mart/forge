@@ -25,6 +25,7 @@ import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
 import type {
   BrowserAutomationInputByOperation,
   BrowserAutomationOperation,
+  RequestSecureSshHostTrustRequest,
   SessionGoalSnapshot,
 } from "@forge/protocol";
 import type { BrowserAutomationInvocationResult } from "./browser-automation/browser-automation-service.js";
@@ -165,6 +166,11 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: RequestSecureSecretAccessToolInput,
   ): Promise<void>;
+  requestSecureSshHostTrust?(
+    callerAgentId: string,
+    toolCallId: string,
+    input: RequestSecureSshHostTrustRequest,
+  ): Promise<"trusted" | "requested">;
   getSecureRuntimeBinding?: GetSecureRuntimeBinding;
   recordToolSideEffect?(callerAgentId: string, event: SwarmToolSideEffectEvent): void;
   listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;

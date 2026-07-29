@@ -25,6 +25,7 @@ import { CodexElicitationCard } from './message-list/CodexElicitationCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { MissingChoiceDetailsFallback } from './message-list/MissingChoiceDetailsFallback'
 import { SecureSecretRequestCard } from './message-list/SecureSecretRequestCard'
+import { SecureSshTrustRequestCard } from './message-list/SecureSshTrustRequestCard'
 import {
   buildStoppableExternalThreadMessageIds,
   resolveConversationMessageTargetId,
@@ -502,8 +503,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     () => secureSessionRequests?.requests.filter((request) => request.status === 'pending') ?? [],
     [secureSessionRequests?.requests],
   )
+  const pendingSshTrustRequests = secureSessionRequests?.sshTrustRequests ?? []
   const hasSecureSessionAttention =
     pendingSecureRequests.length > 0
+    || pendingSshTrustRequests.length > 0
     || secureSessionRequests?.outputState === 'quarantined'
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
   const latestPlanSummary = [...displayEntries].reverse().find((entry) => entry.type === 'plan_summary')
@@ -1392,6 +1395,27 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               onCreateBrowserPairing={secureSessionRequests.onCreateBrowserPairing}
               onClaimBrowserPairing={secureSessionRequests.onClaimBrowserPairing}
               onBrowserPaired={secureSessionRequests.onBrowserPaired}
+            />
+          ))}
+          {pendingSshTrustRequests.map((request) => (
+            <SecureSshTrustRequestCard
+              key={request.requestId}
+              request={request}
+              disabled={secureSessionRequests.disabled}
+              canApprove={
+                secureSessionRequests.canApprove
+                && Boolean(secureSessionRequests.onTrustSshHost)
+              }
+              onTrust={(requestId) =>
+                secureSessionRequests.onTrustSshHost?.(
+                  secureSessionRequests.sessionAgentId ?? '',
+                  requestId,
+                )}
+              onDismiss={(requestId) =>
+                secureSessionRequests.onDismissSshTrustRequest?.(
+                  secureSessionRequests.sessionAgentId ?? '',
+                  requestId,
+                )}
             />
           ))}
         </section>

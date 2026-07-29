@@ -6,7 +6,9 @@ import {
   SecureSecretsError,
   checkSecureMaterialEntryAvailability,
   connectBitwardenProvider,
+  createSecureSshTrustedHost,
   createLocalSecret,
+  deleteSecureSshTrustedHost,
   fetchSecureSessionReadiness,
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
@@ -18,6 +20,7 @@ import {
   updateSecureSecret,
   updateSecureSecretAutomaticGrant,
   updateSecureSecretProjectDefault,
+  updateSecureSshTrustedHost,
 } from './secure-secrets-api'
 
 const SECRET_SUMMARY = {
@@ -40,6 +43,19 @@ const PROVIDER_SUMMARY = {
   status: 'available' as const,
   lastVerifiedAt: '2026-07-23T12:00:00.000Z',
   lastStatusCode: 'ok',
+}
+
+const SSH_HOST_SUMMARY = {
+  trustedHostId: 'ssh-host-1',
+  profileId: 'project-alpha',
+  alias: 'production-api',
+  hostName: '10.0.0.25',
+  port: 22,
+  username: 'deploy',
+  hostKeyAlgorithm: 'ssh-ed25519',
+  hostKeyFingerprint: 'SHA256:trusted-key',
+  createdAt: '2026-07-23T12:00:00.000Z',
+  updatedAt: '2026-07-23T12:00:00.000Z',
 }
 
 function makeClient(
@@ -126,6 +142,8 @@ describe('secure secrets API', () => {
           ? { providers: [PROVIDER_SUMMARY] }
           : path.endsWith('/project-defaults')
             ? { projectDefaults: [] }
+            : path.endsWith('/ssh-trusted-hosts')
+              ? [SSH_HOST_SUMMARY]
             : { secrets: [SECRET_SUMMARY] },
       ),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -136,6 +154,7 @@ describe('secure secrets API', () => {
       providers: [PROVIDER_SUMMARY],
       secrets: [SECRET_SUMMARY],
       projectDefaults: [],
+      sshTrustedHosts: [SSH_HOST_SUMMARY],
     })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets/providers',
@@ -148,6 +167,55 @@ describe('secure secrets API', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets/project-defaults',
       expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-secrets/ssh-trusted-hosts',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('creates, updates, and removes project SSH trust metadata with secure control', async () => {
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) =>
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify(SSH_HOST_SUMMARY), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }))
+    const client = makeClient(fetchMock)
+
+    await createSecureSshTrustedHost(client, {
+      profileId: 'project-alpha',
+      alias: 'production-api',
+      hostName: '10.0.0.25',
+      port: 22,
+      username: 'deploy',
+      hostKey: 'ssh-ed25519 AAAA',
+    })
+    await updateSecureSshTrustedHost(client, 'ssh-host-1', {
+      username: 'release',
+    })
+    await deleteSecureSshTrustedHost(client, 'ssh-host-1')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/secure-secrets/ssh-trusted-hosts',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.any(Headers),
+      }),
+    )
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+      .get('X-Forge-Secure-Control')).toBe('test-secure-control-token-that-is-long-enough')
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/secure-secrets/ssh-trusted-hosts/ssh-host-1',
+      expect.objectContaining({ method: 'PATCH' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/secure-secrets/ssh-trusted-hosts/ssh-host-1',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 

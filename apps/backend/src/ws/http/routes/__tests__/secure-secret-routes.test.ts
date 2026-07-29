@@ -4,6 +4,7 @@ import type {
   SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
+  SecureSshTrustedHostSummary,
 } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpRoute } from "../../shared/http-route.js";
@@ -54,6 +55,19 @@ const projectDefault: SecureSecretProjectDefaultSummary = {
   updatedAt: "2026-07-23T00:00:00.000Z",
 };
 
+const sshTrustedHost: SecureSshTrustedHostSummary = {
+  trustedHostId: "ssh-host-1",
+  profileId: "profile-1",
+  alias: "deployment",
+  hostName: "10.140.2.17",
+  port: 22,
+  username: "ansibleuser",
+  hostKeyAlgorithm: "ssh-ed25519",
+  hostKeyFingerprint: "SHA256:public-fingerprint",
+  createdAt: "2026-07-23T00:00:00.000Z",
+  updatedAt: "2026-07-23T00:00:00.000Z",
+};
+
 function fakeService(): SecureSecretTransportService {
   return {
     listSecureSecretProviders: vi.fn(() => [provider]),
@@ -71,6 +85,10 @@ function fakeService(): SecureSecretTransportService {
     createLocalSecureSecret: vi.fn(async () => secret),
     updateSecureSecret: vi.fn(async () => secret),
     deleteSecureSecret: vi.fn(async () => undefined),
+    listSecureSshTrustedHosts: vi.fn(() => [sshTrustedHost]),
+    createSecureSshTrustedHost: vi.fn(async () => sshTrustedHost),
+    updateSecureSshTrustedHost: vi.fn(async () => sshTrustedHost),
+    deleteSecureSshTrustedHost: vi.fn(async () => true),
   };
 }
 
@@ -302,6 +320,85 @@ describe("secure secret routes", () => {
       kind: "projects",
       profileIds: ["profile-1", "profile-2"],
     });
+  });
+
+  it("supports strict SSH trusted-host CRUD without returning the key blob", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+    const publicHostKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPublicHostKey";
+
+    const listed = await fetch(
+      `${server.baseUrl}/api/secure-secrets/ssh-trusted-hosts`,
+    );
+    const created = await postJson(
+      `${server.baseUrl}/api/secure-secrets/ssh-trusted-hosts`,
+      {
+        profileId: "profile-1",
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKey: publicHostKey,
+      },
+    );
+    const updated = await fetch(
+      `${server.baseUrl}/api/secure-secrets/ssh-trusted-hosts/ssh-host-1`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          hostName: "10.140.2.18",
+          port: 2222,
+        }),
+      },
+    );
+    const deleted = await fetch(
+      `${server.baseUrl}/api/secure-secrets/ssh-trusted-hosts/ssh-host-1`,
+      { method: "DELETE" },
+    );
+
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual([sshTrustedHost]);
+    expect(created.status).toBe(201);
+    expect(updated.status).toBe(200);
+    expect(deleted.status).toBe(204);
+    expect(service.createSecureSshTrustedHost).toHaveBeenCalledWith({
+      profileId: "profile-1",
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKey: publicHostKey,
+    });
+    expect(service.updateSecureSshTrustedHost).toHaveBeenCalledWith(
+      "ssh-host-1",
+      { hostName: "10.140.2.18", port: 2222 },
+    );
+    expect(service.deleteSecureSshTrustedHost).toHaveBeenCalledWith(
+      "ssh-host-1",
+    );
+    expect(
+      JSON.stringify([
+        await created.json(),
+        await updated.json(),
+      ]),
+    ).not.toContain("AAAAC3NzaC1lZDI1NTE5AAAAIPublicHostKey");
+
+    const invalid = await postJson(
+      `${server.baseUrl}/api/secure-secrets/ssh-trusted-hosts`,
+      {
+        profileId: "profile-1",
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKey: publicHostKey,
+        privateKey: "must-not-pass",
+      },
+    );
+    expect(invalid.status).toBe(400);
+    expect(service.createSecureSshTrustedHost).toHaveBeenCalledTimes(1);
   });
 
   it("rejects plaintext and malformed bodies before invoking the service", async () => {

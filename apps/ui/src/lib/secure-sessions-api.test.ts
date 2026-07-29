@@ -5,7 +5,9 @@ import type { SettingsApiClient } from '@/components/settings/settings-api-clien
 import type { SecureAccessRequestSummary, SecureSessionSnapshot } from '@forge/protocol'
 import {
   applySecureSessionProjectDefaults,
+  approveSecureSshHostTrustRequest,
   denySecureAccessRequest,
+  dismissSecureSshHostTrustRequest,
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
   grantSecureSessionLease,
@@ -74,6 +76,92 @@ describe('Secure Sessions API', () => {
     expect(secureSessionUiErrorMessage(
       new SecureSessionUiError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'),
     )).toBe('This project already has the maximum number of automatic secrets.')
+  })
+
+  it('maps additive SSH trust metadata into the UI snapshot', () => {
+    const source = snapshot()
+    source.trustedSshHosts = [{
+      trustedHostId: 'host-1',
+      profileId: 'profile-1',
+      alias: 'production-api',
+      hostName: '10.0.0.25',
+      port: 22,
+      username: 'deploy',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyFingerprint: 'SHA256:trusted',
+      createdAt: source.updatedAt,
+      updatedAt: source.updatedAt,
+    }]
+    source.pendingSshTrustRequests = [{
+      requestId: 'trust-1',
+      alias: 'production-api',
+      hostName: '10.0.0.25',
+      port: 22,
+      username: 'deploy',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyFingerprint: 'SHA256:reported',
+      purposeSummary: 'Deploy the release',
+      requestedByAgentId: 'worker-1',
+      requestedByDisplayName: 'Release worker',
+      createdAt: source.updatedAt,
+      expiresAt: null,
+    }]
+
+    expect(toSecureSessionSnapshotView(source)).toMatchObject({
+      trustedSshHosts: [{ trustedHostId: 'host-1' }],
+      pendingSshTrustRequests: [{ requestId: 'trust-1' }],
+    })
+    expect(toSecureSessionSnapshotView(snapshot())).toMatchObject({
+      trustedSshHosts: [],
+      pendingSshTrustRequests: [],
+    })
+  })
+
+  it('approves SSH trust with secure control and dismisses it through the web-safe route', async () => {
+    const fetchMock = vi.fn<SettingsApiClient['fetch']>(async () => new Response(JSON.stringify(snapshot(5)), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const client = makeClient(fetchMock)
+
+    await approveSecureSshHostTrustRequest(client, 'manager-1', 'trust-1', 4)
+    await dismissSecureSshHostTrustRequest(client, 'manager-1', 'trust-2', 5)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/secure-sessions/manager-1/ssh-trust-requests/trust-1/resolve',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+      .get('X-Forge-Secure-Control')).toBe('test-secure-control-token-that-is-long-enough')
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/secure-sessions/manager-1/ssh-trust-requests/trust-2',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers)
+      .has('X-Forge-Secure-Control')).toBe(false)
+  })
+
+  it('reports a stale SSH trust request with fixed actionable copy', async () => {
+    const fetchMock = vi.fn<SettingsApiClient['fetch']>(async () =>
+      new Response(JSON.stringify({
+        code: 'SECURE_SSH_HOST_NOT_FOUND',
+        error: 'SECURE_SSH_HOST_NOT_FOUND',
+      }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    await expect(approveSecureSshHostTrustRequest(
+      makeClient(fetchMock),
+      'manager-1',
+      'missing-trust',
+      4,
+    )).rejects.toMatchObject({
+      code: 'SECURE_SSH_HOST_NOT_FOUND',
+      message: expect.stringContaining('no longer available'),
+    })
   })
 
   it('refreshes exact state after stale or ambiguous project-default results', () => {

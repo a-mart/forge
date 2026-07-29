@@ -105,6 +105,29 @@ function safeView(): SecureSessionAgentView {
         ],
       },
     ],
+    trustedSshHosts: [
+      {
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyFingerprint: "SHA256:trusted-fingerprint",
+      },
+    ],
+    pendingSshTrustRequests: [
+      {
+        alias: "database",
+        hostName: "10.140.2.18",
+        port: 2222,
+        username: "dbadmin",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyFingerprint: "SHA256:pending-fingerprint",
+        purposeSummary: "Connect to the project database host.",
+        createdAt: "2026-07-23T00:00:00.000Z",
+        expiresAt: "2026-07-23T00:05:00.000Z",
+      },
+    ],
     updatedAt: "2026-07-23T00:00:00.000Z",
   };
 }
@@ -117,6 +140,7 @@ function host(
     getWorkerActivity: () => undefined,
     getSecureSessionAgentView: () => safeView(),
     requestSecureSecretAccess: async () => {},
+    requestSecureSshHostTrust: async () => "requested",
     ...overrides,
   } as SwarmToolHost;
 }
@@ -194,12 +218,14 @@ describe("secure session agent tools", () => {
       expect.arrayContaining([
         "secure_session_status",
         "request_secret_access",
+        "request_ssh_host_trust",
       ]),
     );
     expect(workerTools).toEqual(
       expect.arrayContaining([
         "secure_session_status",
         "request_secret_access",
+        "request_ssh_host_trust",
       ]),
     );
   });
@@ -233,18 +259,32 @@ describe("secure session agent tools", () => {
 
     expect(collabNames).not.toContain("secure_session_status");
     expect(collabNames).not.toContain("request_secret_access");
+    expect(collabNames).not.toContain("request_ssh_host_trust");
     expect(collabWorkerNames).not.toContain("secure_session_status");
     expect(collabWorkerNames).not.toContain("request_secret_access");
+    expect(collabWorkerNames).not.toContain("request_ssh_host_trust");
     expect(unspecifiedManagerNames).toContain("secure_session_status");
     expect(unspecifiedManagerNames).toContain("request_secret_access");
+    expect(unspecifiedManagerNames).toContain("request_ssh_host_trust");
   });
 
   it("gates each tool on its corresponding optional host capability", () => {
-    const statusOnly = host({ requestSecureSecretAccess: undefined });
-    const requestOnly = host({ getSecureSessionAgentView: undefined });
+    const statusOnly = host({
+      requestSecureSecretAccess: undefined,
+      requestSecureSshHostTrust: undefined,
+    });
+    const requestOnly = host({
+      getSecureSessionAgentView: undefined,
+      requestSecureSshHostTrust: undefined,
+    });
+    const sshTrustOnly = host({
+      getSecureSessionAgentView: undefined,
+      requestSecureSecretAccess: undefined,
+    });
     const neither = host({
       getSecureSessionAgentView: undefined,
       requestSecureSecretAccess: undefined,
+      requestSecureSshHostTrust: undefined,
     });
 
     expect(buildSwarmTools(statusOnly, manager()).map((tool) => tool.name)).toContain(
@@ -260,11 +300,15 @@ describe("secure session agent tools", () => {
       buildSwarmTools(requestOnly, manager()).map((tool) => tool.name),
     ).toContain("request_secret_access");
     expect(
+      buildSwarmTools(sshTrustOnly, manager()).map((tool) => tool.name),
+    ).toEqual(expect.arrayContaining(["request_ssh_host_trust"]));
+    expect(
       buildSwarmTools(neither, manager()).map((tool) => tool.name),
     ).not.toEqual(
       expect.arrayContaining([
         "secure_session_status",
         "request_secret_access",
+        "request_ssh_host_trust",
       ]),
     );
   });
@@ -311,6 +355,18 @@ describe("secure session agent tools", () => {
             ],
           },
         ],
+        trustedSshHosts: [
+          expect.objectContaining({
+            alias: "deployment",
+            hostKeyFingerprint: "SHA256:trusted-fingerprint",
+          }),
+        ],
+        pendingSshTrustRequests: [
+          expect.objectContaining({
+            alias: "database",
+            hostKeyFingerprint: "SHA256:pending-fingerprint",
+          }),
+        ],
       },
     });
     expect(serialized).not.toContain(LEAK_MARKER);
@@ -324,8 +380,12 @@ describe("secure session agent tools", () => {
     const tools = buildSwarmTools(host(), manager());
     const status = toolByName(tools, "secure_session_status");
     const request = toolByName(tools, "request_secret_access");
+    const sshTrust = toolByName(tools, "request_ssh_host_trust");
     const statusCheck = TypeCompiler.Compile(status.parameters as TSchema);
     const requestCheck = TypeCompiler.Compile(request.parameters as TSchema);
+    const sshTrustCheck = TypeCompiler.Compile(
+      sshTrust.parameters as TSchema,
+    );
     const valid = {
       displayAlias: "github-work",
       purposeSummary: "Read repository issue metadata.",
@@ -362,6 +422,25 @@ describe("secure session agent tools", () => {
         durationSeconds: 300,
       }),
     ).toBe(false);
+    const publicHostKey = "AAAAC3NzaC1lZDI1NTE5AAAAIPublicHostKey";
+    const validSshTrust = {
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKeyAlgorithm: "ssh-ed25519",
+      hostKeyBase64: publicHostKey,
+      purposeSummary: "Connect to the deployment host.",
+    };
+    expect(sshTrustCheck.Check(validSshTrust)).toBe(true);
+    expect(sshTrustCheck.Check({
+      ...validSshTrust,
+      privateKey: LEAK_MARKER,
+    })).toBe(false);
+    expect(sshTrustCheck.Check({
+      ...validSshTrust,
+      ciphertext: LEAK_MARKER,
+    })).toBe(false);
 
     const names = propertyNames(request.parameters);
     expect(names).not.toContain("value");
@@ -369,6 +448,11 @@ describe("secure session agent tools", () => {
     expect(names).not.toContain("ciphertext");
     expect(names).not.toContain("sourceLocator");
     expect(names).not.toContain("secretId");
+    const sshTrustNames = propertyNames(sshTrust.parameters);
+    expect(sshTrustNames).toContain("hostKeyBase64");
+    expect(sshTrustNames).not.toContain("privateKey");
+    expect(sshTrustNames).not.toContain("password");
+    expect(sshTrustNames).not.toContain("ciphertext");
   });
 
   it("rejects direct status fields without consulting the host", async () => {
@@ -476,6 +560,50 @@ describe("secure session agent tools", () => {
     expect(resultJson(result)).not.toContain("deploy-key");
   });
 
+  it("returns a fixed SSH trust receipt without echoing the public key", async () => {
+    const requestTrust = vi.fn(async () => "requested" as const);
+    const request = toolByName(
+      buildSwarmTools(
+        host({ requestSecureSshHostTrust: requestTrust }),
+        worker(),
+      ),
+      "request_ssh_host_trust",
+    );
+    const input = {
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKeyAlgorithm: "ssh-ed25519",
+      hostKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIPublicHostKey",
+      purposeSummary: "Connect to the deployment host.",
+    };
+
+    const result = await request.execute("request-ssh-1", input);
+
+    expect(requestTrust).toHaveBeenCalledWith(
+      "worker-1",
+      "request-ssh-1",
+      input,
+    );
+    expect(result.details).toEqual({
+      ok: true,
+      status: "requested",
+    });
+    expect(resultJson(result)).not.toContain(input.hostKeyBase64);
+
+    const rejected = await request.execute("request-ssh-2", {
+      ...input,
+      privateKey: LEAK_MARKER,
+    });
+    expect(rejected).toMatchObject({
+      isError: true,
+      details: { ok: false, error: { code: "invalid_input" } },
+    });
+    expect(requestTrust).toHaveBeenCalledTimes(1);
+    expect(resultJson(rejected)).not.toContain(LEAK_MARKER);
+  });
+
   it("converts host exceptions into fixed value-free failures", async () => {
     const status = toolByName(
       buildSwarmTools(
@@ -499,12 +627,32 @@ describe("secure session agent tools", () => {
       ),
       "request_secret_access",
     );
+    const sshTrustRequest = toolByName(
+      buildSwarmTools(
+        host({
+          requestSecureSshHostTrust: async () => {
+            throw new Error(LEAK_MARKER);
+          },
+        }),
+        manager(),
+      ),
+      "request_ssh_host_trust",
+    );
     const statusResult = await status.execute("status-2", {});
     const requestResult = await request.execute("request-4", {
       displayAlias: "github-work",
       purposeSummary: "Read repository issue metadata.",
       leaseKind: "task",
       exposures: [{ deliveryKind: "stdin" }],
+    });
+    const sshTrustResult = await sshTrustRequest.execute("request-ssh-3", {
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKeyAlgorithm: "ssh-ed25519",
+      hostKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIPublicHostKey",
+      purposeSummary: "Connect to the deployment host.",
     });
 
     expect(statusResult).toMatchObject({
@@ -515,6 +663,12 @@ describe("secure session agent tools", () => {
       isError: true,
       details: { error: { code: "request_failed" } },
     });
-    expect(resultJson([statusResult, requestResult])).not.toContain(LEAK_MARKER);
+    expect(sshTrustResult).toMatchObject({
+      isError: true,
+      details: { error: { code: "request_failed" } },
+    });
+    expect(
+      resultJson([statusResult, requestResult, sshTrustResult]),
+    ).not.toContain(LEAK_MARKER);
   });
 });

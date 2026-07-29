@@ -6,6 +6,7 @@ import type {
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
+  ResolveSecureSshHostTrustRequest,
   SecureSecretBinding,
   SecureSecretAutomaticGrantPolicy,
   SecureSecretCatalogChangedEvent,
@@ -13,6 +14,7 @@ import type {
   SecureSecretProviderSummary,
   SecureSecretProviderTestResult,
   SecureSecretSummary,
+  SecureSshTrustedHostSummary,
   SecureBrowserPrivateEntryChallenge,
   SecureBrowserSealedPrivateEntry,
   SecureSessionReadiness,
@@ -44,12 +46,15 @@ import type {
   ImportBitwardenSecureSecretInput,
   ConnectBitwardenSecureSecretProviderInput,
   CreateLocalSecureSecretInput,
+  CreateSecureSshTrustedHostInput,
   RequestSecureSecretAccessInput,
+  RequestSecureSshHostTrustInput,
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
   UpdateSecureSecretInput,
+  UpdateSecureSshTrustedHostInput,
 } from "./secure-sessions-api.js";
 import {
   SecureSessionsServiceError,
@@ -66,6 +71,7 @@ import {
   SecureSessionRequestExpiredError,
   SecureSessionRevisionConflictError,
   SecureSessionStore,
+  SecureSessionSshAliasConflictError,
 } from "./storage/secure-session-store.js";
 import { isExternalThreadDescriptor } from "../external-thread-compatibility.js";
 import { isCodexPluginWorkerDescriptor } from "../codex-app-server/codex-plugin-scope-service.js";
@@ -78,8 +84,17 @@ import type {
   SecureSessionRequestedExposure,
   SecureSessionSecret,
   SecureSessionSnapshot as StoredSnapshot,
+  SecureSessionSshTrustRequest,
   SecureSessionState,
 } from "./storage/types.js";
+import {
+  buildSecureSshConfig,
+  buildSecureSshKnownHosts,
+  normalizeProposedSshTrustedHost,
+  normalizeSshTrustedHostInput,
+  SECURE_SSH_RESERVED_BINDING_PREFIX,
+  toPublicSshTrustedHost,
+} from "./ssh-trusted-host.js";
 
 const LOCAL_PROVIDER_ID = "forge-local-keychain";
 const MAX_CIPHERTEXT_BYTES = 1024 * 1024;
@@ -514,12 +529,18 @@ export class SecureSessionsService {
           orphanedProfileIds.add(projectDefault.profileId);
         }
       }
+      for (const host of store.listSshTrustedHosts()) {
+        if (!this.options.hasProfile(host.profileId)) {
+          orphanedProfileIds.add(host.profileId);
+        }
+      }
       for (const profileId of orphanedProfileIds) {
         const deleted = store.deleteProjectSecretState(profileId);
         catalogChanged = (
           deleted.projectDefaultsDeleted > 0
           || deleted.secretsDeleted > 0
           || deleted.secretsUpdated > 0
+          || deleted.trustedSshHostsDeleted > 0
         ) || catalogChanged;
       }
       for (const state of store.listSessionStates()) {
@@ -597,6 +618,98 @@ export class SecureSessionsService {
   async listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> {
     const store = await this.store();
     return store.listProviders().map(toProviderSummary);
+  }
+
+  async listSecureSshTrustedHosts(): Promise<SecureSshTrustedHostSummary[]> {
+    const store = await this.store();
+    return store.listSshTrustedHosts()
+      .filter((host) =>
+        this.options.hasProfile(host.profileId)
+        && !this.options.isProfileArchived(host.profileId)
+      )
+      .map(toPublicSshTrustedHost);
+  }
+
+  async createSecureSshTrustedHost(
+    input: CreateSecureSshTrustedHostInput,
+  ): Promise<SecureSshTrustedHostSummary> {
+    return await this.withAuthorityMutation(async () => {
+      const profileId = bounded(input.profileId, 256);
+      this.requireActiveProfile(profileId);
+      let normalized: ReturnType<typeof normalizeSshTrustedHostInput>;
+      try {
+        normalized = normalizeSshTrustedHostInput(input);
+      } catch {
+        throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      }
+      try {
+        const store = await this.store();
+        const host = store.putSshTrustedHost({
+          trustedHostId: this.id(),
+          profileId,
+          ...normalized,
+        });
+        this.emitCatalog(store);
+        return toPublicSshTrustedHost(host);
+      } catch (error) {
+        throw this.publicError(error);
+      }
+    });
+  }
+
+  async updateSecureSshTrustedHost(
+    trustedHostId: string,
+    input: UpdateSecureSshTrustedHostInput,
+  ): Promise<SecureSshTrustedHostSummary> {
+    return await this.withAuthorityMutation(async () => {
+      const store = await this.store();
+      const existing = store.getSshTrustedHost(
+        bounded(trustedHostId, 256),
+      );
+      if (!existing) {
+        throw new SecureSessionsServiceError("SECURE_SSH_HOST_NOT_FOUND");
+      }
+      this.requireActiveProfile(existing.profileId);
+      let normalized: ReturnType<typeof normalizeSshTrustedHostInput>;
+      try {
+        normalized = normalizeSshTrustedHostInput({
+          alias: input.alias ?? existing.alias,
+          hostName: input.hostName ?? existing.hostName,
+          port: input.port ?? existing.port,
+          username: input.username ?? existing.username,
+          hostKey:
+            input.hostKey
+            ?? `${existing.hostKeyAlgorithm} ${existing.hostKeyBase64}`,
+        });
+      } catch {
+        throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      }
+      try {
+        const host = store.putSshTrustedHost({
+          trustedHostId: existing.trustedHostId,
+          profileId: existing.profileId,
+          ...normalized,
+        });
+        this.emitCatalog(store);
+        return toPublicSshTrustedHost(host);
+      } catch (error) {
+        throw this.publicError(error);
+      }
+    });
+  }
+
+  async deleteSecureSshTrustedHost(trustedHostId: string): Promise<boolean> {
+    return await this.withAuthorityMutation(async () => {
+      const store = await this.store();
+      const existing = store.getSshTrustedHost(
+        bounded(trustedHostId, 256),
+      );
+      if (!existing) return false;
+      this.requireActiveProfile(existing.profileId);
+      const deleted = store.deleteSshTrustedHost(existing.trustedHostId);
+      if (deleted) this.emitCatalog(store);
+      return deleted;
+    });
   }
 
   async getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
@@ -1125,6 +1238,7 @@ export class SecureSessionsService {
           result.projectDefaultsDeleted === 0
           && result.secretsDeleted === 0
           && result.secretsUpdated === 0
+          && result.trustedSshHostsDeleted === 0
           && affected.leaseIds.length === 0
         ) {
           return;
@@ -2455,6 +2569,26 @@ export class SecureSessionsService {
         displayAlias: secret.displayAlias,
         bindings: secret.bindings,
       })),
+      trustedSshHosts: snapshot.trustedSshHosts?.map((host) => ({
+        alias: host.alias,
+        hostName: host.hostName,
+        port: host.port,
+        username: host.username,
+        hostKeyAlgorithm: host.hostKeyAlgorithm,
+        hostKeyFingerprint: host.hostKeyFingerprint,
+      })) ?? [],
+      pendingSshTrustRequests:
+        snapshot.pendingSshTrustRequests?.map((request) => ({
+          alias: request.alias,
+          hostName: request.hostName,
+          port: request.port,
+          username: request.username,
+          hostKeyAlgorithm: request.hostKeyAlgorithm,
+          hostKeyFingerprint: request.hostKeyFingerprint,
+          purposeSummary: request.purposeSummary,
+          createdAt: request.createdAt,
+          expiresAt: request.expiresAt,
+        })) ?? [],
       updatedAt: snapshot.updatedAt,
     };
   }
@@ -2523,6 +2657,165 @@ export class SecureSessionsService {
     } catch (error) {
       throw this.publicError(error);
     }
+  }
+
+  async requestSecureSshHostTrust(
+    callerAgentId: string,
+    toolCallId: string,
+    input: RequestSecureSshHostTrustInput,
+  ): Promise<"trusted" | "requested"> {
+    bounded(toolCallId, 256);
+    const requestedBy = this.options.getDescriptor(callerAgentId);
+    if (!requestedBy) {
+      throw new SecureSessionsServiceError("SECURE_BUILDER_ONLY");
+    }
+    const principal = this.resolveSecurePrincipal(callerAgentId);
+    let normalized: ReturnType<typeof normalizeProposedSshTrustedHost>;
+    try {
+      normalized = normalizeProposedSshTrustedHost(input);
+    } catch {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    return await this.withAuthorityMutation(async () =>
+      await this.withSessionMutation(
+        principal.descriptor.agentId,
+        async () => {
+          const currentPrincipal = this.resolveSecurePrincipal(callerAgentId);
+          const store = await this.store();
+          const sessionAgentId = currentPrincipal.descriptor.agentId;
+          const state = store.initializePrincipalState(
+            sessionAgentId,
+            principalStateInput(currentPrincipal),
+          );
+          assertPrincipalStateMatches(currentPrincipal, state);
+          const duplicatePendingRequest = store.getSnapshot(sessionAgentId)
+            .sshTrustRequests.some((request) =>
+              request.alias === normalized.alias
+              && request.hostName === normalized.hostName
+              && request.port === normalized.port
+              && request.username === normalized.username
+              && request.hostKeyAlgorithm === normalized.hostKeyAlgorithm
+              && request.hostKeyBase64 === normalized.hostKeyBase64
+            );
+          if (duplicatePendingRequest) return "requested";
+          const existing = store.getSshTrustedHostByAlias(
+            currentPrincipal.profileId,
+            normalized.alias,
+          );
+          if (
+            existing
+            && existing.hostName === normalized.hostName
+            && existing.port === normalized.port
+            && existing.username === normalized.username
+            && existing.hostKeyAlgorithm === normalized.hostKeyAlgorithm
+            && existing.hostKeyBase64 === normalized.hostKeyBase64
+          ) {
+            return "trusted";
+          }
+          try {
+            const snapshot = store.createSshTrustRequest({
+              requestId: this.id(),
+              sessionAgentId,
+              profileId: currentPrincipal.profileId,
+              ...normalized,
+              purposeSummary: bounded(input.purposeSummary, 2000),
+              requestedByAgentId: requestedBy.agentId,
+              requestedByDisplayName: bounded(requestedBy.displayName, 256),
+              expiresAt: new Date(
+                Date.parse(this.now()) + REQUEST_TTL_MS,
+              ).toISOString(),
+            });
+            this.scheduleSessionExpiry(store, sessionAgentId);
+            this.options.emitSnapshot(
+              toSnapshotEvent(this.toPublicSnapshot(store, snapshot)),
+            );
+            return "requested";
+          } catch (error) {
+            throw this.publicError(error);
+          }
+        },
+      )
+    );
+  }
+
+  async resolveSecureSshHostTrustRequest(
+    sessionAgentId: string,
+    input: ResolveSecureSshHostTrustRequest,
+  ): Promise<PublicSecureSessionSnapshot> {
+    const descriptor = this.options.requireBuilderSession(
+      sessionAgentId,
+      "resolve SSH host trust",
+    );
+    const principal = this.resolveSecurePrincipal(descriptor.agentId);
+    const authoritySessionAgentId = principal.descriptor.agentId;
+    if (authoritySessionAgentId !== sessionAgentId) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    return await this.withAuthorityMutation(async () =>
+      await this.withSessionMutation(sessionAgentId, async () => {
+        const store = await this.store();
+        await this.expireAndPublish(store, sessionAgentId);
+        const request = store.getSshTrustRequest(
+          bounded(input.requestId, 256),
+        );
+        if (!request || request.sessionAgentId !== sessionAgentId) {
+          throw new SecureSessionsServiceError("SECURE_SSH_HOST_NOT_FOUND");
+        }
+        if (
+          store.getSnapshot(sessionAgentId).state.revision
+          !== input.baseRevision
+        ) {
+          throw new SecureSessionsServiceError("SECURE_STALE_REVISION");
+        }
+        try {
+          const snapshot = store.withTransaction(() => {
+            if (input.decision === "approve") {
+              const existing = store.getSshTrustedHostByAlias(
+                request.profileId,
+                request.alias,
+              );
+              if (
+                existing
+                && (
+                  existing.hostName !== request.hostName
+                  || existing.port !== request.port
+                  || existing.username !== request.username
+                  || existing.hostKeyAlgorithm !== request.hostKeyAlgorithm
+                  || existing.hostKeyBase64 !== request.hostKeyBase64
+                )
+              ) {
+                throw new SecureSessionsServiceError(
+                  "SECURE_SSH_HOST_KEY_CONFLICT",
+                );
+              }
+              store.putSshTrustedHost({
+                trustedHostId: existing?.trustedHostId ?? this.id(),
+                profileId: request.profileId,
+                alias: request.alias,
+                hostName: request.hostName,
+                port: request.port,
+                username: request.username,
+                hostKeyAlgorithm: request.hostKeyAlgorithm,
+                hostKeyBase64: request.hostKeyBase64,
+                hostKeyFingerprint: request.hostKeyFingerprint,
+              });
+            }
+            return store.resolveSshTrustRequest({
+              requestId: request.requestId,
+              baseRevision: input.baseRevision,
+              state: input.decision === "approve" ? "approved" : "denied",
+            });
+          });
+          if (input.decision === "approve") this.emitCatalog(store);
+          this.scheduleSessionExpiry(store, sessionAgentId);
+          const result = this.toPublicSnapshot(store, snapshot);
+          this.options.emitSnapshot(toSnapshotEvent(result));
+          return result;
+        } catch (error) {
+          throw this.publicError(error);
+        }
+      })
+    );
   }
 
   getSecureRuntimeBinding(
@@ -2807,6 +3100,21 @@ export class SecureSessionsService {
     const sessionAgentId = authorityDescriptor.agentId;
     try {
       const delivery = createExecutionDeliveryFromBindings(resolved);
+      const trustedSshHosts = store.listSshTrustedHosts(
+        requireProfileId(authorityDescriptor),
+      );
+      if (trustedSshHosts.length > 0) {
+        delivery.sshTrust = {
+          config: Buffer.from(
+            buildSecureSshConfig(trustedSshHosts),
+            "utf8",
+          ),
+          knownHosts: Buffer.from(
+            buildSecureSshKnownHosts(trustedSshHosts),
+            "utf8",
+          ),
+        };
+      }
       const rawOutputGuard = guard.createOutputGuard();
       const result = await this.options.execution.execute({
         task: active.task,
@@ -3363,6 +3671,14 @@ export class SecureSessionsService {
         this.toPublicSnapshot(store, mutation.snapshot),
       ));
     }
+    for (const mutation of store.expireSshTrustRequests(
+      this.now(),
+      sessionAgentId,
+    )) {
+      this.options.emitSnapshot(toSnapshotEvent(
+        this.toPublicSnapshot(store, mutation.snapshot),
+      ));
+    }
   }
 
   private async deactivateEnvironmentAfterLeaseLoss(
@@ -3639,6 +3955,10 @@ export class SecureSessionsService {
         .filter((request) => request.expiresAt !== null)
         .map((request) => Date.parse(request.expiresAt!))
         .filter(Number.isFinite),
+      ...snapshot.sshTrustRequests
+        .filter((request) => request.expiresAt !== null)
+        .map((request) => Date.parse(request.expiresAt!))
+        .filter(Number.isFinite),
     ].filter(Number.isFinite);
     if (expirations.length === 0) {
       return;
@@ -3736,6 +4056,11 @@ export class SecureSessionsService {
         createdAt: request.requestedAt,
         expiresAt: request.expiresAt,
       })),
+      trustedSshHosts: store.listSshTrustedHosts(snapshot.state.profileId)
+        .map(toPublicSshTrustedHost),
+      pendingSshTrustRequests: snapshot.sshTrustRequests.map((request) =>
+        toPublicSshTrustRequest(request)
+      ),
       projectDefaults: this.listEffectiveProjectDefaultsForProfile(
         store,
         snapshot.state.profileId,
@@ -4228,6 +4553,15 @@ export class SecureSessionsService {
     }
   }
 
+  private requireActiveProfile(profileId: string): void {
+    if (
+      !this.options.hasProfile(profileId)
+      || this.options.isProfileArchived(profileId)
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+  }
+
   private createValueGuard(values: readonly Uint8Array[]): SecureValueGuard {
     return this.options.createValueGuard?.(values) ?? new SecureValueGuard(values);
   }
@@ -4242,6 +4576,9 @@ export class SecureSessionsService {
     }
     if (error instanceof SecureSessionAliasConflictError) {
       return new SecureSessionsServiceError("SECURE_SECRET_ALIAS_CONFLICT");
+    }
+    if (error instanceof SecureSessionSshAliasConflictError) {
+      return new SecureSessionsServiceError("SECURE_SSH_HOST_KEY_CONFLICT");
     }
     if (error instanceof SecureSessionRequestExpiredError) {
       return new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
@@ -4270,6 +4607,23 @@ function toProviderSummary(provider: SecureSessionProvider): SecureSecretProvide
     status: provider.status,
     lastVerifiedAt: provider.lastVerifiedAt,
     lastStatusCode: provider.lastStatusCode,
+  };
+}
+
+function toPublicSshTrustRequest(request: SecureSessionSshTrustRequest) {
+  return {
+    requestId: request.requestId,
+    alias: request.alias,
+    hostName: request.hostName,
+    port: request.port,
+    username: request.username,
+    hostKeyAlgorithm: request.hostKeyAlgorithm,
+    hostKeyFingerprint: request.hostKeyFingerprint,
+    purposeSummary: request.purposeSummary,
+    requestedByAgentId: request.requestedByAgentId,
+    requestedByDisplayName: request.requestedByDisplayName,
+    createdAt: request.requestedAt,
+    expiresAt: request.expiresAt,
   };
 }
 
@@ -4606,6 +4960,7 @@ function validateBinding(binding: SecureSecretBinding): void {
   if (binding.deliveryKind === "file") {
     if (
       !binding.targetPath.startsWith(SECURE_FILE_ROOT)
+      || binding.targetPath.startsWith(SECURE_SSH_RESERVED_BINDING_PREFIX)
       || binding.targetPath.includes("/../")
       || ![undefined, 0o400, 0o600].includes(binding.fileMode)
     ) {

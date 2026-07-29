@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Database, Link2, Loader2 } from 'lucide-react'
+import { AlertTriangle, Database, Link2, Loader2, Server } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { SettingsApiClient } from './settings-api-client'
 import {
@@ -20,6 +20,7 @@ import { SecretCatalogPanel } from './secrets/SecretCatalogPanel'
 import { SecretSourcesPanel } from './secrets/SecretSourcesPanel'
 import { SecureSessionsReadinessPanel } from './secrets/SecureSessionsReadinessPanel'
 import { SecureBrowserAccessPanel } from './secrets/SecureBrowserAccessPanel'
+import { SshTrustedHostsPanel } from './secrets/SshTrustedHostsPanel'
 import type {
   ManagerProfile,
   SecureBrowserControlStatus,
@@ -66,6 +67,7 @@ function BuilderSecretsSettings({
     providers: [],
     secrets: [],
     projectDefaults: [],
+    sshTrustedHosts: [],
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -122,6 +124,12 @@ function BuilderSecretsSettings({
     ),
     [catalog.projectDefaults, projectProfileIds],
   )
+  const visibleSshTrustedHosts = useMemo(
+    () => (catalog.sshTrustedHosts ?? []).filter((host) =>
+      projectProfileIds.has(host.profileId)
+    ),
+    [catalog.sshTrustedHosts, projectProfileIds],
+  )
   const secretsReady =
     readiness?.available === true
     && materialEntryAvailable
@@ -148,6 +156,7 @@ function BuilderSecretsSettings({
       setCatalog({
         ...nextCatalog,
         projectDefaults: nextCatalog.projectDefaults ?? [],
+        sshTrustedHosts: nextCatalog.sshTrustedHosts ?? [],
       })
     } else {
       setError(secureSecretsErrorMessage(catalogResult.reason))
@@ -336,6 +345,10 @@ function BuilderSecretsSettings({
               <Link2 className="size-3.5" />
               Advanced delivery
             </TabsTrigger>
+            <TabsTrigger value="ssh-hosts" className="gap-1.5">
+              <Server className="size-3.5" />
+              SSH hosts
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="sources">
@@ -365,6 +378,16 @@ function BuilderSecretsSettings({
             <SecretBindingsPanel
               apiClient={apiClient}
               secrets={visibleSecrets}
+              onChanged={handleChanged}
+              onError={handleError}
+            />
+          </TabsContent>
+          <TabsContent value="ssh-hosts">
+            <SshTrustedHostsPanel
+              apiClient={apiClient}
+              trustedHosts={visibleSshTrustedHosts}
+              profiles={projectProfiles}
+              initialProfileId={initialProfileId}
               onChanged={handleChanged}
               onError={handleError}
             />

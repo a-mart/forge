@@ -10,6 +10,9 @@ import type {
   SecureSecretSummary,
   SecureSecretProviderTestResult,
   SecureSessionReadiness,
+  SecureSshTrustedHostSummary,
+  CreateSecureSshTrustedHostRequest,
+  UpdateSecureSshTrustedHostRequest,
 } from '@forge/protocol'
 
 export type {
@@ -25,11 +28,15 @@ export type {
   SecureSecretSummary,
   SecureSessionReadiness,
   SecureSessionReadinessCode,
+  SecureSshTrustedHostSummary,
 } from '@forge/protocol'
 
 export type SecureSecretsCatalog =
   Pick<SecureSecretCatalog, 'providers' | 'secrets'>
-  & { projectDefaults: SecureSecretProjectDefaultSummary[] }
+  & {
+    projectDefaults: SecureSecretProjectDefaultSummary[]
+    sshTrustedHosts?: SecureSshTrustedHostSummary[]
+  }
 
 export interface CreateLocalSecretInput {
   displayAlias: string
@@ -98,13 +105,15 @@ export type SecureSecretsErrorCode =
   | 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED'
   | 'SECURE_SECRET_ALIAS_CONFLICT'
   | 'SECURE_SECRET_NOT_FOUND'
+  | 'SECURE_SSH_HOST_KEY_CONFLICT'
+  | 'SECURE_SSH_HOST_NOT_FOUND'
   | 'SECURE_STALE_REVISION'
   | 'SECURE_OPERATION_FAILED'
 
 const ERROR_MESSAGES: Record<SecureSecretsErrorCode, string> = {
   SECURE_BUILDER_ONLY: 'Secrets are available only on the local Builder backend.',
   SECURE_PRIVATE_API_UNAVAILABLE: 'Secret entry is available only in the Forge desktop app.',
-  SECURE_REQUEST_INVALID: 'Check the secret settings and try again.',
+  SECURE_REQUEST_INVALID: 'Check the secret or SSH host settings and try again.',
   SECURE_SOURCE_LOCKED: 'The secret source is locked. Unlock it and try again.',
   SECURE_SOURCE_UNAVAILABLE: 'The secret source is currently unavailable.',
   SECURE_PROVIDER_AUTH_REQUIRED: 'The secret source needs to be connected again.',
@@ -112,6 +121,9 @@ const ERROR_MESSAGES: Record<SecureSecretsErrorCode, string> = {
     'One or more selected projects already have the maximum number of automatic grants. Remove one before adding another.',
   SECURE_SECRET_ALIAS_CONFLICT: 'A secret with this alias already exists in that scope.',
   SECURE_SECRET_NOT_FOUND: 'That saved secret no longer exists.',
+  SECURE_SSH_HOST_KEY_CONFLICT:
+    'This SSH alias already has different connection details or a different host key. Review the saved host before replacing it.',
+  SECURE_SSH_HOST_NOT_FOUND: 'That trusted SSH host no longer exists.',
   SECURE_STALE_REVISION: 'Secret settings changed elsewhere. Refresh and try again.',
   SECURE_OPERATION_FAILED: 'The secure secrets operation could not be completed.',
 }
@@ -167,7 +179,8 @@ export async function fetchSecureSecretsCatalog(
   apiClient: SettingsApiClient,
 ): Promise<SecureSecretsCatalog> {
   assertBuilderTarget(apiClient)
-  const [providerPayload, secretPayload, projectDefaultPayload] = await Promise.all([
+  const [providerPayload, secretPayload, projectDefaultPayload, sshTrustedHostPayload] =
+    await Promise.all([
     requestJson<SecureSecretProviderSummary[] | { providers: SecureSecretProviderSummary[] }>(
       apiClient,
       '/api/secure-secrets/providers',
@@ -183,6 +196,13 @@ export async function fetchSecureSecretsCatalog(
       apiClient,
       '/api/secure-secrets/project-defaults',
     ),
+    requestJson<
+      SecureSshTrustedHostSummary[]
+      | { trustedHosts: SecureSshTrustedHostSummary[] }
+    >(
+      apiClient,
+      '/api/secure-secrets/ssh-trusted-hosts',
+    ),
   ])
 
   return {
@@ -191,7 +211,55 @@ export async function fetchSecureSecretsCatalog(
     projectDefaults: Array.isArray(projectDefaultPayload)
       ? projectDefaultPayload
       : projectDefaultPayload.projectDefaults,
+    sshTrustedHosts: Array.isArray(sshTrustedHostPayload)
+      ? sshTrustedHostPayload
+      : sshTrustedHostPayload.trustedHosts,
   }
+}
+
+export async function createSecureSshTrustedHost(
+  apiClient: SettingsApiClient,
+  input: CreateSecureSshTrustedHostRequest,
+): Promise<SecureSshTrustedHostSummary> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSshTrustedHostSummary>(
+    apiClient,
+    '/api/secure-secrets/ssh-trusted-hosts',
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(input),
+    },
+  )
+}
+
+export async function updateSecureSshTrustedHost(
+  apiClient: SettingsApiClient,
+  trustedHostId: string,
+  input: UpdateSecureSshTrustedHostRequest,
+): Promise<SecureSshTrustedHostSummary> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSshTrustedHostSummary>(
+    apiClient,
+    `/api/secure-secrets/ssh-trusted-hosts/${encodeURIComponent(trustedHostId)}`,
+    {
+      method: 'PATCH',
+      headers: jsonHeaders(),
+      body: JSON.stringify(input),
+    },
+  )
+}
+
+export async function deleteSecureSshTrustedHost(
+  apiClient: SettingsApiClient,
+  trustedHostId: string,
+): Promise<void> {
+  assertBuilderTarget(apiClient)
+  await requestEmpty(
+    apiClient,
+    `/api/secure-secrets/ssh-trusted-hosts/${encodeURIComponent(trustedHostId)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function fetchSecureSessionReadiness(

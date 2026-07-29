@@ -25,11 +25,13 @@ import {
   type CreateSecureSessionLeaseInput,
   type CreateSecureSessionLeasesInput,
   type CreateSecureSessionRequestInput,
+  type CreateSecureSessionSshTrustRequestInput,
   type CreateSecureSessionSecretInput,
   type DeleteSecureSessionProjectStateResult,
   type InitializeSecureSessionPrincipalInput,
   type InitializeSecureSessionStateInput,
   type PutSecureSessionProjectDefaultInput,
+  type PutSecureSessionSshTrustedHostInput,
   type ReplaceSecureSessionAutomaticGrantPolicyInput,
   type PutSecureSessionSecretWithBindingsInput,
   type PutSecureSessionBindingInput,
@@ -37,6 +39,7 @@ import {
   type ReserveSecureSessionLeaseUseInput,
   type ReserveSecureSessionLeaseUseResult,
   type ResolveSecureSessionRequestInput,
+  type ResolveSecureSessionSshTrustRequestInput,
   type RevokeSecureSessionLeaseInput,
   type SecureSessionAuditRecord,
   type SecureSessionBinding,
@@ -55,6 +58,8 @@ import {
   type SecureSessionSecret,
   type SecureSessionSecretWithBindings,
   type SecureSessionSnapshot,
+  type SecureSessionSshTrustedHost,
+  type SecureSessionSshTrustRequest,
   type SecureSessionState,
   type SecureSessionUseReservation,
   type UpdateSecureSessionSecretInput,
@@ -72,6 +77,12 @@ const MAX_TARGET_LENGTH = 4096;
 const MAX_PURPOSE_LENGTH = 2000;
 const MAX_BINDINGS = 16;
 const MAX_ENCRYPTED_MATERIAL_BYTES = 1024 * 1024;
+const MAX_SSH_ALIAS_LENGTH = 128;
+const MAX_SSH_HOST_LENGTH = 512;
+const MAX_SSH_USERNAME_LENGTH = 256;
+const MAX_SSH_KEY_ALGORITHM_LENGTH = 128;
+const MAX_SSH_KEY_BASE64_LENGTH = 16 * 1024;
+const MAX_SSH_FINGERPRINT_LENGTH = 256;
 
 export class SecureSessionRevisionConflictError extends Error {
   readonly code = "secure_session_revision_conflict";
@@ -106,6 +117,15 @@ export class SecureSessionAliasConflictError extends Error {
   constructor() {
     super("A secret with this alias already exists in the selected scope");
     this.name = "SecureSessionAliasConflictError";
+  }
+}
+
+export class SecureSessionSshAliasConflictError extends Error {
+  readonly code = "secure_ssh_alias_conflict";
+
+  constructor() {
+    super("An SSH trusted host with this alias already exists in the project");
+    this.name = "SecureSessionSshAliasConflictError";
   }
 }
 
@@ -934,6 +954,107 @@ export class SecureSessionStore {
     })();
   }
 
+  listSshTrustedHosts(profileId?: string): SecureSessionSshTrustedHost[] {
+    if (profileId !== undefined) assertId(profileId, "profile ID");
+    const rows = profileId === undefined
+      ? this.database.prepare(`
+          ${SSH_TRUSTED_HOST_SELECT}
+          ORDER BY profile_id, alias COLLATE NOCASE, trusted_host_id
+        `).all()
+      : this.database.prepare(`
+          ${SSH_TRUSTED_HOST_SELECT}
+          WHERE profile_id = ?
+          ORDER BY alias COLLATE NOCASE, trusted_host_id
+        `).all(profileId);
+    return (rows as SshTrustedHostRow[]).map(mapSshTrustedHost);
+  }
+
+  getSshTrustedHost(trustedHostId: string): SecureSessionSshTrustedHost | null {
+    assertId(trustedHostId, "SSH trusted host ID");
+    const row = this.database.prepare(`
+      ${SSH_TRUSTED_HOST_SELECT}
+      WHERE trusted_host_id = ?
+    `).get(trustedHostId) as SshTrustedHostRow | undefined;
+    return row ? mapSshTrustedHost(row) : null;
+  }
+
+  getSshTrustedHostByAlias(
+    profileId: string,
+    alias: string
+  ): SecureSessionSshTrustedHost | null {
+    assertId(profileId, "profile ID");
+    assertBoundedText(alias, "SSH host alias", MAX_SSH_ALIAS_LENGTH);
+    const row = this.database.prepare(`
+      ${SSH_TRUSTED_HOST_SELECT}
+      WHERE profile_id = ? AND alias = ?
+    `).get(profileId, alias) as SshTrustedHostRow | undefined;
+    return row ? mapSshTrustedHost(row) : null;
+  }
+
+  putSshTrustedHost(
+    input: PutSecureSessionSshTrustedHostInput
+  ): SecureSessionSshTrustedHost {
+    const normalized = normalizeSshTrustedHostInput(input);
+    return this.database.transaction(() => {
+      const existing = this.getSshTrustedHost(normalized.trustedHostId);
+      if (existing && existing.profileId !== normalized.profileId) {
+        throw new SecureSessionIdConflictError("SSH trusted host");
+      }
+      const aliasOwner = this.getSshTrustedHostByAlias(
+        normalized.profileId,
+        normalized.alias
+      );
+      if (aliasOwner && aliasOwner.trustedHostId !== normalized.trustedHostId) {
+        throw new SecureSessionSshAliasConflictError();
+      }
+      const now = this.timestamp();
+      this.database.prepare(`
+        INSERT INTO secure_session_ssh_trusted_host (
+          trusted_host_id, profile_id, alias, host_name, port, username,
+          host_key_algorithm, host_key_base64, host_key_fingerprint,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(trusted_host_id) DO UPDATE SET
+          alias = excluded.alias,
+          host_name = excluded.host_name,
+          port = excluded.port,
+          username = excluded.username,
+          host_key_algorithm = excluded.host_key_algorithm,
+          host_key_base64 = excluded.host_key_base64,
+          host_key_fingerprint = excluded.host_key_fingerprint,
+          updated_at = excluded.updated_at
+      `).run(
+        normalized.trustedHostId,
+        normalized.profileId,
+        normalized.alias,
+        normalized.hostName,
+        normalized.port,
+        normalized.username,
+        normalized.hostKeyAlgorithm,
+        normalized.hostKeyBase64,
+        normalized.hostKeyFingerprint,
+        existing?.createdAt ?? now,
+        now
+      );
+      this.bumpCatalog(now);
+      return this.requireSshTrustedHost(normalized.trustedHostId);
+    })();
+  }
+
+  deleteSshTrustedHost(trustedHostId: string): boolean {
+    assertId(trustedHostId, "SSH trusted host ID");
+    return this.database.transaction(() => {
+      if (!this.getSshTrustedHost(trustedHostId)) return false;
+      const now = this.timestamp();
+      this.database.prepare(`
+        DELETE FROM secure_session_ssh_trusted_host
+        WHERE trusted_host_id = ?
+      `).run(trustedHostId);
+      this.bumpCatalog(now);
+      return true;
+    })();
+  }
+
   listActiveProjectDefaultLeases(
     profileId: string,
     secretId?: string
@@ -997,13 +1118,21 @@ export class SecureSessionStore {
       const result = {
         projectDefaultsDeleted: defaultSecretIds.length,
         secretsDeleted: deletedSecretIds.size,
-        secretsUpdated: scopedSecrets.length - deletedSecretIds.size
+        secretsUpdated: scopedSecrets.length - deletedSecretIds.size,
+        trustedSshHostsDeleted: this.listSshTrustedHosts(profileId).length
       };
       const now = this.timestamp();
       this.revokeProjectDefaultLeases(profileId, effectiveDefaultSecretIds, now);
-      if (result.projectDefaultsDeleted === 0 && scopedSecrets.length === 0) {
+      if (
+        result.projectDefaultsDeleted === 0
+        && scopedSecrets.length === 0
+        && result.trustedSshHostsDeleted === 0
+      ) {
         return result;
       }
+      this.database.prepare(`
+        DELETE FROM secure_session_ssh_trusted_host WHERE profile_id = ?
+      `).run(profileId);
       this.database.prepare(`
         DELETE FROM secure_session_project_default WHERE profile_id = ?
       `).run(profileId);
@@ -1368,10 +1497,16 @@ export class SecureSessionStore {
     const requestRows = this.database.prepare(`${REQUEST_SELECT}
       WHERE session_agent_id = ? AND state = 'pending'
       ORDER BY requested_at, request_id`).all(sessionAgentId) as RequestRow[];
+    const sshTrustRequestRows = this.database.prepare(`${SSH_TRUST_REQUEST_SELECT}
+      WHERE session_agent_id = ? AND state = 'pending'
+      ORDER BY requested_at, request_id`).all(
+        sessionAgentId
+      ) as SshTrustRequestRow[];
     return {
       state,
       leases: leaseRows.map((row) => this.mapLease(row)),
-      requests: requestRows.map((row) => this.mapRequest(row))
+      requests: requestRows.map((row) => this.mapRequest(row)),
+      sshTrustRequests: sshTrustRequestRows.map(mapSshTrustRequest)
     };
   }
 
@@ -1623,6 +1758,128 @@ export class SecureSessionStore {
         eventType: "request_resolved",
         sessionAgentId: request.sessionAgentId,
         secretId: selectedSecretId,
+        requestId: input.requestId,
+        outcome: input.state,
+        occurredAt: now
+      });
+      const snapshot = this.getSnapshot(request.sessionAgentId);
+      assertSnapshotRevision(snapshot, revision);
+      return snapshot;
+    })();
+  }
+
+  createSshTrustRequest(
+    input: CreateSecureSessionSshTrustRequestInput
+  ): SecureSessionSnapshot {
+    const normalized = normalizeSshTrustRequestInput(input);
+    return this.database.transaction(() => {
+      const state = this.getOrCreateSessionState(normalized.sessionAgentId);
+      if (
+        state.principalKind !== "manager"
+        || state.profileId !== normalized.profileId
+      ) {
+        throw new SecureSessionIdConflictError("SSH trust request authority");
+      }
+      const existing = this.getSshTrustRequest(normalized.requestId);
+      if (existing) {
+        if (!sameSshTrustRequest(existing, normalized)) {
+          throw new SecureSessionIdConflictError("SSH trust request");
+        }
+        return this.getSnapshot(normalized.sessionAgentId);
+      }
+      const now = this.timestamp();
+      const revision = this.incrementRevision(
+        normalized.sessionAgentId,
+        "request_created",
+        null,
+        1,
+        now
+      );
+      this.database.prepare(`
+        INSERT INTO secure_session_ssh_trust_request (
+          request_id, session_agent_id, profile_id, alias, host_name, port,
+          username, host_key_algorithm, host_key_base64,
+          host_key_fingerprint, purpose_summary, requested_by_agent_id,
+          requested_by_display_name, state, requested_at, expires_at,
+          resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
+      `).run(
+        normalized.requestId,
+        normalized.sessionAgentId,
+        normalized.profileId,
+        normalized.alias,
+        normalized.hostName,
+        normalized.port,
+        normalized.username,
+        normalized.hostKeyAlgorithm,
+        normalized.hostKeyBase64,
+        normalized.hostKeyFingerprint,
+        normalized.purposeSummary,
+        normalized.requestedByAgentId,
+        normalized.requestedByDisplayName,
+        now,
+        normalized.expiresAt
+      );
+      this.audit({
+        eventType: "request_created",
+        sessionAgentId: normalized.sessionAgentId,
+        requestId: normalized.requestId,
+        outcome: "created",
+        occurredAt: now
+      });
+      const snapshot = this.getSnapshot(normalized.sessionAgentId);
+      assertSnapshotRevision(snapshot, revision);
+      return snapshot;
+    })();
+  }
+
+  resolveSshTrustRequest(
+    input: ResolveSecureSessionSshTrustRequestInput
+  ): SecureSessionSnapshot {
+    assertId(input.requestId, "SSH trust request ID");
+    if (input.baseRevision !== undefined) assertRevision(input.baseRevision);
+    assertEnum(
+      input.state,
+      SECURE_SESSION_REQUEST_STATES.filter((state) => state !== "pending"),
+      "SSH trust request state"
+    );
+    return this.database.transaction(() => {
+      const request = this.requireSshTrustRequest(input.requestId);
+      if (input.baseRevision !== undefined) {
+        this.assertRevision(
+          this.requireSessionState(request.sessionAgentId),
+          input.baseRevision
+        );
+      }
+      if (request.state === input.state) {
+        return this.getSnapshot(request.sessionAgentId);
+      }
+      if (request.state !== "pending") {
+        throw new SecureSessionIdConflictError("SSH trust request resolution");
+      }
+      const now = this.timestamp();
+      if (
+        input.state === "approved"
+        && request.expiresAt !== null
+        && request.expiresAt <= now
+      ) {
+        throw new SecureSessionRequestExpiredError();
+      }
+      const revision = this.incrementRevision(
+        request.sessionAgentId,
+        "request_resolved",
+        null,
+        1,
+        now
+      );
+      this.database.prepare(`
+        UPDATE secure_session_ssh_trust_request
+        SET state = ?, resolved_at = ?
+        WHERE request_id = ?
+      `).run(input.state, now, input.requestId);
+      this.audit({
+        eventType: "request_resolved",
+        sessionAgentId: request.sessionAgentId,
         requestId: input.requestId,
         outcome: input.state,
         occurredAt: now
@@ -1956,6 +2213,72 @@ export class SecureSessionStore {
             eventType: "request_resolved",
             sessionAgentId: session.session_agent_id,
             secretId: request.secret_id,
+            requestId: request.request_id,
+            outcome: "cancelled",
+            occurredAt: at
+          });
+        }
+        return {
+          changed: true,
+          revision,
+          snapshot: this.getSnapshot(session.session_agent_id)
+        };
+      });
+    })();
+  }
+
+  expireSshTrustRequests(
+    now = this.timestamp(),
+    sessionAgentId?: string
+  ): SecureSessionMutationResult[] {
+    const at = normalizeTimestamp(now, "SSH trust request expiration time");
+    if (sessionAgentId !== undefined) {
+      assertId(sessionAgentId, "session agent ID");
+    }
+    return this.database.transaction(() => {
+      const sessions = (
+        sessionAgentId === undefined
+          ? this.database.prepare(`
+              SELECT session_agent_id, COUNT(*) AS request_count
+              FROM secure_session_ssh_trust_request
+              WHERE state = 'pending' AND expires_at IS NOT NULL
+                AND expires_at <= ?
+              GROUP BY session_agent_id
+              ORDER BY session_agent_id
+            `).all(at)
+          : this.database.prepare(`
+              SELECT session_agent_id, COUNT(*) AS request_count
+              FROM secure_session_ssh_trust_request
+              WHERE state = 'pending' AND expires_at IS NOT NULL
+                AND expires_at <= ? AND session_agent_id = ?
+              GROUP BY session_agent_id
+            `).all(at, sessionAgentId)
+      ) as Array<{ session_agent_id: string; request_count: number }>;
+      return sessions.map((session) => {
+        const requests = this.database.prepare(`
+          SELECT request_id
+          FROM secure_session_ssh_trust_request
+          WHERE session_agent_id = ? AND state = 'pending'
+            AND expires_at IS NOT NULL AND expires_at <= ?
+          ORDER BY request_id
+        `).all(session.session_agent_id, at) as Array<{ request_id: string }>;
+        const revision = this.incrementRevision(
+          session.session_agent_id,
+          "request_resolved",
+          null,
+          session.request_count,
+          at
+        );
+        this.database.prepare(`
+          UPDATE secure_session_ssh_trust_request
+          SET state = 'cancelled', resolved_at = ?
+          WHERE session_agent_id = ? AND state = 'pending'
+            AND expires_at IS NOT NULL AND expires_at <= ?
+        `).run(at, session.session_agent_id, at);
+        for (const request of requests) {
+          this.audit({
+            eventType: "request_resolved",
+            sessionAgentId: session.session_agent_id,
             requestId: request.request_id,
             outcome: "cancelled",
             occurredAt: at
@@ -2512,6 +2835,15 @@ export class SecureSessionStore {
     return row ? this.mapRequest(row) : null;
   }
 
+  getSshTrustRequest(requestId: string): SecureSessionSshTrustRequest | null {
+    assertId(requestId, "SSH trust request ID");
+    const row = this.database.prepare(`
+      ${SSH_TRUST_REQUEST_SELECT}
+      WHERE request_id = ?
+    `).get(requestId) as SshTrustRequestRow | undefined;
+    return row ? mapSshTrustRequest(row) : null;
+  }
+
   private getLease(leaseId: string): SecureSessionLease | null {
     const row = this.database.prepare(`${LEASE_SELECT} WHERE lease_id = ?`).get(leaseId) as
       | LeaseRow
@@ -2664,6 +2996,22 @@ export class SecureSessionStore {
   private requireRequest(requestId: string): SecureSessionRequest {
     const record = this.getRequest(requestId);
     if (!record) throw new SecureSessionNotFoundError("request");
+    return record;
+  }
+
+  private requireSshTrustedHost(
+    trustedHostId: string
+  ): SecureSessionSshTrustedHost {
+    const record = this.getSshTrustedHost(trustedHostId);
+    if (!record) throw new SecureSessionNotFoundError("SSH trusted host");
+    return record;
+  }
+
+  private requireSshTrustRequest(
+    requestId: string
+  ): SecureSessionSshTrustRequest {
+    const record = this.getSshTrustRequest(requestId);
+    if (!record) throw new SecureSessionNotFoundError("SSH trust request");
     return record;
   }
 
@@ -2971,6 +3319,15 @@ const REQUEST_SELECT = `SELECT request_id, session_agent_id, secret_id,
   display_alias, requested_lease_kind, requested_duration_seconds, purpose_summary,
   requested_by_agent_id, requested_by_display_name, state, requested_at,
   expires_at, resolved_at, worker_assignment_id FROM secure_session_request`;
+const SSH_TRUSTED_HOST_SELECT = `SELECT trusted_host_id, profile_id, alias,
+  host_name, port, username, host_key_algorithm, host_key_base64,
+  host_key_fingerprint, created_at, updated_at
+  FROM secure_session_ssh_trusted_host`;
+const SSH_TRUST_REQUEST_SELECT = `SELECT request_id, session_agent_id,
+  profile_id, alias, host_name, port, username, host_key_algorithm,
+  host_key_base64, host_key_fingerprint, purpose_summary,
+  requested_by_agent_id, requested_by_display_name, state, requested_at,
+  expires_at, resolved_at FROM secure_session_ssh_trust_request`;
 
 interface ProviderRow {
   provider_id: string;
@@ -3075,6 +3432,38 @@ interface RequestExposureRow {
   target_path: string | null;
   file_mode: number | null;
 }
+interface SshTrustedHostRow {
+  trusted_host_id: string;
+  profile_id: string;
+  alias: string;
+  host_name: string;
+  port: number;
+  username: string;
+  host_key_algorithm: string;
+  host_key_base64: string;
+  host_key_fingerprint: string;
+  created_at: string;
+  updated_at: string;
+}
+interface SshTrustRequestRow {
+  request_id: string;
+  session_agent_id: string;
+  profile_id: string;
+  alias: string;
+  host_name: string;
+  port: number;
+  username: string;
+  host_key_algorithm: string;
+  host_key_base64: string;
+  host_key_fingerprint: string;
+  purpose_summary: string;
+  requested_by_agent_id: string;
+  requested_by_display_name: string;
+  state: SecureSessionSshTrustRequest["state"];
+  requested_at: string;
+  expires_at: string | null;
+  resolved_at: string | null;
+}
 interface ProviderBackendRow {
   provider_id: string;
   server_origin: string;
@@ -3136,6 +3525,48 @@ function mapProjectDefault(row: ProjectDefaultRow): SecureSessionProjectDefault 
     secretId: row.secret_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function mapSshTrustedHost(
+  row: SshTrustedHostRow
+): SecureSessionSshTrustedHost {
+  return {
+    trustedHostId: row.trusted_host_id,
+    profileId: row.profile_id,
+    alias: row.alias,
+    hostName: row.host_name,
+    port: row.port,
+    username: row.username,
+    hostKeyAlgorithm: row.host_key_algorithm,
+    hostKeyBase64: row.host_key_base64,
+    hostKeyFingerprint: row.host_key_fingerprint,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapSshTrustRequest(
+  row: SshTrustRequestRow
+): SecureSessionSshTrustRequest {
+  return {
+    requestId: row.request_id,
+    sessionAgentId: row.session_agent_id,
+    profileId: row.profile_id,
+    alias: row.alias,
+    hostName: row.host_name,
+    port: row.port,
+    username: row.username,
+    hostKeyAlgorithm: row.host_key_algorithm,
+    hostKeyBase64: row.host_key_base64,
+    hostKeyFingerprint: row.host_key_fingerprint,
+    purposeSummary: row.purpose_summary,
+    requestedByAgentId: row.requested_by_agent_id,
+    requestedByDisplayName: row.requested_by_display_name,
+    state: row.state,
+    requestedAt: row.requested_at,
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at
   };
 }
 
@@ -3485,6 +3916,105 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
   const sortedRight = [...right].sort();
   return sortedLeft.length === sortedRight.length &&
     sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function normalizeSshTrustedHostInput(
+  input: PutSecureSessionSshTrustedHostInput
+): PutSecureSessionSshTrustedHostInput {
+  assertId(input.trustedHostId, "SSH trusted host ID");
+  assertId(input.profileId, "profile ID");
+  validateSshHostFields(input);
+  return { ...input };
+}
+
+function normalizeSshTrustRequestInput(
+  input: CreateSecureSessionSshTrustRequestInput
+): Required<Omit<CreateSecureSessionSshTrustRequestInput, "expiresAt">> & {
+  expiresAt: string | null;
+} {
+  assertId(input.requestId, "SSH trust request ID");
+  assertId(input.sessionAgentId, "session agent ID");
+  assertId(input.profileId, "profile ID");
+  assertId(input.requestedByAgentId, "requesting agent ID");
+  assertBoundedText(
+    input.requestedByDisplayName,
+    "requesting agent display name",
+    MAX_DISPLAY_LENGTH
+  );
+  assertBoundedText(input.purposeSummary, "request purpose", MAX_PURPOSE_LENGTH);
+  validateSshHostFields(input);
+  return {
+    ...input,
+    expiresAt: normalizeOptionalTimestamp(
+      input.expiresAt,
+      "SSH trust request expiration time"
+    )
+  };
+}
+
+function validateSshHostFields(input: {
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyBase64: string;
+  hostKeyFingerprint: string;
+}): void {
+  assertBoundedText(input.alias, "SSH host alias", MAX_SSH_ALIAS_LENGTH);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(input.alias)) {
+    throw new Error("SSH host alias contains unsupported characters");
+  }
+  assertSingleToken(input.hostName, "SSH host name", MAX_SSH_HOST_LENGTH);
+  assertSingleToken(input.username, "SSH username", MAX_SSH_USERNAME_LENGTH);
+  assertSingleToken(
+    input.hostKeyAlgorithm,
+    "SSH host-key algorithm",
+    MAX_SSH_KEY_ALGORITHM_LENGTH
+  );
+  assertSingleToken(
+    input.hostKeyBase64,
+    "SSH host-key value",
+    MAX_SSH_KEY_BASE64_LENGTH
+  );
+  assertSingleToken(
+    input.hostKeyFingerprint,
+    "SSH host-key fingerprint",
+    MAX_SSH_FINGERPRINT_LENGTH
+  );
+  if (!Number.isSafeInteger(input.port) || input.port < 1 || input.port > 65535) {
+    throw new Error("SSH port must be an integer between 1 and 65535");
+  }
+}
+
+function assertSingleToken(
+  value: string,
+  label: string,
+  maximum: number
+): void {
+  assertBoundedText(value, label, maximum);
+  if (value.trim() !== value || /\s|[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`${label} contains unsupported whitespace or control characters`);
+  }
+}
+
+function sameSshTrustRequest(
+  existing: SecureSessionSshTrustRequest,
+  input: ReturnType<typeof normalizeSshTrustRequestInput>
+): boolean {
+  return existing.sessionAgentId === input.sessionAgentId
+    && existing.profileId === input.profileId
+    && existing.alias === input.alias
+    && existing.hostName === input.hostName
+    && existing.port === input.port
+    && existing.username === input.username
+    && existing.hostKeyAlgorithm === input.hostKeyAlgorithm
+    && existing.hostKeyBase64 === input.hostKeyBase64
+    && existing.hostKeyFingerprint === input.hostKeyFingerprint
+    && existing.purposeSummary === input.purposeSummary
+    && existing.requestedByAgentId === input.requestedByAgentId
+    && existing.requestedByDisplayName === input.requestedByDisplayName
+    && existing.expiresAt === input.expiresAt;
 }
 
 function assertId(value: string, label: string): void {

@@ -2,6 +2,7 @@ import { Type, type TSchema } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
+  parseRequestSecureSshHostTrustRequest,
   parseSecureSecretBinding,
   parseSecureSecretLeaseSpec,
   type SecureSecretBinding,
@@ -9,6 +10,7 @@ import {
   type SecureSecretLeaseStatus,
   type SecureSessionEnvironmentStatus,
   type SecureSessionExecutionMode,
+  type RequestSecureSshHostTrustRequest,
 } from "@forge/protocol";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor } from "../types.js";
@@ -55,6 +57,22 @@ export interface SecureSessionAvailableSecretView {
   bindings: SecureSecretBinding[];
 }
 
+export interface SecureSessionAgentSshTrustedHostView {
+  alias: string;
+  hostName: string;
+  port: number;
+  username: string;
+  hostKeyAlgorithm: string;
+  hostKeyFingerprint: string;
+}
+
+export interface SecureSessionAgentPendingSshTrustRequestView
+  extends SecureSessionAgentSshTrustedHostView {
+  purposeSummary: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
 /**
  * Agent-visible Secure Sessions metadata. This deliberately has no provider,
  * secret id, source locator, encrypted material, or secret material fields.
@@ -66,6 +84,8 @@ export interface SecureSessionAgentView {
   leases: SecureSessionAgentLeaseView[];
   pendingRequests: SecureSessionAgentPendingRequestView[];
   availableSecrets: SecureSessionAvailableSecretView[];
+  trustedSshHosts: SecureSessionAgentSshTrustedHostView[];
+  pendingSshTrustRequests: SecureSessionAgentPendingSshTrustRequestView[];
   updatedAt: string;
 }
 
@@ -147,6 +167,19 @@ const requestSecretAccessSchema = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
+const requestSshHostTrustSchema = Type.Object(
+  {
+    alias: Type.String({ minLength: 1, maxLength: 128 }),
+    hostName: Type.String({ minLength: 1, maxLength: 512 }),
+    port: Type.Integer({ minimum: 1, maximum: 65_535 }),
+    username: Type.String({ minLength: 1, maxLength: 256 }),
+    hostKeyAlgorithm: Type.String({ minLength: 1, maxLength: 128 }),
+    hostKeyBase64: Type.String({ minLength: 1, maxLength: 16_384 }),
+    purposeSummary: Type.String({ minLength: 1, maxLength: MAX_PURPOSE_LENGTH }),
+  },
+  { additionalProperties: false },
+);
 
 class SafeToolInputError extends Error {
   constructor() {
@@ -306,9 +339,13 @@ function projectAgentView(input: SecureSessionAgentView): SecureSessionAgentView
     !Array.isArray(input.leases) ||
     !Array.isArray(input.pendingRequests) ||
     !Array.isArray(input.availableSecrets) ||
+    !Array.isArray(input.trustedSshHosts) ||
+    !Array.isArray(input.pendingSshTrustRequests) ||
     input.leases.length > MAX_VIEW_ENTRIES ||
     input.pendingRequests.length > MAX_VIEW_ENTRIES ||
-    input.availableSecrets.length > MAX_VIEW_ENTRIES
+    input.availableSecrets.length > MAX_VIEW_ENTRIES ||
+    input.trustedSshHosts.length > MAX_VIEW_ENTRIES ||
+    input.pendingSshTrustRequests.length > MAX_VIEW_ENTRIES
   ) {
     throw new SafeToolInputError();
   }
@@ -374,7 +411,31 @@ function projectAgentView(input: SecureSessionAgentView): SecureSessionAgentView
         bindings: projectBindings(secret.bindings),
       };
     }),
+    trustedSshHosts: input.trustedSshHosts.map(projectSshTrustedHost),
+    pendingSshTrustRequests: input.pendingSshTrustRequests.map((request) => ({
+      ...projectSshTrustedHost(request),
+      purposeSummary: boundedString(
+        request.purposeSummary,
+        MAX_PURPOSE_LENGTH,
+      ),
+      createdAt: boundedString(request.createdAt, MAX_TIMESTAMP_LENGTH),
+      expiresAt: optionalTimestamp(request.expiresAt),
+    })),
     updatedAt: boundedString(input.updatedAt, MAX_TIMESTAMP_LENGTH),
+  };
+}
+
+function projectSshTrustedHost(input: unknown): SecureSessionAgentSshTrustedHostView {
+  if (!isRecord(input)) throw new SafeToolInputError();
+  const port = nonNegativeInteger(input.port);
+  if (port < 1 || port > 65_535) throw new SafeToolInputError();
+  return {
+    alias: boundedString(input.alias, 128),
+    hostName: boundedString(input.hostName, 512),
+    port,
+    username: boundedString(input.username, 256),
+    hostKeyAlgorithm: boundedString(input.hostKeyAlgorithm, 128),
+    hostKeyFingerprint: boundedString(input.hostKeyFingerprint, 256),
   };
 }
 
@@ -480,6 +541,40 @@ function requestAccessTool(
   };
 }
 
+function requestSshHostTrustTool(
+  host: SwarmToolHost,
+  descriptor: AgentDescriptor,
+): ToolDefinition {
+  return {
+    name: "request_ssh_host_trust",
+    label: "Request SSH Host Trust",
+    description:
+      "Propose a project SSH host profile after observing its public host key. Supply the connection alias, endpoint, username, public host-key algorithm/blob, and a bounded purpose. The user can trust it once; future Secure Bash commands can use ordinary `ssh <alias>` with strict host-key checking. Never disable host-key checking.",
+    parameters: requestSshHostTrustSchema,
+    async execute(toolCallId, params) {
+      let input: RequestSecureSshHostTrustRequest;
+      try {
+        input = parseRequestSecureSshHostTrustRequest(params);
+      } catch {
+        return fixedFailure("invalid_input");
+      }
+      if (!host.requestSecureSshHostTrust) {
+        return fixedFailure("request_failed");
+      }
+      try {
+        const status = await host.requestSecureSshHostTrust(
+          descriptor.agentId,
+          toolCallId,
+          input,
+        );
+        return fixedSuccess({ ok: true, status });
+      } catch {
+        return fixedFailure("request_failed");
+      }
+    },
+  };
+}
+
 export function buildSecureSessionTools(
   host: SwarmToolHost,
   descriptor: AgentDescriptor,
@@ -495,13 +590,18 @@ export function buildSecureSessionTools(
   if (host.requestSecureSecretAccess) {
     tools.push(requestAccessTool(host, descriptor));
   }
+  if (host.requestSecureSshHostTrust) {
+    tools.push(requestSshHostTrustTool(host, descriptor));
+  }
   return tools;
 }
 
 export const secureSessionToolSchemas: Readonly<{
   secure_session_status: TSchema;
   request_secret_access: TSchema;
+  request_ssh_host_trust: TSchema;
 }> = Object.freeze({
   secure_session_status: Type.Object({}, { additionalProperties: false }),
   request_secret_access: requestSecretAccessSchema,
+  request_ssh_host_trust: requestSshHostTrustSchema,
 });

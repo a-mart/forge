@@ -3,11 +3,13 @@ import type {
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
+  ResolveSecureSshHostTrustRequest,
   SecureSecretProviderSummary,
   SecureSecretAutomaticGrantPolicy,
   SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
+  SecureSshTrustedHostSummary,
   SecureSessionSnapshot,
   SecureSessionReadiness,
   SecureBrowserPrivateEntryChallenge,
@@ -21,14 +23,17 @@ import type {
   ConnectBitwardenSecureSecretProviderInput,
   ApplySecureSessionProjectDefaultsInput,
   CreateLocalSecureSecretInput,
+  CreateSecureSshTrustedHostInput,
   FulfillSecureAccessRequestInput,
   ImportBitwardenSecureSecretInput,
   RequestSecureSecretAccessInput,
+  RequestSecureSshHostTrustInput,
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
   UpdateSecureSecretInput,
+  UpdateSecureSshTrustedHostInput,
 } from "./secure-sessions-api.js";
 
 /**
@@ -42,6 +47,30 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> {
     return this.secureSessions.listSecureSecretProviders();
+  }
+
+  listSecureSshTrustedHosts(): Promise<SecureSshTrustedHostSummary[]> {
+    return this.secureSessions.listSecureSshTrustedHosts();
+  }
+
+  createSecureSshTrustedHost(
+    input: CreateSecureSshTrustedHostInput,
+  ): Promise<SecureSshTrustedHostSummary> {
+    return this.secureSessions.createSecureSshTrustedHost(input);
+  }
+
+  updateSecureSshTrustedHost(
+    trustedHostId: string,
+    input: UpdateSecureSshTrustedHostInput,
+  ): Promise<SecureSshTrustedHostSummary> {
+    return this.secureSessions.updateSecureSshTrustedHost(
+      trustedHostId,
+      input,
+    );
+  }
+
+  deleteSecureSshTrustedHost(trustedHostId: string): Promise<boolean> {
+    return this.secureSessions.deleteSecureSshTrustedHost(trustedHostId);
   }
 
   getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
@@ -245,6 +274,28 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: RequestSecureSecretAccessInput,
   ): Promise<void> {
     return this.secureSessions.requestSecureSecretAccess(callerAgentId, toolCallId, input);
+  }
+
+  requestSecureSshHostTrust(
+    callerAgentId: string,
+    toolCallId: string,
+    input: RequestSecureSshHostTrustInput,
+  ): Promise<"trusted" | "requested"> {
+    return this.secureSessions.requestSecureSshHostTrust(
+      callerAgentId,
+      toolCallId,
+      input,
+    );
+  }
+
+  resolveSecureSshHostTrustRequest(
+    sessionAgentId: string,
+    input: ResolveSecureSshHostTrustRequest,
+  ): Promise<SecureSessionSnapshot> {
+    return this.secureSessions.resolveSecureSshHostTrustRequest(
+      sessionAgentId,
+      input,
+    );
   }
 
   getSecureRuntimeBinding(

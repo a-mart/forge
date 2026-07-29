@@ -5,6 +5,7 @@ import {
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
   parseResolveSecureSecretAccessRequest,
+  parseResolveSecureSshHostTrustRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
   parseSecureSecretScope,
@@ -12,6 +13,7 @@ import {
   type GrantSecureSecretLeaseRequest,
   type GrantSecureSecretLeasesRequest,
   type ResolveSecureSecretAccessRequest,
+  type ResolveSecureSshHostTrustRequest,
   type SecureSecretBinding,
   type SecureSecretLeaseKind,
   type SecureSecretRetention,
@@ -42,7 +44,12 @@ export function isWebSafeSecureAccessRequestDismissal(
   pathname: string,
 ): boolean {
   return method === "DELETE"
-    && /^\/api\/secure-sessions\/[^/]+\/access-requests\/[^/]+$/.test(pathname);
+    && (
+      /^\/api\/secure-sessions\/[^/]+\/access-requests\/[^/]+$/.test(pathname)
+      || /^\/api\/secure-sessions\/[^/]+\/ssh-trust-requests\/[^/]+$/.test(
+        pathname,
+      )
+    );
 }
 
 export interface StartSecureSessionInput {
@@ -107,6 +114,10 @@ export interface SecureSessionsTransportService {
     sessionAgentId: string,
     requestId: string,
     input: FulfillSecureAccessRequestInput,
+  ): Promise<SecureSessionSnapshot>;
+  resolveSecureSshHostTrustRequest(
+    sessionAgentId: string,
+    input: ResolveSecureSshHostTrustRequest,
   ): Promise<SecureSessionSnapshot>;
 }
 
@@ -328,6 +339,74 @@ export function createSecureSessionRoutes(options: {
                 parseFulfillInput(body),
               );
           sendSecureJson(response, 200, snapshot);
+          return;
+        }
+
+        const sshTrustRequestMatch = requestUrl.pathname.match(
+          /^\/api\/secure-sessions\/([^/]+)\/ssh-trust-requests\/([^/]+)$/,
+        );
+        if (
+          isWebSafeSecureAccessRequestDismissal(
+            request.method,
+            requestUrl.pathname,
+          )
+          && sshTrustRequestMatch
+        ) {
+          const sessionAgentId = parsePathId(
+            sshTrustRequestMatch[1],
+            "sessionAgentId",
+          );
+          const requestId = parsePathId(
+            sshTrustRequestMatch[2],
+            "requestId",
+          );
+          const body = requireObject(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          assertKnownKeys(body, ["baseRevision"]);
+          sendSecureJson(
+            response,
+            200,
+            await options.service.resolveSecureSshHostTrustRequest(
+              sessionAgentId,
+              parseResolveSecureSshHostTrustRequest({
+                baseRevision: body.baseRevision,
+                requestId,
+                decision: "deny",
+              }),
+            ),
+          );
+          return;
+        }
+
+        const sshTrustResolveMatch = requestUrl.pathname.match(
+          /^\/api\/secure-sessions\/([^/]+)\/ssh-trust-requests\/([^/]+)\/resolve$/,
+        );
+        if (request.method === "POST" && sshTrustResolveMatch) {
+          const sessionAgentId = parsePathId(
+            sshTrustResolveMatch[1],
+            "sessionAgentId",
+          );
+          const requestId = parsePathId(
+            sshTrustResolveMatch[2],
+            "requestId",
+          );
+          const body = requireObject(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          assertKnownKeys(body, ["baseRevision", "decision"]);
+          sendSecureJson(
+            response,
+            200,
+            await options.service.resolveSecureSshHostTrustRequest(
+              sessionAgentId,
+              parseResolveSecureSshHostTrustRequest({
+                baseRevision: body.baseRevision,
+                requestId,
+                decision: body.decision,
+              }),
+            ),
+          );
           return;
         }
 

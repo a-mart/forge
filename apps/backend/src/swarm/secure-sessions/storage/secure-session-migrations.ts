@@ -890,6 +890,90 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         );
       `);
     }
+  },
+  {
+    version: 8,
+    name: "project_ssh_trusted_hosts",
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_ssh_trusted_host (
+          trusted_host_id TEXT PRIMARY KEY
+            CHECK (length(trusted_host_id) BETWEEN 1 AND 256),
+          profile_id TEXT NOT NULL
+            CHECK (length(profile_id) BETWEEN 1 AND 256),
+          alias TEXT NOT NULL
+            CHECK (length(alias) BETWEEN 1 AND 128),
+          host_name TEXT NOT NULL
+            CHECK (length(host_name) BETWEEN 1 AND 512),
+          port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+          username TEXT NOT NULL
+            CHECK (length(username) BETWEEN 1 AND 256),
+          host_key_algorithm TEXT NOT NULL
+            CHECK (length(host_key_algorithm) BETWEEN 1 AND 128),
+          host_key_base64 TEXT NOT NULL
+            CHECK (length(host_key_base64) BETWEEN 1 AND 16384),
+          host_key_fingerprint TEXT NOT NULL
+            CHECK (length(host_key_fingerprint) BETWEEN 1 AND 256),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (profile_id, alias)
+        ) STRICT;
+
+        CREATE INDEX secure_session_ssh_trusted_host_profile_idx
+          ON secure_session_ssh_trusted_host(profile_id, alias);
+
+        CREATE TABLE secure_session_ssh_trust_request (
+          request_id TEXT PRIMARY KEY
+            CHECK (length(request_id) BETWEEN 1 AND 256),
+          session_agent_id TEXT NOT NULL
+            REFERENCES secure_session_state(session_agent_id) ON DELETE CASCADE,
+          profile_id TEXT NOT NULL
+            CHECK (length(profile_id) BETWEEN 1 AND 256),
+          alias TEXT NOT NULL
+            CHECK (length(alias) BETWEEN 1 AND 128),
+          host_name TEXT NOT NULL
+            CHECK (length(host_name) BETWEEN 1 AND 512),
+          port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+          username TEXT NOT NULL
+            CHECK (length(username) BETWEEN 1 AND 256),
+          host_key_algorithm TEXT NOT NULL
+            CHECK (length(host_key_algorithm) BETWEEN 1 AND 128),
+          host_key_base64 TEXT NOT NULL
+            CHECK (length(host_key_base64) BETWEEN 1 AND 16384),
+          host_key_fingerprint TEXT NOT NULL
+            CHECK (length(host_key_fingerprint) BETWEEN 1 AND 256),
+          purpose_summary TEXT NOT NULL
+            CHECK (length(purpose_summary) BETWEEN 1 AND 2000),
+          requested_by_agent_id TEXT NOT NULL
+            CHECK (length(requested_by_agent_id) BETWEEN 1 AND 256),
+          requested_by_display_name TEXT NOT NULL
+            CHECK (length(requested_by_display_name) BETWEEN 1 AND 256),
+          state TEXT NOT NULL
+            CHECK (state IN ('pending', 'approved', 'denied', 'cancelled')),
+          requested_at TEXT NOT NULL,
+          expires_at TEXT,
+          resolved_at TEXT
+        ) STRICT;
+
+        CREATE INDEX secure_session_ssh_trust_request_session_idx
+          ON secure_session_ssh_trust_request(
+            session_agent_id, state, requested_at, request_id
+          );
+
+        CREATE TRIGGER secure_session_ssh_trust_request_authority_guard
+        BEFORE INSERT ON secure_session_ssh_trust_request
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM secure_session_state state
+          WHERE state.session_agent_id = NEW.session_agent_id
+            AND state.principal_kind = 'manager'
+            AND state.profile_id = NEW.profile_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'ssh trust request session authority is invalid');
+        END;
+      `);
+    }
   }
 ];
 

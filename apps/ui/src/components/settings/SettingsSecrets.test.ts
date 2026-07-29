@@ -30,6 +30,9 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   importBitwardenSecret: vi.fn(),
   testSecureSecretProvider: vi.fn(),
   disconnectSecureSecretProvider: vi.fn(),
+  createSecureSshTrustedHost: vi.fn(),
+  updateSecureSshTrustedHost: vi.fn(),
+  deleteSecureSshTrustedHost: vi.fn(),
   isSecureMaterialEntryAvailable: vi.fn(() => true),
   checkSecureMaterialEntryAvailability: vi.fn(async () => true),
   unlockSecureMaterialEntry: vi.fn(async () => true),
@@ -65,6 +68,12 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.testSecureSecretProvider(...args),
     disconnectSecureSecretProvider: (...args: unknown[]) =>
       secureSecretsApiMock.disconnectSecureSecretProvider(...args),
+    createSecureSshTrustedHost: (...args: unknown[]) =>
+      secureSecretsApiMock.createSecureSshTrustedHost(...args),
+    updateSecureSshTrustedHost: (...args: unknown[]) =>
+      secureSecretsApiMock.updateSecureSshTrustedHost(...args),
+    deleteSecureSshTrustedHost: (...args: unknown[]) =>
+      secureSecretsApiMock.deleteSecureSshTrustedHost(...args),
     isSecureMaterialEntryAvailable: () =>
       secureSecretsApiMock.isSecureMaterialEntryAvailable(),
     checkSecureMaterialEntryAvailability: () =>
@@ -174,6 +183,8 @@ beforeEach(() => {
   secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
     providers: [LOCAL_PROVIDER],
     secrets: [],
+    projectDefaults: [],
+    sshTrustedHosts: [],
   })
 })
 
@@ -253,6 +264,72 @@ describe('SettingsSecrets', () => {
         .getAttribute('data-state')).toBe('active')
       expect(container.textContent).toContain('Private sources')
     })
+  })
+
+  it('adds a project-scoped trusted SSH host from the SSH hosts tab', async () => {
+    secureSecretsApiMock.createSecureSshTrustedHost.mockResolvedValue({
+      trustedHostId: 'ssh-host-1',
+      profileId: 'project-alpha',
+      alias: 'production-api',
+      hostName: '10.0.0.25',
+      port: 22,
+      username: 'deploy',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyFingerprint: 'SHA256:trusted',
+      createdAt: '2026-07-29T12:00:00.000Z',
+      updatedAt: '2026-07-29T12:00:00.000Z',
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'tab', { name: 'SSH hosts' })).toBeTruthy()
+    })
+    activateTab('SSH hosts')
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'production-api' },
+    })
+    fireEvent.change(getByLabelText(container, 'Host or address'), {
+      target: { value: '10.0.0.25' },
+    })
+    fireEvent.change(getByLabelText(container, 'Username'), {
+      target: { value: 'deploy' },
+    })
+    fireEvent.change(getByLabelText(container, 'Trusted public host key'), {
+      target: { value: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA' },
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Trust host' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.createSecureSshTrustedHost).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          profileId: 'project-alpha',
+          alias: 'production-api',
+          hostName: '10.0.0.25',
+          port: 22,
+          username: 'deploy',
+          hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA',
+        },
+      )
+    })
+  })
+
+  it('shows an actionable inline error for an incomplete SSH host', async () => {
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'tab', { name: 'SSH hosts' })).toBeTruthy()
+    })
+    activateTab('SSH hosts')
+    fireEvent.click(getByRole(container, 'button', { name: 'Trust host' }))
+
+    await waitFor(() => {
+      expect(getByRole(container, 'alert').textContent).toContain(
+        'Enter a project, alias, host, username, valid port, and public host key.',
+      )
+    })
+    expect(secureSecretsApiMock.createSecureSshTrustedHost).not.toHaveBeenCalled()
   })
 
   it('separates stored sources and bindings from task grants', async () => {

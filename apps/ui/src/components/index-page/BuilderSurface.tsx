@@ -66,7 +66,9 @@ import { getActiveLocalRemoteUpdateSnapshot } from '@/components/index-page/remo
 import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
 import {
   applySecureSessionProjectDefaults,
+  approveSecureSshHostTrustRequest,
   denySecureAccessRequest,
+  dismissSecureSshHostTrustRequest,
   fetchSecureSessionCatalog,
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
@@ -560,6 +562,11 @@ export function BuilderSurface({
   const securePendingRequestViews = useMemo(() => {
     return secureSessionSnapshot
       ? toSecureSessionSnapshotView(secureSessionSnapshot).pendingRequests
+      : []
+  }, [secureSessionSnapshot])
+  const securePendingSshTrustRequestViews = useMemo(() => {
+    return secureSessionSnapshot
+      ? toSecureSessionSnapshotView(secureSessionSnapshot).pendingSshTrustRequests ?? []
       : []
   }, [secureSessionSnapshot])
 
@@ -1368,6 +1375,95 @@ export function BuilderSurface({
     reportSecureMutationError,
   ])
 
+  const handleResolveSecureSshTrustRequest = useCallback(async (
+    sessionAgentId: string,
+    requestId: string,
+    decision: 'approve' | 'dismiss',
+  ) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
+    if (
+      !apiClient
+      || !client
+      || !principalSnapshot
+      || isRemoteOriginActive
+    ) return false
+
+    try {
+      let currentSnapshot = principalSnapshot
+      let nextSnapshot
+      try {
+        nextSnapshot = decision === 'approve'
+          ? await approveSecureSshHostTrustRequest(
+              apiClient,
+              sessionAgentId,
+              requestId,
+              currentSnapshot.revision,
+            )
+          : await dismissSecureSshHostTrustRequest(
+              apiClient,
+              sessionAgentId,
+              requestId,
+              currentSnapshot.revision,
+            )
+      } catch (error) {
+        if (
+          !(error instanceof SecureSessionUiError)
+          || (
+            error.code !== 'SECURE_STALE_REVISION'
+            && error.code !== 'SECURE_REQUEST_INVALID'
+          )
+        ) throw error
+        currentSnapshot = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        applySecureMutationResult(client, currentSnapshot)
+        if (!(currentSnapshot.pendingSshTrustRequests ?? []).some(
+          (request) => request.requestId === requestId,
+        )) return true
+        if (error.code === 'SECURE_REQUEST_INVALID') throw error
+        nextSnapshot = decision === 'approve'
+          ? await approveSecureSshHostTrustRequest(
+              apiClient,
+              sessionAgentId,
+              requestId,
+              currentSnapshot.revision,
+            )
+          : await dismissSecureSshHostTrustRequest(
+              apiClient,
+              sessionAgentId,
+              requestId,
+              currentSnapshot.revision,
+            )
+      }
+      applySecureMutationResult(client, nextSnapshot)
+      return true
+    } catch (error) {
+      reportSecureMutationError(client, sessionAgentId, error)
+      return false
+    }
+  }, [
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+  ])
+
+  const handleTrustSecureSshHost = useCallback((
+    sessionAgentId: string,
+    requestId: string,
+  ) => handleResolveSecureSshTrustRequest(sessionAgentId, requestId, 'approve'), [
+    handleResolveSecureSshTrustRequest,
+  ])
+
+  const handleDismissSecureSshTrustRequest = useCallback((
+    sessionAgentId: string,
+    requestId: string,
+  ) => handleResolveSecureSshTrustRequest(sessionAgentId, requestId, 'dismiss'), [
+    handleResolveSecureSshTrustRequest,
+  ])
+
   const handlePrivateSecureFulfillment = useCallback(async (
     sessionAgentId: string,
     requestId: string,
@@ -1523,6 +1619,9 @@ export function BuilderSurface({
       requests: isRemoteOriginActive
         ? []
         : securePendingRequestViews,
+      sshTrustRequests: isRemoteOriginActive
+        ? []
+        : securePendingSshTrustRequestViews,
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(!isRemoteOriginActive && secureSessionSnapshot
         ? {
@@ -1557,6 +1656,8 @@ export function BuilderSurface({
         && isSecureControlAvailable(secureBrowserControl?.authorized === true),
       onGrant: handleGrantSecureSession,
       onDeny: handleDenySecureRequest,
+      onTrustSshHost: handleTrustSecureSshHost,
+      onDismissSshTrustRequest: handleDismissSecureSshTrustRequest,
       ...(isActiveManager ? { onRevoke: handleRevokeSecureSession } : {}),
       ...(!isRemoteOriginActive && isPrivateSecureFulfillmentAvailable(
         secureBrowserControl?.privateEntryAvailable === true,
@@ -1580,7 +1681,9 @@ export function BuilderSurface({
     activeAgentId,
     activeOriginId,
     handleDenySecureRequest,
+    handleDismissSecureSshTrustRequest,
     handleGrantSecureSession,
+    handleTrustSecureSshHost,
     handlePrivateSecureFulfillment,
     handleCreateSecureBrowserPairing,
     handleClaimSecureBrowserPairing,
@@ -1592,6 +1695,7 @@ export function BuilderSurface({
     secureCatalog?.projectDefaults,
     secureSecretOptions,
     securePendingRequestViews,
+    securePendingSshTrustRequestViews,
     secureSessionAvailability,
     secureSessionSnapshot,
     secureSessionSnapshotView,

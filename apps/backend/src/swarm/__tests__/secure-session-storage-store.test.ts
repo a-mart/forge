@@ -796,6 +796,7 @@ describe("SecureSessionStore", () => {
       projectDefaultsDeleted: 0,
       secretsDeleted: 0,
       secretsUpdated: 0,
+      trustedSshHostsDeleted: 0,
     });
     expect(store.getAutomaticGrantPolicy("secret")).toEqual({
       kind: "all_projects",
@@ -845,7 +846,8 @@ describe("SecureSessionStore", () => {
     expect(store.deleteProjectSecretState("project-b")).toEqual({
       projectDefaultsDeleted: 2,
       secretsDeleted: 1,
-      secretsUpdated: 0
+      secretsUpdated: 0,
+      trustedSshHostsDeleted: 0
     });
     expect(store.getSecret("project-secret")).toBeNull();
     expect(store.getSecret("secret")).not.toBeNull();
@@ -928,7 +930,8 @@ describe("SecureSessionStore", () => {
     expect(store.deleteProjectSecretState("project-a")).toEqual({
       projectDefaultsDeleted: 1,
       secretsDeleted: 0,
-      secretsUpdated: 1
+      secretsUpdated: 1,
+      trustedSshHostsDeleted: 0
     });
     expect(store.getSecret(secret.secretId)).toEqual(expect.objectContaining({
       profileId: "project-b",
@@ -941,7 +944,8 @@ describe("SecureSessionStore", () => {
     expect(store.deleteProjectSecretState("project-b")).toEqual({
       projectDefaultsDeleted: 1,
       secretsDeleted: 1,
-      secretsUpdated: 0
+      secretsUpdated: 0,
+      trustedSshHostsDeleted: 0
     });
     expect(store.getSecret(secret.secretId)).toBeNull();
     expect(store.getSecret("disjoint-alias")).not.toBeNull();

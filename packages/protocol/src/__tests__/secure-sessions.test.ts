@@ -11,15 +11,19 @@ import {
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
   parseApplySecureSessionProjectDefaultsRequest,
+  parseCreateSecureSshTrustedHostRequest,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
   parseRequestSecureSecretAccessRequest,
+  parseRequestSecureSshHostTrustRequest,
   parseResolveSecureSecretAccessRequest,
+  parseResolveSecureSshHostTrustRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
   parseSecureSecretAutomaticGrantPolicy,
   parseSecureSecretLeaseSpec,
   parseSecureSecretScope,
+  parseUpdateSecureSshTrustedHostRequest,
   type ApplySecureSessionProjectDefaultsRequest,
   type SecureAccessRequestSummary,
   type SecureSecretBinding,
@@ -28,6 +32,8 @@ import {
   type SecureSecretProviderSummary,
   type SecureSecretProjectDefaultSummary,
   type SecureSecretSummary,
+  type SecureSshTrustedHostSummary,
+  type SecureSshTrustRequestSummary,
   type SecureSessionLeaseSummary,
   type SecureSessionSnapshotEvent,
   type ServerEvent,
@@ -212,6 +218,94 @@ describe('Secure Sessions protocol', () => {
       requestId: 'access-1',
       selectedSecretId: 'secret-api',
       decision: 'deny',
+    })).toThrow(SecureSessionsContractError)
+  })
+
+  it('parses strict SSH trusted-host catalog and agent proposal contracts', () => {
+    const hostKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestHostKey'
+
+    expect(parseCreateSecureSshTrustedHostRequest({
+      profileId: 'profile-1',
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKey,
+    })).toEqual({
+      profileId: 'profile-1',
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKey,
+    })
+    expect(parseUpdateSecureSshTrustedHostRequest({
+      port: 2222,
+      username: 'deploy',
+    })).toEqual({
+      port: 2222,
+      username: 'deploy',
+    })
+    expect(parseRequestSecureSshHostTrustRequest({
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAITestHostKey',
+      purposeSummary: 'Connect to the project deployment host',
+    })).toEqual({
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAITestHostKey',
+      purposeSummary: 'Connect to the project deployment host',
+    })
+    expect(parseResolveSecureSshHostTrustRequest({
+      baseRevision: 7,
+      requestId: 'ssh-request-1',
+      decision: 'approve',
+    })).toEqual({
+      baseRevision: 7,
+      requestId: 'ssh-request-1',
+      decision: 'approve',
+    })
+
+    for (const invalid of [
+      {},
+      { port: 0 },
+      { port: 65_536 },
+      { alias: 'next', unexpected: true },
+    ]) {
+      expect(() => parseUpdateSecureSshTrustedHostRequest(invalid))
+        .toThrow(SecureSessionsContractError)
+    }
+    expect(() => parseCreateSecureSshTrustedHostRequest({
+      profileId: 'profile-1',
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKey,
+      plaintextPassword: 'must-not-pass',
+    })).toThrow(SecureSessionsContractError)
+    expect(() => parseRequestSecureSshHostTrustRequest({
+      alias: 'ansible-p-azure',
+      hostName: '10.140.2.17',
+      port: 22,
+      username: 'ansibleuser',
+      hostKeyAlgorithm: 'ssh-ed25519',
+      hostKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAITestHostKey',
+      purposeSummary: 'Connect to the project deployment host',
+      privateKey: 'must-not-pass',
+    })).toThrow(SecureSessionsContractError)
+    expect(() => parseResolveSecureSshHostTrustRequest({
+      baseRevision: 7,
+      requestId: 'ssh-request-1',
+      decision: 'approve',
+      hostKeyBase64: 'must-not-pass',
     })).toThrow(SecureSessionsContractError)
   })
 
@@ -428,12 +522,15 @@ describe('Secure Sessions protocol', () => {
       | 'ciphertext'
       | 'sourceLocator'
       | 'keychainRef'
+      | 'hostKeyBase64'
     type ExposedMaterialField = Extract<
       | keyof SecureSecretProviderSummary
       | keyof SecureSecretSummary
       | keyof SecureSecretBinding
       | keyof SecureSessionLeaseSummary
-      | keyof SecureAccessRequestSummary,
+      | keyof SecureAccessRequestSummary
+      | keyof SecureSshTrustedHostSummary
+      | keyof SecureSshTrustRequestSummary,
       ForbiddenMaterialField
     >
 

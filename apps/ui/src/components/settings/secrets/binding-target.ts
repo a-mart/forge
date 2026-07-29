@@ -14,8 +14,10 @@ export function isValidBindingTarget(
   if (deliveryKind !== 'file') return true
 
   const root = '/run/forge-secure/bindings/'
+  const reservedSshRoot = `${root}.forge-ssh/`
   if (
     !target.startsWith(root)
+    || target.startsWith(reservedSshRoot)
     || target.includes('\\')
     || target.includes('\0')
     || target.endsWith('/')

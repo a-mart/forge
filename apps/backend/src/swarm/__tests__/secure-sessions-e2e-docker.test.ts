@@ -23,6 +23,9 @@ import {
 import {
   DockerSecureExecutionBackend,
 } from "../secure-sessions/execution/docker-secure-execution-backend.js";
+import {
+  SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER,
+} from "../secure-sessions/execution/secure-execution-backend.js";
 import type {
   SecureExecutionDelivery,
   SecureExecutionRequest,
@@ -159,6 +162,47 @@ function reflectedCommand(
 function environmentDelivery(canary: Buffer): SecureExecutionDelivery {
   return {
     environment: [{ name: "FORGE_E2E_CANARY", value: canary }],
+  };
+}
+
+async function readFixtureHostKey(
+  targetName: string,
+  keyPath: string,
+): Promise<string> {
+  const read = await runCommand("docker", [
+    "exec",
+    targetName,
+    "cat",
+    keyPath,
+  ]);
+  expect(read.exitCode).toBe(0);
+  const fields = read.stdout.toString("utf8").trim().split(/\s+/u);
+  expect(fields.length).toBeGreaterThanOrEqual(2);
+  return `${fields[0]} ${fields[1]}`;
+}
+
+function sshTrustDelivery(
+  alias: string,
+  targetIpAddress: string,
+  hostKey: string,
+  password: Buffer,
+): SecureExecutionDelivery {
+  return {
+    askpass: [{ targetName: "SSH_ASKPASS", value: password }],
+    sshTrust: {
+      config: Buffer.from([
+        `Host ${alias}`,
+        `  HostName ${targetIpAddress}`,
+        "  Port 22",
+        "  User forge",
+        `  HostKeyAlias ${alias}`,
+        `  UserKnownHostsFile ${SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER}`,
+        "  StrictHostKeyChecking yes",
+        "  CheckHostIP no",
+        "",
+      ].join("\n"), "utf8"),
+      knownHosts: Buffer.from(`${alias} ${hostKey}\n`, "utf8"),
+    },
   };
 }
 
@@ -509,6 +553,118 @@ dockerSuite(
       expect(filesystemReport.totalMatches).toBe(0);
       expect(filesystemReport.matches).toEqual([]);
     }, 180_000);
+
+    it("uses ordinary SSH aliases with strict trusted-host verification and rejects a wrong key", async () => {
+      const password = makeCanary();
+      const temporaryRoot = await mkdtemp(
+        join(tmpdir(), "forge-secure-e2e-ssh-trust-"),
+      );
+      const workspacePath = await realpath(temporaryRoot);
+      const targetName = uniqueManagedName("ssh-trust-target");
+      const target = await startFixtureTarget(
+        targetImage,
+        targetName,
+        password,
+      );
+      cleanups.push(async () => await removeManagedContainer(targetName));
+      const backend = new DockerSecureExecutionBackend({
+        image: runnerImage,
+        scope: uniqueManagedName("ssh-trust-scope"),
+      });
+      const task = makeTask(workspacePath, "ssh-trust");
+      cleanups.push(
+        async () => password.fill(0),
+        async () => await rm(temporaryRoot, { recursive: true, force: true }),
+        async () => await backend.destroyTask(task),
+      );
+
+      const correctHostKey = await readFixtureHostKey(
+        targetName,
+        "/etc/ssh/ssh_host_ed25519_key.pub",
+      );
+      const correct = await executeGuarded(
+        backend,
+        {
+          task,
+          command: {
+            executable: "bash",
+            args: [
+              "-lc",
+              [
+                "ssh",
+                "-o BatchMode=no",
+                "-o LogLevel=ERROR",
+                "-o ConnectTimeout=5",
+                "fixture-server",
+                "'printf trusted-host-ok'",
+              ].join(" "),
+            ],
+          },
+          delivery: sshTrustDelivery(
+            "fixture-server",
+            target.ipAddress,
+            correctHostKey,
+            password,
+          ),
+        },
+        password,
+        "ssh-trust-correct",
+      );
+      expect(correct.exitCode).toBe(0);
+      expect(correct.stdout.toString("utf8")).toBe("trusted-host-ok");
+
+      const generatedWrongKey = await runCommand("docker", [
+        "exec",
+        targetName,
+        "sh",
+        "-c",
+        "ssh-keygen -q -t ed25519 -N '' -f /tmp/forge-wrong-host-key && cat /tmp/forge-wrong-host-key.pub",
+      ]);
+      expect(generatedWrongKey.exitCode).toBe(0);
+      const wrongKeyFields = generatedWrongKey.stdout
+        .toString("utf8")
+        .trim()
+        .split(/\s+/u);
+      const wrongHostKey = `${wrongKeyFields[0]} ${wrongKeyFields[1]}`;
+      const wrong = await executeGuarded(
+        backend,
+        {
+          task,
+          command: {
+            executable: "bash",
+            args: [
+              "-lc",
+              [
+                "ssh",
+                "-o BatchMode=no",
+                "-o LogLevel=ERROR",
+                "-o ConnectTimeout=5",
+                "fixture-server",
+                "'touch /tmp/forge-wrong-key-command-ran'",
+              ].join(" "),
+            ],
+          },
+          delivery: sshTrustDelivery(
+            "fixture-server",
+            target.ipAddress,
+            wrongHostKey,
+            password,
+          ),
+        },
+        password,
+        "ssh-trust-wrong",
+      );
+      expect(wrong.exitCode).toBe(255);
+      const markerCheck = await runCommand("docker", [
+        "exec",
+        targetName,
+        "test",
+        "!",
+        "-e",
+        "/tmp/forge-wrong-key-command-ran",
+      ]);
+      expect(markerCheck.exitCode).toBe(0);
+    }, 90_000);
 
     it("destroys secret-bearing sandboxes on cancel, timeout, and background revocation", async () => {
       const canary = makeCanary();

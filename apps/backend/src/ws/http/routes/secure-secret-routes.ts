@@ -4,7 +4,10 @@ import {
   SecureSessionsContractError,
   parseSecureSecretBinding,
   parseSecureSecretAutomaticGrantPolicy,
+  parseCreateSecureSshTrustedHostRequest,
   parseSecureSecretScope,
+  parseUpdateSecureSshTrustedHostRequest,
+  type CreateSecureSshTrustedHostRequest,
   type SecureSecretAutomaticGrantPolicy,
   type SecureSecretBinding,
   type SecureSecretProviderSummary,
@@ -13,6 +16,8 @@ import {
   type SecureSecretRetention,
   type SecureSecretScope,
   type SecureSecretSummary,
+  type SecureSshTrustedHostSummary,
+  type UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -34,6 +39,8 @@ export const SECURE_ROUTE_ERROR_CODES = [
   "SECURE_PROVIDER_AUTH_REQUIRED",
   "SECURE_SECRET_NOT_FOUND",
   "SECURE_SECRET_ALIAS_CONFLICT",
+  "SECURE_SSH_HOST_KEY_CONFLICT",
+  "SECURE_SSH_HOST_NOT_FOUND",
   "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
   "SECURE_STALE_REVISION",
   "SECURE_OPERATION_FAILED",
@@ -115,6 +122,17 @@ export interface SecureSecretTransportService {
     input: UpdateSecureSecretInput,
   ): Promise<SecureSecretSummary>;
   deleteSecureSecret(secretId: string): Promise<void>;
+  listSecureSshTrustedHosts():
+    | Promise<SecureSshTrustedHostSummary[]>
+    | SecureSshTrustedHostSummary[];
+  createSecureSshTrustedHost(
+    input: CreateSecureSshTrustedHostRequest,
+  ): Promise<SecureSshTrustedHostSummary>;
+  updateSecureSshTrustedHost(
+    trustedHostId: string,
+    input: UpdateSecureSshTrustedHostRequest,
+  ): Promise<SecureSshTrustedHostSummary>;
+  deleteSecureSshTrustedHost(trustedHostId: string): Promise<boolean>;
 }
 
 export function createSecureSecretRoutes(options: {
@@ -278,6 +296,62 @@ export function createSecureSecretRoutes(options: {
             await options.service.importBitwardenSecureSecret(providerId, input),
           );
           return;
+        }
+
+        const sshTrustedHostsPath =
+          `${SECURE_SECRETS_PATH}/ssh-trusted-hosts`;
+        if (
+          request.method === "GET"
+          && requestUrl.pathname === sshTrustedHostsPath
+        ) {
+          sendSecureJson(
+            response,
+            200,
+            await options.service.listSecureSshTrustedHosts(),
+          );
+          return;
+        }
+        if (
+          request.method === "POST"
+          && requestUrl.pathname === sshTrustedHostsPath
+        ) {
+          const input = parseCreateSecureSshTrustedHostRequest(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            201,
+            await options.service.createSecureSshTrustedHost(input),
+          );
+          return;
+        }
+        const sshTrustedHostMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/ssh-trusted-hosts\/([^/]+)$/,
+        );
+        if (sshTrustedHostMatch) {
+          const trustedHostId = parsePathId(
+            sshTrustedHostMatch[1],
+            "trustedHostId",
+          );
+          if (request.method === "PATCH") {
+            const input = parseUpdateSecureSshTrustedHostRequest(
+              await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+            );
+            sendSecureJson(
+              response,
+              200,
+              await options.service.updateSecureSshTrustedHost(
+                trustedHostId,
+                input,
+              ),
+            );
+            return;
+          }
+          if (request.method === "DELETE") {
+            await options.service.deleteSecureSshTrustedHost(trustedHostId);
+            sendSecureEmpty(response, 204);
+            return;
+          }
         }
 
         if (request.method === "GET" && requestUrl.pathname === SECURE_SECRETS_PATH) {
@@ -720,6 +794,10 @@ function mapSecureRouteError(error: unknown): {
       return { code: "SECURE_STALE_REVISION", statusCode: 409 };
     case "SECURE_SECRET_ALIAS_CONFLICT":
       return { code: "SECURE_SECRET_ALIAS_CONFLICT", statusCode: 409 };
+    case "SECURE_SSH_HOST_KEY_CONFLICT":
+      return { code: "SECURE_SSH_HOST_KEY_CONFLICT", statusCode: 409 };
+    case "SECURE_SSH_HOST_NOT_FOUND":
+      return { code: "SECURE_SSH_HOST_NOT_FOUND", statusCode: 404 };
     case "SECURE_PROJECT_DEFAULT_LIMIT_REACHED":
       return { code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED", statusCode: 409 };
     case "SECURE_SOURCE_UNAVAILABLE":

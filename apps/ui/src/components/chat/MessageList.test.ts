@@ -511,6 +511,50 @@ describe('MessageList Secure Session attention', () => {
     )
   })
 
+  it('renders SSH host trust requests outside persisted transcript rows', () => {
+    const onTrustSshHost = vi.fn()
+    const onDismissSshTrustRequest = vi.fn()
+    render([], {
+      secureSessionRequests: {
+        sessionAgentId: 'manager',
+        availability: { state: 'available' },
+        requests: [],
+        sshTrustRequests: [{
+          requestId: 'ssh-trust-1',
+          alias: 'production-api',
+          hostName: '10.0.0.25',
+          port: 22,
+          username: 'deploy',
+          hostKeyAlgorithm: 'ssh-ed25519',
+          hostKeyFingerprint: 'SHA256:trusted',
+          purposeSummary: 'Deploy the verified release',
+          requestedByAgentId: 'worker-1',
+          requestedByDisplayName: 'Release worker',
+          createdAt: '2026-07-29T12:00:00.000Z',
+          expiresAt: null,
+        }],
+        secrets: [],
+        canApprove: true,
+        onGrant: vi.fn(),
+        onDeny: vi.fn(),
+        onTrustSshHost,
+        onDismissSshTrustRequest,
+      },
+    })
+
+    const attention = container.querySelector<HTMLElement>(
+      '[data-testid="secure-session-attention"]',
+    )
+    expect(attention?.textContent).toContain('Trust SSH host?')
+    expect(attention?.textContent).toContain('deploy@10.0.0.25:22')
+    expect(container.querySelector('[data-row-id]')).toBeNull()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(attention!, 'button', { name: 'Trust host' }))
+    })
+    expect(onTrustSshHost).toHaveBeenCalledWith('manager', 'ssh-trust-1')
+  })
+
   it('renders redacted output outside the transcript with dismiss and optional stop actions', () => {
     const onRevoke = vi.fn()
     render([], {

@@ -264,6 +264,46 @@ export interface SecureAccessRequestSummary {
   expiresAt: string | null
 }
 
+/**
+ * Project-scoped SSH connection metadata.
+ *
+ * Host keys are public trust material rather than secret material, but the
+ * encoded key blob is omitted from catalog and snapshot responses. Those
+ * read surfaces expose only the verified fingerprint needed to identify it.
+ */
+export interface SecureSshTrustedHostSummary {
+  trustedHostId: string
+  profileId: string
+  alias: string
+  hostName: string
+  port: number
+  username: string
+  hostKeyAlgorithm: string
+  hostKeyFingerprint: string
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * A host-trust proposal raised by an agent after it has observed an SSH host
+ * key. Approval stores the key for the project and makes it available to the
+ * manager-owned Secure Bash sandbox without putting it in chat or tool output.
+ */
+export interface SecureSshTrustRequestSummary {
+  requestId: string
+  alias: string
+  hostName: string
+  port: number
+  username: string
+  hostKeyAlgorithm: string
+  hostKeyFingerprint: string
+  purposeSummary: string
+  requestedByAgentId: string
+  requestedByDisplayName: string
+  createdAt: string
+  expiresAt: string | null
+}
+
 export type SecureSessionExecutionMode = 'standard' | 'secure'
 
 export type SecureSessionEnvironmentStatus =
@@ -341,6 +381,12 @@ export interface SecureSessionSnapshot {
   leases: SecureSessionLeaseSummary[]
   pendingRequests: SecureAccessRequestSummary[]
   /**
+   * Additive project SSH trust metadata. Older snapshots may omit these
+   * fields and clients must interpret omission as empty lists.
+   */
+  trustedSshHosts?: SecureSshTrustedHostSummary[]
+  pendingSshTrustRequests?: SecureSshTrustRequestSummary[]
+  /**
    * Additive runtime status. Older snapshots may omit it and clients must
    * interpret omission as no configured defaults.
    */
@@ -407,6 +453,43 @@ export interface ResolveSecureSecretAccessRequest {
   reason?: string
 }
 
+export interface RequestSecureSshHostTrustRequest {
+  alias: string
+  hostName: string
+  port: number
+  username: string
+  hostKeyAlgorithm: string
+  hostKeyBase64: string
+  purposeSummary: string
+}
+
+export interface CreateSecureSshTrustedHostRequest {
+  profileId: string
+  alias: string
+  hostName: string
+  port: number
+  username: string
+  hostKey: string
+}
+
+export interface UpdateSecureSshTrustedHostRequest {
+  alias?: string
+  hostName?: string
+  port?: number
+  username?: string
+  /**
+   * Omit the key to retain the currently trusted key. Supplying a different
+   * key is an explicit replacement through Settings.
+   */
+  hostKey?: string
+}
+
+export interface ResolveSecureSshHostTrustRequest {
+  baseRevision: number
+  requestId: string
+  decision: SecureSecretAccessDecision
+}
+
 export class SecureSessionsContractError extends Error {
   constructor(message: string) {
     super(`Invalid Secure Sessions input: ${message}`)
@@ -420,6 +503,10 @@ const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
 const SECURE_SESSIONS_MAX_GRANTS = 16
+const SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH = 128
+const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
+const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256
+const SECURE_SESSIONS_MAX_SSH_KEY_LENGTH = 20_000
 
 function isOneOf<const Values extends readonly string[]>(
   values: Values,
@@ -479,6 +566,15 @@ function boundedString(value: unknown, field: string, maximum: number): string {
 function nonNegativeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new SecureSessionsContractError(`${field} must be a non-negative safe integer`)
+  }
+  return value as number
+}
+
+function sshPort(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 65_535) {
+    throw new SecureSessionsContractError(
+      `${field} must be an integer from 1 to 65535`,
+    )
   }
   return value as number
 }
@@ -836,5 +932,174 @@ export function parseResolveSecureSecretAccessRequest(
     decision: input.decision,
     ...(selectedSecretId === undefined ? {} : { selectedSecretId }),
     ...(reason === undefined ? {} : { reason }),
+  }
+}
+
+export function parseCreateSecureSshTrustedHostRequest(
+  value: unknown,
+): CreateSecureSshTrustedHostRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(
+    input,
+    ['profileId', 'alias', 'hostName', 'port', 'username', 'hostKey'],
+    'request',
+  )
+  return {
+    profileId: boundedString(
+      input.profileId,
+      'request.profileId',
+      SECURE_SESSIONS_MAX_ID_LENGTH,
+    ),
+    alias: boundedString(
+      input.alias,
+      'request.alias',
+      SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH,
+    ),
+    hostName: boundedString(
+      input.hostName,
+      'request.hostName',
+      SECURE_SESSIONS_MAX_SSH_HOST_LENGTH,
+    ),
+    port: sshPort(input.port, 'request.port'),
+    username: boundedString(
+      input.username,
+      'request.username',
+      SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH,
+    ),
+    hostKey: boundedString(
+      input.hostKey,
+      'request.hostKey',
+      SECURE_SESSIONS_MAX_SSH_KEY_LENGTH,
+    ),
+  }
+}
+
+export function parseUpdateSecureSshTrustedHostRequest(
+  value: unknown,
+): UpdateSecureSshTrustedHostRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(
+    input,
+    ['alias', 'hostName', 'port', 'username', 'hostKey'],
+    'request',
+  )
+  if (Object.keys(input).length === 0) {
+    throw new SecureSessionsContractError(
+      'request must contain at least one SSH host field',
+    )
+  }
+  return {
+    ...(input.alias === undefined
+      ? {}
+      : {
+          alias: boundedString(
+            input.alias,
+            'request.alias',
+            SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH,
+          ),
+        }),
+    ...(input.hostName === undefined
+      ? {}
+      : {
+          hostName: boundedString(
+            input.hostName,
+            'request.hostName',
+            SECURE_SESSIONS_MAX_SSH_HOST_LENGTH,
+          ),
+        }),
+    ...(input.port === undefined
+      ? {}
+      : { port: sshPort(input.port, 'request.port') }),
+    ...(input.username === undefined
+      ? {}
+      : {
+          username: boundedString(
+            input.username,
+            'request.username',
+            SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH,
+          ),
+        }),
+    ...(input.hostKey === undefined
+      ? {}
+      : {
+          hostKey: boundedString(
+            input.hostKey,
+            'request.hostKey',
+            SECURE_SESSIONS_MAX_SSH_KEY_LENGTH,
+          ),
+        }),
+  }
+}
+
+export function parseRequestSecureSshHostTrustRequest(
+  value: unknown,
+): RequestSecureSshHostTrustRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(
+    input,
+    [
+      'alias',
+      'hostName',
+      'port',
+      'username',
+      'hostKeyAlgorithm',
+      'hostKeyBase64',
+      'purposeSummary',
+    ],
+    'request',
+  )
+  return {
+    alias: boundedString(
+      input.alias,
+      'request.alias',
+      SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH,
+    ),
+    hostName: boundedString(
+      input.hostName,
+      'request.hostName',
+      SECURE_SESSIONS_MAX_SSH_HOST_LENGTH,
+    ),
+    port: sshPort(input.port, 'request.port'),
+    username: boundedString(
+      input.username,
+      'request.username',
+      SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH,
+    ),
+    hostKeyAlgorithm: boundedString(
+      input.hostKeyAlgorithm,
+      'request.hostKeyAlgorithm',
+      128,
+    ),
+    hostKeyBase64: boundedString(
+      input.hostKeyBase64,
+      'request.hostKeyBase64',
+      16_384,
+    ),
+    purposeSummary: boundedString(
+      input.purposeSummary,
+      'request.purposeSummary',
+      SECURE_SESSIONS_MAX_PURPOSE_LENGTH,
+    ),
+  }
+}
+
+export function parseResolveSecureSshHostTrustRequest(
+  value: unknown,
+): ResolveSecureSshHostTrustRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(input, ['baseRevision', 'requestId', 'decision'], 'request')
+  if (input.decision !== 'approve' && input.decision !== 'deny') {
+    throw new SecureSessionsContractError(
+      'request.decision must be approve or deny',
+    )
+  }
+  return {
+    baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
+    requestId: boundedString(
+      input.requestId,
+      'request.requestId',
+      SECURE_SESSIONS_MAX_ID_LENGTH,
+    ),
+    decision: input.decision,
   }
 }

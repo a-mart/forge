@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
@@ -4130,6 +4131,270 @@ describe("SecureSessionsService", () => {
     );
     await harness.close();
   });
+
+  it("attributes a worker SSH trust proposal to the manager-owned session", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    harness.descriptors.set(worker.agentId, worker);
+    await harness.service.startSecureSession("manager-a");
+    const key = sshHostKey("worker-proposal");
+
+    await expect(harness.service.requestSecureSshHostTrust(
+      "worker-a",
+      "tool-ssh-trust",
+      {
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyBase64: key.base64,
+        purposeSummary: "Connect the delegated worker to the deployment host",
+      },
+    )).resolves.toBe("requested");
+    await expect(harness.service.requestSecureSshHostTrust(
+      "worker-a",
+      "tool-ssh-trust-retry",
+      {
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyBase64: key.base64,
+        purposeSummary: "Retry the same delegated SSH host proposal",
+      },
+    )).resolves.toBe("requested");
+
+    const manager = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(manager.pendingSshTrustRequests).toEqual([
+      expect.objectContaining({
+        alias: "deployment",
+        requestedByAgentId: "worker-a",
+        requestedByDisplayName: "worker-a",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyFingerprint: key.fingerprint,
+      }),
+    ]);
+    expect(JSON.stringify(manager)).not.toContain(key.base64);
+    expect(await harness.service.getSecureSessionSnapshot("worker-a")).toEqual(
+      manager,
+    );
+    await harness.close();
+  });
+
+  it("returns trusted for an exact existing host without creating a request", async () => {
+    const harness = createHarness();
+    const key = sshHostKey("already-trusted");
+    await harness.service.createSecureSshTrustedHost({
+      profileId: "profile-a",
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKey: `ssh-ed25519 ${key.base64}`,
+    });
+
+    await expect(harness.service.requestSecureSshHostTrust(
+      "manager-a",
+      "tool-existing",
+      {
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyBase64: key.base64,
+        purposeSummary: "Reconnect to the already trusted host",
+      },
+    )).resolves.toBe("trusted");
+    expect(
+      await harness.service.getSecureSessionSnapshot("manager-a"),
+    ).toEqual(expect.objectContaining({
+      pendingSshTrustRequests: [],
+      trustedSshHosts: [
+        expect.objectContaining({
+          alias: "deployment",
+          hostKeyFingerprint: key.fingerprint,
+        }),
+      ],
+    }));
+    await harness.close();
+  });
+
+  it("rolls back approval when an alias already has a different key", async () => {
+    const harness = createHarness();
+    const original = sshHostKey("original");
+    const replacement = sshHostKey("replacement");
+    await harness.service.createSecureSshTrustedHost({
+      profileId: "profile-a",
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKey: `ssh-ed25519 ${original.base64}`,
+    });
+    await harness.service.requestSecureSshHostTrust(
+      "manager-a",
+      "tool-key-change",
+      {
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyBase64: replacement.base64,
+        purposeSummary: "Reconnect after the server reported a changed key",
+      },
+    );
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingSshTrustRequests?.[0]?.requestId;
+    expect(requestId).toBeDefined();
+
+    await expect(harness.service.resolveSecureSshHostTrustRequest(
+      "manager-a",
+      {
+        baseRevision: pending.revision,
+        requestId: requestId!,
+        decision: "approve",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_SSH_HOST_KEY_CONFLICT" });
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.revision).toBe(pending.revision);
+    expect(after.pendingSshTrustRequests).toEqual(
+      pending.pendingSshTrustRequests,
+    );
+    expect(after.trustedSshHosts).toEqual([
+      expect.objectContaining({
+        alias: "deployment",
+        hostKeyFingerprint: original.fingerprint,
+      }),
+    ]);
+    expect(JSON.stringify(after)).not.toContain(original.base64);
+    expect(JSON.stringify(after)).not.toContain(replacement.base64);
+    await harness.close();
+  });
+
+  it("does not silently retarget an existing SSH alias with the same key", async () => {
+    const harness = createHarness();
+    const key = sshHostKey("shared-host-key");
+    await harness.service.createSecureSshTrustedHost({
+      profileId: "profile-a",
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKey: `ssh-ed25519 ${key.base64}`,
+    });
+    await harness.service.requestSecureSshHostTrust(
+      "manager-a",
+      "tool-retarget",
+      {
+        alias: "deployment",
+        hostName: "10.140.2.99",
+        port: 2222,
+        username: "other-user",
+        hostKeyAlgorithm: "ssh-ed25519",
+        hostKeyBase64: key.base64,
+        purposeSummary: "Connect the alias to a different endpoint",
+      },
+    );
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingSshTrustRequests?.[0]?.requestId;
+    expect(requestId).toBeDefined();
+
+    await expect(harness.service.resolveSecureSshHostTrustRequest(
+      "manager-a",
+      {
+        baseRevision: pending.revision,
+        requestId: requestId!,
+        decision: "approve",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_SSH_HOST_KEY_CONFLICT" });
+    expect(await harness.service.listSecureSshTrustedHosts()).toEqual([
+      expect.objectContaining({
+        alias: "deployment",
+        hostName: "10.140.2.17",
+        port: 22,
+        username: "ansibleuser",
+      }),
+    ]);
+    await harness.close();
+  });
+
+  it("injects current project SSH trust into the next manager or worker command", async () => {
+    const harness = createHarness();
+    const worker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    harness.descriptors.set(worker.agentId, worker);
+    const first = sshHostKey("first");
+    await harness.service.createSecureSshTrustedHost({
+      profileId: "profile-a",
+      alias: "deployment",
+      hostName: "10.140.2.17",
+      port: 22,
+      username: "ansibleuser",
+      hostKey: `ssh-ed25519 ${first.base64}`,
+    });
+    await harness.service.startSecureSession("manager-a");
+
+    await harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!.executeBash({
+      command: "manager-ssh",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+
+    const second = sshHostKey("second");
+    await harness.service.createSecureSshTrustedHost({
+      profileId: "profile-a",
+      alias: "database",
+      hostName: "10.140.2.18",
+      port: 2222,
+      username: "dbadmin",
+      hostKey: `ssh-ed25519 ${second.base64}`,
+    });
+    await harness.service.getSecureRuntimeBinding(worker)!.executeBash({
+      command: "worker-ssh",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+
+    expect(harness.execution.sshTrustDeliveries).toHaveLength(2);
+    expect(harness.execution.sshTrustDeliveries[0]?.config).toContain(
+      "Host deployment",
+    );
+    expect(harness.execution.sshTrustDeliveries[0]?.knownHosts).toContain(
+      `deployment ssh-ed25519 ${first.base64}`,
+    );
+    expect(harness.execution.sshTrustDeliveries[1]?.config).toContain(
+      "Host database",
+    );
+    expect(harness.execution.sshTrustDeliveries[1]?.config).toContain(
+      "StrictHostKeyChecking yes",
+    );
+    expect(harness.execution.sshTrustDeliveries[1]?.knownHosts).toContain(
+      `[database]:2222 ssh-ed25519 ${second.base64}`,
+    );
+    expect(harness.execution.executed.slice(-2)).toEqual([
+      "manager-a",
+      "manager-a",
+    ]);
+    await harness.close();
+  });
 });
 
 async function grant(
@@ -4383,6 +4648,10 @@ class FakeExecutionBackend implements SecureExecutionBackend {
   readonly ensured: string[] = [];
   readonly executed: string[] = [];
   readonly recoveryCalls: SecureExecutionTask[][] = [];
+  readonly sshTrustDeliveries: Array<{
+    config: string;
+    knownHosts: string;
+  }> = [];
   readonly destroyUnconfirmed = new Set<string>();
   private readonly blockedExecutions = new Map<
     string,
@@ -4459,6 +4728,14 @@ class FakeExecutionBackend implements SecureExecutionBackend {
   async execute(request: SecureExecutionRequest) {
     this.executed.push(request.task.taskId);
     this.lastDeliveryValue = request.delivery?.environment?.[0]?.value;
+    if (request.delivery?.sshTrust) {
+      this.sshTrustDeliveries.push({
+        config: Buffer.from(request.delivery.sshTrust.config).toString("utf8"),
+        knownHosts: Buffer.from(
+          request.delivery.sshTrust.knownHosts,
+        ).toString("utf8"),
+      });
+    }
     const command = request.command.args.at(-1);
     if (command === "throw-execution-timeout") {
       throw new SecureExecutionError("EXECUTION_TIMEOUT");
@@ -4596,4 +4873,21 @@ function workerDescriptor(
         }
       : {}),
   } as AgentDescriptor;
+}
+
+function sshHostKey(marker: string): {
+  base64: string;
+  fingerprint: string;
+} {
+  const algorithm = Buffer.from("ssh-ed25519", "utf8");
+  const payload = Buffer.from(marker, "utf8");
+  const blob = Buffer.alloc(4 + algorithm.byteLength + payload.byteLength);
+  blob.writeUInt32BE(algorithm.byteLength, 0);
+  algorithm.copy(blob, 4);
+  payload.copy(blob, 4 + algorithm.byteLength);
+  return {
+    base64: blob.toString("base64"),
+    fingerprint:
+      `SHA256:${createHash("sha256").update(blob).digest("base64").replace(/=+$/u, "")}`,
+  };
 }

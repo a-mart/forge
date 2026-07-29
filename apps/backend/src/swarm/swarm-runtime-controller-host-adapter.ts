@@ -105,6 +105,7 @@ export function createSwarmRuntimeControllerHost(
     saveLearning: toolHost.saveLearning?.bind(toolHost),
     getSecureSessionAgentView: toolHost.getSecureSessionAgentView?.bind(toolHost),
     requestSecureSecretAccess: toolHost.requestSecureSecretAccess?.bind(toolHost),
+    requestSecureSshHostTrust: toolHost.requestSecureSshHostTrust?.bind(toolHost),
     getSecureRuntimeBinding: toolHost.getSecureRuntimeBinding?.bind(toolHost),
     recordToolSideEffect: toolHost.recordToolSideEffect?.bind(toolHost),
     listCodexMcpTools: toolHost.listCodexMcpTools?.bind(toolHost),

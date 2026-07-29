@@ -1,9 +1,12 @@
 import type {
   ApplySecureSessionProjectDefaultsRequest,
+  CreateSecureSshTrustedHostRequest,
+  RequestSecureSshHostTrustRequest,
   SecureSecretBinding,
   SecureSecretLeaseKind,
   SecureSecretRetention,
   SecureSecretScope,
+  UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
 import type {
   SecureSessionAgentView as ToolSecureSessionAgentView,
@@ -102,5 +105,14 @@ export type RequestSecureSecretAccessInput = {
   | { leaseKind: Exclude<SecureSecretLeaseKind, "timed"> }
   | { leaseKind: "timed"; durationSeconds: number }
 );
+
+export type CreateSecureSshTrustedHostInput =
+  CreateSecureSshTrustedHostRequest;
+
+export type UpdateSecureSshTrustedHostInput =
+  UpdateSecureSshTrustedHostRequest;
+
+export type RequestSecureSshHostTrustInput =
+  RequestSecureSshHostTrustRequest;
 
 export type SecureSessionAgentView = ToolSecureSessionAgentView;

@@ -15,5 +15,11 @@ describe('SecretBindingsPanel file targets', () => {
     expect(isValidBindingTarget('file', '/run/forge-secure/bindings')).toBe(false)
     expect(isValidBindingTarget('file', '/run/forge-secure/bindings/../token')).toBe(false)
     expect(isValidBindingTarget('file', '/run/forge-secure/bindings//token')).toBe(false)
+    expect(
+      isValidBindingTarget(
+        'file',
+        '/run/forge-secure/bindings/.forge-ssh/known_hosts',
+      ),
+    ).toBe(false)
   })
 })
