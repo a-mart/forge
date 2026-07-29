@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS } from '@forge/protocol'
+import {
+  EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+} from '@forge/protocol'
 import { Runtime } from '../src/payload/service-worker/index.js'
 import { fakeChrome } from './fakes.js'
 
@@ -52,6 +55,43 @@ describe('service-worker execution safety evidence', () => {
     expect(chrome.attached).toEqual(new Set())
   })
 
+  it('returns canonical bounded screenshot overflow through the worker and releases debugger authority', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
+    const screenshot = oversizedPng(EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES)
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: `target-tab-${String(target.tabId)}`, type: 'page', attached: true } }
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: `frame-tab-${String(target.tabId)}` } } }
+      if (method === 'Runtime.evaluate') {
+        if (params?.expression === 'window.devicePixelRatio') return { result: { type: 'number', value: 1 } }
+        return { result: { type: 'object', value: { url: 'https://fixture.invalid/', title: 'Fixture', loading: false, visibleText: '', interactiveElements: [] } } }
+      }
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 400, clientHeight: 300, pageX: 0, pageY: 0, scale: 1 } }
+      if (method === 'Page.captureScreenshot') return { data: screenshot }
+      if (method === 'Accessibility.getFullAXTree') throw new Error('AX must not run after the early screenshot bound')
+      return {}
+    }
+    vi.stubGlobal('chrome', chrome)
+    const { execute } = await authorizedRuntime()
+
+    await expect(execute({
+      protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'snapshot', input: {}, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    })).resolves.toMatchObject({
+      protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'snapshot', ok: false,
+      error: {
+        code: 'response-too-large', retryable: false,
+        details: {
+          limitation: 'screenshot-only-envelope-overflow', screenshotByteUnit: 'decoded-png',
+          screenshotBytes: 24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+          maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, maximumByteUnit: 'decoded-png',
+        },
+      },
+    })
+    expect(chrome.attached).toEqual(new Set())
+  })
+
   it('keeps failures after page-command dispatch free of attach-conflict evidence', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
@@ -93,6 +133,14 @@ function clickRequest(): Record<string, unknown> {
     input: { x: 1, y: 1, timeoutMs: 1_000 },
     deadlineAt: new Date(Date.now() + 5_000).toISOString(),
   }
+}
+
+function oversizedPng(additionalBytes: number): string {
+  const bytes = new Uint8Array(24 + additionalBytes)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  new DataView(bytes.buffer).setUint32(16, 4)
+  new DataView(bytes.buffer).setUint32(20, 3)
+  return Buffer.from(bytes).toString('base64')
 }
 
 function navigateRequest(): Record<string, unknown> {

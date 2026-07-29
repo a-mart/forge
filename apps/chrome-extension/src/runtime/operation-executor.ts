@@ -7,7 +7,9 @@ import {
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_VIEWPORT_MAX_DIMENSION,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
   EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES,
+  externalChromeScreenshotOverflowDetails,
   type BrowserActionTimelineEntry,
   type BrowserAutomationErrorCode,
   type BrowserAutomationFailure,
@@ -21,7 +23,6 @@ import type { ChromeTab } from './chrome-api.js'
 import { DebuggerController, type DebuggerRoute } from './debugger-controller.js'
 
 const POLL_MS = 50
-const MAX_SCREENSHOT_BYTES = 192 * 1_024
 const MAX_OPERATION_RESULT_BYTES = EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES - EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES
 const MAX_AX_NODES = 200
 
@@ -222,8 +223,18 @@ export class ExternalChromeOperationExecutor {
     if (typeof capture.data !== 'string' || capture.data.length === 0) throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
     const bytes = base64Bytes(capture.data)
     if (bytes === 0) throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
-    if (bytes > MAX_SCREENSHOT_BYTES) {
-      throw new ExternalChromeOperationError('response-too-large', 'External Chrome screenshot exceeds the 192 KiB relay limit.', false, { screenshotBytes: bytes, maximumBytes: MAX_SCREENSHOT_BYTES })
+    if (bytes > EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES) {
+      throw new ExternalChromeOperationError(
+        'response-too-large',
+        'External Chrome screenshot exceeds the decoded PNG byte limit.',
+        false,
+        externalChromeScreenshotOverflowDetails(
+          bytes,
+          'decoded-png',
+          EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+          'decoded-png',
+        ),
+      )
     }
     const dimensions = pngDimensions(capture.data) ?? { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
     const axResults = await Promise.all(routes.map((route) => this.command(params, authority, route, 'Accessibility.getFullAXTree').catch(() => ({ nodes: [] }))))

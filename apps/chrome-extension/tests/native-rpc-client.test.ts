@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { EXTERNAL_CHROME_MAX_MESSAGE_BYTES, parseExternalChromeJsonRpcFrame } from '@forge/protocol'
+import {
+  EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+  externalChromeScreenshotOverflowDetails,
+  parseExternalChromeJsonRpcFrame,
+} from '@forge/protocol'
 import { NativeRpcClient, type NativeRpcScheduler } from '../src/runtime/native-rpc-client.js'
 import { FakePort } from './fakes.js'
 
@@ -106,6 +111,58 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     const response = parseExternalChromeJsonRpcFrame(JSON.stringify(port.sent.at(-1)), { expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1 })
     expect(response).toMatchObject({ result: { ok: true, result: { compaction: { omitted: { interactiveElements: expect.any(Number) } } } } })
     expect(new TextEncoder().encode(JSON.stringify(port.sent.at(-1))).byteLength).toBeLessThanOrEqual(256 * 1_024 - 16 * 1_024)
+    client.stop()
+  })
+
+  it('delivers bounded canonical screenshot overflow failures through the shared parser', async () => {
+    const scheduler = new FakeScheduler()
+    const port = welcomePort()
+    const client = new NativeRpcClient({
+      connect: () => port,
+      extensionInstanceId: 'instance', chromeVersion: '125', scheduler,
+      onRequest: async () => ({
+        protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-snapshot', leaseEpoch: 1,
+        tabId: 7, operation: 'snapshot', ok: false as const,
+        error: {
+          code: 'response-too-large' as const,
+          message: 'External Chrome screenshot exceeds the decoded PNG byte limit.', retryable: false,
+          details: externalChromeScreenshotOverflowDetails(
+            24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+            'decoded-png', EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, 'decoded-png',
+          ),
+        },
+      }),
+    })
+    client.start()
+    await Promise.resolve()
+    port.emitMessage({
+      jsonrpc: '2.0', id: 'desktop-snapshot-overflow', method: 'forge.browser.execute',
+      params: {
+        protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-snapshot', leaseEpoch: 1, tabId: 7,
+        operation: 'snapshot', input: {}, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+      },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    const response = parseExternalChromeJsonRpcFrame(JSON.stringify(port.sent.at(-1)), {
+      expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1,
+    })
+    expect(response).toMatchObject({
+      id: 'desktop-snapshot-overflow',
+      result: {
+        ok: false, operation: 'snapshot',
+        error: {
+          code: 'response-too-large', retryable: false,
+          details: {
+            limitation: 'screenshot-only-envelope-overflow', screenshotByteUnit: 'decoded-png',
+            screenshotBytes: 24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+            maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, maximumByteUnit: 'decoded-png',
+          },
+        },
+      },
+    })
+    expect(new TextEncoder().encode(JSON.stringify(port.sent.at(-1))).byteLength).toBeLessThanOrEqual(EXTERNAL_CHROME_MAX_MESSAGE_BYTES)
+    expect(port.disconnected).toBe(false)
     client.stop()
   })
 

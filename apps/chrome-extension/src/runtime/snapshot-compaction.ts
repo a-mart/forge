@@ -1,5 +1,6 @@
 import {
   EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES,
+  externalChromeScreenshotOverflowDetails,
   type BrowserAutomationResultByOperation,
   type BrowserSnapshotResult,
   type ExternalChromeExecuteResult,
@@ -55,11 +56,12 @@ function failureForScreenshotOverflow(execute: SnapshotExecuteResult, screenshot
       code: 'response-too-large',
       message: 'External Chrome screenshot alone exceeds the negotiated response envelope.',
       retryable: false,
-      details: {
-        limitation: 'screenshot-only-envelope-overflow',
+      details: externalChromeScreenshotOverflowDetails(
         screenshotBytes,
+        'base64-utf8',
         maximumBytes,
-      },
+        'json-rpc-envelope-utf8',
+      ),
     },
   } as ExternalChromeExecuteResult
 }

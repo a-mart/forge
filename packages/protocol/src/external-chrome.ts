@@ -49,6 +49,28 @@ export interface ExternalChromeRendezvousDocument {
 export const EXTERNAL_CHROME_MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024
 /** Native relay negotiation currently selects 256 KiB; keep this shared for envelope budgeting. */
 export const EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES = 256 * 1_024
+/** Maximum raw decoded PNG bytes accepted before snapshot envelope compaction. */
+export const EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES = 192 * 1_024
+/** Stable limitation subtype for a screenshot that cannot fit without dropping the image. */
+export const EXTERNAL_CHROME_SCREENSHOT_ONLY_OVERFLOW_LIMITATION = 'screenshot-only-envelope-overflow' as const
+export const EXTERNAL_CHROME_SCREENSHOT_BYTE_UNITS = ['decoded-png', 'base64-utf8', 'json-rpc-envelope-utf8'] as const
+export type ExternalChromeScreenshotByteUnit = (typeof EXTERNAL_CHROME_SCREENSHOT_BYTE_UNITS)[number]
+
+export function externalChromeScreenshotOverflowDetails(
+  screenshotBytes: number,
+  screenshotByteUnit: ExternalChromeScreenshotByteUnit,
+  maximumBytes: number,
+  maximumByteUnit: ExternalChromeScreenshotByteUnit,
+): Record<string, string | number> {
+  return {
+    limitation: EXTERNAL_CHROME_SCREENSHOT_ONLY_OVERFLOW_LIMITATION,
+    screenshotBytes,
+    screenshotByteUnit,
+    maximumBytes,
+    maximumByteUnit,
+  }
+}
+
 /** Reserved headroom for transport evolution and authenticated relay framing. */
 export const EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES = 16 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES = 64 * 1_024 * 1_024

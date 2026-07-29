@@ -443,6 +443,34 @@ describe('AutomaticBrowserHost', () => {
     expect(external.acquisitions).toHaveLength(2)
   })
 
+  it('keeps screenshot overflow read-only failures replay-safe through policy formatting', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const original = request('snapshot', {}, 'chrome-tab-1')
+    external.executionResults.push({
+      response: failure({ ...original, tabId: 'chrome-tab-1' } as BrowserAutomationRequest, 'response-too-large', {
+        limitation: 'screenshot-only-envelope-overflow', screenshotBytes: 196_632, screenshotByteUnit: 'decoded-png',
+        maximumBytes: 196_608, maximumByteUnit: 'decoded-png',
+      }),
+      failure: { phase: 'execution', mutationState: 'not-started' },
+    })
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('chrome-tab-1', 'external-chrome')], 'chrome-tab-1')])
+
+    await expect(host.perform(original)).resolves.toMatchObject({
+      ok: false, tabId: 'chrome-tab-1',
+      error: {
+        code: 'response-too-large', retryable: false,
+        details: {
+          limitation: 'screenshot-only-envelope-overflow', screenshotByteUnit: 'decoded-png',
+          mutationState: 'not-started', noReplay: false,
+        },
+      },
+    })
+    expect(external.authorityReleases).toHaveLength(1)
+    expect(managed.requests).toHaveLength(0)
+  })
+
   it('returns the original no-replay failure when post-mutation cleanup also fails', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
@@ -614,11 +642,11 @@ function resultFor(operation: BrowserAutomationOperation, tabId: string): unknow
   }
 }
 
-function failure(requestValue: BrowserAutomationRequest, code: BrowserAutomationFailure['code']): BrowserAutomationResponse {
+function failure(requestValue: BrowserAutomationRequest, code: BrowserAutomationFailure['code'], details?: NonNullable<BrowserAutomationFailure['details']>): BrowserAutomationResponse {
   return {
     requestId: requestValue.requestId, sessionAgentId: requestValue.sessionAgentId, profileId: requestValue.profileId,
     tabId: requestValue.tabId, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration,
-    operation: requestValue.operation, ok: false, error: { code, message: code, retryable: true }, elapsedMs: 1,
+    operation: requestValue.operation, ok: false, error: { code, message: code, retryable: code !== 'response-too-large', ...(details ? { details } : {}) }, elapsedMs: 1,
   }
 }
 

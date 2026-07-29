@@ -107,6 +107,36 @@ describe("browser automation tools", () => {
     }
   });
 
+  it("preserves canonical screenshot overflow details in bounded snapshot tool failures", async () => {
+    const invoke = vi.fn(async () => ({
+      ok: false as const,
+      operation: "snapshot" as const,
+      error: {
+        code: "response-too-large" as const,
+        message: "External Chrome screenshot exceeds the decoded PNG byte limit.",
+        retryable: false,
+        details: {
+          limitation: "screenshot-only-envelope-overflow",
+          screenshotBytes: 196_632,
+          screenshotByteUnit: "decoded-png",
+          maximumBytes: 196_608,
+          maximumByteUnit: "decoded-png",
+        },
+      },
+    }));
+    const tool = byName(buildBrowserAutomationTools(host(invoke), descriptor()), "browser_snapshot");
+    const result = await tool.execute("call-overflow", {}, undefined, undefined, undefined as never) as {
+      content: Array<{ type: string; text?: string }>;
+      details: unknown;
+      isError?: boolean;
+    };
+    expect(result).toMatchObject({
+      isError: true,
+      details: { ok: false, operation: "snapshot", error: { code: "response-too-large", retryable: false, details: { limitation: "screenshot-only-envelope-overflow", screenshotByteUnit: "decoded-png" } } },
+    });
+    expect(result.content[0]?.text).toContain("screenshot-only-envelope-overflow");
+  });
+
   it("returns typed invalid-input failures without invoking the host", async () => {
     const invoke = vi.fn();
     const tool = byName(buildBrowserAutomationTools(host(invoke), descriptor()), "browser_click");
