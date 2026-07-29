@@ -71,6 +71,7 @@ describe('Secure Sessions protocol', () => {
       providerId: provider.providerId,
       displayAlias: 'github/work',
       displayName: 'Work GitHub credential',
+      note: 'Used for release automation.',
       scope: { kind: 'profile', profileId: 'profile-1' },
       retention: 'saved',
       bindings: [{ deliveryKind: 'environment', targetName: 'GITHUB_TOKEN' }],
@@ -92,6 +93,7 @@ describe('Secure Sessions protocol', () => {
     } satisfies SecureSecretCatalog
 
     expect(catalog.secrets[0]?.displayAlias).toBe('github/work')
+    expect(catalog.secrets[0]?.note).toBe('Used for release automation.')
     expect(catalog.projectDefaults).toEqual([expect.objectContaining({
       profileId: 'profile-1',
       secretId: 'secret-api',

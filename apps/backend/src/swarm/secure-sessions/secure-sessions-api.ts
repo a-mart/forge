@@ -26,6 +26,7 @@ export interface UpdateBitwardenSecureSecretProviderCredentialInput {
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;
+  note?: string;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial: string;
   bindings?: SecureSecretBinding[];
@@ -46,6 +47,7 @@ export interface ImportBitwardenSecureSecretInput {
 export interface UpdateSecureSecretInput {
   displayAlias?: string;
   displayName?: string | null;
+  note?: string | null;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial?: string;
   bindings?: SecureSecretBinding[];

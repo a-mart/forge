@@ -122,6 +122,10 @@ function BuilderSecretsSettings({
     ),
     [catalog.projectDefaults, projectProfileIds],
   )
+  const secretsReady =
+    readiness?.available === true
+    && materialEntryAvailable
+    && catalog.providers.every((provider) => provider.status === 'available')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -316,7 +320,12 @@ function BuilderSecretsSettings({
           Loading secure sources…
         </div>
       ) : (
-        <Tabs defaultValue="sources" className="gap-5">
+        <Tabs
+          defaultValue={
+            secretsReady ? 'secrets' : 'sources'
+          }
+          className="gap-5"
+        >
           <TabsList aria-label="Secret settings sections">
             <TabsTrigger value="sources" className="gap-1.5">
               <Database className="size-3.5" />

@@ -1142,6 +1142,7 @@ export class SecureSessionsService {
             providerId: LOCAL_PROVIDER_ID,
             displayAlias,
             displayName: optionalBounded(input.displayName, 256),
+            note: optionalBounded(input.note, 2_000),
             ...scope,
             retention: input.retention ?? "saved",
             sourceLocator: "local",
@@ -1296,6 +1297,9 @@ export class SecureSessionsService {
               displayName: input.displayName === undefined
                 ? existing.displayName
                 : optionalBounded(input.displayName, 256),
+              note: input.note === undefined
+                ? existing.note
+                : optionalBounded(input.note, 2_000),
               ...nextScope,
               retention: nextRetention,
               sourceLocator: existing.sourceLocator,
@@ -3762,6 +3766,7 @@ export class SecureSessionsService {
       providerId: secret.providerId,
       displayAlias: secret.displayAlias,
       displayName: secret.displayName,
+      note: secret.note,
       scope: toPublicScope(secret),
       retention: secret.retention,
       bindings: store.listBindings(secret.secretId).map(toPublicBinding),

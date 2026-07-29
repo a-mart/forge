@@ -209,6 +209,7 @@ describe('secure secrets API', () => {
     await createLocalSecret(client, {
       displayAlias: 'github/work',
       displayName: 'GitHub work token',
+      note: 'Used by release automation.',
       material: rawSecret,
       scope: {
         kind: 'profiles',
@@ -221,6 +222,7 @@ describe('secure secrets API', () => {
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Forge-Secure-Control'))
       .toBe('test-secure-control-token-that-is-long-enough')
     expect(requestBody).toContain('"encryptedMaterial":"ciphertext-only"')
+    expect(requestBody).toContain('"note":"Used by release automation."')
     expect(requestBody).toContain(
       '"scope":{"kind":"profiles","profileIds":["project-alpha","project-beta"]}',
     )
@@ -343,11 +345,14 @@ describe('secure secrets API', () => {
     }))
     const client = makeClient(fetchMock)
 
-    await updateSecureSecret(client, 'secret-1', { displayName: 'Updated' })
+    await updateSecureSecret(client, 'secret-1', {
+      displayName: 'Updated',
+      note: null,
+    })
 
     expect(encryptLocalValue).not.toHaveBeenCalled()
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body).toBe(
-      JSON.stringify({ displayName: 'Updated' }),
+      JSON.stringify({ displayName: 'Updated', note: null }),
     )
   })
 

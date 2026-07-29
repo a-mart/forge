@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -80,6 +81,7 @@ export function SecretCatalogPanel({
   const firstProfileId = initialProfileId ?? profiles[0]?.profileId ?? ''
   const [displayAlias, setDisplayAlias] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [note, setNote] = useState('')
   const [material, setMaterial] = useState('')
   const [localScopeKind, setLocalScopeKind] = useState<SecretScopeKind>(
     profiles.length > 0 ? 'projects' : 'instance',
@@ -108,6 +110,7 @@ export function SecretCatalogPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editAlias, setEditAlias] = useState('')
   const [editName, setEditName] = useState('')
+  const [editNote, setEditNote] = useState('')
   const [replacementMaterial, setReplacementMaterial] = useState('')
   const [editScopeKind, setEditScopeKind] = useState<SecretScopeKind>('instance')
   const [editScopeProfileIds, setEditScopeProfileIds] =
@@ -286,12 +289,14 @@ export function SecretCatalogPanel({
       const created = await createLocalSecret(apiClient, {
         displayAlias: displayAlias.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
         material: materialForSubmission,
         scope,
       })
       saved = true
       setDisplayAlias('')
       setDisplayName('')
+      setNote('')
       setLocalAutomaticProfileIds(new Set())
       setLocalEveryProject(false)
       if (automaticGrantPolicy.kind !== 'none') {
@@ -411,6 +416,7 @@ export function SecretCatalogPanel({
     setEditingId(secret.secretId)
     setEditAlias(secret.displayAlias)
     setEditName(secret.displayName ?? '')
+    setEditNote(secret.note ?? '')
     setReplacementMaterial('')
     setEditScopeKind(scopeKindFor(secret.scope))
     setEditScopeProfileIds(new Set(scopeProfileIds(secret.scope)))
@@ -426,6 +432,7 @@ export function SecretCatalogPanel({
     setEditingId(null)
     setEditAlias('')
     setEditName('')
+    setEditNote('')
     setReplacementMaterial('')
     setEditScopeKind('instance')
     setEditScopeProfileIds(new Set())
@@ -479,6 +486,7 @@ export function SecretCatalogPanel({
       await updateSecureSecret(apiClient, secret.secretId, {
         displayAlias: editAlias.trim(),
         displayName: editName.trim() || null,
+        note: editNote.trim() || null,
         ...(materialForSubmission ? { material: materialForSubmission } : {}),
         scope,
       })
@@ -576,6 +584,16 @@ export function SecretCatalogPanel({
                           />
                         </Field>
                       </div>
+                      <Field label="Note (optional)" htmlFor={`edit-note-${secret.secretId}`}>
+                        <Textarea
+                          id={`edit-note-${secret.secretId}`}
+                          value={editNote}
+                          onChange={(event) => setEditNote(event.target.value)}
+                          placeholder="What this secret is for or when to use it"
+                          maxLength={2000}
+                          disabled={isBusy}
+                        />
+                      </Field>
                       <SecretScopeFields
                         idPrefix={`edit-${secret.secretId}`}
                         profiles={profiles}
@@ -698,6 +716,11 @@ export function SecretCatalogPanel({
                         </div>
                         {secret.displayName ? (
                           <p className="text-sm text-muted-foreground">{secret.displayName}</p>
+                        ) : null}
+                        {secret.note ? (
+                          <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                            {secret.note}
+                          </p>
                         ) : null}
                         <p className="text-xs text-muted-foreground">
                           {providerLabel(secret.providerId, providers)}
@@ -896,6 +919,19 @@ export function SecretCatalogPanel({
               />
             </Field>
           </div>
+          <Field label="Note (optional)" htmlFor="local-secret-note">
+            <Textarea
+              id="local-secret-note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="What this secret is for or when to use it"
+              maxLength={2000}
+              disabled={!materialEntryAvailable || busyKey !== null}
+            />
+            <p className="text-xs text-muted-foreground">
+              Visible in Forge settings. Do not include the secret value.
+            </p>
+          </Field>
           <Field label="Private value" htmlFor="local-secret-material">
             <Input
               id="local-secret-material"

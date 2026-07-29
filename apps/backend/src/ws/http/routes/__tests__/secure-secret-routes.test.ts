@@ -39,6 +39,7 @@ const secret: SecureSecretSummary = {
   providerId: "provider-1",
   displayAlias: "DEPLOY_TOKEN",
   displayName: "Deploy token",
+  note: "Used by release automation.",
   scope: { kind: "instance" },
   retention: "saved",
   bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
@@ -101,6 +102,7 @@ describe("secure secret routes", () => {
     const materialCiphertext = Buffer.from("ciphertext-material").toString("base64");
     const created = await postJson(`${server.baseUrl}/api/secure-secrets/local`, {
       displayAlias: "DEPLOY_TOKEN",
+      note: " Used by release automation. ",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
       scope: {
@@ -112,6 +114,7 @@ describe("secure secret routes", () => {
     expect(created.status).toBe(201);
     expect(service.createLocalSecureSecret).toHaveBeenCalledWith({
       displayAlias: "DEPLOY_TOKEN",
+      note: "Used by release automation.",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
       scope: {
@@ -190,7 +193,10 @@ describe("secure secret routes", () => {
     const updated = await fetch(`${server.baseUrl}/api/secure-secrets/secret-1`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ displayAlias: "NEW_ALIAS" }),
+      body: JSON.stringify({
+        displayAlias: "NEW_ALIAS",
+        note: null,
+      }),
     });
     const deleted = await fetch(`${server.baseUrl}/api/secure-secrets/secret-1`, {
       method: "DELETE",
@@ -210,6 +216,7 @@ describe("secure secret routes", () => {
     });
     expect(service.updateSecureSecret).toHaveBeenCalledWith("secret-1", {
       displayAlias: "NEW_ALIAS",
+      note: null,
     });
     expect(service.deleteSecureSecret).toHaveBeenCalledWith("secret-1");
     expect(deleted.headers.get("cache-control")).toBe("no-store");
@@ -319,6 +326,14 @@ describe("secure secret routes", () => {
       headers: { "content-type": "application/json" },
       body: "{",
     });
+    const oversizedNote = await postJson(
+      `${server.baseUrl}/api/secure-secrets/local`,
+      {
+        displayAlias: "TOKEN",
+        note: "x".repeat(2_001),
+        encryptedMaterial: Buffer.from("ciphertext").toString("base64"),
+      },
+    );
     const invalidScope = await postJson(
       `${server.baseUrl}/api/secure-secrets/providers/provider-1/secrets`,
       {
@@ -328,7 +343,13 @@ describe("secure secret routes", () => {
       },
     );
 
-    for (const response of [plaintext, rawToken, malformed, invalidScope]) {
+    for (const response of [
+      plaintext,
+      rawToken,
+      malformed,
+      oversizedNote,
+      invalidScope,
+    ]) {
       expect(response.status).toBe(400);
       const body = await response.text();
       expect(body).toContain("SECURE_REQUEST_INVALID");

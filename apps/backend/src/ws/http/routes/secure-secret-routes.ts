@@ -22,6 +22,7 @@ const SECURE_SECRET_PROVIDERS_PATH = `${SECURE_SECRETS_PATH}/providers`;
 const MAX_SECURE_REQUEST_BYTES = 256 * 1024;
 const MAX_ID_LENGTH = 256;
 const MAX_LABEL_LENGTH = 256;
+const MAX_NOTE_LENGTH = 2_000;
 const MAX_ENCRYPTED_PAYLOAD_LENGTH = 2 * 1024 * 1024;
 
 export const SECURE_ROUTE_ERROR_CODES = [
@@ -43,6 +44,7 @@ export type SecureRouteErrorCode = (typeof SECURE_ROUTE_ERROR_CODES)[number];
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;
+  note?: string;
   encryptedMaterial: string;
   bindings?: SecureSecretBinding[];
   scope?: SecureSecretScope;
@@ -52,6 +54,7 @@ export interface CreateLocalSecureSecretInput {
 export interface UpdateSecureSecretInput {
   displayAlias?: string;
   displayName?: string | null;
+  note?: string | null;
   encryptedMaterial?: string;
   bindings?: SecureSecretBinding[];
   scope?: SecureSecretScope;
@@ -442,6 +445,7 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
   assertKnownKeys(input, [
     "displayAlias",
     "displayName",
+    "note",
     "encryptedMaterial",
     "bindings",
     "scope",
@@ -452,6 +456,9 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
     ...(input.displayName === undefined
       ? {}
       : { displayName: parseLabel(input.displayName, "displayName") }),
+    ...(input.note === undefined
+      ? {}
+      : { note: parseNote(input.note) }),
     encryptedMaterial: parseEncryptedPayload(input.encryptedMaterial, "encryptedMaterial"),
     ...(input.bindings === undefined
       ? {}
@@ -479,6 +486,7 @@ function parseUpdateSecretInput(value: unknown): UpdateSecureSecretInput {
   assertKnownKeys(input, [
     "displayAlias",
     "displayName",
+    "note",
     "encryptedMaterial",
     "bindings",
     "scope",
@@ -499,6 +507,9 @@ function parseUpdateSecretInput(value: unknown): UpdateSecureSecretInput {
               ? null
               : parseLabel(input.displayName, "displayName"),
         }),
+    ...(input.note === undefined
+      ? {}
+      : { note: input.note === null ? null : parseNote(input.note) }),
     ...(input.encryptedMaterial === undefined
       ? {}
       : {
@@ -597,6 +608,18 @@ function parseLabel(value: unknown, field: string): string {
     || value.includes("\0")
   ) {
     throw new SecureSessionsContractError(`${field} is invalid`);
+  }
+  return value.trim();
+}
+
+function parseNote(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.trim().length === 0
+    || value.length > MAX_NOTE_LENGTH
+    || value.includes("\0")
+  ) {
+    throw new SecureSessionsContractError("note is invalid");
   }
   return value.trim();
 }

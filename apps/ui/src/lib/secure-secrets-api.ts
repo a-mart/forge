@@ -34,6 +34,7 @@ export type SecureSecretsCatalog =
 export interface CreateLocalSecretInput {
   displayAlias: string
   displayName?: string
+  note?: string
   material: string
   scope: SecureSecretScope
 }
@@ -41,6 +42,7 @@ export interface CreateLocalSecretInput {
 export interface UpdateSecureSecretInput {
   displayAlias?: string
   displayName?: string | null
+  note?: string | null
   material?: string
   bindings?: SecureSecretBinding[]
   scope?: SecureSecretScope
@@ -225,6 +227,7 @@ export async function createLocalSecret(
     body: JSON.stringify({
       displayAlias: input.displayAlias,
       ...(input.displayName ? { displayName: input.displayName } : {}),
+      ...(input.note ? { note: input.note } : {}),
       encryptedMaterial,
       scope: input.scope,
     }),
@@ -250,6 +253,7 @@ export async function updateSecureSecret(
       body: JSON.stringify({
         ...(input.displayAlias === undefined ? {} : { displayAlias: input.displayAlias }),
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+        ...(input.note === undefined ? {} : { note: input.note }),
         ...(input.bindings === undefined ? {} : { bindings: input.bindings }),
         ...(input.scope === undefined ? {} : { scope: input.scope }),
         ...(encryptedMaterial === undefined ? {} : { encryptedMaterial }),

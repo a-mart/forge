@@ -66,6 +66,7 @@ import {
 
 const MAX_ID_LENGTH = 256;
 const MAX_DISPLAY_LENGTH = 256;
+const MAX_NOTE_LENGTH = 2000;
 const MAX_SOURCE_LOCATOR_LENGTH = 4096;
 const MAX_TARGET_LENGTH = 4096;
 const MAX_PURPOSE_LENGTH = 2000;
@@ -500,7 +501,7 @@ export class SecureSessionStore {
   getEncryptedSecret(secretId: string): SecureSessionEncryptedSecret | null {
     assertId(secretId, "secret ID");
     const row = this.database.prepare(`
-      SELECT secret_id, provider_id, display_alias, display_name, scope_kind, profile_id,
+      SELECT secret_id, provider_id, display_alias, display_name, note, scope_kind, profile_id,
         retention, source_locator, encrypted_material, created_at, updated_at
       FROM secure_session_secret WHERE secret_id = ?
     `).get(secretId) as EncryptedSecretRow | undefined;
@@ -567,14 +568,15 @@ export class SecureSessionStore {
       }
       this.database.prepare(`
         INSERT INTO secure_session_secret (
-          secret_id, provider_id, display_alias, display_name, scope_kind, profile_id,
+          secret_id, provider_id, display_alias, display_name, note, scope_kind, profile_id,
           retention, source_locator, encrypted_material, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.secretId,
         input.providerId,
         input.displayAlias,
         normalized.displayName,
+        normalized.note,
         input.scopeKind,
         normalized.profileId,
         input.retention,
@@ -627,13 +629,14 @@ export class SecureSessionStore {
       }
       this.database.prepare(`
         UPDATE secure_session_secret
-        SET provider_id = ?, display_alias = ?, display_name = ?, scope_kind = ?,
+        SET provider_id = ?, display_alias = ?, display_name = ?, note = ?, scope_kind = ?,
           profile_id = ?, retention = ?, source_locator = ?, encrypted_material = ?, updated_at = ?
         WHERE secret_id = ?
       `).run(
         input.providerId,
         input.displayAlias,
         normalized.displayName,
+        normalized.note,
         input.scopeKind,
         normalized.profileId,
         input.retention,
@@ -2240,6 +2243,7 @@ export class SecureSessionStore {
 
   private normalizeSecretInput(input: CreateSecureSessionSecretInput): {
     displayName: string | null;
+    note: string | null;
     profileId: string | null;
     profileIds: string[];
     encryptedMaterial: Buffer | null;
@@ -2248,6 +2252,7 @@ export class SecureSessionStore {
     assertId(input.providerId, "provider ID");
     assertBoundedText(input.displayAlias, "secret display alias", MAX_DISPLAY_LENGTH);
     const displayName = normalizeOptionalText(input.displayName, "secret display name", MAX_DISPLAY_LENGTH);
+    const note = normalizeOptionalText(input.note, "secret note", MAX_NOTE_LENGTH);
     assertEnum(input.scopeKind, SECURE_SESSION_SCOPE_KINDS, "secret scope");
     const profileIds = input.scopeKind === "instance"
       ? []
@@ -2289,6 +2294,7 @@ export class SecureSessionStore {
     }
     return {
       displayName,
+      note,
       profileId,
       profileIds,
       encryptedMaterial: encryptedMaterial === null ? null : Buffer.from(encryptedMaterial)
@@ -2952,7 +2958,7 @@ export class SecureSessionStore {
   }
 }
 
-const SECRET_SELECT = `SELECT secret_id, provider_id, display_alias, display_name,
+const SECRET_SELECT = `SELECT secret_id, provider_id, display_alias, display_name, note,
   scope_kind, profile_id, retention, source_locator, created_at, updated_at
   FROM secure_session_secret`;
 const BINDING_SELECT = `SELECT binding_id, secret_id, delivery_kind, target_name,
@@ -2982,6 +2988,7 @@ interface SecretRow {
   provider_id: string;
   display_alias: string;
   display_name: string | null;
+  note: string | null;
   scope_kind: SecureSessionSecret["scopeKind"];
   profile_id: string | null;
   retention: SecureSessionSecret["retention"];
@@ -3160,6 +3167,7 @@ function mapSecretMetadata(
     providerId: row.provider_id,
     displayAlias: row.display_alias,
     displayName: row.display_name,
+    note: row.note,
     scopeKind: row.scope_kind,
     profileId: row.profile_id,
     profileIds: [],

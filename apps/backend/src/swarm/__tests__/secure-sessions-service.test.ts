@@ -74,9 +74,11 @@ describe("SecureSessionsService", () => {
     const harness = createHarness();
     const created = await harness.service.createLocalSecureSecret({
       displayAlias: "server/password",
+      note: "Rotated by the infrastructure team.",
       encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
     });
 
+    expect(created.note).toBe("Rotated by the infrastructure team.");
     expect(created.bindings).toEqual([expect.objectContaining({
       deliveryKind: "environment",
       targetName: expect.stringMatching(/^FORGE_SECRET_SERVER_PASSWORD_[A-Z0-9]+$/),
@@ -85,7 +87,9 @@ describe("SecureSessionsService", () => {
 
     const renamed = await harness.service.updateSecureSecret(created.secretId, {
       displayAlias: "renamed/password",
+      note: null,
     });
+    expect(renamed.note).toBeNull();
     expect(renamed.bindings).toEqual([originalBinding]);
     await harness.close();
   });

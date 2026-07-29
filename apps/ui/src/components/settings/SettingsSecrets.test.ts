@@ -88,6 +88,7 @@ const SECRET_SUMMARY = {
   secretId: 'secret-1',
   displayAlias: 'github/work',
   displayName: 'GitHub work token',
+  note: 'Used by release automation.',
   providerId: 'local',
   scope: { kind: 'instance' as const },
   retention: 'saved' as const,
@@ -161,8 +162,8 @@ beforeEach(() => {
   secureSecretsApiMock.unlockSecureMaterialEntry.mockReset()
   secureSecretsApiMock.unlockSecureMaterialEntry.mockResolvedValue(true)
   secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
-    available: true,
-    code: 'available',
+    available: false,
+    code: 'image_unavailable',
   })
   secureSecretsApiMock.testSecureSecretProvider.mockReset()
   secureSecretsApiMock.testSecureSecretProvider.mockResolvedValue({
@@ -228,6 +229,30 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('Local Builder only')
     expect(container.textContent).toContain('disabled for remote origins')
     expect(secureSecretsApiMock.fetchSecureSecretsCatalog).not.toHaveBeenCalled()
+  })
+
+  it('opens saved secrets by default when Secure Sessions are ready', async () => {
+    secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
+      available: true,
+      code: 'available',
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'tab', { name: 'Secrets' })
+        .getAttribute('data-state')).toBe('active')
+      expect(container.textContent).toContain('Add local secret')
+    })
+  })
+
+  it('keeps sources first while Secure Sessions are not ready', async () => {
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'tab', { name: 'Sources' })
+        .getAttribute('data-state')).toBe('active')
+      expect(container.textContent).toContain('Private sources')
+    })
   })
 
   it('separates stored sources and bindings from task grants', async () => {
@@ -466,9 +491,13 @@ describe('SettingsSecrets', () => {
     activateTab('Secrets')
 
     const aliasInput = getByLabelText(container, 'Alias') as HTMLInputElement
+    const noteInput = getByLabelText(container, 'Note (optional)') as HTMLTextAreaElement
     const materialInput = getByLabelText(container, 'Private value') as HTMLInputElement
     const rawSecret = 'dom-secret-canary-value'
     fireEvent.change(aliasInput, { target: { value: 'github/work' } })
+    fireEvent.change(noteInput, {
+      target: { value: 'Used by release automation.' },
+    })
     fireEvent.change(materialInput, { target: { value: rawSecret } })
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
@@ -481,6 +510,7 @@ describe('SettingsSecrets', () => {
     expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
+        note: 'Used by release automation.',
         material: rawSecret,
         scope: { kind: 'profile', profileId: 'project-alpha' },
       }),
@@ -489,6 +519,7 @@ describe('SettingsSecrets', () => {
     resolveCreate?.(SECRET_SUMMARY)
     await waitFor(() => {
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
+      expect(noteInput.value).toBe('')
     })
   })
 
@@ -1004,8 +1035,20 @@ describe('SettingsSecrets', () => {
     })
     activateTab('Secrets')
     expect(container.textContent).toContain('2 projects')
+    expect(container.textContent).toContain('Used by release automation.')
 
     fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
+    const editNote = await waitFor(() => {
+      const textarea = container.querySelector(
+        '#edit-note-secret-1',
+      ) as HTMLTextAreaElement | null
+      expect(textarea).toBeTruthy()
+      return textarea!
+    })
+    expect(editNote.value).toBe('Used by release automation.')
+    fireEvent.change(editNote, {
+      target: { value: 'Used for deploys and rollbacks.' },
+    })
     let scopeTrigger: Element | null = null
     await waitFor(() => {
       scopeTrigger = container.querySelector('#edit-secret-1-scope')
@@ -1038,6 +1081,7 @@ describe('SettingsSecrets', () => {
         expect.anything(),
         'secret-1',
         expect.objectContaining({
+          note: 'Used for deploys and rollbacks.',
           scope: {
             kind: 'profiles',
             profileIds: ['project-alpha', 'project-beta'],

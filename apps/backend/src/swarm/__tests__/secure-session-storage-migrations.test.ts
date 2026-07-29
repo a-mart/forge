@@ -80,12 +80,23 @@ describe("secure session migrations", () => {
     runSecureSessionMigrations(database);
 
     expect(database.prepare(`
-      SELECT secret_id, profile_id
-      FROM secure_session_secret_scope_profile
+      SELECT scoped.secret_id, scoped.profile_id, secret.note
+      FROM secure_session_secret_scope_profile scoped
+      JOIN secure_session_secret secret USING (secret_id)
     `).all()).toEqual([{
       secret_id: "secret",
-      profile_id: "project-a"
+      profile_id: "project-a",
+      note: null
     }]);
+    database.prepare(`
+      UPDATE secure_session_secret SET note = ? WHERE secret_id = 'secret'
+    `).run("Migrated catalog note");
+    expect(database.prepare(`
+      SELECT note FROM secure_session_secret WHERE secret_id = 'secret'
+    `).get()).toEqual({ note: "Migrated catalog note" });
+    expect(() => database.prepare(`
+      UPDATE secure_session_secret SET note = ? WHERE secret_id = 'secret'
+    `).run("x".repeat(2_001))).toThrow();
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });

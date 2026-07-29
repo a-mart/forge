@@ -155,6 +155,11 @@ export interface SecureSecretSummary {
   providerId: string
   displayAlias: string
   displayName: string | null
+  /**
+   * Optional operator-authored catalog metadata. This is never secret
+   * material and is not injected into Secure Bash.
+   */
+  note?: string | null
   scope: SecureSecretScope
   retention: SecureSecretRetention
   bindings: SecureSecretBinding[]

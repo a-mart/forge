@@ -878,6 +878,18 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         END;
       `);
     }
+  },
+  {
+    version: 7,
+    name: "secret_catalog_notes",
+    up(database) {
+      database.exec(`
+        ALTER TABLE secure_session_secret
+        ADD COLUMN note TEXT CHECK (
+          note IS NULL OR length(note) BETWEEN 1 AND 2000
+        );
+      `);
+    }
   }
 ];
 

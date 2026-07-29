@@ -27,6 +27,7 @@ describe("SecureSessionStore", () => {
         providerId: "local",
         displayAlias: "deploy-token",
         displayName: "Deploy token",
+        note: "Used by the production deploy workflow.",
         scopeKind: "instance",
         retention: "saved",
         sourceLocator: "local:secret-1",
@@ -44,12 +45,14 @@ describe("SecureSessionStore", () => {
       expect.objectContaining({
         secretId: "secret-1",
         displayAlias: "deploy-token",
+        note: "Used by the production deploy workflow.",
         retention: "saved"
       })
     ]);
     expect(store.listSecrets()[0]).not.toHaveProperty("encryptedMaterial");
     expect(store.getEncryptedSecret("secret-1")).toEqual(expect.objectContaining({
       sourceLocator: "local:secret-1",
+      note: "Used by the production deploy workflow.",
       encryptedMaterial: Buffer.from("safe-storage-ciphertext")
     }));
 
@@ -591,6 +594,7 @@ describe("SecureSessionStore", () => {
       secretId: "multi-project-secret",
       providerId: "local",
       displayAlias: "multi-project",
+      note: "Persists across Forge restarts.",
       scopeKind: "profile",
       profileIds: ["profile-b", "profile-a"],
       retention: "saved",
@@ -638,6 +642,7 @@ describe("SecureSessionStore", () => {
     ]);
     expect(second.getSecret("multi-project-secret")).toEqual(
       expect.objectContaining({
+        note: "Persists across Forge restarts.",
         profileId: "profile-a",
         profileIds: ["profile-a", "profile-b"]
       })

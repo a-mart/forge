@@ -127,6 +127,7 @@ export interface SecureSessionSecret {
   providerId: string;
   displayAlias: string;
   displayName: string | null;
+  note: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId: string | null;
   profileIds: string[];
@@ -178,6 +179,7 @@ export interface CreateSecureSessionSecretInput {
   providerId: string;
   displayAlias: string;
   displayName?: string | null;
+  note?: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId?: string | null;
   profileIds?: string[];
