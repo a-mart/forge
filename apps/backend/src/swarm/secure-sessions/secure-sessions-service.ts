@@ -83,6 +83,7 @@ import type {
 
 const LOCAL_PROVIDER_ID = "forge-local-keychain";
 const MAX_CIPHERTEXT_BYTES = 1024 * 1024;
+const MAX_TRUSTED_BROWSER_PRIVATE_ENTRY_BYTES = 256 * 1024;
 const REQUEST_TTL_MS = 30 * 60 * 1000;
 const SECURE_FILE_ROOT = "/run/forge-secure/bindings/";
 
@@ -245,6 +246,27 @@ export class SecureSessionsService {
     } catch (error) {
       throw this.publicError(error);
     } finally {
+      encrypted?.fill(0);
+    }
+  }
+
+  /**
+   * Trusted HTTP browser entry is intentionally scoped to an approved browser
+   * and reaches only the Electron-owned vault. The value never enters agent
+   * state, normal tools, conversation history, or persisted catalog metadata.
+   */
+  async encryptTrustedBrowserPrivateEntry(
+    encodedValue: string,
+  ): Promise<string> {
+    const plaintext = decodeTrustedBrowserPrivateEntry(encodedValue);
+    let encrypted: Buffer | null = null;
+    try {
+      encrypted = await this.options.cipher.encrypt(plaintext);
+      return encrypted.toString("base64");
+    } catch (error) {
+      throw this.publicError(error);
+    } finally {
+      plaintext.fill(0);
       encrypted?.fill(0);
     }
   }
@@ -4926,6 +4948,25 @@ function validateDuration(value: number | null | undefined): number {
     throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
   }
   return value as number;
+}
+
+function decodeTrustedBrowserPrivateEntry(value: string): Buffer {
+  const maxEncodedLength = Math.ceil(
+    MAX_TRUSTED_BROWSER_PRIVATE_ENTRY_BYTES / 3,
+  ) * 4;
+  if (!value || value.length > maxEncodedLength || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (
+    decoded.byteLength === 0
+    || decoded.byteLength > MAX_TRUSTED_BROWSER_PRIVATE_ENTRY_BYTES
+    || decoded.toString("base64") !== value
+  ) {
+    decoded.fill(0);
+    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  }
+  return decoded;
 }
 
 function sourcePublicCode(code: SecureSourceError["code"]): SecureSessionsServiceErrorCode {

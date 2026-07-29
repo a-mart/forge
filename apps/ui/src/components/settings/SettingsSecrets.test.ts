@@ -283,6 +283,7 @@ describe('SettingsSecrets', () => {
           authorized: false,
           privateEntryAvailable: false,
           secureContextRequired: false,
+          privateEntryTransport: 'trusted_http',
         }), { status: 200 })
       }
       return new Response('{}', { status: 404 })
@@ -293,7 +294,7 @@ describe('SettingsSecrets', () => {
       expect(container.textContent).toContain(
         'You are viewing Forge in a web browser',
       )
-      expect(container.textContent).toContain('Not paired yet')
+      expect(container.textContent).toContain('Trusted network mode')
       expect(getByRole(container, 'button', {
         name: 'Pair this browser',
       })).toBeTruthy()

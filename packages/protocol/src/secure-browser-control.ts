@@ -60,6 +60,12 @@ export interface SecureBrowserControlStatus {
   authorized: boolean
   privateEntryAvailable: boolean
   secureContextRequired: boolean
+  /**
+   * HTTPS browsers encrypt a private value before it reaches the Builder
+   * backend. Trusted HTTP browser entry is intended for a known private
+   * network and is sealed directly by the paired Forge Desktop vault.
+   */
+  privateEntryTransport?: 'browser_encrypted' | 'trusted_http'
   device?: SecureBrowserDeviceDescriptor
 }
 

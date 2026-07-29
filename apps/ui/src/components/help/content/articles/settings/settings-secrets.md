@@ -27,15 +27,21 @@ Open **Secrets**, enter an alias, optional display name, and value. Choose its p
 scope and, when appropriate, select projects under **Automatically grant in**. In
 Desktop, the private bridge encrypts the value directly. A paired HTTPS browser
 encrypts it to a one-use Desktop key before the Builder backend relays it. Electron
-then seals it with the operating-system-backed secure storage service. Forge never
-displays the value again.
+then seals it with the operating-system-backed secure storage service. A paired browser
+on a known trusted VPN can instead use **Trusted network mode** over HTTP. It carries
+the value only to the paired Electron vault for immediate sealing and never into chat,
+agent tools, prompts, or saved secret metadata. HTTPS remains the stronger option;
+never use HTTP mode on a public or untrusted network. Forge never displays the value
+again.
 
 To use private entry from the same running Builder in another browser, choose
 **Pair this browser**, compare the six-digit code, and approve it under
 **Settings → Secrets → Paired browsers** in Forge Desktop. Pairing is per browser,
 persists across restarts, and can be revoked from Desktop. It does not expose the
-Desktop master capability. Remote browser entry requires HTTPS; Remote Projects and
-Collaboration remain separate hosts and do not inherit the local Desktop vault.
+Desktop master capability. Remote browser entry uses HTTPS by default and can use the
+explicit trusted-network HTTP path when the connection is your known private VPN.
+Remote Projects and Collaboration remain separate hosts and do not inherit the local
+Desktop vault.
 
 ## Connect Bitwarden
 
@@ -114,8 +120,9 @@ delivery, and lease. The tool cannot include or receive protected material. Choo
 vault. The requested alias, delivery, and lease remain fixed; the prefilled display
 name is editable. The dialog defaults to the current project and can instead save to
 all projects or make the secret automatic in the current project. Choose **Use for
-this task only** when you do not want a reusable saved secret. A paired HTTPS browser
-uses the same dialog and continues automatically after Desktop approves the pairing.
+this task only** when you do not want a reusable saved secret. A paired browser uses
+the same dialog and continues automatically after Desktop approves the pairing; the
+browser clearly labels the trusted-network HTTP path when it is active.
 
 The missing-secret dialog currently saves local-vault material. Import a Bitwarden
 reference under **Settings → Secrets** first when the source should be Bitwarden; the

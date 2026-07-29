@@ -28,6 +28,9 @@ function fakeVault(): SecureBrowserVaultService {
     encryptRemotePrivateEntry: vi.fn(async () =>
       Buffer.from("desktop-ciphertext").toString("base64")
     ),
+    encryptTrustedBrowserPrivateEntry: vi.fn(async () =>
+      Buffer.from("desktop-trusted-http-ciphertext").toString("base64")
+    ),
   };
 }
 
@@ -156,7 +159,61 @@ describe("secure browser control routes", () => {
     );
   });
 
-  it("fails closed when Desktop control or a secure browser context is unavailable", async () => {
+  it("allows a paired trusted HTTP browser to send a bounded private entry only to Desktop", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-trusted-http-"));
+    const service = new SecureBrowserAccessService({ dataDir });
+    const vault = fakeVault();
+    const server = await createRouteServer(createSecureBrowserControlRoutes({
+      accessService: service,
+      vaultService: vault,
+      secureControlAvailable: true,
+    }));
+    const origin = "http://10.128.4.7:47188";
+
+    const created = await postJson(
+      `${server.baseUrl}/api/secure-browser-control/pairing/requests`,
+      { deviceId: "trusted-http-browser", deviceName: "Trusted VPN browser" },
+      { origin },
+    );
+    expect(created.status).toBe(201);
+    const pairing = await created.json() as {
+      requestId: string;
+      claimSecret: string;
+    };
+    await service.approvePairing(pairing.requestId);
+    const claimed = await postJson(
+      `${server.baseUrl}/api/secure-browser-control/pairing/requests/${encodeURIComponent(pairing.requestId)}/claim`,
+      { claimSecret: pairing.claimSecret },
+      { origin },
+    );
+    const cookie = claimed.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(cookie).toContain("forge_secure_browser=");
+
+    const status = await fetch(
+      `${server.baseUrl}/api/secure-browser-control/status`,
+      { headers: { origin, cookie } },
+    );
+    expect(await status.json()).toMatchObject({
+      authorized: true,
+      privateEntryTransport: "trusted_http",
+    });
+
+    const rawValue = "private-http-value";
+    const trustedEntry = await postJson(
+      `${server.baseUrl}/api/secure-browser-control/private-entry/trusted-http`,
+      { encodedValue: Buffer.from(rawValue).toString("base64") },
+      { origin, cookie },
+    );
+    expect(trustedEntry.status).toBe(200);
+    expect(await trustedEntry.json()).toEqual({
+      encryptedMaterial: Buffer.from("desktop-trusted-http-ciphertext").toString("base64"),
+    });
+    expect(vault.encryptTrustedBrowserPrivateEntry).toHaveBeenCalledWith(
+      Buffer.from(rawValue).toString("base64"),
+    );
+  });
+
+  it("fails closed when Desktop control is unavailable", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-unavailable-"));
     const service = new SecureBrowserAccessService({ dataDir });
     const server = await createRouteServer(createSecureBrowserControlRoutes({
@@ -179,7 +236,8 @@ describe("secure browser control routes", () => {
       available: false,
       authorized: false,
       privateEntryAvailable: false,
-      secureContextRequired: true,
+      secureContextRequired: false,
+      privateEntryTransport: "trusted_http",
     });
   });
 });

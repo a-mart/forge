@@ -565,6 +565,9 @@ For Electron development with simultaneous browser access, run
 The Electron window continues to use its loopback backend bootstrap while the
 remote browser derives the backend hostname from the address it opened and
 connects on port `47287`. The development UI is available on port `47188`.
-Remote secure-browser pairing and private secret entry require an HTTPS origin;
-plain HTTP remains suitable only for non-private development access on a trusted
-network.
+Remote secure-browser pairing supports HTTPS and, for a known trusted private network
+such as a personal VPN, the explicit **Trusted network mode** shown in the browser UI.
+HTTPS keeps the browser-encrypted private-entry path. The HTTP mode sends a bounded
+value only to the paired Electron vault for immediate operating-system sealing; it
+never enters chat, tools, prompts, or persisted secret metadata. Do not use HTTP mode
+on a public or untrusted network.

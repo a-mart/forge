@@ -69,6 +69,10 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     return this.secureSessions.encryptRemotePrivateEntry(deviceId, sealedEntry);
   }
 
+  encryptTrustedBrowserPrivateEntry(encodedValue: string): Promise<string> {
+    return this.secureSessions.encryptTrustedBrowserPrivateEntry(encodedValue);
+  }
+
   connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary> {
