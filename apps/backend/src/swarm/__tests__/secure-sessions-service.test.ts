@@ -30,6 +30,19 @@ const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
 
 describe("SecureSessionsService", () => {
+  it("seals a bounded trusted-browser private entry", async () => {
+    const harness = createHarness();
+    const encodedValue = Buffer.from(ALPHA).toString("base64");
+
+    await expect(
+      harness.service.encryptTrustedBrowserPrivateEntry(encodedValue),
+    ).resolves.toBe(encodedValue);
+    await expect(
+      harness.service.encryptTrustedBrowserPrivateEntry(`${encodedValue}=`),
+    ).rejects.toThrow("SECURE_REQUEST_INVALID");
+    await harness.close();
+  });
+
   it("persists local key rotation without revoking the newly active lease", async () => {
     const harness = createHarness({
       rotatedLocalCiphertext: "current-local-ciphertext",

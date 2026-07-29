@@ -115,19 +115,28 @@ mode; a future remote backend must have its own explicit trust and transport con
 
 ## Add a private source
 
-Open **Settings → Secrets** in Forge Desktop or a paired HTTPS browser connected to
-that same running local Builder. Desktop private entry uses its direct bridge. A
-paired browser encrypts the value to a one-use Electron key before the Builder backend
+Open **Settings → Secrets** in Forge Desktop or a paired browser connected to that
+same running local Builder. Desktop private entry uses its direct bridge. A paired
+HTTPS browser encrypts the value to a one-use Electron key before the Builder backend
 relays it, so the backend receives only public-key material and ciphertext. Electron
 then seals the value with operating-system secure storage.
+
+Forge also supports a paired browser opened over plain HTTP when it is being used on a
+known, trusted private network such as a personal VPN. The UI calls this **Trusted
+network mode**. In that mode the bounded value reaches the Builder backend only long
+enough to be sent directly to the paired Electron vault for sealing. It never enters
+chat, model prompts, tools, session history, or catalog metadata. This is deliberately
+less transport protection than HTTPS and is not appropriate for a public or untrusted
+network.
 
 Browser pairing starts in the remote UI and produces a six-digit verification code.
 Forge Desktop lists that pending request under **Settings → Secrets → Paired
 browsers**. Approval creates a revocable, browser-scoped token whose hash is persisted;
 the token itself is delivered once in an HttpOnly, SameSite cookie. Pairing does not
-expose the per-launch Desktop capability. Non-loopback browser control requires
-same-origin HTTPS. Remote Projects and Collaboration remain separate authority
-boundaries and do not inherit this local Desktop vault connection.
+expose the per-launch Desktop capability. HTTP browser control is allowed only through
+this explicit paired trusted-network path; HTTPS remains the preferred path. Remote
+Projects and Collaboration remain separate authority boundaries and do not inherit
+this local Desktop vault connection.
 
 Every saved secret has an availability scope:
 
@@ -389,19 +398,24 @@ boundaries remain part of the trusted computing base.
 
 Secure Sessions assume a trusted, single-user local machine. Desktop mutations use a
 random per-launch capability shared only between the Electron renderer and its backend
-child. Approved HTTPS browsers receive a separate revocable token with only Secure
-Sessions control, secure-secret write, and private-entry write scope. The Desktop
-capability is not persisted, logged, included in agent runtime state, or given to the
-browser. Browser tokens are stored only as hashes, carried in HttpOnly SameSite
-cookies, and are rejected for Desktop-only pairing administration.
+child. Approved browsers receive a separate revocable token with only Secure Sessions
+control, secure-secret write, and private-entry write scope. The Desktop capability is
+not persisted, logged, included in agent runtime state, or given to the browser.
+Browser tokens are stored only as hashes, carried in HttpOnly SameSite cookies, and are
+rejected for Desktop-only pairing administration. On HTTPS, that cookie is marked
+`Secure`; the explicit trusted-network HTTP path instead relies on the user's private
+network.
 
-Remote private entry uses a process-lifetime P-256 Electron key and a two-minute,
-context-bound, one-use challenge. The browser derives an ephemeral shared key and
-AES-GCM encrypts the value before HTTP. The backend cannot decrypt the envelope;
-Electron decrypts it and immediately returns only operating-system-sealed ciphertext.
-Same-origin HTTPS, pairing verification, request revision checks, and fixed secure
-errors remain defense in depth. Same-user process inspection, Electron compromise,
-the approved browser, and the Docker daemon remain inside the trusted computing base.
+Remote private entry on HTTPS uses a process-lifetime P-256 Electron key and a
+two-minute, context-bound, one-use challenge. The browser derives an ephemeral shared
+key and AES-GCM encrypts the value before HTTP. The backend cannot decrypt the
+envelope; Electron decrypts it and immediately returns only operating-system-sealed
+ciphertext. The explicit trusted-network HTTP mode instead carries a bounded value to
+Electron for immediate sealing, so its network and backend-process exposure is part of
+the trusted computing base. Pairing verification, request revision checks, and fixed
+secure errors remain defense in depth. Same-user process inspection, Electron
+compromise, the approved browser, and the Docker daemon remain inside the trusted
+computing base.
 
 Each manager session keeps separate state, leases, requests, cached material, guard,
 and container. A fork or different manager session never gains an active lease merely

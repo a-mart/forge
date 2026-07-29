@@ -21,20 +21,12 @@ export async function fetchSecureBrowserControlStatus(
     apiClient,
     `${ROOT}/status`,
   )
-  return {
-    ...status,
-    privateEntryAvailable:
-      status.privateEntryAvailable && isRemotePrivateEntryCapable(),
-    secureContextRequired: !isSecureBrowserContext(),
-  }
+  return status
 }
 
 export async function createSecureBrowserPairingRequest(
   apiClient: SettingsApiClient,
 ): Promise<SecureBrowserPairingRequestCreated> {
-  if (!isSecureBrowserContext()) {
-    throw new Error('Remote secure control requires HTTPS.')
-  }
   return await requestJson<SecureBrowserPairingRequestCreated>(
     apiClient,
     `${ROOT}/pairing/requests`,
@@ -69,6 +61,12 @@ export async function encryptRemoteSecureValue(
   apiClient: SettingsApiClient,
   value: string,
 ): Promise<string> {
+  if (!isSecureBrowserContext()) {
+    return await encryptTrustedHttpPrivateEntry(apiClient, value)
+  }
+  if (!isRemotePrivateEntryCapable()) {
+    throw new Error('Browser private-entry encryption is unavailable.')
+  }
   const challenge = await requestJson<SecureBrowserPrivateEntryChallenge>(
     apiClient,
     `${ROOT}/private-entry/challenge`,
@@ -86,6 +84,23 @@ export async function encryptRemoteSecureValue(
       method: 'POST',
       headers: jsonHeaders(),
       body: JSON.stringify(sealed),
+    },
+  )
+  return encrypted.encryptedMaterial
+}
+
+async function encryptTrustedHttpPrivateEntry(
+  apiClient: SettingsApiClient,
+  value: string,
+): Promise<string> {
+  const encodedValue = toBase64(new TextEncoder().encode(value))
+  const encrypted = await requestJson<SecureBrowserEncryptedPrivateEntry>(
+    apiClient,
+    `${ROOT}/private-entry/trusted-http`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ encodedValue }),
     },
   )
   return encrypted.encryptedMaterial
@@ -135,10 +150,7 @@ export async function revokeSecureBrowserDevice(
 
 export function isSecureBrowserContext(): boolean {
   if (typeof window === 'undefined') return false
-  return window.isSecureContext
-    || window.location.hostname === 'localhost'
-    || window.location.hostname === '127.0.0.1'
-    || window.location.hostname === '::1'
+  return window.isSecureContext === true
 }
 
 function isRemotePrivateEntryCapable(): boolean {
@@ -253,9 +265,19 @@ function jsonHeaders(existing?: HeadersInit): Headers {
 function getOrCreateDeviceId(): string {
   const existing = window.localStorage.getItem(DEVICE_ID_KEY)
   if (existing && /^[A-Za-z0-9._:-]{8,160}$/u.test(existing)) return existing
-  const created = `browser-${crypto.randomUUID()}`
+  const created = `browser-${createBrowserDeviceId()}`
   window.localStorage.setItem(DEVICE_ID_KEY, created)
   return created
+}
+
+function createBrowserDeviceId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  const bytes = new Uint8Array(16)
+  if (typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes)
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
 function describeBrowser(): string {

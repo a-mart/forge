@@ -33,6 +33,7 @@ export interface SecureBrowserVaultService {
     deviceId: string,
     sealedEntry: SecureBrowserSealedPrivateEntry,
   ): Promise<string>;
+  encryptTrustedBrowserPrivateEntry(encodedValue: string): Promise<string>;
 }
 
 const requestDevice = new WeakMap<
@@ -141,7 +142,10 @@ export function createSecureBrowserControlRoutes(options: {
               authorized: authenticatedDevice !== null,
               privateEntryAvailable:
                 authenticatedDevice !== null && privateEntryAvailable,
-              secureContextRequired: !isSecureBrowserRequest(request),
+              secureContextRequired: false,
+              privateEntryTransport: isTrustedHttpBrowserTransport(request)
+                ? "trusted_http"
+                : "browser_encrypted",
               ...(authenticatedDevice ? { device: authenticatedDevice } : {}),
             };
             sendJson(
@@ -158,7 +162,7 @@ export function createSecureBrowserControlRoutes(options: {
           ) {
             if (
               !options.secureControlAvailable ||
-              !isSecureBrowserRequest(request)
+              !isSupportedBrowserRequest(request)
             ) {
               sendUnavailable(response);
               return;
@@ -184,7 +188,7 @@ export function createSecureBrowserControlRoutes(options: {
           if (request.method === "POST" && claimMatch) {
             if (
               !options.secureControlAvailable ||
-              !isSecureBrowserRequest(request)
+              !isSupportedBrowserRequest(request)
             ) {
               sendUnavailable(response);
               return;
@@ -255,6 +259,26 @@ export function createSecureBrowserControlRoutes(options: {
               await options.vaultService.encryptRemotePrivateEntry(
                 authenticatedDevice.id,
                 body,
+              );
+            sendJson(response, 200, { encryptedMaterial });
+            return;
+          }
+
+          if (
+            request.method === "POST" &&
+            requestUrl.pathname === `${ROOT}/private-entry/trusted-http`
+          ) {
+            if (!authenticatedDevice || !isTrustedHttpBrowserRequest(request)) {
+              return sendUnauthorized(response);
+            }
+            const body = await readBody(request, response);
+            if (!body || !isTrustedPrivateEntry(body)) {
+              sendBadRequest(response, "The trusted private entry is invalid");
+              return;
+            }
+            const encryptedMaterial =
+              await options.vaultService.encryptTrustedBrowserPrivateEntry(
+                body.encodedValue,
               );
             sendJson(response, 200, { encryptedMaterial });
             return;
@@ -417,11 +441,57 @@ function isSealedPrivateEntry(
   );
 }
 
-function isSecureBrowserRequest(request: IncomingMessage): boolean {
-  const origin =
-    typeof request.headers.origin === "string"
-      ? request.headers.origin.trim()
+function isTrustedPrivateEntry(
+  value: unknown,
+): value is { encodedValue: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  return (
+    typeof input.encodedValue === "string"
+    && input.encodedValue.length > 0
+    && input.encodedValue.length <= 349_528
+    && Object.keys(input).length === 1
+  );
+}
+
+function isSupportedBrowserRequest(request: IncomingMessage): boolean {
+  return isSecureBrowserRequest(request) || isTrustedHttpBrowserRequest(request);
+}
+
+function isTrustedHttpBrowserRequest(request: IncomingMessage): boolean {
+  const origin = requestOrigin(request);
+  try {
+    return new URL(origin).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedHttpBrowserTransport(request: IncomingMessage): boolean {
+  const origin = requestOrigin(request);
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      return url.protocol === "http:" && !isLoopbackHost(url.hostname);
+    } catch {
+      return false;
+    }
+  }
+  const forwardedProtocol =
+    typeof request.headers["x-forwarded-proto"] === "string"
+      ? request.headers["x-forwarded-proto"].split(",", 1)[0]?.trim()
       : "";
+  if (forwardedProtocol) {
+    return forwardedProtocol === "http" && !isLoopbackRequestHost(request);
+  }
+  return (
+    (request.socket as typeof request.socket & { encrypted?: boolean })
+      .encrypted !== true && !isLoopbackRequestHost(request)
+  );
+}
+
+function isSecureBrowserRequest(request: IncomingMessage): boolean {
+  const origin = requestOrigin(request);
   try {
     const url = new URL(origin);
     return url.protocol === "https:" || isLoopbackHost(url.hostname);
@@ -447,12 +517,27 @@ function buildSecureBrowserCookie(
 }
 
 function isLoopbackRequestOrigin(request: IncomingMessage): boolean {
+  const origin = requestOrigin(request);
+  try {
+    return isLoopbackHost(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function requestOrigin(request: IncomingMessage): string {
   const origin =
     typeof request.headers.origin === "string"
       ? request.headers.origin.trim()
       : "";
+  return origin;
+}
+
+function isLoopbackRequestHost(request: IncomingMessage): boolean {
+  const host =
+    typeof request.headers.host === "string" ? request.headers.host.trim() : "";
   try {
-    return isLoopbackHost(new URL(origin).hostname);
+    return isLoopbackHost(new URL(`http://${host}`).hostname);
   } catch {
     return false;
   }
