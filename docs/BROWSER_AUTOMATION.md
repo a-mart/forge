@@ -11,36 +11,27 @@ Each logical browser tab has a sticky private target affinity:
 - `managed-electron` — a main-process-owned Electron `WebContentsView` rendered inside Forge;
 - `external-chrome` — one exact tab in a Chrome profile that loaded Forge's extension.
 
-The affinity is assigned when the logical tab is created and is not a picker setting. An operation with an explicit logical `tabId` always returns to that target. Forge never silently moves an explicit Chrome tab into Electron, or an embedded tab into Chrome, to make an operation succeed.
+The affinity is assigned to each logical tab and is not a host-preference picker. An inventory `tabId` may explicitly select an eligible Chrome tab when opening; after selection, an operation with an explicit logical `tabId` always returns to that target. Forge never silently moves an explicit Chrome tab into Electron, or an embedded tab into Chrome, to make an operation succeed.
 
-For a tabless request, the Automatic Browser Host:
+Once the Forge extension is enabled and authenticated in a Chrome profile, the Automatic Browser can access eligible ordinary web tabs across that profile. For a tabless request, the Automatic Browser Host:
 
-1. uses the session's selected or default logical tab when one exists, except for the explicit open/reselection boundary below;
-2. routes physical resize and recording directly to an embedded tab;
-3. otherwise tries an eligible Chrome target when the Chrome adapter is ready; and
-4. uses the embedded browser when Chrome acquisition is unavailable and fallback is still safe.
+1. keeps non-open operations on the session's selected or default logical tab when one exists;
+2. treats `browser_open` as the explicit selection boundary described below;
+3. routes physical resize and recording directly to an embedded tab; and
+4. uses the embedded browser when Chrome acquisition is unavailable or an embedded-only capability is required.
 
-### Open and Chrome reuse
+### Eligible tab inventory and open selection
 
-The `reuseExistingTab` input controls whether a tabless open may reuse Chrome's focused eligible tab. It does not select a host.
+`browser_status` returns a bounded `eligibleTabs` inventory across all ready, authenticated Chrome profiles. Each entry has an opaque canonical `tabId` accepted by `browser_open`; the inventory is ranked by active/most-recent eligibility and does not require OS focus. There is no Chrome profile confirmation prompt or picker.
 
-- Tabs created from the Browser workspace use `reuseExistingTab: false`, so Forge requests a dedicated, ungrouped Chrome tab when Chrome is selected automatically.
-- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. Every tabless `browser_open(reuseExistingTab: true)` is an explicit reselection boundary: Forge may release completed authority and re-probe for the uniquely focused eligible Chrome target, including when the current logical tab is an idle managed-electron fallback. If that probe succeeds, the logical selection changes to the exact Chrome-backed tab.
-- If the managed-electron fallback has no eligible focus or focus is ambiguous, Forge retains that exact managed selection rather than creating or guessing another tab. A currently active or in-flight operation is never migrated; after the boundary, subsequent non-open operations remain sticky to the selected logical tab.
-- When reuse is false, or a safe retry needs a fresh target, Forge creates a dedicated ungrouped tab. Child tabs are not automatically enrolled.
+The `reuseExistingTab` input controls whether a tabless open selects an existing eligible Chrome tab or may create a new one:
 
-Chrome internal and extension pages, a tab already controlled by DevTools or another debugger, and other restricted targets are not eligible.
+- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. Without `tabId`, it selects the active or most recently accessed eligible tab from the profile-wide inventory, without requiring Chrome or the operating system to be focused.
+- Passing an inventory `tabId` explicitly selects that exact eligible Chrome tab. The tab ID comes from `browser_status`; it is not a profile picker or host preference.
+- Tabs created from the Browser workspace use `reuseExistingTab: false`. When creation is needed, or when no eligible tab exists, Forge may create an inactive neutral `about:blank` tab. A URL-bearing open performs one authorized initial navigation on that created tab.
+- After an open selects a logical tab, subsequent non-open operations remain sticky to it. Explicit Chrome tabs do not migrate, and child tabs are not automatically enrolled.
 
-### Chrome profile ambiguity
-
-Forge does not enumerate Chrome profiles or tabs in the renderer. Selection happens privately in the Desktop main process:
-
-1. use the unique connected Chrome profile whose focused tab is eligible;
-2. otherwise use the sole ready connected profile; or
-3. if multiple ready profiles remain ambiguous, show one generic native confirmation for that Forge session.
-
-The confirmation labels choices only as **Chrome profile 1**, **Chrome profile 2**, and so on, and includes **Use embedded browser**. Forge remembers a confirmed Chrome choice only in memory until Forge quits. It prompts a given session at most once during that run; choosing the embedded option or dismissing the prompt lets the safe automatic fallback use Electron.
-
+Chrome-internal pages, extension pages, debugger-controlled tabs, and other restricted pages remain excluded by the platform capability.
 ## Operations and workspace
 
 The common operation set is:
