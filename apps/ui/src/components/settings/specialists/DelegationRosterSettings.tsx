@@ -31,7 +31,7 @@ import {
   saveDelegationRosterSettingsApi,
 } from '../specialists-api'
 import { ModelIdSelect } from './ModelIdSelect'
-import { REASONING_LEVEL_LABELS } from './types'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 
 const MODE_LABELS: Record<DelegationBehaviorMode, string> = {
   general: 'Build & execute',
@@ -544,7 +544,7 @@ function ReasoningSelect({
         <SelectContent>
           {levels.map((level) => (
             <SelectItem key={level} value={level}>
-              {REASONING_LEVEL_LABELS[level] ?? level}
+              {formatReasoningLevel(level, levels)}
             </SelectItem>
           ))}
         </SelectContent>

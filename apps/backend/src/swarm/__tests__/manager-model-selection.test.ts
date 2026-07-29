@@ -182,10 +182,10 @@ describe("manager model selection", () => {
     ).toThrow(`use ${replacementPreset} instead`);
   });
 
-  it("keeps pi-opus preset resolution on the catalog default", async () => {
+  it("keeps pi-opus preset resolution on the Opus 5 catalog default", async () => {
     expect(resolveModelDescriptorFromPreset("pi-opus")).toEqual({
       provider: "anthropic",
-      modelId: "claude-opus-4-8",
+      modelId: "claude-opus-5",
       thinkingLevel: "high",
     });
   });

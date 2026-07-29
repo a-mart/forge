@@ -60,7 +60,7 @@ const EXPECTED_FAMILIES = {
   },
   'pi-opus': {
     provider: 'anthropic',
-    defaultModelId: 'claude-opus-4-8',
+    defaultModelId: 'claude-opus-5',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -153,6 +153,14 @@ const EXPECTED_MODELS = {
     provider: 'openai-codex',
     familyId: 'pi-5.4',
     contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'claude-opus-5': {
+    provider: 'anthropic',
+    familyId: 'pi-opus',
+    contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
@@ -274,7 +282,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(20)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -296,6 +304,24 @@ describe('model-catalog', () => {
     expect(getCatalogModel('gpt-5.3-codex-spark')).toBeUndefined()
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'anthropic')).toBeUndefined()
     expect(getCatalogModel('claude-haiku-4-5-20251001', 'anthropic')).toBeUndefined()
+    expect(getCatalogModel('claude-opus-5')).toMatchObject({
+      isFamilyDefault: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+      thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+      piCompat: { forceAdaptiveThinking: true, supportsTemperature: false },
+      piCost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: 'claude-opus-5',
+      intentionalDivergenceNotes: 'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships claude-opus-5.',
+    })
+    expect(getCatalogModel('claude-opus-5')?.supportedReasoningLevels).toContain('none')
+    expect(getCatalogModel('claude-opus-4-8')).toMatchObject({
+      isFamilyDefault: false,
+      intentionalDivergenceNotes:
+        'Intentional divergence: Claude Opus 4.8 is restricted to low, medium, and high reasoning levels.',
+    })
     expect(getCatalogModel('claude-fable-5')).toMatchObject({
       isFamilyDefault: true,
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -320,10 +346,13 @@ describe('model-catalog', () => {
     })
   })
 
-  it('documents the intentional xAI divergences from Pi upstream', () => {
+  it('documents intentional catalog divergences from Pi upstream', () => {
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
     expect(getCatalogModel('gpt-5.6-sol')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
-    expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
+    expect(getCatalogModel('claude-opus-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
+    expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain(
+      'restricted to low, medium, and high reasoning levels',
+    )
     expect(getCatalogModel('claude-sonnet-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.20-0309-reasoning')?.intentionalDivergenceNotes).toContain(
       'text-only',

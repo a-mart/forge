@@ -12,7 +12,7 @@ import { MANAGER_REASONING_LEVELS } from '@forge/protocol'
 import { getModelDisplayLabel, getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
 import type { SelectableModel } from '@/lib/model-preset'
 import type { CardEditState } from './types'
-import { REASONING_LEVEL_LABELS } from './types'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 import { ModelIdSelect } from './ModelIdSelect'
 
 export function FallbackModelSection({
@@ -42,8 +42,13 @@ export function FallbackModelSection({
     // Read-only: show compact summary if configured
     if (!hasFallback) return null
     const label = getModelDisplayLabel(fallbackModelId, modelPresets, fallbackProvider)
+    const fallbackSupportedLevels = getSupportedReasoningLevelsForModelId(
+      fallbackModelId,
+      modelPresets,
+      fallbackProvider,
+    )
     const reasoningLabel = fallbackReasoningLevel
-      ? REASONING_LEVEL_LABELS[fallbackReasoningLevel] ?? fallbackReasoningLevel
+      ? formatReasoningLevel(fallbackReasoningLevel, fallbackSupportedLevels)
       : null
     return (
       <p className="text-xs text-muted-foreground">
@@ -69,7 +74,7 @@ export function FallbackModelSection({
       >
         {isExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
         {hasFallback
-          ? `Fallback: ${getModelDisplayLabel(fallbackModelId, modelPresets, fallbackProvider)}${fallbackReasoningLevel ? ` · ${REASONING_LEVEL_LABELS[fallbackReasoningLevel] ?? fallbackReasoningLevel}` : ''}`
+          ? `Fallback: ${getModelDisplayLabel(fallbackModelId, modelPresets, fallbackProvider)}${fallbackReasoningLevel ? ` · ${formatReasoningLevel(fallbackReasoningLevel, fallbackSupportedLevels)}` : ''}`
           : 'Configure fallback'}
       </button>
 
@@ -105,7 +110,7 @@ export function FallbackModelSection({
                 </SelectItem>
                 {fallbackSupportedLevels.map((level) => (
                   <SelectItem key={level} value={level} className="text-xs">
-                    {REASONING_LEVEL_LABELS[level] || level}
+                    {formatReasoningLevel(level, fallbackSupportedLevels)}
                   </SelectItem>
                 ))}
               </SelectContent>

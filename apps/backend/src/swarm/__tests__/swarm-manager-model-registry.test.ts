@@ -200,7 +200,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
     })
     expect(opusWorker.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
+      modelId: 'claude-opus-5',
       thinkingLevel: 'high',
     })
   })
@@ -224,7 +224,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
     })
   })
 
-  it('maps anthropic reasoning none/xhigh to low/high for spawn_agent', async () => {
+  it('preserves Opus 5 disabled reasoning and xhigh for spawn_agent', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -243,13 +243,13 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     expect(lowMapped.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
-      thinkingLevel: 'low',
+      modelId: 'claude-opus-5',
+      thinkingLevel: 'none',
     })
     expect(highMapped.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
-      thinkingLevel: 'high',
+      modelId: 'claude-opus-5',
+      thinkingLevel: 'xhigh',
     })
   })
 
