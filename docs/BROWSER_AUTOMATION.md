@@ -11,35 +11,27 @@ Each logical browser tab has a sticky private target affinity:
 - `managed-electron` — a main-process-owned Electron `WebContentsView` rendered inside Forge;
 - `external-chrome` — one exact tab in a Chrome profile that loaded Forge's extension.
 
-The affinity is assigned when the logical tab is created and is not a picker setting. An operation with an explicit logical `tabId` always returns to that target. Forge never silently moves an explicit Chrome tab into Electron, or an embedded tab into Chrome, to make an operation succeed.
+The affinity is assigned to each logical tab and is not a host-preference picker. An inventory `tabId` may explicitly select an eligible Chrome tab when opening; after selection, an operation with an explicit logical `tabId` always returns to that target. Forge never silently moves an explicit Chrome tab into Electron, or an embedded tab into Chrome, to make an operation succeed.
 
-For a tabless request, the Automatic Browser Host:
+Once the Forge extension is enabled and authenticated in a Chrome profile, the Automatic Browser can access eligible ordinary web tabs across that profile. For a tabless request, the Automatic Browser Host:
 
-1. uses the session's selected or default logical tab when one exists, except for the explicit open/reselection boundary below;
-2. routes physical resize and recording directly to an embedded tab;
-3. otherwise tries an eligible Chrome target when the Chrome adapter is ready; and
-4. uses the embedded browser when Chrome acquisition is unavailable and fallback is still safe.
+1. keeps non-open operations on the session's selected or default logical tab when one exists;
+2. treats `browser_open` as the explicit selection boundary described below;
+3. routes physical resize and recording directly to an embedded tab; and
+4. uses the embedded browser when Chrome acquisition is unavailable or an embedded-only capability is required.
 
-### Open and Chrome reuse
+### Eligible tab inventory and open selection
 
-The `reuseExistingTab` input controls whether a tabless open may reuse Chrome's focused eligible tab. It does not select a host.
+`browser_status` returns a bounded `eligibleTabs` inventory across all ready, authenticated Chrome profiles. Each entry has an opaque canonical `tabId` accepted by `browser_open`; inventory selection does not require OS focus. Ranking is deterministic: active tab first, then a tab in the focused window, then descending Chrome last-access time (exposed publicly as `lastAccessedAt`), descending profile connection time, ascending opaque extension-instance ID, ascending window ID, and ascending tab ID. The public inventory is capped at 32 entries. `eligibleTabsTruncated` is true when the aggregate exceeds that cap, any profile reports its own inventory truncated, or a ready profile's inventory request fails; candidates from failed profiles are omitted. There is no Chrome profile confirmation prompt or picker.
 
-- Tabs created from the Browser workspace use `reuseExistingTab: false`, so Forge requests a dedicated, ungrouped Chrome tab when Chrome is selected automatically.
-- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. Every tabless `browser_open(reuseExistingTab: true)` is an explicit reselection boundary: Forge may release completed authority and re-probe for the uniquely focused eligible Chrome target, including when the current logical tab is an idle managed-electron fallback. If that probe succeeds, the logical selection changes to the exact Chrome-backed tab.
-- If the managed-electron fallback has no eligible focus or focus is ambiguous, Forge retains that exact managed selection rather than creating or guessing another tab. A currently active or in-flight operation is never migrated; after the boundary, subsequent non-open operations remain sticky to the selected logical tab.
-- When reuse is false, or a safe retry needs a fresh target, Forge creates a dedicated ungrouped tab. Child tabs are not automatically enrolled.
+The `reuseExistingTab` input controls whether a tabless open selects an existing eligible Chrome tab or may create a new one:
 
-Chrome internal and extension pages, a tab already controlled by DevTools or another debugger, and other restricted targets are not eligible.
+- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. Without `tabId`, it selects the active or most recently accessed eligible tab from the profile-wide inventory, without requiring Chrome or the operating system to be focused.
+- Passing an inventory `tabId` explicitly selects that exact eligible Chrome tab. The tab ID comes from `browser_status`; it is not a profile picker or host preference.
+- Tabs created from the Browser workspace use `reuseExistingTab: false`. When creation is needed, or when no eligible tab exists, Forge may create an inactive neutral `about:blank` tab. A URL-bearing open performs one authorized initial navigation on that created tab.
+- After an open selects a logical tab, subsequent non-open operations remain sticky to it. Explicit Chrome tabs do not migrate, and child tabs are not automatically enrolled.
 
-### Chrome profile ambiguity
-
-Forge does not enumerate Chrome profiles or tabs in the renderer. Selection happens privately in the Desktop main process:
-
-1. use the unique connected Chrome profile whose focused tab is eligible;
-2. otherwise use the sole ready connected profile; or
-3. if multiple ready profiles remain ambiguous, show one generic native confirmation for that Forge session.
-
-The confirmation labels choices only as **Chrome profile 1**, **Chrome profile 2**, and so on, and includes **Use embedded browser**. Forge remembers a confirmed Chrome choice only in memory until Forge quits. It prompts a given session at most once during that run; choosing the embedded option or dismissing the prompt lets the safe automatic fallback use Electron.
+Chrome-internal pages, extension pages, and other platform-restricted pages remain excluded from eligibility. A normal web tab held by DevTools or another competing debugger may still appear in `eligibleTabs`, but acquisition or execution fails while that debugger controls the tab; inventory does not imply that Forge can take control.
 
 ## Operations and workspace
 
@@ -61,16 +53,13 @@ The Desktop activity rail has one **Browser** workspace:
 
 **Show in Chrome** does not depend on a long-lived attachment. Forge first settles any active operation burst, reacquires the exact sticky Chrome tab with transient authority, reveals it, and releases that exact authority again. If the exact target cannot be reacquired, reveal fails rather than opening or migrating another tab.
 
-The workspace renderer registers one Desktop host with the local Builder backend and forwards bounded calls through trusted IPC. It receives no Chrome candidate inventory and exposes no tab-attachment, group, lease, or authority controls.
+The workspace renderer registers one Desktop host with the local Builder backend and forwards bounded calls through trusted IPC. It transiently relays complete `browser_status` inventory responses between the trusted bridge and backend, but does not project that inventory into Browser workspace UI or canonical renderer state. The renderer exposes no tab-attachment, group, lease, or authority controls.
 
-## Safety, retries, and authority
+## Safety, fallback, and authority
 
 ### Safe fallback and no replay
 
-Automatic fallback is limited to requests whose failure metadata proves that mutation did not start. For a tabless Chrome attempt, Forge may:
-
-1. retry once against a dedicated Chrome tab when focused reuse or the first acquisition lost a pre-mutation race; then
-2. fall back to the embedded browser if the dedicated attempt also failed before mutation.
+Automatic fallback is limited to requests whose failure metadata proves that mutation did not start. Forge makes one Chrome acquisition/execution attempt for the request; if that attempt fails before mutation, it falls back directly to the embedded browser. Forge does not make a dedicated-Chrome retry or promise focused-tab reuse.
 
 Forge does not replay an operation after it may have clicked, typed, navigated, evaluated code, or otherwise mutated the page. That failure returns typed `mutationState` and `noReplay` details to the caller. Explicit logical targets also never fall back to another affinity.
 
@@ -99,7 +88,7 @@ It declares no action or side-panel surface, optional permissions, `tabGroups`, 
 
 Each session's `browser.json` uses protocol schema v2. It stores logical session identity, hosting state, tabs with private `targetAffinity`, active/default tab identity, panel and reveal state, bounded recent action summaries, lifecycle-cleanup acknowledgement, revision, and timestamps. It does **not** store a selected browser host.
 
-Before writing schema-v2 state, Forge redacts Chrome-backed page URLs and titles, tab error detail, and page-identifying URL/title fields from action summaries. Runtime-only Chrome profile choice and exact authority stay in Desktop memory or the protected integration recovery state, not in renderer state. Redaction limits durable exposure; it cannot retract page data already used by a live operation or model turn.
+Before writing schema-v2 state, Forge redacts Chrome-backed page URLs and titles, tab error detail, and page-identifying URL/title fields from action summaries. The bounded `eligibleTabs` fields (`url`, `title`, opaque profile/window IDs, active state, window-focus state, and `lastAccessedAt`) may transiently reach the manager/model through `browser_status` so it can select a target, but are not projected into Browser workspace UI or canonical renderer/session state and are not persisted. Exact authority stays in Desktop memory or protected integration recovery state, not renderer state. Redaction limits durable exposure; it cannot retract page data already used by a live operation or model turn.
 
 Schema-v1 state migrates conservatively. Proven embedded tabs become `managed-electron` tabs. Unproven Chrome hints, old lease-like records, and reveal intent that points only at a dropped target are discarded or satisfied rather than reinterpreted as authority.
 

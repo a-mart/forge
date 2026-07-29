@@ -8,14 +8,14 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 
 - **Main process** (`src/main.ts`) — launches the packaged backend, owns the application window and updates, and composes one protocol-v2 `AutomaticBrowserHost` from embedded-Electron and optional Chrome target adapters
 - **Trusted preload** (`src/preload.ts`) — gives the Forge renderer narrow browser invocation, lifecycle, reveal, workspace-presentation, and Chrome setup/repair IPC; handlers reject callers other than the trusted renderer
-- **Renderer process** — loads the staged UI bundle from `ui/index.html`, registers one Desktop browser host with the local Builder backend, projects canonical embedded-tab state, and renders either the embedded workspace or a Chrome-backed tab card. The renderer receives no Chrome profile/tab inventory or per-tab operation-authority state or controls. It does receive bounded coordinator setup, build, readiness, and ownership status
+- **Renderer process** — loads the staged UI bundle from `ui/index.html`, registers one Desktop browser host with the local Builder backend, projects canonical embedded-tab state, and renders either the embedded workspace or a Chrome-backed tab card. The renderer transiently relays complete `browser_status` inventory responses between the trusted bridge and backend, but does not project that inventory into Browser workspace UI or canonical renderer state; it also receives no per-tab operation-authority state or controls. It does receive bounded coordinator setup, build, readiness, and ownership status
 - **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed embedded tab views, reports only real pointer/key input so human control can interrupt an agent action, and renders the non-interactive agent cursor inside the native guest
 
-`BrowserAutomationManager` owns the `AutomaticBrowserHost` policy seam in the main process. Logical tabs carry sticky `managed-electron` or `external-chrome` affinity. Explicit targets never migrate. Tabless common operations may acquire Chrome automatically, retry a proven pre-mutation race once on a dedicated target, and fall back to Electron only before mutation; a possible mutation returns no-replay failure metadata. Resize and recording route directly to Electron. Chrome authority is exact per tab and retained only for short adaptive operation bursts. Failed release acknowledgement keeps the exact checkpoint and blocks later acquisition until reconciliation. **Show in Chrome** settles an active burst, reacquires the exact target transiently, reveals it, and releases it again. Turn end and session lifecycle cleanup use correlated generic host requests.
+`BrowserAutomationManager` owns the `AutomaticBrowserHost` policy seam in the main process. Logical tabs carry sticky `managed-electron` or `external-chrome` affinity. Explicit targets never migrate. Tabless common operations may acquire Chrome automatically and fall back directly to Electron when one acquisition/execution attempt proves mutation did not start; a possible mutation returns no-replay failure metadata. Resize and recording route directly to Electron. Chrome authority is exact per tab and retained only for short adaptive operation bursts. Failed release acknowledgement keeps the exact checkpoint and blocks later acquisition until reconciliation. **Show in Chrome** settles an active burst, reacquires the exact target transiently, reveals it, and releases it again. Turn end and session lifecycle cleanup use correlated generic host requests.
 
 The embedded adapter uses main-owned `WebContentsView` instances with persistent profile-scoped partitions. Views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. The same view can move into the single native pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Cmd+W docks it on macOS and Ctrl+W docks it on Windows/Linux. The adapter uses pinned `playwright-core` 1.60.0 extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
 
-The optional Chrome adapter has no Electron view or recording authority. Its coordinator deploys the deterministic unpacked extension and required native host into the active Forge data directory, owns current-user authentication/rendezvous and Chrome registration, and connects the main-process relay to exact operation-scoped tab authority. Profile selection is private: unique focused eligible profile, then sole ready profile, then one generic main-process confirmation per Forge session. The [Browser automation guide](../../docs/BROWSER_AUTOMATION.md) is the user-facing source of truth.
+The optional Chrome adapter has no Electron view or recording authority. Its coordinator deploys the deterministic unpacked extension and required native host into the active Forge data directory, owns current-user authentication/rendezvous and Chrome registration, and connects the main-process relay to profile-wide eligible-tab inventory plus exact operation-scoped tab authority. Once enabled and authenticated, the extension covers eligible ordinary web tabs across its profile; `browser_status` returns a bounded inventory across ready authenticated profiles, and `browser_open` selects the active/most-recent eligible tab or an inventory `tabId` without OS focus. There is no profile confirmation prompt or picker. The [Browser automation guide](../../docs/BROWSER_AUTOMATION.md) is the user-facing source of truth.
 
 ### Packaged layout
 
@@ -39,8 +39,7 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
 | `src/preload.ts` | Trusted renderer bridge for one browser host plus bounded Chrome setup/repair |
 | `src/browser/browser-automation-manager.ts` | Main-process composition of the automatic host and target adapters |
-| `src/browser/automatic-browser-host.ts` | Sticky affinity, acquisition, safe retry/fallback, no replay, authority bursts, reveal, and lifecycle policy |
-| `src/browser/automatic-chrome-profile-confirmation.ts` | Once-per-session generic profile confirmation without renderer inventory |
+| `src/browser/automatic-browser-host.ts` | Sticky affinity, acquisition, safe fallback, no replay, authority bursts, reveal, and lifecycle policy |
 | `src/browser/browser-target-adapter.ts` | Private embedded/Chrome adapter and authority contracts |
 | `src/browser/managed-electron-target-adapter.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
 | `src/browser/external-chrome-target-adapter.ts` | Chrome common-operation, acquisition, exact release, and reveal adapter |
@@ -50,7 +49,7 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 | `src/browser/guest-preload.ts` | Sandboxed guest input-only preload |
 | `src/browser/playwright-injected-runtime.ts` | Pinned, fail-closed Playwright semantic-locator runtime extraction |
 | `src/external-chrome/coordinator.ts` | Optional adapter deployment, current-user authentication, registration, update, recovery, and repair coordinator |
-| `src/external-chrome/relay-runtime.ts` | Authenticated private profile selection, exact per-tab checkpoints, operation transport, release, reveal, and recovery |
+| `src/external-chrome/relay-runtime.ts` | Authenticated profile-wide inventory, exact per-tab checkpoints, operation transport, release, reveal, and recovery |
 | `src/external-chrome/registration.ts` | Forge-owned native-host manifest/registry inspection, repair, transfer, and removal |
 | `src/external-chrome/data-paths.ts` | Canonical optional Chrome adapter integration paths under the active Forge data directory |
 | `scripts/stage-external-chrome.mjs` | Combines verified extension and native-host inventories into the Electron stage |
@@ -115,10 +114,9 @@ Focused Automatic Browser Host validation commands:
 # A fresh worktree needs the shared protocol output used by the Electron bundle
 pnpm --filter @forge/protocol build
 
-# Main-process automatic policy, generic profile confirmation, adapters, and relay lifecycle
+# Main-process automatic policy, adapters, and relay lifecycle
 pnpm --dir apps/electron exec vitest run \
   src/browser/__tests__/automatic-browser-host.test.ts \
-  src/browser/__tests__/automatic-chrome-profile-confirmation.test.ts \
   src/browser/__tests__/browser-target-adapters.test.ts \
   src/external-chrome/__tests__/relay-runtime.test.ts
 
@@ -154,10 +152,9 @@ pnpm --filter @forge/external-chrome-native-host test
 # Credential-free, explicitly non-publishable current-target SEA
 FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --filter @forge/external-chrome-native-host package:current
 
-# Electron automatic policy, profile confirmation, coordinator/adapter, relay, and packaging policy
+# Electron automatic policy, coordinator/adapter, relay, and packaging policy
 pnpm --dir apps/electron exec vitest run \
   src/browser/__tests__/automatic-browser-host.test.ts \
-  src/browser/__tests__/automatic-chrome-profile-confirmation.test.ts \
   src/browser/__tests__/browser-target-adapters.test.ts \
   src/external-chrome/__tests__
 pnpm --dir apps/electron exec vitest run scripts/__tests__/external-chrome-staging.test.mjs scripts/__tests__/external-chrome-release-signing.test.mjs scripts/__tests__/windows-ci-signing-env.test.mjs
