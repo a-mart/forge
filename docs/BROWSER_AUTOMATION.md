@@ -22,7 +22,7 @@ Once the Forge extension is enabled and authenticated in a Chrome profile, the A
 
 ### Eligible tab inventory and open selection
 
-`browser_status` returns a bounded `eligibleTabs` inventory across all ready, authenticated Chrome profiles. Each entry has an opaque canonical `tabId` accepted by `browser_open`; the inventory is ranked by active/most-recent eligibility and does not require OS focus. There is no Chrome profile confirmation prompt or picker.
+`browser_status` returns a bounded `eligibleTabs` inventory across all ready, authenticated Chrome profiles. Each entry has an opaque canonical `tabId` accepted by `browser_open`; inventory selection does not require OS focus. Ranking is deterministic: active tab first, then a tab in the focused window, then descending `lastAccessed`, descending profile connection time, ascending opaque extension-instance ID, ascending window ID, and ascending tab ID. The public inventory is capped at 32 entries. `eligibleTabsTruncated` is true when the aggregate exceeds that cap, any profile reports its own inventory truncated, or a ready profile's inventory request fails; candidates from failed profiles are omitted. There is no Chrome profile confirmation prompt or picker.
 
 The `reuseExistingTab` input controls whether a tabless open selects an existing eligible Chrome tab or may create a new one:
 
@@ -31,7 +31,8 @@ The `reuseExistingTab` input controls whether a tabless open selects an existing
 - Tabs created from the Browser workspace use `reuseExistingTab: false`. When creation is needed, or when no eligible tab exists, Forge may create an inactive neutral `about:blank` tab. A URL-bearing open performs one authorized initial navigation on that created tab.
 - After an open selects a logical tab, subsequent non-open operations remain sticky to it. Explicit Chrome tabs do not migrate, and child tabs are not automatically enrolled.
 
-Chrome-internal pages, extension pages, debugger-controlled tabs, and other restricted pages remain excluded by the platform capability.
+Chrome-internal pages, extension pages, and other platform-restricted pages remain excluded from eligibility. A normal web tab held by DevTools or another competing debugger may still appear in `eligibleTabs`, but acquisition or execution fails while that debugger controls the tab; inventory does not imply that Forge can take control.
+
 ## Operations and workspace
 
 The common operation set is:
@@ -52,16 +53,13 @@ The Desktop activity rail has one **Browser** workspace:
 
 **Show in Chrome** does not depend on a long-lived attachment. Forge first settles any active operation burst, reacquires the exact sticky Chrome tab with transient authority, reveals it, and releases that exact authority again. If the exact target cannot be reacquired, reveal fails rather than opening or migrating another tab.
 
-The workspace renderer registers one Desktop host with the local Builder backend and forwards bounded calls through trusted IPC. It receives no Chrome candidate inventory and exposes no tab-attachment, group, lease, or authority controls.
+The workspace renderer registers one Desktop host with the local Builder backend and forwards bounded calls through trusted IPC. It receives no Chrome candidate inventory: bounded inventory metadata is transiently available only on the manager/model `browser_status` path, not in Browser workspace UI or canonical renderer state. The renderer exposes no tab-attachment, group, lease, or authority controls.
 
-## Safety, retries, and authority
+## Safety, fallback, and authority
 
 ### Safe fallback and no replay
 
-Automatic fallback is limited to requests whose failure metadata proves that mutation did not start. For a tabless Chrome attempt, Forge may:
-
-1. retry once against a dedicated Chrome tab when focused reuse or the first acquisition lost a pre-mutation race; then
-2. fall back to the embedded browser if the dedicated attempt also failed before mutation.
+Automatic fallback is limited to requests whose failure metadata proves that mutation did not start. Forge makes one Chrome acquisition/execution attempt for the request; if that attempt fails before mutation, it falls back directly to the embedded browser. Forge does not make a dedicated-Chrome retry or promise focused-tab reuse.
 
 Forge does not replay an operation after it may have clicked, typed, navigated, evaluated code, or otherwise mutated the page. That failure returns typed `mutationState` and `noReplay` details to the caller. Explicit logical targets also never fall back to another affinity.
 
@@ -90,7 +88,7 @@ It declares no action or side-panel surface, optional permissions, `tabGroups`, 
 
 Each session's `browser.json` uses protocol schema v2. It stores logical session identity, hosting state, tabs with private `targetAffinity`, active/default tab identity, panel and reveal state, bounded recent action summaries, lifecycle-cleanup acknowledgement, revision, and timestamps. It does **not** store a selected browser host.
 
-Before writing schema-v2 state, Forge redacts Chrome-backed page URLs and titles, tab error detail, and page-identifying URL/title fields from action summaries. Runtime-only Chrome profile choice and exact authority stay in Desktop memory or the protected integration recovery state, not in renderer state. Redaction limits durable exposure; it cannot retract page data already used by a live operation or model turn.
+Before writing schema-v2 state, Forge redacts Chrome-backed page URLs and titles, tab error detail, and page-identifying URL/title fields from action summaries. The bounded `eligibleTabs` fields (`url`, `title`, opaque profile/window IDs, active state, window-focus state, and `lastAccessedAt`) may transiently reach the manager/model through `browser_status` so it can select a target, but are not projected into Browser workspace UI or canonical renderer/session state and are not persisted. Exact authority stays in Desktop memory or protected integration recovery state, not renderer state. Redaction limits durable exposure; it cannot retract page data already used by a live operation or model turn.
 
 Schema-v1 state migrates conservatively. Proven embedded tabs become `managed-electron` tabs. Unproven Chrome hints, old lease-like records, and reveal intent that points only at a dropped target are discarded or satisfied rather than reinterpreted as authority.
 

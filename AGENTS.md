@@ -76,9 +76,10 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
   built-in model-specific instruction defaults.
 - Forge Desktop's Automatic Browser is a local Builder capability, not a Skill. An enabled and
   authenticated Forge extension grants profile-wide access to eligible ordinary Chrome tabs;
-  `browser_status` exposes a bounded inventory and `browser_open` can select an inventory tab ID or
-  the active/most-recent eligible tab without OS focus. Non-open operations remain sticky, and
-  possibly mutating operations are never replayed during fallback. The capability is not forwarded to
+  `browser_status` exposes a bounded inventory transiently to the manager/model path, not Browser
+  workspace UI or canonical renderer state, and `browser_open` can select an inventory tab ID or the
+  active/most-recent eligible tab without OS focus. Non-open operations remain sticky, and possibly
+  mutating operations are never replayed during fallback. The capability is not forwarded to
   Remote Projects or Collaboration. Browser recording and saved browser artifacts remain embedded-only.
 
 ## Safety
