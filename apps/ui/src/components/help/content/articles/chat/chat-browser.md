@@ -17,7 +17,7 @@ Open **Settings → Use Chrome with Forge** to set up each Chrome profile and Fo
 
 External Chrome keeps the PNG screenshot unchanged. When the complete successful snapshot response would exceed its bounded relay envelope, Forge deterministically omits optional diagnostics, accessibility nodes, visible-text characters, and interactive elements as needed to fit. The response reports positive omission counts in `compaction.omitted`; `compaction` is absent when nothing was omitted.
 
-If the screenshot alone cannot fit, Forge returns non-retryable `response-too-large` with the `screenshot-only-envelope-overflow` limitation. It does not drop the image or send an oversized response.
+If the screenshot alone cannot fit, Forge returns the typed, non-retryable `response-too-large` failure. It does not drop the image or send an oversized response; callers should rely on the error code and retryability rather than optional diagnostic details.
 
 ## Privacy and persistence
 
