@@ -16,6 +16,7 @@ const EXECUTION_ID = /^[a-f0-9]{24}$/;
 const MATERIAL_ROOT = "/run/forge-secure/bindings";
 export const SECURE_RESERVED_GUEST_ENVIRONMENT_NAMES = [
   "HOME",
+  "BASH_ENV",
   "LANG",
   "LC_ALL",
   "LOGNAME",
@@ -43,6 +44,11 @@ interface AskpassDescriptor extends MaterialDescriptor {
   index: number;
 }
 
+interface SshTrustDescriptor {
+  configByteLength: number;
+  knownHostsByteLength: number;
+}
+
 export interface SecureExecutionFrameHeader {
   version: 1;
   executionId: string;
@@ -54,6 +60,7 @@ export interface SecureExecutionFrameHeader {
   environment: EnvironmentDescriptor[];
   ramFiles: RamFileDescriptor[];
   askpass: AskpassDescriptor[];
+  sshTrust: SshTrustDescriptor | null;
   stdinByteLength: number;
 }
 
@@ -190,6 +197,23 @@ function buildAskpassDescriptors(
   });
 }
 
+function buildSshTrustDescriptor(
+  delivery: SecureExecutionDelivery,
+  material: Buffer[],
+): SshTrustDescriptor | null {
+  if (!delivery.sshTrust) {
+    return null;
+  }
+
+  const config = copyMaterial(delivery.sshTrust.config);
+  const knownHosts = copyMaterial(delivery.sshTrust.knownHosts);
+  material.push(config, knownHosts);
+  return {
+    configByteLength: config.byteLength,
+    knownHostsByteLength: knownHosts.byteLength,
+  };
+}
+
 function zeroBuffers(buffers: readonly Buffer[]): void {
   for (const buffer of buffers) {
     buffer.fill(0);
@@ -228,6 +252,7 @@ export function encodeSecureExecutionFrame(input: {
       material,
       environmentNames,
     );
+    const sshTrust = buildSshTrustDescriptor(delivery, material);
     const stdin = delivery.stdin ? copyMaterial(delivery.stdin) : Buffer.alloc(0);
     material.push(stdin);
 
@@ -250,6 +275,7 @@ export function encodeSecureExecutionFrame(input: {
       environment,
       ramFiles,
       askpass,
+      sshTrust,
       stdinByteLength: stdin.byteLength,
     };
     const headerBytes = Buffer.from(JSON.stringify(header), "utf8");

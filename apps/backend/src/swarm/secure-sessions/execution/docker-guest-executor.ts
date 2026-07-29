@@ -15,7 +15,9 @@ const MAX_FRAME_BYTES = 17 * 1024 * 1024;
 const ROOT = "/run/forge-secure/executions";
 const MATERIAL_ROOT = "/run/forge-secure/bindings";
 const ASKPASS_ROOT = "/tmp/forge-secure-askpass";
+const SSH_WRAPPER_ROOT = "/tmp/forge-secure-ssh";
 const NSS_WRAPPER_LIBRARY = "/usr/local/lib/forge/libnss_wrapper.so";
+const SSH_KNOWN_HOSTS_PLACEHOLDER = "__FORGE_SECURE_SSH_KNOWN_HOSTS__";
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXECUTION_ID = /^[a-f0-9]{24}$/;
 
@@ -54,6 +56,14 @@ function decodeEnvironmentValue(bytes) {
   const value = bytes.toString("utf8");
   if (value.includes("\0") || !Buffer.from(value, "utf8").equals(bytes)) {
     throw new Error("invalid-environment");
+  }
+  return value;
+}
+
+function decodeTextMaterial(bytes) {
+  const value = bytes.toString("utf8");
+  if (value.includes("\0") || !Buffer.from(value, "utf8").equals(bytes)) {
+    throw new Error("invalid-text-material");
   }
   return value;
 }
@@ -172,7 +182,15 @@ function ensureDirectory(pathValue) {
     if (!error || error.code !== "ENOENT") {
       throw error;
     }
-    fs.mkdirSync(pathValue, { mode: 0o700 });
+    try {
+      fs.mkdirSync(pathValue, { mode: 0o700 });
+    } catch (createError) {
+      // Two execution-local deliveries may initialize the shared empty parent
+      // concurrently. EEXIST is safe only after the lstat validation below.
+      if (!createError || createError.code !== "EEXIST") {
+        throw createError;
+      }
+    }
     const created = fs.lstatSync(pathValue);
     if (!created.isDirectory() || created.isSymbolicLink()) {
       throw new Error("unsafe-directory");
@@ -294,6 +312,89 @@ function materializeAskpass(frame, state, header, executionRoot, environment) {
   });
 }
 
+function materializeSshTrust(frame, state, header, executionRoot, environment) {
+  if (header.sshTrust === null) {
+    return;
+  }
+  const descriptor = header.sshTrust;
+  if (
+    !descriptor ||
+    !Number.isSafeInteger(descriptor.configByteLength) ||
+    descriptor.configByteLength <= 0 ||
+    !Number.isSafeInteger(descriptor.knownHostsByteLength) ||
+    descriptor.knownHostsByteLength <= 0
+  ) {
+    throw new Error("invalid-ssh-trust");
+  }
+
+  const configBytes = takeMaterial(frame, state, descriptor.configByteLength);
+  const knownHostsBytes = takeMaterial(
+    frame,
+    state,
+    descriptor.knownHostsByteLength,
+  );
+  const sshRoot = path.join(executionRoot, "ssh");
+  const wrapperRoot = path.join(SSH_WRAPPER_ROOT, header.executionId);
+  const configPath = path.join(sshRoot, "config");
+  const knownHostsPath = path.join(sshRoot, "known_hosts");
+  const wrapperPath = path.join(wrapperRoot, "ssh");
+  const bashEnvironmentPath = path.join(executionRoot, "bash-env");
+
+  try {
+    const config = decodeTextMaterial(configBytes);
+    const knownHosts = decodeTextMaterial(knownHostsBytes);
+    if (!config.includes(SSH_KNOWN_HOSTS_PLACEHOLDER)) {
+      throw new Error("invalid-ssh-config");
+    }
+    const materializedConfig = config.replaceAll(
+      SSH_KNOWN_HOSTS_PLACEHOLDER,
+      knownHostsPath,
+    );
+    if (materializedConfig.includes(SSH_KNOWN_HOSTS_PLACEHOLDER)) {
+      throw new Error("invalid-ssh-config");
+    }
+
+    fs.mkdirSync(sshRoot, { mode: 0o700 });
+    ensureDirectory(SSH_WRAPPER_ROOT);
+    fs.mkdirSync(wrapperRoot, { mode: 0o700 });
+    fs.writeFileSync(knownHostsPath, knownHosts, {
+      flag: "wx",
+      mode: 0o400,
+    });
+    fs.writeFileSync(configPath, materializedConfig, {
+      flag: "wx",
+      mode: 0o400,
+    });
+    const wrapper =
+      "#!/bin/sh\n" +
+      "exec /usr/bin/ssh -F " +
+      JSON.stringify(configPath) +
+      " -o StrictHostKeyChecking=yes \"$@\"\n";
+    fs.writeFileSync(wrapperPath, wrapper, {
+      flag: "wx",
+      mode: 0o700,
+    });
+    const bashEnvironment =
+      "ssh() { " +
+      JSON.stringify(wrapperPath) +
+      " \"$@\"; }\n" +
+      "export -f ssh\n" +
+      "export PATH=" +
+      JSON.stringify(wrapperRoot) +
+      ":\"$" +
+      "{PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}\"\n";
+    fs.writeFileSync(bashEnvironmentPath, bashEnvironment, {
+      flag: "wx",
+      mode: 0o400,
+    });
+    environment.PATH = wrapperRoot + ":" + environment.PATH;
+    environment.BASH_ENV = bashEnvironmentPath;
+  } finally {
+    configBytes.fill(0);
+    knownHostsBytes.fill(0);
+  }
+}
+
 async function main(frame) {
   if (
     frame.byteLength < PREFIX_BYTES ||
@@ -325,7 +426,8 @@ async function main(frame) {
     typeof header.command.cwd !== "string" ||
     !Array.isArray(header.environment) ||
     !Array.isArray(header.ramFiles) ||
-    !Array.isArray(header.askpass)
+    !Array.isArray(header.askpass) ||
+    !Object.prototype.hasOwnProperty.call(header, "sshTrust")
   ) {
     throw new Error("invalid-header");
   }
@@ -353,6 +455,7 @@ async function main(frame) {
   try {
     materializeFiles(frame, state, header, environment, createdFiles);
     materializeAskpass(frame, state, header, executionRoot, environment);
+    materializeSshTrust(frame, state, header, executionRoot, environment);
     ensureExecutionIdentity(executionRoot, environment);
     const childStdin = takeMaterial(frame, state, header.stdinByteLength);
     if (state.offset !== frame.byteLength) {
@@ -448,6 +551,10 @@ process.stdin.once("end", async () => {
       try {
         fs.rmSync(executionRoot, { recursive: true, force: true });
         fs.rmSync(path.join(ASKPASS_ROOT, path.basename(executionRoot)), {
+          recursive: true,
+          force: true,
+        });
+        fs.rmSync(path.join(SSH_WRAPPER_ROOT, path.basename(executionRoot)), {
           recursive: true,
           force: true,
         });

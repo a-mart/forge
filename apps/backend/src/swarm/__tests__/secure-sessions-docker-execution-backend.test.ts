@@ -32,6 +32,7 @@ import type {
   SecureOutputGuard,
   SecureOutputStream,
 } from "../secure-sessions/execution/secure-execution-backend.js";
+import { SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER } from "../secure-sessions/execution/secure-execution-backend.js";
 import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
 
 const execFileAsync = promisify(execFile);
@@ -341,6 +342,99 @@ dockerSuite(
       expect(Buffer.from(result.stdout).toString("utf8")).toBe(
         "42420:42421:forge-secure:forge-secure",
       );
+    }, 30_000);
+
+    it("applies execution-local SSH trust to ordinary login-shell ssh commands", async () => {
+      const backend = new DockerSecureExecutionBackend({
+        scope: uniqueScope("ssh-trust"),
+      });
+      const secureTask = task("ssh-trust");
+      cleanupOperations.push(async () => await backend.destroyTask(secureTask));
+      const resetWrapperRoot = await backend.execute({
+        task: secureTask,
+        command: {
+          executable: "rm",
+          args: ["-rf", "/tmp/forge-secure-ssh"],
+        },
+        guardOutput: passThroughGuard(),
+      });
+      expect(resetWrapperRoot.exitCode).toBe(0);
+
+      const aliases = [
+        {
+          alias: "forge-trusted-one",
+          hostName: "192.0.2.41",
+          user: "first-user",
+          port: 2201,
+        },
+        {
+          alias: "forge-trusted-two",
+          hostName: "192.0.2.42",
+          user: "second-user",
+          port: 2202,
+        },
+      ];
+      const results = await Promise.all(
+        aliases.map(async ({ alias, hostName, user, port }) =>
+          await backend.execute({
+            task: secureTask,
+            command: {
+              executable: "bash",
+              args: [
+                "-lc",
+                `sleep 0.1; ssh -G ${alias} | awk '$1 == "hostname" || $1 == "user" || $1 == "port" || $1 == "stricthostkeychecking" || $1 == "userknownhostsfile" { print $1 "=" $2 }'`,
+              ],
+            },
+            delivery: {
+              sshTrust: {
+                config: Buffer.from(
+                  [
+                    `Host ${alias}`,
+                    `  HostName ${hostName}`,
+                    `  User ${user}`,
+                    `  Port ${port}`,
+                    "  HostKeyAlias " + alias,
+                    "  StrictHostKeyChecking yes",
+                    `  UserKnownHostsFile ${SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER}`,
+                    "",
+                  ].join("\n"),
+                ),
+                knownHosts: Buffer.from(
+                  `${alias} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKuYwA+0fN6HcYk4v0zKGhm10I/C4gXLm9yJQ4IT\n`,
+                ),
+              },
+            },
+            guardOutput: passThroughGuard(),
+          }),
+        ),
+      );
+
+      for (const [index, result] of results.entries()) {
+        const expected = aliases[index];
+        const output = Buffer.from(result.stdout).toString("utf8");
+        expect(result.exitCode).toBe(0);
+        expect(output).toContain(`user=${expected.user}\n`);
+        expect(output).toContain(`hostname=${expected.hostName}\n`);
+        expect(output).toContain(`port=${expected.port}\n`);
+        expect(output).toContain("stricthostkeychecking=true\n");
+        expect(output).toMatch(
+          /userknownhostsfile=\/run\/forge-secure\/executions\/[a-f0-9]{24}\/ssh\/known_hosts\n/u,
+        );
+        expect(output).not.toContain(SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER);
+      }
+
+      const cleanupCheck = await backend.execute({
+        task: secureTask,
+        command: {
+          executable: "sh",
+          args: [
+            "-c",
+            `current="$(basename "$(dirname "$TMPDIR")")"; test -z "$(find ${dockerSecureExecutionMetadata.secretRoot}/executions -mindepth 1 -maxdepth 1 ! -name "$current" -print -quit)"`,
+          ],
+        },
+        guardOutput: passThroughGuard(),
+      });
+      expect(cleanupCheck.exitCode).toBe(0);
     }, 30_000);
 
     it("reuses one hardened same-path task sandbox for sixteen commands", async () => {

@@ -5,6 +5,7 @@ import {
   secureExecutionFrameConstants,
   type SecureExecutionFrameHeader,
 } from "../secure-sessions/execution/execution-frame.js";
+import { SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER } from "../secure-sessions/execution/secure-execution-backend.js";
 import { createExecutionDeliveryFromBindings } from "../secure-sessions/execution/protocol-binding-delivery.js";
 import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
 
@@ -27,6 +28,10 @@ describe("secure execution frame", () => {
     const environmentValue = Buffer.from("environment-canary");
     const fileValue = Buffer.from("file-canary");
     const askpassValue = Buffer.from("askpass-canary");
+    const sshConfig = Buffer.from(
+      `Host test\n  UserKnownHostsFile ${SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER}\n`,
+    );
+    const knownHosts = Buffer.from("test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest\n");
     const stdinValue = Buffer.from("stdin-canary");
     const command = {
       executable: "/bin/sh",
@@ -52,6 +57,10 @@ describe("secure execution frame", () => {
             value: askpassValue,
           },
         ],
+        sshTrust: {
+          config: sshConfig,
+          knownHosts,
+        },
         stdin: stdinValue,
       },
     });
@@ -82,10 +91,16 @@ describe("secure execution frame", () => {
         byteLength: askpassValue.byteLength,
       },
     ]);
+    expect(header.sshTrust).toEqual({
+      configByteLength: sshConfig.byteLength,
+      knownHostsByteLength: knownHosts.byteLength,
+    });
     expect(headerText).not.toContain(environmentValue.toString("utf8"));
     expect(headerText).not.toContain(fileValue.toString("utf8"));
     expect(headerText).not.toContain(stdinValue.toString("utf8"));
     expect(headerText).not.toContain(askpassValue.toString("utf8"));
+    expect(headerText).not.toContain(sshConfig.toString("utf8"));
+    expect(headerText).not.toContain(knownHosts.toString("utf8"));
 
     frame.fill(0);
   });
@@ -121,6 +136,24 @@ describe("secure execution frame", () => {
             {
               targetPath: "/run/forge-secure/bindings/../outside",
               value: Buffer.from("value"),
+            },
+          ],
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<SecureExecutionError>>({
+        code: "INVALID_DELIVERY",
+      }),
+    );
+
+    expect(() =>
+      encodeSecureExecutionFrame({
+        ...base,
+        delivery: {
+          environment: [
+            {
+              name: "BASH_ENV",
+              value: Buffer.from("/tmp/untrusted-startup"),
             },
           ],
         },

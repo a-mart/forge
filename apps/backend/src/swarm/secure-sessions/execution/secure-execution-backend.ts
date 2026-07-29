@@ -54,10 +54,32 @@ export interface SecureAskpassDelivery {
   value: Uint8Array;
 }
 
+/**
+ * Replaced inside the secure guest with the execution-local known_hosts path.
+ * The service can therefore build one deterministic OpenSSH config without
+ * knowing the per-command execution identifier.
+ */
+export const SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER =
+  "__FORGE_SECURE_SSH_KNOWN_HOSTS__";
+
+export interface SecureSshTrustDelivery {
+  /**
+   * A Forge-generated OpenSSH config containing the known-hosts placeholder.
+   * It is public trust metadata, but remains execution-local so concurrent
+   * commands never share mutable SSH configuration files.
+   */
+  config: Uint8Array;
+  /**
+   * Canonical known_hosts lines for the configured project host profiles.
+   */
+  knownHosts: Uint8Array;
+}
+
 export interface SecureExecutionDelivery {
   environment?: readonly SecureEnvironmentDelivery[];
   ramFiles?: readonly SecureRamFileDelivery[];
   askpass?: readonly SecureAskpassDelivery[];
+  sshTrust?: SecureSshTrustDelivery;
   /**
    * Explicit secret-bearing stdin for programs whose native interface reads a
    * credential from stdin. This is not a shell interpolation mechanism.
