@@ -455,11 +455,7 @@ export class SessionLifecycleCoordinator {
         this.cleanupCodex(agentId);
         this.options.goals.cancelScheduledContinuation(agentId);
         this.options.browser.cancelSession(agentId);
-        await this.options.browser.releaseSessionForLifecycle(
-          requiredDescriptor.profileId,
-          agentId,
-          "delete",
-        );
+        await this.releaseBeforeDelete(requiredDescriptor.profileId, agentId);
         const result = await this.options.sessions.deleteSession(agentId);
         await this.cleanupSecureSessionStateAfterCoreDeletion(agentId);
         await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
@@ -482,7 +478,7 @@ export class SessionLifecycleCoordinator {
     );
     const descriptor = cloneDescriptor(requiredDescriptor);
     this.options.browser.cancelSession(agentId);
-    await this.options.browser.releaseSessionForLifecycle(requiredDescriptor.profileId, agentId, "delete");
+    await this.releaseBeforeDelete(requiredDescriptor.profileId, agentId);
     const result = await this.options.sessions.deleteCollaborationSession(agentId);
     await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
     this.options.activeTools.clearSession(agentId);
@@ -602,10 +598,9 @@ export class SessionLifecycleCoordinator {
         }
         const deleted = sessions.map((session) => cloneDescriptor(session));
         for (const descriptor of deleted) {
-          await this.options.browser.releaseSessionForLifecycle(
+          await this.releaseBeforeDelete(
             descriptor.profileId ?? targetManagerId,
             descriptor.agentId,
-            "delete",
           );
         }
         const result = await this.options.lifecycle.deleteManager(
@@ -701,8 +696,22 @@ export class SessionLifecycleCoordinator {
       await this.options.browser.releaseSessionForLifecycle(profileId, agentId, "stop");
     } catch (error) {
       // Stop is the generic emergency path and may proceed after a bounded
-      // browser release failure. Archive/delete and host replacement remain fail closed.
+      // browser release failure. Archive and host replacement remain fail closed.
       this.options.logDebug("browser:lifecycle_release:stop_failed", {
+        profileId,
+        agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async releaseBeforeDelete(profileId: string, agentId: string): Promise<void> {
+    try {
+      await this.options.browser.releaseSessionForLifecycle(profileId, agentId, "delete");
+    } catch (error) {
+      // Deletion is terminal. Browser revocation remains best-effort, but stale
+      // host bookkeeping must not make the session impossible to remove.
+      this.options.logDebug("browser:lifecycle_release:delete_failed", {
         profileId,
         agentId,
         error: error instanceof Error ? error.message : String(error),

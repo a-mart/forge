@@ -598,6 +598,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   async releaseSession(session: BrowserTargetSession, reason: string): Promise<void> {
+    if (reason === 'delete') {
+      await this.deleteSessionCheckpoints(session)
+      return
+    }
     await this.releaseSessionCheckpoints(session, reason)
   }
 
@@ -617,6 +621,18 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     })
   }
 
+  private deleteSessionCheckpoints(session: BrowserTargetSession): Promise<void> {
+    return this.serializeCheckpointRelease(async () => {
+      const checkpoints = (await this.checkpoints.all()).filter((lease) =>
+        lease.sessionAgentId === session.sessionAgentId && lease.profileId === session.profileId)
+      for (const checkpoint of checkpoints) {
+        try { await this.releaseCheckpoint(checkpoint, 'delete') }
+        catch { await this.forgetCheckpoint(checkpoint) }
+      }
+      this.sessionAffinities.delete(`${session.sessionAgentId}\0${session.profileId}`)
+    })
+  }
+
   private async releaseCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, reason: string): Promise<void> {
     const connection = this.connection(checkpoint.extensionInstanceId)
     const result = await connection.request('forge.browser.release', {
@@ -626,6 +642,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       result.leaseEpoch !== checkpoint.leaseEpoch || canonical([...result.releasedTabIds].sort((a, b) => a - b)) !== canonical(checkpoint.tabIds)) {
       throw new Error('exact checkpoint release was not acknowledged')
     }
+    await this.forgetCheckpoint(checkpoint)
+  }
+
+  private async forgetCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
     await this.checkpoints.remove(checkpoint.extensionInstanceId, checkpoint.leaseId, checkpoint.leaseEpoch)
     for (const tabId of checkpoint.tabIds) this.acquisitionCreated.delete(acquisitionKey(checkpoint, tabId))
   }

@@ -471,6 +471,22 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); reconnected.close(); await retryLoop
   })
 
+  it('discards a deleted session checkpoint when its extension is no longer connected', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
+    const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
+    const acquired = await runtime.acquireTarget({
+      ...session, operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 33,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    client.close(); await loop
+
+    await expect(runtime.releaseSession(session, 'delete')).resolves.toBeUndefined()
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate()
+  })
+
   it('removes a relay checkpoint only after the retry acknowledges its exact receipted tab IDs', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const mismatchedLoop = fakeExtensionLoop(client, [], 'instance_profile_a', true, undefined, [999])
@@ -665,7 +681,21 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     expect(acquisitions).toHaveLength(2)
     expect(acquisitions.every(({ params }) => params.createIfNeeded === false)).toBe(true)
 
-    runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
+    profileA.close(); await loopA
+    const newerProfileA = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(newerProfileA, 'instance_profile_a')
+    const newerLoopA = fakeExtensionLoop(newerProfileA, requestsA, 'instance_profile_a', true, undefined, undefined, tabsA)
+
+    await runtime.releaseSession(session, 'delete')
+    const recreated = await runtime.acquireTarget({
+      ...session, operation: 'open', preferredTabId: null,
+      reuseExisting: false, createIfNeeded: true, ownerEpoch: 31,
+    })
+    expect(recreated).toEqual({ ok: true, authority: { ownerEpoch: 31, tabId: 'ext.instance_profile_a.41' } })
+    if (!recreated.ok) throw new Error('fixture recreated session acquisition failed')
+    await runtime.releaseAuthority(session, recreated.authority, 'idle')
+
+    runtime.deactivate(); newerProfileA.close(); profileB.close(); await Promise.all([newerLoopA, loopB])
   })
 
   it('restores the same canonical inventory IDs after an automatic runtime reconnect', async () => {

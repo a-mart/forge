@@ -212,12 +212,23 @@ export class AutomaticBrowserHost {
   }
 
   async releaseSession(session: BrowserTargetSession, reason: Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason']): Promise<void> {
-    await this.releaseBurst(session, reason)
-    await Promise.all([
-      this.managed.releaseSession?.(session, reason),
-      this.external?.releaseSession?.(session, reason),
-    ])
+    if (reason === 'delete') {
+      // Delete is terminal: attempt revocation, then forget every host-side
+      // reference even when an adapter can no longer acknowledge stale state.
+      try { await this.releaseBurst(session, reason) } catch { /* terminal cleanup continues */ }
+      await Promise.allSettled([
+        this.managed.releaseSession?.(session, reason),
+        this.external?.releaseSession?.(session, reason),
+      ])
+    } else {
+      await this.releaseBurst(session, reason)
+      await Promise.all([
+        this.managed.releaseSession?.(session, reason),
+        this.external?.releaseSession?.(session, reason),
+      ])
+    }
     const key = sessionKey(session)
+    this.bursts.delete(key)
     this.sessions.delete(key)
     for (const tabKey of [...this.targetAffinities.keys()]) {
       if (!tabKey.startsWith(`${key}\u0000`)) continue
