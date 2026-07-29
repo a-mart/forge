@@ -1053,6 +1053,8 @@ export function BuilderSurface({
       const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
         secureCatalog,
         secureSessionSnapshot?.profileId ?? activeAgent?.profileId,
+        secureBrowserControl?.authorized === true
+          && secureBrowserControl.privateEntryAvailable === true,
       )
       if (!localVaultReady) {
         throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
@@ -1076,6 +1078,7 @@ export function BuilderSurface({
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
+    secureBrowserControl,
     secureCatalog,
     secureSessionSnapshot?.profileId,
     secureSessionSnapshot?.revision,
@@ -1100,6 +1103,8 @@ export function BuilderSurface({
       const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
         secureCatalog,
         managerSnapshot.profileId,
+        secureBrowserControl?.authorized === true
+          && secureBrowserControl.privateEntryAvailable === true,
       )
       if (!localVaultReady) {
         throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
@@ -1132,6 +1137,7 @@ export function BuilderSurface({
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
+    secureBrowserControl,
     secureCatalog,
   ])
 

@@ -9,6 +9,7 @@ import type {
 } from '@/components/chat/secure-session/types'
 import {
   fetchSecureSecretsCatalog,
+  isSecureMaterialEntryAvailable,
   unlockSecureMaterialEntry,
   type SecureSecretsCatalog,
 } from './secure-secrets-api'
@@ -128,6 +129,7 @@ export async function fetchSecureSessionCatalog(
 export async function unlockLocalProjectDefaultsIfNeeded(
   catalog: SecureSecretsCatalog | null,
   profileId: string | null | undefined,
+  pairedBrowserVaultReady = false,
 ): Promise<boolean> {
   if (!catalog || !profileId) return true
   const localProviderIds = new Set(
@@ -152,9 +154,13 @@ export async function unlockLocalProjectDefaultsIfNeeded(
         && secret.automaticGrantPolicy.profileIds.includes(profileId)
       )
     ))
-  return requiresLocalVault
+  if (!requiresLocalVault) return true
+  // Desktop performs the explicit OS-vault unlock locally. A paired browser
+  // has no preload bridge, so it relies on the authenticated backend status
+  // that already verified the same Electron-owned vault.
+  return isSecureMaterialEntryAvailable()
     ? unlockSecureMaterialEntry()
-    : true
+    : pairedBrowserVaultReady
 }
 
 export async function fetchSecureSessionSnapshot(

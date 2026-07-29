@@ -193,8 +193,47 @@ describe('Secure Sessions API', () => {
         updatedAt: '2026-07-23T12:00:00.000Z',
       }],
       projectDefaults: [],
-    }, 'profile-1')).resolves.toBe(false)
+    }, 'profile-1', true)).resolves.toBe(false)
     expect(unlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses authenticated paired-browser vault readiness when no Electron bridge exists', async () => {
+    Reflect.deleteProperty(window, 'electronBridge')
+    const catalog = {
+      providers: [{
+        providerId: 'local',
+        kind: 'local_keychain' as const,
+        displayName: 'Local vault',
+        enabled: true,
+        status: 'available' as const,
+        lastVerifiedAt: '2026-07-29T12:00:00.000Z',
+        lastStatusCode: null,
+      }],
+      secrets: [{
+        secretId: 'local-default',
+        providerId: 'local',
+        displayAlias: 'deploy-token',
+        displayName: null,
+        scope: { kind: 'instance' as const },
+        retention: 'saved' as const,
+        bindings: [],
+        automaticGrantPolicy: { kind: 'all_projects' as const },
+        available: true,
+        updatedAt: '2026-07-29T12:00:00.000Z',
+      }],
+      projectDefaults: [],
+    }
+
+    await expect(unlockLocalProjectDefaultsIfNeeded(
+      catalog,
+      'profile-1',
+      true,
+    )).resolves.toBe(true)
+    await expect(unlockLocalProjectDefaultsIfNeeded(
+      catalog,
+      'profile-1',
+      false,
+    )).resolves.toBe(false)
   })
 
   it('uses no-store for snapshot reads', async () => {
