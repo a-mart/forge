@@ -40,9 +40,6 @@ const SOURCE_STATUS_LABELS: Record<SecureSecretSourceStatus, string> = {
   disabled: 'Disabled',
 }
 
-export const SECURE_RUNNER_BUILD_COMMAND =
-  'docker build --tag forge-secure-runner:node22-v5 --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner apps/backend/src/swarm/secure-sessions/execution'
-
 function readinessActions(
   readiness: SecureSessionReadiness | null,
   privateEntrySupported: boolean,
@@ -51,9 +48,9 @@ function readinessActions(
 ): string[] {
   const actions: string[] = []
   if (readiness?.code === 'backend_unavailable') {
-    actions.push('Start or repair Docker Desktop, then refresh. Forge will not build an image automatically.')
+    actions.push('Start or repair Docker Desktop, then check again.')
   } else if (readiness?.code === 'image_unavailable') {
-    actions.push('Check the Forge installation and Docker storage, then refresh.')
+    actions.push('Install the Forge secure runner in this local Docker engine.')
   } else if (readiness?.code === 'unsupported_platform') {
     actions.push('Use a supported local Builder platform for Secure Bash.')
   }
@@ -104,10 +101,13 @@ export function SecureSessionsReadinessPanel({
   privateEntryAvailable,
   unlockingPrivateEntry,
   privateEntryUnlockMessage,
+  installingRunner,
+  runnerInstallMessage,
   providers,
   configuredProjectDefaultCount,
   onRefresh,
   onUnlockPrivateEntry,
+  onInstallRunner,
 }: {
   readiness: SecureSessionReadiness | null
   loading: boolean
@@ -115,14 +115,15 @@ export function SecureSessionsReadinessPanel({
   privateEntryAvailable: boolean
   unlockingPrivateEntry: boolean
   privateEntryUnlockMessage: string | null
+  installingRunner: boolean
+  runnerInstallMessage: string | null
   providers: SecureSecretProviderSummary[]
   configuredProjectDefaultCount?: number
   onRefresh: () => void | Promise<void>
   onUnlockPrivateEntry: () => void | Promise<void>
+  onInstallRunner: () => void | Promise<void>
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const [buildCopyState, setBuildCopyState] =
-    useState<'idle' | 'copied' | 'failed'>('idle')
   const actions = loading
     ? []
     : readinessActions(
@@ -144,16 +145,6 @@ export function SecureSessionsReadinessPanel({
       setCopyState('copied')
     } catch {
       setCopyState('failed')
-    }
-  }
-
-  const copyBuildCommand = async () => {
-    setBuildCopyState('idle')
-    try {
-      await navigator.clipboard.writeText(SECURE_RUNNER_BUILD_COMMAND)
-      setBuildCopyState('copied')
-    } catch {
-      setBuildCopyState('failed')
     }
   }
 
@@ -195,7 +186,7 @@ export function SecureSessionsReadinessPanel({
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 text-xs"
-            disabled={loading}
+            disabled={loading || installingRunner}
             onClick={() => void onRefresh()}
           >
             {loading
@@ -269,24 +260,17 @@ export function SecureSessionsReadinessPanel({
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button
                 type="button"
-                variant="outline"
+                variant="default"
                 size="sm"
-                className="h-7 gap-1.5 bg-background px-2 text-xs"
-                onClick={() => void copyBuildCommand()}
+                className="h-7 gap-1.5 px-2 text-xs"
+                disabled={installingRunner}
+                onClick={() => void onInstallRunner()}
               >
-                <Clipboard className="size-3.5" />
-                Copy build command
+                {installingRunner
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : <ShieldCheck className="size-3.5" />}
+                {installingRunner ? 'Installing secure runner…' : 'Install secure runner'}
               </Button>
-              {buildCopyState !== 'idle' ? (
-                <span className={buildCopyState === 'copied'
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : 'text-destructive'}
-                >
-                  {buildCopyState === 'copied'
-                    ? 'Build command copied.'
-                    : 'Build command could not be copied.'}
-                </span>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -294,6 +278,17 @@ export function SecureSessionsReadinessPanel({
         <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 className="size-3.5" />
           Secure Sessions are ready for configured local sources.
+        </p>
+      ) : null}
+
+      {runnerInstallMessage ? (
+        <p
+          role="status"
+          className={readiness?.available
+            ? 'text-xs text-emerald-700 dark:text-emerald-300'
+            : 'text-xs text-destructive'}
+        >
+          {runnerInstallMessage}
         </p>
       ) : null}
 

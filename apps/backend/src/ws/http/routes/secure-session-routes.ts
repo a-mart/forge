@@ -70,6 +70,7 @@ export type FulfillSecureAccessRequestInput = {
 
 export interface SecureSessionsTransportService {
   getSecureSessionReadiness(): Promise<SecureSessionReadiness> | SecureSessionReadiness;
+  installSecureRunner(): Promise<SecureSessionReadiness> | SecureSessionReadiness;
   getSecureSessionSnapshot(
     sessionAgentId: string,
   ): Promise<SecureSessionSnapshot> | SecureSessionSnapshot;
@@ -137,6 +138,18 @@ export function createSecureSessionRoutes(options: {
             response,
             200,
             await options.service.getSecureSessionReadiness(),
+          );
+          return;
+        }
+
+        if (
+          request.method === "POST"
+          && requestUrl.pathname === `${SECURE_SESSIONS_PATH}/runner/install`
+        ) {
+          sendSecureJson(
+            response,
+            200,
+            await options.service.installSecureRunner(),
           );
           return;
         }

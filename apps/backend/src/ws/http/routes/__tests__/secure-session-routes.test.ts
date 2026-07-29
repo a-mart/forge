@@ -30,6 +30,10 @@ function fakeService(): SecureSessionsTransportService {
       available: true,
       code: "available",
     })),
+    installSecureRunner: vi.fn(() => ({
+      available: true,
+      code: "available",
+    })),
     getSecureSessionSnapshot: vi.fn(() => snapshot),
     startSecureSession: vi.fn(async () => snapshot),
     stopSecureSession: vi.fn(async () => snapshot),
@@ -55,6 +59,25 @@ describe("secure session routes", () => {
       code: "available",
     });
     expect(service.getSecureSessionReadiness).toHaveBeenCalledOnce();
+    expect(service.getSecureSessionSnapshot).not.toHaveBeenCalled();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("installs the local secure runner through the fixed readiness contract", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+
+    const response = await fetch(
+      `${server.baseUrl}/api/secure-sessions/runner/install`,
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      available: true,
+      code: "available",
+    });
+    expect(service.installSecureRunner).toHaveBeenCalledOnce();
     expect(service.getSecureSessionSnapshot).not.toHaveBeenCalled();
     expect(response.headers.get("cache-control")).toBe("no-store");
   });

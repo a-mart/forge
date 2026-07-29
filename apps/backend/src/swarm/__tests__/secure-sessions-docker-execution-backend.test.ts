@@ -9,6 +9,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   realpath,
   rename,
   rm,
@@ -19,11 +20,12 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DockerSecureExecutionBackend,
   dockerSecureExecutionMetadata,
 } from "../secure-sessions/execution/docker-secure-execution-backend.js";
+import { DockerCli } from "../secure-sessions/execution/docker-cli.js";
 import type {
   SecureExecutionTask,
   SecureOutputGuard,
@@ -204,6 +206,97 @@ async function hostGitCommonDirectory(): Promise<string | null> {
 afterEach(async () => {
   const pending = cleanupOperations.splice(0);
   await Promise.allSettled(pending.map(async (cleanup) => await cleanup()));
+});
+
+describe("Docker secure runner installation", () => {
+  it("serializes installs, builds from only Forge-owned resources, and verifies the contract", async () => {
+    const resources = await mkdtemp(
+      join(tmpdir(), "forge-secure-runner-resources-"),
+    );
+    cleanupOperations.push(async () =>
+      await rm(resources, { recursive: true, force: true }),
+    );
+    await writeFile(
+      join(resources, "Dockerfile.secure-runner"),
+      'FROM scratch\nLABEL com.forge.secure-execution.runner-contract="5"\n',
+    );
+    await writeFile(join(resources, "forge-env-askpass"), "#!/bin/sh\n");
+    await writeFile(join(resources, "not-in-build-context"), "canary");
+
+    let releaseBuild!: () => void;
+    const buildReleased = new Promise<void>((resolveBuild) => {
+      releaseBuild = resolveBuild;
+    });
+    let reportBuildStarted!: () => void;
+    const buildStarted = new Promise<void>((resolveBuild) => {
+      reportBuildStarted = resolveBuild;
+    });
+    let buildContextFiles: string[] = [];
+    const invocations: string[][] = [];
+    const timeouts: Array<number | undefined> = [];
+    const pin = vi.spyOn(DockerCli.prototype, "pinLocalEndpoint")
+      .mockResolvedValue(true);
+    const run = vi.spyOn(DockerCli.prototype, "run")
+      .mockImplementation(async (args, _maxStdoutBytes, timeoutMs) => {
+        invocations.push([...args]);
+        timeouts.push(timeoutMs);
+        if (args[0] === "version") {
+          return { exitCode: 0, stdout: Buffer.from('"linux"\n') };
+        }
+        if (args[0] === "build") {
+          const context = args.at(-1);
+          if (context === undefined) throw new Error("missing build context");
+          buildContextFiles = (await readdir(context)).sort();
+          reportBuildStarted();
+          await buildReleased;
+          return { exitCode: 0, stdout: Buffer.from("sha256:test") };
+        }
+        return { exitCode: 0, stdout: Buffer.from("5\n") };
+      });
+
+    try {
+      const backend = new DockerSecureExecutionBackend({
+        runnerResourceDirectory: resources,
+        dockerRunnerInstallTimeoutMs: 123_456,
+      });
+      const first = backend.installRunner();
+      await buildStarted;
+      const second = backend.installRunner();
+      releaseBuild();
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { available: true, code: "available" },
+        { available: true, code: "available" },
+      ]);
+      expect(pin).toHaveBeenCalled();
+      expect(invocations.filter(([command]) => command === "build")).toHaveLength(1);
+      expect(buildContextFiles).toEqual([
+        "Dockerfile.secure-runner",
+        "forge-env-askpass",
+      ]);
+      const buildIndex = invocations.findIndex(([command]) => command === "build");
+      expect(timeouts[buildIndex]).toBe(123_456);
+      expect(invocations[buildIndex]).toEqual([
+        "build",
+        "--quiet",
+        "--tag",
+        "forge-secure-runner:node22-v5",
+        "--file",
+        expect.stringMatching(/Dockerfile\.secure-runner$/),
+        expect.stringMatching(/forge-secure-runner-build-/),
+      ]);
+      expect(invocations.at(-1)).toEqual([
+        "image",
+        "inspect",
+        "forge-secure-runner:node22-v5",
+        "--format",
+        '{{index .Config.Labels "com.forge.secure-execution.runner-contract"}}',
+      ]);
+    } finally {
+      run.mockRestore();
+      pin.mockRestore();
+    }
+  });
 });
 
 dockerSuite(

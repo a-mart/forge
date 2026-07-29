@@ -3,11 +3,13 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, existsSync } from "node:fs";
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   realpath,
@@ -62,6 +64,19 @@ const GIT_COMMON_LABEL = "com.forge.secure-execution.git-common";
 const VERSION_LABEL = "com.forge.secure-execution.version";
 const PROTOCOL_VERSION = "2";
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const DEFAULT_RUNNER_INSTALL_TIMEOUT_MS = 20 * 60 * 1_000;
+const RUNNER_RESOURCE_FILES = [
+  "Dockerfile.secure-runner",
+  "forge-env-askpass",
+] as const;
+const RUNNER_RESOURCE_RELATIVE_DIR = join(
+  "apps",
+  "backend",
+  "src",
+  "swarm",
+  "secure-sessions",
+  "execution",
+);
 
 interface DockerInspectMount {
   Type?: unknown;
@@ -124,7 +139,9 @@ export interface DockerSecureExecutionBackendOptions {
   dockerCommand?: string;
   dockerEnvironment?: NodeJS.ProcessEnv;
   dockerControlPlaneTimeoutMs?: number;
+  dockerRunnerInstallTimeoutMs?: number;
   heartbeatRoot?: string;
+  runnerResourceDirectory?: string;
   onDockerInvocation?: DockerCliOptions["onInvocation"];
   runAsUser?: {
     uid: number;
@@ -292,7 +309,10 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
   private readonly requireImageContract: boolean;
   private readonly runAsUser: { uid: number; gid: number };
   private readonly heartbeatRoot: string;
+  private readonly runnerInstallTimeoutMs: number;
+  private readonly runnerResourceDirectory: string;
   private readonly platform: NodeJS.Platform;
+  private runnerInstallPromise: Promise<SecureExecutionAvailability> | null = null;
   private readonly preparing = new Map<string, Promise<TaskIdentity>>();
   private readonly lifecycleTails = new Map<string, Promise<void>>();
   private readonly fileDeliveryTails = new Map<string, Promise<void>>();
@@ -314,6 +334,33 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     this.heartbeatRoot = resolve(
       options.heartbeatRoot
         ?? join(tmpdir(), "forge-secure-heartbeats", this.scopeHash),
+    );
+    this.runnerInstallTimeoutMs =
+      options.dockerRunnerInstallTimeoutMs !== undefined
+      && Number.isFinite(options.dockerRunnerInstallTimeoutMs)
+      && options.dockerRunnerInstallTimeoutMs > 0
+        ? options.dockerRunnerInstallTimeoutMs
+        : DEFAULT_RUNNER_INSTALL_TIMEOUT_MS;
+    this.runnerResourceDirectory = resolve(
+      options.runnerResourceDirectory
+        ?? (
+          process.env.FORGE_RESOURCES_DIR?.trim()
+            ? join(
+                process.env.FORGE_RESOURCES_DIR.trim(),
+                RUNNER_RESOURCE_RELATIVE_DIR,
+              )
+            : (
+                existsSync(join(process.cwd(), RUNNER_RESOURCE_RELATIVE_DIR))
+                  ? join(process.cwd(), RUNNER_RESOURCE_RELATIVE_DIR)
+                  : join(
+                      process.cwd(),
+                      "src",
+                      "swarm",
+                      "secure-sessions",
+                      "execution",
+                    )
+              )
+        ),
     );
     if (
       !isAbsolute(this.heartbeatRoot)
@@ -364,6 +411,90 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       return { available: false, code: "image_unavailable" };
     }
     return { available: true, code: "available" };
+  }
+
+  async installRunner(): Promise<SecureExecutionAvailability> {
+    if (this.runnerInstallPromise !== null) {
+      return await this.runnerInstallPromise;
+    }
+    const installation = this.installRunnerOnce();
+    this.runnerInstallPromise = installation;
+    try {
+      return await installation;
+    } finally {
+      if (this.runnerInstallPromise === installation) {
+        this.runnerInstallPromise = null;
+      }
+    }
+  }
+
+  private async installRunnerOnce(): Promise<SecureExecutionAvailability> {
+    if (!(await this.cli.pinLocalEndpoint())) {
+      return { available: false, code: "backend_unavailable" };
+    }
+
+    const serverOs = await this.cli.run([
+      "version",
+      "--format",
+      "{{json .Server.Os}}",
+    ]);
+    if (!isLinuxDockerServer(serverOs.exitCode, serverOs.stdout)) {
+      return { available: false, code: "backend_unavailable" };
+    }
+
+    let buildContext: string | null = null;
+    try {
+      buildContext = await this.createRunnerBuildContext();
+      const build = await this.cli.run([
+        "build",
+        "--quiet",
+        "--tag",
+        this.image,
+        "--file",
+        join(buildContext, "Dockerfile.secure-runner"),
+        buildContext,
+      ], 4 * 1024 * 1024, this.runnerInstallTimeoutMs);
+      if (build.exitCode !== 0) {
+        return { available: false, code: "image_unavailable" };
+      }
+    } catch {
+      return { available: false, code: "image_unavailable" };
+    } finally {
+      if (buildContext !== null) {
+        await rm(buildContext, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    return await this.probe();
+  }
+
+  private async createRunnerBuildContext(): Promise<string> {
+    const resourceDirectory = await realpath(this.runnerResourceDirectory);
+    const resourceStat = await lstat(this.runnerResourceDirectory);
+    if (!resourceStat.isDirectory() || resourceStat.isSymbolicLink()) {
+      throw new Error("secure runner resources unavailable");
+    }
+
+    const buildContext = await mkdtemp(join(tmpdir(), "forge-secure-runner-build-"));
+    try {
+      for (const fileName of RUNNER_RESOURCE_FILES) {
+        const sourcePath = join(resourceDirectory, fileName);
+        const sourceStat = await lstat(sourcePath);
+        if (
+          !sourceStat.isFile()
+          || sourceStat.isSymbolicLink()
+          || sourceStat.size <= 0
+          || sourceStat.size > 1024 * 1024
+        ) {
+          throw new Error("secure runner resource is invalid");
+        }
+        await copyFile(sourcePath, join(buildContext, fileName));
+      }
+      return buildContext;
+    } catch (error) {
+      await rm(buildContext, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   async ensureTask(task: SecureExecutionTask): Promise<SecureTaskSandbox> {

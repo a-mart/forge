@@ -136,6 +136,13 @@ export interface SecureExecutionBackend {
   probe(): Promise<SecureExecutionAvailability>;
 
   /**
+   * Installs Forge's owned local runner when the backend supports it. The
+   * operation must remain on the same pinned local provider endpoint used for
+   * execution and return only fixed availability metadata.
+   */
+  installRunner?(): Promise<SecureExecutionAvailability>;
+
+  /**
    * Explicitly provisions (or re-authorizes after hard destroy) a persistent
    * task sandbox.
    */

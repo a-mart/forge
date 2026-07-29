@@ -44,6 +44,24 @@ const stagedPlaywrightCoreDir = path.join(browserRuntimeDir, 'playwright-core')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
 const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
 const stagedBuiltinSpecialistsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins')
+const secureRunnerSourceDir = path.join(
+  repoRoot,
+  'apps',
+  'backend',
+  'src',
+  'swarm',
+  'secure-sessions',
+  'execution',
+)
+const stagedSecureRunnerDir = path.join(
+  forgeResourcesDir,
+  'apps',
+  'backend',
+  'src',
+  'swarm',
+  'secure-sessions',
+  'execution',
+)
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
@@ -172,6 +190,14 @@ async function main() {
   await assertExists(stagedBuiltinSkillsDir, 'staged built-in skills')
   await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
   await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
+  await assertExists(
+    path.join(stagedSecureRunnerDir, 'Dockerfile.secure-runner'),
+    'staged secure runner Dockerfile',
+  )
+  await assertExists(
+    path.join(stagedSecureRunnerDir, 'forge-env-askpass'),
+    'staged secure runner askpass helper',
+  )
   await assertExists(cliStagedEntry, 'staged CLI entry')
   await assertExists(path.join(streamDeckStageDir, path.basename(streamDeckArtifactPath)), 'staged Stream Deck plugin installer')
   await assertExists(path.join(stagedPlaywrightCoreDir, 'lib', 'coreBundle.js'), 'staged Playwright injected runtime')
@@ -1718,6 +1744,15 @@ async function stageBackendResources() {
   await copyDirectory(
     path.join(repoRoot, 'apps', 'backend', 'static'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'static'),
+  )
+  await mkdir(stagedSecureRunnerDir, { recursive: true })
+  await cp(
+    path.join(secureRunnerSourceDir, 'Dockerfile.secure-runner'),
+    path.join(stagedSecureRunnerDir, 'Dockerfile.secure-runner'),
+  )
+  await cp(
+    path.join(secureRunnerSourceDir, 'forge-env-askpass'),
+    path.join(stagedSecureRunnerDir, 'forge-env-askpass'),
   )
 
   const repoSwarmDir = path.join(repoRoot, '.swarm')

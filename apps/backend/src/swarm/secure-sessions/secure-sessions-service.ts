@@ -579,21 +579,42 @@ export class SecureSessionsService {
 
   async getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
     try {
-      const result = await this.options.execution.probe();
-      switch (result.code) {
-        case "available":
-          return result.available
-            ? { available: true, code: "available" }
-            : { available: false, code: "backend_unavailable" };
-        case "backend_unavailable":
-        case "image_unavailable":
-        case "unsupported_platform":
-          return { available: false, code: result.code };
-        default:
-          return { available: false, code: "backend_unavailable" };
-      }
+      return this.toSecureSessionReadiness(
+        await this.options.execution.probe(),
+      );
     } catch {
       return { available: false, code: "backend_unavailable" };
+    }
+  }
+
+  async installSecureRunner(): Promise<SecureSessionReadiness> {
+    try {
+      const installRunner = this.options.execution.installRunner;
+      if (installRunner === undefined) {
+        return { available: false, code: "unsupported_platform" };
+      }
+      return this.toSecureSessionReadiness(
+        await installRunner.call(this.options.execution),
+      );
+    } catch {
+      return { available: false, code: "image_unavailable" };
+    }
+  }
+
+  private toSecureSessionReadiness(
+    result: Awaited<ReturnType<SecureExecutionBackend["probe"]>>,
+  ): SecureSessionReadiness {
+    switch (result.code) {
+      case "available":
+        return result.available
+          ? { available: true, code: "available" }
+          : { available: false, code: "backend_unavailable" };
+      case "backend_unavailable":
+      case "image_unavailable":
+      case "unsupported_platform":
+        return { available: false, code: result.code };
+      default:
+        return { available: false, code: "backend_unavailable" };
     }
   }
 

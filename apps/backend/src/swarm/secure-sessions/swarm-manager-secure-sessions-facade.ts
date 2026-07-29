@@ -48,6 +48,10 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     return this.secureSessions.getSecureSessionReadiness();
   }
 
+  installSecureRunner(): Promise<SecureSessionReadiness> {
+    return this.secureSessions.installSecureRunner();
+  }
+
   isSecurePrivateEntryAvailable(): Promise<boolean> {
     return this.secureSessions.isSecurePrivateEntryAvailable();
   }

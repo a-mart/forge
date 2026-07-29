@@ -19,6 +19,7 @@ import { SECURE_SECRET_MAX_PROJECT_DEFAULTS } from '@forge/protocol'
 const secureSecretsApiMock = vi.hoisted(() => ({
   fetchSecureSecretsCatalog: vi.fn(),
   fetchSecureSessionReadiness: vi.fn(),
+  installSecureRunner: vi.fn(),
   createLocalSecret: vi.fn(),
   updateSecureSecret: vi.fn(),
   updateSecureSecretAutomaticGrant: vi.fn(),
@@ -42,6 +43,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.fetchSecureSecretsCatalog(...args),
     fetchSecureSessionReadiness: (...args: unknown[]) =>
       secureSecretsApiMock.fetchSecureSessionReadiness(...args),
+    installSecureRunner: (...args: unknown[]) =>
+      secureSecretsApiMock.installSecureRunner(...args),
     createLocalSecret: (...args: unknown[]) =>
       secureSecretsApiMock.createLocalSecret(...args),
     updateSecureSecret: (...args: unknown[]) =>
@@ -366,7 +369,7 @@ describe('SettingsSecrets', () => {
     })
   })
 
-  it('shows fixed readiness actions and copies only bounded safe diagnostics', async () => {
+  it('installs a missing secure runner and keeps diagnostics bounded', async () => {
     secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
       available: false,
       code: 'image_unavailable',
@@ -395,12 +398,17 @@ describe('SettingsSecrets', () => {
       expect(container.textContent).toContain('Secure image unavailable')
       expect(container.textContent).toContain('Reconnect the affected source below.')
     })
+    secureSecretsApiMock.installSecureRunner.mockResolvedValue({
+      available: true,
+      code: 'available',
+    })
     fireEvent.click(getByRole(container, 'button', {
-      name: 'Copy build command',
+      name: 'Install secure runner',
     }))
     await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledWith(
-        'docker build --tag forge-secure-runner:node22-v5 --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner apps/backend/src/swarm/secure-sessions/execution',
+      expect(secureSecretsApiMock.installSecureRunner).toHaveBeenCalledOnce()
+      expect(container.textContent).toContain(
+        'Secure runner installed. Secure Bash is ready.',
       )
     })
     fireEvent.click(getByRole(container, 'button', {
@@ -408,13 +416,13 @@ describe('SettingsSecrets', () => {
     }))
 
     await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledTimes(2)
+      expect(clipboardWriteText).toHaveBeenCalledTimes(1)
     })
-    const serialized = String(clipboardWriteText.mock.calls[1]?.[0])
+    const serialized = String(clipboardWriteText.mock.calls[0]?.[0])
     const diagnostics = JSON.parse(serialized)
     expect(diagnostics).toMatchObject({
       schemaVersion: 1,
-      execution: { code: 'image_unavailable' },
+      execution: { code: 'available' },
       privateEntry: { available: true },
       sources: [{
         kind: 'bitwarden_secrets_manager',

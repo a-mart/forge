@@ -202,6 +202,17 @@ export async function fetchSecureSessionReadiness(
   )
 }
 
+export async function installSecureRunner(
+  apiClient: SettingsApiClient,
+): Promise<SecureSessionReadiness> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSessionReadiness>(
+    apiClient,
+    '/api/secure-sessions/runner/install',
+    { method: 'POST' },
+  )
+}
+
 export async function createLocalSecret(
   apiClient: SettingsApiClient,
   input: CreateLocalSecretInput,

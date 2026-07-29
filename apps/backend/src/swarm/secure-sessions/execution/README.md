@@ -5,7 +5,14 @@ requires image contract label
 `com.forge.secure-execution.runner-contract=5` and refuses to start when the
 image is absent or does not carry that label.
 
-Build the pinned Node 22 runner from the repository root:
+When the image is missing, Forge Desktop offers **Install secure runner** in
+Settings. That explicit action builds the pinned image in the already-verified
+local Docker engine, checks the contract label, and refreshes readiness without
+restarting Forge. The packaged desktop app includes only the Dockerfile and
+askpass helper required for this build.
+
+For development or recovery, the equivalent manual command from the repository
+root is:
 
 ```bash
 docker build \
@@ -27,9 +34,10 @@ environment delivery can authenticate OpenSSH without writing or compiling a
 temporary helper. Set `FORGE_ASKPASS_ENV` to the exact granted environment
 target name and set `SSH_ASKPASS` to that fixed path.
 
-The backend requires the effective Docker endpoint to be a local `unix://`
-socket and pins that endpoint into every later CLI invocation. Remote contexts
-and `DOCKER_HOST` values fail closed. Each task container also receives a
+The backend requires the effective Docker endpoint to be an approved local
+Unix socket or Docker Desktop Linux named pipe and pins that endpoint into
+every later CLI invocation. Remote contexts, TCP endpoints, SSH endpoints, and
+arbitrary named pipes fail closed. Each task container also receives a
 read-only host heartbeat file; PID 1 exits when it becomes stale, so a killed
 Forge process cannot leave secret-bearing descendants running indefinitely.
 

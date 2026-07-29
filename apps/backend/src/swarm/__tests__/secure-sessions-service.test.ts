@@ -668,6 +668,27 @@ describe("SecureSessionsService", () => {
     await failed.close();
   });
 
+  it("installs the secure runner through fixed readiness metadata", async () => {
+    const installed = createHarness({
+      installAvailability: {
+        available: true,
+        code: "available",
+      },
+    });
+    await expect(installed.service.installSecureRunner()).resolves.toEqual({
+      available: true,
+      code: "available",
+    });
+    await installed.close();
+
+    const failed = createHarness({ installThrows: true });
+    await expect(failed.service.installSecureRunner()).resolves.toEqual({
+      available: false,
+      code: "image_unavailable",
+    });
+    await failed.close();
+  });
+
   it("tests every saved local ciphertext, releases successful plaintexts, and reports safe failures", async () => {
     const harness = createHarness({
       failSourceMaterials: [BETA, "session-only"],
@@ -4125,6 +4146,11 @@ function createHarness(options: {
     code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
   };
   probeThrows?: boolean;
+  installAvailability?: {
+    available: boolean;
+    code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
+  };
+  installThrows?: boolean;
   guardFailures?: number;
   archivedProfiles?: readonly string[];
   systemProfiles?: readonly string[];
@@ -4364,6 +4390,11 @@ class FakeExecutionBackend implements SecureExecutionBackend {
       code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
     };
     probeThrows?: boolean;
+    installAvailability?: {
+      available: boolean;
+      code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
+    };
+    installThrows?: boolean;
   } = {}) {
     this.recoveryFailures = options.recoveryFailures ?? 0;
   }
@@ -4371,6 +4402,12 @@ class FakeExecutionBackend implements SecureExecutionBackend {
   async probe() {
     if (this.options.probeThrows) throw new Error("RAW-PROBE-FAILURE");
     return this.options.probeAvailability
+      ?? { available: true, code: "available" as const };
+  }
+
+  async installRunner() {
+    if (this.options.installThrows) throw new Error("RAW-INSTALL-FAILURE");
+    return this.options.installAvailability
       ?? { available: true, code: "available" as const };
   }
 

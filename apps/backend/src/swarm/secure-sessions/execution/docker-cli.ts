@@ -136,6 +136,7 @@ export class DockerCli {
   async run(
     args: readonly string[],
     maxStdoutBytes = 4 * 1024 * 1024,
+    timeoutMs = this.controlPlaneTimeoutMs,
   ): Promise<DockerCliResult> {
     const child = this.spawn(args);
     child.stdin.end();
@@ -179,7 +180,11 @@ export class DockerCli {
         stdoutChunks.length = 0;
         child.kill("SIGKILL");
         settle(-1);
-      }, this.controlPlaneTimeoutMs);
+      }, (
+        Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? timeoutMs
+          : this.controlPlaneTimeoutMs
+      ));
       timeout.unref?.();
       child.once("error", () => settle(-1));
       child.once("close", (code) => settle(code ?? -1));

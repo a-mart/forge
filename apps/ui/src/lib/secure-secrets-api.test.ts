@@ -10,6 +10,7 @@ import {
   fetchSecureSessionReadiness,
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
+  installSecureRunner,
   reconnectBitwardenProvider,
   secureSecretsErrorMessage,
   testSecureSecretProvider,
@@ -150,7 +151,7 @@ describe('secure secrets API', () => {
     )
   })
 
-  it('loads only the fixed Secure Sessions readiness contract', async () => {
+  it('loads and installs through only the fixed Secure Sessions readiness contract', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       available: false,
       code: 'image_unavailable',
@@ -167,6 +168,18 @@ describe('secure secrets API', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-sessions/readiness',
       expect.objectContaining({ cache: 'no-store' }),
+    )
+
+    await expect(installSecureRunner(client)).resolves.toEqual({
+      available: false,
+      code: 'image_unavailable',
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-sessions/runner/install',
+      expect.objectContaining({
+        cache: 'no-store',
+        method: 'POST',
+      }),
     )
   })
 

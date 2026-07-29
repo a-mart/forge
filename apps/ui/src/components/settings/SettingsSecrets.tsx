@@ -6,6 +6,7 @@ import {
   checkSecureMaterialEntryAvailability,
   fetchSecureSecretsCatalog,
   fetchSecureSessionReadiness,
+  installSecureRunner,
   isSecureMaterialEntryAvailable,
   secureSecretsErrorMessage,
   testSecureSecretProvider,
@@ -80,6 +81,8 @@ function BuilderSecretsSettings({
     localMaterialEntrySupported
     || secureBrowserControl?.privateEntryAvailable === true
   const [readiness, setReadiness] = useState<SecureSessionReadiness | null>(null)
+  const [installingRunner, setInstallingRunner] = useState(false)
+  const [runnerInstallMessage, setRunnerInstallMessage] = useState<string | null>(null)
   const projectProfiles = useMemo(
     () => profiles.filter((profile) =>
       profile.profileType !== 'system' && !profile.archivedAt
@@ -123,6 +126,7 @@ function BuilderSecretsSettings({
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setRunnerInstallMessage(null)
     const [
       catalogResult,
       readinessResult,
@@ -217,6 +221,27 @@ function BuilderSecretsSettings({
     }
   }, [apiClient, catalog.providers, refresh])
 
+  const handleInstallRunner = useCallback(async () => {
+    setInstallingRunner(true)
+    setRunnerInstallMessage(null)
+    setError(null)
+    try {
+      const result = await installSecureRunner(apiClient)
+      setReadiness(result)
+      setRunnerInstallMessage(
+        result.available
+          ? 'Secure runner installed. Secure Bash is ready.'
+          : result.code === 'backend_unavailable'
+            ? 'Docker became unavailable. Start Docker Desktop and try again.'
+            : 'The secure runner could not be installed. Check Docker storage and network access, then try again.',
+      )
+    } catch (nextError) {
+      setRunnerInstallMessage(secureSecretsErrorMessage(nextError))
+    } finally {
+      setInstallingRunner(false)
+    }
+  }, [apiClient])
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -253,6 +278,8 @@ function BuilderSecretsSettings({
         privateEntryAvailable={materialEntryAvailable}
         unlockingPrivateEntry={unlockingPrivateEntry}
         privateEntryUnlockMessage={privateEntryUnlockMessage}
+        installingRunner={installingRunner}
+        runnerInstallMessage={runnerInstallMessage}
         providers={catalog.providers}
         configuredProjectDefaultCount={contextualProfileId
           ? new Set([
@@ -274,6 +301,7 @@ function BuilderSecretsSettings({
           : undefined}
         onRefresh={refresh}
         onUnlockPrivateEntry={handleUnlockPrivateEntry}
+        onInstallRunner={handleInstallRunner}
       />
 
       <SecureBrowserAccessPanel
