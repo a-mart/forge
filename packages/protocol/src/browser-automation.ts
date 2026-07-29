@@ -69,6 +69,8 @@ export const BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS = 200
 export const BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES = 200
 export const BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH = 1_280
 export const BROWSER_AUTOMATION_MAX_SAFE_ACTIONS = 100
+/** Maximum profile-wide External Chrome candidates returned by one status call. */
+export const BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS = 32
 export const BROWSER_VIEWPORT_MIN_DIMENSION = 240
 export const BROWSER_VIEWPORT_MAX_DIMENSION = 3_840
 export const BROWSER_VIEWPORT_MAX_AREA = 3_840 * 2_160
@@ -406,6 +408,25 @@ export interface BrowserWaitForInput extends BrowserTabTargetInput {
 
 export type BrowserRecordingStartInput = BrowserTabTargetInput
 
+/** Canonical, directly selectable External Chrome tab advertised by browser_status. */
+export interface BrowserEligibleTab {
+  targetAffinity: 'external-chrome'
+  /** Stable canonical ID accepted by browser_open({ tabId }). */
+  tabId: string
+  /** Opaque stable identity of the authenticated Chrome profile runtime. */
+  browserProfileId: string
+  /** Opaque stable identity of the containing normal Chrome window. */
+  windowId: string
+  title: string
+  url: string
+  /** Whether this is the active tab in its Chrome window. */
+  active: boolean
+  /** Current Chrome window focus; false after focus moves to Forge or another app. */
+  windowFocused: boolean
+  /** Chrome's bounded last-access timestamp, used for deterministic default selection. */
+  lastAccessedAt: string
+}
+
 export interface BrowserRecordingStopInput extends BrowserTabTargetInput {
   recordingId?: string
 }
@@ -420,6 +441,10 @@ export interface BrowserAutomationStatusResult {
   /** Electron-authoritative physical presentation acknowledgement for selectedTab. */
   physicalTabVisible: boolean
   selectedTab: BrowserTabSnapshot | null
+  /** Ranked eligible tabs across every authenticated ready External Chrome profile. */
+  eligibleTabs: BrowserEligibleTab[]
+  /** True when the canonical inventory exceeded its public bound. */
+  eligibleTabsTruncated: boolean
 }
 
 export interface BrowserOpenResult {

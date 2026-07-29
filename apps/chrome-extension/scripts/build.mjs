@@ -12,7 +12,7 @@ const packageRoot = path.resolve(outputArgument === -1 ? path.join(sourceRoot, '
 const extensionRoot = path.join(packageRoot, 'extension')
 const temporaryPayload = path.join(packageRoot, '.payload')
 // Keep in lockstep with src/runtime/identity.ts; the payload validates its own immutable directory.
-const payloadVersion = 'm5-runtime.1'
+const payloadVersion = 'm6-runtime.1'
 
 async function bundle(entry, outfile, options = {}) {
   await mkdir(path.dirname(outfile), { recursive: true })

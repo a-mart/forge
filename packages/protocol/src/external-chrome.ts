@@ -1,5 +1,6 @@
 import {
   BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES,
+  BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
   BROWSER_AUTOMATION_MAX_EVALUATE_BYTES,
   BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS,
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
@@ -17,6 +18,7 @@ import {
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
   type BrowserAutomationResultByOperation,
+  type BrowserEligibleTab,
 } from './browser-automation.js'
 
 /** Stable identity derived from Forge's pinned offline public manifest key. */
@@ -56,11 +58,12 @@ export const EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH = 128
 export const EXTERNAL_CHROME_MAX_LABEL_LENGTH = 512
 export const EXTERNAL_CHROME_MAX_URL_LENGTH = 2_048
 export const EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH = 1_024
+const EXTERNAL_CHROME_MAX_DATE_MS = 8_640_000_000_000_000
 
 export const EXTERNAL_CHROME_REQUEST_METHODS = [
   'forge.runtime.hello',
   'forge.runtime.ping',
-  'forge.browser.focusedEligibility',
+  'forge.browser.inventory',
   'forge.browser.acquire',
   'forge.browser.release',
   'forge.browser.reveal',
@@ -237,13 +240,25 @@ export interface ExternalChromePongResult {
   receivedAt: string
 }
 
-export interface ExternalChromeFocusedEligibilityParams {
+export interface ExternalChromeInventoryParams {
   protocolVersion: ExternalChromeProtocolVersion
+  sessionAgentId: string
 }
 
-export interface ExternalChromeFocusedEligibilityResult {
+export interface ExternalChromeInventoryTab {
+  tabId: number
+  windowId: number
+  title: string
+  url: string
+  active: boolean
+  windowFocused: boolean
+  lastAccessed: number
+}
+
+export interface ExternalChromeInventoryResult {
   protocolVersion: ExternalChromeProtocolVersion
-  eligible: boolean
+  tabs: ExternalChromeInventoryTab[]
+  truncated: boolean
 }
 
 export interface ExternalChromeLeaseRouting {
@@ -262,8 +277,8 @@ export interface ExternalChromeAcquiredTab {
 export interface ExternalChromeAcquireParams extends ExternalChromeLeaseRouting {
   sessionAgentId: string
   tabId?: number
-  url?: string
-  reuseFocused: boolean
+  /** Creation is an explicit caller decision; omission of tabId never implies it. */
+  createIfNeeded: boolean
 }
 
 export interface ExternalChromeAcquireResult extends ExternalChromeLeaseRouting {
@@ -426,7 +441,7 @@ export interface ExternalChromeGoodbyeParams {
 export interface ExternalChromeRequestParamsByMethod {
   'forge.runtime.hello': ExternalChromeHelloParams
   'forge.runtime.ping': ExternalChromePingParams
-  'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityParams
+  'forge.browser.inventory': ExternalChromeInventoryParams
   'forge.browser.acquire': ExternalChromeAcquireParams
   'forge.browser.release': ExternalChromeReleaseParams
   'forge.browser.reveal': ExternalChromeRevealParams
@@ -438,7 +453,7 @@ export interface ExternalChromeRequestParamsByMethod {
 export interface ExternalChromeResultByMethod {
   'forge.runtime.hello': ExternalChromeWelcomeResult
   'forge.runtime.ping': ExternalChromePongResult
-  'forge.browser.focusedEligibility': ExternalChromeFocusedEligibilityResult
+  'forge.browser.inventory': ExternalChromeInventoryResult
   'forge.browser.acquire': ExternalChromeAcquireResult
   'forge.browser.release': ExternalChromeReleaseResult
   'forge.browser.reveal': ExternalChromeRevealResult
@@ -588,6 +603,12 @@ function identifier(value: unknown, path: string): string {
   return boundedString(value, path, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
 }
 
+function extensionInstanceIdentifier(value: unknown, path: string): string {
+  const result = boundedString(value, path, 64)
+  if (!/^[A-Za-z0-9_-]+$/u.test(result)) return fail('invalid-envelope', `${path} must be a canonical opaque identifier`)
+  return result
+}
+
 function integer(value: unknown, path: string, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
   if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
     return fail('invalid-envelope', `${path} must be an integer from ${minimum} to ${maximum}`)
@@ -706,19 +727,26 @@ function parseOperationCapabilities(value: unknown): ExternalChromeOperationCapa
 }
 
 function parseMethods(value: unknown): ExternalChromeMethod[] {
-  const methods = uniqueArray(
+  const legacyFocusedMethod = 'forge.browser.focusedEligibility'
+  const raw = uniqueArray(
     boundedArray(value, 'params.methods', EXTERNAL_CHROME_METHODS.length).map((entry, index) => {
-      if (typeof entry !== 'string' || !(EXTERNAL_CHROME_METHODS as readonly string[]).includes(entry)) {
+      if (typeof entry !== 'string' || (!(EXTERNAL_CHROME_METHODS as readonly string[]).includes(entry) && entry !== legacyFocusedMethod)) {
         return fail('unknown-method', `params.methods[${index}] is unknown`, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.methodNotFound)
       }
-      return entry as ExternalChromeMethod
+      return entry
     }),
     'params.methods',
   )
-  if (methods.length !== EXTERNAL_CHROME_METHODS.length || EXTERNAL_CHROME_METHODS.some((method) => !methods.includes(method))) {
-    fail('invalid-params', 'params.methods must contain every V1 method exactly once', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+  const current = EXTERNAL_CHROME_METHODS.every((method) => raw.includes(method))
+  const legacy = raw.includes(legacyFocusedMethod)
+    && !raw.includes('forge.browser.inventory')
+    && EXTERNAL_CHROME_METHODS.filter((method) => method !== 'forge.browser.inventory').every((method) => raw.includes(method))
+  if (raw.length !== EXTERNAL_CHROME_METHODS.length || (!current && !legacy)) {
+    fail('invalid-params', 'params.methods must contain one complete runtime method generation', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
   }
-  return methods
+  // The legacy form is hello-only update compatibility. It never makes the
+  // stale payload operation-ready; the immutable payload identity gate does.
+  return [...EXTERNAL_CHROME_METHODS]
 }
 
 function parseUpdate(value: unknown, path: string): ExternalChromeUpdateDescriptor {
@@ -751,6 +779,22 @@ function parseAcquiredTab(value: unknown, path: string): ExternalChromeAcquiredT
     title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
     url: boundedString(tab.url, `${path}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH),
     active: boolean(tab.active, `${path}.active`),
+  }
+}
+
+function parseInventoryTab(value: unknown, path: string): ExternalChromeInventoryTab {
+  const tab = object(value, path)
+  strictKeys(tab, path, ['tabId', 'windowId', 'title', 'url', 'active', 'windowFocused', 'lastAccessed'])
+  const lastAccessed = finiteNumber(tab.lastAccessed, `${path}.lastAccessed`)
+  if (lastAccessed > EXTERNAL_CHROME_MAX_DATE_MS) fail('invalid-result', `${path}.lastAccessed is outside the timestamp bound`)
+  return {
+    tabId: integer(tab.tabId, `${path}.tabId`),
+    windowId: integer(tab.windowId, `${path}.windowId`),
+    title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
+    url: boundedString(tab.url, `${path}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH),
+    active: boolean(tab.active, `${path}.active`),
+    windowFocused: boolean(tab.windowFocused, `${path}.windowFocused`),
+    lastAccessed,
   }
 }
 
@@ -807,7 +851,7 @@ function parseHelloParams(value: unknown): ExternalChromeHelloParams {
       return digest
     })() }),
     extensionId,
-    extensionInstanceId: identifier(params.extensionInstanceId, 'params.extensionInstanceId'),
+    extensionInstanceId: extensionInstanceIdentifier(params.extensionInstanceId, 'params.extensionInstanceId'),
     chromeVersion: boundedString(params.chromeVersion, 'params.chromeVersion', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH),
     methods: parseMethods(params.methods),
     maxMessageBytes: integer(params.maxMessageBytes, 'params.maxMessageBytes', 1, EXTERNAL_CHROME_MAX_MESSAGE_BYTES),
@@ -824,18 +868,25 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
       strictKeys(params, 'params', ['protocolVersion', 'nonce', 'sentAt'])
       return { protocolVersion: protocolVersion(params.protocolVersion, expected), nonce: identifier(params.nonce, 'params.nonce'), sentAt: boundedString(params.sentAt, 'params.sentAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) }
     }
-    case 'forge.browser.focusedEligibility': {
-      strictKeys(params, 'params', ['protocolVersion'])
-      return { protocolVersion: protocolVersion(params.protocolVersion, expected) }
+    case 'forge.browser.inventory': {
+      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId'])
+      return {
+        protocolVersion: protocolVersion(params.protocolVersion, expected),
+        sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId'),
+      }
     }
     case 'forge.browser.acquire': {
-      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'reuseFocused'], ['tabId', 'url'])
+      strictKeys(params, 'params', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'createIfNeeded'], ['tabId'])
+      const tabId = params.tabId === undefined ? undefined : integer(params.tabId, 'params.tabId')
+      const createIfNeeded = boolean(params.createIfNeeded, 'params.createIfNeeded')
+      if ((tabId === undefined) !== createIfNeeded) {
+        fail('invalid-params', 'params must select exactly one existing tab or explicitly request creation', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      }
       return {
         ...parseLeaseRouting(params, expected),
         sessionAgentId: identifier(params.sessionAgentId, 'params.sessionAgentId'),
-        ...(params.tabId === undefined ? {} : { tabId: integer(params.tabId, 'params.tabId') }),
-        ...(params.url === undefined ? {} : { url: boundedString(params.url, 'params.url', EXTERNAL_CHROME_MAX_URL_LENGTH) }),
-        reuseFocused: boolean(params.reuseFocused, 'params.reuseFocused'),
+        ...(tabId === undefined ? {} : { tabId }),
+        createIfNeeded,
       }
     }
     case 'forge.browser.release': {
@@ -993,6 +1044,28 @@ function validateBrowserTab(value: unknown, path: string): void {
   boundedString(tab.updatedAt, `${path}.updatedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
 }
 
+function validateEligibleTab(value: unknown, path: string): BrowserEligibleTab {
+  const tab = object(value, path)
+  strictKeys(tab, path, ['targetAffinity', 'tabId', 'browserProfileId', 'windowId', 'title', 'url', 'active', 'windowFocused', 'lastAccessedAt'])
+  if (tab.targetAffinity !== 'external-chrome') fail('invalid-result', `${path}.targetAffinity must be external-chrome`)
+  const lastAccessedAt = boundedString(tab.lastAccessedAt, `${path}.lastAccessedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  const timestamp = Date.parse(lastAccessedAt)
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== lastAccessedAt) {
+    fail('invalid-result', `${path}.lastAccessedAt must be a canonical ISO timestamp`)
+  }
+  return {
+    targetAffinity: 'external-chrome',
+    tabId: identifier(tab.tabId, `${path}.tabId`),
+    browserProfileId: identifier(tab.browserProfileId, `${path}.browserProfileId`),
+    windowId: identifier(tab.windowId, `${path}.windowId`),
+    title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
+    url: boundedString(tab.url, `${path}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH),
+    active: boolean(tab.active, `${path}.active`),
+    windowFocused: boolean(tab.windowFocused, `${path}.windowFocused`),
+    lastAccessedAt,
+  }
+}
+
 function validateSnapshotResult(result: Record<string, unknown>, path: string): void {
   validateViewportSetting(result.viewportSetting, `${path}.viewportSetting`)
   validateRenderedViewport(result.viewport, `${path}.viewport`)
@@ -1053,6 +1126,8 @@ function validateStrictOperationResult(operation: BrowserAutomationOperation, re
     case 'status':
       validateBrowserHost(result.host, `${path}.host`)
       if (result.selectedTab !== null) validateBrowserTab(result.selectedTab, `${path}.selectedTab`)
+      boundedArray(result.eligibleTabs, `${path}.eligibleTabs`, BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS)
+        .forEach((tab, index) => validateEligibleTab(tab, `${path}.eligibleTabs[${index}]`))
       return
     case 'open': validateBrowserTab(result.tab, `${path}.tab`); return
     case 'navigate': validateBrowserTab(result.tab, `${path}.tab`); return
@@ -1101,13 +1176,15 @@ function parseOperationResult(
   validateStrictOperationResult(operation, result)
   switch (operation) {
     case 'status':
-      strictKeys(result, 'result.result', ['available', 'host', 'panelVisible', 'panelRevealRequested', 'physicalTabVisible', 'selectedTab'])
+      strictKeys(result, 'result.result', ['available', 'host', 'panelVisible', 'panelRevealRequested', 'physicalTabVisible', 'selectedTab', 'eligibleTabs', 'eligibleTabsTruncated'])
       boolean(result.available, 'result.result.available')
       boolean(result.panelVisible, 'result.result.panelVisible')
       boolean(result.panelRevealRequested, 'result.result.panelRevealRequested')
       boolean(result.physicalTabVisible, 'result.result.physicalTabVisible')
       object(result.host, 'result.result.host')
       if (result.selectedTab !== null) object(result.selectedTab, 'result.result.selectedTab')
+      boundedArray(result.eligibleTabs, 'result.result.eligibleTabs', BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS)
+      boolean(result.eligibleTabsTruncated, 'result.result.eligibleTabsTruncated')
       break
     case 'open':
       strictKeys(result, 'result.result', ['tab', 'created', 'panelRevealRequested'])
@@ -1226,16 +1303,23 @@ function parseResult(method: ExternalChromeRequestMethod, value: unknown, expect
       strictKeys(result, 'result', ['protocolVersion', 'nonce', 'receivedAt'])
       return { protocolVersion: protocolVersion(result.protocolVersion, expected), nonce: identifier(result.nonce, 'result.nonce'), receivedAt: boundedString(result.receivedAt, 'result.receivedAt', EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH) }
     }
-    case 'forge.browser.focusedEligibility': {
-      strictKeys(result, 'result', ['protocolVersion', 'eligible'])
-      return { protocolVersion: protocolVersion(result.protocolVersion, expected), eligible: boolean(result.eligible, 'result.eligible') }
+    case 'forge.browser.inventory': {
+      strictKeys(result, 'result', ['protocolVersion', 'tabs', 'truncated'])
+      const tabs = boundedArray(result.tabs, 'result.tabs', BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS)
+        .map((tab, index) => parseInventoryTab(tab, `result.tabs[${index}]`))
+      if (new Set(tabs.map((tab) => tab.tabId)).size !== tabs.length) fail('invalid-result', 'result.tabs contains duplicate tab IDs')
+      return {
+        protocolVersion: protocolVersion(result.protocolVersion, expected),
+        tabs,
+        truncated: boolean(result.truncated, 'result.truncated'),
+      }
     }
     case 'forge.browser.acquire': {
       strictKeys(result, 'result', ['protocolVersion', 'sessionAgentId', 'leaseId', 'leaseEpoch', 'extensionInstanceId', 'tab', 'created'])
       return {
         ...parseLeaseRouting(result, expected),
         sessionAgentId: identifier(result.sessionAgentId, 'result.sessionAgentId'),
-        extensionInstanceId: identifier(result.extensionInstanceId, 'result.extensionInstanceId'),
+        extensionInstanceId: extensionInstanceIdentifier(result.extensionInstanceId, 'result.extensionInstanceId'),
         tab: parseAcquiredTab(result.tab, 'result.tab'),
         created: boolean(result.created, 'result.created'),
       }

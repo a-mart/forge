@@ -55,7 +55,7 @@ describe("Automatic Browser Host service", () => {
 
     const status = instance.invoke("manager-1", "profile-1", "status", {});
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    accept(instance, { ...routing(requests[0]!), ok: true, result: { available: true, host: instance.broker.getConnectionSnapshot(), panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null } });
+    accept(instance, { ...routing(requests[0]!), ok: true, result: { available: true, host: instance.broker.getConnectionSnapshot(), panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null, eligibleTabs: [], eligibleTabsTruncated: false } });
     await expect(status).resolves.toMatchObject({ ok: true, result: { selectedTab: null } });
 
     const opening = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: true });
@@ -67,13 +67,82 @@ describe("Automatic Browser Host service", () => {
     const snapshot = instance.invoke("manager-1", "profile-1", "snapshot", {});
     await vi.waitFor(() => expect(requests).toHaveLength(3));
     expect(requests[2]).toMatchObject({ operation: "snapshot", tabId: null });
-    const adopted = tab(requests[2]!, "logical-tab-1", "external-chrome");
+    const adopted = tab(requests[2]!, "ext.instance_profile_a.8", "external-chrome");
     accept(instance, {
       ...routing(requests[2]!), ok: true, updatedTab: adopted,
       result: { tabId: adopted.tabId, url: "https://private.invalid/path", title: "Private", loading: false, viewportSetting: { mode: "fill" }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 }, visibleText: "secret page", interactiveElements: [], accessibility: {}, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: "image/png", data: "AA==", width: 1, height: 1 } },
     });
-    await expect(snapshot).resolves.toMatchObject({ ok: true, result: { tabId: "logical-tab-1" } });
-    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({ schemaVersion: 2, activeTabId: "logical-tab-1", defaultTabId: "logical-tab-1", tabs: [{ tabId: "logical-tab-1", targetAffinity: "external-chrome", url: "", title: "" }] });
+    await expect(snapshot).resolves.toMatchObject({ ok: true, result: { tabId: "ext.instance_profile_a.8" } });
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({ schemaVersion: 2, activeTabId: "ext.instance_profile_a.8", defaultTabId: "ext.instance_profile_a.8", tabs: [{ tabId: "ext.instance_profile_a.8", targetAffinity: "external-chrome", url: "", title: "" }] });
+  });
+
+  it("returns live inventory and adopts an explicit inventory tab ID without persisting inventory metadata", async () => {
+    const instance = await service();
+    const requests: BrowserAutomationRequest[] = [];
+    register(instance, (request) => requests.push(request));
+    const inventoryTab = {
+      targetAffinity: "external-chrome" as const,
+      tabId: "ext.instance_profile_a.7",
+      browserProfileId: "ext-profile.instance_profile_a",
+      windowId: "ext-window.instance_profile_a.1",
+      title: "Private candidate",
+      url: "https://private.invalid/candidate",
+      active: true,
+      windowFocused: false,
+      lastAccessedAt: "2026-07-27T00:00:00.000Z",
+    };
+
+    const status = instance.invoke("manager-1", "profile-1", "status", {});
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    accept(instance, {
+      ...routing(requests[0]!), ok: true,
+      result: {
+        available: true, host: instance.broker.getConnectionSnapshot(), panelVisible: false,
+        panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+        eligibleTabs: [inventoryTab], eligibleTabsTruncated: false,
+      },
+    });
+    await expect(status).resolves.toMatchObject({ ok: true, result: { eligibleTabs: [inventoryTab] } });
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.not.toHaveProperty("eligibleTabs");
+
+    const opening = instance.invoke("manager-1", "profile-1", "open", {
+      tabId: inventoryTab.tabId, show: false, reuseExistingTab: true,
+    });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ operation: "open", tabId: inventoryTab.tabId });
+    const adopted = tab(requests[1]!, inventoryTab.tabId, "external-chrome");
+    accept(instance, {
+      ...routing(requests[1]!), ok: true, updatedTab: adopted,
+      result: { tab: adopted, created: false, panelRevealRequested: false },
+    });
+    await expect(opening).resolves.toMatchObject({ ok: true, result: { tab: { tabId: inventoryTab.tabId } } });
+    await expect(instance.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      activeTabId: inventoryTab.tabId,
+      tabs: [{ tabId: inventoryTab.tabId, targetAffinity: "external-chrome", url: "", title: "" }],
+    });
+  });
+
+  it("rejects noncanonical External Chrome inventory identity relationships", async () => {
+    const instance = await service();
+    const requests: BrowserAutomationRequest[] = [];
+    register(instance, (request) => requests.push(request));
+
+    const status = instance.invoke("manager-1", "profile-1", "status", {});
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    accept(instance, {
+      ...routing(requests[0]!), ok: true,
+      result: {
+        available: true, host: instance.broker.getConnectionSnapshot(), panelVisible: false,
+        panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+        eligibleTabs: [{
+          targetAffinity: "external-chrome", tabId: "ext.profile_a.7", browserProfileId: "ext-profile.profile_b",
+          windowId: "ext-window.profile_a.1", title: "Mismatch", url: "https://private.invalid/",
+          active: true, windowFocused: false, lastAccessedAt: "2026-07-27T00:00:00.000Z",
+        }],
+        eligibleTabsTruncated: false,
+      },
+    });
+    await expect(status).resolves.toMatchObject({ ok: false, error: { code: "malformed-response" } });
   });
 
   it("creates and selects a distinct tab when open disables selected-tab reuse", async () => {
@@ -116,18 +185,18 @@ describe("Automatic Browser Host service", () => {
     const reselect = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: true });
     await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]).toMatchObject({ operation: "open", tabId: null, input: { reuseExistingTab: true } });
-    const focused = tab(requests[1]!, "external-focused", "external-chrome");
+    const focused = tab(requests[1]!, "ext.instance_profile_a.9", "external-chrome");
     accept(instance, { ...routing(requests[1]!), ok: true, updatedTab: focused, result: { tab: focused, created: false, panelRevealRequested: false } });
     await reselect;
 
     const snapshot = instance.invoke("manager-1", "profile-1", "snapshot", {});
     await vi.waitFor(() => expect(requests).toHaveLength(3));
-    expect(requests[2]).toMatchObject({ operation: "snapshot", tabId: "external-focused" });
+    expect(requests[2]).toMatchObject({ operation: "snapshot", tabId: "ext.instance_profile_a.9" });
     accept(instance, {
       ...routing(requests[2]!), ok: true, updatedTab: focused,
-      result: { tabId: "external-focused", url: "https://private.invalid/path", title: "Private", loading: false, viewportSetting: { mode: "fill" }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 }, visibleText: "focused page", interactiveElements: [], accessibility: {}, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: "image/png", data: "AA==", width: 1, height: 1 } },
+      result: { tabId: "ext.instance_profile_a.9", url: "https://private.invalid/path", title: "Private", loading: false, viewportSetting: { mode: "fill" }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 }, visibleText: "focused page", interactiveElements: [], accessibility: {}, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: "image/png", data: "AA==", width: 1, height: 1 } },
     });
-    await expect(snapshot).resolves.toMatchObject({ ok: true, result: { tabId: "external-focused" } });
+    await expect(snapshot).resolves.toMatchObject({ ok: true, result: { tabId: "ext.instance_profile_a.9" } });
   });
 
   it("dispatches every tabless operation once and adopts the target returned by Desktop", async () => {

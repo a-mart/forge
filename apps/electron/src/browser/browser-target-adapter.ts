@@ -5,6 +5,7 @@ import type {
   BrowserAutomationResponse,
   BrowserHostLifecycleReason,
   BrowserTargetAffinity,
+  BrowserEligibleTab,
 } from '@forge/protocol'
 
 export const AUTOMATIC_BROWSER_FALLBACK_REASONS = [
@@ -12,7 +13,6 @@ export const AUTOMATIC_BROWSER_FALLBACK_REASONS = [
   'runtime-not-ready',
   'operation-unsupported',
   'no-eligible-target',
-  'ambiguous-instance',
   'restricted-target',
   'foreign-debugger',
   'authority-conflict',
@@ -94,11 +94,14 @@ export interface ExternalBrowserRevealResult {
   readonly tabId: string
 }
 
-/**
- * Narrow automatic-policy seam. It exposes one winning target (or a typed reason),
- * never extension instances, profile aliases, candidate inventories, or picker state.
- */
+export interface ExternalBrowserInventory {
+  readonly tabs: readonly BrowserEligibleTab[]
+  readonly truncated: boolean
+}
+
+/** Narrow automatic-policy seam for authenticated profile-wide Chrome access. */
 export interface AutomaticExternalBrowserAdapter extends BrowserTargetAdapter {
+  listEligibleTabs(session: BrowserTargetSession, deadlineAt?: number): Promise<ExternalBrowserInventory>
   readonly targetAffinity: 'external-chrome'
   acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult>
   executeWithAuthority(input: ExternalBrowserExecuteInput): Promise<BrowserTargetExecution>
@@ -115,7 +118,8 @@ export function isAutomaticExternalBrowserAdapter(
 ): adapter is AutomaticExternalBrowserAdapter {
   if (!adapter || adapter.targetAffinity !== 'external-chrome') return false
   const candidate = adapter as Partial<AutomaticExternalBrowserAdapter>
-  return typeof candidate.acquireTarget === 'function'
+  return typeof candidate.listEligibleTabs === 'function'
+    && typeof candidate.acquireTarget === 'function'
     && typeof candidate.executeWithAuthority === 'function'
     && typeof candidate.releaseAuthority === 'function'
     && typeof candidate.revealTarget === 'function'

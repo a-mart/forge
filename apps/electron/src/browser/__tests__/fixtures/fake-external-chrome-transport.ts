@@ -7,6 +7,7 @@ import type {
   BrowserTargetSession,
   ExternalBrowserAcquireInput,
   ExternalBrowserAcquireResult,
+  ExternalBrowserInventory,
   ExternalBrowserTargetAuthority,
 } from '../../browser-target-adapter.js'
 import type {
@@ -20,6 +21,10 @@ export class FakeExternalChromeTransport implements ExternalChromeTransport {
   readonly releases: Array<{ session: BrowserTargetSession; authority: ExternalBrowserTargetAuthority; reason: string }> = []
   readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
   constructor(readonly maxResponseBytes = 1_000_000) {}
+
+  async listEligibleTabs(): Promise<ExternalBrowserInventory> {
+    return { tabs: [], truncated: false }
+  }
 
   async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
     this.acquisitions.push(structuredClone(input))
@@ -43,6 +48,7 @@ export class FakeExternalChromeTransport implements ExternalChromeTransport {
         available: true,
         host: { connected: true, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: new Date(0).toISOString() },
         panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: request.tabId ? tab : null,
+        eligibleTabs: [], eligibleTabsTruncated: false,
       },
       open: { tab, created: request.tabId === null, panelRevealRequested: false },
       navigate: { tab: { ...tab, url: 'https://navigated.example/' }, readiness: 'load' },

@@ -64,6 +64,8 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd',
       features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true },
     })
+    expect(hello.params.methods).toContain('forge.browser.focusedEligibility')
+    expect(hello.params.methods).not.toContain('forge.browser.inventory')
     expect((hello.params.operations as Array<{ operation: string; supported: boolean }>).filter((entry) => entry.supported).map((entry) => entry.operation)).toEqual(['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'])
     scheduler.advance(1_000)
     await Promise.resolve()
@@ -97,7 +99,7 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
         leaseId: 'lease-fixture',
         leaseEpoch: 1,
         tabId: 7,
-        reuseFocused: false,
+        createIfNeeded: false,
       },
     })
     await Promise.resolve()

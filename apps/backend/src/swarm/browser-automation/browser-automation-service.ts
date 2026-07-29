@@ -1,7 +1,10 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  BROWSER_AUTOMATION_MAX_URL_LENGTH,
   BROWSER_TARGET_AFFINITIES,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
   type BrowserAutomationFailure,
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
@@ -143,7 +146,9 @@ export class BrowserAutomationService {
         : operation === "open"
           ? undefined
           : selectedTab(snapshot);
-      if (requestedTabId && !target) {
+      // browser_open may adopt a canonical External Chrome inventory ID that is
+      // intentionally not yet part of this Forge session's persisted tab set.
+      if (requestedTabId && !target && operation !== "open") {
         const owner = this.tabOwners.get(requestedTabId);
         return { ok: false, operation, error: owner && owner !== sessionAgentId
           ? failure("tab-session-mismatch", "The requested browser tab belongs to another Forge session.", false)
@@ -158,7 +163,9 @@ export class BrowserAutomationService {
           panelRevealRequested: isPanelRevealPending(snapshot),
           physicalTabVisible: false,
           selectedTab: target ? publicTab(target) : null,
-        } as BrowserAutomationResultByOperation[Operation] };
+          eligibleTabs: [],
+          eligibleTabsTruncated: false,
+        } as unknown as BrowserAutomationResultByOperation[Operation] };
       }
 
       const actionId = crypto.randomUUID();
@@ -173,7 +180,7 @@ export class BrowserAutomationService {
       let response: BrowserAutomationResponse;
       try {
         response = await this.broker.request({
-          sessionAgentId, profileId, tabId: target?.tabId ?? null, operation,
+          sessionAgentId, profileId, tabId: target?.tabId ?? (operation === "open" ? requestedTabId ?? null : null), operation,
           input: input as Record<string, unknown>, timeoutMs: readTimeout(input),
           artifactDirectory: operation === "recordingStop" ? this.store.getArtifactsDirectory(profileId, sessionAgentId) : null,
         });
@@ -190,7 +197,7 @@ export class BrowserAutomationService {
       return this.withSessionMutation(key, async () => {
         if (!this.isMutable(key, generation)) return cancelled(operation);
         const returnedTab = response.updatedTab ? normalizeHostTab(response.updatedTab, snapshot) : undefined;
-        if (response.updatedTab && (!returnedTab || !this.isTabIdAvailable(snapshot, returnedTab.tabId))) {
+        if (response.updatedTab && (!returnedTab || !this.isTabIdAvailable(snapshot, returnedTab))) {
           return this.failMalformed(snapshot, actionId, operation, generation, response.elapsedMs, "Browser host returned invalid tab metadata.");
         }
         if (!response.ok) {
@@ -432,15 +439,18 @@ export class BrowserAutomationService {
     }
   }
 
-  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tabId: string): boolean {
-    const owner = this.tabOwners.get(tabId); return owner === undefined || owner === snapshot.sessionAgentId;
+  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tab: BrowserTabSnapshot): boolean {
+    if (tab.targetAffinity === "external-chrome") return decodeCanonicalExternalTabId(tab.tabId) !== null;
+    const owner = this.tabOwners.get(tab.tabId); return owner === undefined || owner === snapshot.sessionAgentId;
   }
   private upsertTab(snapshot: BrowserSessionSnapshot, tab: BrowserTabSnapshot): void {
     const index = snapshot.tabs.findIndex((candidate) => candidate.tabId === tab.tabId);
     if (index >= 0) snapshot.tabs[index] = publicTab(tab); else snapshot.tabs.push(publicTab(tab));
-    this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+    if (tab.targetAffinity !== "external-chrome") this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
   }
-  private indexTabs(snapshot: BrowserSessionSnapshot): void { for (const tab of snapshot.tabs) this.tabOwners.set(tab.tabId, snapshot.sessionAgentId); }
+  private indexTabs(snapshot: BrowserSessionSnapshot): void {
+    for (const tab of snapshot.tabs) if (tab.targetAffinity !== "external-chrome") this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+  }
 
   private async failMalformed<Operation extends BrowserAutomationOperation>(snapshot: BrowserSessionSnapshot, actionId: string, operation: Operation, generation: number, elapsedMs: number, message: string): Promise<BrowserAutomationInvocationResult<Operation>> {
     const malformed = failure("malformed-response", message, false);
@@ -504,10 +514,44 @@ function getResultTabId(value: unknown): string | null {
 function isValidSuccessResult(operation: BrowserAutomationOperation, value: unknown, expectedTabId: string | null, adopted?: BrowserTabSnapshot): boolean {
   if (!isRecord(value)) return false;
   const id = getResultTabId(value);
-  if (operation === "status") return typeof value.available === "boolean" && (value.selectedTab === null || id !== null) && (!id || adopted?.tabId === id);
+  if (operation === "status") return typeof value.available === "boolean" && (value.selectedTab === null || id !== null)
+    && (!id || adopted?.tabId === id) && validEligibleInventory(value);
   if (operation === "open" || operation === "navigate") return isRecord(value.tab) && typeof value.tab.tabId === "string" && adopted?.tabId === value.tab.tabId;
   if (id === null) return false;
   return (expectedTabId === null || id === expectedTabId || adopted?.tabId === id) && !!adopted;
+}
+function validEligibleInventory(value: Record<string, unknown>): boolean {
+  if (!Array.isArray(value.eligibleTabs) || value.eligibleTabs.length > BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS
+    || typeof value.eligibleTabsTruncated !== "boolean") return false;
+  const ids = new Set<string>();
+  for (const candidate of value.eligibleTabs) {
+    if (!isRecord(candidate) || candidate.targetAffinity !== "external-chrome"
+      || typeof candidate.tabId !== "string" || candidate.tabId.length < 1 || candidate.tabId.length > 128
+      || typeof candidate.browserProfileId !== "string" || candidate.browserProfileId.length < 1 || candidate.browserProfileId.length > 128
+      || typeof candidate.windowId !== "string" || candidate.windowId.length < 1 || candidate.windowId.length > 128
+      || typeof candidate.title !== "string" || candidate.title.length > EXTERNAL_CHROME_MAX_LABEL_LENGTH
+      || typeof candidate.url !== "string" || candidate.url.length < 1 || candidate.url.length > BROWSER_AUTOMATION_MAX_URL_LENGTH
+      || typeof candidate.active !== "boolean" || typeof candidate.windowFocused !== "boolean"
+      || typeof candidate.lastAccessedAt !== "string" || !isCanonicalTimestamp(candidate.lastAccessedAt)
+      || ids.has(candidate.tabId)) return false;
+    const canonical = decodeCanonicalExternalTabId(candidate.tabId);
+    const windowMatch = /^ext-window\.([A-Za-z0-9_-]{1,64})\.([0-9]+)$/u.exec(candidate.windowId);
+    if (!canonical || candidate.browserProfileId !== `ext-profile.${canonical.extensionInstanceId}`
+      || !windowMatch || windowMatch[1] !== canonical.extensionInstanceId
+      || !Number.isSafeInteger(Number(windowMatch[2]))) return false;
+    ids.add(candidate.tabId);
+  }
+  return true;
+}
+function isCanonicalTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+function decodeCanonicalExternalTabId(value: string): { extensionInstanceId: string; tabId: number } | null {
+  const match = /^ext\.([A-Za-z0-9_-]{1,64})\.([0-9]+)$/u.exec(value);
+  if (!match) return null;
+  const tabId = Number(match[2]);
+  return Number.isSafeInteger(tabId) ? { extensionInstanceId: match[1]!, tabId } : null;
 }
 function extractSafeCompletionMetadata(result: unknown, affinity?: BrowserTabSnapshot["targetAffinity"]): Partial<BrowserSafeActionSummary> {
   if (!isRecord(result)) return {};

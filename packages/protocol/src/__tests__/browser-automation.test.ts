@@ -224,6 +224,8 @@ describe('browser host, session, and routing wire contract', () => {
         panelRevealRequested: false,
         physicalTabVisible: false,
         selectedTab: null,
+        eligibleTabs: [],
+        eligibleTabsTruncated: false,
       },
     }
     const failure: BrowserAutomationResponse = {

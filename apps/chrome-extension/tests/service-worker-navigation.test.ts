@@ -75,7 +75,7 @@ describe('service-worker navigation orchestration', () => {
 
     const acquired = await handleDesktopRequest({
       jsonrpc: '2.0', id: 'desktop-acquire-neutral', method: 'forge.browser.acquire',
-      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, reuseFocused: false },
+      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, createIfNeeded: true },
     })
     expect(acquired).toMatchObject({ created: true, tab: { tabId: 1, url: 'about:blank', active: false } })
     expect(chrome.attached).toEqual(new Set())
@@ -86,7 +86,7 @@ describe('service-worker navigation orchestration', () => {
     })
     await expect(handleDesktopRequest({
       jsonrpc: '2.0', id: 'reacquire-neutral', method: 'forge.browser.acquire',
-      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'next-owner', leaseEpoch: 2, tabId: 1, reuseFocused: false },
+      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'next-owner', leaseEpoch: 2, tabId: 1, createIfNeeded: false },
     })).resolves.toMatchObject({ created: false, tab: { tabId: 1, url: 'about:blank', active: false } })
 
     await expect(execute({
@@ -149,7 +149,7 @@ describe('service-worker navigation orchestration', () => {
       const execute = (runtime as unknown as { execute(input: unknown): Promise<unknown> }).execute.bind(runtime)
       await handleDesktopRequest({
         jsonrpc: '2.0', id: `acquire-${readiness}`, method: 'forge.browser.acquire',
-        params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, reuseFocused: false },
+        params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, createIfNeeded: true },
       })
       const update = chrome.tabs.update.bind(chrome.tabs)
       chrome.tabs.update = (tabId, properties) => update(tabId, properties)
@@ -204,7 +204,7 @@ describe('service-worker navigation orchestration', () => {
       }).handleDesktopRequest.bind(runtime)
       await handleDesktopRequest({
         jsonrpc: '2.0', id: `acquire-${mode}`, method: 'forge.browser.acquire',
-        params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, reuseFocused: false },
+        params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, createIfNeeded: true },
       })
       const authorities = (runtime as unknown as {
         authorities: {
@@ -234,7 +234,7 @@ describe('service-worker navigation orchestration', () => {
     },
   )
 
-  it('rejects URL-bearing acquire RPCs before they can bypass authorized navigation', async () => {
+  it('does not create a target unless acquisition explicitly requests creation', async () => {
     const tabs: ChromeTab[] = []
     const chrome = fakeChrome({ tabs })
     vi.stubGlobal('chrome', chrome)
@@ -244,12 +244,12 @@ describe('service-worker navigation orchestration', () => {
     }).handleDesktopRequest.bind(runtime)
 
     await expect(handleDesktopRequest({
-      jsonrpc: '2.0', id: 'acquire-with-url', method: 'forge.browser.acquire',
+      jsonrpc: '2.0', id: 'acquire-without-target', method: 'forge.browser.acquire',
       params: {
         protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1,
-        reuseFocused: false, url: 'https://destination.example.test/',
+        createIfNeeded: false,
       },
-    })).rejects.toMatchObject({ code: 'scope-mismatch' })
+    })).rejects.toMatchObject({ code: 'target-not-found' })
     expect(tabs).toEqual([])
     expect(chrome.updates).toEqual([])
   })
@@ -264,7 +264,7 @@ describe('service-worker navigation orchestration', () => {
     const execute = (runtime as unknown as { execute(input: unknown): Promise<unknown> }).execute.bind(runtime)
     await handleDesktopRequest({
       jsonrpc: '2.0', id: 'acquire-neutral-failure', method: 'forge.browser.acquire',
-      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, reuseFocused: false },
+      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, createIfNeeded: true },
     })
     const update = chrome.tabs.update.bind(chrome.tabs)
     chrome.tabs.update = async (tabId, properties) => {
@@ -281,9 +281,15 @@ describe('service-worker navigation orchestration', () => {
     expect(chrome.attached).toEqual(new Set())
   })
 
-  it('reselects one focused eligible tab after releasing a neutral Forge target', async () => {
-    const tabs: ChromeTab[] = [{ id: 7, windowId: 1, active: true, url: 'https://orthoar.example.test/candidates' }]
-    const windows = [{ id: 1, focused: false, tabs }]
+  it('inventories and explicitly acquires an ordinary tab after focus returns to Forge', async () => {
+    const first: ChromeTab = {
+      id: 7, windowId: 1, active: true, title: 'Candidates', url: 'https://orthoar.example.test/candidates', lastAccessed: 200,
+    }
+    const second: ChromeTab = {
+      id: 8, windowId: 1, active: false, title: 'Patient', url: 'https://orthoar.example.test/patient', lastAccessed: 100,
+    }
+    const tabs = [first, second]
+    const windows = [{ id: 1, focused: false, type: 'normal' as const, tabs }]
     const chrome = fakeChrome({ tabs, windows })
     vi.stubGlobal('chrome', chrome)
     const runtime = new Runtime()
@@ -292,22 +298,17 @@ describe('service-worker navigation orchestration', () => {
     }).handleDesktopRequest.bind(runtime)
 
     await expect(handleDesktopRequest({
-      jsonrpc: '2.0', id: 'acquire-neutral', method: 'forge.browser.acquire',
-      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'neutral-owner', leaseEpoch: 1, reuseFocused: true },
-    })).resolves.toMatchObject({ created: true, tab: { tabId: 8, url: 'about:blank', active: false } })
-    await expect(handleDesktopRequest({
-      jsonrpc: '2.0', id: 'release-neutral', method: 'forge.browser.release',
-      params: { protocolVersion: 1, leaseId: 'neutral-owner', leaseEpoch: 1, reason: 'idle' },
-    })).resolves.toMatchObject({ releasedTabIds: [8] })
-
-    windows[0]!.focused = true
-    tabs[0]!.active = true
-    tabs[1]!.active = false
-    await expect(handleDesktopRequest({
-      jsonrpc: '2.0', id: 'acquire-focused', method: 'forge.browser.acquire',
-      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'focused-owner', leaseEpoch: 2, reuseFocused: true },
+      jsonrpc: '2.0', id: 'inventory', method: 'forge.browser.inventory',
+      params: { protocolVersion: 1, sessionAgentId: 'session' },
     })).resolves.toMatchObject({
-      created: false, tab: { tabId: 7, url: 'https://orthoar.example.test/candidates', active: true },
+      tabs: [{ tabId: 7, active: true, windowFocused: false }, { tabId: 8, active: false, windowFocused: false }],
+      truncated: false,
+    })
+    await expect(handleDesktopRequest({
+      jsonrpc: '2.0', id: 'acquire-existing', method: 'forge.browser.acquire',
+      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'owner', leaseEpoch: 1, tabId: 8, createIfNeeded: false },
+    })).resolves.toMatchObject({
+      created: false, tab: { tabId: 8, url: 'https://orthoar.example.test/patient', active: false },
     })
     expect(chrome.attached).toEqual(new Set())
     expect(chrome.injections).toEqual([])

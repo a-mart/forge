@@ -1,3 +1,9 @@
+import {
+  BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
+  EXTERNAL_CHROME_MAX_URL_LENGTH,
+  type ExternalChromeInventoryTab,
+} from '@forge/protocol'
 import type { ChromeApi, ChromeTab } from './chrome-api.js'
 import { restrictedTargetReason } from './restricted-target.js'
 
@@ -115,20 +121,32 @@ export class LeaseManager {
     return active.length > 0 ? active : receipt !== undefined && receipt.expiresAt > this.now() ? [...receipt.tabIds] : []
   }
 
-  async focusedEligibleTab(): Promise<ChromeTab | null> {
-    const windows = await this.chrome.windows.getAll({ populate: true })
-    const focused = windows.filter((window) => window.focused)
-    if (focused.length !== 1) return null
-    const active = (focused[0]!.tabs ?? []).filter((tab) => tab.active === true && tab.id !== undefined)
-    if (active.length !== 1 || restrictedTargetReason(active[0]!.url) !== null) return null
-    return active[0]!
+  async eligibleTabs(sessionAgentId: string): Promise<{ tabs: ExternalChromeInventoryTab[]; truncated: boolean }> {
+    const windows = await this.chrome.windows.getAll({ populate: true, windowTypes: ['normal'] })
+    const eligible = windows.flatMap((window) => {
+      if (window.type !== 'normal' || !Number.isSafeInteger(window.id) || (window.id as number) < 0) return []
+      return (window.tabs ?? []).flatMap((tab): ExternalChromeInventoryTab[] => {
+        if (!Number.isSafeInteger(tab.id) || (tab.id as number) < 0 || tab.windowId !== window.id || restrictedTargetReason(tab.url) !== null) return []
+        const authority = this.authorities.get(tab.id as number)
+        if (authority && (authority.state === 'lost' || authority.sessionAgentId !== sessionAgentId)) return []
+        return [{
+          tabId: tab.id as number,
+          windowId: window.id as number,
+          title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+          url: (tab.url ?? '').slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+          active: tab.active === true,
+          windowFocused: window.focused,
+          lastAccessed: Number.isFinite(tab.lastAccessed) && (tab.lastAccessed as number) >= 0 ? tab.lastAccessed as number : 0,
+        }]
+      })
+    }).sort(compareEligibleTabs)
+    return {
+      tabs: eligible.slice(0, BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS),
+      truncated: eligible.length > BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
+    }
   }
 
-  async allocateAutomaticTab(input: { reuseFocused: boolean; url?: string }): Promise<{ tab: ChromeTab; createdByForge: boolean }> {
-    const focused = input.reuseFocused ? await this.focusedEligibleTab() : null
-    if (focused !== null) return { tab: focused, createdByForge: false }
-    // A legacy URL-bearing caller still cannot bypass the neutral transition;
-    // Desktop must dispatch that URL later as an authorized navigate operation.
+  async createNeutralTab(): Promise<{ tab: ChromeTab; createdByForge: true }> {
     const created = await this.chrome.tabs.create({
       url: NEUTRAL_INITIAL_URL,
       active: false,
@@ -137,8 +155,13 @@ export class LeaseManager {
     // Real Chrome may resolve tabs.create while the new tab still has no observable URL.
     // The exact background about:blank target is accepted only as a Forge-created,
     // one-transition authority; every ordinary acquisition keeps the restriction check.
-    const tab = await this.waitForCreatedTarget(created.id, true)
-    return { tab, createdByForge: true }
+    try {
+      const tab = await this.waitForCreatedTarget(created.id, true)
+      return { tab, createdByForge: true }
+    } catch (error) {
+      try { await this.chrome.tabs.remove(created.id) } catch { /* exact created tab already disappeared */ }
+      throw error
+    }
   }
 
   acquire(input: {
@@ -154,14 +177,13 @@ export class LeaseManager {
       let tab: ChromeTab
       try { tab = await this.chrome.tabs.get(input.tabId) } catch { throw new LeaseError('target-not-found', 'tab no longer exists') }
       const existing = this.authorities.get(input.tabId)
-      const initialNavigationPending = tab.url === NEUTRAL_INITIAL_URL && (
-        input.createdByForge === true
-        || this.neutralTargets.has(input.tabId)
+      const hasNeutralProvenance = input.createdByForge === true || this.neutralTargets.has(input.tabId)
         || existing?.createdByForge === true && existing.initialNavigationPending
-      )
+      const initialNavigationPending = await this.observeNeutralInitialTarget(tab, hasNeutralProvenance)
       const restriction = restrictedTargetReason(tab.url)
       if (restriction !== null && !initialNavigationPending) throw new LeaseError('restricted-target', `tab is restricted (${restriction})`)
-      const clearNeutralTarget = !initialNavigationPending && tab.url !== NEUTRAL_INITIAL_URL && this.neutralTargets.has(input.tabId)
+      const clearNeutralTarget = !initialNavigationPending && this.neutralTargets.has(input.tabId)
+      if (initialNavigationPending && tab.url === undefined) tab = { ...tab, url: NEUTRAL_INITIAL_URL }
       if (existing !== undefined) {
         const exact = existing.ownerId === input.ownerId && existing.ownerEpoch === input.ownerEpoch &&
           existing.sessionAgentId === input.sessionAgentId && existing.state !== 'lost'
@@ -324,7 +346,7 @@ export class LeaseManager {
       for (const tabId of this.parseNeutralTargets(sessionStored[NEUTRAL_TARGETS_KEY])) {
         try {
           const tab = await this.chrome.tabs.get(tabId)
-          if (tab.url === NEUTRAL_INITIAL_URL) recoveredNeutralTargets.add(tabId)
+          if (await this.observeNeutralInitialTarget(tab, true)) recoveredNeutralTargets.add(tabId)
         } catch { /* stale session provenance is discarded */ }
       }
       const nextReceipts = this.parseDurableReceipts(localStored[DURABLE_RELEASE_RECEIPTS_KEY])
@@ -336,7 +358,8 @@ export class LeaseManager {
         if (record.payloadVersion !== this.payloadVersion || record.expiresAt <= this.now()) continue
         let tab: ChromeTab
         try { tab = await this.chrome.tabs.get(record.tabId) } catch { continue }
-        const initialNavigationPending = record.createdByForge && tab.url === NEUTRAL_INITIAL_URL && record.initialNavigationPending !== false
+        const initialNavigationPending = record.createdByForge &&
+          await this.observeNeutralInitialTarget(tab, recoveredNeutralTargets.has(record.tabId)) && record.initialNavigationPending !== false
         if (!initialNavigationPending && record.initialNavigationPending === false) recoveredNeutralTargets.delete(record.tabId)
         if (restrictedTargetReason(tab.url) !== null && !initialNavigationPending) continue
         // MV3 restart never assumes a debugger survived. Durable ownership resumes human/unattached.
@@ -380,6 +403,20 @@ export class LeaseManager {
     })
   }
 
+  async hasAuthorizedNeutralInitialTarget(tab: ChromeTab): Promise<boolean> {
+    return this.observeNeutralInitialTarget(tab, tab.id !== undefined && this.neutralTargets.has(tab.id))
+  }
+
+  private async observeNeutralInitialTarget(tab: ChromeTab, hasProvenance: boolean): Promise<boolean> {
+    if (!hasProvenance) return false
+    if (isNeutralInitialTarget(tab)) return true
+    if (tab.pendingUrl !== undefined || tab.id === undefined || restrictedTargetReason(tab.url) !== 'missing-url') return false
+    try {
+      const frame = await this.chrome.webNavigation.getFrame({ tabId: tab.id, frameId: 0 })
+      return frame?.url === NEUTRAL_INITIAL_URL
+    } catch { return false }
+  }
+
   private addNeutralTarget(tabId: number): void {
     if (this.neutralTargets.has(tabId)) return
     if (this.neutralTargets.size >= MAX_NEUTRAL_TARGETS) throw new LeaseError('scope-mismatch', 'neutral target provenance bound reached')
@@ -404,7 +441,14 @@ export class LeaseManager {
       let tab: ChromeTab
       try { tab = await this.chrome.tabs.get(tabId) } catch { throw new LeaseError('target-not-found', 'created tab no longer exists') }
       const restriction = restrictedTargetReason(tab.url)
-      if (restriction === null || allowNeutralInitialTarget && tab.url === NEUTRAL_INITIAL_URL) return tab
+      if (restriction === null || (allowNeutralInitialTarget && isNeutralInitialTarget(tab))) return tab
+      if (allowNeutralInitialTarget && restriction === 'missing-url') {
+        if (tab.pendingUrl !== undefined) throw new LeaseError('restricted-target', 'created tab changed before neutral authority was established')
+        let frame: { url: string } | null = null
+        try { frame = await this.chrome.webNavigation.getFrame({ tabId, frameId: 0 }) } catch { /* not committed yet */ }
+        if (frame?.url === NEUTRAL_INITIAL_URL) return { ...tab, url: NEUTRAL_INITIAL_URL }
+        if (frame !== null) throw new LeaseError('restricted-target', 'created tab changed before neutral authority was established')
+      }
       if (restriction !== 'missing-url') throw new LeaseError('restricted-target', `created tab is restricted (${restriction})`)
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
@@ -512,6 +556,18 @@ export class LeaseManager {
     this.mutationTail = result.then(() => undefined, () => undefined)
     return result
   }
+}
+
+function isNeutralInitialTarget(tab: ChromeTab): boolean {
+  return tab.url === NEUTRAL_INITIAL_URL || (tab.url === undefined && tab.pendingUrl === NEUTRAL_INITIAL_URL)
+}
+
+function compareEligibleTabs(left: ExternalChromeInventoryTab, right: ExternalChromeInventoryTab): number {
+  return Number(right.active) - Number(left.active)
+    || Number(right.windowFocused) - Number(left.windowFocused)
+    || right.lastAccessed - left.lastAccessed
+    || left.windowId - right.windowId
+    || left.tabId - right.tabId
 }
 
 function releaseKey(ownerId: string, ownerEpoch: number): string {

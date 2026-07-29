@@ -617,6 +617,8 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       panelRevealRequested: false,
       physicalTabVisible: selected?.visible ?? false,
       selectedTab: selected ? this.syncSnapshot(selected) : null,
+      eligibleTabs: [],
+      eligibleTabsTruncated: false,
     }
   }
 

@@ -17,6 +17,7 @@ import type {
   BrowserTargetSession,
   ExternalBrowserAcquireInput,
   ExternalBrowserAcquireResult,
+  ExternalBrowserInventory,
   ExternalBrowserTargetAuthority,
 } from '../browser-target-adapter.js'
 
@@ -44,12 +45,18 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   readonly ended: Array<{ session: BrowserTargetSession; turnId: string }> = []
   readonly sessionReleases: Array<{ session: BrowserTargetSession; reason: string }> = []
   readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
+  readonly inventoryRequests: BrowserTargetSession[] = []
+  inventoryResults: ExternalBrowserInventory[] = []
   acquireResults: ExternalBrowserAcquireResult[] = []
   executionResults: BrowserTargetExecution[] = []
   releaseFailures: Error[] = []
   revealFailures: Error[] = []
   sequence = 0
 
+  async listEligibleTabs(session: BrowserTargetSession): Promise<ExternalBrowserInventory> {
+    this.inventoryRequests.push(structuredClone(session))
+    return this.inventoryResults.shift() ?? { tabs: [], truncated: false }
+  }
   async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
     this.acquisitions.push(structuredClone(input))
     return this.acquireResults.shift() ?? {
@@ -99,6 +106,41 @@ describe('AutomaticBrowserHost', () => {
     expect(managed.requests).toHaveLength(0)
   })
 
+  it('exposes External Chrome inventory even while the sticky selected tab is managed', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.inventoryResults.push({ tabs: [eligible('ext.instance.7')], truncated: false })
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('managed-selected', 'managed-electron')], 'managed-selected')])
+
+    await expect(host.perform(request('status', {}, null))).resolves.toMatchObject({
+      ok: true,
+      result: {
+        selectedTab: { tabId: 'managed-selected', targetAffinity: 'managed-electron' },
+        eligibleTabs: [{ tabId: 'ext.instance.7', url: 'https://inventory.invalid/' }],
+        eligibleTabsTruncated: false,
+      },
+    })
+    expect(external.inventoryRequests).toMatchObject([{ sessionAgentId: 'session', profileId: 'profile' }])
+  })
+
+  it('adopts an explicit canonical inventory tab ID that is not yet in session state', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+
+    await expect(host.perform(request('open', {
+      tabId: 'ext.instance.9', show: false, reuseExistingTab: true,
+    }, 'ext.instance.9'))).resolves.toMatchObject({
+      ok: true,
+      updatedTab: { targetAffinity: 'external-chrome', tabId: 'ext.instance.9' },
+    })
+    expect(external.acquisitions).toMatchObject([{
+      preferredTabId: 'ext.instance.9', reuseExisting: true, createIfNeeded: false,
+    }])
+    expect(managed.requests).toEqual([])
+  })
+
   it('preserves caller tab correlation while open, navigate, and snapshot allocate or target internally', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
@@ -124,7 +166,7 @@ describe('AutomaticBrowserHost', () => {
     expect(external.executions[0]?.tabId).not.toBe('selected')
   })
 
-  it('reselects focused Chrome on explicit tabless open and keeps subsequent operations sticky', async () => {
+  it('reselects profile-wide Chrome inventory on explicit tabless open and keeps subsequent operations sticky', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
     const host = createHost(managed, external)
@@ -148,7 +190,7 @@ describe('AutomaticBrowserHost', () => {
     expect(external.executions.map(({ tabId }) => tabId)).toEqual(['chrome-neutral', 'chrome-focused', 'chrome-focused'])
   })
 
-  it('reselects focused Chrome from a managed fallback and keeps non-open operations sticky', async () => {
+  it('reselects Chrome inventory from a managed fallback and keeps non-open operations sticky', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
     const host = createHost(managed, external)
@@ -161,7 +203,7 @@ describe('AutomaticBrowserHost', () => {
       ok: true, updatedTab: { targetAffinity: 'external-chrome', tabId: 'chrome-focused' },
     })
     expect(external.acquisitions).toMatchObject([{
-      preferredTabId: null, reuseExisting: true, createIfNeeded: false,
+      preferredTabId: null, reuseExisting: true, createIfNeeded: true,
     }])
     expect(managed.requests).toEqual([])
 
@@ -182,9 +224,71 @@ describe('AutomaticBrowserHost', () => {
     expect(managed.requests).toEqual([])
   })
 
-  it.each(['no-eligible-target', 'ambiguous-instance'] as const)(
-    'retains the exact managed fallback when focused Chrome selection fails with %s',
-    async (fallbackReason) => {
+  it('lets another session explicitly select a profile-wide Chrome tab after exact prior turn release', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    const canonicalTabId = 'ext.instance.7'
+    const sessionA = { sessionAgentId: 'session-a', profileId: 'profile' }
+    const sessionB = { sessionAgentId: 'session-b', profileId: 'profile' }
+
+    await expect(host.perform(request('open', {
+      tabId: canonicalTabId, show: false, reuseExistingTab: true,
+    }, canonicalTabId, sessionA.sessionAgentId))).resolves.toMatchObject({
+      ok: true, updatedTab: { tabId: canonicalTabId, targetAffinity: 'external-chrome' },
+    })
+    await host.endTurn(sessionA, 'turn-a')
+    expect(external.authorityReleases).toMatchObject([{
+      authority: { tabId: canonicalTabId }, reason: 'turn-ended',
+    }])
+
+    external.inventoryResults.push({ tabs: [eligible(canonicalTabId)], truncated: false })
+    await expect(host.perform(request('status', {}, null, sessionB.sessionAgentId))).resolves.toMatchObject({
+      ok: true, result: { eligibleTabs: [{ tabId: canonicalTabId }] },
+    })
+    await expect(host.perform(request('open', {
+      tabId: canonicalTabId, show: false, reuseExistingTab: true,
+    }, canonicalTabId, sessionB.sessionAgentId))).resolves.toMatchObject({
+      ok: true, updatedTab: { tabId: canonicalTabId, targetAffinity: 'external-chrome' },
+    })
+    await expect(host.perform(request('snapshot', {}, null, sessionB.sessionAgentId))).resolves.toMatchObject({
+      ok: true, result: { tabId: canonicalTabId }, updatedTab: { tabId: canonicalTabId },
+    })
+    expect(external.acquisitions).toMatchObject([
+      { sessionAgentId: 'session-a', preferredTabId: canonicalTabId, createIfNeeded: false },
+      { sessionAgentId: 'session-b', preferredTabId: canonicalTabId, createIfNeeded: false },
+    ])
+    expect(external.executions.map(({ sessionAgentId, operation, tabId }) => ({ sessionAgentId, operation, tabId }))).toEqual([
+      { sessionAgentId: 'session-a', operation: 'open', tabId: canonicalTabId },
+      { sessionAgentId: 'session-b', operation: 'open', tabId: canonicalTabId },
+      { sessionAgentId: 'session-b', operation: 'snapshot', tabId: canonicalTabId },
+    ])
+
+    await host.endTurn(sessionB, 'turn-b')
+    expect(external.authorityReleases).toMatchObject([
+      { authority: { tabId: canonicalTabId }, reason: 'turn-ended' },
+      { authority: { tabId: canonicalTabId }, reason: 'turn-ended' },
+    ])
+  })
+
+  it('keeps managed Electron tab IDs session-owned across explicit opens', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    const owned = { ...tab('managed-owned', 'managed-electron'), sessionAgentId: 'session-a' }
+    host.synchronizeSessions([{ ...session([owned], owned.tabId), sessionAgentId: 'session-a' }])
+
+    await expect(host.perform(request('open', {
+      tabId: owned.tabId, show: false, reuseExistingTab: true,
+    }, owned.tabId, 'session-b'))).resolves.toMatchObject({
+      ok: false, error: { code: 'tab-session-mismatch' },
+    })
+    expect(external.acquisitions).toEqual([])
+    expect(managed.requests).toEqual([])
+  })
+
+  it('retains the exact managed fallback when Chrome inventory acquisition fails before mutation', async () => {
+      const fallbackReason = 'no-eligible-target' as const
       const managed = new FakeManagedAdapter()
       const external = new FakeExternalAdapter()
       external.acquireResults.push(acquireFailure(fallbackReason))
@@ -196,11 +300,10 @@ describe('AutomaticBrowserHost', () => {
       await expect(host.perform(request('open', { show: false, reuseExistingTab: true }, null))).resolves.toMatchObject({
         ok: true, updatedTab: { targetAffinity: 'managed-electron', tabId: 'managed-fallback' },
       })
-      expect(external.acquisitions).toMatchObject([{ createIfNeeded: false, reuseExisting: true }])
+      expect(external.acquisitions).toMatchObject([{ createIfNeeded: true, reuseExisting: true }])
       expect(external.executions).toEqual([])
       expect(managed.requests).toMatchObject([{ operation: 'open', tabId: 'managed-fallback' }])
-    },
-  )
+  })
 
   it('still allocates one automatic target for open reuse false from managed affinity', async () => {
     const managed = new FakeManagedAdapter()
@@ -234,7 +337,7 @@ describe('AutomaticBrowserHost', () => {
     expect(ensureManagedTarget).toHaveBeenCalledOnce()
   })
 
-  it('retries a pre-mutation Chrome race on one dedicated target before using Managed Browser', async () => {
+  it('falls back to Managed without creating a hidden tab after a pre-mutation Chrome race', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
     external.executionResults.push({
@@ -244,10 +347,9 @@ describe('AutomaticBrowserHost', () => {
     const host = createHost(managed, external)
 
     await expect(host.perform(request('click', { x: 1, y: 1, timeoutMs: 100 }, null))).resolves.toMatchObject({ ok: true })
-    expect(external.acquisitions).toHaveLength(2)
-    expect(external.acquisitions[1]).toMatchObject({ preferredTabId: null, reuseExisting: false })
-    expect(external.executions).toHaveLength(2)
-    expect(managed.requests).toHaveLength(0)
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.executions).toHaveLength(1)
+    expect(managed.requests).toHaveLength(1)
   })
 
   it('does not retry a mutating debugger-unavailable failure without explicit safety metadata', async () => {
@@ -271,7 +373,7 @@ describe('AutomaticBrowserHost', () => {
   it('falls back to Managed only while mutation is proven not started', async () => {
     const managed = new FakeManagedAdapter()
     const external = new FakeExternalAdapter()
-    external.acquireResults.push(acquireFailure('restricted-target'), acquireFailure('no-eligible-target'))
+    external.acquireResults.push(acquireFailure('restricted-target'))
     const ensureManagedTarget = vi.fn(async () => 'managed-fallback')
     const host = createHost(managed, external, ensureManagedTarget)
 
@@ -279,7 +381,8 @@ describe('AutomaticBrowserHost', () => {
       ok: true,
       updatedTab: { targetAffinity: 'managed-electron', tabId: 'managed-fallback' },
     })
-    expect(external.acquisitions).toHaveLength(2)
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.acquisitions[0]).toMatchObject({ createIfNeeded: false })
     expect(managed.requests).toHaveLength(1)
   })
 
@@ -433,9 +536,14 @@ function createHost(
   return new AutomaticBrowserHost({ managedAdapter: managed, externalAdapter: external, ensureManagedTarget })
 }
 
-function request(operation: BrowserAutomationOperation, input: Record<string, unknown>, tabId: string | null): BrowserAutomationRequest {
+function request(
+  operation: BrowserAutomationOperation,
+  input: Record<string, unknown>,
+  tabId: string | null,
+  sessionAgentId = 'session',
+): BrowserAutomationRequest {
   return {
-    requestId: `request-${operation}-${Math.random()}`, sessionAgentId: 'session', profileId: 'profile', tabId,
+    requestId: `request-${operation}-${Math.random()}`, sessionAgentId, profileId: 'profile', tabId,
     hostId: 'automatic-host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
     artifactDirectory: null, operation, input,
   } as BrowserAutomationRequest
@@ -451,6 +559,20 @@ function tab(tabId: string, targetAffinity: BrowserTabSnapshot['targetAffinity']
   }
 }
 
+function eligible(tabId: string) {
+  return {
+    targetAffinity: 'external-chrome' as const,
+    tabId,
+    browserProfileId: 'ext-profile.instance',
+    windowId: 'ext-window.instance.1',
+    title: 'Inventory',
+    url: 'https://inventory.invalid/',
+    active: true,
+    windowFocused: false,
+    lastAccessedAt: new Date(0).toISOString(),
+  }
+}
+
 function session(tabs: BrowserTabSnapshot[], activeTabId: string | null): BrowserSessionSnapshot {
   const now = new Date(0).toISOString()
   return {
@@ -460,7 +582,11 @@ function session(tabs: BrowserTabSnapshot[], activeTabId: string | null): Browse
 }
 
 function success(requestValue: BrowserAutomationRequest, targetAffinity: BrowserTabSnapshot['targetAffinity']): BrowserAutomationResponse {
-  const target = tab(requestValue.tabId ?? `${targetAffinity}-created`, targetAffinity)
+  const target = {
+    ...tab(requestValue.tabId ?? `${targetAffinity}-created`, targetAffinity),
+    sessionAgentId: requestValue.sessionAgentId,
+    profileId: requestValue.profileId,
+  }
   const routing = {
     requestId: requestValue.requestId, sessionAgentId: requestValue.sessionAgentId, profileId: requestValue.profileId,
     tabId: target.tabId, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration,
@@ -468,7 +594,7 @@ function success(requestValue: BrowserAutomationRequest, targetAffinity: Browser
   }
   if (requestValue.operation === 'open') return { ...routing, operation: 'open', result: { tab: target, created: true, panelRevealRequested: requestValue.input.show } }
   if (requestValue.operation === 'navigate') return { ...routing, operation: 'navigate', result: { tab: target, readiness: requestValue.input.readiness } }
-  if (requestValue.operation === 'status') return { ...routing, operation: 'status', result: { available: true, host: { connected: true, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration, focused: true, capabilities: null, connectedAt: new Date(0).toISOString() }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: target } }
+  if (requestValue.operation === 'status') return { ...routing, operation: 'status', result: { available: true, host: { connected: true, hostId: requestValue.hostId, hostGeneration: requestValue.hostGeneration, focused: true, capabilities: null, connectedAt: new Date(0).toISOString() }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: target, eligibleTabs: [], eligibleTabsTruncated: false } }
   return { ...routing, result: resultFor(requestValue.operation, target.tabId) } as BrowserAutomationResponse
 }
 
@@ -496,10 +622,8 @@ function failure(requestValue: BrowserAutomationRequest, code: BrowserAutomation
   }
 }
 
-function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-target' | 'ambiguous-instance'): ExternalBrowserAcquireResult {
-  const code = fallbackReason === 'restricted-target'
-    ? 'restricted-target'
-    : fallbackReason === 'ambiguous-instance' ? 'target-not-found' : 'unavailable-host'
+function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-target'): ExternalBrowserAcquireResult {
+  const code = fallbackReason === 'restricted-target' ? 'restricted-target' : 'unavailable-host'
   return {
     ok: false,
     error: { code, message: fallbackReason, retryable: true },

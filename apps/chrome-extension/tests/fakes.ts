@@ -33,6 +33,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
   const commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> = []
   const injections: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; files: string[]; world?: 'ISOLATED' | 'MAIN' }> = []
   const updates: Array<{ tabId: number; properties: { url?: string; active?: boolean } }> = []
+  const windows = options.windows ?? [{ id: 1, focused: true, type: 'normal' as const, tabs }]
   let nextTabId = Math.max(0, ...tabs.map((tab) => tab.id ?? 0)) + 1
   return {
     attached,
@@ -56,7 +57,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
         return structuredClone(tab)
       },
       create: async (properties) => {
-        const tab: ChromeTab = { id: nextTabId++, windowId: 1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created' }
+        const tab: ChromeTab = { id: nextTabId++, windowId: 1, active: properties.active, url: properties.url ?? 'about:blank', title: 'Created', lastAccessed: Date.now() }
         tabs.push(tab)
         return structuredClone(tab)
       },
@@ -74,7 +75,19 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
       },
     },
     windows: {
-      getAll: async () => structuredClone(options.windows ?? [{ id: 1, focused: true, tabs }]),
+      getAll: async (getInfo) => {
+        const windowTypes = Array.isArray(getInfo?.windowTypes) ? getInfo.windowTypes : null
+        return structuredClone(windows
+          .map((window) => ({ ...window, type: window.type ?? 'normal' as const }))
+          .filter((window) => windowTypes === null || windowTypes.includes(window.type)))
+      },
+    },
+    webNavigation: {
+      getFrame: async ({ tabId }) => {
+        const tab = tabs.find((entry) => entry.id === tabId)
+        const url = tab?.url ?? tab?.pendingUrl
+        return url === undefined ? null : { url }
+      },
     },
     storage: { local, session },
     scripting: { executeScript: async (injection) => { injections.push(structuredClone(injection)); return [] } },

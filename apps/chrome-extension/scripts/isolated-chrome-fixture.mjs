@@ -84,7 +84,9 @@ const fixtureAddress = fixtureServer.address()
 if (fixtureAddress === null || typeof fixtureAddress === 'string') throw new Error('isolated fixture server did not bind TCP')
 const fixtureUrl = `http://127.0.0.1:${fixtureAddress.port}/`
 const args = [
-  '--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
+  '--headless=new',
+  ...(process.env.FORGE_ISOLATED_CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+  '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
   '--disable-component-update', '--disable-default-apps', '--disable-search-engine-choice-screen', '--disable-sync',
   '--metrics-recording-only', '--password-store=basic', '--use-mock-keychain',
   '--remote-debugging-port=0', '--remote-allow-origins=*', `--user-data-dir=${profile}`,
@@ -179,15 +181,15 @@ async function inspectWorker(webSocketDebuggerUrl) {
         ]);
         const call = (method, params) => globalThis.__forgeIsolatedFixtureRequest({jsonrpc:'2.0',id:crypto.randomUUID(),method,params});
         const detached = async tabId => !(await chrome.debugger.getTargets()).some(target => target.tabId === tabId && target.attached);
-        let focused={eligible:false};
+        let inventory={tabs:[]};
         while(Date.now()<deadline){
-          const active=(await chrome.tabs.query({active:true}))[0];
-          focused=await call('forge.browser.focusedEligibility',{protocolVersion:1});
-          if(focused.eligible===true&&active?.id&&(await chrome.tabs.get(active.id)).url===${JSON.stringify(fixtureUrl)}) break;
+          inventory=await call('forge.browser.inventory',{protocolVersion:1,sessionAgentId:'fixture-session'});
+          if(inventory.tabs.some(tab=>tab.url===${JSON.stringify(fixtureUrl)})) break;
           await new Promise(resolve=>setTimeout(resolve,50));
         }
-        if(focused.eligible!==true) throw new Error('focused fixture tab did not become eligible');
-        const acquired = await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-session',leaseId:'fixture-root',leaseEpoch:1,reuseFocused:true});
+        const candidate=inventory.tabs.find(tab=>tab.url===${JSON.stringify(fixtureUrl)});
+        if(!candidate) throw new Error('fixture tab did not enter profile inventory');
+        const acquired = await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-session',leaseId:'fixture-root',leaseEpoch:1,tabId:candidate.tabId,createIfNeeded:false});
         const tabId = acquired.tab.tabId;
         const run = async (operation,input) => {
           const response = await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-'+operation+'-'+crypto.randomUUID(),leaseId:'fixture-root',leaseEpoch:1,tabId,operation,input,deadlineAt:new Date(Date.now()+10000).toISOString()});
@@ -219,7 +221,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const exactConflictEvidence=conflictDetails&&Object.keys(conflictDetails).length===3&&conflictDetails.failurePhase==='debugger-attach'&&conflictDetails.mutationState==='not-started'&&conflictDetails.fallbackReason==='foreign-debugger';
         const conflictPreMutation=conflict.ok===false&&conflict.error?.code==='debugger-unavailable'&&exactConflictEvidence&&counterAfterConflict?.result===1;
         const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'fixture-complete'});
-        const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:2,reuseFocused:false,url:${JSON.stringify(fixtureUrl)}});
+        const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:2,createIfNeeded:true});
         const dedicatedTab=await chrome.tabs.get(dedicated.tab.tabId);
         await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-dedicated',leaseEpoch:2,reason:'fixture-complete'});
         await chrome.tabs.remove(dedicated.tab.tabId);
@@ -227,7 +229,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           manifestName:chrome.runtime.getManifest().name,extensionId:chrome.runtime.id,
           instanceReady:typeof stored['forge.externalChrome.instanceId.v1']==='string',heartbeatReady:alarm?.name==='forge.externalChrome.heartbeat.v2',
           bootState:globalThis.__forgeServiceWorkerBootState??null,workerLocation:globalThis.location.href,
-          acquisition:{acquired:acquired.created===false&&focused.eligible===true,tabId},
+          acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
@@ -294,7 +296,7 @@ try {
     nativeMessaging: 'fixture-blocked',
     importScriptsBootError: false,
     operations: { acquired: true, ...state.operations, released: state.released, debuggerDetached: state.debuggerDetached },
-    allocation: { focusedReuse: state.acquisition.acquired, dedicatedCreated: state.dedicated.created, dedicatedUngrouped: state.dedicated.ungrouped },
+    allocation: { inventoryReuse: state.acquisition.acquired, inventoryCount: state.acquisition.inventoryCount, dedicatedCreated: state.dedicated.created, dedicatedUngrouped: state.dedicated.ungrouped },
     childPolicy: state.childPolicy,
     debuggerConflict: state.debuggerConflict,
   }

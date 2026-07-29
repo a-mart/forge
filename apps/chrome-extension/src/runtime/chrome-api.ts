@@ -4,12 +4,17 @@ export interface ChromeTab {
   active?: boolean
   title?: string
   url?: string
+  /** Requested URL while Chrome has not committed it to url yet. */
+  pendingUrl?: string
   status?: 'unloaded' | 'loading' | 'complete'
+  /** Milliseconds since the epoch when supplied by chrome.tabs. */
+  lastAccessed?: number
 }
 
 export interface ChromeWindow {
   id?: number
   focused: boolean
+  type?: 'normal' | 'popup' | 'panel' | 'app' | 'devtools'
   tabs?: ChromeTab[]
 }
 
@@ -70,6 +75,9 @@ export interface ChromeApi {
   }
   windows: {
     getAll(getInfo?: Record<string, unknown>): Promise<ChromeWindow[]>
+  }
+  webNavigation: {
+    getFrame(details: { tabId: number; frameId: number }): Promise<{ url: string } | null>
   }
   storage: {
     local: ChromeStorageArea

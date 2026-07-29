@@ -53,7 +53,7 @@ function deferred<Value>(): Deferred<Value> {
 
 function chromeVersion(): string { return /Chrom(?:e|ium)\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? 'unknown' }
 function acquiredTab(tab: ChromeTab): Record<string, unknown> {
-  return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? '', active: tab.active === true }
+  return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? tab.pendingUrl ?? '', active: tab.active === true }
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -148,12 +148,11 @@ export class Runtime implements ServiceWorkerPayload {
     }
     switch (request.method) {
       case 'forge.runtime.ping': return { protocolVersion: 1, nonce: request.params.nonce, receivedAt: new Date().toISOString() }
-      case 'forge.browser.focusedEligibility':
-        return { protocolVersion: 1, eligible: await this.authorities.focusedEligibleTab() !== null }
+      case 'forge.browser.inventory': {
+        const inventory = await this.authorities.eligibleTabs(request.params.sessionAgentId)
+        return { protocolVersion: 1, ...inventory }
+      }
       case 'forge.browser.acquire': {
-        // URL dispatch belongs to forge.browser.execute so it receives exact
-        // operation authority, deadline, readiness, and no-replay handling.
-        if (request.params.url !== undefined) throw new LeaseError('scope-mismatch', 'acquire cannot dispatch a URL')
         let tab: ChromeTab
         let createdByForge = false
         if (request.params.tabId !== undefined) {
@@ -166,7 +165,8 @@ export class Runtime implements ServiceWorkerPayload {
           })
           tab = acquired.tab
         } else {
-          const allocated = await this.authorities.allocateAutomaticTab({ reuseFocused: request.params.reuseFocused })
+          if (!request.params.createIfNeeded) throw new LeaseError('target-not-found', 'no existing tab was selected and creation was not requested')
+          const allocated = await this.authorities.createNeutralTab()
           tab = allocated.tab
           createdByForge = allocated.createdByForge
           if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return a tab ID')
@@ -235,7 +235,7 @@ export class Runtime implements ServiceWorkerPayload {
 
   private async execute(params: ExternalChromeExecuteParams): Promise<unknown> {
     const authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
-    if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority) })
+    if (params.operation === 'status') return this.executeResponse(params, true, { available: true, host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: this.browserTab(await this.chrome.tabs.get(params.tabId), authority), eligibleTabs: [], eligibleTabsTruncated: false })
     if (!['navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(params.operation)) return this.executeFailure(params, 'unsupported-operation', `External Chrome does not support ${params.operation}.`, false)
     return this.operations.runExclusive(params.tabId, async () => {
       let resolveTracked!: () => void
@@ -247,7 +247,8 @@ export class Runtime implements ServiceWorkerPayload {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= Date.now()) return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
         let operationAuthority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
         const currentTab = await this.chrome.tabs.get(params.tabId)
-        const neutralInitialTarget = operationAuthority.createdByForge && operationAuthority.initialNavigationPending && currentTab.url === 'about:blank'
+        const neutralInitialTarget = operationAuthority.createdByForge && operationAuthority.initialNavigationPending
+          && await this.authorities.hasAuthorizedNeutralInitialTarget(currentTab)
         const currentRestriction = restrictedTargetReason(currentTab.url)
         if (currentRestriction !== null && !neutralInitialTarget) {
           return this.executeFailure(params, 'restricted-target', `Current target is restricted (${currentRestriction}).`, false)
@@ -334,7 +335,7 @@ export class Runtime implements ServiceWorkerPayload {
 
   private browserTab(tab: ChromeTab, authority: TabAuthorityRecord): BrowserTabSnapshot {
     const now = new Date().toISOString()
-    return { targetAffinity: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: authority.state === 'agent' ? 'agent' : 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now }
+    return { targetAffinity: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? tab.pendingUrl ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: authority.state === 'agent' ? 'agent' : 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now }
   }
 
   private handleConnect(value: unknown): void {

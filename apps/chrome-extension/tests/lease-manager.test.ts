@@ -172,19 +172,80 @@ describe('per-tab compare-and-set authority', () => {
     await expect(recovered.completeInitialNavigation('next-owner', 3, 1)).resolves.toMatchObject({ initialNavigationPending: false })
   })
 
-  it('reports and reuses only one focused eligible tab without exposing an inventory', async () => {
-    const chrome = fakeChrome({ tabs: [tab(1, true), tab(2)], windows: [{ id: 1, focused: true, tabs: [tab(1, true), tab(2)] }] })
+  it('returns a ranked profile-wide eligible inventory after OS focus leaves Chrome', async () => {
+    const first = { ...tab(1, true), lastAccessed: 100 }
+    const inactive = { ...tab(2), lastAccessed: 900 }
+    const recentActive = { ...tab(3, true), windowId: 2, lastAccessed: 500 }
+    const restricted = { id: 4, windowId: 2, active: false, title: 'Chrome settings', url: 'chrome://settings/', lastAccessed: 1_000 }
+    const tabs = [first, inactive, recentActive, restricted]
+    const chrome = fakeChrome({
+      tabs,
+      windows: [
+        { id: 1, focused: false, type: 'normal', tabs: [first, inactive] },
+        { id: 2, focused: false, type: 'normal', tabs: [recentActive, restricted] },
+      ],
+    })
     const manager = new LeaseManager(chrome, 'payload')
-    await expect(manager.focusedEligibleTab()).resolves.toMatchObject({ id: 1, active: true })
-    await expect(manager.allocateAutomaticTab({ reuseFocused: true })).resolves.toMatchObject({
-      tab: { id: 1, active: true }, createdByForge: false,
+
+    await expect(manager.eligibleTabs('session')).resolves.toEqual({
+      tabs: [
+        expect.objectContaining({ tabId: 3, windowId: 2, active: true, windowFocused: false, lastAccessed: 500 }),
+        expect.objectContaining({ tabId: 1, windowId: 1, active: true, windowFocused: false, lastAccessed: 100 }),
+        expect.objectContaining({ tabId: 2, windowId: 1, active: false, windowFocused: false, lastAccessed: 900 }),
+      ],
+      truncated: false,
     })
   })
 
-  it('allocates a neutral background tab when focused reuse is unavailable', async () => {
-    const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
+  it('prefers an active eligible tab over an inactive tab beside a focused restricted page', async () => {
+    const inactive = { ...tab(1), lastAccessed: 900 }
+    const restricted = { id: 2, windowId: 1, active: true, title: 'Forge extension', url: 'chrome-extension://forge/chat', lastAccessed: 1_000 }
+    const active = { ...tab(3, true), windowId: 2, lastAccessed: 100 }
+    const tabs = [inactive, restricted, active]
+    const chrome = fakeChrome({
+      tabs,
+      windows: [
+        { id: 1, focused: true, type: 'normal', tabs: [inactive, restricted] },
+        { id: 2, focused: false, type: 'normal', tabs: [active] },
+      ],
+    })
     const manager = new LeaseManager(chrome, 'payload')
-    const allocated = await manager.allocateAutomaticTab({ reuseFocused: true })
+
+    await expect(manager.eligibleTabs('session')).resolves.toMatchObject({
+      tabs: [{ tabId: 3, active: true }, { tabId: 1, active: false, windowFocused: true }],
+    })
+  })
+
+  it('bounds and deterministically truncates a large eligible inventory', async () => {
+    const tabs = Array.from({ length: 35 }, (_, index) => ({
+      ...tab(index + 1, index === 34),
+      lastAccessed: index + 1,
+    }))
+    const chrome = fakeChrome({ tabs, windows: [{ id: 1, focused: false, type: 'normal', tabs }] })
+    const manager = new LeaseManager(chrome, 'payload')
+
+    const inventory = await manager.eligibleTabs('session')
+    expect(inventory.truncated).toBe(true)
+    expect(inventory.tabs).toHaveLength(32)
+    expect(inventory.tabs.map(({ tabId }) => tabId).slice(0, 3)).toEqual([35, 34, 33])
+    expect(inventory.tabs.at(-1)?.tabId).toBe(4)
+  })
+
+  it('excludes tabs leased to another session while retaining this session and unleased tabs', async () => {
+    const tabs = [{ ...tab(1, true), lastAccessed: 30 }, { ...tab(2), lastAccessed: 20 }, { ...tab(3), lastAccessed: 10 }]
+    const chrome = fakeChrome({ tabs, windows: [{ id: 1, focused: false, type: 'normal', tabs }] })
+    const manager = new LeaseManager(chrome, 'payload')
+    await manager.acquire({ tabId: 1, ownerId: 'owner-a', ownerEpoch: 1, sessionAgentId: 'session-a', expectedOwnerEpoch: 0 })
+    await manager.acquire({ tabId: 2, ownerId: 'owner-b', ownerEpoch: 1, sessionAgentId: 'session-b', expectedOwnerEpoch: 0 })
+
+    await expect(manager.eligibleTabs('session-a')).resolves.toMatchObject({ tabs: [{ tabId: 1 }, { tabId: 3 }] })
+    await expect(manager.eligibleTabs('session-b')).resolves.toMatchObject({ tabs: [{ tabId: 2 }, { tabId: 3 }] })
+  })
+
+  it('creates a neutral background tab only through the explicit creation path', async () => {
+    const chrome = fakeChrome({ tabs: [tab(1, true)] })
+    const manager = new LeaseManager(chrome, 'payload')
+    const allocated = await manager.createNeutralTab()
     expect(allocated).toMatchObject({
       tab: { id: 2, active: false, url: 'about:blank' }, createdByForge: true,
     })
@@ -202,14 +263,41 @@ describe('per-tab compare-and-set authority', () => {
     expect(manager.all()).toEqual([])
   })
 
-  it('keeps a URL-bearing allocation neutral and inactive while Chrome exposes its created-tab URL', async () => {
-    const chrome = fakeChrome({ tabs: [tab(1, true)], windows: [{ id: 1, focused: false, tabs: [tab(1, true)] }] })
+  it('observes exact about:blank provenance through the top frame when tabs hides the URL', async () => {
+    const chrome = fakeChrome({ tabs: [tab(1, true)] })
     const create = chrome.tabs.create
-    chrome.tabs.create = async (properties) => ({ ...await create(properties), url: undefined })
+    const get = chrome.tabs.get
+    let createdId: number | undefined
+    chrome.tabs.create = async (properties) => {
+      const created = await create(properties)
+      createdId = created.id
+      return { ...created, url: undefined, pendingUrl: undefined }
+    }
+    chrome.tabs.get = async (tabId) => {
+      const current = await get(tabId)
+      return tabId === createdId ? { ...current, url: undefined, pendingUrl: undefined } : current
+    }
     const manager = new LeaseManager(chrome, 'payload')
 
-    await expect(manager.allocateAutomaticTab({ reuseFocused: false, url: 'https://fixture.invalid/' })).resolves.toMatchObject({
+    const allocated = await manager.createNeutralTab()
+    expect(allocated).toMatchObject({
       tab: { id: 2, active: false, url: 'about:blank' }, createdByForge: true,
     })
+    await expect(manager.acquire({
+      tabId: 2, ownerId: 'owner', ownerEpoch: 1, sessionAgentId: 'session', expectedOwnerEpoch: 0, createdByForge: true,
+    })).resolves.toMatchObject({ authority: { initialNavigationPending: true } })
+  })
+
+  it('removes an exact created tab if its hidden top-frame URL is no longer neutral', async () => {
+    const chrome = fakeChrome({ tabs: [tab(1, true)] })
+    const create = chrome.tabs.create
+    const get = chrome.tabs.get
+    chrome.tabs.create = async (properties) => ({ ...await create(properties), url: undefined })
+    chrome.tabs.get = async (tabId) => ({ ...await get(tabId), url: undefined })
+    chrome.webNavigation.getFrame = async () => ({ url: 'chrome://settings/' })
+    const manager = new LeaseManager(chrome, 'payload')
+
+    await expect(manager.createNeutralTab()).rejects.toMatchObject({ code: 'restricted-target' })
+    await expect(chrome.tabs.query({})).resolves.toHaveLength(1)
   })
 })

@@ -70,7 +70,7 @@ describe('External Chrome automatic transport contract', () => {
     expect(EXTERNAL_CHROME_REQUEST_METHODS).toEqual([
       'forge.runtime.hello',
       'forge.runtime.ping',
-      'forge.browser.focusedEligibility',
+      'forge.browser.inventory',
       'forge.browser.acquire',
       'forge.browser.release',
       'forge.browser.reveal',
@@ -91,27 +91,49 @@ describe('External Chrome automatic transport contract', () => {
     expect(parse(hello)).toEqual(hello)
     expectContractFailure({ ...hello, params: { ...hello.params, unexpectedMetadata: 'obsolete' } })
     expectContractFailure({ ...hello, params: { ...hello.params, extensionId: 'wrong' } })
+    expectContractFailure({ ...hello, params: { ...hello.params, extensionInstanceId: 'not.canonical' } })
     expectContractFailure({ ...hello, params: { ...hello.params, methods: EXTERNAL_CHROME_METHODS.slice(1) } })
   })
 
-  it('round-trips private focus eligibility and one-tab acquisition', () => {
-    const eligibility = { jsonrpc: '2.0', id: 'focus-1', method: 'forge.browser.focusedEligibility', params: { protocolVersion: 1 } }
-    const acquire = {
-      jsonrpc: '2.0', id: 'acquire-1', method: 'forge.browser.acquire',
-      params: { ...lease, sessionAgentId: 'session-1', reuseFocused: true, url: 'https://example.test/' },
-    }
-    expect(parse(eligibility)).toEqual(eligibility)
-    expect(parse(acquire)).toEqual(acquire)
-    expectContractFailure({ ...acquire, params: { ...acquire.params, tabIds: [17] } })
+  it('normalizes the previous hello method generation only for immutable-payload update recovery', () => {
+    const legacyMethods = EXTERNAL_CHROME_METHODS.map((method) => method === 'forge.browser.inventory'
+      ? 'forge.browser.focusedEligibility'
+      : method)
+    expect(parse({ ...hello, params: { ...hello.params, payloadVersion: 'm5-runtime.1', methods: legacyMethods } }))
+      .toMatchObject({ params: { payloadVersion: 'm5-runtime.1', methods: EXTERNAL_CHROME_METHODS } })
   })
 
-  it('round-trips eligibility and acquisition responses with exact schemas', () => {
-    const eligibility = { jsonrpc: '2.0', id: 'focus-1', result: { protocolVersion: 1, eligible: true } }
+  it('round-trips profile inventory and explicit one-tab acquisition requests', () => {
+    const inventory = { jsonrpc: '2.0', id: 'inventory-1', method: 'forge.browser.inventory', params: { protocolVersion: 1, sessionAgentId: 'session-1' } }
+    const acquire = {
+      jsonrpc: '2.0', id: 'acquire-1', method: 'forge.browser.acquire',
+      params: { ...lease, sessionAgentId: 'session-1', tabId: 17, createIfNeeded: false },
+    }
+    const create = {
+      jsonrpc: '2.0', id: 'create-1', method: 'forge.browser.acquire',
+      params: { ...lease, sessionAgentId: 'session-1', createIfNeeded: true },
+    }
+    expect(parse(inventory)).toEqual(inventory)
+    expect(parse(acquire)).toEqual(acquire)
+    expect(parse(create)).toEqual(create)
+    expectContractFailure({ ...acquire, params: { ...acquire.params, createIfNeeded: true } })
+    expectContractFailure({ ...create, params: { ...create.params, createIfNeeded: false } })
+    expectContractFailure({ ...acquire, params: { ...acquire.params, reuseFocused: true } })
+    expectContractFailure({ ...acquire, params: { ...acquire.params, url: 'https://example.test/' } })
+  })
+
+  it('round-trips bounded inventory and acquisition responses with exact schemas', () => {
+    const inventoryTab = {
+      tabId: 17, windowId: 3, title: 'Page', url: 'https://example.test/', active: true,
+      windowFocused: false, lastAccessed: 123_456,
+    }
+    const inventory = { jsonrpc: '2.0', id: 'inventory-1', result: { protocolVersion: 1, tabs: [inventoryTab], truncated: false } }
     const acquire = {
       jsonrpc: '2.0', id: 'acquire-1',
       result: { ...lease, sessionAgentId: 'session-1', extensionInstanceId: 'instance-1', tab: acquiredTab, created: false },
     }
-    expect(parse(eligibility, 'forge.browser.focusedEligibility')).toEqual(eligibility)
+    expect(parse(inventory, 'forge.browser.inventory')).toEqual(inventory)
+    expect(() => parse({ ...inventory, result: { ...inventory.result, tabs: [inventoryTab, inventoryTab] } }, 'forge.browser.inventory')).toThrow(ExternalChromeContractError)
     expect(parse(acquire, 'forge.browser.acquire')).toEqual(acquire)
     expect(() => parse({ ...acquire, result: { ...acquire.result, windows: [] } }, 'forge.browser.acquire')).toThrow(ExternalChromeContractError)
   })

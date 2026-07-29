@@ -16,6 +16,7 @@ class ExternalBoundaryAdapter implements AutomaticExternalBrowserAdapter {
   readonly targetAffinity = "external-chrome" as const;
   readonly capabilities = { supportedOperations: EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const;
   executedTabIds: Array<string | null> = [];
+  listEligibleTabs() { return Promise.resolve({ tabs: [], truncated: false }); }
   acquireTarget(input: Parameters<AutomaticExternalBrowserAdapter["acquireTarget"]>[0]) {
     return Promise.resolve({ ok: true as const, authority: { ownerEpoch: input.ownerEpoch, tabId: "external-tab-7" } });
   }

@@ -158,7 +158,7 @@ async function sendCoordinatorRuntimeHello(
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
       protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
       extensionId: EXTERNAL_CHROME_EXTENSION_ID, extensionInstanceId, chromeVersion: '125.0.0.0',
-      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.focusedEligibility', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.inventory', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
         operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
@@ -180,8 +180,12 @@ async function lifecycleExtensionLoop(
     if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
     const params = message.params as Record<string, unknown>
     requests.push({ method: message.method, params })
-    if (message.method === 'forge.browser.focusedEligibility') {
-      await client.send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, eligible: true } })
+    if (message.method === 'forge.browser.inventory') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1,
+        tabs: [{ tabId: 40, windowId: 1, title: '', url: 'https://fixture.invalid/', active: true, windowFocused: false, lastAccessed: 1_000 }],
+        truncated: false,
+      } })
     } else if (message.method === 'forge.browser.acquire') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,

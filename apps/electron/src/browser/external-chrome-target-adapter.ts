@@ -14,6 +14,7 @@ import type {
   BrowserTargetSession,
   ExternalBrowserAcquireInput,
   ExternalBrowserAcquireResult,
+  ExternalBrowserInventory,
   ExternalBrowserRevealResult,
   ExternalBrowserTargetAuthority,
 } from './browser-target-adapter.js'
@@ -22,10 +23,11 @@ export type ExternalChromeTransportResult =
   | { ok: true; result: BrowserAutomationResultByOperation[keyof BrowserAutomationResultByOperation]; updatedTab?: BrowserTabSnapshot; elapsedMs?: number }
   | { ok: false; error: BrowserAutomationFailure; updatedTab?: BrowserTabSnapshot; elapsedMs?: number }
 
-/** Automatic policy transport. It exposes one target authority, never profiles or candidates. */
+/** Authenticated transport for profile-wide inventory and exact per-tab authority. */
 export interface ExternalChromeTransport {
   readonly maxResponseBytes: number
   execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult>
+  listEligibleTabs?(session: BrowserTargetSession, deadlineAt?: number): Promise<ExternalBrowserInventory>
   acquireTarget?(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult>
   releaseAuthority?(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void>
   endTurn?(session: BrowserTargetSession, turnId: string): Promise<void>
@@ -45,6 +47,10 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   }
 
   constructor(private readonly transport: ExternalChromeTransport, private readonly now: () => number = Date.now) {}
+
+  listEligibleTabs(session: BrowserTargetSession, deadlineAt?: number): Promise<ExternalBrowserInventory> {
+    return this.transport.listEligibleTabs?.(session, deadlineAt) ?? Promise.resolve({ tabs: [], truncated: false })
+  }
 
   acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
     if (this.transport.acquireTarget) return this.transport.acquireTarget(input)

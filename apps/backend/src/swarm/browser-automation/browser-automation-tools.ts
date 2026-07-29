@@ -19,7 +19,7 @@ import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor } from "../types.js";
 
 const TOOL_TEXT_MAX_BYTES = 128 * 1_024;
-const tabId = Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Target tab id. Defaults to this Forge session's default tab." }));
+const tabId = Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Target tab ID. browser_open also accepts a canonical eligibleTabs ID from browser_status." }));
 const timeoutMs = Type.Optional(Type.Integer({ minimum: 1, maximum: BROWSER_AUTOMATION_MAX_TIMEOUT_MS, default: 15_000 }));
 const locator = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
 const selector = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
@@ -146,8 +146,8 @@ const labels: Record<BrowserAutomationOperation, string> = {
 };
 
 const descriptions: Record<BrowserAutomationOperation, string> = {
-  status: "Inspect the Forge browser and the selected tab for this Forge session.",
-  open: "Open or reselect a persistent Forge browser tab. A URL is optional; omitting tabId with reuseExistingTab enabled lets the Automatic Browser reuse the uniquely focused eligible target.",
+  status: "Inspect the selected Forge browser tab and the bounded eligible External Chrome tab inventory across authenticated profiles.",
+  open: "Open or reselect a persistent browser tab. With reuseExistingTab enabled, omit tabId to select the active/most-recent eligible Chrome tab, or pass an eligibleTabs ID from browser_status to select that exact tab.",
   navigate: "Navigate the selected Forge browser tab to a URL or local environment port and optionally wait for readiness.",
   resize: "Resize the selected Forge browser tab using fill, freeform dimensions, or a device preset.",
   snapshot: "Inspect visible page text, semantic elements, accessibility and diagnostics, and receive a native PNG screenshot.",
@@ -232,6 +232,17 @@ function boundedJson(value: unknown): string {
   if (Buffer.byteLength(serialized, "utf8") <= TOOL_TEXT_MAX_BYTES) return serialized;
   const record = value as { ok?: unknown; operation?: unknown; result?: Record<string, unknown> };
   const result = record.result ?? {};
+  const compactEligibleTabs = Array.isArray(result.eligibleTabs)
+    ? result.eligibleTabs.map((entry) => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+        const tab = entry as Record<string, unknown>;
+        return {
+          ...tab,
+          title: typeof tab.title === "string" ? tab.title.slice(0, 128) : tab.title,
+          url: typeof tab.url === "string" ? tab.url.slice(0, 256) : tab.url,
+        };
+      })
+    : result.eligibleTabs;
   const summary = {
     ok: record.ok,
     operation: record.operation,
@@ -243,6 +254,7 @@ function boundedJson(value: unknown): string {
       networkEntries: Array.isArray(result.networkEntries) ? { count: result.networkEntries.length } : undefined,
       interactiveElements: Array.isArray(result.interactiveElements) ? result.interactiveElements.slice(0, 50) : result.interactiveElements,
       actionTimeline: Array.isArray(result.actionTimeline) ? result.actionTimeline.slice(-50) : result.actionTimeline,
+      eligibleTabs: compactEligibleTabs,
       truncated: true,
     },
   };

@@ -31,6 +31,14 @@ export interface NativeRpcScheduler {
   now(): number
 }
 
+// Keep the hello advertisement parseable by the immediately previous Desktop
+// so rollback can instruct this payload to activate its older immutable selector.
+// Current Desktop normalizes this hello-only alias to forge.browser.inventory;
+// operation dispatch itself never retains the removed focus probe.
+const ROLLBACK_COMPATIBLE_HELLO_METHODS = EXTERNAL_CHROME_METHODS.map((method) =>
+  method === 'forge.browser.inventory' ? 'forge.browser.focusedEligibility' : method,
+) as unknown as ExternalChromeHelloParams['methods']
+
 const browserScheduler: NativeRpcScheduler = {
   setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
   clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -189,7 +197,7 @@ export class NativeRpcClient {
       extensionId: EXTERNAL_CHROME_EXTENSION_ID,
       extensionInstanceId: this.options.extensionInstanceId,
       chromeVersion: this.options.chromeVersion,
-      methods: [...EXTERNAL_CHROME_METHODS],
+      methods: [...ROLLBACK_COMPATIBLE_HELLO_METHODS],
       maxMessageBytes: EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
       operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({
         operation,

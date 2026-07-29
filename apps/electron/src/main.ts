@@ -40,8 +40,7 @@ import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
 import { resolveExternalChromeResources, type ExternalChromeResourceLocation } from './external-chrome/resources.js'
-import { ExternalChromeTargetAdapter, type ExternalChromeTransport } from './browser/external-chrome-target-adapter.js'
-import { withSessionProfileConfirmation } from './browser/automatic-chrome-profile-confirmation.js'
+import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
 import { getStreamDeckPluginStatus, resolveStreamDeckAppPath, resolveStreamDeckPluginPath } from './stream-deck-install.js'
 
@@ -809,7 +808,7 @@ if (!hasSingleInstanceLock) {
         lifecycleLog.record(`electron_main_renderer_${event.type}`, event)
       },
     })
-    const automaticChromeTransport = createAutomaticChromeTransport(externalChromeCoordinator.transport(), mainWindow)
+    const automaticChromeTransport = externalChromeCoordinator.transport()
     const browserManager = new BrowserAutomationManager({
       approvedDataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
       hostWebContentsId: mainWindow.webContents.id,
@@ -1447,26 +1446,6 @@ function isTrustedMainRenderer(event: unknown): boolean {
   }
 
   return isTrustedRendererUrl(mainWindow.webContents.getURL())
-}
-
-function createAutomaticChromeTransport(
-  transport: ReturnType<ExternalChromeHostCoordinator['transport']>,
-  window: BrowserWindow,
-): ExternalChromeTransport {
-  return withSessionProfileConfirmation(transport, async (labels) => {
-    if (window.isDestroyed()) return null
-    const choice = await dialog.showMessageBox(window, {
-      type: 'question',
-      title: 'Choose a Chrome profile',
-      message: 'Which Chrome profile should Forge use for this session?',
-      detail: 'Forge remembers this choice only until you quit Forge.',
-      buttons: [...labels, 'Use embedded browser'],
-      cancelId: labels.length,
-      defaultId: 0,
-      noLink: true,
-    })
-    return choice.response < labels.length ? choice.response : null
-  })
 }
 
 function createAutomaticManagedTab(request: BrowserAutomationRequest): BrowserTabSnapshot {
