@@ -429,7 +429,7 @@ describe("SessionLifecycleCoordinator", () => {
     );
   });
 
-  it("blocks archive/delete on failed release but durably marks a failed stop before proceeding", async () => {
+  it("keeps archive fail-closed but lets terminal delete and stop proceed after failed browser release", async () => {
     const archiveHarness = createHarness();
     archiveHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {
       archiveHarness.calls.push("browser.release.failed");
@@ -443,8 +443,42 @@ describe("SessionLifecycleCoordinator", () => {
       deleteHarness.calls.push("browser.release.failed");
       throw new Error("release failed");
     });
-    await expect(deleteHarness.coordinator.deleteSession("forge--s2")).rejects.toThrow("release failed");
-    expect(deleteHarness.deps.sessions.deleteSession).not.toHaveBeenCalled();
+    deleteHarness.deps.sessions.deleteSession = vi.fn(async () => {
+      deleteHarness.calls.push("sessions.delete");
+      return { terminatedWorkerIds: [] };
+    });
+    await expect(deleteHarness.coordinator.deleteSession("forge--s2")).resolves.toEqual({ terminatedWorkerIds: [] });
+    expect(deleteHarness.calls).toEqual([
+      "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
+      "browser.release.failed",
+      "log:browser:lifecycle_release:delete_failed",
+      "sessions.delete",
+      "browser.delete:forge:forge--s2",
+      "plans:forge--s2",
+      "goals.forget:forge--s2",
+      "tools:forge--s2",
+    ]);
+
+    const managerHarness = createHarness();
+    managerHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {
+      managerHarness.calls.push("browser.release.failed");
+      throw new Error("release failed");
+    });
+    managerHarness.deps.lifecycle.deleteManager = vi.fn(async () => {
+      managerHarness.calls.push("lifecycle.deleteManager");
+      return { managerId: "forge", terminatedWorkerIds: [] };
+    });
+    await expect(managerHarness.coordinator.deleteManager("forge", "forge")).resolves.toEqual({
+      managerId: "forge",
+      terminatedWorkerIds: [],
+    });
+    expect(managerHarness.calls.filter((call) => call === "browser.release.failed")).toHaveLength(2);
+    expect(managerHarness.calls.filter((call) => call === "log:browser:lifecycle_release:delete_failed")).toHaveLength(2);
+    expect(managerHarness.calls).toContain("lifecycle.deleteManager");
+    expect(managerHarness.calls).toContain("browser.delete:forge:forge");
+    expect(managerHarness.calls).toContain("browser.delete:forge:forge--s2");
 
     const stopHarness = createHarness();
     stopHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {

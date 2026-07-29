@@ -543,6 +543,24 @@ describe('AutomaticBrowserHost', () => {
     expect(managed.released).toHaveLength(1)
   })
 
+  it('forgets terminal session state when exact browser release can no longer be acknowledged', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.releaseFailures.push(new Error('release disconnected'))
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('chrome', 'external-chrome')], 'chrome')])
+    await host.perform(request('snapshot', {}, 'chrome'))
+
+    await expect(host.handleLifecycle(lifecycle('release-session', 'delete'))).resolves.toMatchObject({
+      ok: true, kind: 'release-session', reason: 'delete',
+    })
+    expect(external.authorityReleases).toHaveLength(1)
+    expect(external.sessionReleases).toMatchObject([{ reason: 'delete' }])
+    await expect(host.perform(request('snapshot', {}, 'chrome'))).resolves.toMatchObject({
+      ok: false, error: { code: 'tab-not-found' },
+    })
+  })
+
   it('advertises one v2 host with typed private target capabilities', () => {
     const host = createHost(new FakeManagedAdapter(), new FakeExternalAdapter())
     expect(host.capabilities).toMatchObject({
@@ -659,7 +677,7 @@ function acquireFailure(fallbackReason: 'restricted-target' | 'no-eligible-targe
   }
 }
 
-function lifecycle(kind: 'turn-ended' | 'release-session'): BrowserHostLifecycleRequest {
+function lifecycle(kind: 'turn-ended' | 'release-session', reason: 'archive' | 'delete' = 'archive'): BrowserHostLifecycleRequest {
   const routing = { requestId: `lifecycle-${kind}`, sessionAgentId: 'session', profileId: 'profile', hostId: 'automatic-host', hostGeneration: 1 }
-  return kind === 'turn-ended' ? { ...routing, kind, turnId: 'turn-1' } : { ...routing, kind, reason: 'archive' }
+  return kind === 'turn-ended' ? { ...routing, kind, turnId: 'turn-1' } : { ...routing, kind, reason }
 }
