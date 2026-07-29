@@ -15,18 +15,19 @@ The affinity is assigned when the logical tab is created and is not a picker set
 
 For a tabless request, the Automatic Browser Host:
 
-1. continues the session's selected or default logical tab when one exists;
+1. uses the session's selected or default logical tab when one exists, except for the explicit open/reselection boundary below;
 2. routes physical resize and recording directly to an embedded tab;
 3. otherwise tries an eligible Chrome target when the Chrome adapter is ready; and
 4. uses the embedded browser when Chrome acquisition is unavailable and fallback is still safe.
 
 ### Open and Chrome reuse
 
-The `reuseExistingTab` input controls whether a new tabless open may reuse Chrome's focused eligible tab. It does not select a host.
+The `reuseExistingTab` input controls whether a tabless open may reuse Chrome's focused eligible tab. It does not select a host.
 
 - Tabs created from the Browser workspace use `reuseExistingTab: false`, so Forge requests a dedicated, ungrouped Chrome tab when Chrome is selected automatically.
-- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. When there is no selected logical tab, that permits—but does not guarantee—reuse of a uniquely focused eligible Chrome tab.
-- When reuse is false, focus is not unique and eligible, or a safe retry needs a fresh target, Forge creates a dedicated ungrouped tab. Child tabs are not automatically enrolled.
+- The model-facing `browser_open` tool defaults `reuseExistingTab` to `true`. Every tabless `browser_open(reuseExistingTab: true)` is an explicit reselection boundary: Forge may release completed authority and re-probe for the uniquely focused eligible Chrome target, including when the current logical tab is an idle managed-electron fallback. If that probe succeeds, the logical selection changes to the exact Chrome-backed tab.
+- If the managed-electron fallback has no eligible focus or focus is ambiguous, Forge retains that exact managed selection rather than creating or guessing another tab. A currently active or in-flight operation is never migrated; after the boundary, subsequent non-open operations remain sticky to the selected logical tab.
+- When reuse is false, or a safe retry needs a fresh target, Forge creates a dedicated ungrouped tab. Child tabs are not automatically enrolled.
 
 Chrome internal and extension pages, a tab already controlled by DevTools or another debugger, and other restricted targets are not eligible.
 
@@ -137,6 +138,8 @@ Compatible connected extensions can reload an authenticated local payload after 
 - **Pending exact release:** keep Chrome and Forge open for authenticated reconciliation. Forge blocks new acquisition rather than abandoning the checkpoint or guessing another target.
 - **Chrome tab no longer exists:** the logical target remains Chrome-affine and fails. Open a new logical browser tab instead of expecting silent migration.
 - **Different data directory:** load that data directory's stable extension folder in the intended Chrome profile and complete setup there.
+
+For maintainers diagnosing a newly dedicated Chrome open, the target may first appear as an inactive `about:blank`. A URL-bearing open performs the one authorized initial navigation for that exact target; it must not be treated as a generic navigation replay.
 
 Canonical data paths and OS registration targets are in [Configuration](CONFIGURATION.md#chrome-adapter-local-integration). Maintainer staging, signing, package-content, and qualification gates are in the [Electron release guide](../apps/electron/README.md#optional-chrome-adapter-packaging-and-validation).
 
