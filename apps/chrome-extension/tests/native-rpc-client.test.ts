@@ -74,6 +74,41 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     client.stop()
   })
 
+  it('compacts a large snapshot before native JSON-RPC delivery', async () => {
+    const scheduler = new FakeScheduler()
+    const port = welcomePort(256 * 1_024)
+    const client = new NativeRpcClient({
+      connect: () => port,
+      extensionInstanceId: 'instance', chromeVersion: '125', scheduler,
+      onRequest: async () => ({
+        protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-snapshot', leaseEpoch: 1,
+        tabId: 7, operation: 'snapshot', ok: true,
+        result: {
+          tabId: '7', url: 'https://fixture.test/', title: 'Fixture', loading: false,
+          viewportSetting: { mode: 'fill' }, viewport: { width: 900, height: 700, deviceScaleFactor: 1 }, visibleText: 'text',
+          interactiveElements: Array.from({ length: 200 }, (_, index) => ({ tag: 'button', role: 'button', name: `Action ${index}`, selector: `#action-${index}-${'x'.repeat(1_000)}`, x: 1, y: 1, width: 10, height: 10 })),
+          accessibility: { frames: [{ targetId: 'target-7', nodes: [] }] }, consoleEntries: [], networkEntries: [], actionTimeline: [],
+          screenshot: { mimeType: 'image/png', data: 'A'.repeat(48_000), width: 900, height: 700 },
+        },
+      }),
+    })
+    client.start()
+    await Promise.resolve()
+    port.emitMessage({
+      jsonrpc: '2.0', id: 'desktop-snapshot-1', method: 'forge.browser.execute',
+      params: {
+        protocolVersion: 1, requestId: 'request-snapshot', leaseId: 'lease-snapshot', leaseEpoch: 1, tabId: 7,
+        operation: 'snapshot', input: {}, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+      },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    const response = parseExternalChromeJsonRpcFrame(JSON.stringify(port.sent.at(-1)), { expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1 })
+    expect(response).toMatchObject({ result: { ok: true, result: { compaction: { omitted: { interactiveElements: expect.any(Number) } } } } })
+    expect(new TextEncoder().encode(JSON.stringify(port.sent.at(-1))).byteLength).toBeLessThanOrEqual(256 * 1_024 - 16 * 1_024)
+    client.stop()
+  })
+
   it('returns contract-valid typed failures without disconnecting the native port', async () => {
     const scheduler = new FakeScheduler()
     const port = welcomePort()

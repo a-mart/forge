@@ -47,6 +47,10 @@ export interface ExternalChromeRendezvousDocument {
 
 /** Lower Forge bounds apply before the native-messaging transport's platform bounds. */
 export const EXTERNAL_CHROME_MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024
+/** Native relay negotiation currently selects 256 KiB; keep this shared for envelope budgeting. */
+export const EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES = 256 * 1_024
+/** Reserved headroom for transport evolution and authenticated relay framing. */
+export const EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES = 16 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES = 64 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES = 1 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_ARRAY_ITEMS = 256
@@ -1066,6 +1070,16 @@ function validateEligibleTab(value: unknown, path: string): BrowserEligibleTab {
   }
 }
 
+function validateSnapshotCompaction(value: unknown, path: string): void {
+  const compaction = object(value, path)
+  strictKeys(compaction, path, ['omitted'])
+  const omitted = object(compaction.omitted, `${path}.omitted`)
+  strictKeys(omitted, `${path}.omitted`, [], [
+    'accessibilityNodes', 'consoleEntries', 'networkEntries', 'actionTimelineEntries', 'interactiveElements', 'visibleTextCharacters',
+  ])
+  for (const key of Object.keys(omitted)) integer(omitted[key], `${path}.omitted.${key}`, 1)
+}
+
 function validateSnapshotResult(result: Record<string, unknown>, path: string): void {
   validateViewportSetting(result.viewportSetting, `${path}.viewportSetting`)
   validateRenderedViewport(result.viewport, `${path}.viewport`)
@@ -1112,6 +1126,7 @@ function validateSnapshotResult(result: Record<string, unknown>, path: string): 
     if (action.completedAt !== undefined) boundedString(action.completedAt, `${entryPath}.completedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
     if (action.errorCode !== undefined) parseBrowserFailure({ code: action.errorCode, message: 'validation', retryable: false }, `${entryPath}.errorCode`)
   })
+  if (result.compaction !== undefined) validateSnapshotCompaction(result.compaction, `${path}.compaction`)
   const screenshot = object(result.screenshot, `${path}.screenshot`)
   strictKeys(screenshot, `${path}.screenshot`, ['mimeType', 'data', 'width', 'height'])
   if (screenshot.mimeType !== 'image/png') fail('invalid-result', `${path}.screenshot.mimeType must be image/png`)
@@ -1204,7 +1219,7 @@ function parseOperationResult(
       object(result.viewport, 'result.result.viewport')
       break
     case 'snapshot':
-      strictKeys(result, 'result.result', ['tabId', 'url', 'title', 'loading', 'viewportSetting', 'viewport', 'visibleText', 'interactiveElements', 'accessibility', 'consoleEntries', 'networkEntries', 'actionTimeline', 'screenshot'])
+      strictKeys(result, 'result.result', ['tabId', 'url', 'title', 'loading', 'viewportSetting', 'viewport', 'visibleText', 'interactiveElements', 'accessibility', 'consoleEntries', 'networkEntries', 'actionTimeline', 'screenshot'], ['compaction'])
       identifier(result.tabId, 'result.result.tabId')
       boundedString(result.url, 'result.result.url', EXTERNAL_CHROME_MAX_URL_LENGTH)
       boundedString(result.title, 'result.result.title', EXTERNAL_CHROME_MAX_LABEL_LENGTH, true)

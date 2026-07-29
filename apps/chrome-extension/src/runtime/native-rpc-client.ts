@@ -23,6 +23,7 @@ import {
   type ExternalChromeWelcomeResult,
 } from '@forge/protocol'
 import type { ChromeRuntimePort } from './chrome-api.js'
+import { compactSnapshotForJsonRpc } from './snapshot-compaction.js'
 import { NATIVE_HOST_NAME, PAYLOAD_VERSION, SHELL_ABI } from './identity.js'
 
 export interface NativeRpcScheduler {
@@ -286,7 +287,10 @@ export class NativeRpcClient {
         return
       }
       void Promise.resolve(handler(parsed)).then(
-        (result) => this.postBounded({ jsonrpc: '2.0', id: parsed.id, result }),
+        (result) => this.postBounded({
+          jsonrpc: '2.0', id: parsed.id,
+          result: compactSnapshotForJsonRpc(result, parsed.id, this.outboundMessageLimit),
+        }),
         (error: unknown) => this.postBounded({
           jsonrpc: '2.0', id: parsed.id, error: requestFailure(error),
         }),

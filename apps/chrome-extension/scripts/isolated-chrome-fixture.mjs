@@ -66,6 +66,11 @@ const fixtureServer = createServer((request, response) => {
     response.end('<!doctype html><title>Fixture child</title><p>Child stays outside parent authority</p>')
     return
   }
+  if (request.url === '/large') {
+    const buttons = Array.from({ length: 240 }, (_, index) => `<button id="large-${index}" aria-label="${`Large action ${index} ${'x'.repeat(480)}`}">Action ${index}</button>`).join('')
+    response.end(`<!doctype html><title>Forge large automatic fixture</title><main>${buttons}</main><p id="large-state">Large page ready</p>`)
+    return
+  }
   response.end(`<!doctype html><title>Forge automatic fixture</title>
     <style>body{font:16px sans-serif}.spacer{height:1600px}</style>
     <button id="action" aria-label="Increment">Increment</button>
@@ -197,6 +202,13 @@ async function inspectWorker(webSocketDebuggerUrl) {
           if (!(await detached(tabId))) throw new Error(operation+': debugger remained attached');
           return response.result;
         };
+        const largeNavigation=await run('navigate',{url:${JSON.stringify(fixtureUrl+'large')},readiness:'load',timeoutMs:5000});
+        const largeSnapshot=await run('snapshot',{});
+        const largeStatus=await run('status',{});
+        const largeEvaluate=await run('evaluate',{expression:'document.title',awaitPromise:true,returnByValue:true});
+        const largeSnapshotBytes=new TextEncoder().encode(JSON.stringify(largeSnapshot)).byteLength;
+        if(largeNavigation.tab.tabId!==String(tabId)||largeSnapshot.screenshot?.data?.length===0||largeEvaluate.value!=='Forge large automatic fixture'||largeStatus.selectedTab?.tabId!==String(tabId)) throw new Error('large selected-tab snapshot proof failed');
+        const restored=await run('navigate',{url:${JSON.stringify(fixtureUrl)},readiness:'load',timeoutMs:5000});
         const snapshot=await run('snapshot',{});
         const click=await run('click',{locator:'role=button[name="Increment"]',timeoutMs:5000});
         const typed=await run('type',{locator:'role=textbox[name="Field"]',text:'forge automatic',clear:true,timeoutMs:5000});
@@ -225,17 +237,20 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const dedicatedTab=await chrome.tabs.get(dedicated.tab.tabId);
         await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-dedicated',leaseEpoch:2,reason:'fixture-complete'});
         await chrome.tabs.remove(dedicated.tab.tabId);
+        const finalAuthorityState=await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
+        const zeroLeakedLease=(finalAuthorityState['forge.externalChrome.tabAuthority.v2']??[]).length===0;
         return {
           manifestName:chrome.runtime.getManifest().name,extensionId:chrome.runtime.id,
           instanceReady:typeof stored['forge.externalChrome.instanceId.v1']==='string',heartbeatReady:alarm?.name==='forge.externalChrome.heartbeat.v2',
           bootState:globalThis.__forgeServiceWorkerBootState??null,workerLocation:globalThis.location.href,
           acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
+          largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,snapshotCompacted:largeSnapshot.compaction?.omitted!==undefined,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
           dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},
           released:released.releasedTabIds.length===1&&released.releasedTabIds[0]===tabId,
-          debuggerDetached:await detached(tabId)
+          debuggerDetached:await detached(tabId),zeroLeakedLease
         };
       })()`,
       awaitPromise: true,
@@ -273,8 +288,10 @@ try {
     throw new Error(`Forge payload did not reach ready state: ${JSON.stringify(state)}`)
   }
   if (state.workerLocation !== target.url) throw new Error('worker target URL and runtime location disagree')
-  if (state.acquisition?.acquired !== true || state.debuggerDetached !== true || state.released !== true ||
+  if (state.acquisition?.acquired !== true || state.debuggerDetached !== true || state.released !== true || state.zeroLeakedLease !== true ||
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
+    state.largePage?.navigated !== true || state.largePage?.snapshotSucceeded !== true || state.largePage?.statusSticky !== true ||
+    state.largePage?.evaluateFollowed !== true ||
     state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
     state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {
@@ -295,7 +312,8 @@ try {
     heartbeatReady: state.heartbeatReady,
     nativeMessaging: 'fixture-blocked',
     importScriptsBootError: false,
-    operations: { acquired: true, ...state.operations, released: state.released, debuggerDetached: state.debuggerDetached },
+    operations: { acquired: true, ...state.operations, released: state.released, debuggerDetached: state.debuggerDetached, zeroLeakedLease: state.zeroLeakedLease },
+    largePage: state.largePage,
     allocation: { inventoryReuse: state.acquisition.acquired, inventoryCount: state.acquisition.inventoryCount, dedicatedCreated: state.dedicated.created, dedicatedUngrouped: state.dedicated.ungrouped },
     childPolicy: state.childPolicy,
     debuggerConflict: state.debuggerConflict,

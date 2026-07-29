@@ -6,6 +6,8 @@ import {
   BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_VIEWPORT_MAX_DIMENSION,
+  EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES,
   type BrowserActionTimelineEntry,
   type BrowserAutomationErrorCode,
   type BrowserAutomationFailure,
@@ -20,7 +22,7 @@ import { DebuggerController, type DebuggerRoute } from './debugger-controller.js
 
 const POLL_MS = 50
 const MAX_SCREENSHOT_BYTES = 192 * 1_024
-const MAX_OPERATION_RESULT_BYTES = 240 * 1_024
+const MAX_OPERATION_RESULT_BYTES = EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES - EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES
 const MAX_AX_NODES = 200
 
 type ExecuteSuccess = { ok: true; result: BrowserAutomationResultByOperation[BrowserAutomationOperation] }
@@ -158,7 +160,9 @@ export class ExternalChromeOperationExecutor {
         default: throw new ExternalChromeOperationError('unsupported-operation', `External Chrome does not implement ${params.operation}.`)
       }
       const resultBytes = new TextEncoder().encode(JSON.stringify(result)).byteLength
-      if (resultBytes > MAX_OPERATION_RESULT_BYTES) {
+      // Snapshot responses are adaptively compacted against the complete native
+      // JSON-RPC envelope by NativeRpcClient after this operation returns.
+      if (params.operation !== 'snapshot' && resultBytes > MAX_OPERATION_RESULT_BYTES) {
         throw new ExternalChromeOperationError('response-too-large', 'External Chrome result exceeds the bounded native relay payload.', false, {
           resultBytes, maximumBytes: MAX_OPERATION_RESULT_BYTES,
         })

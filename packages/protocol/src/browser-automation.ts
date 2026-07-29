@@ -500,6 +500,18 @@ export interface BrowserActionTimelineEntry {
   errorCode?: BrowserAutomationErrorCode
 }
 
+export interface BrowserSnapshotCompactionMetadata {
+  /** Counts of source values omitted while fitting the negotiated transport envelope. */
+  omitted: {
+    accessibilityNodes?: number
+    consoleEntries?: number
+    networkEntries?: number
+    actionTimelineEntries?: number
+    interactiveElements?: number
+    visibleTextCharacters?: number
+  }
+}
+
 export interface BrowserSnapshotResult {
   tabId: string
   url: string
@@ -513,6 +525,8 @@ export interface BrowserSnapshotResult {
   consoleEntries: BrowserConsoleEntry[]
   networkEntries: BrowserNetworkEntry[]
   actionTimeline: BrowserActionTimelineEntry[]
+  /** Present only when adaptive transport compaction omitted source data. */
+  compaction?: BrowserSnapshotCompactionMetadata
   screenshot: {
     mimeType: 'image/png'
     data: string

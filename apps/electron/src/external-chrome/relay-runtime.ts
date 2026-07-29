@@ -5,7 +5,7 @@ import path from 'node:path'
 import {
   BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
   EXTERNAL_CHROME_EXTENSION_ORIGIN,
-  EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
   EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
   parseExternalChromeJsonRpcFrame,
@@ -425,7 +425,7 @@ interface RuntimeInstanceState {
 }
 
 export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
-  readonly maxResponseBytes = EXTERNAL_CHROME_MAX_MESSAGE_BYTES
+  readonly maxResponseBytes = EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES
   private context: RelayContext | null = null
   private readonly handshaking = new Set<FramedSocketPeer>()
   private readonly allConnections = new Set<RuntimeConnection>()
