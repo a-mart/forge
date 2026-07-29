@@ -511,6 +511,34 @@ describe('MessageList Secure Session attention', () => {
     )
   })
 
+  it('does not render terminal secret requests as actionable transcript history', () => {
+    render([], {
+      secureSessionRequests: {
+        sessionAgentId: 'manager',
+        availability: { state: 'available' },
+        requests: [{
+          requestId: 'resolved-request',
+          sessionAgentId: 'manager',
+          requestedByAgentId: 'worker-1',
+          requestedByLabel: 'Worker',
+          secretId: 'secret-1',
+          secretAlias: 'deployment',
+          purpose: 'Deploy the application',
+          requestedBindings: [{ kind: 'env', variable: 'DEPLOYMENT_PASSWORD' }],
+          requestedPolicy: { kind: 'task' },
+          status: 'granted',
+        }],
+        secrets: [],
+        onGrant: vi.fn(),
+        onDeny: vi.fn(),
+      },
+    })
+
+    expect(container.querySelector('[data-testid="secure-session-attention"]')).toBeNull()
+    expect(container.textContent).not.toContain('Secret access requested')
+    expect(container.querySelector('[data-row-id]')).toBeNull()
+  })
+
   it('renders SSH host trust requests outside persisted transcript rows', () => {
     const onTrustSshHost = vi.fn()
     const onDismissSshTrustRequest = vi.fn()

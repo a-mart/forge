@@ -5,6 +5,8 @@ import { SecureSessionUiError } from '@/lib/secure-sessions-api'
 import {
   reconcileSecureBatchGrantFailure,
   secureBatchGrantMatchesSnapshot,
+  secureGrantMatchesSnapshot,
+  shouldRefreshSecureRequestAfterError,
   shouldReconcileSecureBatchGrantError,
 } from './secure-batch-grant-reconciliation'
 
@@ -102,6 +104,12 @@ describe('BuilderSurface secure batch-grant reconciliation', () => {
         )),
       },
     )).toBe(false)
+
+    expect(secureGrantMatchesSnapshot(reviewedGrants[0]!, matchingSnapshot)).toBe(true)
+    expect(secureGrantMatchesSnapshot(
+      { ...reviewedGrants[0]!, secretId: 'not-active' },
+      matchingSnapshot,
+    )).toBe(false)
   })
 
   it('reconciles stale and ambiguous results but not definite validation failures', () => {
@@ -117,6 +125,12 @@ describe('BuilderSurface secure batch-grant reconciliation', () => {
     expect(shouldReconcileSecureBatchGrantError(new TypeError('connection reset'))).toBe(true)
     expect(shouldReconcileSecureBatchGrantError(
       new SecureSessionUiError('SECURE_REQUEST_INVALID'),
+    )).toBe(false)
+    expect(shouldRefreshSecureRequestAfterError(
+      new SecureSessionUiError('SECURE_REQUEST_INVALID'),
+    )).toBe(true)
+    expect(shouldRefreshSecureRequestAfterError(
+      new SecureSessionUiError('SECURE_SECRET_ALIAS_CONFLICT'),
     )).toBe(false)
   })
 

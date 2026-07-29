@@ -12,6 +12,14 @@ export function shouldReconcileSecureBatchGrantError(error: unknown): boolean {
     || error.code === 'SECURE_OPERATION_FAILED'
 }
 
+export function shouldRefreshSecureRequestAfterError(error: unknown): boolean {
+  return shouldReconcileSecureBatchGrantError(error)
+    || (
+      error instanceof SecureSessionUiError
+      && error.code === 'SECURE_REQUEST_INVALID'
+    )
+}
+
 export function secureBatchGrantMatchesSnapshot(
   grants: readonly SecureGrantInput[],
   snapshot: SecureSessionSnapshot,
@@ -29,6 +37,13 @@ export function secureBatchGrantMatchesSnapshot(
     unmatchedLeases.splice(matchingIndex, 1)
   }
   return true
+}
+
+export function secureGrantMatchesSnapshot(
+  grant: SecureGrantInput,
+  snapshot: SecureSessionSnapshot,
+): boolean {
+  return secureBatchGrantMatchesSnapshot([grant], snapshot)
 }
 
 export async function reconcileSecureBatchGrantFailure(

@@ -96,6 +96,8 @@ import {
 import { hydrateSessionWorkers } from './worker-hydration'
 import {
   reconcileSecureBatchGrantFailure,
+  secureGrantMatchesSnapshot,
+  shouldRefreshSecureRequestAfterError,
 } from './secure-batch-grant-reconciliation'
 import {
   LOCAL_ORIGIN_ID,
@@ -1195,22 +1197,26 @@ export function BuilderSurface({
           grant,
         )
       } catch (error) {
-        if (!(error instanceof SecureSessionUiError)) throw error
         if (
-          error.code !== 'SECURE_STALE_REVISION'
-          && error.code !== 'SECURE_REQUEST_INVALID'
+          !grant.requestId
+          || !shouldRefreshSecureRequestAfterError(error)
         ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
-        applySecureMutationResult(client, refreshed)
-        if (error.code === 'SECURE_REQUEST_INVALID') throw error
-        if (
-          grant.requestId
-          && !refreshed.pendingRequests.some(
-            (request) => request.requestId === grant.requestId,
-          )
-        ) {
-          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        let refreshed
+        try {
+          refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        } catch {
+          throw error
         }
+        applySecureMutationResult(client, refreshed)
+        if (!refreshed.pendingRequests.some(
+          (request) => request.requestId === grant.requestId,
+        )) {
+          return secureGrantMatchesSnapshot(grant, refreshed)
+        }
+        if (
+          !(error instanceof SecureSessionUiError)
+          || error.code !== 'SECURE_STALE_REVISION'
+        ) throw error
         baseRevision = refreshed.revision
         nextSnapshot = await grantSecureSessionLease(
           apiClient,
@@ -1343,19 +1349,21 @@ export function BuilderSurface({
           principalSnapshot.revision,
         )
       } catch (error) {
-        if (!(error instanceof SecureSessionUiError)) throw error
-        if (
-          error.code !== 'SECURE_STALE_REVISION'
-          && error.code !== 'SECURE_REQUEST_INVALID'
-        ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        if (!shouldRefreshSecureRequestAfterError(error)) throw error
+        let refreshed
+        try {
+          refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        } catch {
+          throw error
+        }
         applySecureMutationResult(client, refreshed)
         if (!refreshed.pendingRequests.some(
           (request) => request.requestId === requestId,
         )) return
-        if (error.code === 'SECURE_REQUEST_INVALID') {
-          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
-        }
+        if (
+          !(error instanceof SecureSessionUiError)
+          || error.code !== 'SECURE_STALE_REVISION'
+        ) throw error
         nextSnapshot = await denySecureAccessRequest(
           apiClient,
           sessionAgentId,
@@ -1409,19 +1417,20 @@ export function BuilderSurface({
               currentSnapshot.revision,
             )
       } catch (error) {
-        if (
-          !(error instanceof SecureSessionUiError)
-          || (
-            error.code !== 'SECURE_STALE_REVISION'
-            && error.code !== 'SECURE_REQUEST_INVALID'
-          )
-        ) throw error
-        currentSnapshot = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        if (!shouldRefreshSecureRequestAfterError(error)) throw error
+        try {
+          currentSnapshot = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        } catch {
+          throw error
+        }
         applySecureMutationResult(client, currentSnapshot)
         if (!(currentSnapshot.pendingSshTrustRequests ?? []).some(
           (request) => request.requestId === requestId,
         )) return true
-        if (error.code === 'SECURE_REQUEST_INVALID') throw error
+        if (
+          !(error instanceof SecureSessionUiError)
+          || error.code !== 'SECURE_STALE_REVISION'
+        ) throw error
         nextSnapshot = decision === 'approve'
           ? await approveSecureSshHostTrustRequest(
               apiClient,
@@ -1496,11 +1505,13 @@ export function BuilderSurface({
           input,
         )
       } catch (error) {
-        if (
-          !(error instanceof SecureSessionUiError)
-          || error.code !== 'SECURE_STALE_REVISION'
-        ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        if (!shouldRefreshSecureRequestAfterError(error)) throw error
+        let refreshed
+        try {
+          refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
+        } catch {
+          throw error
+        }
         applySecureMutationResult(client, refreshed)
         const refreshedRequest = refreshed.pendingRequests.find(
           (candidate) =>
@@ -1508,8 +1519,12 @@ export function BuilderSurface({
             && candidate.secretId === null,
         )
         if (!refreshedRequest) {
-          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+          return
         }
+        if (
+          !(error instanceof SecureSessionUiError)
+          || error.code !== 'SECURE_STALE_REVISION'
+        ) throw error
         nextSnapshot = await fulfillSecureAccessRequestPrivately(
           apiClient,
           sessionAgentId,

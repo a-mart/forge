@@ -272,7 +272,7 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     callerAgentId: string,
     toolCallId: string,
     input: RequestSecureSecretAccessInput,
-  ): Promise<void> {
+  ): Promise<"requested" | "already_requested" | "already_granted"> {
     return this.secureSessions.requestSecureSecretAccess(callerAgentId, toolCallId, input);
   }
 

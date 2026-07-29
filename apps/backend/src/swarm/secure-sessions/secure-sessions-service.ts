@@ -2597,7 +2597,7 @@ export class SecureSessionsService {
     callerAgentId: string,
     toolCallId: string,
     input: RequestSecureSecretAccessInput,
-  ): Promise<void> {
+  ): Promise<"requested" | "already_requested" | "already_granted"> {
     bounded(toolCallId, 256);
     const caller = this.options.getDescriptor(callerAgentId);
     if (!caller) {
@@ -2605,23 +2605,23 @@ export class SecureSessionsService {
     }
     const principal = this.resolveSecurePrincipal(callerAgentId);
     const authoritySessionAgentId = principal.descriptor.agentId;
-    await this.withAuthorityMutation(async () => {
+    return await this.withAuthorityMutation(async () =>
       await this.withSessionMutation(authoritySessionAgentId, async () => {
         const currentPrincipal = this.resolveSecurePrincipal(callerAgentId);
-        await this.requestSecureSecretAccessUnlocked(
+        return await this.requestSecureSecretAccessUnlocked(
           currentPrincipal,
           caller,
           input,
         );
-      });
-    });
+      })
+    );
   }
 
   private async requestSecureSecretAccessUnlocked(
     principal: SecurePrincipal,
     requestedBy: AgentDescriptor,
     input: RequestSecureSecretAccessInput,
-  ): Promise<void> {
+  ): Promise<"requested" | "already_requested" | "already_granted"> {
     const store = await this.store();
     const sessionAgentId = principal.descriptor.agentId;
     const state = store.initializePrincipalState(
@@ -2629,24 +2629,60 @@ export class SecureSessionsService {
       principalStateInput(principal),
     );
     assertPrincipalStateMatches(principal, state);
+    await this.expireAndPublish(store, sessionAgentId);
+    const displayAlias = bounded(input.displayAlias, 256);
+    const requestedExposures = input.exposures.map(toStoredExposure);
+    const requestedDurationSeconds = input.leaseKind === "timed"
+      ? validateDuration(input.durationSeconds)
+      : null;
     const secret = resolveVisibleSavedSecretByAlias(
       store,
       principal.profileId,
-      bounded(input.displayAlias, 256),
+      displayAlias,
     );
     if (secret) matchBindingIds(store.listBindings(secret.secretId), input.exposures);
+    const current = store.getSnapshot(sessionAgentId);
+    if (current.leases.some((lease) =>
+      lease.state === "active"
+      && (
+        lease.leaseKind !== "one_use"
+        || (lease.remainingUses === 1 && lease.oneUseOperationId === null)
+      )
+      && store.getSecret(lease.secretId)?.displayAlias === displayAlias
+      && sameBindingSets(
+        lease.bindingIds.map((bindingId) => {
+          const binding = store.getBinding(bindingId);
+          if (!binding) {
+            throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+          }
+          return toPublicBinding(binding);
+        }),
+        input.exposures,
+      )
+    )) {
+      return "already_granted";
+    }
+    if (current.requests.some((request) =>
+      request.displayAlias === displayAlias
+      && request.requestedLeaseKind === input.leaseKind
+      && request.requestedDurationSeconds === requestedDurationSeconds
+      && sameBindingSets(
+        request.requestedExposures.map(toPublicBinding),
+        input.exposures,
+      )
+    )) {
+      return "already_requested";
+    }
     try {
       const snapshot = store.createRequest({
         requestId: this.id(),
         sessionAgentId,
         workerAssignmentId: null,
         secretId: secret?.secretId ?? null,
-        displayAlias: bounded(input.displayAlias, 256),
-        requestedExposures: input.exposures.map(toStoredExposure),
+        displayAlias,
+        requestedExposures,
         requestedLeaseKind: input.leaseKind,
-        requestedDurationSeconds: input.leaseKind === "timed"
-          ? validateDuration(input.durationSeconds)
-          : null,
+        requestedDurationSeconds,
         purposeSummary: bounded(input.purposeSummary, 2000),
         requestedByAgentId: requestedBy.agentId,
         requestedByDisplayName: bounded(requestedBy.displayName, 256),
@@ -2654,6 +2690,7 @@ export class SecureSessionsService {
       });
       this.scheduleSessionExpiry(store, sessionAgentId);
       this.options.emitSnapshot(toSnapshotEvent(this.toPublicSnapshot(store, snapshot)));
+      return "requested";
     } catch (error) {
       throw this.publicError(error);
     }
@@ -5209,6 +5246,16 @@ function samePublicBindings(
 ): boolean {
   return left.length === right.length
     && left.every((binding, index) => bindingKey(binding) === bindingKey(right[index]!));
+}
+
+function sameBindingSets(
+  left: readonly SecureSecretBinding[],
+  right: readonly SecureSecretBinding[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const leftKeys = left.map(bindingKey).sort();
+  const rightKeys = right.map(bindingKey).sort();
+  return leftKeys.every((key, index) => key === rightKeys[index]);
 }
 
 function isVisibleTo(secret: SecureSessionSecret, profileId: string): boolean {

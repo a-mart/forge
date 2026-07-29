@@ -481,6 +481,71 @@ describe('handleConversationEvent secure session snapshots', () => {
     expect(wrongSession.secureSessionSnapshots['other-manager']).toBeUndefined()
   })
 
+  it('removes resolved request attention when a newer live snapshot arrives', () => {
+    const pending = runHandler(createInitialManagerWsState('manager'), {
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
+      revision: 4,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [],
+      pendingRequests: [{
+        requestId: 'request-1',
+        secretId: 'secret-1',
+        displayAlias: 'deployment',
+        requestedLeaseKind: 'task',
+        requestedExposures: [{
+          deliveryKind: 'environment',
+          targetName: 'DEPLOYMENT_PASSWORD',
+        }],
+        purposeSummary: 'Deploy the application',
+        requestedByAgentId: 'worker-1',
+        requestedByDisplayName: 'Deployment worker',
+        workerAssignmentId: null,
+        createdAt: '2026-07-23T12:00:04.000Z',
+        expiresAt: null,
+      }],
+      updatedAt: '2026-07-23T12:00:04.000Z',
+    })
+    expect(pending.secureSessionSnapshots.manager?.pendingRequests)
+      .toHaveLength(1)
+
+    const resolved = runHandler(pending, {
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
+      revision: 5,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [{
+        leaseId: 'lease-1',
+        secretId: 'secret-1',
+        displayAlias: 'deployment',
+        leaseKind: 'task',
+        exposures: [{
+          deliveryKind: 'environment',
+          targetName: 'DEPLOYMENT_PASSWORD',
+        }],
+        status: 'active',
+        expiresAt: null,
+        lastUsedAt: null,
+        remainingUses: null,
+      }],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:05.000Z',
+    })
+
+    expect(resolved.secureSessionSnapshots.manager?.pendingRequests).toEqual([])
+    expect(resolved.secureSessionSnapshots.manager?.leases).toHaveLength(1)
+  })
+
   it('delivers one manager authority snapshot to the manager and every owned worker', () => {
     const managerSnapshot = {
       type: 'secure_session_snapshot' as const,

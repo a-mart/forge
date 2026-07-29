@@ -512,7 +512,7 @@ function requestAccessTool(
     name: "request_secret_access",
     label: "Request Secret Access",
     description:
-      "Request user approval to use a secret display alias in this Builder session. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
+      "Request user approval to use a secret display alias in this Builder session. First call secure_session_status and use an existing active lease or pending equivalent when one is listed. Forge also checks this atomically and returns already_granted or already_requested instead of creating a duplicate. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
     parameters: requestSecretAccessSchema,
     async execute(toolCallId, params) {
       let input: RequestSecureSecretAccessToolInput;
@@ -525,14 +525,21 @@ function requestAccessTool(
         return fixedFailure("request_failed");
       }
       try {
-        await host.requestSecureSecretAccess(
+        const status = await host.requestSecureSecretAccess(
           descriptor.agentId,
           toolCallId,
           input,
         );
+        if (
+          status !== "requested"
+          && status !== "already_requested"
+          && status !== "already_granted"
+        ) {
+          return fixedFailure("request_failed");
+        }
         return fixedSuccess({
           ok: true,
-          status: "requested",
+          status,
         });
       } catch {
         return fixedFailure("request_failed");

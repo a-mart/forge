@@ -1964,6 +1964,169 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("reuses an equivalent active lease instead of creating another request", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "already-active",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [
+        { deliveryKind: "environment", targetName: "ACTIVE_TOKEN" },
+        {
+          deliveryKind: "file",
+          targetPath: "/run/forge-secure/bindings/active",
+          fileMode: 0o400,
+        },
+      ],
+    });
+    const initial = await harness.service.getSecureSessionSnapshot("manager-a");
+    const granted = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: initial.revision,
+      secretId: secret.secretId,
+      exposures: [
+        { deliveryKind: "environment", targetName: "ACTIVE_TOKEN" },
+        {
+          deliveryKind: "file",
+          targetPath: "/run/forge-secure/bindings/active",
+          fileMode: 0o400,
+        },
+      ],
+      leaseKind: "task",
+    });
+
+    await expect(harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-already-active",
+      {
+        displayAlias: "already-active",
+        exposures: [
+          {
+            deliveryKind: "file",
+            targetPath: "/run/forge-secure/bindings/active",
+            fileMode: 0o400,
+          },
+          { deliveryKind: "environment", targetName: "ACTIVE_TOKEN" },
+        ],
+        leaseKind: "task",
+        purposeSummary: "Reuse the existing authorized delivery",
+      },
+    )).resolves.toBe("already_granted");
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.revision).toBe(granted.revision);
+    expect(after.pendingRequests).toEqual([]);
+    expect(after.leases).toHaveLength(1);
+    await harness.close();
+  });
+
+  it("coalesces equivalent pending access requests while retaining distinct requests", async () => {
+    const harness = createHarness();
+    const first = await harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-pending-first",
+      {
+        displayAlias: "pending-alpha",
+        exposures: [
+          { deliveryKind: "environment", targetName: "PENDING_ALPHA" },
+          { deliveryKind: "stdin" },
+        ],
+        leaseKind: "timed",
+        durationSeconds: 600,
+        purposeSummary: "First request purpose",
+      },
+    );
+    const duplicate = await harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-pending-duplicate",
+      {
+        displayAlias: "pending-alpha",
+        exposures: [
+          { deliveryKind: "stdin" },
+          { deliveryKind: "environment", targetName: "PENDING_ALPHA" },
+        ],
+        leaseKind: "timed",
+        durationSeconds: 600,
+        purposeSummary: "A different purpose does not need a second approval",
+      },
+    );
+    const distinct = await harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-pending-distinct",
+      {
+        displayAlias: "pending-beta",
+        exposures: [{ deliveryKind: "environment", targetName: "PENDING_BETA" }],
+        leaseKind: "task",
+        purposeSummary: "A genuinely different secret still needs approval",
+      },
+    );
+
+    expect({ first, duplicate, distinct }).toEqual({
+      first: "requested",
+      duplicate: "already_requested",
+      distinct: "requested",
+    });
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .pendingRequests.map(({ displayAlias }) => displayAlias)).toEqual([
+        "pending-alpha",
+        "pending-beta",
+      ]);
+    await harness.close();
+  });
+
+  it("resolves two distinct requests independently with each current revision", async () => {
+    const harness = createHarness();
+    for (const [displayAlias, targetName, value] of [
+      ["multi-alpha", "MULTI_ALPHA", ALPHA],
+      ["multi-beta", "MULTI_BETA", BETA],
+    ] as const) {
+      await harness.service.createLocalSecureSecret({
+        displayAlias,
+        encryptedMaterial: Buffer.from(value).toString("base64"),
+        bindings: [{ deliveryKind: "environment", targetName }],
+      });
+      await harness.service.requestSecureSecretAccess(
+        "manager-a",
+        `tool-${displayAlias}`,
+        {
+          displayAlias,
+          exposures: [{ deliveryKind: "environment", targetName }],
+          leaseKind: "task",
+          purposeSummary: `Use ${displayAlias}`,
+        },
+      );
+    }
+
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(pending.pendingRequests).toHaveLength(2);
+    const firstRequestId = pending.pendingRequests[0]!.requestId;
+    const afterFirst = await harness.service.resolveSecureAccessRequest(
+      "manager-a",
+      firstRequestId,
+      {
+        baseRevision: pending.revision,
+        requestId: firstRequestId,
+        decision: "approve",
+      },
+    );
+    expect(afterFirst.pendingRequests).toHaveLength(1);
+    const secondRequestId = afterFirst.pendingRequests[0]!.requestId;
+    const afterSecond = await harness.service.resolveSecureAccessRequest(
+      "manager-a",
+      secondRequestId,
+      {
+        baseRevision: afterFirst.revision,
+        requestId: secondRequestId,
+        decision: "approve",
+      },
+    );
+
+    expect(afterSecond.pendingRequests).toEqual([]);
+    expect(afterSecond.leases).toEqual(expect.arrayContaining([
+      expect.objectContaining({ displayAlias: "multi-alpha", status: "active" }),
+      expect.objectContaining({ displayAlias: "multi-beta", status: "active" }),
+    ]));
+    await harness.close();
+  });
+
   it("prefers a project-scoped alias over the instance alias for agent discovery and requests", async () => {
     const harness = createHarness();
     const globalSecret = await harness.service.createLocalSecureSecret({

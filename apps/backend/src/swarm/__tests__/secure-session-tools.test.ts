@@ -139,7 +139,7 @@ function host(
     listAgents: () => [manager()],
     getWorkerActivity: () => undefined,
     getSecureSessionAgentView: () => safeView(),
-    requestSecureSecretAccess: async () => {},
+    requestSecureSecretAccess: async () => "requested",
     requestSecureSshHostTrust: async () => "requested",
     ...overrides,
   } as SwarmToolHost;
@@ -478,7 +478,7 @@ describe("secure session agent tools", () => {
   });
 
   it("rejects direct unknown and nested material fields without calling the host", async () => {
-    const requestAccess = vi.fn(async () => {});
+    const requestAccess = vi.fn(async () => "requested" as const);
     const request = toolByName(
       buildSwarmTools(
         host({ requestSecureSecretAccess: requestAccess }),
@@ -525,7 +525,7 @@ describe("secure session agent tools", () => {
   });
 
   it("passes only validated metadata and returns a fixed request receipt", async () => {
-    const requestAccess = vi.fn(async () => {});
+    const requestAccess = vi.fn(async () => "requested" as const);
     const request = toolByName(
       buildSwarmTools(
         host({ requestSecureSecretAccess: requestAccess }),
@@ -558,6 +558,55 @@ describe("secure session agent tools", () => {
       status: "requested",
     });
     expect(resultJson(result)).not.toContain("deploy-key");
+  });
+
+  it.each([
+    "already_granted",
+    "already_requested",
+  ] as const)("returns the host's fixed %s receipt", async (status) => {
+    const request = toolByName(
+      buildSwarmTools(
+        host({ requestSecureSecretAccess: async () => status }),
+        worker(),
+      ),
+      "request_secret_access",
+    );
+
+    const result = await request.execute("request-existing", {
+      displayAlias: "deploy-key",
+      purposeSummary: "Authenticate the deployment command.",
+      leaseKind: "task",
+      exposures: [{ deliveryKind: "environment", targetName: "DEPLOY_KEY" }],
+    });
+
+    expect(result.details).toEqual({ ok: true, status });
+    expect(resultJson(result)).not.toContain("deploy-key");
+  });
+
+  it("rejects an unexpected host receipt without echoing it", async () => {
+    const request = toolByName(
+      buildSwarmTools(
+        host({
+          requestSecureSecretAccess: async () =>
+            LEAK_MARKER as "already_granted",
+        }),
+        worker(),
+      ),
+      "request_secret_access",
+    );
+
+    const result = await request.execute("request-unexpected", {
+      displayAlias: "deploy-key",
+      purposeSummary: "Authenticate the deployment command.",
+      leaseKind: "task",
+      exposures: [{ deliveryKind: "environment", targetName: "DEPLOY_KEY" }],
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      details: { ok: false, error: { code: "request_failed" } },
+    });
+    expect(resultJson(result)).not.toContain(LEAK_MARKER);
   });
 
   it("returns a fixed SSH trust receipt without echoing the public key", async () => {

@@ -154,6 +154,68 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 
+  it('keeps only the newest actionable secure requests during bootstrap replay', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+    const request = {
+      requestId: 'request-1',
+      secretId: 'secret-1',
+      displayAlias: 'deployment',
+      requestedLeaseKind: 'task' as const,
+      requestedExposures: [{
+        deliveryKind: 'environment' as const,
+        targetName: 'DEPLOYMENT_PASSWORD',
+      }],
+      purposeSummary: 'Deploy the application',
+      requestedByAgentId: 'worker-1',
+      requestedByDisplayName: 'Deployment worker',
+      workerAssignmentId: null,
+      createdAt: '2026-07-23T12:00:04.000Z',
+      expiresAt: null,
+    }
+
+    buffer.handleEvent({
+      type: 'ready',
+      serverTime: '2026-07-23T12:00:03.000Z',
+      subscribedAgentId: 'session-b',
+    })
+    buffer.handleEvent({
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'session-b',
+      profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
+      revision: 4,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [],
+      pendingRequests: [request],
+      updatedAt: '2026-07-23T12:00:04.000Z',
+    })
+    buffer.handleEvent({
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'session-b',
+      profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
+      revision: 5,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:05.000Z',
+    })
+    buffer.handleEvent({ type: 'unread_counts_snapshot', counts: {} })
+
+    expect(patches).toHaveLength(1)
+    expect(patches[0].secureSessionSnapshots?.['session-b']).toMatchObject({
+      revision: 5,
+      pendingRequests: [],
+    })
+  })
+
   it('effective state accumulates across multiple coalescible events', () => {
     const { buffer, patches, getState } = setup()
     buffer.begin('session-b')

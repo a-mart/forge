@@ -165,7 +165,7 @@ export interface SwarmToolHost {
     callerAgentId: string,
     toolCallId: string,
     input: RequestSecureSecretAccessToolInput,
-  ): Promise<void>;
+  ): Promise<"requested" | "already_requested" | "already_granted">;
   requestSecureSshHostTrust?(
     callerAgentId: string,
     toolCallId: string,
