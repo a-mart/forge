@@ -73,13 +73,13 @@ Forge does not replay an operation after it may have clicked, typed, navigated, 
 
 Chrome control is private, per-tab, compare-and-set authority. Consecutive operations may share a short adaptive authority burst so Forge does not repeatedly attach and release the debugger between nearby actions. Operations remain serialized, and trusted human input interrupts agent control instead of racing it.
 
-Every release is tied to the exact Chrome instance, logical session, tab, lease identity, and owner epoch. Forge checkpoints that identity before control and removes the checkpoint only after Chrome acknowledges the exact release. If a release acknowledgement is lost:
+Every non-terminal release is tied to the exact Chrome instance, logical session, tab, lease identity, and owner epoch. Forge checkpoints that identity before control and removes the checkpoint only after Chrome acknowledges the exact release. If a normal release acknowledgement is lost:
 
 - the checkpoint remains durable;
 - Forge retries that same release after reconnection; and
 - later Chrome acquisition for that session is blocked until the exact release is acknowledged.
 
-Turn end, stop, archive, delete, host replacement, Desktop update, and Desktop quit use the same lifecycle cleanup path. Chrome tabs remain open when authority is released. Opening DevTools, another debugger taking control, Chrome or extension disconnect, expiry, or human input can interrupt an operation; inspect or snapshot again before continuing.
+Turn end, stop, archive, host replacement, Desktop update, and Desktop quit use this fail-closed cleanup path. In particular, archive does not proceed when its browser release cannot be acknowledged. Deletion is different because it is terminal: Forge attempts exact browser revocation, but browser revocation is best-effort and a stale release cannot block deletion. After a delete request, Desktop clears the matching session's in-memory state, while External Chrome attempts to release and then forgets matching checkpoints and session affinity even if the extension is disconnected or the acknowledgement is lost. Chrome tabs remain open when authority is released. Opening DevTools, another debugger taking control, Chrome or extension disconnect, expiry, or human input can interrupt an operation; inspect or snapshot again before continuing.
 
 ## Privacy and persistence
 
@@ -130,7 +130,7 @@ Compatible connected extensions can reload an authenticated local payload after 
 - **Native host missing or untrusted:** choose **Repair** only when Settings enables it. Do not substitute or hand-edit an executable, manifest, registry key, rendezvous, or authentication file.
 - **Registration conflict:** Chrome has one current-user registration target for Forge's native host name. Stop the other Forge installation or data-directory owner before using qualified repair; do not overwrite the target manually.
 - **Restricted target or debugger conflict:** close DevTools or the competing debugger and retry. Forge will not take over a restricted page.
-- **Pending exact release:** keep Chrome and Forge open for authenticated reconciliation. Forge blocks new acquisition rather than abandoning the checkpoint or guessing another target.
+- **Pending exact release:** for a normal lifecycle release or archive, keep Chrome and Forge open for authenticated reconciliation; Forge blocks new acquisition rather than abandoning the checkpoint or guessing another target. A terminal delete is the exception: Forge forgets matching Desktop/External Chrome session state and checkpoints after its best-effort revocation attempt, so a stale release does not block deletion.
 - **Chrome tab no longer exists:** the logical target remains Chrome-affine and fails. Open a new logical browser tab instead of expecting silent migration.
 - **Different data directory:** load that data directory's stable extension folder in the intended Chrome profile and complete setup there.
 
