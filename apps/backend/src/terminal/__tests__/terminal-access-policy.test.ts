@@ -109,6 +109,108 @@ describe('terminal-access-policy', () => {
     })
   })
 
+  it('allows the trusted HTTP development UI to reach the same Desktop host on the backend port', () => {
+    vi.stubEnv('FORGE_DESKTOP', '1')
+
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://10.128.4.7:47188',
+        host: '10.128.4.7:47287',
+        remoteAddress: '10.128.4.20',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      allowedOrigin: 'http://10.128.4.7:47188',
+    })
+  })
+
+  it('rejects trusted HTTP cross-port control outside Desktop mode', () => {
+    vi.stubEnv('FORGE_DESKTOP', '0')
+
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://10.128.4.7:47188',
+        host: '10.128.4.7:47287',
+        remoteAddress: '10.128.4.20',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+  })
+
+  it('rejects trusted HTTP control when the UI and backend hostnames differ', () => {
+    vi.stubEnv('FORGE_DESKTOP', '1')
+
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://attacker.example:47188',
+        host: '10.128.4.7:47287',
+        remoteAddress: '10.128.4.20',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+  })
+
+  it('rejects trusted HTTP control from unexpected UI or backend ports', () => {
+    vi.stubEnv('FORGE_DESKTOP', '1')
+
+    const options = {
+      backendHost: '0.0.0.0',
+      backendPort: 47287,
+      uiPort: 47188,
+    }
+    expect(validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://10.128.4.7:9999',
+        host: '10.128.4.7:47287',
+        remoteAddress: '10.128.4.20',
+      }),
+      options,
+    )).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+    expect(validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://10.128.4.7:47188',
+        host: '10.128.4.7:9999',
+        remoteAddress: '10.128.4.20',
+      }),
+      options,
+    )).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+  })
+
   it('rejects same-origin remote HTTP secure control', () => {
     const result = validateSecureBuilderControlOrigin(
       createRequest({

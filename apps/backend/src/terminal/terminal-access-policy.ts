@@ -58,6 +58,10 @@ export function validateSecureBuilderControlOrigin(
     return { ok: true, allowedOrigin: rawOrigin };
   }
 
+  if (isTrustedDesktopHttpUiOrigin(request, originUrl, options)) {
+    return { ok: true, allowedOrigin: rawOrigin };
+  }
+
   const allowedOrigins = secureBuilderControlOrigins(options);
   if (
     (originUrl.protocol === "http:" || originUrl.protocol === "https:")
@@ -67,6 +71,34 @@ export function validateSecureBuilderControlOrigin(
   }
 
   return { ok: false, allowedOrigin: null, errorMessage: "Origin not allowed" };
+}
+
+function isTrustedDesktopHttpUiOrigin(
+  request: IncomingMessage,
+  originUrl: URL,
+  options: {
+    backendHost: string;
+    backendPort: number;
+    uiPort?: number;
+  },
+): boolean {
+  if (!isDesktopMode() || originUrl.protocol !== "http:") {
+    return false;
+  }
+
+  const requestOrigin = resolveRequestOrigin(request);
+  if (!requestOrigin || requestOrigin.protocol !== "http:") {
+    return false;
+  }
+
+  const uiPort = validatePort(
+    options.uiPort ?? parseConfiguredUiPort(process.env.FORGE_UI_PORT),
+  );
+  return (
+    areHostsEquivalent(originUrl.hostname, requestOrigin.hostname)
+    && resolveUrlPort(originUrl) === uiPort
+    && resolveUrlPort(requestOrigin) === validatePort(options.backendPort)
+  );
 }
 
 function isSecureSameOriginBrowserRequest(
@@ -186,6 +218,13 @@ function resolveRequestOrigin(request: IncomingMessage): URL | null {
   } catch {
     return null;
   }
+}
+
+function resolveUrlPort(url: URL): number {
+  if (url.port) {
+    return Number(url.port);
+  }
+  return url.protocol === "https:" ? 443 : 80;
 }
 
 function isAllowedBrowserOrigin(originUrl: URL, requestUrl: URL): boolean {
