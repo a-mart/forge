@@ -64,7 +64,7 @@ the pinned runner image from the repository root:
 
 ```bash
 docker build \
-  --tag forge-secure-runner:node22-v5 \
+  --tag forge-secure-runner:node22-v6 \
   --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner \
   apps/backend/src/swarm/secure-sessions/execution
 ```

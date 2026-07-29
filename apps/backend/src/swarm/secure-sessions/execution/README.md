@@ -1,8 +1,8 @@
 # Docker secure runner
 
-The Docker execution proof defaults to `forge-secure-runner:node22-v5`. It
+The Docker execution proof defaults to `forge-secure-runner:node22-v6`. It
 requires image contract label
-`com.forge.secure-execution.runner-contract=5` and refuses to start when the
+`com.forge.secure-execution.runner-contract=6` and refuses to start when the
 image is absent or does not carry that label.
 
 When the image is missing, Forge Desktop offers **Install secure runner** in
@@ -16,7 +16,7 @@ root is:
 
 ```bash
 docker build \
-  --tag forge-secure-runner:node22-v5 \
+  --tag forge-secure-runner:node22-v6 \
   --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner \
   apps/backend/src/swarm/secure-sessions/execution
 ```
@@ -26,13 +26,16 @@ OpenSSH client, PostgreSQL client, rsync, jq, Python 3, the `script` PTY helper,
 and the Debian build toolchain. The Docker backend mounts the live workspace at
 the same absolute path, supplies its own clean child environment, and does not
 import image or host environment variables into executed commands.
-Contract v5 also supplies per-execution passwd/group views when the mapped host
+Contract v6 also supplies per-execution passwd/group views when the mapped host
 UID or GID is absent from the image, so NSS-dependent tools such as OpenSSH work
 without running the container as root. It includes the immutable
 `/usr/local/bin/forge-env-askpass` bridge so an automatically generated
 environment delivery can authenticate OpenSSH without writing or compiling a
 temporary helper. Set `FORGE_ASKPASS_ENV` to the exact granted environment
-target name and set `SSH_ASKPASS` to that fixed path.
+target name and set `SSH_ASKPASS` to that fixed path. Forge normalizes the
+runner build resources to LF before invoking Docker, and the image build
+executes the helper with a disposable canary so an invalid shebang cannot
+produce a nominally compatible image.
 
 The backend requires the effective Docker endpoint to be an approved local
 Unix socket or Docker Desktop Linux named pipe and pins that endpoint into

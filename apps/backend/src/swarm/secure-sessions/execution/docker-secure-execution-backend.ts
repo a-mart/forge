@@ -6,7 +6,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { constants as fsConstants, existsSync } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -16,6 +15,7 @@ import {
   rm,
   stat,
   type FileHandle,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
@@ -50,10 +50,10 @@ import {
   type SecureExecutionErrorCode,
 } from "./secure-execution-error.js";
 
-const DEFAULT_IMAGE = "forge-secure-runner:node22-v5";
+const DEFAULT_IMAGE = "forge-secure-runner:node22-v6";
 const RUNNER_CONTRACT_LABEL =
   "com.forge.secure-execution.runner-contract";
-const RUNNER_CONTRACT_VERSION = "5";
+const RUNNER_CONTRACT_VERSION = "6";
 const SECRET_ROOT = "/run/forge-secure";
 const HOST_HEARTBEAT_TARGET = DOCKER_HEARTBEAT_PATH;
 const MANAGED_LABEL = "com.forge.secure-execution.managed";
@@ -488,7 +488,11 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
         ) {
           throw new Error("secure runner resource is invalid");
         }
-        await copyFile(sourcePath, join(buildContext, fileName));
+        const source = await readFile(sourcePath);
+        const normalized = normalizeRunnerResource(fileName, source);
+        await writeFile(join(buildContext, fileName), normalized, {
+          mode: 0o600,
+        });
       }
       return buildContext;
     } catch (error) {
@@ -1455,6 +1459,43 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     if (listed.exitCode !== 0) return false;
     return listed.stdout.toString("utf8").trim().length === 0;
   }
+}
+
+function normalizeRunnerResource(fileName: string, source: Buffer): Buffer {
+  if (
+    source.byteLength >= 3
+    && source[0] === 0xef
+    && source[1] === 0xbb
+    && source[2] === 0xbf
+  ) {
+    throw new Error("secure runner resource has a byte-order mark");
+  }
+
+  const normalized = Buffer.allocUnsafe(source.byteLength);
+  let outputOffset = 0;
+  for (let inputOffset = 0; inputOffset < source.byteLength; inputOffset += 1) {
+    const byte = source[inputOffset]!;
+    if (byte === 0) {
+      throw new Error("secure runner resource contains a null byte");
+    }
+    if (byte === 0x0d) {
+      if (source[inputOffset + 1] !== 0x0a) {
+        throw new Error("secure runner resource contains a bare carriage return");
+      }
+      continue;
+    }
+    normalized[outputOffset] = byte;
+    outputOffset += 1;
+  }
+
+  const result = normalized.subarray(0, outputOffset);
+  if (
+    fileName === "forge-env-askpass"
+    && !result.subarray(0, 10).equals(Buffer.from("#!/bin/sh\n"))
+  ) {
+    throw new Error("secure runner askpass helper has an invalid shebang");
+  }
+  return result;
 }
 
 function isLinuxDockerServer(exitCode: number, stdout: Buffer): boolean {

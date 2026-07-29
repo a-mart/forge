@@ -9,6 +9,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readFile,
   readdir,
   realpath,
   rename,
@@ -218,9 +219,9 @@ describe("Docker secure runner installation", () => {
     );
     await writeFile(
       join(resources, "Dockerfile.secure-runner"),
-      'FROM scratch\nLABEL com.forge.secure-execution.runner-contract="5"\n',
+      'FROM scratch\r\nLABEL com.forge.secure-execution.runner-contract="6"\r\n',
     );
-    await writeFile(join(resources, "forge-env-askpass"), "#!/bin/sh\n");
+    await writeFile(join(resources, "forge-env-askpass"), "#!/bin/sh\r\n");
     await writeFile(join(resources, "not-in-build-context"), "canary");
 
     let releaseBuild!: () => void;
@@ -232,6 +233,8 @@ describe("Docker secure runner installation", () => {
       reportBuildStarted = resolveBuild;
     });
     let buildContextFiles: string[] = [];
+    let buildContextDockerfile = "";
+    let buildContextAskpass = "";
     const invocations: string[][] = [];
     const timeouts: Array<number | undefined> = [];
     const pin = vi.spyOn(DockerCli.prototype, "pinLocalEndpoint")
@@ -247,11 +250,19 @@ describe("Docker secure runner installation", () => {
           const context = args.at(-1);
           if (context === undefined) throw new Error("missing build context");
           buildContextFiles = (await readdir(context)).sort();
+          buildContextDockerfile = await readFile(
+            join(context, "Dockerfile.secure-runner"),
+            "utf8",
+          );
+          buildContextAskpass = await readFile(
+            join(context, "forge-env-askpass"),
+            "utf8",
+          );
           reportBuildStarted();
           await buildReleased;
           return { exitCode: 0, stdout: Buffer.from("sha256:test") };
         }
-        return { exitCode: 0, stdout: Buffer.from("5\n") };
+        return { exitCode: 0, stdout: Buffer.from("6\n") };
       });
 
     try {
@@ -274,13 +285,17 @@ describe("Docker secure runner installation", () => {
         "Dockerfile.secure-runner",
         "forge-env-askpass",
       ]);
+      expect(buildContextDockerfile).toBe(
+        'FROM scratch\nLABEL com.forge.secure-execution.runner-contract="6"\n',
+      );
+      expect(buildContextAskpass).toBe("#!/bin/sh\n");
       const buildIndex = invocations.findIndex(([command]) => command === "build");
       expect(timeouts[buildIndex]).toBe(123_456);
       expect(invocations[buildIndex]).toEqual([
         "build",
         "--quiet",
         "--tag",
-        "forge-secure-runner:node22-v5",
+        "forge-secure-runner:node22-v6",
         "--file",
         expect.stringMatching(/Dockerfile\.secure-runner$/),
         expect.stringMatching(/forge-secure-runner-build-/),
@@ -288,7 +303,7 @@ describe("Docker secure runner installation", () => {
       expect(invocations.at(-1)).toEqual([
         "image",
         "inspect",
-        "forge-secure-runner:node22-v5",
+        "forge-secure-runner:node22-v6",
         "--format",
         '{{index .Config.Labels "com.forge.secure-execution.runner-contract"}}',
       ]);

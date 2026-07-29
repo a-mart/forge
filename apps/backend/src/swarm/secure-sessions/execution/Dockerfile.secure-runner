@@ -1,6 +1,6 @@
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
 
-LABEL com.forge.secure-execution.runner-contract="5"
+LABEL com.forge.secure-execution.runner-contract="6"
 
 COPY --chmod=0555 forge-env-askpass /usr/local/bin/forge-env-askpass
 
@@ -28,4 +28,5 @@ RUN apt-get update \
       command -v "$tool" >/dev/null || exit 1; \
     done \
     && test -x /usr/local/bin/forge-env-askpass \
+    && test "$(FORGE_ASKPASS_ENV=FORGE_RUNNER_ASKPASS_CANARY FORGE_RUNNER_ASKPASS_CANARY=forge-runner-ready /usr/local/bin/forge-env-askpass)" = "forge-runner-ready" \
     && test "$(pnpm --version)" = "10.30.1"

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +11,15 @@ const HELPER_PATH = fileURLToPath(
 );
 
 describe("secure runner environment askpass bridge", () => {
+  it("is stored as an LF-only executable script without a byte-order mark", () => {
+    const bytes = readFileSync(HELPER_PATH);
+
+    expect(bytes.subarray(0, 10).toString("hex")).toBe(
+      "23212f62696e2f73680a",
+    );
+    expect(bytes.includes(0x0d)).toBe(false);
+  });
+
   it("returns only the selected authorized environment value", () => {
     const result = spawnSync(
       "/bin/sh",

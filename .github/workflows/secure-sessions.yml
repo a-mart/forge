@@ -49,6 +49,7 @@ jobs:
         run: |
           cd apps/backend
           pnpm exec vitest run \
+            src/swarm/__tests__/secure-env-askpass.test.ts \
             src/terminal/__tests__/terminal-access-policy.test.ts \
             src/swarm/__tests__/secure-sessions-docker-cli.test.ts \
             src/swarm/__tests__/secure-sessions-electron-safe-storage-client.test.ts
