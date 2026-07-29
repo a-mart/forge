@@ -5,7 +5,7 @@ Forge chooses the available local target automatically:
 - A Chrome-backed tab stays in Chrome. The Browser rail shows a compact card with **Show in Chrome**.
 - An embedded tab appears inside Forge and includes navigation, viewport, screenshot, recording, and dock/pop-out controls.
 
-For tabless requests, Forge can use the embedded browser when Chrome acquisition is unavailable or the operation requires an embedded-only capability. An explicit Chrome-backed tab never migrates; unsupported operations fail on that tab.
+For tabless requests, Forge can use the embedded browser when Chrome acquisition is unavailable or the operation requires an embedded-only capability. A tabless `browser_open` with reuse enabled (the default) may reselect a uniquely focused eligible Chrome tab, including after an idle embedded fallback was selected. When that embedded fallback is current, unavailable or ambiguous focus leaves the exact tab selected. The next non-open action stays on the selected logical tab; active operations are never moved or replayed. An explicit Chrome-backed tab never migrates; unsupported operations fail on that tab.
 
 There is no host picker, tab attachment flow, or lease management UI. If more than one ready Chrome profile remains ambiguous, Forge asks once for the current Forge session with generic profile labels and a **Use embedded browser** option. A confirmed Chrome choice stays in memory only until Forge quits.
 
