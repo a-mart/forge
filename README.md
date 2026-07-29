@@ -319,7 +319,10 @@ pnpm dev
 # Backend: http://127.0.0.1:47187
 # UI:      http://127.0.0.1:47188
 
-# Start Electron and expose its development UI on a trusted network
+# Start Electron locally
+pnpm dev:electron
+
+# Also expose that same Electron-owned backend on a trusted network
 pnpm dev:electron:remote
 # Remote UI: http://<station-address>:47188
 

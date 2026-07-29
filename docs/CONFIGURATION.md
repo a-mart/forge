@@ -23,7 +23,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VITE_FORGE_WS_URL` | Auto-resolved from page URL | WebSocket URL for the UI to connect to the backend. Only needed if running UI and backend on different hosts/ports. |
-| `VITE_FORGE_WS_PORT` | Auto-resolved from page URL | Backend WebSocket port combined with the browser page's hostname. Used by `pnpm dev:electron:remote` so local Electron stays on loopback while remote browsers connect back to the same station. An explicit `VITE_FORGE_WS_URL` takes precedence. |
+| `VITE_FORGE_WS_PORT` | Auto-resolved from page URL | Backend WebSocket port combined with the browser page's hostname. Used by Electron development so the Desktop renderer stays on loopback while a remote browser connects back to the station it opened. An explicit `VITE_FORGE_WS_URL` takes precedence. |
 
 ### Skills
 
@@ -562,6 +562,8 @@ To access Forge from other devices on a trusted network, heed the local Builder 
 
 For Electron development with simultaneous browser access, run
 `pnpm dev:electron:remote` (or `pnpm.cmd dev:electron:remote` on Windows).
+This is a thin trusted-network wrapper around the normal `dev:electron`
+workflow, so both commands use the same Electron-owned backend on port `47287`.
 The Electron window continues to use its loopback backend bootstrap while the
 remote browser derives the backend hostname from the address it opened and
 connects on port `47287`. The development UI is available on port `47188`.

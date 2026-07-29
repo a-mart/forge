@@ -70,7 +70,7 @@ To run the Electron app in dev mode from the repository root:
 pnpm dev:electron
 ```
 
-This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). Electron forks its backend child on `47287`, and the root script sets `VITE_FORGE_WS_URL=ws://127.0.0.1:47287` so the renderer targets that child.
+This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). Electron forks its backend child on `47287`. The root script publishes that backend port to the UI; Electron's preload keeps the Desktop renderer on loopback, while any explicitly exposed browser UI derives the station hostname from the page it opened.
 
 Before Electron launches, the desktop workspace prepares a cached `better-sqlite3` binary for Electron's embedded Node runtime. The cache lives under `apps/electron/.dev-native/` and is separate from the Host-Node binary installed by pnpm, so switching between `pnpm dev` and `pnpm dev:electron` does not rebuild or overwrite shared dependencies. The cache is versioned by the Electron version, platform, architecture, and `better-sqlite3` source fingerprint, and is verified with an Electron-as-Node in-memory database smoke test before use.
 
@@ -105,8 +105,9 @@ On Windows PowerShell or Command Prompt, use
 hostname on backend port `47287`. The Electron renderer continues to receive
 the loopback backend URL from preload. Do not run `pnpm dev:remote` beside this
 command: that would start a second standalone backend instead of sharing the
-Electron-owned backend. Remote private secret entry requires HTTPS even though
-the general development UI can be reached over HTTP on a trusted network.
+Electron-owned backend. Secure browser pairing supports HTTPS and the explicit
+Trusted network mode for HTTP access over a known private network such as a
+personal VPN.
 
 Focused Automatic Browser Host validation commands:
 
