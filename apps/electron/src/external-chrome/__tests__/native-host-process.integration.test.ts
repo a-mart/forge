@@ -14,6 +14,7 @@ import {
   EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserTabSnapshot,
 } from '@forge/protocol'
 import { Runtime } from '../../../../chrome-extension/src/payload/service-worker/index.js'
 import type { ChromeTab } from '../../../../chrome-extension/src/runtime/chrome-api.js'
@@ -95,6 +96,7 @@ interface ProcessFixture {
 
 class RejectingManagedAdapter implements BrowserTargetAdapter {
   readonly targetAffinity = 'managed-electron' as const
+  readonly requests: BrowserAutomationRequest[] = []
   readonly capabilities = {
     supportedOperations: BROWSER_AUTOMATION_OPERATIONS,
     physicalViewport: true,
@@ -102,8 +104,19 @@ class RejectingManagedAdapter implements BrowserTargetAdapter {
     reveal: false,
   } as const
 
-  async execute(_request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+  async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
+    this.requests.push(structuredClone(request))
     throw new Error('integration unexpectedly fell back to Managed Browser')
+  }
+}
+
+function managedFallbackTab(): BrowserTabSnapshot {
+  const now = new Date(0).toISOString()
+  return {
+    targetAffinity: 'managed-electron', tabId: 'managed-fallback', sessionAgentId: 'session-process', profileId: 'profile-process',
+    url: 'about:blank', title: '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false,
+    zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null,
+    physicalVisible: true, error: null, createdAt: now, updatedAt: now,
   }
 }
 
@@ -202,6 +215,19 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()))
 }
 
+function value(result: unknown): Record<string, unknown> {
+  return { result: { type: typeof result, value: result } }
+}
+
+function pngBase64(width: number, height: number): string {
+  const bytes = new Uint8Array(24)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(16, width)
+  view.setUint32(20, height)
+  return Buffer.from(bytes).toString('base64')
+}
+
 async function waitFor(assertion: () => boolean, label: string, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!assertion() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
@@ -271,6 +297,21 @@ describe('spawned native host relay lifecycle', () => {
       })
       return updated
     }
+    const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      const result = await sendCommand(target, method, params)
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('interactiveElements')) {
+        return value({
+          url: 'https://focused.example.test/private', title: 'Focused private tab', loading: false,
+          visibleText: 'Focused OrthoAR page', interactiveElements: [],
+        })
+      }
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(1)
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 320, clientHeight: 200, pageX: 0, pageY: 0 } }
+      if (method === 'Page.captureScreenshot') return { data: pngBase64(2, 2) }
+      if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+      return result
+    }
     await extension.initialize({
       directory: `${PAYLOAD_VERSION}-${PAYLOAD_SHA256}`,
       sha256: PAYLOAD_SHA256,
@@ -298,29 +339,21 @@ describe('spawned native host relay lifecycle', () => {
     expect(exits[0]).toEqual({ code: 0, signal: null })
 
     const session = { sessionAgentId: 'session-process', profileId: 'profile-process' }
+    const managed = new RejectingManagedAdapter()
     const host = new AutomaticBrowserHost({
-      managedAdapter: new RejectingManagedAdapter(),
+      managedAdapter: managed,
       externalAdapter: new ExternalChromeTargetAdapter(next.runtime),
       authorityBurst: { initialIdleMs: 60_000, incrementMs: 0, maximumIdleMs: 60_000 },
     })
+    host.adoptTarget(managedFallbackTab())
     const extensionAuthorities = (extension as unknown as {
       authorities: { all(): Array<{ tabId: number; ownerEpoch: number }> }
     }).authorities
-
-    const neutral = await host.perform(browserRequest('open', { show: false, reuseExistingTab: false }))
-    expect(neutral).toMatchObject({
-      ok: true,
-      result: { tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.1`, url: 'about:blank' } },
-    })
-    expect(tabs).toMatchObject([{ id: 1, active: false, url: 'about:blank' }])
-    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ tabIds: [1] }])
-    await host.endTurn(session, 'neutral-release')
     expect(await next.runtime.leaseCheckpoints()).toEqual([])
-    expect(extensionAuthorities.all()).toEqual([])
 
-    // The host still remembers the released neutral affinity. A later explicit
-    // tabless open must probe through relay and extension, then adopt the one
-    // focused eligible Chrome tab rather than reacquiring the placeholder.
+    // Reproduce the product failure after the relay epoch replacement: Desktop
+    // has selected a managed about:blank fallback, then Chrome gains one focused
+    // eligible page. Explicit open must cross host affinity exactly once.
     tabs.push({
       id: 7, windowId: 1, active: true, url: 'https://focused.example.test/private',
       title: 'Focused private tab', status: 'complete',
@@ -330,18 +363,40 @@ describe('spawned native host relay lifecycle', () => {
       ok: true,
       result: { created: false, tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.7`, url: 'https://focused.example.test/private' } },
     })
-    expect(tabs).toHaveLength(2)
+    expect(tabs).toHaveLength(1)
     expect(chrome.updates).toEqual([])
-    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 2, tabIds: [7] }])
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 1, tabIds: [7] }])
 
+    const snapshot = await host.perform(browserRequest('snapshot', {}))
+    expect(snapshot).toMatchObject({
+      ok: true,
+      result: { tabId: `ext.${EXTENSION_INSTANCE_ID}.7`, url: 'https://focused.example.test/private', visibleText: 'Focused OrthoAR page' },
+    })
     const sticky = await host.perform(browserRequest('status', {}))
     expect(sticky).toMatchObject({
       ok: true,
       result: { selectedTab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.7` } },
     })
-    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 2, tabIds: [7] }])
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 1, tabIds: [7] }])
     expect(chrome.updates).toEqual([])
+    expect(chrome.attached).toEqual(new Set())
+    expect(managed.requests).toEqual([])
     await host.endTurn(session, 'focused-release')
+    expect(await next.runtime.leaseCheckpoints()).toEqual([])
+    expect(extensionAuthorities.all()).toEqual([])
+    chrome.commands.splice(0)
+    chrome.injections.splice(0)
+
+    // open(reuseExistingTab:false) remains a fresh automatic allocation rather
+    // than probing or flapping back to the managed fallback.
+    const neutral = await host.perform(browserRequest('open', { show: false, reuseExistingTab: false }))
+    expect(neutral).toMatchObject({
+      ok: true,
+      result: { tab: { targetAffinity: 'external-chrome', tabId: `ext.${EXTENSION_INSTANCE_ID}.1`, url: 'about:blank' } },
+    })
+    expect(tabs.find((tab) => tab.id === 1)).toMatchObject({ active: false, url: 'about:blank' })
+    expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 2, tabIds: [1] }])
+    await host.endTurn(session, 'neutral-release')
     expect(await next.runtime.leaseCheckpoints()).toEqual([])
     expect(extensionAuthorities.all()).toEqual([])
 
@@ -405,6 +460,9 @@ describe('spawned native host relay lifecycle', () => {
     expect(tabs.find((tab) => tab.id === 3)).toMatchObject({ active: false, url: 'about:blank' })
     await next.runtime.releaseAuthority(session, replacement.authority, 'idle')
     await host.destroy()
+    expect(managed.requests).toEqual([])
+    expect(await next.runtime.leaseCheckpoints()).toEqual([])
+    expect(extensionAuthorities.all()).toEqual([])
 
     extension.shutdown()
     next.runtime.deactivate()

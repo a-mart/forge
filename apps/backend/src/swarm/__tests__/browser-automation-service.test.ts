@@ -101,14 +101,15 @@ describe("Automatic Browser Host service", () => {
     });
   });
 
-  it("treats tabless open reuse as reselection while later operations remain sticky", async () => {
+  it("lets tabless open reselect External Chrome from a managed fallback while later operations stay sticky", async () => {
     const instance = await service();
     const requests: BrowserAutomationRequest[] = [];
     register(instance, (request) => requests.push(request));
 
-    const initial = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: false });
+    const initial = instance.invoke("manager-1", "profile-1", "open", { show: false, reuseExistingTab: true });
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    const neutral = tab(requests[0]!, "external-neutral", "external-chrome");
+    const neutral = tab(requests[0]!, "managed-neutral", "managed-electron");
+    neutral.url = "about:blank";
     accept(instance, { ...routing(requests[0]!), ok: true, updatedTab: neutral, result: { tab: neutral, created: true, panelRevealRequested: false } });
     await initial;
 

@@ -75,6 +75,16 @@ interface AuthorityBurst {
   pendingReleaseReason: 'idle' | 'operation-failed' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'] | null
 }
 
+interface ExternalAttemptOptions {
+  explicit: boolean
+  preferredTabId: string | null
+  reuseExisting: boolean
+  allowDedicatedRetry?: boolean
+  forceReacquire?: boolean
+  createIfNeeded?: boolean
+  managedFallbackTabId?: string | null
+}
+
 /**
  * The one Desktop browser host. Target affinity, Chrome acquisition, fallback,
  * no-replay, burst authority, reveal, and lifecycle policy do not escape this seam.
@@ -272,13 +282,29 @@ export class AutomaticBrowserHost {
 
     if (managedOnly) return this.performManaged(request, selectedAffinity === 'managed-electron' ? selectedTabId : null)
     if (request.operation === 'status' && !selectedAffinity) return this.performManaged(request, null)
-    if (request.operation === 'open' && request.input.reuseExistingTab && selectedAffinity === 'external-chrome') {
+    if (request.operation === 'open' && request.input.reuseExistingTab && selectedAffinity) {
       const external = this.external
       if (isAutomaticExternalBrowserAdapter(external) && supports(external, request.operation)) {
         // A tabless open is an explicit re-selection boundary. Release any
         // completed burst before probing the uniquely focused eligible tab;
         // non-open operations continue to use exact sticky affinity.
-        return this.performExternal(request, external, false, null, true, false, true)
+        if (selectedAffinity === 'external-chrome') {
+          return this.performExternal(request, external, {
+            explicit: false, preferredTabId: null, reuseExisting: true, forceReacquire: true,
+          })
+        }
+        // A managed fallback must not pin later explicit selection. Probe only
+        // focused Chrome here: no focus/ambiguity keeps the exact managed tab,
+        // while success replaces selection without migrating an active request.
+        return this.performExternal(request, external, {
+          explicit: false,
+          preferredTabId: null,
+          reuseExisting: true,
+          allowDedicatedRetry: false,
+          forceReacquire: true,
+          createIfNeeded: false,
+          managedFallbackTabId: selectedTabId,
+        })
       }
     }
     if (selectedAffinity) {
@@ -288,7 +314,11 @@ export class AutomaticBrowserHost {
 
     const external = this.external
     if (isAutomaticExternalBrowserAdapter(external) && supports(external, request.operation)) {
-      return this.performExternal(request, external, false, null, request.operation === 'open' ? request.input.reuseExistingTab : true)
+      return this.performExternal(request, external, {
+        explicit: false,
+        preferredTabId: null,
+        reuseExisting: request.operation === 'open' ? request.input.reuseExistingTab : true,
+      })
     }
     return this.performManaged(request, null)
   }
@@ -306,18 +336,25 @@ export class AutomaticBrowserHost {
       }, false)))
     }
     if (!isAutomaticExternalBrowserAdapter(external)) return external.execute(request).then((response) => this.acceptResponse(request, response, 'external-chrome'))
-    return this.performExternal(request, external, explicit, request.tabId, true)
+    return this.performExternal(request, external, {
+      explicit, preferredTabId: request.tabId, reuseExisting: true,
+    })
   }
 
   private async performExternal(
     request: BrowserAutomationRequest,
     external: AutomaticExternalBrowserAdapter,
-    explicit: boolean,
-    preferredTabId: string | null,
-    reuseExisting: boolean,
-    dedicatedAttempt = false,
-    forceReacquire = false,
+    options: ExternalAttemptOptions,
   ): Promise<BrowserAutomationResponse> {
+    const {
+      explicit,
+      preferredTabId,
+      reuseExisting,
+      allowDedicatedRetry = true,
+      forceReacquire = false,
+      createIfNeeded = true,
+      managedFallbackTabId = null,
+    } = options
     const session = { sessionAgentId: request.sessionAgentId, profileId: request.profileId }
     const burstKey = sessionKey(session)
     let burst = this.bursts.get(burstKey)
@@ -341,16 +378,23 @@ export class AutomaticBrowserHost {
         operation: request.operation,
         preferredTabId,
         reuseExisting,
-        createIfNeeded: true,
+        createIfNeeded,
         deadlineAt: Date.parse(request.deadlineAt),
         ownerEpoch: ++this.ownerEpoch,
       })
       if (!acquired.ok) {
         if (!explicit && acquired.metadata.mutationState === 'not-started') {
-          if (!dedicatedAttempt && reuseExisting) {
-            return this.performExternal(request, external, false, null, false, true)
+          if (allowDedicatedRetry && reuseExisting) {
+            return this.performExternal(request, external, {
+              explicit: false,
+              preferredTabId: null,
+              reuseExisting: false,
+              allowDedicatedRetry: false,
+              forceReacquire: true,
+              managedFallbackTabId,
+            })
           }
-          return this.performManaged(request, null, acquired.metadata.fallbackReason)
+          return this.performManaged(request, managedFallbackTabId, acquired.metadata.fallbackReason)
         }
         return failureResponse(request, acquired.error.code, acquired.error.message, acquired.error.retryable, {
           ...acquired.error.details,
@@ -391,8 +435,17 @@ export class AutomaticBrowserHost {
     }
     const terminal = withPolicyFailure(response, metadata, metadata.mutationState !== 'not-started')
     if (explicit || metadata.mutationState !== 'not-started') return terminal
-    if (!dedicatedAttempt && reuseExisting) return this.performExternal(request, external, false, null, false, true)
-    return this.performManaged(request, null, metadata.fallbackReason)
+    if (allowDedicatedRetry && reuseExisting) {
+      return this.performExternal(request, external, {
+        explicit: false,
+        preferredTabId: null,
+        reuseExisting: false,
+        allowDedicatedRetry: false,
+        forceReacquire: true,
+        managedFallbackTabId,
+      })
+    }
+    return this.performManaged(request, managedFallbackTabId, metadata.fallbackReason)
   }
 
   private async performManaged(
