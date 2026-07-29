@@ -1,9 +1,37 @@
 import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DockerCli } from "../secure-sessions/execution/docker-cli.js";
 
 describe("DockerCli", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("preserves Windows Docker plugin discovery paths without forwarding unrelated values", async () => {
+    vi.stubEnv("ProgramFiles", "C:\\Program Files");
+    vi.stubEnv("ProgramW6432", "C:\\Program Files");
+    vi.stubEnv("FORGE_TEST_PRIVATE_VALUE", "must-not-be-forwarded");
+    const cli = new DockerCli({ command: process.execPath });
+
+    const result = await cli.run([
+      "-e",
+      [
+        "process.stdout.write(JSON.stringify({",
+        "programFiles: process.env.ProgramFiles,",
+        "programW6432: process.env.ProgramW6432,",
+        "unrelated: process.env.FORGE_TEST_PRIVATE_VALUE",
+        "}))",
+      ].join(""),
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout.toString("utf8"))).toEqual({
+      programFiles: "C:\\Program Files",
+      programW6432: "C:\\Program Files",
+    });
+  });
+
   it.each([
     "ssh://builder@example.test",
     "tcp://127.0.0.1:2376",

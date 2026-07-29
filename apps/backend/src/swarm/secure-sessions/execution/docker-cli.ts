@@ -14,6 +14,8 @@ const DOCKER_ENVIRONMENT_ALLOWLIST = [
   "HOME",
   "LOCALAPPDATA",
   "PATH",
+  "ProgramFiles",
+  "ProgramW6432",
   "SystemRoot",
   "TMPDIR",
   "USERPROFILE",
