@@ -13,6 +13,12 @@ There is no Chrome profile confirmation prompt or picker, host picker, tab attac
 
 Open **Settings → Use Chrome with Forge** to set up each Chrome profile and Forge data directory, or to repair the integration. After setup, Forge creates or uses browser tabs automatically. Chrome-backed tabs do not show unsupported recording, viewport, screenshot-export, or dock/pop-out controls.
 
+## External Chrome snapshot size limits
+
+External Chrome keeps the PNG screenshot unchanged. When the complete successful snapshot response would exceed its bounded relay envelope, Forge deterministically omits optional diagnostics, accessibility nodes, visible-text characters, and interactive elements as needed to fit. The response reports positive omission counts in `compaction.omitted`; `compaction` is absent when nothing was omitted.
+
+If the screenshot alone cannot fit, Forge returns the typed, non-retryable `response-too-large` failure. It does not drop the image or send an oversized response; callers should rely on the error code and retryability rather than optional diagnostic details.
+
 ## Privacy and persistence
 
 Chrome page URLs/titles, tab error detail, and page-identifying action fields are redacted before persistence. Embedded-browser cookies and site storage use Forge's persistent local browser partition. Successfully stopped embedded recordings persist under the session's `artifacts/browser/` directory.
