@@ -274,6 +274,60 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('generated environment delivery')
   })
 
+  it('identifies the browser and offers pairing from settings', async () => {
+    const client = makeClient()
+    vi.mocked(client.fetch).mockImplementation(async (path) => {
+      if (path === '/api/secure-browser-control/status') {
+        return new Response(JSON.stringify({
+          available: true,
+          authorized: false,
+          privateEntryAvailable: false,
+          secureContextRequired: false,
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    render(client)
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'You are viewing Forge in a web browser',
+      )
+      expect(container.textContent).toContain('Not paired yet')
+      expect(getByRole(container, 'button', {
+        name: 'Pair this browser',
+      })).toBeTruthy()
+    })
+  })
+
+  it('keeps browser access visible when the Desktop pairing bridge is unavailable', async () => {
+    const client = makeClient()
+    vi.mocked(client.fetch).mockImplementation(async (path) => {
+      if (path === '/api/secure-browser-control/status') {
+        return new Response(JSON.stringify({
+          available: false,
+          authorized: false,
+          privateEntryAvailable: false,
+          secureContextRequired: false,
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    render(client)
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'You are viewing Forge in a web browser',
+      )
+      expect(container.textContent).toContain(
+        'Pairing is unavailable from the backend this browser reached',
+      )
+      expect(queryByRole(container, 'button', {
+        name: 'Pair this browser',
+      })).toBeNull()
+    })
+  })
+
   it('treats an approved browser as a private-entry surface for the local Builder', async () => {
     vi.stubGlobal('crypto', {
       subtle: { deriveKey: vi.fn() },
@@ -303,6 +357,9 @@ describe('SettingsSecrets', () => {
     await waitFor(() => {
       expect(container.textContent).toContain(
         'Paired as Forge browser on macOS',
+      )
+      expect(container.textContent).toContain(
+        'stays paired for up to 90 days',
       )
       expect(container.textContent).toContain('Private entry')
       expect(container.textContent).toContain('Available')

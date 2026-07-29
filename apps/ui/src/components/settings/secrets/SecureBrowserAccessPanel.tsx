@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Laptop, Loader2, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  Check,
+  Globe2,
+  Laptop,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SettingsApiClient } from '../settings-api-client'
 import {
@@ -90,17 +98,34 @@ export function SecureBrowserAccessPanel({
   if (typeof window === 'undefined') return null
 
   if (!desktopControlAvailable) {
-    if (!loading && remoteStatus?.available !== true) return null
     return (
       <>
         <section className="space-y-3 rounded-lg border border-border bg-card/40 p-4">
-          <div>
-            <h3 className="text-sm font-semibold">Secure browser access</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Pair this browser once with the running Forge Desktop instance.
-              Approval is revocable and private values are encrypted in this
-              browser before they cross the Builder backend.
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2">
+              <Globe2
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <div>
+                <h3 className="text-sm font-semibold">Browser access</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  You are viewing Forge in a web browser. Pair it once with the
+                  running Forge Desktop instance to privately add and approve
+                  secrets here.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => void refresh()}
+              disabled={loading}
+            >
+              <RefreshCw className="size-3.5" aria-hidden="true" />
+              Refresh
+            </Button>
           </div>
           {loading && !remoteStatus ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -108,22 +133,41 @@ export function SecureBrowserAccessPanel({
               Checking secure browser access…
             </div>
           ) : remoteStatus?.authorized ? (
-            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
-              <Check className="size-4" aria-hidden="true" />
-              Paired as {remoteStatus.device?.deviceName ?? 'this browser'}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                <Check className="size-4" aria-hidden="true" />
+                Paired as {remoteStatus.device?.deviceName ?? 'this browser'}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This browser stays paired for up to 90 days unless you revoke
+                it in Forge Desktop or clear its browser data.
+              </p>
             </div>
+          ) : remoteStatus?.available !== true ? (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Pairing is unavailable from the backend this browser reached.
+              Keep Forge Desktop running and connect this browser to that
+              Desktop-owned Forge instance, then refresh.
+            </p>
           ) : remoteStatus?.secureContextRequired ? (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              Open this Forge instance over HTTPS to pair secure browser access.
+              This browser is connected, but remote pairing requires HTTPS.
+              Reopen this same Forge instance through its HTTPS address.
             </p>
           ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setPairingOpen(true)}
-            >
-              Pair this browser
-            </Button>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Not paired yet. Forge Desktop will ask you to confirm a
+                six-digit code; the approval then stays with this browser.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setPairingOpen(true)}
+              >
+                Pair this browser
+              </Button>
+            </div>
           )}
         </section>
         {pairingOpen ? (
