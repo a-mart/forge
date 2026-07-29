@@ -18,9 +18,9 @@ Right-click a session and choose **Stop** to pause it. A stopped session keeps i
 
 ## Delete a session
 
-Right-click and choose **Delete**. This permanently removes the session's history and memory. You'll be asked to confirm. The default "Main" session in each profile cannot be deleted.
+Right-click and choose **Delete**. This permanently removes the session's history and memory. You'll be asked to confirm. Deletion is terminal: Forge attempts to revoke browser authority, then clears its Desktop/External Chrome session state and checkpoints even if a stale release cannot be acknowledged, so browser cleanup cannot block deletion. The default "Main" session in each profile cannot be deleted.
 
-If you delete the session you're currently viewing, Forge routes you to the most recent session in the same profile.
+If you delete the session you're currently viewing, Forge routes you to the most recent session in the same profile. Archive is separate and reversible; it remains fail-closed when browser release cannot be acknowledged rather than proceeding with an unresolved lifecycle release.
 
 ## Clear conversation
 
