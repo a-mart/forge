@@ -1,5 +1,7 @@
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  parseExternalChromeJsonRpcFrame,
   type BrowserAutomationResultByOperation,
   type BrowserTabSnapshot,
   type ExternalChromeExecuteParams,
@@ -12,6 +14,7 @@ import { PAYLOAD_VERSION } from '../../runtime/identity.js'
 import { LeaseError, LeaseManager, type TabAuthorityRecord } from '../../runtime/lease-manager.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
 import { ExternalChromeOperationExecutor } from '../../runtime/operation-executor.js'
+import { compactSnapshotForJsonRpc } from '../../runtime/snapshot-compaction.js'
 import { restrictedTargetReason } from '../../runtime/restricted-target.js'
 import type { ServiceWorkerPayload, ShellEventName, VerifiedPayloadIdentity } from '../../shell/service-worker-bootstrap.js'
 import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
@@ -139,6 +142,23 @@ export class Runtime implements ServiceWorkerPayload {
   }
 
   shutdown(): void { this.native?.stop(); void this.detachAllOperations() }
+
+  /** Disposable fixture seam: exercises the same compactor and shared parser as NativeRpcClient. */
+  async handleIsolatedFixtureRequest(message: ExternalChromeJsonRpcMessage): Promise<{
+    rawEnvelope: Record<string, unknown>
+    envelope: Record<string, unknown>
+    parsed: ExternalChromeJsonRpcMessage
+  }> {
+    if (!('method' in message) || !('id' in message)) throw new Error('fixture message is not a request')
+    const rawResult = await this.handleDesktopRequest(message)
+    const rawEnvelope = { jsonrpc: '2.0', id: message.id, result: rawResult }
+    const result = compactSnapshotForJsonRpc(rawResult, message.id, EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES)
+    const envelope = { jsonrpc: '2.0', id: message.id, result }
+    const parsed = parseExternalChromeJsonRpcFrame(JSON.stringify(envelope), {
+      expectedResponseMethod: message.method, protocolVersion: 1,
+    })
+    return { rawEnvelope, envelope, parsed }
+  }
 
   private async handleDesktopRequest(message: ExternalChromeJsonRpcMessage): Promise<unknown> {
     if (!('method' in message) || !('id' in message)) throw new Error('Desktop message is not a request')

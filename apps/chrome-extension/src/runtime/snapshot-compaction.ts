@@ -83,8 +83,10 @@ export function compactSnapshotForJsonRpc(
 
   const omitted: OmittedCounts = {}
   let candidate: BrowserSnapshotResult = { ...snapshot }
-  const fits = (value: BrowserSnapshotResult): boolean => jsonRpcResponseBytes(id, { ...execute, result: value }) <= budget
-  const finish = (): unknown => ({ ...execute, result: compactedResult(candidate, omitted) })
+  const finalized = (value: BrowserSnapshotResult, counts: OmittedCounts): BrowserSnapshotResult => compactedResult(value, counts)
+  const fits = (value: BrowserSnapshotResult, counts: OmittedCounts = omitted): boolean =>
+    jsonRpcResponseBytes(id, { ...execute, result: finalized(value, counts) }) <= budget
+  const finish = (): unknown => ({ ...execute, result: finalized(candidate, omitted) })
 
   if (candidate.consoleEntries.length > 0) {
     omitted.consoleEntries = candidate.consoleEntries.length
@@ -127,16 +129,22 @@ export function compactSnapshotForJsonRpc(
   let low = 0
   let high = interactive.length
   let best: BrowserSnapshotResult | null = null
+  let bestOmitted: OmittedCounts | null = null
   while (low <= high) {
     const count = Math.floor((low + high) / 2)
     const next = { ...candidate, interactiveElements: interactive.slice(0, count) }
-    if (fits(next)) {
+    const nextOmitted: OmittedCounts = {
+      ...omitted,
+      ...(count < interactive.length ? { interactiveElements: interactive.length - count } : {}),
+    }
+    if (fits(next, nextOmitted)) {
       best = next
+      bestOmitted = nextOmitted
       low = count + 1
     } else high = count - 1
   }
-  if (best !== null) {
-    if (best.interactiveElements.length < interactive.length) omitted.interactiveElements = interactive.length - best.interactiveElements.length
+  if (best !== null && bestOmitted !== null) {
+    Object.assign(omitted, bestOmitted)
     candidate = best
     return finish()
   }
@@ -147,11 +155,13 @@ export function compactSnapshotForJsonRpc(
   const axNodes = countAccessibilityNodes(candidate.accessibility)
   if (axNodes > 0) omitted.accessibilityNodes = (omitted.accessibilityNodes ?? 0) + axNodes
   candidate = { ...candidate, accessibility: { frames: [] }, interactiveElements: [], visibleText: '' }
-  if (candidate.visibleText.length < originalVisibleText.length) {
-    omitted.visibleTextCharacters = Math.max(omitted.visibleTextCharacters ?? 0, originalVisibleText.length)
+  const fallbackOmitted: OmittedCounts = {
+    ...omitted,
+    ...(interactive.length > 0 ? { interactiveElements: interactive.length } : {}),
+    ...(originalVisibleText.length > 0 ? { visibleTextCharacters: originalVisibleText.length } : {}),
   }
-  if (fits(candidate)) {
-    if (interactive.length > 0) omitted.interactiveElements = interactive.length
+  if (fits(candidate, fallbackOmitted)) {
+    Object.assign(omitted, fallbackOmitted)
     return finish()
   }
 

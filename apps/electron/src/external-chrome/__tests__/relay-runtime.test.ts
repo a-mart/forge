@@ -194,6 +194,11 @@ async function fakeExtensionLoop(
           canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: null, recording: null,
           viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
         },
+      } : operation === 'snapshot' ? {
+        tabId: String(params.tabId), url: 'https://selected.invalid/private', title: 'Selected private title', loading: false,
+        viewportSetting: { mode: 'fill' }, viewport: { width: 900, height: 700, deviceScaleFactor: 1 }, visibleText: 'Large fixture',
+        interactiveElements: [], accessibility: { frames: [] }, consoleEntries: [], networkEntries: [], actionTimeline: [],
+        compaction: { omitted: { consoleEntries: 200 } }, screenshot: { mimeType: 'image/png', data: 'AA==', width: 1, height: 1 },
       } : operation === 'status' ? {
         available: true,
         host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
@@ -367,6 +372,9 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
       url: 'https://navigated.invalid/', readiness: 'load', timeoutMs: 1_000,
     }))
     expect(navigated).toMatchObject({ ok: true, result: { tab: { tabId: 'ext.instance_profile_a.41', profileId: 'profile-a' } } })
+    await expect(runtime.execute(request('snapshot', 'ext.instance_profile_a.41', {}))).resolves.toMatchObject({
+      ok: true, result: { tabId: 'ext.instance_profile_a.41', compaction: { omitted: { consoleEntries: 200 } }, screenshot: { data: 'AA==' } },
+    })
     await expect(runtime.execute(request('navigate', 'ext.wrong_instance.41', { url: 'https://x.invalid/', readiness: 'load', timeoutMs: 1_000 })))
       .resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
     runtime.deactivate()

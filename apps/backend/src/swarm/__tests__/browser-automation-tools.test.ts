@@ -135,6 +135,7 @@ describe("browser automation tools", () => {
         consoleEntries: [],
         networkEntries: [],
         actionTimeline: [],
+        compaction: { omitted: { consoleEntries: 1 } },
         screenshot: { mimeType: "image/png" as const, data: "U0VDUkVU", width: 800, height: 600 },
       },
     }));
@@ -149,6 +150,7 @@ describe("browser automation tools", () => {
     ]);
     expect(result.content[0]?.text).not.toContain("U0VDUkVU");
     expect(JSON.stringify(result.details)).not.toContain("U0VDUkVU");
+    expect(result.details).toMatchObject({ ok: true, result: { compaction: { omitted: { consoleEntries: 1 } } } });
   });
 
   it("enforces the same eligibility at the manager service boundary", async () => {

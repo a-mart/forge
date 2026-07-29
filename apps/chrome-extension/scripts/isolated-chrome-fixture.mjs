@@ -59,7 +59,7 @@ if (!bootstrap.includes(activation) || bootstrap.indexOf(activation) !== bootstr
 }
 await writeFile(bootstrapPath, bootstrap
   .replace(nativeConnect, 'connect: (_host) => { throw new Error("isolated fixture blocks native messaging") },')
-  .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleDesktopRequest(request) });`), 'utf8')
+  .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleIsolatedFixtureRequest(request) });`), 'utf8')
 const fixtureServer = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
   if (request.url === '/child') {
@@ -176,15 +176,22 @@ async function inspectWorker(webSocketDebuggerUrl) {
   })
   try {
     await send('Runtime.enable')
+    await waitForValue(async () => {
+      const probe = await send('Runtime.evaluate', { expression: 'globalThis.__forgeServiceWorkerBootState?.state', returnByValue: true })
+      return probe.result?.value === 'ready' ? true : undefined
+    }, 'service-worker payload ready')
     const evaluation = await send('Runtime.evaluate', {
       expression: `(async () => {
-        const deadline = Date.now() + 10000;
-        while (globalThis.__forgeServiceWorkerBootState?.state !== 'ready' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
         const [stored, alarm] = await Promise.all([
           chrome.storage.local.get('forge.externalChrome.instanceId.v1'),
           chrome.alarms.get('forge.externalChrome.heartbeat.v2')
         ]);
-        const call = (method, params) => globalThis.__forgeIsolatedFixtureRequest({jsonrpc:'2.0',id:crypto.randomUUID(),method,params});
+        const deadline=Date.now()+10000;
+        const call = async (method, params) => {
+          const response = await globalThis.__forgeIsolatedFixtureRequest({jsonrpc:'2.0',id:crypto.randomUUID(),method,params});
+          globalThis.__forgeIsolatedFixtureLastResponse = response;
+          return response.parsed.result;
+        };
         const detached = async tabId => !(await chrome.debugger.getTargets()).some(target => target.tabId === tabId && target.attached);
         let inventory={tabs:[]};
         while(Date.now()<deadline){
@@ -204,10 +211,15 @@ async function inspectWorker(webSocketDebuggerUrl) {
         };
         const largeNavigation=await run('navigate',{url:${JSON.stringify(fixtureUrl+'large')},readiness:'load',timeoutMs:5000});
         const largeSnapshot=await run('snapshot',{});
+        const largeSnapshotResponse=globalThis.__forgeIsolatedFixtureLastResponse;
         const largeStatus=await run('status',{});
         const largeEvaluate=await run('evaluate',{expression:'document.title',awaitPromise:true,returnByValue:true});
+        const largeResponse=largeSnapshotResponse;
+        const largeRawEnvelopeBytes=new TextEncoder().encode(JSON.stringify(largeResponse.rawEnvelope)).byteLength;
+        const largeFinalEnvelopeBytes=new TextEncoder().encode(JSON.stringify(largeResponse.envelope)).byteLength;
         const largeSnapshotBytes=new TextEncoder().encode(JSON.stringify(largeSnapshot)).byteLength;
-        if(largeNavigation.tab.tabId!==String(tabId)||largeSnapshot.screenshot?.data?.length===0||largeEvaluate.value!=='Forge large automatic fixture'||largeStatus.selectedTab?.tabId!==String(tabId)) throw new Error('large selected-tab snapshot proof failed');
+        const largeCompacted=largeSnapshot.compaction?.omitted!==undefined;
+        if(largeRawEnvelopeBytes<=245760||largeFinalEnvelopeBytes>245760||!largeCompacted||largeSnapshot.screenshot?.data?.length===0||largeEvaluate.value!=='Forge large automatic fixture'||largeStatus.selectedTab?.tabId!==String(tabId)) throw new Error('large selected-tab snapshot envelope proof failed: '+JSON.stringify({largeRawEnvelopeBytes,largeFinalEnvelopeBytes,largeCompacted,screenshot:largeSnapshot.screenshot?.data?.length,largeEvaluate:largeEvaluate.value,selected:largeStatus.selectedTab?.tabId,tabId:String(tabId)}));
         const restored=await run('navigate',{url:${JSON.stringify(fixtureUrl)},readiness:'load',timeoutMs:5000});
         const snapshot=await run('snapshot',{});
         const click=await run('click',{locator:'role=button[name="Increment"]',timeoutMs:5000});
@@ -245,7 +257,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           bootState:globalThis.__forgeServiceWorkerBootState??null,workerLocation:globalThis.location.href,
           acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
-          largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,snapshotCompacted:largeSnapshot.compaction?.omitted!==undefined,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
+          largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,rawEnvelopeBytes:largeRawEnvelopeBytes,finalEnvelopeBytes:largeFinalEnvelopeBytes,snapshotCompacted:largeCompacted,parserAccepted:largeResponse.parsed.result?.ok===true,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
           dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},
@@ -291,7 +303,7 @@ try {
   if (state.acquisition?.acquired !== true || state.debuggerDetached !== true || state.released !== true || state.zeroLeakedLease !== true ||
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
     state.largePage?.navigated !== true || state.largePage?.snapshotSucceeded !== true || state.largePage?.statusSticky !== true ||
-    state.largePage?.evaluateFollowed !== true ||
+    state.largePage?.evaluateFollowed !== true || state.largePage?.snapshotCompacted !== true || state.largePage?.parserAccepted !== true ||
     state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
     state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {

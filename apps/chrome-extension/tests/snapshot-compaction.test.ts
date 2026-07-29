@@ -46,12 +46,39 @@ describe('bounded External Chrome snapshot compaction', () => {
     expect(jsonRpcResponseBytes(id, compacted)).toBeLessThanOrEqual(256 * 1_024 - EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES)
   })
 
+  it('measures finalized metadata at the exact bare-envelope boundary', () => {
+    const budget = 256 * 1_024 - EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES
+    const make = (dataLength: number, consoleEntries: BrowserAutomationResultByOperation['snapshot']['consoleEntries']) => execute({
+      visibleText: '', interactiveElements: [], accessibility: { frames: [] }, networkEntries: [], actionTimeline: [], consoleEntries,
+      screenshot: { mimeType: 'image/png', data: 'A'.repeat(dataLength), width: 900, height: 700 },
+    })
+    let low = 0
+    let high = budget
+    let exactLength: number | null = null
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2)
+      const bytes = jsonRpcResponseBytes(id, make(middle, []))
+      if (bytes === budget) { exactLength = middle; break }
+      if (bytes < budget) low = middle + 1
+      else high = middle - 1
+    }
+    expect(exactLength).not.toBeNull()
+    const entry = { level: 'log', text: 'one', timestamp: new Date(0).toISOString() }
+    const compacted = compactSnapshotForJsonRpc(make(exactLength as number, [entry]), id, 256 * 1_024)
+    expect(jsonRpcResponseBytes(id, compacted)).toBeLessThanOrEqual(budget)
+  })
+
   it('delivers the compacted response through the shared strict JSON-RPC parser', () => {
     const compacted = compactSnapshotForJsonRpc(execute(), id, 256 * 1_024)
     const parsed = parseExternalChromeJsonRpcFrame(JSON.stringify({ jsonrpc: '2.0', id, result: compacted }), {
       expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1,
     })
     expect(parsed).toMatchObject({ result: { ok: true, operation: 'snapshot', result: { compaction: { omitted: expect.any(Object) } } } })
+    const invalid = structuredClone(parsed) as { result: { result: { compaction: { omitted: Record<string, unknown> } } } }
+    invalid.result.result.compaction.omitted = {}
+    expect(() => parseExternalChromeJsonRpcFrame(JSON.stringify(invalid), {
+      expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1,
+    })).toThrow(/omitted must contain at least one positive omission count/u)
   })
 
   it('returns a typed failure when the screenshot alone cannot fit the negotiated envelope', () => {

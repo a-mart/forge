@@ -1074,9 +1074,11 @@ function validateSnapshotCompaction(value: unknown, path: string): void {
   const compaction = object(value, path)
   strictKeys(compaction, path, ['omitted'])
   const omitted = object(compaction.omitted, `${path}.omitted`)
-  strictKeys(omitted, `${path}.omitted`, [], [
+  const keys = [
     'accessibilityNodes', 'consoleEntries', 'networkEntries', 'actionTimelineEntries', 'interactiveElements', 'visibleTextCharacters',
-  ])
+  ] as const
+  strictKeys(omitted, `${path}.omitted`, [], keys)
+  if (Object.keys(omitted).length === 0) fail('invalid-result', `${path}.omitted must contain at least one positive omission count`)
   for (const key of Object.keys(omitted)) integer(omitted[key], `${path}.omitted.${key}`, 1)
 }
 
