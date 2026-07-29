@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { ExternalChromeExecuteParams } from '@forge/protocol'
+import {
+  EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+  type ExternalChromeExecuteParams,
+} from '@forge/protocol'
 import { DebuggerController } from '../src/runtime/debugger-controller.js'
 import { ExternalChromeOperationExecutor } from '../src/runtime/operation-executor.js'
 import { fakeChrome } from './fakes.js'
@@ -154,6 +157,34 @@ describe('ExternalChromeOperationExecutor', () => {
       interactiveElements: [{ role: 'button', name: 'Save' }], consoleEntries: [{ text: 'diagnostic' }],
       screenshot: { mimeType: 'image/png', data: png, width: 4, height: 3 },
     } })
+  })
+
+  it('rejects oversized decoded PNGs with canonical envelope-overflow details before AX capture', async () => {
+    const oversized = pngBase64(4, 3, EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES)
+    let accessibilityCalls = 0
+    const { chrome, controller, executor } = await harness((_target, method, params) => {
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('interactiveElements')) return value({
+        url: 'https://fixture.test/', title: 'Fixture', loading: false, visibleText: '', interactiveElements: [],
+      })
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(1)
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 400, clientHeight: 300, pageX: 0, pageY: 0, scale: 1 } }
+      if (method === 'Page.captureScreenshot') return { data: oversized }
+      if (method === 'Accessibility.getFullAXTree') { accessibilityCalls += 1; return { nodes: [] } }
+      return PASS
+    })
+    const result = await executor.execute(request('snapshot', {}), authority(controller))
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'response-too-large', retryable: false,
+        details: {
+          limitation: 'screenshot-only-envelope-overflow', screenshotBytes: 24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+          screenshotByteUnit: 'decoded-png', maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, maximumByteUnit: 'decoded-png',
+        },
+      },
+    })
+    expect(accessibilityCalls).toBe(0)
+    expect(chrome.attached.has(7)).toBe(true)
   })
 
   it('routes a cross-origin OOPIF only after leased-root ancestry proof', async () => {
@@ -331,8 +362,8 @@ describe('ExternalChromeOperationExecutor', () => {
   })
 })
 
-function pngBase64(width: number, height: number): string {
-  const bytes = new Uint8Array(24)
+function pngBase64(width: number, height: number, additionalBytes = 0): string {
+  const bytes = new Uint8Array(24 + additionalBytes)
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
   const view = new DataView(bytes.buffer)
   view.setUint32(16, width)

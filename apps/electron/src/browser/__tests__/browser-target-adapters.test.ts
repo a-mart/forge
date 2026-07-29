@@ -118,6 +118,32 @@ describe('BrowserTargetAdapter routing', () => {
     })
   })
 
+  it('preserves canonical screenshot overflow details and read-only no-replay semantics', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'response-too-large', message: 'External Chrome screenshot exceeds the decoded PNG byte limit.', retryable: false,
+        details: {
+          limitation: 'screenshot-only-envelope-overflow', screenshotBytes: 196_632, screenshotByteUnit: 'decoded-png',
+          maximumBytes: 196_608, maximumByteUnit: 'decoded-png',
+        },
+      },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+    const requestValue = request('snapshot', {}, 'external-tab-1')
+
+    await expect(adapter.execute(requestValue)).resolves.toMatchObject({
+      ok: false, operation: 'snapshot', error: { code: 'response-too-large', retryable: false, details: { limitation: 'screenshot-only-envelope-overflow', screenshotByteUnit: 'decoded-png' } },
+    })
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' }, request: requestValue,
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'response-too-large', details: { limitation: 'screenshot-only-envelope-overflow' } } },
+      failure: { phase: 'execution', mutationState: 'not-started' },
+    })
+  })
+
   it('classifies mutating execution failures as possible while read-only failures remain replay-safe', async () => {
     const transport = new FakeExternalChromeTransport()
     transport.execute = async () => ({ ok: false, error: { code: 'execution-failed', message: 'failed', retryable: true } })
