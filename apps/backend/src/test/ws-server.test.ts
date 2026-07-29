@@ -4388,7 +4388,7 @@ describe('SwarmWebSocketServer', () => {
       expect(createdEvent.manager.managerId).toBe(createdEvent.manager.agentId)
       expect(createdEvent.manager.model).toEqual({
         provider: 'anthropic',
-        modelId: 'claude-opus-4-8',
+        modelId: 'claude-opus-5',
         thinkingLevel: 'high',
       })
     }

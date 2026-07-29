@@ -159,6 +159,19 @@ describe('SessionModelPicker compact menu', () => {
     expect(getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })).toBeTruthy()
   })
 
+  it('distinguishes Opus 5 xhigh from max while keeping legacy GPT xhigh as Max', async () => {
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, {
+      currentModel: { provider: 'anthropic', modelId: 'claude-opus-5', thinkingLevel: 'xhigh' },
+    })
+
+    expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
+    await openPicker()
+    await openSubmenu(/Reasoning/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Extra High' })).toBeTruthy()
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Max' })).toBeTruthy()
+  })
+
   it('applies a reasoning override immediately', async () => {
     const onUpdate = vi.fn(async () => {})
     renderPicker(onUpdate)

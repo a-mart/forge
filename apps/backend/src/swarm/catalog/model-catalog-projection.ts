@@ -6,6 +6,8 @@ import {
   getCatalogModel,
   type ForgeProviderDefinition,
   type ForgeThinkingLevelMap,
+  type ForgePiModelCompat,
+  type ForgePiModelCost,
 } from "@forge/protocol";
 import { getSharedCacheGeneratedDir } from "../data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -34,7 +36,7 @@ interface PiModelDefinition {
   authScope?: "any" | "oauth";
   reasoning?: boolean;
   input?: string[];
-  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  cost?: ForgePiModelCost;
   contextWindow?: number;
   maxTokens?: number;
   headers?: Record<string, string>;
@@ -47,7 +49,9 @@ interface PiModelOverride {
   reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
+  cost?: ForgePiModelCost;
   thinkingLevelMap?: ForgeThinkingLevelMap;
+  compat?: Record<string, unknown>;
 }
 
 export function getPiModelsProjectionPath(dataDir: string): string {
@@ -113,6 +117,16 @@ function projectThinkingLevelMap(model: object | undefined): { thinkingLevelMap?
   return thinkingLevelMap ? { thinkingLevelMap: { ...thinkingLevelMap } } : {};
 }
 
+function projectPiCompat(model: object | undefined): { compat?: Record<string, unknown> } {
+  const compat = (model as { piCompat?: ForgePiModelCompat } | undefined)?.piCompat;
+  return compat ? { compat: { ...compat } } : {};
+}
+
+function projectPiCost(model: object | undefined): { cost?: ForgePiModelCost } {
+  const cost = (model as { piCost?: ForgePiModelCost } | undefined)?.piCost;
+  return cost ? { cost: { ...cost } } : {};
+}
+
 function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderConfig | undefined {
   // Keep curated models in the projection even when user-disabled so existing sessions,
   // specialists, and manual configs still resolve to Forge-owned runtime metadata.
@@ -137,6 +151,8 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
         contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
         maxTokens: model.maxOutputTokens,
         ...projectThinkingLevelMap(model),
+        ...projectPiCompat(model),
+        ...projectPiCost(model),
       };
       continue;
     }
@@ -150,6 +166,8 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
         contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
         maxTokens: model.maxOutputTokens,
         ...projectThinkingLevelMap(model),
+        ...projectPiCompat(model),
+        ...projectPiCost(model),
       });
     }
   }
@@ -220,6 +238,7 @@ function generateApprovedProviderProjection(provider: ForgeProviderDefinition): 
           }
         : {}),
       ...(upstream?.headers ? { headers: { ...upstream.headers } } : {}),
+      ...projectPiCost(catalogModel ?? upstream),
       ...projectThinkingLevelMap(catalogModel ?? upstream),
       ...(upstream?.compat ? { compat: structuredClone(upstream.compat) } : {}),
     };
@@ -254,5 +273,6 @@ function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition
       contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
       maxTokens: model.maxOutputTokens,
       ...projectThinkingLevelMap(model),
+      ...projectPiCost(model),
     }));
 }

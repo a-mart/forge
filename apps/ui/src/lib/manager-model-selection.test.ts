@@ -98,6 +98,19 @@ describe('buildManagerModelRows provider availability gating', () => {
     expect(grokRows.every((row) => row.unavailableReason)).toBe(true)
   })
 
+  it('includes Claude Opus 5 with both xhigh and max reasoning levels', () => {
+    const rows = buildManagerModelRows('create', {}, { anthropic: true })
+    const opus = rows.find((row) => row.key === 'anthropic::claude-opus-5')
+
+    expect(opus).toMatchObject({
+      provider: 'anthropic',
+      modelId: 'claude-opus-5',
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+    })
+    expect(opus?.unavailableReason).toBeUndefined()
+  })
+
   it('includes Claude Fable 5 with its catalog reasoning levels', () => {
     const rows = buildManagerModelRows('create', {}, { anthropic: true })
     const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5')

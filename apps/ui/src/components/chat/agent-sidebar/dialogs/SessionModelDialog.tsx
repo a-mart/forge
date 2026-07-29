@@ -27,16 +27,7 @@ import {
   encodeManagerModelValue,
   groupManagerModelRows,
 } from '@/lib/manager-model-selection'
-
-const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
-  none: 'None',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Max',
-  max: 'Max',
-  ultra: 'Ultra',
-}
+import { formatManagerReasoningLevel } from '@/lib/reasoning-level-labels'
 
 export function SessionModelDialog({
   apiClient,
@@ -245,7 +236,7 @@ export function SessionModelDialog({
               <SelectContent>
                 {availableReasoningLevels.map((level) => (
                   <SelectItem key={level} value={level}>
-                    {REASONING_LEVEL_LABELS[level]}
+                    {formatManagerReasoningLevel(level, availableReasoningLevels)}
                   </SelectItem>
                 ))}
               </SelectContent>

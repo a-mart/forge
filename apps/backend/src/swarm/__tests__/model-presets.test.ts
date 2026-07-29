@@ -186,7 +186,22 @@ describe("model-presets", () => {
     })).toBe("low");
   });
 
-  it("keeps catalog Opus and Sonnet reasoning constrained to low, medium, and high", () => {
+  it("exposes Opus 5 with its full adaptive-thinking reasoning scale", () => {
+    for (const level of ["none", "low", "medium", "high", "xhigh", "max"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId: "claude-opus-5",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "anthropic",
+      modelId: "claude-opus-5",
+      thinkingLevel: "none",
+    })).toBe("none");
+  });
+
+  it("keeps legacy Opus and Sonnet reasoning constrained to low, medium, and high", () => {
     for (const modelId of ["claude-opus-4-8", "claude-sonnet-5"] as const) {
       for (const level of ["low", "medium", "high"] as const) {
         expect(normalizeThinkingLevelForModelDescriptor({

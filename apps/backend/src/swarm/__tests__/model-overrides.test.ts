@@ -60,10 +60,10 @@ describe("model-overrides", () => {
     expect(service.getEffectiveContextWindow("claude-opus-4-6")).toBe(300_000);
     expect(service.isModelEnabled("claude-opus-4-6")).toBe(false);
     const opusPreset = service.getModelPresetInfoList().find((preset) => preset.presetId === "pi-opus");
-    expect(opusPreset?.modelId).toBe("claude-opus-4-8");
+    expect(opusPreset?.modelId).toBe("claude-opus-5");
     expect(service.resolveModelDescriptorFromFamily("pi-opus")).toEqual({
       provider: "anthropic",
-      modelId: "claude-opus-4-8",
+      modelId: "claude-opus-5",
       thinkingLevel: "high",
     });
   });

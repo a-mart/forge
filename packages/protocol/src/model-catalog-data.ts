@@ -105,9 +105,9 @@ export const FORGE_MODEL_CATALOG = {
     },
     'pi-opus': {
       familyId: 'pi-opus',
-      displayName: 'Claude Opus 4.8',
+      displayName: 'Claude Opus 5',
       provider: 'anthropic',
-      defaultModelId: 'claude-opus-4-8',
+      defaultModelId: 'claude-opus-5',
       defaultReasoningLevel: 'high',
       visibleInCreateManager: true,
       visibleInChangeManager: true,
@@ -280,12 +280,33 @@ export const FORGE_MODEL_CATALOG = {
     },
 
     // ── Anthropic models ────────────────────────────────
+    'claude-opus-5': {
+      modelId: 'claude-opus-5',
+      provider: 'anthropic',
+      familyId: 'pi-opus',
+      displayName: 'Claude Opus 5',
+      isFamilyDefault: true,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+      piCompat: { forceAdaptiveThinking: true, supportsTemperature: false },
+      piCost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      enabledByDefault: true,
+      piUpstreamId: 'claude-opus-5',
+      intentionalDivergenceNotes:
+        'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships claude-opus-5.',
+    },
     'claude-opus-4-8': {
       modelId: 'claude-opus-4-8',
       provider: 'anthropic',
       familyId: 'pi-opus',
       displayName: 'Claude Opus 4.8',
-      isFamilyDefault: true,
+      isFamilyDefault: false,
       supportsReasoning: true,
       supportedReasoningLevels: ['low', 'medium', 'high'],
       defaultReasoningLevel: 'high',
@@ -296,7 +317,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'claude-opus-4-8',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships claude-opus-4-8.',
+        'Intentional divergence: Claude Opus 4.8 is restricted to low, medium, and high reasoning levels.',
     },
     'claude-opus-4-7': {
       modelId: 'claude-opus-4-7',

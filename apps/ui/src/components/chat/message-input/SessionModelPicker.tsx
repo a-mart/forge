@@ -27,27 +27,9 @@ import {
   groupManagerModelRows,
 } from '@/lib/manager-model-selection'
 import { cn } from '@/lib/utils'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 import { resolveSessionModelPickerApiClient } from './session-model-picker-target'
 import type { SessionModelPickerConfig } from './types'
-
-const REASONING_LEVEL_LABELS: Record<string, string> = {
-  none: 'None',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Max',
-  'x-high': 'Max',
-  max: 'Max',
-  ultra: 'Ultra',
-}
-
-function formatReasoningLevel(level: string): string {
-  const knownLabel = REASONING_LEVEL_LABELS[level]
-  if (knownLabel) return knownLabel
-
-  const words = level.replaceAll(/[-_]+/g, ' ').trim()
-  return words ? `${words[0]?.toUpperCase() ?? ''}${words.slice(1)}` : 'Default'
-}
 
 function asManagerReasoningLevel(level: string): ManagerReasoningLevel {
   if (level === 'x-high') return 'xhigh'
@@ -110,7 +92,10 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
   )
   const modelLabel = catalogModel?.displayName ?? config.currentModel.modelId
   const reasoning = asManagerReasoningLevel(config.currentModel.thinkingLevel)
-  const reasoningLabel = formatReasoningLevel(config.currentModel.thinkingLevel)
+  const reasoningLabel = formatReasoningLevel(
+    config.currentModel.thinkingLevel,
+    catalogModel?.supportedReasoningLevels,
+  )
   const effectiveLabel = `${modelLabel} · ${reasoningLabel}`
   const originLabel = config.modelOrigin === 'session_override' ? 'session override' : 'project default'
 
@@ -272,7 +257,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
             <DropdownMenuRadioGroup value={reasoning} onValueChange={selectReasoning}>
               {reasoningLevels.map((level) => (
                 <DropdownMenuRadioItem key={level} value={level} disabled={saving}>
-                  {formatReasoningLevel(level)}
+                  {formatReasoningLevel(level, reasoningLevels)}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>

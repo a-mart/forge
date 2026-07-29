@@ -1336,7 +1336,7 @@ Never use plain assistant text for user communication.`
     })
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
+      modelId: 'claude-opus-5',
       thinkingLevel: 'high',
     })
     expect(cursorAliasManager.model).toEqual({
@@ -1613,7 +1613,7 @@ Never use plain assistant text for user communication.`
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
+      modelId: 'claude-opus-5',
       thinkingLevel: 'high',
     })
 

@@ -8,6 +8,17 @@ export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
 export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type ForgeThinkingLevelMap = Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>
+/** Pi's per-million-token pricing fields for Forge-curated synthetic models. */
+export interface ForgePiModelCost {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}
+export interface ForgePiModelCompat {
+  forceAdaptiveThinking?: boolean
+  supportsTemperature?: boolean
+}
 export type ForgeProviderCredentialAuthType = 'api_key' | 'oauth' | 'unknown'
 export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool' | 'central_broker'
 
@@ -85,6 +96,10 @@ export interface ForgeModelDefinition {
   discovered?: boolean
   webSearchCapability: ForgeWebSearchCapability
   thinkingLevelMap?: ForgeThinkingLevelMap
+  /** Pi runtime compatibility flags needed when projecting synthetic models. */
+  piCompat?: ForgePiModelCompat
+  /** Pi cost metadata needed when projecting synthetic models absent from upstream. */
+  piCost?: ForgePiModelCost
   enabledByDefault: boolean
   /** Pi upstream source metadata for audit; null for synthetic entries */
   piUpstreamId: string | null

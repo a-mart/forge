@@ -180,6 +180,61 @@ describe("model-catalog-projection", () => {
     expect(projectedFable?.cost).toEqual(upstreamFable?.cost);
   });
 
+  it("projects pending Opus 5 with adaptive-thinking compatibility metadata", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    expect(getModels("anthropic").some((model) => model.id === "claude-opus-5")).toBe(false);
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-opus5-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        models?: Array<{
+          id: string;
+          contextWindow?: number;
+          maxTokens?: number;
+          thinkingLevelMap?: Record<string, string | null>;
+          cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+          compat?: Record<string, unknown>;
+        }>;
+      }>;
+    };
+    const projectedOpus5 = projection.providers.anthropic?.models?.find((model) => model.id === "claude-opus-5");
+
+    expect(projectedOpus5).toMatchObject({
+      id: "claude-opus-5",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => {
+        contextWindow?: number;
+        maxTokens?: number;
+        cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+        compat?: Record<string, unknown>;
+        thinkingLevelMap?: Record<string, string | null>;
+      } | undefined;
+    };
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("anthropic", "claude-opus-5")).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+    expect(registry.find("anthropic", "claude-opus-5")?.thinkingLevelMap).not.toHaveProperty("off");
+  });
+
   it("adds user-selected OpenRouter models as a custom provider merge block", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-"));
     const dataDir = join(rootDir, "data");

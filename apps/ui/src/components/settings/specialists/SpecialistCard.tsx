@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { SpecialistBadge } from '@/components/chat/SpecialistBadge'
 import { getModelDisplayLabel, getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
 import type { SpecialistCardProps } from './types'
-import { REASONING_LEVEL_LABELS } from './types'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 import {
   getBehaviorModeCardMetadata,
   normalizeHandle,
@@ -53,18 +53,27 @@ export function SpecialistCard({
   const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
   const behaviorMode = getBehaviorModeCardMetadata(specialist.specialistId)
   const usesTierModel = !!behaviorMode || (!specialist.modelId && !!specialist.defaultTier)
+  const specialistSupportedLevels = specialist.modelId
+    ? getSupportedReasoningLevelsForModelId(specialist.modelId, modelPresets, specialist.provider)
+    : undefined
+  const fallbackSupportedLevels = specialist.fallbackModelId
+    ? getSupportedReasoningLevelsForModelId(specialist.fallbackModelId, modelPresets, specialist.fallbackProvider)
+    : undefined
 
   // Compact summary values (used in collapsed state)
   const modelDisplay = specialist.modelId
     ? getModelDisplayLabel(specialist.modelId, modelPresets, specialist.provider)
     : null
-  const reasoningLabel = REASONING_LEVEL_LABELS[specialist.reasoningLevel ?? 'high'] ?? specialist.reasoningLevel ?? 'High'
+  const reasoningLabel = formatReasoningLevel(
+    specialist.reasoningLevel ?? 'high',
+    specialistSupportedLevels,
+  )
   const hasFallback = !!specialist.fallbackModelId
   const fallbackLabel = hasFallback
     ? getModelDisplayLabel(specialist.fallbackModelId!, modelPresets, specialist.fallbackProvider)
     : null
   const fallbackReasoningLabel = specialist.fallbackReasoningLevel
-    ? REASONING_LEVEL_LABELS[specialist.fallbackReasoningLevel] ?? specialist.fallbackReasoningLevel
+    ? formatReasoningLevel(specialist.fallbackReasoningLevel, fallbackSupportedLevels)
     : null
 
   const stopPropagation = (e: React.MouseEvent) => e.stopPropagation()
@@ -348,7 +357,7 @@ export function SpecialistCard({
                 <SelectContent>
                   {supportedLevels.map((level) => (
                     <SelectItem key={level} value={level} className="text-xs">
-                      {REASONING_LEVEL_LABELS[level] || level}
+                      {formatReasoningLevel(level, supportedLevels)}
                     </SelectItem>
                   ))}
                 </SelectContent>
