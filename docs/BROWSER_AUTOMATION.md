@@ -43,6 +43,12 @@ The common operation set is:
 - JavaScript evaluation; and
 - bounded wait (`waitFor` in protocol v2).
 
+### External Chrome snapshot response bounds
+
+An External Chrome snapshot preserves its PNG screenshot unchanged. If the successful JSON-RPC response would exceed the negotiated bounded response envelope, the extension measures the complete UTF-8 response and deterministically compacts only optional snapshot data: it drops console, network, and action-timeline diagnostics; bounds accessibility nodes; keeps a bounded prefix of visible text; and retains the largest fitting prefix of interactive elements. If that still does not fit, accessibility data, interactive elements, and visible text may be omitted as a final fallback. The screenshot is never dropped, recompressed, or replaced.
+
+A compacted successful snapshot includes `compaction.omitted` with positive counts for each omitted source category (`accessibilityNodes`, `consoleEntries`, `networkEntries`, `actionTimelineEntries`, `interactiveElements`, and/or `visibleTextCharacters`). `compaction` is absent when nothing was omitted. If the screenshot alone cannot fit the response envelope, the operation returns non-retryable `response-too-large` with `details.limitation: screenshot-only-envelope-overflow` rather than overflowing the relay or silently dropping the image.
+
 Physical viewport resize and recording start/stop are embedded-only. Chrome also has no managed download workflow, saved download artifacts, opening of downloaded files, standalone screenshot export controls, or dock/pop-out view. A Chrome snapshot can still return bounded transient page and PNG data to the active operation.
 
 The Desktop activity rail has one **Browser** workspace:
