@@ -47,8 +47,10 @@ describe('service-worker restart debugger reconciliation', () => {
       debuggerSessions: [],
     })
     await vi.waitFor(() => expect(port.sent).toContainEqual(expect.objectContaining({
-      method: 'browser.leaseChanged',
-      params: expect.objectContaining({ leaseId: 'lease', leaseEpoch: 1, state: 'acquired', tabIds: [7] }),
+      method: 'browser.authoritySnapshot',
+      params: expect.objectContaining({
+        reports: [expect.objectContaining({ leaseId: 'lease', leaseEpoch: 1, state: 'acquired', tabIds: [7] })],
+      }),
     })))
 
     const released = await (runtime as unknown as {
@@ -85,10 +87,13 @@ describe('service-worker restart debugger reconciliation', () => {
     }
     expect(authorities.authorities.releaseScope('lease', 2)).toEqual([7])
     await vi.waitFor(() => expect(port.sent).toContainEqual(expect.objectContaining({
-      method: 'browser.leaseChanged',
-      params: expect.objectContaining({ leaseId: 'lease', leaseEpoch: 2, state: 'released', tabIds: [7] }),
+      method: 'browser.authoritySnapshot',
+      params: expect.objectContaining({
+        reports: [expect.objectContaining({ leaseId: 'lease', leaseEpoch: 2, state: 'released', tabIds: [7] })],
+      }),
     })))
     expect(local.values['forge.externalChrome.releaseReceipts.v2']).toMatchObject({
+      schemaVersion: 2,
       receipts: [expect.objectContaining({ ownerId: 'lease', ownerEpoch: 2, tabIds: [7] })],
     })
     await runtime.shutdown()

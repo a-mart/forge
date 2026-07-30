@@ -1,6 +1,10 @@
 import { installedChrome } from '../../runtime/chrome-api.js'
 import { installSingletonContentBridge } from '../../runtime/content-bridge-singleton.js'
-import { isTrustedHumanInterruption } from '../../runtime/human-control.js'
+import {
+  ExactSyntheticInputGuard,
+  installExactTrustedInputListeners,
+  parseSyntheticTrustedEventSequence,
+} from '../../runtime/human-control.js'
 
 const ROOT_ID = '__forge_external_chrome_status__'
 const FAVICON_MARK = 'data-forge-external-status'
@@ -10,7 +14,7 @@ installSingletonContentBridge(globalThis as unknown as Record<string, unknown>, 
   const chromeApi = installedChrome()
   const nonce = crypto.randomUUID()
   const port = chromeApi.runtime.connect({ name: `forge-leased-frame:${nonce}` })
-  let syntheticUntil = 0
+  const syntheticGuard = new ExactSyntheticInputGuard()
   let activeControlEpoch = 0
   let activeOperationId: string | null = null
   let controlState: ControlState = 'human'
@@ -68,7 +72,7 @@ installSingletonContentBridge(globalThis as unknown as Record<string, unknown>, 
   }
 
   function trustedInput(event: Event): void {
-    if (!isTrustedHumanInterruption({ isTrusted: event.isTrusted, observedAt: performance.now(), syntheticUntil })) return
+    activeOperationId = null
     setState('human')
     port.postMessage({ type: 'trusted-human-input', nonce, controlEpoch: activeControlEpoch, event: inputKind(event), at: new Date().toISOString() })
   }
@@ -81,8 +85,7 @@ installSingletonContentBridge(globalThis as unknown as Record<string, unknown>, 
     element.style.top = `${Math.max(0, event.clientY - 9)}px`
   }
 
-  const trustedEventNames = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const
-  for (const eventName of trustedEventNames) globalThis.addEventListener(eventName, trustedInput, { capture: true, passive: true })
+  const removeTrustedInputListeners = installExactTrustedInputListeners(globalThis, syntheticGuard, trustedInput)
   globalThis.addEventListener('pointermove', pointerMove, { capture: true, passive: true })
 
   const onMessage = (message: unknown): void => {
@@ -90,24 +93,30 @@ installSingletonContentBridge(globalThis as unknown as Record<string, unknown>, 
     const command = message as Record<string, unknown>
     if (command.nonce !== nonce) return
     if (command.type === 'synthetic-start' && typeof command.operationId === 'string' && Number.isSafeInteger(command.controlEpoch)) {
-      syntheticUntil = performance.now() + Math.min(5_000, typeof command.durationMs === 'number' ? command.durationMs : 1_000)
+      const expectedEvents = parseSyntheticTrustedEventSequence(command.expectedEvents)
+      if (expectedEvents === null) return
       activeOperationId = command.operationId
       activeControlEpoch = command.controlEpoch as number
+      syntheticGuard.start(activeOperationId, activeControlEpoch, expectedEvents)
       setState('agent')
       port.postMessage({ type: 'synthetic-ack', nonce, operationId: activeOperationId, controlEpoch: activeControlEpoch })
-    } else if (command.type === 'synthetic-end' && command.operationId === activeOperationId && command.controlEpoch === activeControlEpoch) {
-      syntheticUntil = 0
+    } else if (command.type === 'synthetic-end' && activeOperationId !== null && command.operationId === activeOperationId && command.controlEpoch === activeControlEpoch) {
+      syntheticGuard.end(activeOperationId, activeControlEpoch)
       activeOperationId = null
     } else if (command.type === 'status' &&
       (command.state === 'human' || command.state === 'agent' || command.state === 'attached-idle' || command.state === 'detached')) {
       if (Number.isSafeInteger(command.controlEpoch)) activeControlEpoch = command.controlEpoch as number
+      if (command.state !== 'agent') {
+        syntheticGuard.clear()
+        activeOperationId = null
+      }
       setState(command.state)
     }
   }
   port.onMessage.addListener(onMessage)
   port.onDisconnect.addListener(() => {
     port.onMessage.removeListener?.(onMessage)
-    for (const eventName of trustedEventNames) globalThis.removeEventListener(eventName, trustedInput, { capture: true })
+    removeTrustedInputListeners()
     globalThis.removeEventListener('pointermove', pointerMove, { capture: true })
     setState('detached')
     disposeSingleton()

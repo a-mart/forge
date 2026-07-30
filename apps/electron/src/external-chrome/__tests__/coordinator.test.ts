@@ -158,7 +158,7 @@ async function sendCoordinatorRuntimeHello(
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
       protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
       extensionId: EXTERNAL_CHROME_EXTENSION_ID, extensionInstanceId, chromeVersion: '125.0.0.0',
-      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.inventory', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
+      methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.inventory', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.acknowledgeRelease', 'forge.browser.reveal', 'forge.browser.execute', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'browser.authoritySnapshot', 'runtime.goodbye'],
       maxMessageBytes: 262144,
       operations: ['status', 'open', 'navigate', 'resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'].map((operation) => ({
         operation, supported: !['resize', 'recordingStart', 'recordingStop'].includes(operation), ...(!['resize', 'recordingStart', 'recordingStop'].includes(operation) ? {} : { reason: 'physical viewport and recording disabled' }),
@@ -167,6 +167,11 @@ async function sendCoordinatorRuntimeHello(
     },
   })
   await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1 } })
+  await client.send({
+    jsonrpc: '2.0', method: 'browser.authoritySnapshot',
+    params: { protocolVersion: 1, snapshotId: `snapshot-${extensionInstanceId}`, reports: [] },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
 async function lifecycleExtensionLoop(
@@ -198,6 +203,11 @@ async function lifecycleExtensionLoop(
     } else if (message.method === 'forge.browser.release') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: [40],
+      } })
+    } else if (message.method === 'forge.browser.acknowledgeRelease') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        releasedTabIds: params.releasedTabIds, acknowledged: true,
       } })
     }
   }
@@ -316,10 +326,10 @@ describe('ExternalChromeHostCoordinator', () => {
     await expect(restarted.remove()).resolves.toMatchObject({
       state: 'disabled', auth: 'missing', registration: 'not-registered', recovery: 'ready',
     })
-    expect(retryRequests.map((request) => request.method)).toEqual([
-      'forge.runtime.prepareUpdate', 'forge.browser.release',
-    ])
-    expect(retryRequests[1]?.params).toMatchObject({
+    expect(retryRequests.map((request) => request.method)).toEqual(expect.arrayContaining([
+      'forge.runtime.prepareUpdate', 'forge.browser.release', 'forge.browser.acknowledgeRelease',
+    ]))
+    expect(retryRequests.find((request) => request.method === 'forge.browser.release')?.params).toMatchObject({
       leaseId: durableLease!.leaseId, leaseEpoch: 17, reason: 'desktop-restart',
     })
     expect(await restarted.transport().leaseCheckpoints()).toEqual([])
@@ -562,6 +572,10 @@ describe('ExternalChromeHostCoordinator', () => {
     const coordinator = new ExternalChromeHostCoordinator({
       dataRoot, platform: 'linux', pid: 515, username: 'marker-user', uid: 516,
       instanceId: 'desktop_marker_test', access, endpoints, registration, isProcessAlive: () => false, deploymentVerifier: deployer,
+      authority: new ExternalChromeAuthorityStore(
+        dataRoot, 'linux', 'desktop_marker_test', 515, access, () => false, Date.now,
+        path.join(dataRoot, '..', 'marker-authority.json'),
+      ),
     })
     await coordinator.enable()
     const authBeforeRemove = await readFile(paths.authKey, 'utf8')

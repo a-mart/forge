@@ -21,6 +21,7 @@ import {
 } from '@forge/protocol'
 import type { ChromeTab } from './chrome-api.js'
 import { DebuggerController, type DebuggerRoute } from './debugger-controller.js'
+import type { SyntheticTrustedEventSignature } from './human-control.js'
 
 const POLL_MS = 50
 const MAX_OPERATION_RESULT_BYTES = EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES - EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES
@@ -36,8 +37,8 @@ interface OperationAuthority {
   navigationGeneration: number
   /** Revokes lease authority, detaches, and settles all outstanding CDP work. */
   cancelOutstanding(): Promise<void>
-  /** Brackets only the actual CDP input dispatch, never locator polling or arbitrary evaluation. */
-  beginSyntheticInput?(): Promise<void>
+  /** Brackets only the actual CDP input dispatch with its exact trusted DOM event sequence. */
+  beginSyntheticInput?(expectedEvents: readonly SyntheticTrustedEventSignature[]): Promise<void>
   endSyntheticInput?(): void
 }
 
@@ -281,7 +282,7 @@ export class ExternalChromeOperationExecutor {
     }
     let syntheticInput = false
     try {
-      await authority.beginSyntheticInput?.()
+      await authority.beginSyntheticInput?.(pointerClickSequence(point.x, point.y))
       syntheticInput = true
       await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none' })
       await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 })
@@ -317,7 +318,9 @@ export class ExternalChromeOperationExecutor {
     if (input.text.length > 0) {
       let syntheticInput = false
       try {
-        await authority.beginSyntheticInput?.()
+        // insertText emits beforeinput/input rather than one of the trusted physical-input
+        // sentinels. An empty expectation means any interleaved trusted event interrupts.
+        await authority.beginSyntheticInput?.([])
         syntheticInput = true
         await this.command(params, authority, route, 'Input.insertText', { text: input.text })
       } finally {
@@ -335,7 +338,7 @@ export class ExternalChromeOperationExecutor {
     let down = false
     let syntheticInput = false
     try {
-      await authority.beginSyntheticInput?.()
+      await authority.beginSyntheticInput?.(keyPressSequence(event.down))
       syntheticInput = true
       await this.command(params, authority, route, 'Input.dispatchKeyEvent', { type: 'keyDown', ...event.down })
       down = true
@@ -665,6 +668,33 @@ function focusedEditableExpression(clear: boolean): string {
 }
 function windowScrollExpression(x: number, y: number): string { return `(() => { window.scrollBy({left:${JSON.stringify(x)},top:${JSON.stringify(y)},behavior:'instant'}); return {scrollX:window.scrollX,scrollY:window.scrollY}; })()` }
 function bodyTextExpression(text: string): string { return `(() => { const query=${JSON.stringify(text)}; const docs=[]; const visit=doc=>{if(!doc||docs.length>=32)return;docs.push(doc);for(const frame of Array.from(doc.querySelectorAll('iframe,frame'))){try{visit(frame.contentDocument)}catch{}}};visit(document);return docs.some(doc=>(doc.body?.innerText||'').includes(query)); })()` }
+
+function pointerClickSequence(clientX: number, clientY: number): SyntheticTrustedEventSignature[] {
+  const modifiers = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false }
+  return [
+    { kind: 'pointer', phase: 'pointermove', clientX, clientY, button: -1, buttons: 0, pointerType: 'mouse', isPrimary: true, ...modifiers },
+    { kind: 'pointer', phase: 'pointerdown', clientX, clientY, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, ...modifiers },
+    { kind: 'pointer', phase: 'pointerup', clientX, clientY, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true, ...modifiers },
+  ]
+}
+
+function keyPressSequence(down: Record<string, unknown>): SyntheticTrustedEventSignature[] {
+  const modifierBits = typeof down.modifiers === 'number' ? down.modifiers : 0
+  const common = {
+    key: String(down.key ?? ''),
+    code: String(down.code ?? ''),
+    location: 0,
+    repeat: false,
+    altKey: (modifierBits & 1) !== 0,
+    ctrlKey: (modifierBits & 2) !== 0,
+    metaKey: (modifierBits & 4) !== 0,
+    shiftKey: (modifierBits & 8) !== 0,
+  }
+  return [
+    { kind: 'key', phase: 'keydown', ...common },
+    { kind: 'key', phase: 'keyup', ...common },
+  ]
+}
 
 function keyEvent(key: string, modifiers: readonly string[]): { down: Record<string, unknown>; up: Record<string, unknown> } {
   const bits: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 }

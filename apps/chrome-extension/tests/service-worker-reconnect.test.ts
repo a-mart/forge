@@ -67,7 +67,9 @@ describe('service-worker native relay recovery', () => {
     runtime.onShellEvent('alarm', [{ name: 'forge.externalChrome.transportGrace.v2' }])
     expect(attempts).toBe(3)
     await vi.waitFor(() => expect(ports[1]?.sent).toContainEqual(expect.objectContaining({
-      method: 'browser.leaseChanged', params: expect.objectContaining({ state: 'released', tabIds: [7] }),
+      method: 'browser.authoritySnapshot', params: expect.objectContaining({
+        reports: [expect.objectContaining({ state: 'released', tabIds: [7] })],
+      }),
     })))
 
     await runtime.shutdown()

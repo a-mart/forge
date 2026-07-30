@@ -198,6 +198,37 @@ describe('service-worker control-session lifecycle', () => {
     await expect(releaseOwner(runtime, 'lease', 1, 'lost-prepare-ack')).resolves.toMatchObject({ releasedTabIds: [7] })
   })
 
+  it('serializes shutdown cleanup behind an admitted acquisition so the new authority is receipted', async () => {
+    const chrome = configuredChrome([TAB])
+    const get = chrome.tabs.get.bind(chrome.tabs)
+    let enteredGet!: () => void
+    let continueGet!: () => void
+    const getEntered = new Promise<void>((resolve) => { enteredGet = resolve })
+    const getGate = new Promise<void>((resolve) => { continueGet = resolve })
+    chrome.tabs.get = async (tabId) => { enteredGet(); await getGate; return get(tabId) }
+    const runtime = new Runtime({ chrome })
+    const request = (message: Record<string, unknown>) => (runtime as unknown as {
+      handleDesktopRequest(value: Record<string, unknown>): Promise<Record<string, unknown>>
+    }).handleDesktopRequest(message)
+
+    const acquiring = request({
+      jsonrpc: '2.0', id: 'acquire-before-shutdown', method: 'forge.browser.acquire',
+      params: { protocolVersion: 1, sessionAgentId: 'session', leaseId: 'lease-shutdown', leaseEpoch: 4, tabId: 7, createIfNeeded: false },
+    })
+    await getEntered
+    const shuttingDown = runtime.shutdown()
+    let shutdownSettled = false
+    void shuttingDown.finally(() => { shutdownSettled = true })
+    await Promise.resolve()
+    expect(shutdownSettled).toBe(false)
+    continueGet()
+
+    await expect(acquiring).resolves.toMatchObject({ leaseId: 'lease-shutdown', leaseEpoch: 4, tab: { tabId: 7 } })
+    await expect(shuttingDown).resolves.toBeUndefined()
+    expect(runtime.diagnostics().authorities).toEqual([])
+    await expect(releaseOwner(runtime, 'lease-shutdown', 4, 'lost-shutdown-ack')).resolves.toMatchObject({ releasedTabIds: [7] })
+  })
+
   it('does not orphan a debugger when terminal release races an in-progress physical attach', async () => {
     const chrome = configuredChrome([TAB])
     const attach = chrome.debugger.attach.bind(chrome.debugger)

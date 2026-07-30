@@ -21,6 +21,7 @@ import {
 } from '../../runtime/control-session-manager.js'
 import { installedChrome, type ChromeApi, type ChromeRuntimePort, type ChromeRuntimeSender, type ChromeTab } from '../../runtime/chrome-api.js'
 import { PAYLOAD_VERSION } from '../../runtime/identity.js'
+import type { SyntheticTrustedEventSignature } from '../../runtime/human-control.js'
 import { LeaseError, LeaseManager, type TabAuthorityRecord } from '../../runtime/lease-manager.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
 import { ExternalChromeOperationExecutor } from '../../runtime/operation-executor.js'
@@ -216,12 +217,14 @@ export class Runtime implements ServiceWorkerPayload {
         this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: TRANSPORT_GRACE_DELAY_MINUTES })
         // Transport uncertainty revokes synthetic authority and physically detaches immediately;
         // the alarm remains only a durable retry edge if MV3 suspends this worker.
-        void this.terminateAll('transport-uncertain').catch(() => undefined)
+        void this.serializeAuthorityWork(() => this.terminateAll('transport-uncertain')).catch(() => undefined)
         this.native?.reconnectNow()
       },
       onConnected: () => {
         void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM)
-        this.reportLeaseState()
+        // A complete snapshot is ordered after any disconnect cleanup and before a newly
+        // reconnected Desktop can reconcile an interrupted pre-acquisition journal.
+        void this.serializeAuthorityWork(async () => { this.reportAuthoritySnapshot() }).catch(() => undefined)
         if (this.pendingClosedTabReceipts.size > 0) void this.retryClosedTabReceipts().catch(() => undefined)
       },
       onRequest: (message) => this.handleDesktopRequest(message),
@@ -247,7 +250,7 @@ export class Runtime implements ServiceWorkerPayload {
           // The durable alarm is the recovery edge after Desktop closes an old epoch.
           this.native?.stop()
           this.native?.start()
-          void this.terminateAll('transport-uncertain').catch(() => undefined)
+          void this.serializeAuthorityWork(() => this.terminateAll('transport-uncertain')).catch(() => undefined)
         }
         return undefined
       }
@@ -263,7 +266,7 @@ export class Runtime implements ServiceWorkerPayload {
   async shutdown(): Promise<void> {
     this.acceptingOperations = false
     this.native?.stop()
-    await this.terminateAll('runtime-shutdown')
+    await this.serializeAuthorityWork(() => this.terminateAll('runtime-shutdown'))
   }
 
   /** Disposable fixture seam: exercises the same compactor and shared parser as NativeRpcClient. */
@@ -287,19 +290,22 @@ export class Runtime implements ServiceWorkerPayload {
     if (!('method' in message) || !('id' in message)) return Promise.reject(new Error('Desktop message is not a request'))
     const request = message as ExternalChromeRequest
     if (request.method === 'forge.runtime.prepareUpdate') this.acceptingOperations = false
-    if (request.method === 'forge.browser.acquire' || request.method === 'forge.runtime.prepareUpdate') {
-      const result = this.authorityRequestTail.then(
-        () => this.handleDesktopRequestUnlocked(request),
-        () => this.handleDesktopRequestUnlocked(request),
-      )
-      this.authorityRequestTail = result.then(() => undefined, () => undefined)
-      return result
+    if (['forge.browser.acquire', 'forge.browser.release', 'forge.browser.acknowledgeRelease', 'forge.runtime.prepareUpdate'].includes(request.method)) {
+      return this.serializeAuthorityWork(async () => {
+        try {
+          return await this.handleDesktopRequestUnlocked(request)
+        } finally {
+          // Every acquire attempt publishes one complete post-attempt authority view. If its
+          // response races disconnect, Desktop either checkpoints exact scope or retains intent.
+          if (request.method === 'forge.browser.acquire') this.reportAuthoritySnapshot()
+        }
+      })
     }
     return this.handleDesktopRequestUnlocked(request)
   }
 
   private async handleDesktopRequestUnlocked(request: ExternalChromeRequest): Promise<unknown> {
-    if (!this.acceptingOperations && !['forge.runtime.ping', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'forge.browser.release'].includes(request.method)) {
+    if (!this.acceptingOperations && !['forge.runtime.ping', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'forge.browser.release', 'forge.browser.acknowledgeRelease'].includes(request.method)) {
       throw new LeaseError('lease-lost', 'runtime is quiesced')
     }
     switch (request.method) {
@@ -322,6 +328,11 @@ export class Runtime implements ServiceWorkerPayload {
           tab = acquired.tab
         } else {
           if (!request.params.createIfNeeded) throw new LeaseError('target-not-found', 'no existing tab was selected and creation was not requested')
+          await this.authorities.ensureAcquireAdmission({
+            ownerId: request.params.leaseId,
+            ownerEpoch: request.params.leaseEpoch,
+            sessionAgentId: request.params.sessionAgentId,
+          })
           const allocated = await this.authorities.createNeutralTab()
           tab = allocated.tab
           createdByForge = allocated.createdByForge
@@ -359,6 +370,20 @@ export class Runtime implements ServiceWorkerPayload {
           `release:${request.params.reason.slice(0, 128)}`,
         )
         return { protocolVersion: 1, leaseId: request.params.leaseId, leaseEpoch: request.params.leaseEpoch, releasedTabIds }
+      }
+      case 'forge.browser.acknowledgeRelease': {
+        const releasedTabIds = await this.authorities.acknowledgeRelease(
+          request.params.leaseId,
+          request.params.leaseEpoch,
+          request.params.releasedTabIds,
+        )
+        return {
+          protocolVersion: 1,
+          leaseId: request.params.leaseId,
+          leaseEpoch: request.params.leaseEpoch,
+          releasedTabIds,
+          acknowledged: true,
+        }
       }
       case 'forge.browser.reveal': {
         this.authorities.assertScope(request.params.leaseId, request.params.leaseEpoch, request.params.tabId)
@@ -557,10 +582,10 @@ export class Runtime implements ServiceWorkerPayload {
           cancelOutstanding: async () => {
             await this.cancelPhysicalOperation(params, controlEpoch as number, 'operation-cancelled')
           },
-          beginSyntheticInput: async () => {
+          beginSyntheticInput: async (expectedEvents) => {
             if (syntheticOperationId !== null) return
             syntheticOperationId = crypto.randomUUID()
-            await this.signalSyntheticStart(params.tabId, syntheticOperationId, controlEpoch as number)
+            await this.signalSyntheticStart(params.tabId, syntheticOperationId, controlEpoch as number, expectedEvents)
           },
           endSyntheticInput: () => {
             if (syntheticOperationId === null) return
@@ -702,7 +727,12 @@ export class Runtime implements ServiceWorkerPayload {
     }
   }
 
-  private async signalSyntheticStart(tabId: number, operationId: string, controlEpoch: number): Promise<void> {
+  private async signalSyntheticStart(
+    tabId: number,
+    operationId: string,
+    controlEpoch: number,
+    expectedEvents: readonly SyntheticTrustedEventSignature[],
+  ): Promise<void> {
     const deadline = this.now() + 1_000
     while (this.readyBridges(tabId).length === 0 && this.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 10))
@@ -730,7 +760,10 @@ export class Runtime implements ServiceWorkerPayload {
       try {
         for (const port of ports) {
           const nonce = port.name.slice('forge-leased-frame:'.length)
-          port.postMessage({ type: 'synthetic-start', nonce, operationId, controlEpoch, durationMs: 1_000 })
+          port.postMessage({
+            type: 'synthetic-start', nonce, operationId, controlEpoch,
+            expectedEvents: expectedEvents.map((event) => structuredClone(event)),
+          })
         }
       } catch (error) {
         finish(error instanceof Error ? error : new Error('trusted-input guard send failed'))
@@ -1147,6 +1180,12 @@ export class Runtime implements ServiceWorkerPayload {
     return result
   }
 
+  private serializeAuthorityWork<Value>(operation: () => Promise<Value>): Promise<Value> {
+    const result = this.authorityRequestTail.then(operation, operation)
+    this.authorityRequestTail = result.then(() => undefined, () => undefined)
+    return result
+  }
+
   private async retryClosedTabReceipts(): Promise<void> {
     this.cleanupRetries += 1
     for (const tabId of [...this.pendingClosedTabReceipts]) {
@@ -1174,10 +1213,19 @@ export class Runtime implements ServiceWorkerPayload {
     else await this.chrome.alarms.clear(CLEANUP_RETRY_ALARM)
   }
 
-  private reportLeaseState(): void {
-    for (const report of this.authorities.releaseReports()) {
-      this.notifyLeaseChanged(report.ownerId, report.ownerEpoch, report.state, report.tabIds)
-    }
+  private reportAuthoritySnapshot(): void {
+    try {
+      this.native?.sendNotification('browser.authoritySnapshot', {
+        protocolVersion: 1,
+        snapshotId: crypto.randomUUID(),
+        reports: this.authorities.releaseReports().map((report) => ({
+          leaseId: report.ownerId,
+          leaseEpoch: report.ownerEpoch,
+          state: report.state,
+          tabIds: [...report.tabIds].sort((left, right) => left - right),
+        })),
+      })
+    } catch { /* Desktop retains every unresolved acquisition/checkpoint/ack journal. */ }
   }
 
   private notifyLeaseChanged(ownerId: string, ownerEpoch: number, state: 'acquired' | 'released', tabIds: number[]): void {

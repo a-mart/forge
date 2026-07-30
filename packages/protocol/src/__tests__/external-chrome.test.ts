@@ -73,12 +73,13 @@ describe('External Chrome automatic transport contract', () => {
       'forge.browser.inventory',
       'forge.browser.acquire',
       'forge.browser.release',
+      'forge.browser.acknowledgeRelease',
       'forge.browser.reveal',
       'forge.browser.execute',
       'forge.runtime.prepareUpdate',
       'forge.runtime.reload',
     ])
-    expect(EXTERNAL_CHROME_NOTIFICATION_METHODS).toHaveLength(7)
+    expect(EXTERNAL_CHROME_NOTIFICATION_METHODS).toHaveLength(8)
     expect(EXTERNAL_CHROME_METHODS).toEqual([...EXTERNAL_CHROME_REQUEST_METHODS, ...EXTERNAL_CHROME_NOTIFICATION_METHODS])
   })
 
@@ -208,13 +209,31 @@ describe('External Chrome automatic transport contract', () => {
     }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
   })
 
-  it('round-trips exact authority notifications without display or grouping fields', () => {
+  it('round-trips exact release acknowledgement and authenticated authority reconciliation contracts', () => {
+    const acknowledgement = {
+      jsonrpc: '2.0', id: 'ack-1', method: 'forge.browser.acknowledgeRelease',
+      params: { ...lease, releasedTabIds: [17] },
+    }
+    const acknowledged = {
+      jsonrpc: '2.0', id: 'ack-1', result: { ...lease, releasedTabIds: [17], acknowledged: true },
+    }
     const notification = {
       jsonrpc: '2.0', method: 'browser.leaseChanged',
       params: { ...lease, state: 'acquired', tabIds: [17] },
     }
+    const snapshot = {
+      jsonrpc: '2.0', method: 'browser.authoritySnapshot',
+      params: {
+        protocolVersion: 1, snapshotId: 'snapshot-1',
+        reports: [{ leaseId: 'lease-1', leaseEpoch: 2, state: 'released', tabIds: [17] }],
+      },
+    }
+    expect(parse(acknowledgement)).toEqual(acknowledgement)
+    expect(parse(acknowledged, 'forge.browser.acknowledgeRelease')).toEqual(acknowledged)
     expect(parse(notification)).toEqual(notification)
+    expect(parse(snapshot)).toEqual(snapshot)
     expectContractFailure({ ...notification, params: { ...notification.params, unexpectedScope: 1 } })
+    expectContractFailure({ ...snapshot, params: { ...snapshot.params, reports: [...snapshot.params.reports, ...snapshot.params.reports] } })
   })
 
   it('rejects unknown methods, IDs on notifications, oversized frames, and non-JSON', () => {
