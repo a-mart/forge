@@ -121,7 +121,7 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 
 | Model ID | Display Name | Provider | Supported Reasoning Levels |
 |---|---|---|---|
-| `gpt-5.6-sol` | GPT-5.6 Sol | OpenAI Codex | low, medium, high, max, ultra |
+| `gpt-5.6-sol` | GPT-5.6 Sol | OpenAI Codex | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-terra` | GPT-5.6 Terra | OpenAI Codex | low, medium, high |
 | `gpt-5.6-luna` | GPT-5.6 Luna | OpenAI Codex | low, medium, high |
 | `gpt-5.5` | GPT-5.5 | OpenAI Codex | none, low, medium, high, xhigh |

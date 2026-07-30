@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 
+import { fireEvent, getAllByRole, getByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CollaborationCategory } from '@forge/protocol'
+import type { CollaborationCategory, ModelPresetInfo } from '@forge/protocol'
 
 // Radix UI components require ResizeObserver in jsdom
 globalThis.ResizeObserver ??= class ResizeObserver {
@@ -13,19 +14,16 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
-vi.mock('@/lib/model-preset', () => ({
-  useModelPresets: () => [],
-  getAvailableChangeManagerFamilies: () => [],
+const modelPresetMocks = vi.hoisted(() => ({
+  presets: [] as ModelPresetInfo[],
 }))
 
-vi.mock('@/components/settings/specialists/types', () => ({
-  REASONING_LEVEL_LABELS: {
-    none: 'None',
-    low: 'Low',
-    medium: 'Medium',
-    high: 'High',
-    xhigh: 'Max',
-  },
+vi.mock('@/lib/model-preset', () => ({
+  useModelPresets: () => modelPresetMocks.presets,
+  getAvailableChangeManagerFamilies: (presets: ModelPresetInfo[]) => presets.map((preset) => ({
+    familyId: preset.presetId,
+    displayName: preset.displayName,
+  })),
 }))
 
 const apiMocks = vi.hoisted(() => ({
@@ -57,11 +55,16 @@ let root: Root
 let container: HTMLDivElement
 
 beforeEach(() => {
+  Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+  Element.prototype.setPointerCapture ??= vi.fn()
+  Element.prototype.releasePointerCapture ??= vi.fn()
+  Element.prototype.scrollIntoView ??= vi.fn()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   apiMocks.createCategory.mockReset()
   apiMocks.updateCategory.mockReset()
+  modelPresetMocks.presets = []
   specialistApiMocks.fetchSharedSpecialists.mockResolvedValue([])
 })
 
@@ -85,6 +88,54 @@ describe('CreateCategoryDialog', () => {
     expect(document.getElementById('collab-create-category-default-model')).toBeTruthy()
     const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
     expect(labels).toEqual(expect.arrayContaining(['Name', 'Default model']))
+  })
+
+  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-5.6 Sol', async () => {
+    modelPresetMocks.presets = [{
+      presetId: 'pi-5.6',
+      displayName: 'GPT-5.6 Sol',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.6-sol',
+      defaultReasoningLevel: 'max',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    }]
+
+    flushSync(() => {
+      root.render(
+        createElement(CreateCategoryDialog, {
+          open: true,
+          onClose: vi.fn(),
+        }),
+      )
+    })
+
+    const modelTrigger = document.getElementById('collab-create-category-default-model')
+    expect(modelTrigger).toBeTruthy()
+    flushSync(() => {
+      fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+    })
+    await vi.waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' })).toBeTruthy())
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' }))
+    })
+
+    const reasoningTrigger = await vi.waitFor(() => {
+      const trigger = document.getElementById('collab-create-category-reasoning-level')
+      expect(trigger).toBeTruthy()
+      return trigger!
+    })
+    flushSync(() => {
+      fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+    })
+    await vi.waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+    expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+      'Low',
+      'Medium',
+      'High',
+      'Extra High',
+      'Max',
+      'Ultra',
+    ])
   })
 
   it('submits the expected create payload', async () => {

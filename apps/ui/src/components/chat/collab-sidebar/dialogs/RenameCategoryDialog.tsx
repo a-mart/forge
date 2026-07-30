@@ -21,8 +21,8 @@ import {
 import { updateCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
-import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 import { fetchSharedSpecialists } from '@/components/settings/specialists-api'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo, ResolvedSpecialistDefinition } from '@forge/protocol'
 
 const NO_DEFAULT_MODEL_VALUE = '__none__'
@@ -232,7 +232,7 @@ export function RenameCategoryDialog({
                   <SelectContent>
                     {supportedLevels.map((level) => (
                       <SelectItem key={level} value={level}>
-                        {REASONING_LEVEL_LABELS[level] || level}
+                        {formatReasoningLevel(level, supportedLevels)}
                       </SelectItem>
                     ))}
                   </SelectContent>
