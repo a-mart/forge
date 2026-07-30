@@ -62,19 +62,30 @@ describe("manager model selection", () => {
     )).toThrow("Choose a native Anthropic model");
   });
 
-  it("normalizes unsupported exact GPT-5.6 Terra/Luna reasoning to model-supported high", async () => {
+  it("preserves supported exact GPT-5.6 Terra/Luna reasoning and clamps Luna Ultra to Max", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
 
     expect(
       resolveExactManagerModelSelection(
         { provider: "openai-codex", modelId: "gpt-5.6-terra" },
-        { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "max" },
+        { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "ultra" },
       ),
     ).toEqual({
       provider: "openai-codex",
       modelId: "gpt-5.6-terra",
-      thinkingLevel: "high",
+      thinkingLevel: "ultra",
+    });
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openai-codex", modelId: "gpt-5.6-luna" },
+        { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "max" },
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-luna",
+      thinkingLevel: "max",
     });
 
     expect(
@@ -85,7 +96,7 @@ describe("manager model selection", () => {
     ).toEqual({
       provider: "openai-codex",
       modelId: "gpt-5.6-luna",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
     });
   });
 

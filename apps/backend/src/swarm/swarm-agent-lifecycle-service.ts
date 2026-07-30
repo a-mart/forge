@@ -57,6 +57,7 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import {
   getTierAttributionId,
   normalizeEffortTier,
@@ -80,6 +81,10 @@ import { resolveDelegationRoute } from "./specialists/delegation-roster-store.js
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
+
+function getDefaultReasoningLevelForModel(provider: string, modelId: string): string {
+  return modelCatalogService.getModel(modelId, provider)?.defaultReasoningLevel ?? "xhigh";
+}
 
 function getDelegationTierDisplayName(tier: EffortTier, configuredName: string): string {
   if (tier === "fast") return "Support";
@@ -724,7 +729,9 @@ export class SwarmAgentLifecycleService {
       model = {
         provider: modelConfig.provider,
         modelId: modelConfig.modelId,
-        thinkingLevel: reasoningLevelOverride ?? modelConfig.reasoningLevel ?? "xhigh",
+        thinkingLevel: reasoningLevelOverride
+          ?? modelConfig.reasoningLevel
+          ?? getDefaultReasoningLevelForModel(modelConfig.provider, modelConfig.modelId),
       };
       model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
       model = this.resolveSpawnModelWithCapacityFallback(model);
@@ -817,10 +824,15 @@ export class SwarmAgentLifecycleService {
         "spawn_agent.reasoningLevel"
       );
 
+        const defaultReasoningLevel = getDefaultReasoningLevelForModel(
+          inferredProvider,
+          specialist.modelId,
+        );
+
         model = {
         provider: inferredProvider,
         modelId: specialist.modelId,
-        thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? "xhigh"
+        thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? defaultReasoningLevel
       };
         model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
         model = this.resolveSpawnModelWithCapacityFallback(model);
