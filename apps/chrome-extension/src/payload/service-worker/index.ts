@@ -146,6 +146,7 @@ export class Runtime implements ServiceWorkerPayload {
     controlEpoch: number
     settled: Promise<void>
   }>()
+  private readonly externalNavigationReconciliations = new Map<number, number>()
   private native: NativeRpcClient | null = null
   private directory = ''
   private extensionInstanceId = ''
@@ -435,6 +436,15 @@ export class Runtime implements ServiceWorkerPayload {
       return this.executeFailure(params, error instanceof LeaseError ? error.code : 'lease-lost', error instanceof Error ? error.message : 'Tab authority is stale.', true)
     }
     const requestedControlEpoch = authority.controlEpoch
+    if (params.operation !== 'status' && this.externalNavigationReconciliations.has(params.tabId)) {
+      return this.executeFailure(
+        params,
+        'request-cancelled',
+        'Chrome is revalidating collaborative page navigation; retry with a fresh snapshot.',
+        true,
+        this.hasCollaborativeAttachedIdle(params) ? EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS : undefined,
+      )
+    }
     if (params.operation === 'status') {
       try {
         const tab = await this.chrome.tabs.get(params.tabId)
@@ -479,6 +489,15 @@ export class Runtime implements ServiceWorkerPayload {
       try {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= this.now()) {
           return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
+        }
+        if (this.externalNavigationReconciliations.has(params.tabId)) {
+          return this.executeFailure(
+            params,
+            'request-cancelled',
+            'Chrome is revalidating collaborative page navigation; retry with a fresh snapshot.',
+            true,
+            this.hasCollaborativeAttachedIdle(params) ? EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS : undefined,
+          )
         }
         let operationAuthority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
         if (operationAuthority.controlEpoch !== requestedControlEpoch) {
@@ -924,9 +943,9 @@ export class Runtime implements ServiceWorkerPayload {
 
   private syntheticKey(tabId: number, operationId: string): string { return `${tabId}\0${operationId}` }
 
-  private async interrupt(tabId: number, event: unknown): Promise<void> {
+  private async revokeCollaborativeAuthority(tabId: number): Promise<TabAuthorityRecord | null> {
     const before = this.authorities.forTab(tabId)
-    if (before === null) return
+    if (before === null) return null
     if (before.state === 'agent') this.humanInterruptedOperations.set(tabId, before.controlEpoch)
     const revocation = this.authorities.trustedHumanInput(tabId)
     if (before.state === 'agent') {
@@ -937,18 +956,22 @@ export class Runtime implements ServiceWorkerPayload {
         settled: revocation.then(() => undefined, () => undefined),
       })
     }
-    let authority: TabAuthorityRecord
     try {
-      authority = await revocation ?? before
+      return await revocation
     } catch {
       // In-memory operation authority is already revoked even if storage.session is temporarily unavailable.
-      authority = this.authorities.forTab(tabId) ?? {
+      return this.authorities.forTab(tabId) ?? {
         ...before,
         state: 'idle',
         controlEpoch: before.controlEpoch + 1,
         requiresObservation: true,
       }
     }
+  }
+
+  private async interrupt(tabId: number, event: unknown): Promise<void> {
+    const authority = await this.revokeCollaborativeAuthority(tabId)
+    if (authority === null) return
     try {
       this.native?.sendNotification('browser.userControl', {
         protocolVersion: 1,
@@ -966,17 +989,46 @@ export class Runtime implements ServiceWorkerPayload {
     this.broadcastState([tabId], attached ? 'attached-idle' : 'human')
   }
 
-  private async interruptExternalNavigation(tabId: number): Promise<void> {
-    const before = this.authorities.forTab(tabId)
-    if (before === null) return
-    try { await this.authorities.trustedHumanInput(tabId) }
-    catch { /* In-memory epoch revocation remains authoritative for this worker. */ }
+  private async retainExternalNavigation(tabId: number): Promise<void> {
+    const authority = await this.revokeCollaborativeAuthority(tabId)
+    if (authority === null) {
+      await this.controlSessions.detach(tabId, 'identity-loss').catch(() => undefined)
+      return
+    }
     try {
-      await this.controlSessions.detach(tabId, 'external-navigation')
-      this.operations.clear(tabId)
-      this.broadcastState([tabId], 'human')
+      const outcome = await this.operations.runExclusive(tabId, async (): Promise<'retained' | 'restricted'> => {
+        const current = this.authorities.forTab(tabId)
+        if (current?.ownerId !== authority.ownerId || current.ownerEpoch !== authority.ownerEpoch ||
+          current.state !== 'idle' || !current.requiresObservation) {
+          throw new Error('external navigation no longer has exact idle authority')
+        }
+        // Claim the existing session before an old idle timer can fire, then prove the current
+        // tab-scoped root. revalidateRoot may adopt a renderer/process-swap target ID only after
+        // Chrome proves its replacement frame tree on this exact debugger channel.
+        await this.controlSessions.ensure(tabId, current.ownerId, current.ownerEpoch)
+        const beforeInjection = await this.chrome.tabs.get(tabId)
+        if (restrictedTargetReason(beforeInjection.url ?? beforeInjection.pendingUrl) !== null) return 'restricted'
+        await this.chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          files: [`payloads/${this.directory}/content-script.js`],
+          world: 'ISOLATED',
+        })
+        await this.debuggers.revalidateRoot(tabId)
+        const afterInjection = await this.chrome.tabs.get(tabId)
+        if (restrictedTargetReason(afterInjection.url ?? afterInjection.pendingUrl) !== null) return 'restricted'
+        const retained = this.authorities.forTab(tabId)
+        if (retained?.ownerId !== current.ownerId || retained.ownerEpoch !== current.ownerEpoch ||
+          retained.state !== 'idle' || !retained.requiresObservation ||
+          !this.controlSessions.isAttachedFor(tabId, current.ownerId, current.ownerEpoch)) {
+          throw new Error('external navigation authority changed during root revalidation')
+        }
+        this.controlSessions.finishOperation(tabId, current.ownerId, current.ownerEpoch)
+        this.broadcastState([tabId], 'attached-idle')
+        return 'retained'
+      })
+      if (outcome === 'restricted') await this.terminateTab(tabId, 'restricted-target')
     } catch {
-      await this.authorities.markLost(tabId).catch(() => undefined)
+      await this.terminateTab(tabId, 'identity-loss')
     }
   }
 
@@ -1126,16 +1178,35 @@ export class Runtime implements ServiceWorkerPayload {
     if (method === 'Page.frameNavigated' && source.sessionId === undefined) {
       const payload = asRecord(rawParams)
       const frame = asRecord(payload?.frame)
-      if (typeof frame?.parentId !== 'string' && typeof frame?.url === 'string') {
-        if (restrictedTargetReason(frame.url) !== null) {
+      if (typeof frame?.parentId !== 'string') {
+        if (restrictedTargetReason(typeof frame?.url === 'string' ? frame.url : undefined) !== null) {
           await this.terminateTab(source.tabId, 'restricted-target')
           return
         }
         const session = this.controlSessions.forTab(source.tabId)
         if (session !== null && !session.operationActive) {
-          // Address-bar, reload, renderer, and page-initiated navigation outside an admitted
-          // operation all invalidate the idle operation epoch before physical detach.
-          await this.interruptExternalNavigation(source.tabId)
+          this.controlSessions.refreshIdle(source.tabId, session.leaseId, session.leaseEpoch)
+          this.externalNavigationReconciliations.set(
+            source.tabId,
+            (this.externalNavigationReconciliations.get(source.tabId) ?? 0) + 1,
+          )
+          try {
+            const accepted = await this.debuggers.onEvent(source, method, rawParams)
+            if (accepted.rootIdentityLost || !accepted.accepted) {
+              await this.terminateTab(source.tabId, 'identity-loss')
+              return
+            }
+            const targetId = accepted.targetId ?? this.debuggers.targetId(source.tabId)
+            if (targetId !== undefined) this.operations.onCdpEvent(source.tabId, { targetId }, method, rawParams)
+            // A trusted click, reload, address-bar action, or eligible page navigation changes the
+            // observed document, not the exact tab lease. Re-prove/adopt its root and reinject the
+            // singleton guard without creating a detach/reattach interval.
+            await this.retainExternalNavigation(source.tabId)
+          } finally {
+            const remaining = (this.externalNavigationReconciliations.get(source.tabId) ?? 1) - 1
+            if (remaining === 0) this.externalNavigationReconciliations.delete(source.tabId)
+            else this.externalNavigationReconciliations.set(source.tabId, remaining)
+          }
           return
         }
       }

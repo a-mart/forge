@@ -59,7 +59,7 @@ if (!bootstrap.includes(activation) || bootstrap.indexOf(activation) !== bootstr
 }
 await writeFile(bootstrapPath, bootstrap
   .replace(nativeConnect, 'connect: (_host) => { throw new Error("isolated fixture blocks native messaging") },')
-  .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleIsolatedFixtureRequest(request) });`), 'utf8')
+  .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleIsolatedFixtureRequest(request) });\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureDiagnostics', { value: () => payload.diagnostics() });`), 'utf8')
 const fixtureServer = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
   if (request.url === '/child') {
@@ -75,6 +75,7 @@ const fixtureServer = createServer((request, response) => {
     <style>body{font:16px sans-serif}.spacer{height:1600px}</style>
     <button id="action" aria-label="Increment">Increment</button>
     <button id="child" aria-label="Open child">Open child</button>
+    <a id="ordinary-link" href="/linked">Follow ordinary link</a>
     <label>Field <input id="field" aria-label="Field"></label>
     <p id="state">Ready for automatic automation</p><div class="spacer"></div><p id="bottom">Bottom</p>
     <script>
@@ -243,6 +244,36 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const collaborativeInput=collision.ok===false&&collision.error?.code==='control-interrupted'&&collision.error?.details?.mutationState==='possible'&&collision.error?.details?.noReplay===true&&collision.error?.details?.requiresReobserve===true&&collision.error?.details?.authorityState==='attached-idle'&&blockedAfterCollision.ok===false&&blockedAfterCollision.error?.code==='request-cancelled'&&blockedAfterCollision.error?.details?.mutationState==='not-started'&&collisionState?.result===1&&reobserved.screenshot?.data?.length>0&&resumedAfterObservation.value===1&&!(await detached(tabId));
         if(!bannerBeforeCollision||!bannerAfterCollision||!collaborativeInput) throw new Error('collaborative input continuity proof failed');
         const revealed=await call('forge.browser.reveal',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,tabId});
+        const diagnosticsBeforeLink=globalThis.__forgeIsolatedFixtureDiagnostics();
+        const [linkPoint]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>{const link=document.querySelector('#ordinary-link');if(!(link instanceof HTMLElement))return null;link.scrollIntoView({block:'center'});const rect=link.getBoundingClientRect();return{x:rect.left+rect.width/2,y:rect.top+rect.height/2}}});
+        if(!linkPoint?.result) throw new Error('ordinary link was not available for trusted input');
+        let monitorAttachment=true,sawDetachedDuringLink=false;
+        const attachmentMonitor=(async()=>{while(monitorAttachment){if(await detached(tabId))sawDetachedDuringLink=true;await new Promise(resolve=>setTimeout(resolve,5));}})();
+        await chrome.debugger.sendCommand({tabId},'Input.dispatchMouseEvent',{type:'mouseMoved',x:linkPoint.result.x,y:linkPoint.result.y,button:'none'});
+        await chrome.debugger.sendCommand({tabId},'Input.dispatchMouseEvent',{type:'mousePressed',x:linkPoint.result.x,y:linkPoint.result.y,button:'left',buttons:1,clickCount:1});
+        await chrome.debugger.sendCommand({tabId},'Input.dispatchMouseEvent',{type:'mouseReleased',x:linkPoint.result.x,y:linkPoint.result.y,button:'left',buttons:0,clickCount:1});
+        const linkDeadline=Date.now()+5000;
+        while(Date.now()<linkDeadline&&(await chrome.tabs.get(tabId)).url!==${JSON.stringify(fixtureUrl+'linked')})await new Promise(resolve=>setTimeout(resolve,10));
+        if((await chrome.tabs.get(tabId)).url!==${JSON.stringify(fixtureUrl+'linked')})throw new Error('trusted ordinary link did not navigate');
+        while(Date.now()<linkDeadline&&!await bannerPresent())await new Promise(resolve=>setTimeout(resolve,10));
+        monitorAttachment=false;
+        await attachmentMonitor;
+        const blockedAfterLink=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-link-reobserve-gate',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'evaluate',input:{expression:'document.title="must-not-run"',awaitPromise:true,returnByValue:true},deadlineAt:new Date(Date.now()+5000).toISOString()});
+        const observationDeadline=Date.now()+5000;
+        let observedAfterLinkResponse;
+        while(Date.now()<observationDeadline){
+          observedAfterLinkResponse=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-link-snapshot-'+crypto.randomUUID(),leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'snapshot',input:{},deadlineAt:new Date(Date.now()+5000).toISOString()});
+          if(observedAfterLinkResponse.ok)break;
+          if(observedAfterLinkResponse.error?.code!=='request-cancelled')throw new Error('snapshot after trusted link failed: '+observedAfterLinkResponse.error?.code);
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        if(!observedAfterLinkResponse?.ok)throw new Error('snapshot after trusted link did not pass navigation revalidation');
+        const observedAfterLink=observedAfterLinkResponse.result;
+        const resumedAfterLink=await run('evaluate',{expression:'document.title',awaitPromise:true,returnByValue:true});
+        const diagnosticsAfterLink=globalThis.__forgeIsolatedFixtureDiagnostics();
+        const trustedLinkContinuity=blockedAfterLink.ok===false&&blockedAfterLink.error?.code==='request-cancelled'&&blockedAfterLink.error?.details?.requiresReobserve===true&&observedAfterLink.screenshot?.data?.length>0&&resumedAfterLink.value==='Forge automatic fixture'&&!sawDetachedDuringLink&&await bannerPresent()&&diagnosticsAfterLink.debuggerMetrics.attachments===diagnosticsBeforeLink.debuggerMetrics.attachments&&diagnosticsAfterLink.debuggerMetrics.detachments===diagnosticsBeforeLink.debuggerMetrics.detachments&&diagnosticsAfterLink.debuggerMetrics.activeAttachments===1;
+        if(!trustedLinkContinuity) throw new Error('trusted ordinary-link attachment continuity proof failed');
+        await run('click',{locator:'role=button[name="Increment"]',timeoutMs:5000});
         const beforeChildren=(await chrome.tabs.query({})).map(tab=>tab.id);
         await run('click',{locator:'role=button[name="Open child"]',timeoutMs:5000});
         await new Promise(resolve=>setTimeout(resolve,250));
@@ -276,7 +307,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
           largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,rawEnvelopeBytes:largeRawEnvelopeBytes,finalEnvelopeBytes:largeFinalEnvelopeBytes,snapshotCompacted:largeCompacted,parserAccepted:largeResponse.parsed.result?.ok===true,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
-          collaboration:{collision:collaborativeInput,bannerContinuous:bannerBeforeCollision&&bannerAfterCollision,reobserved:reobserved.screenshot?.data?.length>0,resumed:resumedAfterObservation.value===1},
+          collaboration:{collision:collaborativeInput,bannerContinuous:bannerBeforeCollision&&bannerAfterCollision,reobserved:reobserved.screenshot?.data?.length>0,resumed:resumedAfterObservation.value===1,trustedLinkContinuity},
           takeControl:{detached:takeControlDetached},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
@@ -324,7 +355,7 @@ try {
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
     state.largePage?.navigated !== true || state.largePage?.snapshotSucceeded !== true || state.largePage?.statusSticky !== true ||
     state.largePage?.evaluateFollowed !== true || state.largePage?.snapshotCompacted !== true || state.largePage?.parserAccepted !== true ||
-    state.collaboration?.collision !== true || state.collaboration?.bannerContinuous !== true || state.collaboration?.reobserved !== true || state.collaboration?.resumed !== true ||
+    state.collaboration?.collision !== true || state.collaboration?.bannerContinuous !== true || state.collaboration?.reobserved !== true || state.collaboration?.resumed !== true || state.collaboration?.trustedLinkContinuity !== true ||
     state.takeControl?.detached !== true || state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
     state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {

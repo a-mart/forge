@@ -76,6 +76,31 @@ describe('bounded reusable physical debugger control sessions', () => {
     })
   })
 
+  it('refreshes an exact attached-idle deadline while navigation identity is re-proved', async () => {
+    const clock = { now: 0 }
+    const scheduler = new ManualScheduler(clock)
+    const chrome = fakeChrome({ tabs: [{ id: 7, url: 'https://fixture.invalid/' }] })
+    const controller = new DebuggerController(chrome.debugger)
+    const manager = new ControlSessionManager(controller, {
+      now: () => clock.now,
+      scheduler,
+      idleTimeoutMs: 20,
+      maximumLifetimeMs: 100,
+      onExpiry: async (tabId, reason) => { await manager.detach(tabId, reason) },
+    })
+    await manager.ensure(7, 'lease', 1)
+    manager.beginOperation(7, 'lease', 1)
+    manager.finishOperation(7, 'lease', 1)
+
+    scheduler.advanceTo(19)
+    manager.refreshIdle(7, 'lease', 1)
+    scheduler.advanceTo(38)
+    expect(manager.forTab(7)).not.toBeNull()
+    scheduler.advanceTo(39)
+    await settle(() => expect(manager.forTab(7)).toBeNull())
+    expect(manager.metrics().detachReasons).toEqual({ 'idle-timeout': 1 })
+  })
+
   it('uses the shared 35-second idle boundary while retaining the five-minute maximum', async () => {
     const clock = { now: 0 }
     const scheduler = new ManualScheduler(clock)

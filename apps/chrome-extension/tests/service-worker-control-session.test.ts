@@ -323,32 +323,100 @@ describe('service-worker control-session lifecycle', () => {
     expect(runtime.diagnostics()).toMatchObject({ authorities: [], debuggerSessions: [], debuggerMetrics: { activeAttachments: 0 } })
   })
 
-  it('revokes retained idle control when the root navigates outside an admitted operation', async () => {
-    const { chrome, runtime, execute, release, attachCalls } = await harness()
-    await expect(execute('before-external-navigation')).resolves.toMatchObject({ ok: true })
+  it('retains one attachment across a trusted click navigation and positively adopts its replacement root', async () => {
+    let rootTargetId = 'root-before-click'
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness({
+      rootTargetId: () => rootTargetId,
+    })
+    await expect(execute('before-trusted-link')).resolves.toMatchObject({ ok: true })
+    const guard = bridge(7, 0, 'document-before-link', 3)
+    runtime.onShellEvent('runtime.connect', [guard.port])
+    guard.ready()
+    guard.human(0)
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+
+    rootTargetId = 'root-after-click'
+    await chrome.tabs.update(7, { url: 'https://navigated-by-click.invalid/' })
     runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
-      frame: { id: 'frame-tab-7', url: 'https://navigated-by-page.invalid/' },
+      frame: { id: 'replacement-frame', url: 'https://navigated-by-click.invalid/' },
+    }])
+    runtime.onShellEvent('navigation.committed', [{
+      tabId: 7, frameId: 0, documentId: 'document-after-link', url: 'https://navigated-by-click.invalid/',
     }])
 
-    await vi.waitFor(() => expect(chrome.attached).toEqual(new Set()))
-    expect(runtime.diagnostics()).toMatchObject({
-      authorities: [{ state: 'idle' }],
-      debuggerMetrics: { activeAttachments: 0, detachReasons: { 'external-navigation': 1 } },
-    })
-    await expect(execute('after-external-navigation')).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'request-cancelled' },
-    })
+    await vi.waitFor(() => expect((runtime as unknown as {
+      debuggers: { targetId(tabId: number): string | undefined }
+    }).debuggers.targetId(7)).toBe('root-after-click'))
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 2, requiresObservation: true }))
+    expect(chrome.attached).toEqual(new Set([7]))
     expect(attachCalls()).toBe(1)
-    await release('idle')
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics().debuggerMetrics).toMatchObject({ attachments: 1, activeAttachments: 1 })
+    await vi.waitFor(() => expect(chrome.injections.some(({ target }) => target.allFrames === true)).toBe(true))
+
+    const replacementGuard = bridge(7, 0, 'document-after-link', 4)
+    runtime.onShellEvent('runtime.connect', [replacementGuard.port])
+    replacementGuard.ready()
+    expect(replacementGuard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 2 }))
+    await expect(execute('blocked-after-trusted-link')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true } },
+    })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'blocked-after-trusted-link')).toBe(false)
+
+    await expect(runSnapshot(runtime, 'snapshot-after-trusted-link')).resolves.toMatchObject({ ok: true })
+    expect(authorityFor(runtime)).toMatchObject({ requiresObservation: false })
+    await expect(execute('after-trusted-link-observation')).resolves.toMatchObject({ ok: true })
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+  })
+
+  it('retains attached-idle authority across ordinary eligible page navigation and reload', async () => {
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness()
+    await expect(execute('before-page-navigation')).resolves.toMatchObject({ ok: true })
+
+    for (const [index, url] of ['https://page-navigation.invalid/', 'https://page-navigation.invalid/'].entries()) {
+      await chrome.tabs.update(7, { url })
+      runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+        frame: { id: 'frame-tab-7', url },
+      }])
+      runtime.onShellEvent('navigation.committed', [{
+        tabId: 7, frameId: 0, documentId: `ordinary-document-${index}`, url,
+      }])
+      if (index === 0) {
+        await expect(execute('while-page-navigation-is-revalidated')).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'request-cancelled', details: { requiresReobserve: true } },
+        })
+        expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' &&
+          params?.expression === 'while-page-navigation-is-revalidated')).toBe(false)
+      }
+      await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({
+        controlEpoch: index + 1,
+        requiresObservation: true,
+      }))
+      await vi.waitFor(() => expect(runtime.diagnostics().debuggerMetrics.attachmentReuses).toBeGreaterThanOrEqual(index * 2 + 1))
+      expect(chrome.attached).toEqual(new Set([7]))
+      await expect(execute(`blocked-after-ordinary-navigation-${index}`)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'request-cancelled', details: { requiresReobserve: true } },
+      })
+      await expect(runSnapshot(runtime, `snapshot-after-ordinary-navigation-${index}`)).resolves.toMatchObject({ ok: true })
+    }
+
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics().debuggerMetrics).toMatchObject({ attachments: 1, activeAttachments: 1 })
+    await release('take-control')
   })
 
   it('terminally detaches and receipts a retained attachment that navigates into a restricted target', async () => {
     const { chrome, runtime, execute, release } = await harness()
     await execute('before-restricted-navigation')
     await chrome.tabs.update(7, { url: 'chrome://settings/' })
-    runtime.onShellEvent('navigation.committed', [{
-      tabId: 7, frameId: 0, documentId: 'restricted-document', url: 'chrome://settings/',
+    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'frame-tab-7', url: 'chrome://settings/' },
     }])
 
     await vi.waitFor(() => expect(runtime.diagnostics().authorities).toEqual([]))
@@ -373,8 +441,9 @@ describe('service-worker control-session lifecycle', () => {
       return send(target, method, params)
     }
     rootTargetId = null
-    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Target.targetInfoChanged', {
-      targetInfo: { targetId: 'unproven', type: 'page', attached: false },
+    await chrome.tabs.update(7, { url: 'https://unproven-navigation.invalid/' })
+    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'unproven-frame', url: 'https://unproven-navigation.invalid/' },
     }])
 
     await vi.waitFor(() => expect(runtime.diagnostics().authorities).toEqual([]))
@@ -602,7 +671,27 @@ function configuredChrome(
     if (method === 'Runtime.evaluate') {
       chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
       const expression = String(params?.expression ?? '')
+      if (expression === 'window.devicePixelRatio') return value(1)
+      if (expression.includes('interactiveElements')) {
+        const tab = await chrome.tabs.get(target.tabId ?? 7)
+        return value({
+          url: tab.url ?? '', title: tab.title ?? 'Fixture', loading: false,
+          visibleText: 'Observed after navigation', interactiveElements: [],
+        })
+      }
       return options.evaluate === undefined ? value(expression) : options.evaluate(expression)
+    }
+    if (method === 'Page.getLayoutMetrics') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { cssVisualViewport: { clientWidth: 320, clientHeight: 180, pageX: 0, pageY: 0 } }
+    }
+    if (method === 'Page.captureScreenshot') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { data: pngBase64(320, 180) }
+    }
+    if (method === 'Accessibility.getFullAXTree') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { nodes: [] }
     }
     return send(target, method, params)
   }
@@ -634,6 +723,25 @@ function runEvaluate(
     input: { expression, awaitPromise: true, returnByValue: true },
     deadlineAt: new Date(Date.now() + timeoutMs).toISOString(),
   })
+}
+
+function runSnapshot(runtime: Runtime, requestId: string): Promise<unknown> {
+  return (runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+    protocolVersion: 1,
+    requestId,
+    leaseId: 'lease-1',
+    leaseEpoch: 1,
+    tabId: 7,
+    operation: 'snapshot',
+    input: {},
+    deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+  })
+}
+
+function authorityFor(runtime: Runtime): { controlEpoch: number; requiresObservation: boolean } | null {
+  return (runtime as unknown as {
+    authorities: { forTab(tabId: number): { controlEpoch: number; requiresObservation: boolean } | null }
+  }).authorities.forTab(7)
 }
 
 function status(runtime: Runtime): Promise<unknown> {
@@ -676,4 +784,15 @@ function bridge(tabId: number, frameId: number, documentId: string, index: numbe
 
 function value(result: unknown): Record<string, unknown> {
   return { result: { type: typeof result, value: result } }
+}
+
+function pngBase64(width: number, height: number): string {
+  const bytes = new Uint8Array(24)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(8, 13)
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12)
+  view.setUint32(16, width)
+  view.setUint32(20, height)
+  return Buffer.from(bytes).toString('base64')
 }

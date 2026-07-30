@@ -184,14 +184,14 @@ export class ControlSessionManager {
     const session = this.sessions.get(tabId)
     if (session === undefined || session.leaseId !== leaseId || session.leaseEpoch !== leaseEpoch) return
     session.operationActive = false
-    session.lastUsedAt = this.now()
-    this.clearIdle(session)
-    session.idleTimer = this.scheduler.setTimeout(() => {
-      session.idleTimer = null
-      if (this.sessions.get(tabId) === session && !session.operationActive) {
-        this.runExpiry(tabId, 'idle-timeout')
-      }
-    }, this.idleTimeoutMs)
+    this.scheduleIdle(session)
+  }
+
+  /** Refreshes an exact attached-idle session while navigation identity is being re-proved. */
+  refreshIdle(tabId: number, leaseId: string, leaseEpoch: number): void {
+    const session = this.assertExact(tabId, leaseId, leaseEpoch)
+    if (session.operationActive) throw new Error('physical debugger operation is active')
+    this.scheduleIdle(session)
   }
 
   detach(tabId: number, reason: PhysicalDebuggerDetachReason): Promise<void> {
@@ -291,6 +291,17 @@ export class ControlSessionManager {
     this.detachments += 1
     const metricReason = this.detachReasons.has(reason) || this.detachReasons.size < MAX_DETACH_REASON_METRICS ? reason : 'other'
     this.detachReasons.set(metricReason, (this.detachReasons.get(metricReason) ?? 0) + 1)
+  }
+
+  private scheduleIdle(session: PhysicalDebuggerSession): void {
+    session.lastUsedAt = this.now()
+    this.clearIdle(session)
+    session.idleTimer = this.scheduler.setTimeout(() => {
+      session.idleTimer = null
+      if (this.sessions.get(session.tabId) === session && !session.operationActive) {
+        this.runExpiry(session.tabId, 'idle-timeout')
+      }
+    }, this.idleTimeoutMs)
   }
 
   private clearIdle(session: PhysicalDebuggerSession): void {
