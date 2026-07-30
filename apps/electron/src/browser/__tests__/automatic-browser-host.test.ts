@@ -8,7 +8,12 @@ import type {
   BrowserSessionSnapshot,
   BrowserTabSnapshot,
 } from '@forge/protocol'
-import { BROWSER_AUTOMATION_OPERATIONS, EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS } from '@forge/protocol'
+import {
+  BROWSER_AUTOMATION_OPERATIONS,
+  EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
+  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  externalChromeControlCollisionDetails,
+} from '@forge/protocol'
 import { AutomaticBrowserHost } from '../automatic-browser-host.js'
 import type {
   AutomaticExternalBrowserAdapter,
@@ -42,6 +47,7 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   readonly acquisitions: ExternalBrowserAcquireInput[] = []
   readonly executions: BrowserAutomationRequest[] = []
   readonly authorityReleases: Array<{ authority: ExternalBrowserTargetAuthority; reason: string }> = []
+  readonly targetAuthorityReleases: Array<{ session: BrowserTargetSession; tabId: string; reason: string }> = []
   readonly ended: Array<{ session: BrowserTargetSession; turnId: string }> = []
   readonly sessionReleases: Array<{ session: BrowserTargetSession; reason: string }> = []
   readonly reveals: Array<{ session: BrowserTargetSession; tabId: string }> = []
@@ -51,6 +57,7 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   executionResults: BrowserTargetExecution[] = []
   releaseFailures: Error[] = []
   revealFailures: Error[] = []
+  recoveredTargetRelease = false
   sequence = 0
 
   async listEligibleTabs(session: BrowserTargetSession): Promise<ExternalBrowserInventory> {
@@ -75,6 +82,10 @@ class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
     this.authorityReleases.push({ authority: structuredClone(authority), reason })
     const failure = this.releaseFailures.shift()
     if (failure) throw failure
+  }
+  async releaseTargetAuthority(session: BrowserTargetSession, tabId: string, reason: 'take-control'): Promise<boolean> {
+    this.targetAuthorityReleases.push({ session: structuredClone(session), tabId, reason })
+    return this.recoveredTargetRelease
   }
   async revealTarget(session: BrowserTargetSession, tabId: string) {
     this.reveals.push({ session: structuredClone(session), tabId })
@@ -425,6 +436,100 @@ describe('AutomaticBrowserHost', () => {
     expect(external.authorityReleases).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(1)
     expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
+  })
+
+  it('keeps one authority across five sub-bound calls and releases after 30 seconds of inactivity', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+
+    for (let index = 0; index < 5; index += 1) {
+      await host.perform(request('snapshot', {}, null))
+      if (index < 4) await vi.advanceTimersByTimeAsync(5_000)
+    }
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.authorityReleases).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS - 1)
+    expect(external.authorityReleases).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
+  })
+
+  it('preserves attached-idle authority on collaborative collision until snapshot or Take Control', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    await host.perform(request('open', { show: false, reuseExistingTab: true }, null))
+    const collided = request('click', { x: 5, y: 6, timeoutMs: 100 }, 'chrome-tab-1')
+    external.executionResults.push({
+      response: failure(collided, 'control-interrupted', externalChromeControlCollisionDetails('possible')),
+      failure: {
+        phase: 'execution', mutationState: 'possible', fallbackReason: 'authority-conflict',
+        noReplay: true, preserveAuthority: true, requiresReobserve: true,
+      },
+    })
+
+    await expect(host.perform(collided)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'control-interrupted', details: { mutationState: 'possible', noReplay: true, requiresReobserve: true } },
+    })
+    expect(external.authorityReleases).toHaveLength(0)
+    expect(managed.requests).toHaveLength(0)
+    await expect(host.perform(request('click', { x: 5, y: 6, timeoutMs: 100 }, 'chrome-tab-1'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true } },
+    })
+    expect(external.executions).toHaveLength(2)
+
+    await expect(host.perform(request('snapshot', {}, 'chrome-tab-1'))).resolves.toMatchObject({ ok: true })
+    await expect(host.perform(request('click', { x: 5, y: 6, timeoutMs: 100 }, 'chrome-tab-1'))).resolves.toMatchObject({ ok: true })
+    expect(external.acquisitions).toHaveLength(1)
+    expect(external.executions).toHaveLength(4)
+
+    await expect(host.takeControl({ sessionAgentId: 'session', profileId: 'profile' }, 'chrome-tab-1')).resolves.toEqual({
+      released: true, tabId: 'chrome-tab-1',
+    })
+    expect(external.authorityReleases).toMatchObject([{ reason: 'take-control', authority: { tabId: 'chrome-tab-1' } }])
+  })
+
+  it('takes control through an exact durable tab checkpoint after in-memory host restart', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    external.recoveredTargetRelease = true
+    const host = createHost(managed, external)
+    host.synchronizeSessions([session([tab('chrome-recovered', 'external-chrome')], 'chrome-recovered')])
+
+    await expect(host.takeControl({ sessionAgentId: 'session', profileId: 'profile' }, 'chrome-recovered'))
+      .resolves.toEqual({ released: true, tabId: 'chrome-recovered' })
+    expect(external.targetAuthorityReleases).toEqual([{
+      session: { sessionAgentId: 'session', profileId: 'profile' },
+      tabId: 'chrome-recovered',
+      reason: 'take-control',
+    }])
+  })
+
+  it('releases collided authority instead of applying its re-observation gate to another explicit tab', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const host = createHost(managed, external)
+    await host.perform(request('open', { show: false, reuseExistingTab: true }, null))
+    const collided = request('click', { x: 5, y: 6, timeoutMs: 100 }, 'chrome-tab-1')
+    external.executionResults.push({
+      response: failure(collided, 'control-interrupted', externalChromeControlCollisionDetails('possible')),
+      failure: {
+        phase: 'execution', mutationState: 'possible', fallbackReason: 'authority-conflict',
+        noReplay: true, preserveAuthority: true, requiresReobserve: true,
+      },
+    })
+    await host.perform(collided)
+    host.adoptTarget(tab('chrome-tab-2', 'external-chrome'))
+
+    await expect(host.perform(request('click', { x: 7, y: 8, timeoutMs: 100 }, 'chrome-tab-2')))
+      .resolves.toMatchObject({ ok: true })
+    expect(external.authorityReleases).toMatchObject([{ reason: 'idle', authority: { tabId: 'chrome-tab-1' } }])
+    expect(external.acquisitions.at(-1)).toMatchObject({ preferredTabId: 'chrome-tab-2' })
   })
 
   it('retains a failed idle release, retries it exactly, and blocks acquisition until acknowledgement', async () => {

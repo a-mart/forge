@@ -413,6 +413,29 @@ export class DebuggerController {
   }
 
   /**
+   * Settle the commands that were in flight at a collaborative-input collision without detaching
+   * an otherwise proven exact debugger session. The invalidated control epoch prevents their
+   * results from being observed, and the per-tab operation queue cannot advance until this proof
+   * completes.
+   */
+  async settlePending(tabId: number, deadlineAt: number): Promise<void> {
+    const pending = [...(this.pendingCommands.get(tabId) ?? [])]
+    if (pending.length === 0) return
+    const remaining = Math.max(0, deadlineAt - this.now())
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      await Promise.race([
+        Promise.allSettled(pending).then(() => undefined),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('collaborative command settlement exceeded the operation deadline')), remaining)
+        }),
+      ])
+    } finally {
+      if (timer !== null) clearTimeout(timer)
+    }
+  }
+
+  /**
    * Fail-closed cancellation primitive. Chrome settles outstanding debugger commands when the
    * owning debugger detaches; waiting for those settlements prevents a stale command from
    * escaping the tab queue. Callers must revoke the lease before invoking this method.
@@ -435,10 +458,12 @@ export class DebuggerController {
     readiness: 'load' | 'domContentLoaded' | 'none',
     deadlineAt: number,
     isAuthorized: () => boolean,
+    onDispatch?: () => void,
   ): Promise<void> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
     if (!isAuthorized()) throw new Error('lease authority was interrupted')
     if (readiness === 'none') {
+      onDispatch?.()
       await this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }))
       if (!isAuthorized()) throw new Error('lease authority was interrupted')
       return
@@ -446,6 +471,8 @@ export class DebuggerController {
     const expected = readiness === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired'
     await new Promise<void>((resolve, reject) => {
       let settled = false
+      let commandSettled = false
+      let milestoneReached = false
       const finish = (error?: Error): void => {
         if (settled) return
         settled = true
@@ -457,9 +484,15 @@ export class DebuggerController {
         if (error) reject(error)
         else resolve()
       }
+      const finishIfComplete = (): void => {
+        if (!commandSettled || !milestoneReached) return
+        finish(isAuthorized() ? undefined : new Error('lease authority was interrupted'))
+      }
       const onSignal = (method: string): void => {
-        if (method === expected) finish()
-        else if (method === 'Debugger.detached') finish(new Error('debugger detached during navigation'))
+        if (method === expected) {
+          milestoneReached = true
+          finishIfComplete()
+        } else if (method === 'Debugger.detached') finish(new Error('debugger detached during navigation'))
       }
       const signals = this.navigationSignals.get(tabId) ?? new Set<(method: string) => void>()
       signals.add(onSignal)
@@ -467,8 +500,10 @@ export class DebuggerController {
       const remaining = Math.max(0, deadlineAt - this.now())
       const deadlineTimer = setTimeout(() => finish(new Error(`navigation readiness ${readiness} timed out`)), remaining)
       const authorityTimer = setInterval(() => { if (!isAuthorized()) finish(new Error('lease authority was interrupted')) }, Math.min(25, Math.max(1, remaining)))
+      onDispatch?.()
       void this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })).then(() => {
-        if (!isAuthorized()) finish(new Error('lease authority was interrupted'))
+        commandSettled = true
+        finishIfComplete()
       }, (error) => finish(error instanceof Error ? error : new Error(String(error))))
     })
   }

@@ -89,12 +89,12 @@ const fixtureAddress = fixtureServer.address()
 if (fixtureAddress === null || typeof fixtureAddress === 'string') throw new Error('isolated fixture server did not bind TCP')
 const fixtureUrl = `http://127.0.0.1:${fixtureAddress.port}/`
 const args = [
-  '--headless=new',
+  ...(process.env.FORGE_ISOLATED_CHROME_HEADED === '1' ? [] : ['--headless=new']),
   ...(process.env.FORGE_ISOLATED_CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
   '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
   '--disable-component-update', '--disable-default-apps', '--disable-search-engine-choice-screen', '--disable-sync',
   '--metrics-recording-only', '--password-store=basic', '--use-mock-keychain',
-  '--remote-debugging-port=0', '--remote-allow-origins=*', `--user-data-dir=${profile}`,
+  '--remote-debugging-port=0', '--remote-allow-origins=*', '--window-size=1280,800', `--user-data-dir=${profile}`,
   `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`, fixtureUrl,
 ]
 let child
@@ -206,7 +206,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const run = async (operation,input) => {
           const response = await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-'+operation+'-'+crypto.randomUUID(),leaseId:'fixture-root',leaseEpoch:1,tabId,operation,input,deadlineAt:new Date(Date.now()+10000).toISOString()});
           if (!response.ok) throw new Error(operation+': '+response.error.code+' '+response.error.message);
-          if (!(await detached(tabId))) throw new Error(operation+': debugger remained attached');
+          if (await detached(tabId)) throw new Error(operation+': reusable debugger detached before turn release');
           return response.result;
         };
         const largeNavigation=await run('navigate',{url:${JSON.stringify(fixtureUrl+'large')},readiness:'load',timeoutMs:5000});
@@ -237,17 +237,20 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const authorityState=await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
         const childOutsideAuthority=!!child && !(authorityState['forge.externalChrome.tabAuthority.v2']??[]).some(record=>record.tabId===child.id);
         if(child?.id) await chrome.tabs.remove(child.id);
+        const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'turn-ended'});
+        if (!(await detached(tabId))) throw new Error('turn release did not detach reusable debugger');
         await chrome.debugger.attach({tabId},'1.3');
-        const conflict=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-conflict',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'click',input:{locator:'role=button[name="Increment"]',timeoutMs:5000},deadlineAt:new Date(Date.now()+10000).toISOString()});
+        await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-conflict',leaseId:'fixture-conflict',leaseEpoch:2,tabId,createIfNeeded:false});
+        const conflict=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-conflict',leaseId:'fixture-conflict',leaseEpoch:2,tabId,operation:'click',input:{locator:'role=button[name="Increment"]',timeoutMs:5000},deadlineAt:new Date(Date.now()+10000).toISOString()});
         await chrome.debugger.detach({tabId});
         const [counterAfterConflict]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>window.__state?.clicks});
         const conflictDetails=conflict.error?.details;
         const exactConflictEvidence=conflictDetails&&Object.keys(conflictDetails).length===3&&conflictDetails.failurePhase==='debugger-attach'&&conflictDetails.mutationState==='not-started'&&conflictDetails.fallbackReason==='foreign-debugger';
         const conflictPreMutation=conflict.ok===false&&conflict.error?.code==='debugger-unavailable'&&exactConflictEvidence&&counterAfterConflict?.result===1;
-        const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'fixture-complete'});
-        const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:2,createIfNeeded:true});
+        await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-conflict',leaseEpoch:2,reason:'fixture-complete'});
+        const dedicated=await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-dedicated',leaseId:'fixture-dedicated',leaseEpoch:3,createIfNeeded:true});
         const dedicatedTab=await chrome.tabs.get(dedicated.tab.tabId);
-        await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-dedicated',leaseEpoch:2,reason:'fixture-complete'});
+        await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-dedicated',leaseEpoch:3,reason:'fixture-complete'});
         await chrome.tabs.remove(dedicated.tab.tabId);
         const finalAuthorityState=await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
         const zeroLeakedLease=(finalAuthorityState['forge.externalChrome.tabAuthority.v2']??[]).length===0;

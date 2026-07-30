@@ -39,11 +39,14 @@ class ContentPort {
 }
 
 describe('service-worker control-session lifecycle', () => {
-  it('reuses one attachment across same-lease operations, reports agent-idle, and detaches on exact release', async () => {
+  it('reuses one attachment across five calls, reports agent-idle, and detaches at turn end', async () => {
     const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness()
 
-    await expect(execute('first')).resolves.toMatchObject({ ok: true, result: { value: 'first' } })
-    await expect(execute('second', 'evaluate-2')).resolves.toMatchObject({ ok: true, result: { value: 'second' } })
+    for (let index = 1; index <= 5; index += 1) {
+      await expect(execute(`call-${index}`, `evaluate-${index}`)).resolves.toMatchObject({
+        ok: true, result: { value: `call-${index}` },
+      })
+    }
     await expect(status(runtime)).resolves.toMatchObject({
       ok: true,
       result: { selectedTab: { controller: 'agent-idle' } },
@@ -53,15 +56,15 @@ describe('service-worker control-session lifecycle', () => {
     expect(chrome.attached).toEqual(new Set([7]))
     expect(runtime.diagnostics()).toMatchObject({
       authorities: [{ tabId: 7, state: 'idle' }],
-      debuggerMetrics: { attachments: 1, attachmentReuses: 1, activeAttachments: 1, maximumObservedAttachments: 1 },
+      debuggerMetrics: { attachments: 1, attachmentReuses: 4, activeAttachments: 1, maximumObservedAttachments: 1 },
     })
 
-    await expect(release('idle')).resolves.toMatchObject({ releasedTabIds: [7] })
+    await expect(release('turn-ended')).resolves.toMatchObject({ releasedTabIds: [7] })
     expect(chrome.attached).toEqual(new Set())
     expect(detachCalls()).toBe(1)
     expect(runtime.diagnostics()).toMatchObject({
       authorities: [],
-      debuggerMetrics: { activeAttachments: 0, detachments: 1, detachReasons: { 'release:idle': 1 } },
+      debuggerMetrics: { activeAttachments: 0, detachments: 1, detachReasons: { 'release:turn-ended': 1 } },
     })
     await expect(release('retry-after-lost-ack')).resolves.toMatchObject({ releasedTabIds: [7] })
   })
@@ -106,14 +109,12 @@ describe('service-worker control-session lifecycle', () => {
     await release('idle')
   })
 
-  it('revokes an active epoch and waits for detach settlement on trusted human input without replaying CDP', async () => {
-    let rejectPending: ((error: Error) => void) | null = null
-    let pending = true
-    const { chrome, runtime, execute, release, attachCalls } = await harness({
-      evaluate: (expression) => expression === 'pending' && pending
-        ? new Promise((_resolve, reject) => { rejectPending = reject })
+  it('settles a collided command, preserves attached-idle authority, and requires re-observation without replay', async () => {
+    let resolvePending!: (result: unknown) => void
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness({
+      evaluate: (expression) => expression === 'pending'
+        ? new Promise((resolve) => { resolvePending = resolve })
         : Promise.resolve(value(expression)),
-      onDetach: () => { rejectPending?.(new Error('debugger detached')); rejectPending = null },
     })
     const operation = execute('pending')
     await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'pending')).toBe(true))
@@ -123,23 +124,55 @@ describe('service-worker control-session lifecycle', () => {
     runtime.onShellEvent('runtime.connect', [guard.port])
     guard.ready()
     guard.human(0)
+    resolvePending(value('late-result'))
 
-    await expect(operation).resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'possible', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
     await expect(staleQueuedOperation).resolves.toMatchObject({ ok: false, error: { code: 'request-cancelled' } })
-    await vi.waitFor(() => expect(chrome.attached).toEqual(new Set()))
-    expect(runtime.diagnostics().authorities).toEqual([expect.objectContaining({ tabId: 7, state: 'idle' })])
-    expect((runtime as unknown as { authorities: { forTab(tabId: number): { controlEpoch: number } | null } }).authorities.forTab(7))
-      .toMatchObject({ controlEpoch: 1 })
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(runtime.diagnostics().authorities).toEqual([
+      expect.objectContaining({ tabId: 7, state: 'idle' }),
+    ])
+    expect((runtime as unknown as {
+      authorities: { forTab(tabId: number): { requiresObservation: boolean; controlEpoch: number } | null }
+    }).authorities.forTab(7)).toMatchObject({ requiresObservation: true, controlEpoch: 1 })
     expect(chrome.commands.filter(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'pending')).toHaveLength(1)
     expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'queued-before-human')).toBe(false)
-    expect(runtime.diagnostics().debuggerMetrics.detachReasons).toMatchObject({ 'trusted-input': 1 })
-    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'human', controlEpoch: 1 }))
+    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 1 }))
 
-    pending = false
-    await expect(execute('resumed', 'evaluate-resumed')).resolves.toMatchObject({ ok: true, result: { value: 'resumed' } })
-    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'agent', controlEpoch: 1 }))
-    expect(attachCalls()).toBe(2)
-    await release('idle')
+    await expect(execute('blocked-until-observed', 'evaluate-blocked')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true } },
+    })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'blocked-until-observed')).toBe(false)
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+    expect(chrome.attached).toEqual(new Set())
+    expect(detachCalls()).toBe(1)
+  })
+
+  it('lets explicit Take Control terminally release active physical work', async () => {
+    let rejectPending: ((error: Error) => void) | null = null
+    const { chrome, execute, release, detachCalls } = await harness({
+      evaluate: (expression) => expression === 'active-before-take-control'
+        ? new Promise((_resolve, reject) => { rejectPending = reject })
+        : Promise.resolve(value(expression)),
+      onDetach: () => { rejectPending?.(new Error('debugger detached by Take Control')); rejectPending = null },
+    })
+    const active = execute('active-before-take-control')
+    await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) =>
+      method === 'Runtime.evaluate' && params?.expression === 'active-before-take-control')).toBe(true))
+
+    await expect(release('take-control')).resolves.toMatchObject({ releasedTabIds: [7] })
+    await expect(active).resolves.toMatchObject({ ok: false })
+    expect(chrome.attached).toEqual(new Set())
+    expect(detachCalls()).toBe(1)
   })
 
   it('cancels and detaches one timed-out command before allowing a later same-lease operation', async () => {
@@ -263,8 +296,11 @@ describe('service-worker control-session lifecycle', () => {
       authorities: [{ state: 'idle' }],
       debuggerMetrics: { activeAttachments: 0, detachReasons: { 'external-navigation': 1 } },
     })
-    await expect(execute('after-external-navigation')).resolves.toMatchObject({ ok: true })
-    expect(attachCalls()).toBe(2)
+    await expect(execute('after-external-navigation')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled' },
+    })
+    expect(attachCalls()).toBe(1)
     await release('idle')
   })
 
@@ -308,11 +344,24 @@ describe('service-worker control-session lifecycle', () => {
     await expect(release('desktop-retry')).resolves.toMatchObject({ releasedTabIds: [7] })
   })
 
-  it('terminally receipts DevTools preemption and rejects stale lease reuse', async () => {
-    const { chrome, runtime, execute, release } = await harness()
-    await execute('before-devtools')
+  it('cancels active work, terminally receipts DevTools preemption, and requires reacquisition', async () => {
+    let rejectActive!: (error: Error) => void
+    const { chrome, runtime, execute, release } = await harness({
+      evaluate: (expression) => expression === 'active-at-devtools'
+        ? new Promise((_resolve, reject) => { rejectActive = reject })
+        : Promise.resolve(value(expression)),
+    })
+    const active = execute('active-at-devtools')
+    await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) =>
+      method === 'Runtime.evaluate' && params?.expression === 'active-at-devtools')).toBe(true))
+    const queued = execute('queued-at-devtools', 'queued-at-devtools')
     chrome.attached.delete(7)
     runtime.onShellEvent('debugger.detach', [{ tabId: 7 }, 'replaced_with_devtools'])
+    rejectActive(new Error('debugger detached during active work'))
+
+    await expect(active).resolves.toMatchObject({ ok: false, error: { code: 'request-cancelled' } })
+    await expect(queued).resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'queued-at-devtools')).toBe(false)
 
     const authorities = runtime as unknown as {
       authorities: {

@@ -1,4 +1,8 @@
 import {
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS,
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS,
+} from '@forge/protocol'
+import {
   DebuggerAttachConflictError,
   DebuggerAttachmentLimitError,
   DebuggerController,
@@ -6,8 +10,8 @@ import {
   type DebuggerState,
 } from './debugger-controller.js'
 
-export const DEFAULT_DEBUGGER_IDLE_TIMEOUT_MS = 5_000
-export const DEFAULT_DEBUGGER_MAXIMUM_LIFETIME_MS = 5 * 60_000
+export const DEFAULT_DEBUGGER_IDLE_TIMEOUT_MS = EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS
+export const DEFAULT_DEBUGGER_MAXIMUM_LIFETIME_MS = EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS
 const MAX_DETACH_REASON_METRICS = 64
 
 export type PhysicalDebuggerDetachReason =

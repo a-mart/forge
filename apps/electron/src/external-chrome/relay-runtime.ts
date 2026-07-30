@@ -4,7 +4,10 @@ import type { Socket } from 'node:net'
 import path from 'node:path'
 import {
   BROWSER_AUTOMATION_MAX_ELIGIBLE_TABS,
+  EXTERNAL_CHROME_EXPIRED_CLEANUP_ATTEMPT_MS,
   EXTERNAL_CHROME_EXTENSION_ORIGIN,
+  EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS,
+  EXTERNAL_CHROME_MAX_LATE_RESPONSE_TOMBSTONES,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
   EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
@@ -576,6 +579,10 @@ class RuntimeConnection {
     reject: (error: Error) => void
     timer: ReturnType<typeof setTimeout>
   }>()
+  private readonly timeoutTombstones = new Map<string, {
+    method: ExternalChromeRequestMethod
+    expiresAt: number
+  }>()
   private requestSequence = 0
   private closed = false
 
@@ -611,6 +618,7 @@ class RuntimeConnection {
     const response = await new Promise<ExternalChromeJsonRpcMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        this.rememberTimeout(id, method)
         reject(new Error(`${method} timed out`))
       }, timeoutMs)
       timer.unref?.()
@@ -633,6 +641,7 @@ class RuntimeConnection {
     this.sessionKey.fill(0)
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('extension runtime disconnected')) }
     this.pending.clear()
+    this.timeoutTombstones.clear()
     this.onClose(this)
   }
 
@@ -658,9 +667,22 @@ class RuntimeConnection {
     const serialized = JSON.stringify(payload)
     if (Buffer.byteLength(serialized) > this.maxMessageBytes) throw new Error('extension payload exceeds negotiated bound')
     const id = typeof payload.id === 'string' ? payload.id : undefined
+    const responseLike = 'result' in payload || 'error' in payload
+    this.pruneTimeouts()
     const pending = id ? this.pending.get(id) : undefined
-    const parsed = parseExternalChromeJsonRpcFrame(serialized, pending ? { expectedResponseMethod: pending.method, protocolVersion: 1 } : { protocolVersion: 1 })
-    if (pending && !('method' in parsed)) {
+    const tombstone = id ? this.timeoutTombstones.get(id) : undefined
+    if (responseLike && pending === undefined && tombstone === undefined) throw new Error('extension response ID is unknown or expired')
+    const expectedMethod = pending?.method ?? tombstone?.method
+    const parsed = parseExternalChromeJsonRpcFrame(serialized, expectedMethod === undefined
+      ? { protocolVersion: 1 }
+      : { expectedResponseMethod: expectedMethod, protocolVersion: 1 })
+    if (tombstone !== undefined) {
+      if ('method' in parsed) throw new Error('extension request reused a timed-out response ID')
+      this.timeoutTombstones.delete(id!)
+      return
+    }
+    if (pending !== undefined) {
+      if ('method' in parsed) throw new Error('extension request reused a pending response ID')
       clearTimeout(pending.timer)
       this.pending.delete(id!)
       pending.resolve(parsed)
@@ -701,6 +723,26 @@ class RuntimeConnection {
       return
     }
     await this.sendPayload({ jsonrpc: '2.0', id: parsed.id, error: { code: -32601, message: 'Desktop does not accept this extension request' } })
+  }
+
+  private rememberTimeout(id: string, method: ExternalChromeRequestMethod): void {
+    this.pruneTimeouts()
+    while (this.timeoutTombstones.size >= EXTERNAL_CHROME_MAX_LATE_RESPONSE_TOMBSTONES) {
+      const oldest = this.timeoutTombstones.keys().next().value
+      if (typeof oldest !== 'string') break
+      this.timeoutTombstones.delete(oldest)
+    }
+    this.timeoutTombstones.set(id, {
+      method,
+      expiresAt: Date.now() + EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS,
+    })
+  }
+
+  private pruneTimeouts(): void {
+    const now = Date.now()
+    for (const [id, tombstone] of this.timeoutTombstones) {
+      if (tombstone.expiresAt <= now) this.timeoutTombstones.delete(id)
+    }
   }
 
   private async sendPayload(payload: Record<string, unknown>): Promise<void> {
@@ -869,10 +911,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       const checkpoints = await this.checkpoints.all()
       const releases = await Promise.allSettled(checkpoints.map((lease) => this.serializeCheckpointRelease(async () => {
         if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before exact lease release')
-        await this.releaseCheckpoint(lease, reason, Math.max(1, deadlineAt - this.now()))
+        await this.releaseCheckpoint(lease, reason, deadlineAt)
         if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed during exact lease release')
       })))
-      await this.reconcilePendingAcknowledgements()
+      await this.reconcilePendingAcknowledgements(undefined, deadlineAt)
       const remaining = await this.durableAuthorityEvidenceCount()
       const failures = [...preparation, ...releases].filter((result) => result.status === 'rejected')
       if (barrierRevision !== this.runtimeStateRevision || failures.length > 0 || remaining > 0) {
@@ -965,7 +1007,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     })
   }
 
-  private async releaseCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, reason: string, timeoutMs?: number): Promise<void> {
+  private async releaseCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, reason: string, callerDeadlineAt?: number): Promise<void> {
+    const cleanupDeadlineAt = normalizeCleanupDeadline(callerDeadlineAt, this.now())
     const current = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === checkpoint.extensionInstanceId &&
       lease.leaseId === checkpoint.leaseId && lease.leaseEpoch === checkpoint.leaseEpoch)
     if (current === undefined) {
@@ -974,7 +1017,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         if (canonical(pendingAcknowledgement.tabIds) !== canonical([...checkpoint.tabIds].sort((left, right) => left - right))) {
           throw new Error('exact release acknowledgement changed tab scope')
         }
-        await this.acknowledgeRelease(pendingAcknowledgement)
+        await this.acknowledgeRelease(pendingAcknowledgement, undefined, cleanupDeadlineAt)
         return
       }
       const settled = this.settledReleases.get(settledReleaseKey(checkpoint))
@@ -989,15 +1032,19 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const connection = this.connection(pending.extensionInstanceId)
     const result = await connection.request('forge.browser.release', {
       protocolVersion: 1, leaseId: pending.leaseId, leaseEpoch: pending.leaseEpoch, reason: pending.cleanupReason!,
-    }, timeoutMs)
+    }, remainingCleanupTimeout(cleanupDeadlineAt, this.now()))
     if (this.connections.get(current.extensionInstanceId) !== connection || result.leaseId !== current.leaseId ||
       result.leaseEpoch !== current.leaseEpoch || canonical([...result.releasedTabIds].sort((a, b) => a - b)) !== canonical(current.tabIds)) {
       throw new Error('exact checkpoint release was not acknowledged')
     }
-    await this.forgetCheckpoint(current, connection)
+    await this.forgetCheckpoint(current, connection, cleanupDeadlineAt)
   }
 
-  private async forgetCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, connection?: RuntimeConnection): Promise<void> {
+  private async forgetCheckpoint(
+    checkpoint: ExternalChromeLeaseCheckpoint,
+    connection?: RuntimeConnection,
+    cleanupDeadlineAt?: number,
+  ): Promise<void> {
     // Atomically replace live checkpoint evidence with a durable pending acknowledgement. The
     // Extension receipt cannot be forgotten until the following exact RPC succeeds.
     const acknowledgement = await this.checkpoints.settleRelease(checkpoint)
@@ -1006,12 +1053,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.settledReleases.delete(key)
     this.settledReleases.set(key, [...checkpoint.tabIds].sort((left, right) => left - right))
     while (this.settledReleases.size > MAX_SETTLED_RELEASES) this.settledReleases.delete(this.settledReleases.keys().next().value!)
-    await this.acknowledgeRelease(acknowledgement, connection)
+    await this.acknowledgeRelease(acknowledgement, connection, cleanupDeadlineAt)
   }
 
   private async acknowledgeRelease(
     acknowledgement: ExternalChromeReleaseAcknowledgement,
     connectionOverride?: RuntimeConnection,
+    cleanupDeadlineAt?: number,
   ): Promise<void> {
     const connection = connectionOverride ?? this.connection(acknowledgement.extensionInstanceId)
     const result = await connection.request('forge.browser.acknowledgeRelease', {
@@ -1019,7 +1067,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       leaseId: acknowledgement.leaseId,
       leaseEpoch: acknowledgement.leaseEpoch,
       releasedTabIds: acknowledgement.tabIds,
-    })
+    }, remainingCleanupTimeout(cleanupDeadlineAt, this.now()))
     if (this.connections.get(acknowledgement.extensionInstanceId) !== connection || result.acknowledged !== true ||
       result.leaseId !== acknowledgement.leaseId || result.leaseEpoch !== acknowledgement.leaseEpoch ||
       canonical(result.releasedTabIds) !== canonical(acknowledgement.tabIds)) {
@@ -1028,7 +1076,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     await this.checkpoints.removeAcknowledgement(acknowledgement)
   }
 
-  private serializeCheckpointRelease(work: () => Promise<void>): Promise<void> {
+  private serializeCheckpointRelease<Value>(work: () => Promise<Value>): Promise<Value> {
     const result = this.checkpointReleaseOperations.then(work, work)
     this.checkpointReleaseOperations = result.then(() => undefined, () => undefined)
     return result
@@ -1183,7 +1231,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           await this.checkpoints.finalizeAcquisition(journal, cleanupCheckpoint).catch(() => undefined)
           const durable = (await this.checkpoints.all()).find((checkpoint) => sameLease(checkpoint, journal))
           if (durable !== undefined) {
-            await this.serializeCheckpointRelease(() => this.releaseCheckpoint(durable, 'acquisition-interrupted')).catch(() => undefined)
+            await this.serializeCheckpointRelease(() => this.releaseCheckpoint(
+              durable,
+              'acquisition-interrupted',
+              input.deadlineAt,
+            )).catch(() => undefined)
           }
         }
       }
@@ -1194,7 +1246,12 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
   }
 
-  async releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void> {
+  async releaseAuthority(
+    session: BrowserTargetSession,
+    authority: ExternalBrowserTargetAuthority,
+    reason: string,
+    deadlineAt?: number,
+  ): Promise<void> {
     const decoded = decodeTabId(authority.tabId)
     if (decoded === null) throw new Error('stale tab authority')
     const checkpoint = (await this.checkpoints.all()).find((entry) => entry.extensionInstanceId === decoded.extensionInstanceId &&
@@ -1206,7 +1263,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         entry.profileId === session.profileId && entry.leaseEpoch === authority.ownerEpoch &&
         entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
       if (acknowledgement !== undefined) {
-        await this.acknowledgeRelease(acknowledgement)
+        await this.acknowledgeRelease(
+          acknowledgement,
+          undefined,
+          normalizeCleanupDeadline(deadlineAt, this.now()),
+        )
         return
       }
       const settled = this.settledReleases.get(settledAuthorityKey(
@@ -1218,7 +1279,36 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       if (settled?.length === 1 && settled[0] === decoded.tabId) return
       throw new Error('exact tab release checkpoint is missing')
     }
-    await this.serializeCheckpointRelease(() => this.releaseCheckpoint(checkpoint, reason))
+    await this.serializeCheckpointRelease(() => this.releaseCheckpoint(checkpoint, reason, deadlineAt))
+  }
+
+  releaseTargetAuthority(
+    session: BrowserTargetSession,
+    tabId: string,
+    reason: string,
+    deadlineAt?: number,
+  ): Promise<boolean> {
+    const decoded = decodeTabId(tabId)
+    if (decoded === null) throw new Error('stale tab authority')
+    return this.serializeCheckpointRelease(async () => {
+      const checkpoint = (await this.checkpoints.all()).find((entry) =>
+        entry.extensionInstanceId === decoded.extensionInstanceId && entry.sessionAgentId === session.sessionAgentId &&
+        entry.profileId === session.profileId && entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
+      if (checkpoint !== undefined) {
+        await this.releaseCheckpoint(checkpoint, reason, deadlineAt)
+        return true
+      }
+      const acknowledgement = (await this.checkpoints.acknowledgements()).find((entry) =>
+        entry.extensionInstanceId === decoded.extensionInstanceId && entry.sessionAgentId === session.sessionAgentId &&
+        entry.profileId === session.profileId && entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
+      if (acknowledgement === undefined) return false
+      await this.acknowledgeRelease(
+        acknowledgement,
+        undefined,
+        normalizeCleanupDeadline(deadlineAt, this.now()),
+      )
+      return true
+    })
   }
 
   async revealTarget(session: BrowserTargetSession, tabId: string): Promise<{ revealed: true; tabId: string }> {
@@ -1509,12 +1599,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.scheduleRuntimeUpdateBarrier()
   }
 
-  private async reconcilePendingAcknowledgements(extensionInstanceId?: string): Promise<void> {
+  private async reconcilePendingAcknowledgements(extensionInstanceId?: string, cleanupDeadlineAt?: number): Promise<void> {
     const acknowledgements = (await this.checkpoints.acknowledgements()).filter((record) =>
       extensionInstanceId === undefined || record.extensionInstanceId === extensionInstanceId)
     for (const acknowledgement of acknowledgements) {
+      if (cleanupDeadlineAt !== undefined && this.now() >= cleanupDeadlineAt) break
       if (!this.isInstanceReady(acknowledgement.extensionInstanceId)) continue
-      try { await this.acknowledgeRelease(acknowledgement) }
+      try { await this.acknowledgeRelease(acknowledgement, undefined, cleanupDeadlineAt) }
       catch { /* durable acknowledgement intent remains for authenticated reconnect retry */ }
     }
   }
@@ -1905,6 +1996,17 @@ function publicInventoryTab(extensionInstanceId: string, tab: ExternalChromeInve
 
 function inventoryTimeout(deadlineAt?: number): number {
   return Number.isFinite(deadlineAt) ? Math.max(1, Math.min(5_000, (deadlineAt as number) - Date.now())) : 5_000
+}
+
+function normalizeCleanupDeadline(deadlineAt: number | undefined, now: number): number | undefined {
+  if (deadlineAt === undefined) return undefined
+  return Number.isFinite(deadlineAt) && deadlineAt > now
+    ? deadlineAt
+    : now + EXTERNAL_CHROME_EXPIRED_CLEANUP_ATTEMPT_MS
+}
+
+function remainingCleanupTimeout(deadlineAt: number | undefined, now: number): number | undefined {
+  return deadlineAt === undefined ? undefined : Math.max(1, Math.floor(deadlineAt - now))
 }
 
 function encodeTabId(extensionInstanceId: string, tabId: number): string { return `ext.${extensionInstanceId}.${tabId}` }

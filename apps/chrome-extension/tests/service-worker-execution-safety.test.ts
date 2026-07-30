@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
 } from '@forge/protocol'
 import { Runtime } from '../src/payload/service-worker/index.js'
@@ -55,7 +56,7 @@ describe('service-worker execution safety evidence', () => {
     expect(chrome.attached).toEqual(new Set())
   })
 
-  it('returns canonical bounded screenshot overflow while retaining the reusable physical attachment', async () => {
+  it('returns bounded minimum-capture overflow while retaining the reusable physical attachment', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     const screenshot = oversizedPng(EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES)
     chrome.debugger.sendCommand = async (target, method, params) => {
@@ -83,9 +84,9 @@ describe('service-worker execution safety evidence', () => {
       error: {
         code: 'response-too-large', retryable: false,
         details: {
-          limitation: 'screenshot-only-envelope-overflow', screenshotByteUnit: 'decoded-png',
-          screenshotBytes: 24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
-          maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, maximumByteUnit: 'decoded-png',
+          limitation: 'minimum-qualified-screenshot-overflow', screenshotByteUnit: 'base64-utf8',
+          screenshotBytes: new TextEncoder().encode(screenshot).byteLength,
+          maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES, maximumByteUnit: 'base64-utf8',
         },
       },
     })
@@ -138,6 +139,8 @@ function clickRequest(): Record<string, unknown> {
 function oversizedPng(additionalBytes: number): string {
   const bytes = new Uint8Array(24 + additionalBytes)
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  new DataView(bytes.buffer).setUint32(8, 13)
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12)
   new DataView(bytes.buffer).setUint32(16, 4)
   new DataView(bytes.buffer).setUint32(20, 3)
   return Buffer.from(bytes).toString('base64')

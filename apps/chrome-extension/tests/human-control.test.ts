@@ -26,6 +26,7 @@ describe('trusted human control interruption', () => {
     const guard = new ExactSyntheticInputGuard()
     guard.start('operation-1', 4, [pointerDown])
     expect(guard.observe({ ...pointerDown, type: pointerDown.phase, isTrusted: false })).toBe('ignored')
+    expect(guard.observe({ ...pointerDown, clientX: 99, type: 'pointermove', isTrusted: true })).toBe('ignored')
     expect(guard.observe({ ...pointerDown, type: pointerDown.phase, isTrusted: true })).toBe('synthetic')
     expect(guard.observe({ ...pointerDown, type: pointerDown.phase, isTrusted: true })).toBe('interrupted')
 

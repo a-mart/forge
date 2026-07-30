@@ -218,13 +218,20 @@ describe('per-tab compare-and-set authority', () => {
     await expect(manager.beginAgentControl('owner', 2, 1, epoch + 1)).resolves.toBe(epoch + 1)
   })
 
-  it('interrupts active control immediately by advancing the tab-local control epoch', async () => {
+  it('interrupts active control immediately and requires an exact fresh observation epoch', async () => {
     const manager = new LeaseManager(fakeChrome({ tabs: [tab(1)] }), 'payload')
     await manager.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 2, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
     const epoch = await manager.beginAgentControl('owner', 2, 1)
     expect(manager.isOperationCurrent('owner', 2, 1, epoch)).toBe(true)
     await manager.trustedHumanInput(1)
     expect(manager.isOperationCurrent('owner', 2, 1, epoch)).toBe(false)
+    expect(manager.forTab(1)).toMatchObject({ state: 'idle', controlEpoch: epoch + 1, requiresObservation: true })
+
+    const observationEpoch = await manager.beginAgentControl('owner', 2, 1, epoch + 1)
+    await expect(manager.completeObservation('owner', 2, 1, epoch)).resolves.toBe(false)
+    await expect(manager.completeObservation('owner', 2, 1, observationEpoch)).resolves.toBe(true)
+    await expect(manager.finishAgentControl('owner', 2, 1, observationEpoch)).resolves.toBe(true)
+    expect(manager.forTab(1)).toMatchObject({ state: 'idle', requiresObservation: false })
   })
 
   it('recovers durable CAS records without assuming debugger control survived worker restart', async () => {
@@ -235,7 +242,9 @@ describe('per-tab compare-and-set authority', () => {
     await first.beginAgentControl('owner', 2, 1)
     const restarted = new LeaseManager(chrome, 'payload')
     await restarted.recover()
-    expect(restarted.forTab(1)).toMatchObject({ ownerId: 'owner', ownerEpoch: 2, state: 'idle' })
+    expect(restarted.forTab(1)).toMatchObject({
+      ownerId: 'owner', ownerEpoch: 2, state: 'idle', requiresObservation: true,
+    })
     expect(chrome.attached.size).toBe(0)
   })
 

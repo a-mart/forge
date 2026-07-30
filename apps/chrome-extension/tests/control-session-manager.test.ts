@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS,
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS,
+} from '@forge/protocol'
+import {
   ControlSessionManager,
   type ControlSessionScheduler,
   type PhysicalDebuggerDetachReason,
@@ -70,6 +74,28 @@ describe('bounded reusable physical debugger control sessions', () => {
       maximumAttachedMs: 30,
       detachReasons: { 'idle-timeout': 1 },
     })
+  })
+
+  it('uses the shared 35-second idle boundary while retaining the five-minute maximum', async () => {
+    const clock = { now: 0 }
+    const scheduler = new ManualScheduler(clock)
+    const chrome = fakeChrome({ tabs: [{ id: 7, url: 'https://fixture.invalid/' }] })
+    const controller = new DebuggerController(chrome.debugger)
+    const manager = new ControlSessionManager(controller, {
+      now: () => clock.now,
+      scheduler,
+      onExpiry: async (tabId, reason) => { await manager.detach(tabId, reason) },
+    })
+    await manager.ensure(7, 'lease', 1)
+    manager.beginOperation(7, 'lease', 1)
+    manager.finishOperation(7, 'lease', 1)
+
+    scheduler.advanceTo(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS - 1)
+    expect(manager.forTab(7)).not.toBeNull()
+    scheduler.advanceTo(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS)
+    await settle(() => expect(manager.forTab(7)).toBeNull())
+    expect(manager.metrics().detachReasons).toEqual({ 'idle-timeout': 1 })
+    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS).toBe(5 * 60_000)
   })
 
   it('enforces maximum physical lifetime even while an operation is active', async () => {

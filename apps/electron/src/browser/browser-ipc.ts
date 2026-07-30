@@ -97,6 +97,11 @@ export function installBrowserIpc(options: {
     const value = input as { sessionAgentId: string; profileId: string; tabId: string }
     return manager.revealTarget({ sessionAgentId: value.sessionAgentId, profileId: value.profileId }, value.tabId)
   })
+  handle(BROWSER_IPC.takeControl, async (event, input) => {
+    trustedMain(event)
+    const value = parseTakeControlInput(input)
+    return manager.takeControl({ sessionAgentId: value.sessionAgentId, profileId: value.profileId }, value.tabId)
+  })
   handle(BROWSER_IPC.prepareRecording, async (event, request) => {
     trustedMain(event)
     return manager.prepareRecording(request as BrowserAutomationRequest & { operation: 'recordingStart' })
@@ -122,4 +127,30 @@ export function installBrowserIpc(options: {
     for (const channel of channels) ipcMain.removeHandler(channel)
     void viewHost.destroy()
   }
+}
+
+function parseTakeControlInput(value: unknown): { sessionAgentId: string; profileId: string; tabId: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BrowserHostError('invalid-input', 'Take Control input must be an object')
+  }
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(',') !== 'profileId,sessionAgentId,tabId') {
+    throw new BrowserHostError('invalid-input', 'Take Control input has unexpected fields')
+  }
+  const bounded = (field: 'sessionAgentId' | 'profileId', maximum: number): string => {
+    const candidate = record[field]
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > maximum || candidate.includes('\0')) {
+      throw new BrowserHostError('invalid-input', `Take Control ${field} is invalid`)
+    }
+    return candidate
+  }
+  const tabId = record.tabId
+  if (typeof tabId !== 'string') {
+    throw new BrowserHostError('invalid-input', 'Take Control tabId is not a canonical External Chrome tab')
+  }
+  const tabMatch = /^ext\.[A-Za-z0-9_-]{1,64}\.([0-9]{1,16})$/u.exec(tabId)
+  if (tabMatch === null || !Number.isSafeInteger(Number(tabMatch[1]))) {
+    throw new BrowserHostError('invalid-input', 'Take Control tabId is not a canonical External Chrome tab')
+  }
+  return { sessionAgentId: bounded('sessionAgentId', 128), profileId: bounded('profileId', 128), tabId }
 }

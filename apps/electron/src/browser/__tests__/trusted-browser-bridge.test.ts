@@ -54,6 +54,10 @@ describe('trusted browser recording bridge', () => {
     const bridge = createTrustedBrowserBridge(ipcRenderer as never)
     await expect(bridge.invoke(requestValue)).resolves.toMatchObject({ requestId: 'navigate-1', ok: true })
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(BROWSER_IPC.execute, requestValue)
+    await bridge.takeControl('session-1', 'profile-1', 'ext.instance.7')
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(BROWSER_IPC.takeControl, {
+      sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.instance.7',
+    })
   })
 
   it('rejects a concurrent stop with its own retryable envelope while the first stop completes with its own routing', async () => {

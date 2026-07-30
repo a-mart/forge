@@ -75,6 +75,27 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     expect(chrome.commands).toContainEqual({ target: { tabId: 9 }, method: 'Page.navigate', params: { url: 'https://fixture.invalid/' } })
   })
 
+  it('waits for both the navigation command callback and the readiness milestone', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(11)
+    const originalSend = chrome.debugger.sendCommand.bind(chrome.debugger)
+    let resolveNavigate!: (value: unknown) => void
+    chrome.debugger.sendCommand = (target, method, params) => method === 'Page.navigate'
+      ? new Promise((resolve) => { resolveNavigate = resolve })
+      : originalSend(target, method, params)
+
+    let settled = false
+    const navigation = controller.navigateAndWait(11, 'https://fixture.invalid/', 'load', Date.now() + 1_000, () => true)
+      .then(() => { settled = true })
+    await controller.onEvent({ tabId: 11 }, 'Page.loadEventFired', {})
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    resolveNavigate({})
+    await navigation
+    expect(settled).toBe(true)
+  })
+
   it('times out readiness and continuously rejects interrupted lease authority', async () => {
     const chrome = fakeChrome()
     const controller = new DebuggerController(chrome.debugger)

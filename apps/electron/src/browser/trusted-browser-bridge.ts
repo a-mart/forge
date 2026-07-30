@@ -164,6 +164,8 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
     invokeLifecycle: (request: BrowserHostLifecycleRequest): Promise<BrowserHostLifecycleResponse> => invokeIpc(BROWSER_IPC.lifecycle, request),
     reveal: (sessionAgentId: string, profileId: string, tabId: string): Promise<{ targetAffinity: 'managed-electron' | 'external-chrome'; revealed: boolean; tabId: string }> =>
       invokeIpc(BROWSER_IPC.reveal, { sessionAgentId, profileId, tabId }),
+    takeControl: (sessionAgentId: string, profileId: string, tabId: string): Promise<{ released: boolean; tabId: string }> =>
+      invokeIpc(BROWSER_IPC.takeControl, { sessionAgentId, profileId, tabId }),
     onStateChanged: (listener: (tab: BrowserTabSnapshot) => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, tab: BrowserTabSnapshot): void => listener(tab)
       ipcRenderer.on(BROWSER_IPC.stateChanged, handler)
