@@ -11,7 +11,10 @@ class FakeSession {
   abortCalls = 0;
   waitForIdleCalls = 0;
   disposeCalls = 0;
+  clearQueueCalls = 0;
   promptCalls: string[] = [];
+  steerCalls: string[] = [];
+  queuedSteers: string[] = [];
   agent = { transport: "sse" };
   model = { provider: "openai-codex", api: "openai-codex-responses" };
   state: { messages: Array<Record<string, unknown>> } = { messages: [] };
@@ -27,12 +30,16 @@ class FakeSession {
   private listener: ((event: unknown) => void) | undefined;
   waitForIdleImpl?: () => Promise<void>;
   abortImpl?: () => Promise<void>;
+  steerTransform?: (message: string) => string;
 
   async prompt(message: string): Promise<void> {
     this.promptCalls.push(message);
   }
   async followUp(): Promise<void> {}
-  async steer(): Promise<void> {}
+  async steer(message: string): Promise<void> {
+    this.steerCalls.push(message);
+    this.queuedSteers.push(this.steerTransform?.(message) ?? message);
+  }
   async sendUserMessage(): Promise<void> {}
   async abort(): Promise<void> {
     this.abortCalls += 1;
@@ -48,6 +55,13 @@ class FakeSession {
   }
   async compact(): Promise<{ ok: true }> {
     return { ok: true };
+  }
+  clearQueue(): { steering: string[]; followUp: string[] } {
+    this.clearQueueCalls += 1;
+    return { steering: this.queuedSteers.splice(0), followUp: [] };
+  }
+  getSteeringMessages(): readonly string[] {
+    return this.queuedSteers;
   }
   dispose(): void {
     this.disposeCalls += 1;
@@ -188,6 +202,163 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
   });
 
+  it("promotes accepted steers one at a time when settlement did not consume them", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, reportSuccess } = makeRuntime();
+
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    const firstReceipt = await runtime.sendMessage("begin the first accepted follow-up");
+    const secondReceipt = await runtime.sendMessage("then handle the second accepted follow-up");
+
+    expect(firstReceipt.acceptedMode).toBe("steer");
+    expect(secondReceipt.acceptedMode).toBe("steer");
+    expect(session.steerCalls).toEqual([
+      "begin the first accepted follow-up",
+      "then handle the second accepted follow-up",
+    ]);
+    expect(runtime.getPendingCount()).toBe(2);
+
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.clearQueueCalls).toBe(1);
+    expect(session.promptCalls).toEqual(["begin the first accepted follow-up"]);
+    expect(runtime.getPendingCount()).toBe(2);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+    expect(onSessionEvent).not.toHaveBeenCalledWith("manager", { type: "agent_end" });
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: "expanded canonical form of the first follow-up" },
+    });
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.clearQueueCalls).toBe(2);
+    expect(session.promptCalls).toEqual([
+      "begin the first accepted follow-up",
+      "then handle the second accepted follow-up",
+    ]);
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: "then handle the second accepted follow-up" },
+    });
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(session.clearQueueCalls).toBe(2);
+    expect(onAgentEnd).toHaveBeenCalledTimes(1);
+    expect(reportSuccess).toHaveBeenCalledTimes(1);
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
+  });
+
+  it("acknowledges Pi-expanded steer content without replaying it", async () => {
+    const { runtime, session, onAgentEnd, reportSuccess } = makeRuntime();
+    session.steerTransform = (message) => `<expanded-skill>${message}</expanded-skill>`;
+    session.isStreaming = true;
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await runtime.sendMessage("/skill:review inspect the change");
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "<expanded-skill>/skill:review inspect the change</expanded-skill>",
+      },
+    });
+
+    expect(runtime.getPendingCount()).toBe(0);
+
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toEqual([]);
+    expect(session.clearQueueCalls).toBe(0);
+    expect(onAgentEnd).toHaveBeenCalledTimes(1);
+    expect(reportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes a recovery-buffered delivery once Pi is idle", async () => {
+    const { runtime, session, onAgentEnd, reportSuccess } = makeRuntime();
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    (runtime as any).contextRecoveryInProgress = true;
+    session.isStreaming = false;
+
+    await runtime.sendMessage("continue after recovery");
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toEqual([]);
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+
+    (runtime as any).contextRecoveryInProgress = false;
+    await (runtime as any).flushRecoveryBufferedMessages();
+
+    expect(session.promptCalls).toEqual(["continue after recovery"]);
+    expect(session.clearQueueCalls).toBe(1);
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: "continue after recovery" },
+    });
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onAgentEnd).toHaveBeenCalledTimes(1);
+    expect(reportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues input behind a delayed settlement and then promotes it", async () => {
+    const { runtime, session, onAgentEnd } = makeRuntime();
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.isStreaming = false;
+    session.emit({ type: "agent_end", willRetry: false, messages: [] });
+    session.emit({ type: "agent_settled" });
+
+    const receipt = await runtime.sendMessage("arrived across settlement");
+    await runtime.flushSessionEventQueue();
+
+    expect(receipt.acceptedMode).toBe("steer");
+    expect(session.steerCalls).toEqual(["arrived across settlement"]);
+    expect(session.clearQueueCalls).toBe(1);
+    expect(session.promptCalls).toEqual(["arrived across settlement"]);
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+  });
+
   it("error outcomes invoke onAgentEnd without broker reportSuccess", async () => {
     const { runtime, session, onAgentEnd, onSessionEvent, reportSuccess } = makeRuntime();
     session.prompt = async () => {
@@ -239,6 +410,52 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onAgentEnd).not.toHaveBeenCalled();
   });
 
+  it("does not relaunch pending work while a normal stop drains settlement", async () => {
+    const { runtime, session } = makeRuntime();
+
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await runtime.sendMessage("do not relaunch after stop");
+    session.waitForIdleImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 1_000 });
+
+    expect(session.promptCalls).toEqual([]);
+    expect(session.clearQueueCalls).toBe(1);
+    expect(session.queuedSteers).toEqual([]);
+    expect(runtime.getPendingCount()).toBe(0);
+  });
+
+  it("restores pending-delivery reconciliation when the final Stop status emit fails", async () => {
+    const { runtime, session, onStatusChange } = makeRuntime();
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    let failNextIdleStatus = true;
+    onStatusChange.mockImplementation(async (_agentId, status) => {
+      if (status === "idle" && failNextIdleStatus) {
+        failNextIdleStatus = false;
+        throw new Error("idle status emit failed");
+      }
+    });
+
+    await expect(runtime.stopInFlight({ abort: false })).rejects.toThrow(
+      "idle status emit failed",
+    );
+    expect((runtime as any).lifecycleInterruptionInProgress).toBe(false);
+
+    session.isStreaming = true;
+    await runtime.sendMessage("continue after failed Stop status emit");
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toEqual(["continue after failed Stop status emit"]);
+    expect(session.clearQueueCalls).toBe(2);
+  });
+
   it("terminate drains queued settlement before dispose", async () => {
     const { runtime, session, onAgentEnd, reportSuccess } = makeRuntime();
     const order: string[] = [];
@@ -252,7 +469,10 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     };
 
     await (runtime as any).handleEvent({ type: "agent_start" });
+    session.isStreaming = true;
+    await runtime.sendMessage("do not relaunch during terminate");
     session.waitForIdleImpl = async () => {
+      session.isStreaming = false;
       session.emit({ type: "agent_end", willRetry: false, messages: [] });
       session.emit({ type: "agent_settled" });
     };
@@ -262,6 +482,8 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.abortCalls).toBe(1);
     expect(session.waitForIdleCalls).toBe(1);
     expect(session.disposeCalls).toBe(1);
+    expect(session.promptCalls).toEqual([]);
+    expect(session.clearQueueCalls).toBe(0);
     expect(onAgentEnd).toHaveBeenCalledTimes(1);
     expect(reportSuccess).toHaveBeenCalledTimes(1);
     expect(order.indexOf("onAgentEnd")).toBeGreaterThanOrEqual(0);
@@ -310,6 +532,14 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.abortCalls).toBe(1);
     expect(session.waitForIdleCalls).toBe(1);
     expect(session.disposeCalls).toBe(0);
+
+    session.isStreaming = true;
+    await runtime.sendMessage("continue after failed termination");
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toEqual(["continue after failed termination"]);
+    expect(session.clearQueueCalls).toBe(1);
   });
 
   it("concurrent terminate and replacement share exactly one shutdown, broker release, and dispose", async () => {

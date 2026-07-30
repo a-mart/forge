@@ -21,10 +21,12 @@ class FakeSession {
   promptImageCounts: number[] = []
   followUpCalls: string[] = []
   steerCalls: string[] = []
+  queuedSteers: string[] = []
   steerImageCounts: number[] = []
   userMessageCalls: Array<string | Array<{ type: string }>> = []
   abortCalls = 0
   disposeCalls = 0
+  clearQueueCalls = 0
   listener: ((event: any) => void) | undefined
   contextUsageCalls = 0
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
@@ -63,6 +65,7 @@ class FakeSession {
 
   async steer(message: string, images?: Array<{ type: string }>): Promise<void> {
     this.steerCalls.push(message)
+    this.queuedSteers.push(message)
     this.steerImageCounts.push(images?.length ?? 0)
   }
 
@@ -78,6 +81,11 @@ class FakeSession {
 
   async compact(): Promise<{ ok: true }> {
     return { ok: true }
+  }
+
+  clearQueue(): { steering: string[]; followUp: string[] } {
+    this.clearQueueCalls += 1
+    return { steering: this.queuedSteers.splice(0), followUp: [] }
   }
 
   getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined {
@@ -840,6 +848,8 @@ describe('AgentRuntime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(runtime.getPendingCount()).toBe(0)
+    expect(session.clearQueueCalls).toBe(1)
+    expect(session.queuedSteers).toEqual([])
     expect(runtimeErrors).toEqual([
       expect.objectContaining({
         phase: 'prompt_dispatch',

@@ -182,6 +182,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
   private readonly compactionFailureScopeKey: string;
   private pendingDeliveries: PendingDelivery[] = [];
+  private promotedPendingDeliveryId: string | undefined;
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
   private unsubscribe: (() => void) | undefined;
@@ -218,6 +219,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private awaitingAgentSettlement = false;
   /** Shared one-shot session shutdown/disposal, used by terminate/replacement/recycle races. */
   private sessionShutdownPromise: Promise<void> | undefined;
+  /** Prevent abort-generated settlement from relaunching accepted work during Stop/terminate. */
+  private lifecycleInterruptionInProgress = false;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -381,13 +384,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
       const deliveryId = randomUUID();
       const message = await prepareRuntimeUserMessageForDispatch(input);
 
-      if (this.isContextRecoveryActive()) {
-        if (this.isContextRecoveryInProgress()) {
-          this.bufferMessageDuringRecovery(deliveryId, message);
-        } else {
-          await this.enqueueMessage(deliveryId, message);
-        }
-
+      if (this.contextRecoveryInProgress) {
+        this.bufferMessageDuringRecovery(deliveryId, message);
         this.noteActivity();
         await this.emitStatus();
         return {
@@ -397,7 +395,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         };
       }
 
-      if (this.session.isStreaming || this.promptDispatchPending) {
+      if (this.session.isStreaming || this.promptDispatchPending || this.awaitingAgentSettlement) {
         await this.enqueueMessage(deliveryId, message);
         this.noteActivity();
         await this.emitStatus();
@@ -424,6 +422,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
     if (this.status === "terminated") return;
 
+    this.lifecycleInterruptionInProgress = true;
     this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
@@ -431,10 +430,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
-      await this.abortSessionAndWaitForIdle(
-        options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
-        "terminate_abort",
-      );
+      try {
+        await this.abortSessionAndWaitForIdle(
+          options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
+          "terminate_abort",
+        );
+      } catch (error) {
+        // A failed termination leaves this runtime attached and usable.
+        this.lifecycleInterruptionInProgress = false;
+        throw error;
+      }
     }
 
     await this.shutdownSessionResourcesOnce({ reason: "quit" });
@@ -475,6 +480,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    this.lifecycleInterruptionInProgress = true;
     this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
@@ -502,6 +508,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.pendingDeliveries = [];
+    this.promotedPendingDeliveryId = undefined;
     this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
     this.currentTurnReplayMessages = [];
@@ -510,9 +517,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
+    this.session.clearQueue();
 
-    if (!this.suppressSessionEventsUntilIdle) {
-      await this.updateStatus("idle");
+    try {
+      if (!this.suppressSessionEventsUntilIdle) {
+        await this.updateStatus("idle");
+      }
+    } finally {
+      this.lifecycleInterruptionInProgress = false;
     }
   }
 
@@ -595,13 +607,26 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.currentTurnReplayMessages = [];
+    if (
+      this.pendingDeliveries.length > 0 &&
+      (this.contextRecoveryInProgress || this.recoveryBufferedMessages.length > 0)
+    ) {
+      // Recovery owns the next dispatch. Keep the logical Forge run open until
+      // cleanup can either re-queue the messages to an active run or prompt one.
+      return;
+    }
     if (await this.maybeResampleUnhandledHiddenOutputTurn()) {
       // Keep awaitingAgentSettlement armed for the resampled run.
       return;
     }
+    this.hiddenOutputResampleState = undefined;
+    if (this.resumeUnconsumedPendingDeliveryAfterSettlement()) {
+      // Pi settled without consuming an accepted steer. Keep the Forge run open
+      // and promote the oldest orphaned delivery to an ordinary prompt.
+      return;
+    }
 
     this.awaitingAgentSettlement = false;
-    this.hiddenOutputResampleState = undefined;
 
     try {
       await this.openAIAuthBrokerController?.reportSuccess();
@@ -1108,15 +1133,43 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async enqueueMessage(deliveryId: string, message: RuntimeUserMessage): Promise<void> {
-    const images = toImageContent(message.images);
-    await this.session.steer(message.text, images.length > 0 ? images : undefined);
-
-    this.pendingDeliveries.push({
+    const pendingDelivery: PendingDelivery = {
       deliveryId,
       messageKey: buildRuntimeMessageKey(message),
       message: cloneRuntimeUserMessage(message) ?? message,
       mode: "steer"
-    });
+    };
+    this.pendingDeliveries.push(pendingDelivery);
+
+    try {
+      await this.steerPendingDelivery(pendingDelivery);
+    } catch (error) {
+      this.removePendingDeliveryById(deliveryId);
+      throw error;
+    }
+  }
+
+  private async steerPendingDelivery(pendingDelivery: PendingDelivery): Promise<void> {
+    const { message } = pendingDelivery;
+    const images = toImageContent(message.images);
+    const queueReader = (this.session as {
+      getSteeringMessages?: () => readonly string[];
+    }).getSteeringMessages;
+    const queuedCountBefore = queueReader?.call(this.session).length;
+    const steerPromise = this.session.steer(
+      message.text,
+      images.length > 0 ? images : undefined,
+    );
+    if (queuedCountBefore !== undefined) {
+      const effectiveText = queueReader?.call(this.session)[queuedCountBefore];
+      if (effectiveText !== undefined) {
+        pendingDelivery.messageKey = buildRuntimeMessageKey({
+          ...message,
+          text: effectiveText,
+        });
+      }
+    }
+    await steerPromise;
   }
 
   private bufferMessageDuringRecovery(deliveryId: string, message: RuntimeUserMessage): void {
@@ -1142,16 +1195,33 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async flushRecoveryBufferedMessages(): Promise<void> {
-    if (this.status === "terminated" || this.contextRecoveryInProgress || this.recoveryBufferedMessages.length === 0) {
+    if (this.status === "terminated" || this.contextRecoveryInProgress) {
       return;
     }
 
     const buffered = this.recoveryBufferedMessages.splice(0, this.recoveryBufferedMessages.length);
 
+    if (
+      !this.session.isStreaming &&
+      !this.promptDispatchPending &&
+      this.resumeUnconsumedPendingDeliveryAfterSettlement()
+    ) {
+      await this.emitStatus();
+      return;
+    }
+
     for (const entry of buffered) {
+      if (this.lifecycleInterruptionInProgress) {
+        break;
+      }
+      const pendingDelivery = this.pendingDeliveries.find(
+        (delivery) => delivery.deliveryId === entry.deliveryId,
+      );
+      if (!pendingDelivery) {
+        continue;
+      }
       try {
-        const images = toImageContent(entry.message.images);
-        await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
+        await this.steerPendingDelivery(pendingDelivery);
       } catch (error) {
         this.removePendingDeliveryById(entry.deliveryId);
         this.logRuntimeError("steer_delivery", error, {
@@ -1270,9 +1340,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
-      const key = extractMessageKeyFromRuntimeContent(event.message.content);
-      if (key !== undefined) {
-        const pendingMessage = this.consumePendingMessage(key);
+      const promotedPendingMessage = this.consumePromotedPendingMessage();
+      const key = promotedPendingMessage
+        ? undefined
+        : extractMessageKeyFromRuntimeContent(event.message.content);
+      if (promotedPendingMessage || key !== undefined) {
+        const pendingMessage =
+          promotedPendingMessage ??
+          (key === undefined ? undefined : this.consumePendingMessage(key));
         if (pendingMessage) {
           this.currentTurnReplayMessages.push(cloneRuntimeUserMessage(pendingMessage.message) ?? pendingMessage.message);
         }
@@ -1622,6 +1697,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const droppedPendingCount = this.pendingDeliveries.length;
     if (droppedPendingCount > 0) {
       this.pendingDeliveries = [];
+      this.promotedPendingDeliveryId = undefined;
+      this.session.clearQueue();
     }
     const details = {
       textPreview: previewForLog(message.text),
@@ -2397,6 +2474,53 @@ export class AgentRuntime implements SwarmAgentRuntime {
     if (index >= 0) {
       this.pendingDeliveries.splice(index, 1);
     }
+    if (this.promotedPendingDeliveryId === deliveryId) {
+      this.promotedPendingDeliveryId = undefined;
+    }
+  }
+
+  private consumePromotedPendingMessage(): PendingDelivery | undefined {
+    const deliveryId = this.promotedPendingDeliveryId;
+    if (!deliveryId) {
+      return undefined;
+    }
+
+    this.promotedPendingDeliveryId = undefined;
+    const index = this.pendingDeliveries.findIndex((delivery) => delivery.deliveryId === deliveryId);
+    if (index < 0) {
+      return undefined;
+    }
+
+    const [pending] = this.pendingDeliveries.splice(index, 1);
+    return pending;
+  }
+
+  private resumeUnconsumedPendingDeliveryAfterSettlement(): boolean {
+    const pending = this.pendingDeliveries[0];
+    if (
+      !pending ||
+      this.status === "terminated" ||
+      this.lifecycleInterruptionInProgress ||
+      this.contextRecoveryInProgress ||
+      this.session.isStreaming ||
+      this.promptDispatchPending ||
+      this.recoveryBufferedMessages.length > 0
+    ) {
+      return false;
+    }
+
+    const clearedQueue = this.session.clearQueue();
+    console.warn(`[swarm][${this.now()}] runtime:pending_delivery_promoted_after_settlement`, {
+      runtime: "pi",
+      agentId: this.descriptor.agentId,
+      deliveryId: pending.deliveryId,
+      pendingCount: this.pendingDeliveries.length,
+      clearedSteeringCount: clearedQueue.steering.length,
+      clearedFollowUpCount: clearedQueue.followUp.length
+    });
+    this.promotedPendingDeliveryId = pending.deliveryId;
+    this.dispatchPrompt(pending.message);
+    return true;
   }
 
   private ensureNotTerminated(): void {

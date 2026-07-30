@@ -34,6 +34,8 @@ class FakeSession {
   isStreaming = true;
   promptCalls: string[] = [];
   steerCalls: string[] = [];
+  queuedSteers: string[] = [];
+  clearQueueCalls = 0;
   abortCalls = 0;
   abortCompactionCalls = 0;
   compactCalls = 0;
@@ -41,6 +43,7 @@ class FakeSession {
   listener: ((event: any) => void) | undefined;
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
   promptImpl: ((message: string) => Promise<void>) | undefined;
+  steerTransform?: (message: string) => string;
   abortImpl: (() => Promise<void>) | undefined;
   compactImpl: (() => Promise<unknown>) | undefined;
   abortCompactionImpl: (() => void) | undefined;
@@ -83,9 +86,19 @@ class FakeSession {
 
   async steer(message: string): Promise<void> {
     this.steerCalls.push(message);
+    this.queuedSteers.push(this.steerTransform?.(message) ?? message);
   }
 
   async sendUserMessage(): Promise<void> {}
+
+  clearQueue(): { steering: string[]; followUp: string[] } {
+    this.clearQueueCalls += 1;
+    return { steering: this.queuedSteers.splice(0), followUp: [] };
+  }
+
+  getSteeringMessages(): readonly string[] {
+    return this.queuedSteers;
+  }
 
   async abort(): Promise<void> {
     this.abortCalls += 1;
@@ -584,7 +597,7 @@ describe("mid-turn context guard", () => {
     expect((runtime as any).pendingDeliveries[0]?.mode).toBe("recovery_buffer");
   });
 
-  it("flushRecoveryBufferedMessages replays buffered deliveries after recovery ends", async () => {
+  it("flushRecoveryBufferedMessages promotes the oldest buffered delivery when recovery ends idle", async () => {
     const { runtime, session } = createRuntime();
     session.isStreaming = false;
     (runtime as any).contextRecoveryInProgress = true;
@@ -598,7 +611,9 @@ describe("mid-turn context guard", () => {
     (runtime as any).contextRecoveryInProgress = false;
     await (runtime as any).flushRecoveryBufferedMessages();
 
-    expect(session.steerCalls).toEqual(["buffer-1", "buffer-2"]);
+    expect(session.steerCalls).toEqual([]);
+    expect(session.promptCalls).toEqual(["buffer-1"]);
+    expect(session.clearQueueCalls).toBe(1);
     expect((runtime as any).recoveryBufferedMessages).toHaveLength(0);
     expect(runtime.getPendingCount()).toBe(2);
   });
@@ -619,9 +634,8 @@ describe("mid-turn context guard", () => {
     (runtime as any).contextRecoveryInProgress = false;
     await (runtime as any).flushRecoveryBufferedMessages();
 
-    expect(session.steerCalls).toHaveLength(25);
-    expect(session.steerCalls[0]).toBe("buffer-6");
-    expect(session.steerCalls[24]).toBe("buffer-30");
+    expect(session.steerCalls).toEqual([]);
+    expect(session.promptCalls).toEqual(["buffer-6"]);
   });
 
   it("flushRecoveryBufferedMessages preserves new deliveries that arrive during flush", async () => {
@@ -634,6 +648,7 @@ describe("mid-turn context guard", () => {
 
     (runtime as any).contextRecoveryInProgress = false;
     (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
+    session.isStreaming = true;
 
     const firstSteerDeferred = createDeferred<void>();
     let blockedFirstFlushSteer = false;
@@ -657,6 +672,41 @@ describe("mid-turn context guard", () => {
     expect(session.steerCalls).toEqual(["buffer-1", "during-flush", "buffer-2"]);
     expect((runtime as any).recoveryBufferedMessages).toHaveLength(0);
     expect(runtime.getPendingCount()).toBe(3);
+  });
+
+  it("acknowledges expanded recovery-buffered content without replaying it", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    session.steerTransform = (message) => `<expanded-skill>${message}</expanded-skill>`;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    await runtime.sendMessage("/skill:review inspect recovery");
+
+    session.isStreaming = true;
+    (runtime as any).contextRecoveryInProgress = false;
+    await (runtime as any).flushRecoveryBufferedMessages();
+
+    expect(session.steerCalls).toEqual(["/skill:review inspect recovery"]);
+    expect(runtime.getPendingCount()).toBe(1);
+
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "<expanded-skill>/skill:review inspect recovery</expanded-skill>",
+      },
+    });
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(session.promptCalls).toEqual([]);
+    expect(session.clearQueueCalls).toBe(0);
   });
 
   it("keeps public recovery strict while internal active includes grace", () => {
