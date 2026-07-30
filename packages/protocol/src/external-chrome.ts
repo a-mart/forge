@@ -1040,7 +1040,7 @@ function validateBrowserTab(value: unknown, path: string): void {
   enumeration(tab.lifecycle, `${path}.lifecycle`, ['restoring', 'loading', 'ready', 'failed', 'closed'])
   for (const key of ['loading', 'live', 'canGoBack', 'canGoForward'] as const) boolean(tab[key], `${path}.${key}`)
   finiteNumber(tab.zoomFactor, `${path}.zoomFactor`, Number.MIN_VALUE)
-  enumeration(tab.controller, `${path}.controller`, ['human', 'agent', 'none'])
+  enumeration(tab.controller, `${path}.controller`, ['human', 'agent', 'agent-idle', 'none'])
   if (tab.agentCursor !== null) {
     const cursor = object(tab.agentCursor, `${path}.agentCursor`)
     strictKeys(cursor, `${path}.agentCursor`, ['x', 'y', 'phase', 'sequence', 'createdAt'])

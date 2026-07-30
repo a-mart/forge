@@ -36,6 +36,9 @@ interface OperationAuthority {
   navigationGeneration: number
   /** Revokes lease authority, detaches, and settles all outstanding CDP work. */
   cancelOutstanding(): Promise<void>
+  /** Brackets only the actual CDP input dispatch, never locator polling or arbitrary evaluation. */
+  beginSyntheticInput?(): Promise<void>
+  endSyntheticInput?(): void
 }
 
 interface LocatedPoint {
@@ -276,9 +279,16 @@ export class ExternalChromeOperationExecutor {
       const spec = parseLocator('locator' in input ? input.locator : `css=${input.selector}`)
       point = await this.pollLocator(params, authority, spec, input.timeoutMs, 'click')
     }
-    await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none' })
-    await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 })
-    await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 })
+    let syntheticInput = false
+    try {
+      await authority.beginSyntheticInput?.()
+      syntheticInput = true
+      await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none' })
+      await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 })
+      await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 })
+    } finally {
+      if (syntheticInput) authority.endSyntheticInput?.()
+    }
     return { tabId: String(params.tabId), point: { x: point.x, y: point.y } }
   }
 
@@ -304,7 +314,16 @@ export class ExternalChromeOperationExecutor {
       // Prove the focused child still belongs to the root immediately before input.
       route = (await this.topLevelTransform(params, authority, editable.route)).route
     }
-    if (input.text.length > 0) await this.command(params, authority, route, 'Input.insertText', { text: input.text })
+    if (input.text.length > 0) {
+      let syntheticInput = false
+      try {
+        await authority.beginSyntheticInput?.()
+        syntheticInput = true
+        await this.command(params, authority, route, 'Input.insertText', { text: input.text })
+      } finally {
+        if (syntheticInput) authority.endSyntheticInput?.()
+      }
+    }
     return { tabId: String(params.tabId), characters: [...input.text].length, cleared: input.clear }
   }
 
@@ -314,13 +333,17 @@ export class ExternalChromeOperationExecutor {
     const input = params.input
     const event = keyEvent(input.key, input.modifiers ?? [])
     let down = false
+    let syntheticInput = false
     try {
+      await authority.beginSyntheticInput?.()
+      syntheticInput = true
       await this.command(params, authority, route, 'Input.dispatchKeyEvent', { type: 'keyDown', ...event.down })
       down = true
       await this.command(params, authority, route, 'Input.dispatchKeyEvent', { type: 'keyUp', ...event.up })
       down = false
     } finally {
       if (down) await this.debuggers.sendCommand(params.tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...event.up }, route.sessionId).catch(() => undefined)
+      if (syntheticInput) authority.endSyntheticInput?.()
     }
     return { tabId: String(params.tabId), key: input.key, modifiers: input.modifiers ?? [] }
   }
@@ -348,7 +371,9 @@ export class ExternalChromeOperationExecutor {
     if (!route) throw new ExternalChromeOperationError('debugger-unavailable', 'The leased tab debugger is not attached.', true)
     const response = record(await this.command(params, authority, route, 'Runtime.evaluate', {
       expression: params.input.expression, awaitPromise: params.input.awaitPromise, returnByValue: params.input.returnByValue,
-      userGesture: true, generatePreview: false,
+      // Arbitrary evaluation never receives transient user activation. Synthetic input has its
+      // own narrowly bracketed CDP path and trusted-input acknowledgement.
+      userGesture: false, generatePreview: false,
     }, true))
     if (response.exceptionDetails !== undefined) throw new ExternalChromeOperationError('evaluation-failed', safeException(response.exceptionDetails), false)
     const remote = record(response.result)

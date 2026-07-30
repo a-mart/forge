@@ -6,7 +6,7 @@ import { fakeChrome } from './fakes.js'
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('service-worker navigation orchestration', () => {
-  it('acquires before Runtime navigation, injects only after attach, and always detaches', async () => {
+  it('acquires before Runtime navigation, injects only after attach, and retains an idle reusable attachment', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     vi.stubGlobal('chrome', chrome)
     const runtime = new Runtime()
@@ -18,8 +18,8 @@ describe('service-worker navigation orchestration', () => {
     expect(response).toMatchObject({ ok: true, operation: 'navigate', result: { readiness: 'none' } })
     expect(chrome.injections).toHaveLength(1)
     expect(chrome.commands.map(({ method }) => method)).toContain('Page.navigate')
-    expect(chrome.attached).toEqual(new Set())
-    expect((runtime as unknown as { authorities: { forTab(id: number): { state: string } | null } }).authorities.forTab(7)).toMatchObject({ state: 'human' })
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect((runtime as unknown as { authorities: { forTab(id: number): { state: string } | null } }).authorities.forTab(7)).toMatchObject({ state: 'idle' })
   })
 
   it('transitions a fresh neutral target once before using normal page authority', async () => {
@@ -120,6 +120,7 @@ describe('service-worker navigation orchestration', () => {
     await vi.waitFor(() => expect((runtime as unknown as {
       authorities: { forTab(id: number): { controlEpoch: number } | null }
     }).authorities.forTab(1)).toMatchObject({ controlEpoch: 1 }))
+    await vi.waitFor(() => expect(chrome.attached).toEqual(new Set()))
     await expect(execute({
       ...navigateRequest({ requestId: 'snapshot-destination', tabId: 1, leaseId: 'next-owner', leaseEpoch: 2 }), operation: 'snapshot', input: {},
     })).resolves.toMatchObject({ ok: true, result: { tabId: '1', url: destination } })
@@ -128,12 +129,12 @@ describe('service-worker navigation orchestration', () => {
       operation: 'click', input: { x: 0, y: 0, timeoutMs: 1_000 },
     })).resolves.toMatchObject({ ok: true, result: { tabId: '1', point: { x: 0, y: 0 } } })
     expect(guard.syntheticStarts).toBe(1)
-    expect(debuggerAttachCalls).toBe(2)
+    expect(debuggerAttachCalls).toBe(1)
     expect(injectionUrls).toEqual([destination, destination, destination])
     expect(chrome.commands.filter(({ method }) => method === 'Page.navigate')).toEqual([])
-    expect(chrome.attached).toEqual(new Set())
+    expect(chrome.attached).toEqual(new Set([1]))
     expect((runtime as unknown as { authorities: { forTab(id: number): { state: string; initialNavigationPending: boolean } | null } }).authorities.forTab(1))
-      .toMatchObject({ state: 'human', initialNavigationPending: false })
+      .toMatchObject({ state: 'idle', initialNavigationPending: false })
   })
 
   it.each(['none', 'domContentLoaded', 'load'] as const)(
@@ -349,7 +350,7 @@ function trustedInputGuard(runtime: Runtime, tabId: number): { syntheticStarts: 
   let onMessage: ((message: unknown) => void) | undefined
   const port = {
     name: `forge-leased-frame:${nonce}`,
-    sender: { tab: { id: tabId } },
+    sender: { tab: { id: tabId }, frameId: 0, documentId: `document-${tabId}` },
     postMessage: (message: unknown) => {
       if (typeof message !== 'object' || message === null) return
       const record = message as Record<string, unknown>
@@ -367,7 +368,7 @@ function trustedInputGuard(runtime: Runtime, tabId: number): { syntheticStarts: 
   onMessage?.({ type: 'content-ready', nonce })
   return {
     get syntheticStarts() { return state.syntheticStarts },
-    emitHumanInput: () => onMessage?.({ type: 'trusted-human-input', nonce, event: 'pointer' }),
+    emitHumanInput: () => onMessage?.({ type: 'trusted-human-input', nonce, controlEpoch: 0, event: 'pointer' }),
   }
 }
 

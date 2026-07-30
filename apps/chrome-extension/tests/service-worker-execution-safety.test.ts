@@ -55,7 +55,7 @@ describe('service-worker execution safety evidence', () => {
     expect(chrome.attached).toEqual(new Set())
   })
 
-  it('returns canonical bounded screenshot overflow through the worker and releases debugger authority', async () => {
+  it('returns canonical bounded screenshot overflow while retaining the reusable physical attachment', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     const screenshot = oversizedPng(EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES)
     chrome.debugger.sendCommand = async (target, method, params) => {
@@ -89,7 +89,7 @@ describe('service-worker execution safety evidence', () => {
         },
       },
     })
-    expect(chrome.attached).toEqual(new Set())
+    expect(chrome.attached).toEqual(new Set([7]))
   })
 
   it('keeps failures after page-command dispatch free of attach-conflict evidence', async () => {

@@ -86,6 +86,12 @@ describe('BrowserPanel automatic experience', () => {
     expect(container.querySelector('button[aria-label*="Managed Browser"]')).toBeNull()
   })
 
+  it('labels a retained Chrome debugger as agent-attached idle rather than human control', () => {
+    render(snapshot([{ ...externalTab, controller: 'agent-idle' }]))
+    expect(container.textContent).toContain('Agent attached · idle')
+    expect(container.textContent).not.toContain('Human controlling')
+  })
+
   it('shows a compact Chrome card and hides unsupported controls', () => {
     const commands = render(snapshot([externalTab]))
     expect(container.textContent).toContain('Browser tab open in Chrome')

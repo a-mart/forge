@@ -449,6 +449,131 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close(); await loop
   })
 
+  it('waits for an admitted acquisition to durably checkpoint before quiesce snapshots and releases it', async () => {
+    const { runtime, client } = await connectedRuntime('instance_profile_a', Date.now)
+    const acquiring = runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'open',
+      preferredTabId: 'ext.instance_profile_a.40', reuseExisting: true, createIfNeeded: false, ownerEpoch: 30,
+    })
+    const acquireRequest = await client.receive()
+    expect(acquireRequest).toMatchObject({ method: 'forge.browser.acquire', params: { tabId: 40, leaseEpoch: 30 } })
+
+    const quiescing = runtime.quiesce('desktop-update', Date.now() + 5_000)
+    await client.send({ jsonrpc: '2.0', id: acquireRequest!.id, result: {
+      protocolVersion: 1,
+      leaseId: (acquireRequest!.params as Record<string, unknown>).leaseId,
+      leaseEpoch: 30,
+      sessionAgentId: 'session-a',
+      extensionInstanceId: 'instance_profile_a',
+      tab: { tabId: 40, title: 'Selected', url: 'https://selected.invalid/', active: true },
+      created: false,
+    } })
+    await expect(acquiring).resolves.toMatchObject({ ok: true, authority: { tabId: 'ext.instance_profile_a.40' } })
+
+    const prepareRequest = await client.receive()
+    expect(prepareRequest).toMatchObject({ method: 'forge.runtime.prepareUpdate' })
+    await client.send({ jsonrpc: '2.0', id: prepareRequest!.id, result: {
+      protocolVersion: 1,
+      payloadVersion: (prepareRequest!.params as Record<string, unknown>).payloadVersion,
+      quiesced: true,
+    } })
+    const releaseRequest = await client.receive()
+    expect(releaseRequest).toMatchObject({
+      method: 'forge.browser.release',
+      params: { leaseEpoch: 30, reason: 'desktop-update' },
+    })
+    await client.send({ jsonrpc: '2.0', id: releaseRequest!.id, result: {
+      protocolVersion: 1,
+      leaseId: (releaseRequest!.params as Record<string, unknown>).leaseId,
+      leaseEpoch: 30,
+      releasedTabIds: [40],
+    } })
+
+    await expect(quiescing).resolves.toBeUndefined()
+    await expect(runtime.leaseCheckpoints()).resolves.toEqual([])
+    runtime.deactivate(); client.close()
+  })
+
+  it('automatically reconciles a pre-restart checkpoint on exact-instance hello', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-restart-cleanup-'))
+    roots.push(root)
+    const checkpointFile = path.join(root, 'state', 'leases.json')
+    await mkdir(path.dirname(checkpointFile), { recursive: true })
+    await writeFile(checkpointFile, JSON.stringify({
+      schemaVersion: 1,
+      leases: [{
+        extensionInstanceId: 'instance_profile_a',
+        sessionAgentId: 'session-a',
+        profileId: 'profile-a',
+        leaseId: 'lease-before-desktop-restart',
+        leaseEpoch: 31,
+        tabIds: [40],
+        expiresAt: 8_000_000_000_000_000,
+      }],
+    }))
+    const runtime = new ExternalChromeRelayRuntime(checkpointFile)
+    runtime.configureExpectedRuntime({ payloadVersion: 'm4-runtime.1', sha256: 'a'.repeat(64), shellAbi: 1 })
+    runtime.activate({
+      epoch: 'epoch_1234567890abcdef', desktopInstanceId: 'desktop_1234567890abcdef',
+      keyId: 'key-test', secret: Buffer.alloc(32, 0x44),
+    })
+    const endpoint = path.join(root, 'relay.sock')
+    const server = createServer((socket) => runtime.accept(socket))
+    servers.push(server)
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve) })
+    const client = await connectRelayClient(endpoint)
+    await sendRuntimeHello(client, 'instance_profile_a')
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+
+    await waitForCondition(async () => (await runtime.leaseCheckpoints()).length === 0)
+    expect(requests).toContainEqual(expect.objectContaining({
+      method: 'forge.browser.release',
+      params: expect.objectContaining({
+        leaseId: 'lease-before-desktop-restart', leaseEpoch: 31, reason: 'desktop-restart',
+      }),
+    }))
+    await expect(runtime.releaseAuthority(
+      { sessionAgentId: 'session-a', profileId: 'profile-a' },
+      { ownerEpoch: 31, tabId: 'ext.instance_profile_a.40' },
+      'redundant-host-retry',
+    )).resolves.toBeUndefined()
+
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('turns an extension terminal receipt into proactive exact release acknowledgement', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
+    const acquired = await runtime.acquireTarget({
+      ...session, operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 32,
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    const checkpoint = (await runtime.leaseCheckpoints())[0]!
+    await client.send({
+      jsonrpc: '2.0',
+      method: 'browser.leaseChanged',
+      params: {
+        protocolVersion: 1,
+        leaseId: checkpoint.leaseId,
+        leaseEpoch: checkpoint.leaseEpoch,
+        state: 'released',
+        tabIds: checkpoint.tabIds,
+      },
+    })
+
+    await waitForCondition(async () => (await runtime.leaseCheckpoints()).length === 0)
+    expect(requests.filter(({ method }) => method === 'forge.browser.release')).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ reason: 'extension-terminal' }) }),
+    ])
+    await expect(runtime.releaseAuthority(session, acquired.authority, 'redundant-host-retry')).resolves.toBeUndefined()
+
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it('retains an exact idle-release checkpoint across disconnect and clears it only after retry acknowledgement', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const firstLoop = fakeExtensionLoop(client)
@@ -471,8 +596,8 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); reconnected.close(); await retryLoop
   })
 
-  it('discards a deleted session checkpoint when its extension is no longer connected', async () => {
-    const { runtime, client } = await connectedRuntime()
+  it('retains disconnected delete cleanup and proactively reconciles it on exact-instance reconnect', async () => {
+    const { runtime, client, root } = await connectedRuntime()
     const loop = fakeExtensionLoop(client)
     const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
     const acquired = await runtime.acquireTarget({
@@ -482,9 +607,19 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     if (!acquired.ok) throw new Error('fixture acquisition failed')
     client.close(); await loop
 
-    await expect(runtime.releaseSession(session, 'delete')).resolves.toBeUndefined()
-    expect(await runtime.leaseCheckpoints()).toEqual([])
-    runtime.deactivate()
+    await expect(runtime.releaseSession(session, 'delete')).rejects.toThrow('disconnected')
+    expect(await runtime.leaseCheckpoints()).toMatchObject([{ cleanupReason: 'delete', tabIds: [40] }])
+
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const retryLoop = fakeExtensionLoop(reconnected, requests)
+    await waitForCondition(async () => (await runtime.leaseCheckpoints()).length === 0)
+    expect(requests).toContainEqual(expect.objectContaining({
+      method: 'forge.browser.release', params: expect.objectContaining({ reason: 'delete' }),
+    }))
+
+    runtime.deactivate(); reconnected.close(); await retryLoop
   })
 
   it('removes a relay checkpoint only after the retry acknowledges its exact receipted tab IDs', async () => {
@@ -730,9 +865,9 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
 
 })
 
-async function waitForCondition(assertion: () => boolean): Promise<void> {
+async function waitForCondition(assertion: () => boolean | Promise<boolean>): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (assertion()) return
+    if (await assertion()) return
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
   throw new Error('condition did not settle')

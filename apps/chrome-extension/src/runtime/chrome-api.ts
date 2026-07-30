@@ -46,13 +46,20 @@ export interface ChromeRuntimePort {
   name: string
   postMessage(message: unknown): void
   disconnect(): void
-  onMessage: { addListener(listener: (message: unknown) => void): void }
-  onDisconnect: { addListener(listener: () => void): void }
+  onMessage: {
+    addListener(listener: (message: unknown) => void): void
+    removeListener?(listener: (message: unknown) => void): void
+  }
+  onDisconnect: {
+    addListener(listener: () => void): void
+    removeListener?(listener: () => void): void
+  }
 }
 
 export interface ChromeRuntimeSender {
   tab?: ChromeTab
   frameId?: number
+  documentId?: string
 }
 
 export interface ChromeApi {

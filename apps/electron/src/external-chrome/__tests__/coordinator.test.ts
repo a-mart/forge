@@ -320,7 +320,7 @@ describe('ExternalChromeHostCoordinator', () => {
       'forge.runtime.prepareUpdate', 'forge.browser.release',
     ])
     expect(retryRequests[1]?.params).toMatchObject({
-      leaseId: durableLease!.leaseId, leaseEpoch: 17, reason: 'integration-remove',
+      leaseId: durableLease!.leaseId, leaseEpoch: 17, reason: 'desktop-restart',
     })
     expect(await restarted.transport().leaseCheckpoints()).toEqual([])
     await retryLoop

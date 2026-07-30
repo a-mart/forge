@@ -173,6 +173,9 @@ describe('External Chrome automatic transport contract', () => {
       result: { ...lease, requestId: 'request-1', tabId: 17, operation: 'navigate', ok: true, result: { tab, readiness: 'load' } },
     }
     expect(parse(response, 'forge.browser.execute')).toEqual(response)
+    const retainedAttachment = structuredClone(response) as any
+    retainedAttachment.result.result.tab.controller = 'agent-idle'
+    expect(parse(retainedAttachment, 'forge.browser.execute')).toEqual(retainedAttachment)
     const obsolete = structuredClone(response) as any
     delete obsolete.result.result.tab.targetAffinity
     obsolete.result.result.tab.unexpectedAffinity = 'external-chrome'

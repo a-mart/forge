@@ -414,13 +414,15 @@ describe('spawned native host relay lifecycle', () => {
     })
     expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 1, tabIds: [7] }])
     expect(chrome.updates).toEqual([])
-    expect(chrome.attached).toEqual(new Set())
+    expect(chrome.attached).toEqual(new Set([7]))
     expect(managed.requests).toEqual([])
     const evaluated = await host.perform(browserRequest('evaluate', {
       expression: '2 + 2', awaitPromise: true, returnByValue: true,
     }))
     expect(evaluated).toMatchObject({ ok: true, result: { tabId: `ext.${EXTENSION_INSTANCE_ID}.7`, value: 4 } })
+    expect(chrome.attached).toEqual(new Set([7]))
     await host.endTurn(session, 'focused-release')
+    expect(chrome.attached).toEqual(new Set())
     expect(await next.runtime.leaseCheckpoints()).toEqual([])
     expect(extensionAuthorities.all()).toEqual([])
 

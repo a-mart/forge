@@ -115,7 +115,7 @@ export interface BrowserRenderedViewport {
   deviceScaleFactor: number
 }
 
-export type BrowserController = 'human' | 'agent' | 'none'
+export type BrowserController = 'human' | 'agent' | 'agent-idle' | 'none'
 export type BrowserTabLifecycle = 'restoring' | 'loading' | 'ready' | 'failed' | 'closed'
 /** Physical host mounting for a Forge browser session. Metadata may remain while unhosted. */
 export type BrowserSessionHostingState = 'hosted' | 'unhosted' | 'removed'

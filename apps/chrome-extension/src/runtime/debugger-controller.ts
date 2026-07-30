@@ -2,6 +2,8 @@ import type { ChromeDebuggerApi, ChromeDebuggerSession, ChromeDebuggerTarget } f
 
 export type DebuggerState = 'UNATTACHED' | 'ATTACHING' | 'ATTACHED' | 'DETACHING' | 'LOST'
 
+export const DEFAULT_MAX_SIMULTANEOUS_DEBUGGER_ATTACHMENTS = 8
+
 interface TargetNode {
   targetId: string
   sessionId?: string
@@ -161,6 +163,7 @@ function seedFrameTree(tracker: OopifAncestryTracker, value: unknown, parentFram
 export interface DebuggerDetachNotice {
   tabId: number
   reason: string
+  expected: boolean
   devtoolsContention: boolean
 }
 
@@ -169,6 +172,20 @@ export class DebuggerAttachConflictError extends Error {
   constructor(message: string) {
     super(message.slice(0, 1_024))
     this.name = 'DebuggerAttachConflictError'
+  }
+}
+
+export class DebuggerAttachmentLimitError extends Error {
+  constructor(readonly maximum: number) {
+    super(`External Chrome debugger attachment bound (${maximum}) is full`)
+    this.name = 'DebuggerAttachmentLimitError'
+  }
+}
+
+export class DebuggerIdentityLossError extends Error {
+  constructor(message = 'Chrome could not prove the leased root debugger identity') {
+    super(message)
+    this.name = 'DebuggerIdentityLossError'
   }
 }
 
@@ -188,9 +205,19 @@ export class DebuggerController {
   private readonly navigationSignals = new Map<number, Set<(method: string) => void>>()
   private readonly navigationGenerations = new Map<number, number>()
   private readonly pendingCommands = new Map<number, Set<Promise<unknown>>>()
+  private readonly attachTasks = new Map<number, Promise<void>>()
+  private readonly closedDuringAttach = new Set<number>()
   private readonly resetTasks = new Map<number, Promise<void>>()
 
-  constructor(private readonly debuggerApi: ChromeDebuggerApi) {}
+  constructor(
+    private readonly debuggerApi: ChromeDebuggerApi,
+    private readonly maximumAttachments = DEFAULT_MAX_SIMULTANEOUS_DEBUGGER_ATTACHMENTS,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (!Number.isSafeInteger(maximumAttachments) || maximumAttachments < 1 || maximumAttachments > 32) {
+      throw new Error('debugger attachment bound is invalid')
+    }
+  }
 
   state(tabId: number): DebuggerState {
     return this.states.get(tabId) ?? 'UNATTACHED'
@@ -200,20 +227,56 @@ export class DebuggerController {
     return this.trackers.get(tabId)
   }
 
-  async reconcileForRelease(tabId: number, extensionId: string): Promise<void> {
+  async reconcileForRelease(tabId: number, _extensionId: string): Promise<'none' | 'owned' | 'foreign'> {
     const target = (await this.debuggerApi.getTargets()).find((candidate) => candidate.tabId === tabId && candidate.attached === true)
+    this.trackers.delete(tabId)
     if (target === undefined) {
-      this.states.set(tabId, 'UNATTACHED')
-      this.trackers.delete(tabId)
-      return
+      this.states.delete(tabId)
+      this.navigationGenerations.delete(tabId)
+      return 'none'
     }
-    // Only positively adopt our own MV3 debugger attachment. Foreign ownership
-    // remains LOST and Chrome detach must explicitly fail/ack before authority clears.
-    this.states.set(tabId, target.extensionId === extensionId ? 'ATTACHED' : 'LOST')
+    try {
+      // TargetInfo.extensionId identifies an extension *target*, not the debugger owner. A benign
+      // command over our tab-scoped channel is the positive proof that this extension owns the
+      // recovered attachment; it is adopted only long enough for immediate exact detach.
+      const response = record(await this.debuggerApi.sendCommand({ tabId }, 'Target.getTargetInfo'))
+      const info = record(response?.targetInfo)
+      const targetId = typeof info?.targetId === 'string' ? info.targetId : undefined
+      if (targetId === undefined || info?.type !== 'page' || info.attached === false ||
+        target.targetId !== undefined && target.targetId !== targetId) {
+        throw new DebuggerIdentityLossError('Chrome could not prove the recovered debugger target')
+      }
+      this.states.set(tabId, 'ATTACHED')
+      return 'owned'
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (/debugger is not attached|not attached to the tab|no debugger (?:is )?attached/iu.test(message)) {
+        // Chrome proves another debugger owns the advertised attachment. Never detach it.
+        this.states.delete(tabId)
+        this.navigationGenerations.delete(tabId)
+        return 'foreign'
+      }
+      this.states.set(tabId, 'LOST')
+      throw error
+    }
   }
 
   async attach(tabId: number): Promise<void> {
+    if (this.attachTasks.has(tabId) || this.state(tabId) !== 'UNATTACHED') throw new Error(`debugger is ${this.state(tabId)}`)
+    this.closedDuringAttach.delete(tabId)
+    const task = this.attachNow(tabId)
+    this.attachTasks.set(tabId, task)
+    try {
+      await task
+    } finally {
+      if (this.attachTasks.get(tabId) === task) this.attachTasks.delete(tabId)
+    }
+  }
+
+  private async attachNow(tabId: number): Promise<void> {
     if (this.state(tabId) !== 'UNATTACHED') throw new Error(`debugger is ${this.state(tabId)}`)
+    const occupied = [...this.states.values()].filter((state) => state !== 'UNATTACHED').length
+    if (occupied >= this.maximumAttachments) throw new DebuggerAttachmentLimitError(this.maximumAttachments)
     this.states.set(tabId, 'ATTACHING')
     const target: ChromeDebuggerTarget = { tabId }
     let didAttach = false
@@ -227,18 +290,25 @@ export class DebuggerController {
         throw error
       }
       didAttach = true
+      this.assertAttachContinuing(tabId)
       const tracker = new OopifAncestryTracker()
       await this.debuggerApi.sendCommand(target, 'Page.enable')
+      this.assertAttachContinuing(tabId)
       const targetInfoResult = record(await this.debuggerApi.sendCommand(target, 'Target.getTargetInfo'))
+      this.assertAttachContinuing(tabId)
       const targetInfo = record(targetInfoResult?.targetInfo)
       const rootTargetId = typeof targetInfo?.targetId === 'string' ? targetInfo.targetId : undefined
-      if (rootTargetId === undefined) throw new Error('Chrome did not prove the root target identity')
+      if (rootTargetId === undefined || targetInfo?.type !== 'page' || targetInfo.attached === false) {
+        throw new Error('Chrome did not prove the root target identity')
+      }
       const frameTreeResult = record(await this.debuggerApi.sendCommand(target, 'Page.getFrameTree'))
+      this.assertAttachContinuing(tabId)
       const frameTree = record(frameTreeResult?.frameTree)
       const rootFrame = record(frameTree?.frame)
       const rootFrameId = typeof rootFrame?.id === 'string' ? rootFrame.id : undefined
+      if (frameTree === null || rootFrameId === undefined) throw new Error('Chrome did not prove the root frame identity')
       tracker.registerRoot(rootTargetId, rootFrameId)
-      if (frameTree !== null) seedFrameTree(tracker, frameTree)
+      seedFrameTree(tracker, frameTree)
       this.trackers.set(tabId, tracker)
       this.navigationGenerations.set(tabId, this.navigationGenerations.get(tabId) ?? 0)
       await this.debuggerApi.sendCommand(target, 'Target.setAutoAttach', {
@@ -246,14 +316,71 @@ export class DebuggerController {
         waitForDebuggerOnStart: false,
         flatten: true,
       })
+      this.assertAttachContinuing(tabId)
       this.states.set(tabId, 'ATTACHED')
     } catch (error) {
-      this.states.set(tabId, 'UNATTACHED')
       this.trackers.delete(tabId)
-      if (didAttach) {
-        try { await this.debuggerApi.detach(target) } catch { /* best effort after partial attach */ }
+      this.navigationGenerations.delete(tabId)
+      const targetClosed = this.closedDuringAttach.delete(tabId)
+      if (targetClosed) {
+        this.states.delete(tabId)
+        throw error
+      }
+      if (!didAttach) {
+        this.states.delete(tabId)
+        throw error
+      }
+      this.states.set(tabId, 'DETACHING')
+      try {
+        await this.debuggerApi.detach(target)
+        this.states.delete(tabId)
+      } catch (detachError) {
+        if (this.state(tabId) !== 'UNATTACHED') {
+          // Partial setup still acquired the physical debugger. Never advertise it as unattached
+          // until Chrome acknowledges a later exact detach retry.
+          this.states.set(tabId, 'LOST')
+          throw new Error('partial debugger attachment could not be safely detached', { cause: detachError })
+        }
       }
       throw error
+    }
+  }
+
+  /**
+   * Re-proves the root over the tab-scoped debugger channel. A renderer/process swap may change
+   * target ID without changing exact tab authority; only this positive proof may adopt it.
+   */
+  async revalidateRoot(tabId: number): Promise<{ changed: boolean; targetId: string }> {
+    try {
+      if (this.state(tabId) !== 'ATTACHED') throw new DebuggerIdentityLossError('debugger target is not attached')
+      const targetInfoResult = record(await this.sendCommand(tabId, 'Target.getTargetInfo'))
+      const targetInfo = record(targetInfoResult?.targetInfo)
+      const targetId = typeof targetInfo?.targetId === 'string' ? targetInfo.targetId : undefined
+      if (targetId === undefined || targetInfo?.type !== 'page' || targetInfo.attached === false) {
+        throw new DebuggerIdentityLossError()
+      }
+      const current = this.trackers.get(tabId)?.rootId()
+      if (current === targetId) return { changed: false, targetId }
+
+      const frameTreeResult = record(await this.sendCommand(tabId, 'Page.getFrameTree'))
+      const frameTree = record(frameTreeResult?.frameTree)
+      const rootFrame = record(frameTree?.frame)
+      const rootFrameId = typeof rootFrame?.id === 'string' ? rootFrame.id : undefined
+      if (frameTree === null || rootFrameId === undefined) throw new DebuggerIdentityLossError('Chrome could not prove the replacement root frame')
+      const tracker = new OopifAncestryTracker()
+      tracker.registerRoot(targetId, rootFrameId)
+      seedFrameTree(tracker, frameTree)
+      this.trackers.set(tabId, tracker)
+      this.navigationGenerations.set(tabId, this.navigationGeneration(tabId) + 1)
+      await this.sendCommand(tabId, 'Target.setAutoAttach', {
+        autoAttach: true,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      })
+      return { changed: true, targetId }
+    } catch (error) {
+      if (error instanceof DebuggerIdentityLossError) throw error
+      throw new DebuggerIdentityLossError(error instanceof Error ? error.message : 'Chrome root identity revalidation failed')
     }
   }
 
@@ -337,7 +464,7 @@ export class DebuggerController {
       const signals = this.navigationSignals.get(tabId) ?? new Set<(method: string) => void>()
       signals.add(onSignal)
       this.navigationSignals.set(tabId, signals)
-      const remaining = Math.max(0, deadlineAt - Date.now())
+      const remaining = Math.max(0, deadlineAt - this.now())
       const deadlineTimer = setTimeout(() => finish(new Error(`navigation readiness ${readiness} timed out`)), remaining)
       const authorityTimer = setInterval(() => { if (!isAuthorized()) finish(new Error('lease authority was interrupted')) }, Math.min(25, Math.max(1, remaining)))
       void this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })).then(() => {
@@ -351,6 +478,24 @@ export class DebuggerController {
     return this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, method, params))
   }
 
+  /** An onDetach event is Chrome's physical acknowledgement; LOST only gates handling until Runtime records it. */
+  acknowledgeExternalDetach(tabId: number): void {
+    if (this.state(tabId) !== 'LOST' && this.state(tabId) !== 'DETACHING') return
+    this.states.delete(tabId)
+    this.trackers.delete(tabId)
+    this.navigationGenerations.delete(tabId)
+  }
+
+  /** Target destruction itself acknowledges physical debugger loss. */
+  acknowledgeTargetClosed(tabId: number): void {
+    if (this.attachTasks.has(tabId) || this.state(tabId) === 'ATTACHING') this.closedDuringAttach.add(tabId)
+    for (const signal of this.navigationSignals.get(tabId) ?? []) signal('Debugger.detached')
+    this.navigationSignals.delete(tabId)
+    this.states.delete(tabId)
+    this.trackers.delete(tabId)
+    this.navigationGenerations.delete(tabId)
+  }
+
   async detach(tabId: number): Promise<void> {
     const state = this.state(tabId)
     if (state === 'UNATTACHED') return
@@ -358,17 +503,26 @@ export class DebuggerController {
     try {
       await this.debuggerApi.detach({ tabId })
     } catch (error) {
-      // Chrome did not acknowledge debugger release. Retain our ownership model
-      // so callers can retry instead of admitting new work through stale authority.
-      this.states.set(tabId, state)
-      throw error
+      // onDetach may positively acknowledge release before the API promise rejects. Only restore
+      // ownership when no such physical acknowledgement reached us.
+      if (this.state(tabId) !== 'UNATTACHED') {
+        this.states.set(tabId, state)
+        throw error
+      }
     }
-    this.states.set(tabId, 'UNATTACHED')
+    this.states.delete(tabId)
     this.trackers.delete(tabId)
     this.navigationGenerations.delete(tabId)
   }
 
+  private assertAttachContinuing(tabId: number): void {
+    if (this.state(tabId) !== 'ATTACHING' || this.closedDuringAttach.has(tabId)) {
+      throw new Error('debugger attachment was cancelled before setup completed')
+    }
+  }
+
   private async resetNow(tabId: number): Promise<void> {
+    await this.attachTasks.get(tabId)?.catch(() => undefined)
     const pending = [...(this.pendingCommands.get(tabId) ?? [])]
     await this.detach(tabId)
     await Promise.allSettled(pending)
@@ -397,7 +551,7 @@ export class DebuggerController {
     return sessionId === undefined ? tracker?.rootId() ?? undefined : tracker?.targetIdForSession(sessionId)
   }
 
-  async onEvent(source: ChromeDebuggerSession, method: string, params: unknown): Promise<{ accepted: boolean; rejectedSessionId?: string; targetId?: string; sessionId?: string }> {
+  async onEvent(source: ChromeDebuggerSession, method: string, params: unknown): Promise<{ accepted: boolean; rejectedSessionId?: string; targetId?: string; sessionId?: string; rootIdentityLost?: boolean }> {
     if (source.tabId === undefined || this.state(source.tabId) !== 'ATTACHED') return { accepted: false }
     const tracker = this.trackers.get(source.tabId)
     if (tracker === undefined) return { accepted: false }
@@ -435,11 +589,19 @@ export class DebuggerController {
       if (typeof payload.sessionId === 'string') tracker.detached(payload.sessionId)
       return { accepted: true }
     }
-    if (method === 'Target.targetInfoChanged' && source.sessionId !== undefined) {
-      if (tracker.validatesTargetInfo(source.sessionId, payload.targetInfo)) return { accepted: true }
-      await this.debuggerApi.sendCommand({ tabId: source.tabId }, 'Target.detachFromTarget', { sessionId: source.sessionId }).catch(() => undefined)
-      tracker.detached(source.sessionId)
-      return { accepted: false, rejectedSessionId: source.sessionId }
+    if (method === 'Target.targetInfoChanged') {
+      if (source.sessionId !== undefined) {
+        if (tracker.validatesTargetInfo(source.sessionId, payload.targetInfo)) return { accepted: true }
+        await this.debuggerApi.sendCommand({ tabId: source.tabId }, 'Target.detachFromTarget', { sessionId: source.sessionId }).catch(() => undefined)
+        tracker.detached(source.sessionId)
+        return { accepted: false, rejectedSessionId: source.sessionId }
+      }
+      try {
+        const identity = await this.revalidateRoot(source.tabId)
+        return { accepted: true, targetId: identity.targetId }
+      } catch {
+        return { accepted: false, rootIdentityLost: true }
+      }
     }
     if (method === 'Page.frameAttached') {
       return { accepted: typeof payload.frameId === 'string' && tracker.frameAttached(payload.frameId, typeof payload.parentFrameId === 'string' ? payload.parentFrameId : null) }
@@ -459,16 +621,21 @@ export class DebuggerController {
 
   onDetach(source: ChromeDebuggerTarget, reason: string): DebuggerDetachNotice | null {
     if (source.tabId === undefined) return null
+    const previous = this.state(source.tabId)
+    if (previous === 'UNATTACHED') return null
+    const expected = previous === 'DETACHING'
     for (const signal of this.navigationSignals.get(source.tabId) ?? []) signal('Debugger.detached')
     this.navigationSignals.delete(source.tabId)
-    this.states.set(source.tabId, 'LOST')
+    if (expected) this.states.delete(source.tabId)
+    else this.states.set(source.tabId, 'LOST')
     this.trackers.delete(source.tabId)
     this.navigationGenerations.set(source.tabId, this.navigationGeneration(source.tabId) + 1)
     const normalized = reason.toLowerCase()
     return {
       tabId: source.tabId,
       reason,
-      devtoolsContention: normalized.includes('user') || normalized.includes('devtools') || normalized.includes('replaced'),
+      expected,
+      devtoolsContention: !expected && (normalized.includes('user') || normalized.includes('devtools') || normalized.includes('replaced')),
     }
   }
 }

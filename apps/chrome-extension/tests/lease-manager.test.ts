@@ -26,6 +26,23 @@ describe('per-tab compare-and-set authority', () => {
     expect(manager.all()).toEqual([expect.objectContaining({ tabId: 2, ownerId: 'other' })])
   })
 
+  it('unions an exact closed-tab receipt with remaining live owner scope across restart', async () => {
+    const session = new FakeStorage()
+    const local = new FakeStorage()
+    const chrome = fakeChrome({ tabs: [tab(1), tab(2)], session, local })
+    const manager = new LeaseManager(chrome, 'payload')
+    await manager.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 4, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
+    await manager.acquire({ tabId: 2, ownerId: 'owner', ownerEpoch: 4, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
+
+    await expect(manager.recordClosedTab('owner', 4, 1)).resolves.toBe(true)
+    expect(manager.all()).toEqual([expect.objectContaining({ tabId: 2 })])
+    await expect(manager.releaseOwner('owner', 4)).resolves.toEqual([1, 2])
+
+    const restarted = new LeaseManager(fakeChrome({ tabs: [], session: new FakeStorage(), local }), 'payload')
+    await restarted.recover()
+    await expect(restarted.releaseOwner('owner', 4)).resolves.toEqual([1, 2])
+  })
+
   it('persists an opaque exact release receipt across payload and full browser restart', async () => {
     const session = new FakeStorage()
     const local = new FakeStorage()
@@ -132,6 +149,36 @@ describe('per-tab compare-and-set authority', () => {
     expect(manager.all()).toEqual([])
   })
 
+  it.each([
+    { malformed: true },
+    Array.from({ length: 129 }, (_, index) => ({
+      tabId: index, ownerId: `owner-${index}`, ownerEpoch: 1, sessionAgentId: `session-${index}`,
+      state: 'idle', controlEpoch: 0, createdByForge: false, initialNavigationPending: false,
+      payloadVersion: 'payload', expiresAt: 2,
+    })),
+    [
+      { tabId: 1, ownerId: 'owner-a', ownerEpoch: 1, sessionAgentId: 'session-a', state: 'idle', controlEpoch: 0, createdByForge: false, initialNavigationPending: false, payloadVersion: 'payload', expiresAt: 2 },
+      { tabId: 1, ownerId: 'owner-b', ownerEpoch: 2, sessionAgentId: 'session-b', state: 'idle', controlEpoch: 0, createdByForge: false, initialNavigationPending: false, payloadVersion: 'payload', expiresAt: 2 },
+    ],
+  ])('fails recovery closed instead of discarding malformed or unbounded authority storage', async (persisted) => {
+    const session = new FakeStorage()
+    session.values['forge.externalChrome.tabAuthority.v2'] = persisted
+    const manager = new LeaseManager(fakeChrome({ tabs: [tab(1)], session }), 'payload')
+    await expect(manager.recover()).rejects.toThrow(/tab authority storage/u)
+    expect(session.values['forge.externalChrome.tabAuthority.v2']).toEqual(persisted)
+  })
+
+  it('cancels one operation epoch back to logical idle without releasing its exact lease', async () => {
+    const manager = new LeaseManager(fakeChrome({ tabs: [tab(1)] }), 'payload')
+    await manager.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 2, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
+    const epoch = await manager.beginAgentControl('owner', 2, 1)
+    await expect(manager.cancelAgentControl('owner', 2, 1, epoch)).resolves.toBe(true)
+    expect(manager.forTab(1)).toMatchObject({ state: 'idle', controlEpoch: epoch + 1 })
+    expect(manager.activeReleaseScope('owner', 2)).toEqual([1])
+    await expect(manager.beginAgentControl('owner', 2, 1, epoch)).rejects.toMatchObject({ code: 'lease-lost' })
+    await expect(manager.beginAgentControl('owner', 2, 1, epoch + 1)).resolves.toBe(epoch + 1)
+  })
+
   it('interrupts active control immediately by advancing the tab-local control epoch', async () => {
     const manager = new LeaseManager(fakeChrome({ tabs: [tab(1)] }), 'payload')
     await manager.acquire({ tabId: 1, ownerId: 'owner', ownerEpoch: 2, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
@@ -149,7 +196,7 @@ describe('per-tab compare-and-set authority', () => {
     await first.beginAgentControl('owner', 2, 1)
     const restarted = new LeaseManager(chrome, 'payload')
     await restarted.recover()
-    expect(restarted.forTab(1)).toMatchObject({ ownerId: 'owner', ownerEpoch: 2, state: 'human' })
+    expect(restarted.forTab(1)).toMatchObject({ ownerId: 'owner', ownerEpoch: 2, state: 'idle' })
     expect(chrome.attached.size).toBe(0)
   })
 
@@ -167,7 +214,7 @@ describe('per-tab compare-and-set authority', () => {
     await expect(recovered.recover()).resolves.toEqual([])
     await expect(recovered.acquire({
       tabId: 1, ownerId: 'next-owner', ownerEpoch: 3, sessionAgentId: 'session', expectedOwnerEpoch: 0,
-    })).resolves.toMatchObject({ authority: { createdByForge: true, initialNavigationPending: true, state: 'human' } })
+    })).resolves.toMatchObject({ authority: { createdByForge: true, initialNavigationPending: true, state: 'idle' } })
     await chrome.tabs.update(1, { url: 'https://fixture.invalid/ready' })
     await expect(recovered.completeInitialNavigation('next-owner', 3, 1)).resolves.toMatchObject({ initialNavigationPending: false })
   })
