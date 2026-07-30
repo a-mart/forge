@@ -243,7 +243,7 @@ function normalizeTab(
   const tab = requiredRecord(value, "browser tab");
   if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) throw new Error("Browser tab identity does not match its session");
   if (tab.lifecycle !== "restoring" && tab.lifecycle !== "loading" && tab.lifecycle !== "ready" && tab.lifecycle !== "failed" && tab.lifecycle !== "closed") throw new Error("Invalid browser tab lifecycle");
-  if (tab.controller !== "human" && tab.controller !== "agent" && tab.controller !== "none") throw new Error("Invalid browser controller");
+  if (tab.controller !== "human" && tab.controller !== "agent" && tab.controller !== "agent-idle" && tab.controller !== "none") throw new Error("Invalid browser controller");
   if (!migrateV1 && tab.targetAffinity === undefined) throw new Error("Browser tab target affinity is required");
   return {
     targetAffinity: targetAffinity(migrateV1 ? tab.targetAffinity ?? tab.hostKind : tab.targetAffinity, legacyAffinity),

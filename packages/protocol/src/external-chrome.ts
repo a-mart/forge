@@ -92,6 +92,7 @@ export const EXTERNAL_CHROME_REQUEST_METHODS = [
   'forge.browser.inventory',
   'forge.browser.acquire',
   'forge.browser.release',
+  'forge.browser.acknowledgeRelease',
   'forge.browser.reveal',
   'forge.browser.execute',
   'forge.runtime.prepareUpdate',
@@ -105,6 +106,7 @@ export const EXTERNAL_CHROME_NOTIFICATION_METHODS = [
   'browser.tabChanged',
   'browser.downloadChanged',
   'browser.leaseChanged',
+  'browser.authoritySnapshot',
   'runtime.goodbye',
 ] as const
 
@@ -322,6 +324,16 @@ export interface ExternalChromeReleaseResult extends ExternalChromeLeaseRouting 
   releasedTabIds: number[]
 }
 
+/** Desktop acknowledgement sent only after exact release checkpoint settlement is durable. */
+export interface ExternalChromeAcknowledgeReleaseParams extends ExternalChromeLeaseRouting {
+  releasedTabIds: number[]
+}
+
+export interface ExternalChromeAcknowledgeReleaseResult extends ExternalChromeLeaseRouting {
+  releasedTabIds: number[]
+  acknowledged: true
+}
+
 type ExternalChromeOperationInput<Operation extends BrowserAutomationOperation> = Omit<
   BrowserAutomationInputByOperation[Operation],
   'tabId'
@@ -459,6 +471,20 @@ export interface ExternalChromeLeaseChangedParams extends ExternalChromeLeaseRou
   tabIds: number[]
 }
 
+export interface ExternalChromeAuthorityReport {
+  leaseId: string
+  leaseEpoch: number
+  state: 'acquired' | 'released'
+  tabIds: number[]
+}
+
+/** Complete authenticated authority report used to reconcile interrupted Desktop acquisition journals. */
+export interface ExternalChromeAuthoritySnapshotParams {
+  protocolVersion: ExternalChromeProtocolVersion
+  snapshotId: string
+  reports: ExternalChromeAuthorityReport[]
+}
+
 export interface ExternalChromeGoodbyeParams {
   protocolVersion: ExternalChromeProtocolVersion
   reason: string
@@ -470,6 +496,7 @@ export interface ExternalChromeRequestParamsByMethod {
   'forge.browser.inventory': ExternalChromeInventoryParams
   'forge.browser.acquire': ExternalChromeAcquireParams
   'forge.browser.release': ExternalChromeReleaseParams
+  'forge.browser.acknowledgeRelease': ExternalChromeAcknowledgeReleaseParams
   'forge.browser.reveal': ExternalChromeRevealParams
   'forge.browser.execute': ExternalChromeExecuteParams
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateParams
@@ -482,6 +509,7 @@ export interface ExternalChromeResultByMethod {
   'forge.browser.inventory': ExternalChromeInventoryResult
   'forge.browser.acquire': ExternalChromeAcquireResult
   'forge.browser.release': ExternalChromeReleaseResult
+  'forge.browser.acknowledgeRelease': ExternalChromeAcknowledgeReleaseResult
   'forge.browser.reveal': ExternalChromeRevealResult
   'forge.browser.execute': ExternalChromeExecuteResult
   'forge.runtime.prepareUpdate': ExternalChromePrepareUpdateResult
@@ -495,6 +523,7 @@ export interface ExternalChromeNotificationParamsByMethod {
   'browser.tabChanged': ExternalChromeTabChangedParams
   'browser.downloadChanged': ExternalChromeDownloadChangedParams
   'browser.leaseChanged': ExternalChromeLeaseChangedParams
+  'browser.authoritySnapshot': ExternalChromeAuthoritySnapshotParams
   'runtime.goodbye': ExternalChromeGoodbyeParams
 }
 
@@ -919,6 +948,10 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
       strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'reason'])
       return { ...parseLeaseRouting(params, expected), reason: boundedString(params.reason, 'params.reason', EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH) }
     }
+    case 'forge.browser.acknowledgeRelease': {
+      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'releasedTabIds'])
+      return { ...parseLeaseRouting(params, expected), releasedTabIds: parseNumericIdArray(params.releasedTabIds, 'params.releasedTabIds') }
+    }
     case 'forge.browser.reveal': {
       strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId'])
       return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId') }
@@ -1040,7 +1073,7 @@ function validateBrowserTab(value: unknown, path: string): void {
   enumeration(tab.lifecycle, `${path}.lifecycle`, ['restoring', 'loading', 'ready', 'failed', 'closed'])
   for (const key of ['loading', 'live', 'canGoBack', 'canGoForward'] as const) boolean(tab[key], `${path}.${key}`)
   finiteNumber(tab.zoomFactor, `${path}.zoomFactor`, Number.MIN_VALUE)
-  enumeration(tab.controller, `${path}.controller`, ['human', 'agent', 'none'])
+  enumeration(tab.controller, `${path}.controller`, ['human', 'agent', 'agent-idle', 'none'])
   if (tab.agentCursor !== null) {
     const cursor = object(tab.agentCursor, `${path}.agentCursor`)
     strictKeys(cursor, `${path}.agentCursor`, ['x', 'y', 'phase', 'sequence', 'createdAt'])
@@ -1367,6 +1400,15 @@ function parseResult(method: ExternalChromeRequestMethod, value: unknown, expect
       strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'releasedTabIds'])
       return { ...parseLeaseRouting(result, expected), releasedTabIds: parseNumericIdArray(result.releasedTabIds, 'result.releasedTabIds') }
     }
+    case 'forge.browser.acknowledgeRelease': {
+      strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'releasedTabIds', 'acknowledged'])
+      if (result.acknowledged !== true) fail('invalid-result', 'result.acknowledged must be true')
+      return {
+        ...parseLeaseRouting(result, expected),
+        releasedTabIds: parseNumericIdArray(result.releasedTabIds, 'result.releasedTabIds'),
+        acknowledged: true,
+      }
+    }
     case 'forge.browser.reveal': {
       strictKeys(result, 'result', ['protocolVersion', 'leaseId', 'leaseEpoch', 'tabId', 'revealed'])
       if (result.revealed !== true) fail('invalid-result', 'result.revealed must be true')
@@ -1429,6 +1471,31 @@ function parseNotificationParams(method: ExternalChromeNotificationMethod, value
       return {
         ...parseLeaseRouting(params, expected), state: params.state,
         tabIds: parseNumericIdArray(params.tabIds, 'params.tabIds', params.state === 'released'),
+      }
+    }
+    case 'browser.authoritySnapshot': {
+      strictKeys(params, 'params', ['protocolVersion', 'snapshotId', 'reports'])
+      const reports = boundedArray(params.reports, 'params.reports', EXTERNAL_CHROME_MAX_ARRAY_ITEMS).map((value, index) => {
+        const report = object(value, `params.reports[${index}]`)
+        strictKeys(report, `params.reports[${index}]`, ['leaseId', 'leaseEpoch', 'state', 'tabIds'])
+        if (report.state !== 'acquired' && report.state !== 'released') {
+          fail('invalid-params', `params.reports[${index}].state is unknown`, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+        }
+        return {
+          leaseId: identifier(report.leaseId, `params.reports[${index}].leaseId`),
+          leaseEpoch: integer(report.leaseEpoch, `params.reports[${index}].leaseEpoch`, 1),
+          state: report.state,
+          tabIds: parseNumericIdArray(report.tabIds, `params.reports[${index}].tabIds`),
+        } as ExternalChromeAuthorityReport
+      })
+      const keys = reports.map((report) => `${report.leaseId}\0${report.leaseEpoch}`)
+      if (new Set(keys).size !== keys.length) {
+        fail('invalid-params', 'params.reports contains duplicate lease epochs', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      }
+      return {
+        protocolVersion: protocolVersion(params.protocolVersion, expected),
+        snapshotId: identifier(params.snapshotId, 'params.snapshotId'),
+        reports,
       }
     }
     case 'runtime.goodbye': {

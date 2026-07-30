@@ -103,13 +103,17 @@ describe('ExternalChromeOperationExecutor', () => {
     let oversized = false
     let slow = true
     let terminationCalled = false
+    let okEvaluateParams: Record<string, unknown> | undefined
     const { controller, executor } = await harness(async (_target, method, params) => {
       if (method === 'Runtime.terminateExecution') { slow = false; terminationCalled = true; return {} }
       if (method === 'Runtime.evaluate' && params?.expression === 'slowPromise') {
         if (slow) await new Promise((resolve) => setTimeout(resolve, 30))
         return value('late')
       }
-      if (method === 'Runtime.evaluate') return value(oversized ? 'x'.repeat(70_000) : { answer: 42 })
+      if (method === 'Runtime.evaluate') {
+        if (params?.expression === 'ok') okEvaluateParams = params
+        return value(oversized ? 'x'.repeat(70_000) : { answer: 42 })
+      }
       return PASS
     })
     await expect(executor.execute(request('evaluate', { expression: 'slowPromise', awaitPromise: true, returnByValue: true }, 5), authority(controller)))
@@ -117,6 +121,7 @@ describe('ExternalChromeOperationExecutor', () => {
     expect(terminationCalled).toBe(true)
     await expect(executor.execute(request('evaluate', { expression: 'ok', awaitPromise: true, returnByValue: true }), authority(controller)))
       .resolves.toMatchObject({ ok: true, result: { value: { answer: 42 } } })
+    expect(okEvaluateParams).toMatchObject({ expression: 'ok', userGesture: false })
     oversized = true
     await expect(executor.execute(request('evaluate', { expression: 'large', awaitPromise: true, returnByValue: true }), authority(controller)))
       .resolves.toMatchObject({ ok: false, error: { code: 'result-too-large' } })

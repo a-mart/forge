@@ -15,6 +15,7 @@ import {
   type BrowserAutomationResultByOperation,
   type BrowserEligibleTab,
   type BrowserTabSnapshot,
+  type ExternalChromeAuthoritySnapshotParams,
   type ExternalChromeFeatures,
   type ExternalChromeHelloParams,
   type ExternalChromeInventoryTab,
@@ -34,6 +35,7 @@ const HEARTBEAT_MS = 5_000
 const CHECKPOINT_TTL_MS = 15 * 60_000
 const MAX_LEASE_CHECKPOINTS = MAX_CONNECTIONS * 128
 const MAX_CHECKPOINT_FILE_BYTES = 1 * 1_024 * 1_024
+const MAX_SETTLED_RELEASES = MAX_LEASE_CHECKPOINTS
 // NativeRpcClient retries the native port after 250 ms; one hello negotiation is
 // bounded by its 10 s request timeout. Keep the automatic wait within that first
 // reconnect attempt while still respecting the caller's browser deadline.
@@ -66,44 +68,221 @@ export interface ExternalChromeLeaseCheckpoint {
   leaseEpoch: number
   tabIds: number[]
   expiresAt: number
+  /** Durable terminal intent; absence means the live Desktop runtime still owns this checkpoint. */
+  cleanupReason?: string
 }
 
+export interface ExternalChromeAcquireJournal {
+  extensionInstanceId: string
+  sessionAgentId: string
+  profileId: string
+  leaseId: string
+  leaseEpoch: number
+  requestedTabId: number | null
+  createIfNeeded: boolean
+  startedAt: number
+  /** Set when the initiating caller can no longer receive exact authority. */
+  cleanupReason?: string
+}
+
+interface ExternalChromeReleaseAcknowledgement {
+  extensionInstanceId: string
+  sessionAgentId: string
+  profileId: string
+  leaseId: string
+  leaseEpoch: number
+  tabIds: number[]
+}
+
+export type ExternalChromeCheckpointFaultPhase =
+  | 'journal-write'
+  | 'journal-finalize'
+  | 'journal-remove'
+  | 'checkpoint-settle'
+  | 'acknowledgement-remove'
+
 interface PersistedCheckpoints {
-  schemaVersion: 1
+  schemaVersion: 2
   leases: ExternalChromeLeaseCheckpoint[]
+  acquisitions: ExternalChromeAcquireJournal[]
+  releaseAcknowledgements: ExternalChromeReleaseAcknowledgement[]
 }
 
 class LeaseCheckpointStore {
   private checkpoints: ExternalChromeLeaseCheckpoint[] = []
+  private acquisitionJournals: ExternalChromeAcquireJournal[] = []
+  private releaseAcknowledgements: ExternalChromeReleaseAcknowledgement[] = []
   private loaded = false
   private fatalLoadError: Error | null = null
   private operation: Promise<void> = Promise.resolve()
-  constructor(private readonly file: string) {}
+  constructor(
+    private readonly file: string,
+    private readonly injectFault?: (phase: ExternalChromeCheckpointFaultPhase) => void | Promise<void>,
+  ) {}
 
   all(): Promise<ExternalChromeLeaseCheckpoint[]> {
+    return this.serialize(async () => { await this.load(); return structuredClone(this.checkpoints) })
+  }
+
+  acquisitions(): Promise<ExternalChromeAcquireJournal[]> {
+    return this.serialize(async () => { await this.load(); return structuredClone(this.acquisitionJournals) })
+  }
+
+  acknowledgements(): Promise<ExternalChromeReleaseAcknowledgement[]> {
+    return this.serialize(async () => { await this.load(); return structuredClone(this.releaseAcknowledgements) })
+  }
+
+  beginAcquisition(journal: ExternalChromeAcquireJournal): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      return structuredClone(this.checkpoints)
+      if (!validAcquireJournal(journal, false)) throw new Error('acquisition journal is invalid')
+      if (this.checkpoints.length + this.acquisitionJournals.length >= MAX_LEASE_CHECKPOINTS) {
+        throw new Error('lease checkpoint bound reached')
+      }
+      if ([...this.checkpoints, ...this.acquisitionJournals].some((record) => sameLease(record, journal))) {
+        throw new Error('exact acquisition journal already exists')
+      }
+      const next = [...this.acquisitionJournals, structuredClone(journal)]
+      await this.injectFault?.('journal-write')
+      await this.persist(this.checkpoints, next, this.releaseAcknowledgements)
+      this.acquisitionJournals = next
     })
   }
 
-  put(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
+  finalizeAcquisition(journal: ExternalChromeAcquireJournal, checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      const withoutExact = this.checkpoints.filter((lease) => lease.extensionInstanceId !== checkpoint.extensionInstanceId || lease.leaseId !== checkpoint.leaseId || lease.leaseEpoch !== checkpoint.leaseEpoch)
-      if (withoutExact.length >= MAX_LEASE_CHECKPOINTS) throw new Error('lease checkpoint bound reached')
-      const next = [...withoutExact, structuredClone(checkpoint)]
-      await this.persist(next)
-      this.checkpoints = next
+      const existingCheckpoint = this.checkpoints.find((record) => sameLease(record, journal))
+      if (existingCheckpoint !== undefined) {
+        if (!sameCheckpoint(existingCheckpoint, checkpoint)) throw new Error('acquisition finalization changed exact authority')
+        return
+      }
+      const index = this.acquisitionJournals.findIndex((record) => sameLease(record, journal))
+      if (index === -1 || !sameAcquireIntent(this.acquisitionJournals[index]!, journal)) {
+        throw new Error('exact acquisition journal is missing')
+      }
+      const nextJournals = [...this.acquisitionJournals]
+      nextJournals.splice(index, 1)
+      const nextCheckpoints = [...this.checkpoints, structuredClone(checkpoint)]
+      await this.injectFault?.('journal-finalize')
+      await this.persist(nextCheckpoints, nextJournals, this.releaseAcknowledgements)
+      this.checkpoints = nextCheckpoints
+      this.acquisitionJournals = nextJournals
     })
   }
 
-  remove(extensionInstanceId: string, leaseId: string, leaseEpoch: number): Promise<void> {
+  markAcquisitionCleanup(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason: string): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      const next = this.checkpoints.filter((lease) => lease.extensionInstanceId !== extensionInstanceId || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch)
-      await this.persist(next)
+      validateCleanupReason(reason)
+      const checkpointIndex = this.checkpoints.findIndex((record) => exactLease(record, extensionInstanceId, leaseId, leaseEpoch))
+      if (checkpointIndex !== -1) {
+        const existing = this.checkpoints[checkpointIndex]!
+        if (existing.cleanupReason !== undefined) return
+        const next = [...this.checkpoints]
+        next[checkpointIndex] = { ...existing, cleanupReason: reason }
+        await this.persist(next, this.acquisitionJournals, this.releaseAcknowledgements)
+        this.checkpoints = next
+        return
+      }
+      const journalIndex = this.acquisitionJournals.findIndex((record) => exactLease(record, extensionInstanceId, leaseId, leaseEpoch))
+      if (journalIndex === -1) {
+        if (this.releaseAcknowledgements.some((record) => exactLease(record, extensionInstanceId, leaseId, leaseEpoch))) return
+        throw new Error('exact acquisition journal is missing')
+      }
+      const existing = this.acquisitionJournals[journalIndex]!
+      if (existing.cleanupReason !== undefined) return
+      const next = [...this.acquisitionJournals]
+      next[journalIndex] = { ...existing, cleanupReason: reason }
+      await this.persist(this.checkpoints, next, this.releaseAcknowledgements)
+      this.acquisitionJournals = next
+    })
+  }
+
+  removeAcquisition(journal: ExternalChromeAcquireJournal): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      const next = this.acquisitionJournals.filter((record) => !sameLease(record, journal))
+      if (next.length === this.acquisitionJournals.length) return
+      await this.injectFault?.('journal-remove')
+      await this.persist(this.checkpoints, next, this.releaseAcknowledgements)
+      this.acquisitionJournals = next
+    })
+  }
+
+  markCleanup(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason: string): Promise<ExternalChromeLeaseCheckpoint> {
+    return this.serialize(async () => {
+      await this.load()
+      validateCleanupReason(reason)
+      const index = this.checkpoints.findIndex((lease) => exactLease(lease, extensionInstanceId, leaseId, leaseEpoch))
+      if (index === -1) throw new Error('exact lease cleanup checkpoint is missing')
+      const existing = this.checkpoints[index]!
+      if (existing.cleanupReason !== undefined) return structuredClone(existing)
+      const checkpoint = { ...existing, cleanupReason: reason }
+      const next = [...this.checkpoints]
+      next[index] = checkpoint
+      await this.persist(next, this.acquisitionJournals, this.releaseAcknowledgements)
       this.checkpoints = next
+      return structuredClone(checkpoint)
+    })
+  }
+
+  settleRelease(checkpoint: ExternalChromeLeaseCheckpoint): Promise<ExternalChromeReleaseAcknowledgement> {
+    return this.serialize(async () => {
+      await this.load()
+      const acknowledgement = acknowledgementFrom(checkpoint)
+      const existingAck = this.releaseAcknowledgements.find((record) => sameLease(record, checkpoint))
+      if (existingAck !== undefined) {
+        if (!sameAcknowledgement(existingAck, acknowledgement)) throw new Error('settled release changed exact tab scope')
+        return structuredClone(existingAck)
+      }
+      const index = this.checkpoints.findIndex((record) => sameLease(record, checkpoint))
+      if (index === -1 || !sameCheckpoint(this.checkpoints[index]!, checkpoint)) throw new Error('exact lease cleanup checkpoint is missing')
+      if (this.releaseAcknowledgements.length >= MAX_LEASE_CHECKPOINTS) throw new Error('release acknowledgement bound reached')
+      const nextCheckpoints = [...this.checkpoints]
+      nextCheckpoints.splice(index, 1)
+      const nextAcknowledgements = [...this.releaseAcknowledgements, acknowledgement]
+      await this.injectFault?.('checkpoint-settle')
+      await this.persist(nextCheckpoints, this.acquisitionJournals, nextAcknowledgements)
+      this.checkpoints = nextCheckpoints
+      this.releaseAcknowledgements = nextAcknowledgements
+      return structuredClone(acknowledgement)
+    })
+  }
+
+  settleAcquisitionRelease(journal: ExternalChromeAcquireJournal, tabIds: number[]): Promise<ExternalChromeReleaseAcknowledgement> {
+    return this.serialize(async () => {
+      await this.load()
+      const index = this.acquisitionJournals.findIndex((record) => sameLease(record, journal))
+      const acknowledgement = acknowledgementFrom({ ...journal, tabIds })
+      const existingAck = this.releaseAcknowledgements.find((record) => sameLease(record, journal))
+      if (existingAck !== undefined) {
+        if (!sameAcknowledgement(existingAck, acknowledgement)) throw new Error('settled acquisition release changed exact tab scope')
+        return structuredClone(existingAck)
+      }
+      if (index === -1 || !sameAcquireIntent(this.acquisitionJournals[index]!, journal)) throw new Error('exact acquisition journal is missing')
+      if (this.releaseAcknowledgements.length >= MAX_LEASE_CHECKPOINTS) throw new Error('release acknowledgement bound reached')
+      const nextJournals = [...this.acquisitionJournals]
+      nextJournals.splice(index, 1)
+      const nextAcknowledgements = [...this.releaseAcknowledgements, acknowledgement]
+      await this.injectFault?.('journal-remove')
+      await this.persist(this.checkpoints, nextJournals, nextAcknowledgements)
+      this.acquisitionJournals = nextJournals
+      this.releaseAcknowledgements = nextAcknowledgements
+      return structuredClone(acknowledgement)
+    })
+  }
+
+  removeAcknowledgement(acknowledgement: ExternalChromeReleaseAcknowledgement): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      const existing = this.releaseAcknowledgements.find((record) => sameLease(record, acknowledgement))
+      if (existing === undefined) return
+      if (!sameAcknowledgement(existing, acknowledgement)) throw new Error('release acknowledgement changed exact tab scope')
+      const next = this.releaseAcknowledgements.filter((record) => !sameLease(record, acknowledgement))
+      await this.injectFault?.('acknowledgement-remove')
+      await this.persist(this.checkpoints, this.acquisitionJournals, next)
+      this.releaseAcknowledgements = next
     })
   }
 
@@ -119,23 +298,43 @@ class LeaseCheckpointStore {
     try {
       const raw = await fs.readFile(this.file, 'utf8')
       if (Buffer.byteLength(raw) > MAX_CHECKPOINT_FILE_BYTES) throw new Error('lease checkpoint file exceeds bound')
-      const value = JSON.parse(raw) as Partial<PersistedCheckpoints>
-      if (value.schemaVersion !== 1 || !Array.isArray(value.leases)) throw new Error('lease checkpoint file has an invalid schema')
-      // Persisted-only migration: acknowledged legacy transactions are discarded;
-      // unresolved records retain only exact lease authority under the generic lifecycle.
+      const value = JSON.parse(raw) as Record<string, unknown>
+      const leases = Array.isArray(value.leases) ? value.leases : null
+      if (leases === null || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) throw new Error('lease checkpoint file has an invalid schema')
       const migrated: ExternalChromeLeaseCheckpoint[] = []
-      for (const lease of value.leases) {
-        if (typeof lease === 'object' && lease !== null && !Array.isArray(lease) && Number.isFinite((lease as unknown as Record<string, unknown>).releasedAt)) continue
+      for (const lease of leases) {
+        if (typeof lease === 'object' && lease !== null && !Array.isArray(lease) && Number.isFinite((lease as Record<string, unknown>).releasedAt)) continue
         const checkpoint = migrateCheckpoint(lease)
         if (checkpoint === null) throw new Error('lease checkpoint file contains an invalid record')
         migrated.push(checkpoint)
       }
-      if (migrated.length > MAX_LEASE_CHECKPOINTS) throw new Error('lease checkpoint file exceeds authority bound')
+      if (value.schemaVersion === 2 && (!Array.isArray(value.acquisitions) || !Array.isArray(value.releaseAcknowledgements))) {
+        throw new Error('lease checkpoint file has an invalid transaction schema')
+      }
+      const acquisitions = value.schemaVersion === 2
+        ? (value.acquisitions as unknown[]).map((journal) => migrateAcquireJournal(journal))
+        : []
+      const acknowledgements = value.schemaVersion === 2
+        ? (value.releaseAcknowledgements as unknown[]).map((acknowledgement) => migrateAcknowledgement(acknowledgement))
+        : []
+      if (acquisitions.some((journal) => journal === null) || acknowledgements.some((acknowledgement) => acknowledgement === null) ||
+        migrated.length + acquisitions.length > MAX_LEASE_CHECKPOINTS || acknowledgements.length > MAX_LEASE_CHECKPOINTS) {
+        throw new Error('lease checkpoint file exceeds authority bound or contains an invalid transaction')
+      }
+      const authorityKeys = [...migrated, ...(acquisitions as ExternalChromeAcquireJournal[])].map(leaseKey)
+      const acknowledgementKeys = (acknowledgements as ExternalChromeReleaseAcknowledgement[]).map(leaseKey)
+      if (new Set(authorityKeys).size !== authorityKeys.length || new Set(acknowledgementKeys).size !== acknowledgementKeys.length) {
+        throw new Error('lease checkpoint file contains duplicate exact authority')
+      }
       this.checkpoints = migrated
+      this.acquisitionJournals = acquisitions as ExternalChromeAcquireJournal[]
+      this.releaseAcknowledgements = acknowledgements as ExternalChromeReleaseAcknowledgement[]
       this.loaded = true
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         this.checkpoints = []
+        this.acquisitionJournals = []
+        this.releaseAcknowledgements = []
         this.loaded = true
         return
       }
@@ -144,33 +343,150 @@ class LeaseCheckpointStore {
     }
   }
 
-  private async persist(checkpoints = this.checkpoints): Promise<void> {
-    await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
+  private async persist(
+    checkpoints = this.checkpoints,
+    acquisitions = this.acquisitionJournals,
+    releaseAcknowledgements = this.releaseAcknowledgements,
+  ): Promise<void> {
+    const value: PersistedCheckpoints = { schemaVersion: 2, leases: checkpoints, acquisitions, releaseAcknowledgements }
+    const serialized = `${JSON.stringify(value)}\n`
+    if (Buffer.byteLength(serialized) > MAX_CHECKPOINT_FILE_BYTES) throw new Error('lease checkpoint file exceeds bound')
+    const directoryPath = path.dirname(this.file)
+    await fs.mkdir(directoryPath, { recursive: true, mode: 0o700 })
     const temporary = `${this.file}.new-${process.pid}-${randomUUID()}`
-    const value: PersistedCheckpoints = { schemaVersion: 1, leases: checkpoints }
-    await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: 'wx' })
-    await fs.rename(temporary, this.file)
-    if (process.platform !== 'win32') await fs.chmod(this.file, 0o600)
+    let renamed = false
+    try {
+      const handle = await fs.open(temporary, 'wx', 0o600)
+      try {
+        await handle.writeFile(serialized, 'utf8')
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      await fs.rename(temporary, this.file)
+      renamed = true
+      if (process.platform !== 'win32') {
+        const directory = await fs.open(directoryPath, 'r')
+        try { await directory.sync() } finally { await directory.close() }
+      }
+    } finally {
+      if (!renamed) await fs.unlink(temporary).catch(() => undefined)
+    }
   }
 }
 
 function migrateCheckpoint(value: unknown): ExternalChromeLeaseCheckpoint | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
-  if (record.releasedAt !== undefined) return null
-  if (typeof record.extensionInstanceId !== 'string' || typeof record.sessionAgentId !== 'string' ||
-    typeof record.profileId !== 'string' || typeof record.leaseId !== 'string' || !Number.isSafeInteger(record.leaseEpoch) ||
-    !Array.isArray(record.tabIds) || record.tabIds.length > 128 || !record.tabIds.every(Number.isSafeInteger) ||
-    !Number.isFinite(record.expiresAt)) return null
+  if (record.releasedAt !== undefined || !validAuthorityIdentity(record) || !validTabIds(record.tabIds) || !Number.isFinite(record.expiresAt) ||
+    !validOptionalCleanupReason(record.cleanupReason)) return null
+  return {
+    extensionInstanceId: record.extensionInstanceId as string,
+    sessionAgentId: record.sessionAgentId as string,
+    profileId: record.profileId as string,
+    leaseId: record.leaseId as string,
+    leaseEpoch: record.leaseEpoch as number,
+    tabIds: [...record.tabIds as number[]],
+    expiresAt: record.expiresAt as number,
+    // Any checkpoint read by a fresh Desktop process has no live burst owner.
+    cleanupReason: typeof record.cleanupReason === 'string' ? record.cleanupReason : 'desktop-restart',
+  }
+}
+
+function migrateAcquireJournal(value: unknown): ExternalChromeAcquireJournal | null {
+  if (!validAcquireJournal(value, true)) return null
+  return {
+    ...structuredClone(value),
+    cleanupReason: value.cleanupReason ?? 'desktop-restart-acquisition',
+  }
+}
+
+function migrateAcknowledgement(value: unknown): ExternalChromeReleaseAcknowledgement | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (!validAuthorityIdentity(record) || !validTabIds(record.tabIds)) return null
+  return {
+    extensionInstanceId: record.extensionInstanceId as string,
+    sessionAgentId: record.sessionAgentId as string,
+    profileId: record.profileId as string,
+    leaseId: record.leaseId as string,
+    leaseEpoch: record.leaseEpoch as number,
+    tabIds: [...record.tabIds as number[]],
+  }
+}
+
+function validAcquireJournal(value: unknown, persisted: boolean): value is ExternalChromeAcquireJournal {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as unknown as Record<string, unknown>
+  return validAuthorityIdentity(record) && (record.requestedTabId === null || Number.isSafeInteger(record.requestedTabId) && (record.requestedTabId as number) >= 0) &&
+    typeof record.createIfNeeded === 'boolean' && (record.requestedTabId === null) === record.createIfNeeded &&
+    Number.isFinite(record.startedAt) && (record.startedAt as number) >= 0 && validOptionalCleanupReason(record.cleanupReason) &&
+    (!persisted || Object.keys(record).every((key) => ['extensionInstanceId', 'sessionAgentId', 'profileId', 'leaseId', 'leaseEpoch', 'requestedTabId', 'createIfNeeded', 'startedAt', 'cleanupReason'].includes(key)))
+}
+
+function validAuthorityIdentity(record: Record<string, unknown>): boolean {
+  return ['extensionInstanceId', 'sessionAgentId', 'profileId', 'leaseId'].every((key) =>
+    typeof record[key] === 'string' && (record[key] as string).length > 0 && (record[key] as string).length <= 128 && !(record[key] as string).includes('\0')) &&
+    Number.isSafeInteger(record.leaseEpoch) && (record.leaseEpoch as number) > 0
+}
+
+function validTabIds(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 128 &&
+    value.every((tabId) => Number.isSafeInteger(tabId) && tabId >= 0) && new Set(value).size === value.length
+}
+
+function validOptionalCleanupReason(value: unknown): boolean {
+  return value === undefined || typeof value === 'string' && value.length > 0 && value.length <= 128 && !value.includes('\0')
+}
+
+function validateCleanupReason(reason: string): void {
+  if (!validOptionalCleanupReason(reason) || reason.length === 0) throw new Error('lease cleanup reason is invalid')
+}
+
+function exactLease(record: { extensionInstanceId: string; leaseId: string; leaseEpoch: number }, extensionInstanceId: string, leaseId: string, leaseEpoch: number): boolean {
+  return record.extensionInstanceId === extensionInstanceId && record.leaseId === leaseId && record.leaseEpoch === leaseEpoch
+}
+
+function sameLease(left: { extensionInstanceId: string; leaseId: string; leaseEpoch: number }, right: { extensionInstanceId: string; leaseId: string; leaseEpoch: number }): boolean {
+  return exactLease(left, right.extensionInstanceId, right.leaseId, right.leaseEpoch)
+}
+
+function leaseKey(record: { extensionInstanceId: string; leaseId: string; leaseEpoch: number }): string {
+  return `${record.extensionInstanceId}\0${record.leaseId}\0${record.leaseEpoch}`
+}
+
+function sameAcquireIntent(left: ExternalChromeAcquireJournal, right: ExternalChromeAcquireJournal): boolean {
+  return sameLease(left, right) && left.sessionAgentId === right.sessionAgentId && left.profileId === right.profileId &&
+    left.requestedTabId === right.requestedTabId && left.createIfNeeded === right.createIfNeeded
+}
+
+function sameCheckpoint(left: ExternalChromeLeaseCheckpoint, right: ExternalChromeLeaseCheckpoint): boolean {
+  return sameLease(left, right) && left.sessionAgentId === right.sessionAgentId && left.profileId === right.profileId &&
+    canonical(left.tabIds) === canonical(right.tabIds)
+}
+
+function acknowledgementFrom(record: {
+  extensionInstanceId: string
+  sessionAgentId: string
+  profileId: string
+  leaseId: string
+  leaseEpoch: number
+  tabIds: number[]
+}): ExternalChromeReleaseAcknowledgement {
+  if (!validTabIds(record.tabIds)) throw new Error('release acknowledgement tab scope is invalid')
   return {
     extensionInstanceId: record.extensionInstanceId,
     sessionAgentId: record.sessionAgentId,
     profileId: record.profileId,
     leaseId: record.leaseId,
-    leaseEpoch: record.leaseEpoch as number,
-    tabIds: [...record.tabIds] as number[],
-    expiresAt: record.expiresAt as number,
+    leaseEpoch: record.leaseEpoch,
+    tabIds: [...record.tabIds].sort((left, right) => left - right),
   }
+}
+
+function sameAcknowledgement(left: ExternalChromeReleaseAcknowledgement, right: ExternalChromeReleaseAcknowledgement): boolean {
+  return sameLease(left, right) && left.sessionAgentId === right.sessionAgentId && left.profileId === right.profileId &&
+    canonical(left.tabIds) === canonical(right.tabIds)
 }
 
 class FramedSocketPeer {
@@ -262,7 +578,6 @@ class RuntimeConnection {
   }>()
   private requestSequence = 0
   private closed = false
-  private firstLeaseReport = true
 
   constructor(
     private readonly peer: FramedSocketPeer,
@@ -273,6 +588,7 @@ class RuntimeConnection {
     readonly maxMessageBytes: number,
     private readonly onHello: (connection: RuntimeConnection, hello: ExternalChromeHelloParams) => Promise<void>,
     private readonly onLeaseChanged: (connection: RuntimeConnection, change: ExternalChromeLeaseChangedParams) => Promise<void>,
+    private readonly onAuthoritySnapshot: (connection: RuntimeConnection, snapshot: ExternalChromeAuthoritySnapshotParams) => Promise<void>,
     private readonly onClose: (connection: RuntimeConnection) => void,
   ) { void this.readLoop() }
 
@@ -308,12 +624,6 @@ class RuntimeConnection {
     if ('error' in response) throw new Error(response.error.data?.code ?? response.error.message)
     if (!('result' in response)) throw new Error('extension returned an invalid response')
     return response.result as ExternalChromeResultByMethod[Method]
-  }
-
-  consumeFirstLeaseReport(): boolean {
-    const first = this.firstLeaseReport
-    this.firstLeaseReport = false
-    return first
   }
 
   close(): void {
@@ -358,6 +668,7 @@ class RuntimeConnection {
     }
     if ('method' in parsed && !('id' in parsed)) {
       if (parsed.method === 'browser.leaseChanged') await this.onLeaseChanged(this, parsed.params)
+      if (parsed.method === 'browser.authoritySnapshot') await this.onAuthoritySnapshot(this, parsed.params)
       return
     }
     if (!('method' in parsed) || !('id' in parsed)) return
@@ -422,6 +733,11 @@ interface RuntimeInstanceState {
   updateAttempt: Promise<void> | null
   preparedRuntimeKey: string | null
   reloadAttempt: Promise<void> | null
+  authoritySnapshotReceived: boolean
+}
+
+export interface ExternalChromeRelayRuntimeOptions {
+  checkpointFault?: (phase: ExternalChromeCheckpointFaultPhase) => void | Promise<void>
 }
 
 export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
@@ -450,10 +766,19 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private readonly sessionAffinities = new Map<string, string>()
   /** One-shot acquisition metadata consumed by the immediately serialized open. */
   private readonly acquisitionCreated = new Map<string, boolean>()
+  /** In-memory idempotency after proactive reconnect cleanup settles a still-live host burst. */
+  private readonly settledReleases = new Map<string, number[]>()
+  /** Acquisitions admitted before quiesce must finish checkpointing before its release snapshot. */
+  private readonly acquisitionOperations = new Set<Promise<ExternalBrowserAcquireResult>>()
+  private acquisitionAdmissionTail: Promise<void> = Promise.resolve()
   private transientOwnerEpoch = 1_000_000_000
 
-  constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
-    this.checkpoints = new LeaseCheckpointStore(checkpointFile)
+  constructor(
+    checkpointFile: string,
+    private readonly now: () => number = Date.now,
+    options: ExternalChromeRelayRuntimeOptions = {},
+  ) {
+    this.checkpoints = new LeaseCheckpointStore(checkpointFile, options.checkpointFault)
   }
 
   configureExpectedRuntime(
@@ -472,7 +797,8 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
     this.runtimeStateRevision += 1
     for (const [extensionInstanceId, state] of this.instanceStates) {
-      if (this.runtimeMatchesExpected(state.connection.inventory)) state.recovery = 'ready'
+      if (!state.authoritySnapshotReceived) state.recovery = 'reconnecting'
+      else if (this.runtimeMatchesExpected(state.connection.inventory)) state.recovery = 'ready'
       else this.beginRuntimeUpdate(extensionInstanceId, state)
     }
     this.scheduleRuntimeUpdateBarrier()
@@ -503,6 +829,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.instanceStates.clear()
     this.sessionAffinities.clear()
     this.acquisitionCreated.clear()
+    this.settledReleases.clear()
     this.runtimeStateRevision += 1
     this.cancelReadinessWaiters()
     this.context?.secret.fill(0)
@@ -520,6 +847,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.operationsQuiesced = true
     this.lifecycleBarrierRecovery = 'updating'
     try {
+      await this.settleAcquisitionsBefore(deadlineAt)
       const barrierRevision = this.runtimeStateRevision
       const connections = [...this.connections.entries()]
       const preparation = await Promise.allSettled(connections.map(async ([extensionInstanceId, connection]) => {
@@ -539,26 +867,16 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         }
       }))
       const checkpoints = await this.checkpoints.all()
-      const releases = await Promise.allSettled(checkpoints.map(async (lease) => {
-        const connection = this.connections.get(lease.extensionInstanceId)
-        if (!connection) throw new Error('runtime disconnected before exact lease release')
+      const releases = await Promise.allSettled(checkpoints.map((lease) => this.serializeCheckpointRelease(async () => {
         if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before exact lease release')
-        const result = await connection.request('forge.browser.release', {
-          protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason,
-        }, Math.max(1, deadlineAt - this.now()))
-        if (this.connections.get(lease.extensionInstanceId) !== connection ||
-          result.leaseId !== lease.leaseId || result.leaseEpoch !== lease.leaseEpoch ||
-          canonical([...result.releasedTabIds].sort((a, b) => a - b)) !== canonical(lease.tabIds)) {
-          throw new Error('runtime release acknowledgement changed exact instance/lease authority')
-        }
+        await this.releaseCheckpoint(lease, reason, Math.max(1, deadlineAt - this.now()))
         if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed during exact lease release')
-        await this.checkpoints.remove(lease.extensionInstanceId, lease.leaseId, lease.leaseEpoch)
-        for (const tabId of lease.tabIds) this.acquisitionCreated.delete(acquisitionKey(lease, tabId))
-      }))
-      const remaining = await this.checkpoints.all()
+      })))
+      await this.reconcilePendingAcknowledgements()
+      const remaining = await this.durableAuthorityEvidenceCount()
       const failures = [...preparation, ...releases].filter((result) => result.status === 'rejected')
-      if (barrierRevision !== this.runtimeStateRevision || failures.length > 0 || remaining.length > 0) {
-        throw new Error(`External Chrome quiesce could not prove release of ${remaining.length} lease(s)`)
+      if (barrierRevision !== this.runtimeStateRevision || failures.length > 0 || remaining > 0) {
+        throw new Error(`External Chrome quiesce could not prove release/settlement of ${remaining} authority transaction(s)`)
       }
       this.lifecycleBarrierRecovery = null
     } catch (error) {
@@ -568,7 +886,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   async hasActiveLeaseCheckpoints(): Promise<boolean> {
-    return (await this.checkpoints.all()).length > 0
+    return (await this.durableAuthorityEvidenceCount()) > 0
   }
 
   accept(socket: Socket): void {
@@ -584,7 +902,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   async ready(): Promise<void> {
-    await this.checkpoints.all()
+    await Promise.all([this.checkpoints.all(), this.checkpoints.acquisitions(), this.checkpoints.acknowledgements()])
   }
 
   /** Opaque-only authority projection for trusted Desktop IPC recovery. */
@@ -609,7 +927,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return this.serializeCheckpointRelease(async () => {
       const checkpoint = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId &&
         lease.leaseId === leaseId && lease.leaseEpoch === leaseEpoch)
-      if (checkpoint) await this.releaseCheckpoint(checkpoint, reason)
+      if (checkpoint) {
+        await this.releaseCheckpoint(checkpoint, reason)
+        return
+      }
+      const acknowledgement = (await this.checkpoints.acknowledgements()).find((record) =>
+        exactLease(record, extensionInstanceId, leaseId, leaseEpoch))
+      if (acknowledgement) await this.acknowledgeRelease(acknowledgement)
     })
   }
 
@@ -618,6 +942,9 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       const checkpoints = (await this.checkpoints.all()).filter((lease) =>
         lease.sessionAgentId === session.sessionAgentId && lease.profileId === session.profileId)
       for (const checkpoint of checkpoints) await this.releaseCheckpoint(checkpoint, reason)
+      const acknowledgements = (await this.checkpoints.acknowledgements()).filter((record) =>
+        record.sessionAgentId === session.sessionAgentId && record.profileId === session.profileId)
+      for (const acknowledgement of acknowledgements) await this.acknowledgeRelease(acknowledgement)
     })
   }
 
@@ -625,29 +952,80 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return this.serializeCheckpointRelease(async () => {
       const checkpoints = (await this.checkpoints.all()).filter((lease) =>
         lease.sessionAgentId === session.sessionAgentId && lease.profileId === session.profileId)
-      for (const checkpoint of checkpoints) {
-        try { await this.releaseCheckpoint(checkpoint, 'delete') }
-        catch { await this.forgetCheckpoint(checkpoint) }
+      try {
+        for (const checkpoint of checkpoints) await this.releaseCheckpoint(checkpoint, 'delete')
+        const acknowledgements = (await this.checkpoints.acknowledgements()).filter((record) =>
+          record.sessionAgentId === session.sessionAgentId && record.profileId === session.profileId)
+        for (const acknowledgement of acknowledgements) await this.acknowledgeRelease(acknowledgement)
+      } finally {
+        // Affinity is only a creation preference; deleting it cannot weaken the retained exact
+        // release checkpoint and must not leak a terminal logical session after disconnect.
+        this.sessionAffinities.delete(`${session.sessionAgentId}\0${session.profileId}`)
       }
-      this.sessionAffinities.delete(`${session.sessionAgentId}\0${session.profileId}`)
     })
   }
 
-  private async releaseCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, reason: string): Promise<void> {
-    const connection = this.connection(checkpoint.extensionInstanceId)
+  private async releaseCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, reason: string, timeoutMs?: number): Promise<void> {
+    const current = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === checkpoint.extensionInstanceId &&
+      lease.leaseId === checkpoint.leaseId && lease.leaseEpoch === checkpoint.leaseEpoch)
+    if (current === undefined) {
+      const pendingAcknowledgement = (await this.checkpoints.acknowledgements()).find((record) => sameLease(record, checkpoint))
+      if (pendingAcknowledgement !== undefined) {
+        if (canonical(pendingAcknowledgement.tabIds) !== canonical([...checkpoint.tabIds].sort((left, right) => left - right))) {
+          throw new Error('exact release acknowledgement changed tab scope')
+        }
+        await this.acknowledgeRelease(pendingAcknowledgement)
+        return
+      }
+      const settled = this.settledReleases.get(settledReleaseKey(checkpoint))
+      if (canonical(settled ?? []) === canonical([...checkpoint.tabIds].sort((left, right) => left - right))) return
+      throw new Error('exact checkpoint release is missing')
+    }
+    // The first durable terminal intent wins. Later lifecycle/reconnect retries must not rewrite
+    // why this exact checkpoint became non-runnable while its acknowledgement is still pending.
+    const pending = current.cleanupReason !== undefined
+      ? current
+      : await this.checkpoints.markCleanup(current.extensionInstanceId, current.leaseId, current.leaseEpoch, reason)
+    const connection = this.connection(pending.extensionInstanceId)
     const result = await connection.request('forge.browser.release', {
-      protocolVersion: 1, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch, reason,
-    })
-    if (this.connections.get(checkpoint.extensionInstanceId) !== connection || result.leaseId !== checkpoint.leaseId ||
-      result.leaseEpoch !== checkpoint.leaseEpoch || canonical([...result.releasedTabIds].sort((a, b) => a - b)) !== canonical(checkpoint.tabIds)) {
+      protocolVersion: 1, leaseId: pending.leaseId, leaseEpoch: pending.leaseEpoch, reason: pending.cleanupReason!,
+    }, timeoutMs)
+    if (this.connections.get(current.extensionInstanceId) !== connection || result.leaseId !== current.leaseId ||
+      result.leaseEpoch !== current.leaseEpoch || canonical([...result.releasedTabIds].sort((a, b) => a - b)) !== canonical(current.tabIds)) {
       throw new Error('exact checkpoint release was not acknowledged')
     }
-    await this.forgetCheckpoint(checkpoint)
+    await this.forgetCheckpoint(current, connection)
   }
 
-  private async forgetCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
-    await this.checkpoints.remove(checkpoint.extensionInstanceId, checkpoint.leaseId, checkpoint.leaseEpoch)
+  private async forgetCheckpoint(checkpoint: ExternalChromeLeaseCheckpoint, connection?: RuntimeConnection): Promise<void> {
+    // Atomically replace live checkpoint evidence with a durable pending acknowledgement. The
+    // Extension receipt cannot be forgotten until the following exact RPC succeeds.
+    const acknowledgement = await this.checkpoints.settleRelease(checkpoint)
     for (const tabId of checkpoint.tabIds) this.acquisitionCreated.delete(acquisitionKey(checkpoint, tabId))
+    const key = settledReleaseKey(checkpoint)
+    this.settledReleases.delete(key)
+    this.settledReleases.set(key, [...checkpoint.tabIds].sort((left, right) => left - right))
+    while (this.settledReleases.size > MAX_SETTLED_RELEASES) this.settledReleases.delete(this.settledReleases.keys().next().value!)
+    await this.acknowledgeRelease(acknowledgement, connection)
+  }
+
+  private async acknowledgeRelease(
+    acknowledgement: ExternalChromeReleaseAcknowledgement,
+    connectionOverride?: RuntimeConnection,
+  ): Promise<void> {
+    const connection = connectionOverride ?? this.connection(acknowledgement.extensionInstanceId)
+    const result = await connection.request('forge.browser.acknowledgeRelease', {
+      protocolVersion: 1,
+      leaseId: acknowledgement.leaseId,
+      leaseEpoch: acknowledgement.leaseEpoch,
+      releasedTabIds: acknowledgement.tabIds,
+    })
+    if (this.connections.get(acknowledgement.extensionInstanceId) !== connection || result.acknowledged !== true ||
+      result.leaseId !== acknowledgement.leaseId || result.leaseEpoch !== acknowledgement.leaseEpoch ||
+      canonical(result.releasedTabIds) !== canonical(acknowledgement.tabIds)) {
+      throw new Error('exact release receipt acknowledgement was not accepted')
+    }
+    await this.checkpoints.removeAcknowledgement(acknowledgement)
   }
 
   private serializeCheckpointRelease(work: () => Promise<void>): Promise<void> {
@@ -692,11 +1070,21 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
   }
 
-  async acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
-    if (this.operationsQuiesced) return acquireFailure('runtime-not-ready', 'External Chrome is updating or reconnecting.', true)
+  acquireTarget(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
+    if (this.operationsQuiesced) return Promise.resolve(acquireFailure('runtime-not-ready', 'External Chrome is updating or reconnecting.', true))
+    const operation = this.serializeAcquisition(() => this.acquireTargetUnlocked(input))
+    this.acquisitionOperations.add(operation)
+    void operation.finally(() => this.acquisitionOperations.delete(operation)).catch(() => undefined)
+    return operation
+  }
+
+  private async acquireTargetUnlocked(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult> {
     await this.reconcileExpiredLeases()
-    const unresolved = (await this.checkpoints.all()).find((checkpoint) => checkpoint.sessionAgentId === input.sessionAgentId && checkpoint.profileId === input.profileId)
-    if (unresolved) return acquireFailure('authority-conflict', 'Previous Chrome authority is still pending exact release.', true)
+    const unresolved = [
+      ...await this.checkpoints.all(),
+      ...await this.checkpoints.acquisitions(),
+    ].find((checkpoint) => checkpoint.sessionAgentId === input.sessionAgentId && checkpoint.profileId === input.profileId)
+    if (unresolved) return acquireFailure('authority-conflict', 'Previous Chrome authority transaction is still pending exact settlement.', true)
 
     const affinityKey = `${input.sessionAgentId}\0${input.profileId}`
     if (input.preferredTabId !== null && decodeTabId(input.preferredTabId) === null) {
@@ -723,8 +1111,28 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
 
     const leaseId = randomUUID()
     const leaseEpoch = input.ownerEpoch
+    const journal: ExternalChromeAcquireJournal = {
+      extensionInstanceId,
+      sessionAgentId: input.sessionAgentId,
+      profileId: input.profileId,
+      leaseId,
+      leaseEpoch,
+      requestedTabId: decoded?.tabId ?? null,
+      createIfNeeded: decoded === null,
+      startedAt: this.now(),
+    }
+    let journaled = false
+    let requestInvoked = false
+    let acquiredScope: { tabId: number; created: boolean } | null = null
     try {
-      const acquired = await this.connection(extensionInstanceId).request('forge.browser.acquire', {
+      if (this.operationsQuiesced || !this.isInstanceReady(extensionInstanceId)) {
+        return acquireFailure('runtime-not-ready', 'External Chrome is not ready for acquisition.', true)
+      }
+      const connection = this.connection(extensionInstanceId)
+      await this.checkpoints.beginAcquisition(journal)
+      journaled = true
+      requestInvoked = true
+      const acquired = await connection.request('forge.browser.acquire', {
         protocolVersion: 1,
         sessionAgentId: input.sessionAgentId,
         leaseId,
@@ -732,23 +1140,55 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         ...(decoded === null ? {} : { tabId: decoded.tabId }),
         createIfNeeded: decoded === null,
       })
-      if (!matchesAcquisition(acquired, extensionInstanceId, input.sessionAgentId, leaseId, leaseEpoch)
-        || decoded !== null && (acquired.tab.tabId !== decoded.tabId || acquired.created)
-        || decoded === null && !acquired.created) {
+      if (this.connections.get(extensionInstanceId) !== connection ||
+        !matchesAcquisition(acquired, extensionInstanceId, input.sessionAgentId, leaseId, leaseEpoch) ||
+        decoded !== null && (acquired.tab.tabId !== decoded.tabId || acquired.created) ||
+        decoded === null && !acquired.created) {
         throw new Error('extension acquire response changed exact tab authority')
       }
       const tabId = acquired.tab.tabId
       if (!Number.isSafeInteger(tabId) || tabId < 0) throw new Error('extension did not return one acquired tab')
-      const checkpoint = {
+      acquiredScope = { tabId, created: acquired.created }
+      const checkpoint: ExternalChromeLeaseCheckpoint = {
         extensionInstanceId, sessionAgentId: input.sessionAgentId, profileId: input.profileId,
         leaseId, leaseEpoch, tabIds: [tabId], expiresAt: this.now() + CHECKPOINT_TTL_MS,
       }
-      await this.checkpoints.put(checkpoint)
+      // This one durable replacement is the acquisition commit point. A success response is never
+      // exposed to Browser Host policy before exact instance/lease/epoch/tab scope reaches disk.
+      await this.checkpoints.finalizeAcquisition(journal, checkpoint)
       this.acquisitionCreated.set(acquisitionKey(checkpoint, tabId), acquired.created)
       this.sessionAffinities.set(affinityKey, extensionInstanceId)
       return { ok: true, authority: { ownerEpoch: input.ownerEpoch, tabId: encodeTabId(extensionInstanceId, tabId) } }
     } catch (error) {
+      if (journaled) {
+        // Once request delivery may have started, never advertise replay safety or managed
+        // fallback. Durable intent survives every mark/finalize/remove fault for reconnect proof.
+        await this.checkpoints.markAcquisitionCleanup(
+          extensionInstanceId,
+          leaseId,
+          leaseEpoch,
+          'acquisition-interrupted',
+        ).catch(() => undefined)
+        if (acquiredScope !== null) {
+          const cleanupCheckpoint: ExternalChromeLeaseCheckpoint = {
+            extensionInstanceId,
+            sessionAgentId: input.sessionAgentId,
+            profileId: input.profileId,
+            leaseId,
+            leaseEpoch,
+            tabIds: [acquiredScope.tabId],
+            expiresAt: this.now(),
+            cleanupReason: 'acquisition-interrupted',
+          }
+          await this.checkpoints.finalizeAcquisition(journal, cleanupCheckpoint).catch(() => undefined)
+          const durable = (await this.checkpoints.all()).find((checkpoint) => sameLease(checkpoint, journal))
+          if (durable !== undefined) {
+            await this.serializeCheckpointRelease(() => this.releaseCheckpoint(durable, 'acquisition-interrupted')).catch(() => undefined)
+          }
+        }
+      }
       const message = error instanceof Error ? error.message : 'External Chrome acquisition failed.'
+      if (requestInvoked) return acquireUncertainFailure(message)
       const conflict = /lease|authority|debugger/u.test(message)
       return acquireFailure(conflict ? 'authority-conflict' : 'no-eligible-target', message, !conflict)
     }
@@ -760,7 +1200,24 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     const checkpoint = (await this.checkpoints.all()).find((entry) => entry.extensionInstanceId === decoded.extensionInstanceId &&
       entry.sessionAgentId === session.sessionAgentId && entry.profileId === session.profileId && entry.leaseEpoch === authority.ownerEpoch &&
       entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
-    if (!checkpoint) throw new Error('exact tab release checkpoint is missing')
+    if (!checkpoint) {
+      const acknowledgement = (await this.checkpoints.acknowledgements()).find((entry) =>
+        entry.extensionInstanceId === decoded.extensionInstanceId && entry.sessionAgentId === session.sessionAgentId &&
+        entry.profileId === session.profileId && entry.leaseEpoch === authority.ownerEpoch &&
+        entry.tabIds.length === 1 && entry.tabIds[0] === decoded.tabId)
+      if (acknowledgement !== undefined) {
+        await this.acknowledgeRelease(acknowledgement)
+        return
+      }
+      const settled = this.settledReleases.get(settledAuthorityKey(
+        decoded.extensionInstanceId,
+        session.sessionAgentId,
+        session.profileId,
+        authority.ownerEpoch,
+      ))
+      if (settled?.length === 1 && settled[0] === decoded.tabId) return
+      throw new Error('exact tab release checkpoint is missing')
+    }
     await this.serializeCheckpointRelease(() => this.releaseCheckpoint(checkpoint, reason))
   }
 
@@ -824,7 +1281,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         const reported = response.result.selectedTab
         selectedTab = reported ? {
           ...reported, targetAffinity: 'external-chrome', tabId: request.tabId,
-          sessionAgentId: request.sessionAgentId, profileId: request.profileId, controller: 'human', physicalVisible: false,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, physicalVisible: false,
         } : null
       }
     }
@@ -953,7 +1410,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
 
   private async activeCheckpoints(): Promise<ExternalChromeLeaseCheckpoint[]> {
     await this.reconcileExpiredLeases()
-    return (await this.checkpoints.all()).filter((lease) => lease.expiresAt > this.now())
+    return (await this.checkpoints.all()).filter((lease) => lease.expiresAt > this.now() && lease.cleanupReason === undefined)
   }
 
   private reconcileExpiredLeases(extensionInstanceId?: string): Promise<void> {
@@ -966,21 +1423,133 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   private async reconcileExpiredLeasesUnlocked(extensionInstanceId?: string): Promise<void> {
-    const expired = (await this.checkpoints.all()).filter((lease) => lease.expiresAt <= this.now()
-      && (extensionInstanceId === undefined || lease.extensionInstanceId === extensionInstanceId))
-    for (const lease of expired) {
-      const connection = this.connections.get(lease.extensionInstanceId)
-      if (!connection) continue
+    await this.reconcilePendingAcknowledgements(extensionInstanceId)
+    const terminal = (await this.checkpoints.all()).filter((lease) =>
+      (lease.cleanupReason !== undefined || lease.expiresAt <= this.now()) &&
+      (extensionInstanceId === undefined || lease.extensionInstanceId === extensionInstanceId))
+    for (const lease of terminal) {
+      if (!this.connections.has(lease.extensionInstanceId) || !this.isInstanceReady(lease.extensionInstanceId)) continue
       try {
-        const result = await connection.request('forge.browser.release', {
-          protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason: 'lease-expired',
-        })
-        if (result.leaseId === lease.leaseId && result.leaseEpoch === lease.leaseEpoch &&
-          canonical([...result.releasedTabIds].sort((a, b) => a - b)) === canonical(lease.tabIds)) {
-          await this.checkpoints.remove(lease.extensionInstanceId, lease.leaseId, lease.leaseEpoch)
-          for (const tabId of lease.tabIds) this.acquisitionCreated.delete(acquisitionKey(lease, tabId))
-        }
-      } catch { /* retain checkpoint until acknowledged; never forget a possibly attached debugger */ }
+        await this.serializeCheckpointRelease(() => this.releaseCheckpoint(lease, lease.cleanupReason ?? 'lease-expired'))
+      } catch { /* retain checkpoint until its exact instance acknowledges terminal cleanup */ }
+    }
+  }
+
+  private async reconcileAuthoritySnapshot(
+    connection: RuntimeConnection,
+    snapshot: ExternalChromeAuthoritySnapshotParams,
+  ): Promise<void> {
+    const extensionInstanceId = connection.inventory?.extensionInstanceId
+    if (extensionInstanceId === undefined || this.connections.get(extensionInstanceId) !== connection) return
+    const state = this.instanceStates.get(extensionInstanceId)
+    if (state?.connection !== connection) return
+    const reports = new Map(snapshot.reports.map((report) => [`${report.leaseId}\0${report.leaseEpoch}`, report] as const))
+
+    for (const journal of (await this.checkpoints.acquisitions()).filter((record) => record.extensionInstanceId === extensionInstanceId)) {
+      const report = reports.get(`${journal.leaseId}\0${journal.leaseEpoch}`)
+      if (report === undefined) {
+        // Complete authenticated absence proves the pre-journaled RPC did not leave authority.
+        await this.checkpoints.removeAcquisition(journal)
+        continue
+      }
+      if (report.tabIds.length !== 1 || journal.requestedTabId !== null && report.tabIds[0] !== journal.requestedTabId) {
+        throw new Error('authority snapshot changed interrupted acquisition tab scope')
+      }
+      if (report.state === 'released') {
+        await this.checkpoints.settleAcquisitionRelease(journal, report.tabIds)
+        continue
+      }
+      const checkpoint: ExternalChromeLeaseCheckpoint = {
+        extensionInstanceId,
+        sessionAgentId: journal.sessionAgentId,
+        profileId: journal.profileId,
+        leaseId: journal.leaseId,
+        leaseEpoch: journal.leaseEpoch,
+        tabIds: [...report.tabIds],
+        expiresAt: this.now() + CHECKPOINT_TTL_MS,
+        ...(journal.cleanupReason === undefined ? {} : { cleanupReason: journal.cleanupReason }),
+      }
+      await this.checkpoints.finalizeAcquisition(journal, checkpoint)
+    }
+
+    for (const checkpoint of (await this.checkpoints.all()).filter((record) => record.extensionInstanceId === extensionInstanceId)) {
+      const report = reports.get(`${checkpoint.leaseId}\0${checkpoint.leaseEpoch}`)
+      if (report === undefined) continue
+      if (canonical(report.tabIds) !== canonical(checkpoint.tabIds)) {
+        throw new Error('authority snapshot changed exact checkpoint tab scope')
+      }
+      if (report.state === 'released' && checkpoint.cleanupReason === undefined) {
+        await this.checkpoints.markCleanup(extensionInstanceId, checkpoint.leaseId, checkpoint.leaseEpoch, 'extension-terminal')
+      }
+    }
+
+    for (const acknowledgement of (await this.checkpoints.acknowledgements()).filter((record) => record.extensionInstanceId === extensionInstanceId)) {
+      const report = reports.get(`${acknowledgement.leaseId}\0${acknowledgement.leaseEpoch}`)
+      if (report === undefined) {
+        // The exact receipt is already absent, which is the idempotent lost-ack response case.
+        await this.checkpoints.removeAcknowledgement(acknowledgement)
+        continue
+      }
+      if (report.state !== 'released' || canonical(report.tabIds) !== canonical(acknowledgement.tabIds)) {
+        throw new Error('authority snapshot contradicted settled release acknowledgement')
+      }
+    }
+
+    state.authoritySnapshotReceived = true
+    state.recovery = this.runtimeMatchesExpected(connection.inventory) ? 'ready' : 'reconnecting'
+    this.runtimeStateRevision += 1
+    if (state.recovery === 'ready') {
+      this.hadReadyConnection = true
+      this.notifyReadinessChanged()
+      const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId).catch(() => undefined) }, 0)
+      reconciliation.unref?.()
+    } else {
+      this.beginRuntimeUpdate(extensionInstanceId, state)
+    }
+    this.scheduleRuntimeUpdateBarrier()
+  }
+
+  private async reconcilePendingAcknowledgements(extensionInstanceId?: string): Promise<void> {
+    const acknowledgements = (await this.checkpoints.acknowledgements()).filter((record) =>
+      extensionInstanceId === undefined || record.extensionInstanceId === extensionInstanceId)
+    for (const acknowledgement of acknowledgements) {
+      if (!this.isInstanceReady(acknowledgement.extensionInstanceId)) continue
+      try { await this.acknowledgeRelease(acknowledgement) }
+      catch { /* durable acknowledgement intent remains for authenticated reconnect retry */ }
+    }
+  }
+
+  private async durableAuthorityEvidenceCount(): Promise<number> {
+    const [leases, acquisitions, acknowledgements] = await Promise.all([
+      this.checkpoints.all(),
+      this.checkpoints.acquisitions(),
+      this.checkpoints.acknowledgements(),
+    ])
+    return leases.length + acquisitions.length + acknowledgements.length
+  }
+
+  private serializeAcquisition<Value>(work: () => Promise<Value>): Promise<Value> {
+    const result = this.acquisitionAdmissionTail.then(work, work)
+    this.acquisitionAdmissionTail = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  private async settleAcquisitionsBefore(deadlineAt: number): Promise<void> {
+    const acquisitions = [...this.acquisitionOperations]
+    if (acquisitions.length === 0) return
+    const remaining = deadlineAt - this.now()
+    if (remaining <= 0) throw new Error('quiesce deadline elapsed before admitted acquisition settled')
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      await Promise.race([
+        Promise.allSettled(acquisitions).then(() => undefined),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('quiesce deadline elapsed while admitted acquisition settled')), remaining)
+          timer.unref?.()
+        }),
+      ])
+    } finally {
+      if (timer !== null) clearTimeout(timer)
     }
   }
 
@@ -1073,7 +1642,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   private beginRuntimeUpdate(extensionInstanceId: string, state: RuntimeInstanceState): void {
-    if (state.updateAttempt !== null || state.reloadAttempt !== null) return
+    if (!state.authoritySnapshotReceived || state.updateAttempt !== null || state.reloadAttempt !== null) return
     const inventory = state.connection.inventory
     if (!inventory) return
     if (this.expectedRuntime === null) {
@@ -1139,7 +1708,11 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     if (runtimeKey === null || this.observedStaleRuntimeKey !== runtimeKey ||
       this.activatedRuntimeKey === runtimeKey || this.failedActivationRuntimeKey === runtimeKey) return
     const revision = this.runtimeStateRevision
-    const checkpoints = await this.checkpoints.all()
+    const checkpoints = [
+      ...await this.checkpoints.all(),
+      ...await this.checkpoints.acquisitions(),
+      ...await this.checkpoints.acknowledgements(),
+    ]
     if (revision !== this.runtimeStateRevision || runtimeKey !== this.expectedRuntimeKey()) {
       this.scheduleRuntimeUpdateBarrier()
       return
@@ -1236,37 +1809,49 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           const state: RuntimeInstanceState = {
             generation,
             connection,
-            recovery: this.runtimeMatchesExpected(connection.inventory) ? 'ready' : 'reconnecting',
+            // No operation admission precedes the first complete authenticated authority snapshot.
+            recovery: 'reconnecting',
             updateAttempt: null,
             preparedRuntimeKey: null,
             reloadAttempt: null,
+            authoritySnapshotReceived: false,
           }
           this.instanceStates.set(extensionInstanceId, state)
           this.runtimeStateRevision += 1
-          if (state.recovery === 'ready') this.hadReadyConnection = true
           this.notifyReadinessChanged()
-          if (state.recovery === 'ready') {
-            const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId) }, 0)
-            reconciliation.unref?.()
-          } else {
-            this.beginRuntimeUpdate(extensionInstanceId, state)
-          }
           this.scheduleRuntimeUpdateBarrier()
         },
         async (connection, change) => {
           const extensionInstanceId = connection.inventory?.extensionInstanceId
           if (!extensionInstanceId) return
           const existing = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId && lease.leaseId === change.leaseId && lease.leaseEpoch === change.leaseEpoch)
-          connection.consumeFirstLeaseReport()
           // Unknown extension-originated authority is never adopted. Desktop is the
           // sole automatic acquisition initiator; reconnect may only prove exact CAS state.
           if (!existing) return
           if (canonical(existing.tabIds) !== canonical([...change.tabIds].sort((a, b) => a - b))) {
             throw new Error('reconnect authority proof attempted to change exact per-tab scope')
           }
-          // A release notification proves Extension state but not delivery of the
-          // request acknowledgement. Retain the checkpoint so the idempotent exact
-          // release can be retried and acknowledged across disconnects.
+          // A release notification proves Extension state but not delivery of the request
+          // acknowledgement. Persist terminal intent, then proactively issue the idempotent exact
+          // release outside this read-loop callback so its response can be consumed.
+          if (change.state === 'released') {
+            try {
+              if (existing.cleanupReason === undefined) {
+                await this.checkpoints.markCleanup(existing.extensionInstanceId, existing.leaseId, existing.leaseEpoch, 'extension-terminal')
+              }
+            } catch {
+              // A concurrent exact request may already have removed the checkpoint. Never tear down
+              // the authenticated connection merely because its redundant release report raced it.
+              const stillPresent = (await this.checkpoints.all()).some((lease) => lease.extensionInstanceId === existing.extensionInstanceId &&
+                lease.leaseId === existing.leaseId && lease.leaseEpoch === existing.leaseEpoch)
+              if (stillPresent) throw new Error('extension terminal report could not be checkpointed')
+            }
+            const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId).catch(() => undefined) }, 0)
+            reconciliation.unref?.()
+          }
+        },
+        async (connection, snapshot) => {
+          await this.reconcileAuthoritySnapshot(connection, snapshot)
         },
         (connection) => {
           this.allConnections.delete(connection)
@@ -1332,6 +1917,12 @@ function decodeTabId(value: string): { extensionInstanceId: string; tabId: numbe
 function acquisitionKey(checkpoint: ExternalChromeLeaseCheckpoint, tabId: number): string {
   return `${checkpoint.extensionInstanceId}\0${checkpoint.leaseId}\0${checkpoint.leaseEpoch}\0${tabId}`
 }
+function settledReleaseKey(checkpoint: ExternalChromeLeaseCheckpoint): string {
+  return settledAuthorityKey(checkpoint.extensionInstanceId, checkpoint.sessionAgentId, checkpoint.profileId, checkpoint.leaseEpoch)
+}
+function settledAuthorityKey(extensionInstanceId: string, sessionAgentId: string, profileId: string, leaseEpoch: number): string {
+  return `${extensionInstanceId}\0${sessionAgentId}\0${profileId}\0${leaseEpoch}`
+}
 function findCheckpoint(leases: ExternalChromeLeaseCheckpoint[], opaqueTabId: string, sessionAgentId: string, profileId: string): ExternalChromeLeaseCheckpoint | undefined {
   const decoded = decodeTabId(opaqueTabId)
   return decoded ? leases.find((lease) => lease.extensionInstanceId === decoded.extensionInstanceId && lease.tabIds.includes(decoded.tabId) && lease.sessionAgentId === sessionAgentId && lease.profileId === profileId) : undefined
@@ -1351,7 +1942,7 @@ function checkpointTab(_checkpoint: ExternalChromeLeaseCheckpoint, opaqueTabId: 
   return {
     targetAffinity: 'external-chrome', tabId: opaqueTabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
     url, title, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false,
-    zoomFactor: 1, controller: 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' },
+    zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' },
     renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
   }
 }
@@ -1373,6 +1964,19 @@ function acquireFailure(
     ok: false,
     error: { code: fallbackReason === 'authority-conflict' ? 'lease-conflict' : 'target-not-found', message: message.slice(0, 1_024), retryable },
     metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason },
+  }
+}
+
+function acquireUncertainFailure(message: string): ExternalBrowserAcquireResult {
+  return {
+    ok: false,
+    error: {
+      code: 'lease-lost',
+      message: message.slice(0, 1_024),
+      retryable: false,
+      details: { automaticFallbackBlocked: true },
+    },
+    metadata: { phase: 'acquisition', mutationState: 'possible' },
   }
 }
 

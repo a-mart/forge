@@ -78,6 +78,21 @@ describe("BrowserSessionStore", () => {
     expect(entries).toEqual(["browser.json"]);
   });
 
+  it("accepts agent-idle live state but never claims a physical External Chrome attachment after restart", async () => {
+    const dataDir = await root();
+    const store = new BrowserSessionStore({ dataDir, now });
+    const state = snapshot(store);
+    state.tabs = [{ ...tab(), targetAffinity: "external-chrome", controller: "agent-idle" }];
+    await store.save(state);
+    const persisted = JSON.parse(await readFile(store.getStatePath("profile-1", "manager-1"), "utf8"));
+    expect(persisted.tabs).toMatchObject([{ targetAffinity: "external-chrome", controller: "agent-idle" }]);
+
+    const restarted = new BrowserSessionStore({ dataDir, now });
+    await expect(restarted.load("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [{ targetAffinity: "external-chrome", live: false, controller: "none" }],
+    });
+  });
+
   it("defaults legacy persisted session and tab host kinds to Managed Electron", async () => {
     const dataDir = await root();
     const store = new BrowserSessionStore({ dataDir, now });

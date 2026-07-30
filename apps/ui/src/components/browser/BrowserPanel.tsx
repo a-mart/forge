@@ -191,7 +191,8 @@ export function BrowserPanel({
         ) : (
           <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
             <span>This tab is open in Chrome.</span>
-            <button type="button" className="ml-auto rounded border px-3 py-1.5 text-foreground hover:bg-muted focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+            {activeTab ? <TabStatus tab={activeTab} /> : null}
+            <button type="button" className="rounded border px-3 py-1.5 text-foreground hover:bg-muted focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
             <HelpTrigger contextKey="chat.browser" size="sm" className="size-8" />
           </div>
         )}
@@ -246,6 +247,6 @@ function createLegacyLocalPort(client: ManagerWsClient | null, sessionAgentId: s
   }
 }
 function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: React.ReactElement<{ className?: string }> }) { return <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick} className="inline-flex size-8 items-center justify-center rounded hover:bg-muted disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 [&_svg]:size-4">{children}</button> }
-function TabStatus({ tab }: { tab: BrowserTabSnapshot }) { const label = tab.controller === 'agent' ? 'Agent controlling' : tab.controller === 'human' ? 'Human controlling' : 'Ready'; return <span className="ml-auto flex items-center gap-1 text-muted-foreground"><span className={cn('size-1.5 rounded-full', tab.loading ? 'bg-amber-400' : tab.error ? 'bg-destructive' : 'bg-emerald-500')} />{label}{tab.recording ? ' · Recording' : ''}</span> }
+function TabStatus({ tab }: { tab: BrowserTabSnapshot }) { const label = tab.controller === 'agent' ? 'Agent controlling' : tab.controller === 'agent-idle' ? 'Agent attached · idle' : tab.controller === 'human' ? 'Human controlling' : 'Ready'; return <span className="ml-auto flex items-center gap-1 text-muted-foreground"><span className={cn('size-1.5 rounded-full', tab.loading ? 'bg-amber-400' : tab.error ? 'bg-destructive' : 'bg-emerald-500')} />{label}{tab.recording ? ' · Recording' : ''}</span> }
 function ScreenshotPreview({ dataUrl, onClose }: { dataUrl: string; onClose: () => void }) { return <aside aria-label="Browser screenshot" className="ml-2 flex w-80 shrink-0 flex-col rounded-lg border bg-background p-3 shadow"><div className="mb-2 flex items-center"><strong className="text-sm">Screenshot</strong><button type="button" aria-label="Close screenshot" className="ml-auto rounded p-1 hover:bg-muted" onClick={onClose}><X className="size-4" /></button></div><img src={dataUrl} alt="Captured browser viewport" className="min-h-0 flex-1 object-contain" /></aside> }
 function viewportSelectValue(setting: BrowserViewportSetting | undefined): string { return setting?.mode === 'preset' ? setting.presetId : setting?.mode ?? 'fill' }

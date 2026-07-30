@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { DebuggerAttachConflictError, DebuggerController, OopifAncestryTracker } from '../src/runtime/debugger-controller.js'
+import {
+  DebuggerAttachConflictError,
+  DebuggerAttachmentLimitError,
+  DebuggerController,
+  OopifAncestryTracker,
+} from '../src/runtime/debugger-controller.js'
 import { fakeChrome } from './fakes.js'
 
 describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening', () => {
@@ -89,8 +94,27 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     expect(controller.state(7)).toBe('UNATTACHED')
     chrome.attached.delete(7)
     await controller.attach(7)
-    expect(controller.onDetach({ tabId: 7 }, 'replaced_with_devtools')).toEqual({ tabId: 7, reason: 'replaced_with_devtools', devtoolsContention: true })
+    expect(controller.onDetach({ tabId: 7 }, 'replaced_with_devtools')).toEqual({ tabId: 7, reason: 'replaced_with_devtools', expected: false, devtoolsContention: true })
     expect(controller.state(7)).toBe('LOST')
+  })
+
+  it('retains a partially attached debugger when cleanup is not acknowledged', async () => {
+    const detachFailures = new Set([7])
+    const chrome = fakeChrome({ detachFailures })
+    const send = chrome.debugger.sendCommand.bind(chrome.debugger)
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      if (method === 'Page.enable') throw new Error('setup failed after attach')
+      return send(target, method, params)
+    }
+    const controller = new DebuggerController(chrome.debugger)
+    await expect(controller.attach(7)).rejects.toThrow('could not be safely detached')
+    expect(controller.state(7)).toBe('LOST')
+    expect(chrome.attached).toEqual(new Set([7]))
+
+    detachFailures.clear()
+    await expect(controller.reset(7)).resolves.toBeUndefined()
+    expect(controller.state(7)).toBe('UNATTACHED')
+    expect(chrome.attached).toEqual(new Set())
   })
 
   it('best-effort detaches every tab while retaining failed debugger ownership for retry', async () => {
@@ -115,5 +139,62 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     const controller = new DebuggerController(chrome.debugger)
     await controller.attach(5)
     expect(await controller.onEvent({ tabId: 5, sessionId: 'unknown' }, 'Runtime.consoleAPICalled', {})).toEqual({ accepted: false })
+  })
+
+  it('bounds simultaneous physical attachments until an exact detach is acknowledged', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger, 1)
+    await controller.attach(7)
+    await expect(controller.attach(8)).rejects.toBeInstanceOf(DebuggerAttachmentLimitError)
+    expect(chrome.attached).toEqual(new Set([7]))
+    await controller.reset(7)
+    await expect(controller.attach(8)).resolves.toBeUndefined()
+    expect(chrome.attached).toEqual(new Set([8]))
+  })
+
+  it('retains a tab-scoped attachment across a positively re-proven renderer target swap', async () => {
+    const chrome = fakeChrome()
+    let targetId = 'root-before-navigation'
+    const send = chrome.debugger.sendCommand.bind(chrome.debugger)
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId, type: 'page', attached: true } }
+      return send(target, method, params)
+    }
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(7)
+    expect(controller.routes(7)).toEqual([{ targetId: 'root-before-navigation' }])
+
+    targetId = 'root-after-navigation'
+    await expect(controller.revalidateRoot(7)).resolves.toEqual({ changed: true, targetId })
+    expect(controller.state(7)).toBe('ATTACHED')
+    expect(controller.routes(7)).toEqual([{ targetId: 'root-after-navigation' }])
+    expect(controller.navigationGeneration(7)).toBe(1)
+    await expect(controller.revalidateRoot(7)).resolves.toEqual({ changed: false, targetId })
+  })
+
+  it('distinguishes recovered own debugger state from foreign DevTools preemption by proving the command channel', async () => {
+    const own = fakeChrome({ debuggerTargets: [{ tabId: 7, attached: true, extensionId: 'not-an-owner-id' }] })
+    const ownController = new DebuggerController(own.debugger)
+    await expect(ownController.reconcileForRelease(7, 'forge-extension')).resolves.toBe('owned')
+    expect(ownController.state(7)).toBe('ATTACHED')
+
+    const foreign = fakeChrome({ debuggerTargets: [{ tabId: 7, attached: true, extensionId: 'forge-extension' }] })
+    foreign.debugger.sendCommand = async () => { throw new Error('Debugger is not attached to the tab with id: 7.') }
+    const foreignController = new DebuggerController(foreign.debugger)
+    await expect(foreignController.reconcileForRelease(7, 'forge-extension')).resolves.toBe('foreign')
+    expect(foreignController.state(7)).toBe('UNATTACHED')
+  })
+
+  it('accepts onDetach as release proof when the detach API promise subsequently rejects', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(7)
+    chrome.debugger.detach = async (target) => {
+      controller.onDetach(target, 'canceled_by_user')
+      throw new Error('detach callback raced the event')
+    }
+
+    await expect(controller.detach(7)).resolves.toBeUndefined()
+    expect(controller.state(7)).toBe('UNATTACHED')
   })
 })

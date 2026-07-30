@@ -414,13 +414,15 @@ describe('spawned native host relay lifecycle', () => {
     })
     expect(await next.runtime.leaseCheckpoints()).toMatchObject([{ leaseEpoch: 1, tabIds: [7] }])
     expect(chrome.updates).toEqual([])
-    expect(chrome.attached).toEqual(new Set())
+    expect(chrome.attached).toEqual(new Set([7]))
     expect(managed.requests).toEqual([])
     const evaluated = await host.perform(browserRequest('evaluate', {
       expression: '2 + 2', awaitPromise: true, returnByValue: true,
     }))
     expect(evaluated).toMatchObject({ ok: true, result: { tabId: `ext.${EXTENSION_INSTANCE_ID}.7`, value: 4 } })
+    expect(chrome.attached).toEqual(new Set([7]))
     await host.endTurn(session, 'focused-release')
+    expect(chrome.attached).toEqual(new Set())
     expect(await next.runtime.leaseCheckpoints()).toEqual([])
     expect(extensionAuthorities.all()).toEqual([])
 
@@ -476,7 +478,9 @@ describe('spawned native host relay lifecycle', () => {
     const openedTabId = opened.result.tab.tabId
     // A released sticky logical tab may later disappear while the freshly
     // authenticated runtime remains healthy. Reproduce that target-local
-    // rejection, then prove a new tabless acquisition still reaches Chrome.
+    // rejection. Because RPC delivery crossed the acquisition boundary, Desktop reports possible
+    // mutation rather than permitting managed fallback; the complete Extension snapshot clears the
+    // exact journal before a new tabless acquisition reaches Chrome.
     await chrome.tabs.remove(10)
     await expect(next.runtime.acquireTarget({
       ...session,
@@ -488,8 +492,8 @@ describe('spawned native host relay lifecycle', () => {
       deadlineAt: Date.now() + 3_000,
     })).resolves.toMatchObject({
       ok: false,
-      error: { code: 'target-not-found' },
-      metadata: { fallbackReason: 'no-eligible-target', mutationState: 'not-started' },
+      error: { code: 'lease-lost' },
+      metadata: { mutationState: 'possible' },
     })
     expect(next.runtime.inventory()).toEqual([
       expect.objectContaining({ extensionInstanceId: EXTENSION_INSTANCE_ID }),
