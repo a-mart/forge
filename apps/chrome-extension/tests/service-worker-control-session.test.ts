@@ -157,6 +157,45 @@ describe('service-worker control-session lifecycle', () => {
     expect(detachCalls()).toBe(1)
   })
 
+  it('keeps attached-idle authority when collaborative input wins before the first page command', async () => {
+    const { chrome, runtime, execute, release, detachCalls } = await harness()
+    const guard = bridge(7, 0, 'document-before-dispatch', 2)
+    runtime.onShellEvent('runtime.connect', [guard.port])
+    guard.ready()
+
+    const originalExecuteScript = chrome.scripting.executeScript.bind(chrome.scripting)
+    let signalInjectionStarted!: () => void
+    let resumeInjection!: () => void
+    const injectionStarted = new Promise<void>((resolve) => { signalInjectionStarted = resolve })
+    const injectionGate = new Promise<void>((resolve) => { resumeInjection = resolve })
+    chrome.scripting.executeScript = async (injection) => {
+      signalInjectionStarted()
+      await injectionGate
+      return originalExecuteScript(injection)
+    }
+
+    const operation = execute('must-not-dispatch-after-input')
+    await injectionStarted
+    guard.human(0)
+    await vi.waitFor(() => expect((runtime as unknown as {
+      authorities: { forTab(tabId: number): { controlEpoch: number; requiresObservation: boolean } | null }
+    }).authorities.forTab(7)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+    resumeInjection()
+
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' &&
+      params?.expression === 'must-not-dispatch-after-input')).toBe(false)
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+  })
+
   it('lets explicit Take Control terminally release active physical work', async () => {
     let rejectPending: ((error: Error) => void) | null = null
     const { chrome, execute, release, detachCalls } = await harness({

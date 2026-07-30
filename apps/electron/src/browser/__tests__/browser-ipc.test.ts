@@ -76,5 +76,16 @@ describe('main-owned browser IPC role and lifecycle', () => {
     await expect(handlers.get(BROWSER_IPC.takeControl)!(trusted, {
       sessionAgentId: 'session', profileId: 'profile', tabId: 'tab', unexpected: true,
     })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    const maximumInstanceTabId = `ext.${'a'.repeat(128)}.7`
+    await expect(handlers.get(BROWSER_IPC.takeControl)!(trusted, {
+      sessionAgentId: 'session', profileId: 'profile', tabId: maximumInstanceTabId,
+    })).resolves.toMatchObject({ ok: true })
+    expect(manager.takeControl).toHaveBeenLastCalledWith(
+      { sessionAgentId: 'session', profileId: 'profile' },
+      maximumInstanceTabId,
+    )
+    await expect(handlers.get(BROWSER_IPC.takeControl)!(trusted, {
+      sessionAgentId: 'session', profileId: 'profile', tabId: `ext.${'a'.repeat(129)}.7`,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
   })
 })

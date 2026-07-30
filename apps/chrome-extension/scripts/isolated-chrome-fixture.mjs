@@ -228,6 +228,20 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const scrolled=await run('scroll',{deltaX:0,deltaY:600});
         const evaluated=await run('evaluate',{expression:'({state:window.__state,value:document.querySelector("#field").value,scrollY:window.scrollY})',awaitPromise:true,returnByValue:true});
         const waited=await run('waitFor',{text:'Entered 1',timeoutMs:5000});
+        const bannerPresent=async()=>Boolean((await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>document.querySelector('link[data-forge-external-status]')!==null}))[0]?.result);
+        const bannerBeforeCollision=await bannerPresent();
+        const collisionRequest=call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-collaborative-collision',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'evaluate',input:{expression:'(()=>{window.__state.collisions=(window.__state.collisions||0)+1;return new Promise(resolve=>setTimeout(()=>resolve(window.__state.collisions),500))})()',awaitPromise:true,returnByValue:true},deadlineAt:new Date(Date.now()+5000).toISOString()});
+        await new Promise(resolve=>setTimeout(resolve,100));
+        await chrome.debugger.sendCommand({tabId},'Input.dispatchKeyEvent',{type:'keyDown',key:'Shift',code:'ShiftLeft',modifiers:8,windowsVirtualKeyCode:16,nativeVirtualKeyCode:16});
+        await chrome.debugger.sendCommand({tabId},'Input.dispatchKeyEvent',{type:'keyUp',key:'Shift',code:'ShiftLeft',modifiers:0,windowsVirtualKeyCode:16,nativeVirtualKeyCode:16});
+        const collision=await collisionRequest;
+        const blockedAfterCollision=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-reobserve-gate',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'evaluate',input:{expression:'window.__state.collisions+=100',awaitPromise:true,returnByValue:true},deadlineAt:new Date(Date.now()+5000).toISOString()});
+        const [collisionState]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>window.__state?.collisions});
+        const bannerAfterCollision=await bannerPresent();
+        const reobserved=await run('snapshot',{});
+        const resumedAfterObservation=await run('evaluate',{expression:'window.__state.collisions',awaitPromise:true,returnByValue:true});
+        const collaborativeInput=collision.ok===false&&collision.error?.code==='control-interrupted'&&collision.error?.details?.mutationState==='possible'&&collision.error?.details?.noReplay===true&&collision.error?.details?.requiresReobserve===true&&collision.error?.details?.authorityState==='attached-idle'&&blockedAfterCollision.ok===false&&blockedAfterCollision.error?.code==='request-cancelled'&&blockedAfterCollision.error?.details?.mutationState==='not-started'&&collisionState?.result===1&&reobserved.screenshot?.data?.length>0&&resumedAfterObservation.value===1&&!(await detached(tabId));
+        if(!bannerBeforeCollision||!bannerAfterCollision||!collaborativeInput) throw new Error('collaborative input continuity proof failed');
         const revealed=await call('forge.browser.reveal',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,tabId});
         const beforeChildren=(await chrome.tabs.query({})).map(tab=>tab.id);
         await run('click',{locator:'role=button[name="Open child"]',timeoutMs:5000});
@@ -237,8 +251,9 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const authorityState=await chrome.storage.session.get('forge.externalChrome.tabAuthority.v2');
         const childOutsideAuthority=!!child && !(authorityState['forge.externalChrome.tabAuthority.v2']??[]).some(record=>record.tabId===child.id);
         if(child?.id) await chrome.tabs.remove(child.id);
-        const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'turn-ended'});
-        if (!(await detached(tabId))) throw new Error('turn release did not detach reusable debugger');
+        const released=await call('forge.browser.release',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,reason:'take-control'});
+        const takeControlDetached=await detached(tabId);
+        if (!takeControlDetached) throw new Error('Take Control did not detach reusable debugger');
         await chrome.debugger.attach({tabId},'1.3');
         await call('forge.browser.acquire',{protocolVersion:1,sessionAgentId:'fixture-conflict',leaseId:'fixture-conflict',leaseEpoch:2,tabId,createIfNeeded:false});
         const conflict=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-conflict',leaseId:'fixture-conflict',leaseEpoch:2,tabId,operation:'click',input:{locator:'role=button[name="Increment"]',timeoutMs:5000},deadlineAt:new Date(Date.now()+10000).toISOString()});
@@ -261,6 +276,8 @@ async function inspectWorker(webSocketDebuggerUrl) {
           acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
           largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,rawEnvelopeBytes:largeRawEnvelopeBytes,finalEnvelopeBytes:largeFinalEnvelopeBytes,snapshotCompacted:largeCompacted,parserAccepted:largeResponse.parsed.result?.ok===true,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
+          collaboration:{collision:collaborativeInput,bannerContinuous:bannerBeforeCollision&&bannerAfterCollision,reobserved:reobserved.screenshot?.data?.length>0,resumed:resumedAfterObservation.value===1},
+          takeControl:{detached:takeControlDetached},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
           dedicated:{created:dedicated.created===true,ungrouped:dedicatedTab.groupId===-1},
@@ -307,7 +324,8 @@ try {
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
     state.largePage?.navigated !== true || state.largePage?.snapshotSucceeded !== true || state.largePage?.statusSticky !== true ||
     state.largePage?.evaluateFollowed !== true || state.largePage?.snapshotCompacted !== true || state.largePage?.parserAccepted !== true ||
-    state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
+    state.collaboration?.collision !== true || state.collaboration?.bannerContinuous !== true || state.collaboration?.reobserved !== true || state.collaboration?.resumed !== true ||
+    state.takeControl?.detached !== true || state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
     state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {
     throw new Error(`isolated automatic runtime proof failed: ${JSON.stringify(state)}`)
@@ -329,6 +347,8 @@ try {
     importScriptsBootError: false,
     operations: { acquired: true, ...state.operations, released: state.released, debuggerDetached: state.debuggerDetached, zeroLeakedLease: state.zeroLeakedLease },
     largePage: state.largePage,
+    collaboration: state.collaboration,
+    takeControl: state.takeControl,
     allocation: { inventoryReuse: state.acquisition.acquired, inventoryCount: state.acquisition.inventoryCount, dedicatedCreated: state.dedicated.created, dedicatedUngrouped: state.dedicated.ungrouped },
     childPolicy: state.childPolicy,
     debuggerConflict: state.debuggerConflict,

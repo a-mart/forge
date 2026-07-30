@@ -1,6 +1,8 @@
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_URL_LENGTH,
   EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
   externalChromeControlCollisionDetails,
   isExternalChromeControlCollisionDetails,
@@ -113,7 +115,12 @@ function deferred<Value>(): Deferred<Value> {
 
 function chromeVersion(): string { return /Chrom(?:e|ium)\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? 'unknown' }
 function acquiredTab(tab: ChromeTab): Record<string, unknown> {
-  return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? tab.pendingUrl ?? '', active: tab.active === true }
+  return {
+    tabId: tab.id ?? 0,
+    title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+    url: (tab.url ?? tab.pendingUrl ?? '').slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+    active: tab.active === true,
+  }
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -135,6 +142,10 @@ export class Runtime implements ServiceWorkerPayload {
   private readonly initialNavigations = new Map<number, InitialNavigationTransition>()
   private readonly pendingClosedTabReceipts = new Set<number>()
   private readonly humanInterruptedOperations = new Map<number, number>()
+  private readonly humanInterruptionSettlements = new Map<number, {
+    controlEpoch: number
+    settled: Promise<void>
+  }>()
   private native: NativeRpcClient | null = null
   private directory = ''
   private extensionInstanceId = ''
@@ -355,6 +366,7 @@ export class Runtime implements ServiceWorkerPayload {
           }
         }
         this.humanInterruptedOperations.delete(tab.id!)
+        this.humanInterruptionSettlements.delete(tab.id!)
         this.notifyLeaseChanged(request.params.leaseId, request.params.leaseEpoch, 'acquired', [tab.id!])
         return {
           protocolVersion: 1,
@@ -502,8 +514,10 @@ export class Runtime implements ServiceWorkerPayload {
         if (neutralInitialTarget && navigateInput !== null) {
           controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
           this.broadcastState([params.tabId], 'agent')
-          const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
-          const authorityCurrent = () => this.authorities.isAuthorityCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const isCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+            this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const authorityCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+            this.authorities.isAuthorityCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
           const deadline = Math.min(Date.parse(params.deadlineAt), this.now() + navigateInput.timeoutMs)
           try {
             const tab = await this.navigateInitialTarget(
@@ -568,9 +582,25 @@ export class Runtime implements ServiceWorkerPayload {
           files: [`payloads/${this.directory}/content-script.js`],
           world: 'ISOLATED',
         })
-        controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
+        try {
+          controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
+        } catch (error) {
+          const current = this.authorities.forTab(params.tabId)
+          const collaborativeBeforeDispatch = error instanceof LeaseError && current?.ownerId === params.leaseId &&
+            current.ownerEpoch === params.leaseEpoch && current.controlEpoch !== expectedEpoch && current.requiresObservation &&
+            this.hasCollaborativeAttachedIdle(params)
+          if (!collaborativeBeforeDispatch) throw error
+          return this.executeFailure(
+            params,
+            'control-interrupted',
+            'Trusted collaborative input interrupted execution before the first page command.',
+            true,
+            externalChromeControlCollisionDetails('not-started'),
+          )
+        }
         this.broadcastState([params.tabId], 'agent')
-        const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+        const isCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+          this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
         if (navigateInput !== null) {
           const deadline = Math.min(Date.parse(params.deadlineAt), this.now() + navigateInput.timeoutMs)
           try {
@@ -590,7 +620,7 @@ export class Runtime implements ServiceWorkerPayload {
               return this.executeFailure(params, 'lease-lost', error.message, true)
             }
             const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
-            if (interrupted) await this.settleCollaborativeOperation(params)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
             else await this.cancelPhysicalOperation(params, controlEpoch, 'operation-cancelled')
             return this.executeFailure(
               params,
@@ -604,7 +634,7 @@ export class Runtime implements ServiceWorkerPayload {
           }
           if (!isCurrent()) {
             const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
-            if (interrupted) await this.settleCollaborativeOperation(params)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
             return this.executeFailure(
               params,
               interrupted ? 'control-interrupted' : 'request-cancelled',
@@ -623,7 +653,7 @@ export class Runtime implements ServiceWorkerPayload {
           }
           if (!isCurrent()) {
             const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
-            if (interrupted) await this.settleCollaborativeOperation(params)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
             return this.executeFailure(
               params,
               interrupted ? 'control-interrupted' : 'request-cancelled',
@@ -648,8 +678,9 @@ export class Runtime implements ServiceWorkerPayload {
           markMutationDispatched: () => { mutationState = 'possible' },
           canPreserveAttachedIdle: () => this.hasCollaborativeAttachedIdle(params),
           cancelOutstanding: async () => {
-            if (this.wasHumanInterrupted(params.tabId, controlEpoch as number)) await this.settleCollaborativeOperation(params)
-            else await this.cancelPhysicalOperation(params, controlEpoch as number, 'operation-cancelled')
+            if (this.wasHumanInterrupted(params.tabId, controlEpoch as number)) {
+              await this.settleCollaborativeOperation(params, controlEpoch as number)
+            } else await this.cancelPhysicalOperation(params, controlEpoch as number, 'operation-cancelled')
           },
           beginSyntheticInput: async (expectedEvents) => {
             if (syntheticOperationId !== null) return
@@ -715,7 +746,11 @@ export class Runtime implements ServiceWorkerPayload {
         } finally {
           resolveTracked()
           if (this.activeOperations.get(params.tabId) === tracked) this.activeOperations.delete(params.tabId)
-          if (controlEpoch !== null && this.wasHumanInterrupted(params.tabId, controlEpoch)) this.humanInterruptedOperations.delete(params.tabId)
+          if (controlEpoch !== null && this.wasHumanInterrupted(params.tabId, controlEpoch)) {
+            this.humanInterruptedOperations.delete(params.tabId)
+            const settlement = this.humanInterruptionSettlements.get(params.tabId)
+            if (settlement?.controlEpoch === controlEpoch) this.humanInterruptionSettlements.delete(params.tabId)
+          }
         }
       }
     })
@@ -732,7 +767,29 @@ export class Runtime implements ServiceWorkerPayload {
       : physicalSession?.leaseId === authority.ownerId && physicalSession.leaseEpoch === authority.ownerEpoch
         ? 'agent-idle'
         : 'human'
-    return { targetAffinity: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? tab.pendingUrl ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now }
+    return {
+      targetAffinity: 'external-chrome',
+      tabId: String(tab.id),
+      sessionAgentId: authority.sessionAgentId,
+      profileId: this.extensionInstanceId,
+      url: (tab.url ?? tab.pendingUrl ?? '').slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+      title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+      lifecycle: 'ready',
+      loading: false,
+      live: true,
+      canGoBack: false,
+      canGoForward: false,
+      zoomFactor: 1,
+      controller,
+      agentCursor: null,
+      recording: null,
+      viewportSetting: { mode: 'fill' },
+      renderedViewport: null,
+      physicalVisible: false,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    }
   }
 
   private handleConnect(value: unknown): void {
@@ -871,12 +928,26 @@ export class Runtime implements ServiceWorkerPayload {
     const before = this.authorities.forTab(tabId)
     if (before === null) return
     if (before.state === 'agent') this.humanInterruptedOperations.set(tabId, before.controlEpoch)
+    const revocation = this.authorities.trustedHumanInput(tabId)
+    if (before.state === 'agent') {
+      this.humanInterruptionSettlements.set(tabId, {
+        controlEpoch: before.controlEpoch,
+        // A rejected storage.session write still leaves the live worker's in-memory epoch revoked;
+        // recovery independently forces a fresh observation before another mutation.
+        settled: revocation.then(() => undefined, () => undefined),
+      })
+    }
     let authority: TabAuthorityRecord
     try {
-      authority = await this.authorities.trustedHumanInput(tabId) ?? before
+      authority = await revocation ?? before
     } catch {
       // In-memory operation authority is already revoked even if storage.session is temporarily unavailable.
-      authority = this.authorities.forTab(tabId) ?? { ...before, state: 'idle', controlEpoch: before.controlEpoch + 1 }
+      authority = this.authorities.forTab(tabId) ?? {
+        ...before,
+        state: 'idle',
+        controlEpoch: before.controlEpoch + 1,
+        requiresObservation: true,
+      }
     }
     try {
       this.native?.sendNotification('browser.userControl', {
@@ -1161,8 +1232,24 @@ export class Runtime implements ServiceWorkerPayload {
 
   private async settleCollaborativeOperation(
     params: Pick<ExternalChromeExecuteParams, 'leaseId' | 'leaseEpoch' | 'tabId' | 'deadlineAt'>,
+    controlEpoch: number,
   ): Promise<void> {
     try {
+      const settlement = this.humanInterruptionSettlements.get(params.tabId)
+      if (settlement?.controlEpoch === controlEpoch) {
+        const remaining = Math.max(0, Date.parse(params.deadlineAt) - this.now())
+        let timer: ReturnType<typeof setTimeout> | null = null
+        try {
+          await Promise.race([
+            settlement.settled,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error('collaborative epoch settlement exceeded the operation deadline')), remaining)
+            }),
+          ])
+        } finally {
+          if (timer !== null) clearTimeout(timer)
+        }
+      }
       await this.debuggers.settlePending(params.tabId, Date.parse(params.deadlineAt))
     } catch (error) {
       // A command whose callback cannot settle by the caller deadline cannot support the exact
@@ -1279,6 +1366,7 @@ export class Runtime implements ServiceWorkerPayload {
         for (const tabId of released) {
           this.operations.clear(tabId)
           this.humanInterruptedOperations.delete(tabId)
+          this.humanInterruptionSettlements.delete(tabId)
         }
         if (released.length > 0) this.notifyLeaseChanged(ownerId, ownerEpoch, 'released', released)
         this.cleanupCompleted += 1

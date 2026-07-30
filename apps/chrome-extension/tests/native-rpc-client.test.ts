@@ -380,6 +380,64 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     client.stop()
   })
 
+  it('returns minimal typed errors for serializable contract and size failures without dropping the relay', async () => {
+    const cases = [
+      {
+        id: 'desktop-invalid-local-result',
+        limit: EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+        result: { protocolVersion: 1, unexpected: true },
+      },
+      {
+        id: 'desktop-oversized-local-result',
+        limit: 512,
+        result: {
+          protocolVersion: 1,
+          sessionAgentId: 'session',
+          leaseId: 'lease',
+          leaseEpoch: 1,
+          extensionInstanceId: 'instance',
+          tab: { tabId: 7, title: 'T'.repeat(400), url: 'https://fixture.test/', active: true },
+          created: false,
+        },
+      },
+    ] as const
+
+    for (const fixture of cases) {
+      const scheduler = new FakeScheduler()
+      const port = welcomePort(fixture.limit)
+      const client = new NativeRpcClient({
+        connect: () => port,
+        extensionInstanceId: 'instance',
+        chromeVersion: '125',
+        scheduler,
+        onRequest: async () => fixture.result,
+      })
+      client.start()
+      await Promise.resolve()
+      port.emitMessage({
+        jsonrpc: '2.0', id: fixture.id, method: 'forge.browser.acquire',
+        params: {
+          protocolVersion: 1, sessionAgentId: 'session', leaseId: 'lease', leaseEpoch: 1,
+          tabId: 7, createIfNeeded: false,
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      const response = port.sent.at(-1)
+      expect(parseExternalChromeJsonRpcFrame(JSON.stringify(response), {
+        expectedResponseMethod: 'forge.browser.acquire', protocolVersion: 1,
+      })).toMatchObject({
+        id: fixture.id,
+        error: { data: { code: 'execution-failed', retryable: true } },
+      })
+      expect(new TextEncoder().encode(JSON.stringify(response)).byteLength).toBeLessThanOrEqual(fixture.limit)
+      expect(port.disconnected).toBe(false)
+      client.stop()
+    }
+  })
+
   it('rejects outbound payloads above the Forge limit before native transport', () => {
     const port = new FakePort()
     const client = new NativeRpcClient({ connect: () => port, extensionInstanceId: 'instance', chromeVersion: '125', randomId: () => 'fixed' })

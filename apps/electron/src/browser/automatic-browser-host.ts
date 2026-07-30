@@ -676,7 +676,7 @@ function sessionKey(session: BrowserTargetSession): string {
 }
 
 function isCanonicalExternalTabId(value: string): boolean {
-  const match = /^ext\.([A-Za-z0-9_-]{1,64})\.([0-9]+)$/u.exec(value)
+  const match = /^ext\.([A-Za-z0-9_-]{1,128})\.([0-9]+)$/u.exec(value)
   return match !== null && Number.isSafeInteger(Number(match[2]))
 }
 

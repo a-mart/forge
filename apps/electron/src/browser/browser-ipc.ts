@@ -148,7 +148,7 @@ function parseTakeControlInput(value: unknown): { sessionAgentId: string; profil
   if (typeof tabId !== 'string') {
     throw new BrowserHostError('invalid-input', 'Take Control tabId is not a canonical External Chrome tab')
   }
-  const tabMatch = /^ext\.[A-Za-z0-9_-]{1,64}\.([0-9]{1,16})$/u.exec(tabId)
+  const tabMatch = /^ext\.[A-Za-z0-9_-]{1,128}\.([0-9]{1,16})$/u.exec(tabId)
   if (tabMatch === null || !Number.isSafeInteger(Number(tabMatch[1]))) {
     throw new BrowserHostError('invalid-input', 'Take Control tabId is not a canonical External Chrome tab')
   }
