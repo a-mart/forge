@@ -402,6 +402,16 @@ export const EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS = {
  */
 export type ExternalChromeDebuggerAttachConflictDetails = typeof EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS
 
+export const EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS = {
+  reason: 'navigation-deadline-before-dispatch',
+  failurePhase: 'execution',
+  mutationState: 'not-started',
+  noReplay: true,
+} as const
+
+/** Exact proof that navigation expired before Chrome received Page.navigate. */
+export type ExternalChromeNavigationNotDispatchedDetails = typeof EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS
+
 export const EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS = {
   interruption: 'trusted-input',
   failurePhase: 'execution',
@@ -442,6 +452,15 @@ export function isExternalChromeDebuggerAttachConflictDetails(
     details.failurePhase === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.failurePhase &&
     details.mutationState === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.mutationState &&
     details.fallbackReason === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.fallbackReason
+}
+
+export function isExternalChromeNavigationNotDispatchedDetails(
+  value: unknown,
+): value is ExternalChromeNavigationNotDispatchedDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).sort().join(',') === Object.keys(EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS).sort().join(',') &&
+    Object.entries(EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS).every(([key, expected]) => details[key] === expected)
 }
 
 export function isExternalChromeControlCollisionDetails(
@@ -964,6 +983,7 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
       .some((key) => Object.prototype.hasOwnProperty.call(rawDetails, key))
     const validSafetyEvidence =
       (error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(rawDetails)) ||
+      (error.code === 'timeout' && isExternalChromeNavigationNotDispatchedDetails(rawDetails)) ||
       (error.code === 'control-interrupted' && isExternalChromeControlCollisionDetails(rawDetails)) ||
       (error.code === 'request-cancelled' && isExternalChromeReobserveRequiredDetails(rawDetails))
     if (hasSafetyEvidenceField && !validSafetyEvidence) {
@@ -1456,7 +1476,11 @@ function parseExecuteResult(value: unknown, expected?: ExternalChromeProtocolVer
   }
   if (result.ok === false) {
     if (result.error === undefined || result.result !== undefined) fail('invalid-result', 'failed execute result requires error and forbids result')
-    return { ...routing, ok: false, error: parseBrowserFailure(result.error, 'result.error') } as ExternalChromeExecuteResult
+    const error = parseBrowserFailure(result.error, 'result.error')
+    if (isExternalChromeNavigationNotDispatchedDetails(error.details) && result.operation !== 'navigate') {
+      fail('invalid-result', 'navigation non-dispatch evidence requires a navigate result')
+    }
+    return { ...routing, ok: false, error } as ExternalChromeExecuteResult
   }
   return fail('invalid-result', 'result.ok must be boolean')
 }

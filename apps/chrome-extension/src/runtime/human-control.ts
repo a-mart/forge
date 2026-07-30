@@ -128,10 +128,6 @@ export class ExactSyntheticInputGuard {
       this.expected.shift()
       return 'synthetic'
     }
-    // Physical pointer movement is collaborative presence, not a takeover. It neither consumes
-    // nor clears the exact synthetic sequence; the next trusted click/key/wheel/touch phase still
-    // has to match exactly or invalidate the operation epoch.
-    if (observed.type === 'pointermove') return 'ignored'
     this.clear()
     return 'interrupted'
   }

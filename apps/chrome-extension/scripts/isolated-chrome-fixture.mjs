@@ -72,15 +72,19 @@ const fixtureServer = createServer((request, response) => {
     return
   }
   response.end(`<!doctype html><title>Forge automatic fixture</title>
-    <style>body{font:16px sans-serif}.spacer{height:1600px}</style>
+    <style>body{font:16px sans-serif}.spacer{height:1600px}#hover-race{display:inline-block;padding:8px;background:#eef}</style>
     <button id="action" aria-label="Increment">Increment</button>
+    <span id="hover-race">Alternate hover target</span>
     <button id="child" aria-label="Open child">Open child</button>
     <a id="ordinary-link" href="/linked">Follow ordinary link</a>
     <label>Field <input id="field" aria-label="Field"></label>
     <p id="state">Ready for automatic automation</p><div class="spacer"></div><p id="bottom">Bottom</p>
     <script>
-      window.__state={clicks:0,entered:0};
+      window.__state={clicks:0,downs:0,entered:0,hover:'none'};
       action.onclick=()=>{window.__state.clicks+=1;state.textContent='Clicked '+window.__state.clicks};
+      action.onpointerdown=()=>{window.__state.downs+=1};
+      action.onpointerenter=()=>{window.__state.hover='action'};
+      document.querySelector('#hover-race').onpointerenter=()=>{window.__state.hover='alternate'};
       child.onclick=()=>window.open('/child','_blank');
       field.addEventListener('keydown',event=>{if(event.key==='Enter'){window.__state.entered+=1;state.textContent='Entered '+window.__state.entered}});
     </script>`)
@@ -243,6 +247,31 @@ async function inspectWorker(webSocketDebuggerUrl) {
         const resumedAfterObservation=await run('evaluate',{expression:'window.__state.collisions',awaitPromise:true,returnByValue:true});
         const collaborativeInput=collision.ok===false&&collision.error?.code==='control-interrupted'&&collision.error?.details?.mutationState==='possible'&&collision.error?.details?.noReplay===true&&collision.error?.details?.requiresReobserve===true&&collision.error?.details?.authorityState==='attached-idle'&&blockedAfterCollision.ok===false&&blockedAfterCollision.error?.code==='request-cancelled'&&blockedAfterCollision.error?.details?.mutationState==='not-started'&&collisionState?.result===1&&reobserved.screenshot?.data?.length>0&&resumedAfterObservation.value===1&&!(await detached(tabId));
         if(!bannerBeforeCollision||!bannerAfterCollision||!collaborativeInput) throw new Error('collaborative input continuity proof failed');
+        const [racePoints]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>{const action=document.querySelector('#action'),hover=document.querySelector('#hover-race');if(!(action instanceof HTMLElement)||!(hover instanceof HTMLElement))return null;action.scrollIntoView({block:'center'});const actionRect=action.getBoundingClientRect(),hoverRect=hover.getBoundingClientRect();return{action:{x:actionRect.left+actionRect.width/2,y:actionRect.top+actionRect.height/2},hover:{x:hoverRect.left+hoverRect.width/2,y:hoverRect.top+hoverRect.height/2}}}});
+        if(!racePoints?.result) throw new Error('pointer-interleaving fixture points were unavailable');
+        const originalDebuggerSend=chrome.debugger.sendCommand;
+        const directDebuggerSend=originalDebuggerSend.bind(chrome.debugger);
+        let hoverInterleaved=false;
+        chrome.debugger.sendCommand=async(target,method,params)=>{
+          const result=await directDebuggerSend(target,method,params);
+          if(!hoverInterleaved&&target.tabId===tabId&&method==='Input.dispatchMouseEvent'&&params?.type==='mouseMoved'){
+            hoverInterleaved=true;
+            await directDebuggerSend({tabId},'Input.dispatchMouseEvent',{type:'mouseMoved',x:racePoints.result.hover.x,y:racePoints.result.hover.y,button:'none'});
+            await new Promise(resolve=>setTimeout(resolve,100));
+          }
+          return result;
+        };
+        let pointerCollision;
+        try{
+          pointerCollision=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-pointer-interleave',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'click',input:{x:racePoints.result.action.x,y:racePoints.result.action.y,timeoutMs:5000},deadlineAt:new Date(Date.now()+5000).toISOString()});
+        }finally{chrome.debugger.sendCommand=originalDebuggerSend;}
+        const blockedAfterPointer=await call('forge.browser.execute',{protocolVersion:1,requestId:'fixture-pointer-reobserve-gate',leaseId:'fixture-root',leaseEpoch:1,tabId,operation:'evaluate',input:{expression:'window.__state.clicks+=1000',awaitPromise:true,returnByValue:true},deadlineAt:new Date(Date.now()+5000).toISOString()});
+        const [pointerState]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>window.__state});
+        const pointerReobserved=await run('snapshot',{});
+        const pointerResumed=await run('evaluate',{expression:'({clicks:window.__state.clicks,downs:window.__state.downs,hover:window.__state.hover})',awaitPromise:true,returnByValue:true});
+        const pointerDiagnostics=globalThis.__forgeIsolatedFixtureDiagnostics();
+        const pointerInterleaving=hoverInterleaved&&pointerCollision?.ok===false&&pointerCollision.error?.code==='control-interrupted'&&pointerCollision.error?.details?.mutationState==='possible'&&pointerCollision.error?.details?.requiresReobserve===true&&pointerCollision.error?.details?.authorityState==='attached-idle'&&blockedAfterPointer.ok===false&&blockedAfterPointer.error?.code==='request-cancelled'&&pointerState?.result?.clicks===1&&pointerState?.result?.downs===1&&pointerState?.result?.hover==='alternate'&&pointerReobserved.screenshot?.data?.length>0&&pointerResumed.value?.clicks===1&&pointerResumed.value?.downs===1&&pointerDiagnostics.debuggerMetrics.activeAttachments===1&&!(await detached(tabId));
+        if(!pointerInterleaving) throw new Error('trusted pointer-interleaving cancellation proof failed: '+JSON.stringify({hoverInterleaved,pointerCollision,blockedAfterPointer,pointerState:pointerState?.result,pointerResumed:pointerResumed.value,activeAttachments:pointerDiagnostics.debuggerMetrics.activeAttachments}));
         const revealed=await call('forge.browser.reveal',{protocolVersion:1,leaseId:'fixture-root',leaseEpoch:1,tabId});
         const diagnosticsBeforeLink=globalThis.__forgeIsolatedFixtureDiagnostics();
         const [linkPoint]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>{const link=document.querySelector('#ordinary-link');if(!(link instanceof HTMLElement))return null;link.scrollIntoView({block:'center'});const rect=link.getBoundingClientRect();return{x:rect.left+rect.width/2,y:rect.top+rect.height/2}}});
@@ -307,7 +336,7 @@ async function inspectWorker(webSocketDebuggerUrl) {
           acquisition:{acquired:acquired.created===false&&candidate.tabId===tabId,inventoryCount:inventory.tabs.length,tabId},
           operations:{snapshot:snapshot.visibleText.includes('Ready for automatic automation'),clicked:click.tabId===String(tabId),typed:typed.characters===15,pressed:pressed.key==='Enter',scrolled:scrolled.scrollY>0,evaluated:evaluated.value?.state?.clicks===1&&evaluated.value?.state?.entered===1&&evaluated.value?.value==='forge automatic',waited:waited.matched===true,revealed:revealed.revealed===true&&revealed.tabId===tabId},
           largePage:{navigated:restored.tab.tabId===String(tabId)&&largeNavigation.readiness==='load',snapshotSucceeded:largeSnapshot.screenshot?.data?.length>0,snapshotBytes:largeSnapshotBytes,rawEnvelopeBytes:largeRawEnvelopeBytes,finalEnvelopeBytes:largeFinalEnvelopeBytes,snapshotCompacted:largeCompacted,parserAccepted:largeResponse.parsed.result?.ok===true,statusSticky:largeStatus.selectedTab?.tabId===String(tabId),evaluateFollowed:largeEvaluate.value==='Forge large automatic fixture'},
-          collaboration:{collision:collaborativeInput,bannerContinuous:bannerBeforeCollision&&bannerAfterCollision,reobserved:reobserved.screenshot?.data?.length>0,resumed:resumedAfterObservation.value===1,trustedLinkContinuity},
+          collaboration:{collision:collaborativeInput,bannerContinuous:bannerBeforeCollision&&bannerAfterCollision,reobserved:reobserved.screenshot?.data?.length>0,resumed:resumedAfterObservation.value===1,pointerInterleaving,trustedLinkContinuity},
           takeControl:{detached:takeControlDetached},
           childPolicy:{opened:!!child,outsideAuthority:childOutsideAuthority},
           debuggerConflict:{preMutation:conflictPreMutation,exactEvidence:exactConflictEvidence},
@@ -355,7 +384,7 @@ try {
     Object.values(state.operations ?? {}).some((value) => value !== true) ||
     state.largePage?.navigated !== true || state.largePage?.snapshotSucceeded !== true || state.largePage?.statusSticky !== true ||
     state.largePage?.evaluateFollowed !== true || state.largePage?.snapshotCompacted !== true || state.largePage?.parserAccepted !== true ||
-    state.collaboration?.collision !== true || state.collaboration?.bannerContinuous !== true || state.collaboration?.reobserved !== true || state.collaboration?.resumed !== true || state.collaboration?.trustedLinkContinuity !== true ||
+    state.collaboration?.collision !== true || state.collaboration?.bannerContinuous !== true || state.collaboration?.reobserved !== true || state.collaboration?.resumed !== true || state.collaboration?.pointerInterleaving !== true || state.collaboration?.trustedLinkContinuity !== true ||
     state.takeControl?.detached !== true || state.childPolicy?.opened !== true || state.childPolicy?.outsideAuthority !== true ||
     state.debuggerConflict?.preMutation !== true || state.debuggerConflict?.exactEvidence !== true ||
     state.dedicated?.created !== true || state.dedicated?.ungrouped !== true) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Runtime } from '../src/payload/service-worker/index.js'
 import type { ChromeDebuggerSession } from '../src/runtime/chrome-api.js'
+import { ExactSyntheticInputGuard, parseSyntheticTrustedEventSequence } from '../src/runtime/human-control.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
 
 afterEach(() => {
@@ -13,6 +14,7 @@ const TAB = { id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/',
 class ContentPort {
   readonly sent: unknown[] = []
   disconnected = false
+  onPost?: (message: unknown) => void
   private readonly messageListeners: Array<(message: unknown) => void> = []
   private readonly disconnectListeners: Array<() => void> = []
   constructor(
@@ -29,7 +31,11 @@ class ContentPort {
   readonly onDisconnect = {
     addListener: (listener: () => void): void => { this.disconnectListeners.push(listener) },
   }
-  postMessage(message: unknown): void { this.sent.push(structuredClone(message)) }
+  postMessage(message: unknown): void {
+    const cloned = structuredClone(message)
+    this.sent.push(cloned)
+    this.onPost?.(cloned)
+  }
   disconnect(): void {
     if (this.disconnected) return
     this.disconnected = true
@@ -573,6 +579,99 @@ describe('service-worker control-session lifecycle', () => {
     await expect(runEvaluate(runtime, 8, 'lease-2', 2, 'tab-two-retry')).resolves.toMatchObject({ ok: true })
     expect(chrome.attached).toEqual(new Set([8]))
     await releaseOwner(runtime, 'lease-2', 2, 'idle')
+  })
+
+  it('cancels an active click on hover-changing trusted pointer interleaving and requires re-observation', async () => {
+    const { chrome, runtime, release, detachCalls } = await harness()
+    const content = bridge(7, 0, 'document-pointer-interleave', 5)
+    const exactGuard = new ExactSyntheticInputGuard()
+    let activeOperationId = ''
+    let activeControlEpoch = -1
+    content.port.onPost = (message) => {
+      if (typeof message !== 'object' || message === null) return
+      const record = message as Record<string, unknown>
+      if (record.type !== 'synthetic-start' || typeof record.operationId !== 'string' || !Number.isSafeInteger(record.controlEpoch)) return
+      const sequence = parseSyntheticTrustedEventSequence(record.expectedEvents)
+      if (sequence === null) return
+      activeOperationId = record.operationId
+      activeControlEpoch = record.controlEpoch as number
+      exactGuard.start(activeOperationId, activeControlEpoch, sequence)
+      const nonce = content.port.name.slice('forge-leased-frame:'.length)
+      queueMicrotask(() => content.port.emit({
+        type: 'synthetic-ack', nonce, operationId: activeOperationId, controlEpoch: activeControlEpoch,
+      }))
+    }
+    runtime.onShellEvent('runtime.connect', [content.port])
+    content.ready()
+
+    const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
+    let signalMovePending!: () => void
+    let settleMove!: () => void
+    const movePending = new Promise<void>((resolve) => { signalMovePending = resolve })
+    const moveGate = new Promise<void>((resolve) => { settleMove = resolve })
+    let exactMoveDisposition: string | null = null
+    let interleavedMoveDisposition: string | null = null
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      const result = await sendCommand(target, method, params)
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseMoved') {
+        const start = content.port.sent.find((message) =>
+          typeof message === 'object' && message !== null && (message as Record<string, unknown>).type === 'synthetic-start') as Record<string, unknown> | undefined
+        const sequence = parseSyntheticTrustedEventSequence(start?.expectedEvents)
+        const expectedMove = sequence?.[0]
+        if (expectedMove?.kind !== 'pointer') throw new Error('fixture did not receive the exact pointer sequence')
+        exactMoveDisposition = exactGuard.observe({ ...expectedMove, type: expectedMove.phase, isTrusted: true })
+        interleavedMoveDisposition = exactGuard.observe({
+          ...expectedMove, type: expectedMove.phase, isTrusted: true, clientX: expectedMove.clientX + 80,
+        })
+        if (interleavedMoveDisposition === 'interrupted') content.human(activeControlEpoch)
+        signalMovePending()
+        await moveGate
+      }
+      return result
+    }
+
+    const click = (runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+      protocolVersion: 1, requestId: 'click-pointer-interleave', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'click', input: { x: 20, y: 30, timeoutMs: 1_000 },
+      deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    })
+    await movePending
+    expect(exactMoveDisposition).toBe('synthetic')
+    expect(interleavedMoveDisposition).toBe('interrupted')
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+    settleMove()
+
+    await expect(click).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'possible', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
+    expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent')).toEqual([
+      expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mouseMoved' }) }),
+    ])
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics()).toMatchObject({
+      authorities: [{ tabId: 7, state: 'idle' }],
+      debuggerMetrics: { activeAttachments: 1 },
+    })
+    expect(content.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 1 }))
+
+    await expect((runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+      protocolVersion: 1, requestId: 'click-before-pointer-reobserve', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'click', input: { x: 20, y: 30, timeoutMs: 1_000 },
+      deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', requiresReobserve: true } },
+    })
+    expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent')).toHaveLength(1)
+    await expect(runSnapshot(runtime, 'snapshot-after-pointer-interleave')).resolves.toMatchObject({ ok: true })
+    expect(authorityFor(runtime)).toMatchObject({ requiresObservation: false })
+    expect(chrome.attached).toEqual(new Set([7]))
+    await release('take-control')
   })
 
   it('cancels before synthetic input when the singleton guard disconnects without acknowledgement', async () => {

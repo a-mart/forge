@@ -60,7 +60,7 @@ describe('singleton content-bridge trusted-input listeners', () => {
     dispose()
   })
 
-  it('ignores physical pointer movement while preserving exact filtering for trusted interleaving', () => {
+  it('interrupts immediately on coordinate/button mismatch and trusted interleaving', () => {
     const target = new TrustedEventTargetFixture()
     const guard = new ExactSyntheticInputGuard()
     const interrupted: string[] = []
@@ -68,15 +68,13 @@ describe('singleton content-bridge trusted-input listeners', () => {
 
     guard.start('coordinate-mismatch', 2, pointerSequence)
     target.dispatch(event(pointerSequence[0]!, { clientX: 21 }))
-    expect(interrupted).toEqual([])
-    target.dispatch(event(pointerSequence[0]!))
-    expect(interrupted).toEqual([])
+    expect(interrupted).toEqual(['pointermove'])
 
     guard.start('interleaved-key', 3, pointerSequence)
     target.dispatch({
       type: 'keydown', isTrusted: true, key: 'x', code: 'KeyX', location: 0, repeat: false, ...noModifiers,
     })
-    expect(interrupted).toEqual(['keydown'])
+    expect(interrupted).toEqual(['pointermove', 'keydown'])
   })
 
   it('matches key modifiers plus wheel and touch fields exactly while ignoring untrusted page events', () => {

@@ -9,6 +9,7 @@ import {
   EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_METHODS,
   EXTERNAL_CHROME_NATIVE_HOST_NAME,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   EXTERNAL_CHROME_NOTIFICATION_METHODS,
   EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS,
   EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS,
@@ -248,6 +249,32 @@ describe('External Chrome automatic transport contract', () => {
     expect(() => parse({
       ...response,
       result: { ...response.result, error: { ...response.result.error, code: 'execution-failed' } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+  })
+
+  it('accepts only exact pre-dispatch navigation deadline evidence', () => {
+    const response = {
+      jsonrpc: '2.0', id: 'execute-navigation-timeout',
+      result: {
+        ...lease, requestId: 'request-navigation-timeout', tabId: 17, operation: 'navigate', ok: false,
+        error: {
+          code: 'timeout', message: 'Navigation timed out', retryable: true,
+          details: EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+        },
+      },
+    }
+    expect(parse(response, 'forge.browser.execute')).toEqual(response)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, details: { ...response.result.error.details, noReplay: false } } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, code: 'execution-failed' } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, operation: 'click' },
     }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
   })
 

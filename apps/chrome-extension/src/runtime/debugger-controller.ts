@@ -462,9 +462,16 @@ export class DebuggerController {
   ): Promise<void> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
     if (!isAuthorized()) throw new Error('lease authority was interrupted')
-    if (readiness === 'none') {
+    const dispatch = (): Promise<unknown> => {
+      // Attachment setup and content-script preflight happen before this method. Re-check both
+      // caller bounds in the same synchronous turn as the sole mutation dispatch.
+      if (deadlineAt <= this.now()) throw new Error(`navigation readiness ${readiness} timed out`)
+      if (!isAuthorized()) throw new Error('lease authority was interrupted')
       onDispatch?.()
-      await this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }))
+      return this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }))
+    }
+    if (readiness === 'none') {
+      await dispatch()
       if (!isAuthorized()) throw new Error('lease authority was interrupted')
       return
     }
@@ -500,11 +507,14 @@ export class DebuggerController {
       const remaining = Math.max(0, deadlineAt - this.now())
       const deadlineTimer = setTimeout(() => finish(new Error(`navigation readiness ${readiness} timed out`)), remaining)
       const authorityTimer = setInterval(() => { if (!isAuthorized()) finish(new Error('lease authority was interrupted')) }, Math.min(25, Math.max(1, remaining)))
-      onDispatch?.()
-      void this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })).then(() => {
-        commandSettled = true
-        finishIfComplete()
-      }, (error) => finish(error instanceof Error ? error : new Error(String(error))))
+      try {
+        void dispatch().then(() => {
+          commandSettled = true
+          finishIfComplete()
+        }, (error) => finish(error instanceof Error ? error : new Error(String(error))))
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)))
+      }
     })
   }
 

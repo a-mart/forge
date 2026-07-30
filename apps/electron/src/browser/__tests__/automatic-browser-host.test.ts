@@ -12,6 +12,7 @@ import {
   BROWSER_AUTOMATION_OPERATIONS,
   EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   externalChromeControlCollisionDetails,
 } from '@forge/protocol'
 import { AutomaticBrowserHost } from '../automatic-browser-host.js'
@@ -455,6 +456,28 @@ describe('AutomaticBrowserHost', () => {
     expect(external.authorityReleases).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(1)
     expect(external.authorityReleases).toMatchObject([{ reason: 'idle' }])
+  })
+
+  it('does not replay navigation after exact proof that its expired dispatch never started', async () => {
+    const managed = new FakeManagedAdapter()
+    const external = new FakeExternalAdapter()
+    const original = request('navigate', { url: 'https://example.test/', readiness: 'load', timeoutMs: 100 }, null)
+    external.executionResults.push({
+      response: failure(
+        { ...original, tabId: 'chrome-tab-1' } as BrowserAutomationRequest,
+        'timeout',
+        EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+      ),
+      failure: { phase: 'execution', mutationState: 'not-started', noReplay: true },
+    })
+    const host = createHost(managed, external)
+
+    await expect(host.perform(original)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'timeout', details: { mutationState: 'not-started', noReplay: true } },
+    })
+    expect(external.authorityReleases).toHaveLength(1)
+    expect(managed.requests).toHaveLength(0)
   })
 
   it('preserves attached-idle authority on collaborative collision until snapshot or Take Control', async () => {

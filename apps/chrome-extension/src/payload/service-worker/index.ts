@@ -3,6 +3,7 @@ import {
   EXTERNAL_CHROME_MAX_LABEL_LENGTH,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
   EXTERNAL_CHROME_MAX_URL_LENGTH,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
   externalChromeControlCollisionDetails,
   isExternalChromeControlCollisionDetails,
@@ -648,7 +649,9 @@ export class Runtime implements ServiceWorkerPayload {
               true,
               interrupted && this.hasCollaborativeAttachedIdle(params)
                 ? externalChromeControlCollisionDetails(mutationState)
-                : undefined,
+                : remainedCurrent && mutationState === 'not-started'
+                  ? EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS
+                  : undefined,
             )
           }
           if (!isCurrent()) {

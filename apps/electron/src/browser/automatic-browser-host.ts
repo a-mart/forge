@@ -543,7 +543,7 @@ export class AutomaticBrowserHost {
     // later acquisition or lifecycle acknowledgement.
     await this.releaseAndForgetBurst(burstKey, burst, 'operation-failed', Date.parse(request.deadlineAt)).catch(() => undefined)
     const terminal = withPolicyFailure(response, metadata, metadata.noReplay === true || metadata.mutationState !== 'not-started')
-    if (explicit || metadata.mutationState !== 'not-started') return terminal
+    if (explicit || metadata.noReplay === true || metadata.mutationState !== 'not-started') return terminal
     return this.performManaged(request, managedFallbackTabId, metadata.fallbackReason)
   }
 

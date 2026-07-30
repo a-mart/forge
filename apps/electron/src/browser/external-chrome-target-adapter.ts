@@ -2,6 +2,7 @@ import {
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
   isExternalChromeControlCollisionDetails,
   isExternalChromeDebuggerAttachConflictDetails,
+  isExternalChromeNavigationNotDispatchedDetails,
   isExternalChromeReobserveRequiredDetails,
   type BrowserAutomationFailure,
   type BrowserAutomationRequest,
@@ -68,7 +69,7 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
     const response = await this.executeTransported(input.request)
     if (response.ok) return { response }
 
-    const evidence = executionSafetyEvidence(response.error)
+    const evidence = executionSafetyEvidence(response.error, input.request.operation)
     if (evidence === 'malformed') {
       return {
         response: {
@@ -80,6 +81,12 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
           },
         },
         failure: { phase: 'execution', mutationState: mutationDefault(input.request.operation) },
+      }
+    }
+    if (evidence === 'navigation-not-dispatched') {
+      return {
+        response,
+        failure: { phase: 'execution', mutationState: 'not-started', noReplay: true },
       }
     }
     if (evidence === 'debugger-attach-conflict') {
@@ -137,8 +144,8 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
     const response = await this.executeTransported(request)
     if (response.ok) return response
-    const evidence = executionSafetyEvidence(response.error)
-    if (evidence === 'absent' || evidence === 'control-collision' || evidence === 'reobserve-required') return response
+    const evidence = executionSafetyEvidence(response.error, request.operation)
+    if (evidence === 'absent' || evidence === 'navigation-not-dispatched' || evidence === 'control-collision' || evidence === 'reobserve-required') return response
     if (evidence === 'malformed') {
       return {
         ...response,
@@ -183,14 +190,17 @@ function mutationDefault(operation: BrowserAutomationRequest['operation']): 'not
   return operation === 'status' || operation === 'snapshot' || operation === 'waitFor' ? 'not-started' : 'possible'
 }
 
-function executionSafetyEvidence(error: BrowserAutomationFailure):
-  'absent' | 'debugger-attach-conflict' | 'control-collision' | 'reobserve-required' | 'malformed' {
+function executionSafetyEvidence(
+  error: BrowserAutomationFailure,
+  operation: BrowserAutomationRequest['operation'],
+): 'absent' | 'debugger-attach-conflict' | 'navigation-not-dispatched' | 'control-collision' | 'reobserve-required' | 'malformed' {
   const details = error.details
   const hasReservedField = details !== undefined &&
     ['failurePhase', 'mutationState', 'fallbackReason', 'noReplay', 'requiresReobserve', 'authorityState']
       .some((key) => Object.prototype.hasOwnProperty.call(details, key))
   if (!hasReservedField) return 'absent'
   if (error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(details)) return 'debugger-attach-conflict'
+  if (error.code === 'timeout' && operation === 'navigate' && isExternalChromeNavigationNotDispatchedDetails(details)) return 'navigation-not-dispatched'
   if (error.code === 'control-interrupted' && isExternalChromeControlCollisionDetails(details)) return 'control-collision'
   if (error.code === 'request-cancelled' && isExternalChromeReobserveRequiredDetails(details)) return 'reobserve-required'
   return 'malformed'
