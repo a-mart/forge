@@ -439,11 +439,38 @@ describe('SettingsGeneral', () => {
       flushSync(() => {
         fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Low' })).toBeTruthy())
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
       expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
         'Low',
         'Medium',
         'High',
+        'Extra High',
+        'Max',
+        'Ultra',
+      ])
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'Max' }))
+      })
+
+      flushSync(() => {
+        fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' })).toBeTruthy())
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' }))
+      })
+
+      reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
+      flushSync(() => {
+        fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+      expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+        'Low',
+        'Medium',
+        'High',
+        'Extra High',
+        'Max',
       ])
     })
 

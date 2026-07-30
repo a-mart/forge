@@ -206,7 +206,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-sol',
       intentionalDivergenceNotes:
-        'Intentional divergence: Forge keeps the GPT-5.6 Sol context window at 272k pending provider verification.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.6-terra': {
       modelId: 'gpt-5.6-terra',
@@ -215,7 +215,7 @@ export const FORGE_MODEL_CATALOG = {
       displayName: 'GPT-5.6 Terra',
       isFamilyDefault: false,
       supportsReasoning: true,
-      supportedReasoningLevels: ['low', 'medium', 'high'],
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       defaultReasoningLevel: 'high',
       contextWindow: 272_000,
       maxOutputTokens: 128_000,
@@ -224,7 +224,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-terra',
       intentionalDivergenceNotes:
-        'Intentional divergence: Forge keeps GPT-5.6 Terra constrained to low, medium, and high reasoning with a 272k context window pending provider verification.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.6-luna': {
       modelId: 'gpt-5.6-luna',
@@ -233,7 +233,7 @@ export const FORGE_MODEL_CATALOG = {
       displayName: 'GPT-5.6 Luna',
       isFamilyDefault: false,
       supportsReasoning: true,
-      supportedReasoningLevels: ['low', 'medium', 'high'],
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultReasoningLevel: 'high',
       contextWindow: 272_000,
       maxOutputTokens: 128_000,
@@ -242,7 +242,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-luna',
       intentionalDivergenceNotes:
-        'Intentional divergence: Forge keeps GPT-5.6 Luna constrained to low, medium, and high reasoning with a 272k context window pending provider verification.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.4': {
       modelId: 'gpt-5.4',

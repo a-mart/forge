@@ -148,11 +148,25 @@ describe("model-presets", () => {
       modelId: "gpt-5.6-sol",
       thinkingLevel: "ultra",
     })).toBe("ultra");
+    for (const level of ["low", "medium", "high", "xhigh", "max", "ultra"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "openai-codex",
+        modelId: "gpt-5.6-terra",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "openai-codex",
+        modelId: "gpt-5.6-luna",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
     expect(normalizeThinkingLevelForModelDescriptor({
       provider: "openai-codex",
-      modelId: "gpt-5.6-terra",
-      thinkingLevel: "max",
-    })).toBe("high");
+      modelId: "gpt-5.6-luna",
+      thinkingLevel: "ultra",
+    })).toBe("max");
     expect(inferSwarmModelPresetFromDescriptor({ provider: "openai-codex", modelId: "gpt-5.6-luna" })).toBe("pi-5.6");
     expect(modelCatalogService.isKnownModelId("gpt-5.6-sol", "openai-codex")).toBe(true);
   });

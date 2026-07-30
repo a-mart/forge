@@ -186,6 +186,27 @@ describe('SessionModelPicker compact menu', () => {
     expect(getByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeTruthy()
   })
 
+  it.each([
+    ['gpt-5.6-terra', true],
+    ['gpt-5.6-luna', false],
+  ] as const)('shows model-specific deep reasoning choices for %s', async (modelId, supportsUltra) => {
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, {
+      currentModel: { provider: 'openai-codex', modelId, thinkingLevel: 'xhigh' },
+    })
+
+    expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
+    await openPicker()
+    await openSubmenu(/Reasoning/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Extra High' })).toBeTruthy()
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Max' })).toBeTruthy()
+    if (supportsUltra) {
+      expect(getByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeTruthy()
+    } else {
+      expect(queryByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeNull()
+    }
+  })
+
   it('applies a reasoning override immediately', async () => {
     const onUpdate = vi.fn(async () => {})
     renderPicker(onUpdate)
