@@ -348,7 +348,11 @@ describe('model-catalog', () => {
 
   it('documents intentional catalog divergences from Pi upstream', () => {
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
-    expect(getCatalogModel('gpt-5.6-sol')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
+    for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+      expect(getCatalogModel(modelId)?.intentionalDivergenceNotes).toContain(
+        '272k context window reported by Codex capability metadata',
+      )
+    }
     expect(getCatalogModel('claude-opus-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain(
       'restricted to low, medium, and high reasoning levels',

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+  externalChromeControlCollisionDetails,
   type BrowserAutomationOperation,
   type BrowserAutomationRequest,
 } from '@forge/protocol'
@@ -99,6 +101,64 @@ describe('BrowserTargetAdapter routing', () => {
       failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
     })
     expect(execution.response.ok || execution.response.error.details).toBeUndefined()
+  })
+
+  it('reports an exact pre-dispatch navigation timeout as not-started and non-replayable', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'timeout', message: 'Navigation timed out before dispatch', retryable: true,
+        details: EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+      },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('navigate', { url: 'https://example.test/', readiness: 'load', timeoutMs: 1_000 }, 'external-tab-1'),
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'timeout', details: EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS } },
+      failure: { phase: 'execution', mutationState: 'not-started', noReplay: true },
+    })
+  })
+
+  it('preserves authority only for exact collaborative collision evidence', async () => {
+    const transport = new FakeExternalChromeTransport()
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'control-interrupted', message: 'Trusted input interrupted execution', retryable: true,
+        details: externalChromeControlCollisionDetails('possible'),
+      },
+    })
+    const adapter = new ExternalChromeTargetAdapter(transport)
+
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'control-interrupted' } },
+      failure: {
+        phase: 'execution', mutationState: 'possible', fallbackReason: 'authority-conflict',
+        noReplay: true, preserveAuthority: true, requiresReobserve: true,
+      },
+    })
+
+    transport.execute = async () => ({
+      ok: false,
+      error: {
+        code: 'control-interrupted', message: 'Malformed collision', retryable: true,
+        details: { ...externalChromeControlCollisionDetails('possible'), authorityState: 'lost' },
+      },
+    })
+    await expect(adapter.executeWithAuthority({
+      authority: { ownerEpoch: 1, tabId: 'external-tab-1' },
+      request: request('click', { x: 1, y: 1, timeoutMs: 1_000 }, 'external-tab-1'),
+    })).resolves.toMatchObject({
+      response: { ok: false, error: { code: 'malformed-response', retryable: false } },
+      failure: { phase: 'execution', mutationState: 'possible' },
+    })
   })
 
   it('does not treat the debugger-unavailable code alone as replay-safe for a click', async () => {

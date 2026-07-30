@@ -2558,6 +2558,94 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.model.modelId).toBe("gpt-5.4");
   });
 
+  it.each([
+    ["gpt-5.6-terra", "high"],
+    ["gpt-5.6-luna", "high"],
+  ] as const)("uses the catalog reasoning default for a %s specialist that omits reasoning", async (modelId, expectedReasoningLevel) => {
+    const manager = createAgentDescriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        resolveSpecialistRosterForProfile: vi.fn(async () => [{
+          specialistId: "variant-specialist",
+          displayName: "Variant Specialist",
+          color: "#abc",
+          enabled: true,
+          whenToUse: "variant work",
+          modelId,
+          provider: "openai-codex",
+          promptBody: "variant prompt",
+          available: true,
+        }]),
+        normalizeSpecialistHandle: vi.fn(async () => "variant-specialist"),
+      }),
+    );
+
+    const spawned = await svc.spawnAgent(manager.agentId, {
+      agentId: `worker-${modelId}`,
+      specialist: "variant-specialist",
+    });
+
+    expect(spawned.model).toMatchObject({
+      provider: "openai-codex",
+      modelId,
+      thinkingLevel: expectedReasoningLevel,
+    });
+  });
+
+  it.each([
+    ["gpt-5.6-terra", "high"],
+    ["gpt-5.6-luna", "high"],
+  ] as const)("uses the catalog reasoning default for a %s compatibility lens that omits reasoning", async (modelId, expectedReasoningLevel) => {
+    const manager = createAgentDescriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        resolveSpecialistRosterForProfile: vi.fn(async () => [{
+          specialistId: "variant-specialist",
+          displayName: "Variant Specialist",
+          color: "#abc",
+          enabled: true,
+          whenToUse: "variant work",
+          modelId,
+          provider: "openai-codex",
+          promptBody: "variant prompt",
+          available: true,
+        }]),
+      }),
+    );
+
+    const spawned = await svc.spawnAgent(manager.agentId, {
+      agentId: `lens-worker-${modelId}`,
+      tier: "fast",
+      lens: "variant-specialist",
+    });
+
+    expect(spawned.model).toMatchObject({
+      provider: "openai-codex",
+      modelId,
+      thinkingLevel: expectedReasoningLevel,
+    });
+  });
+
   it("defers an eligible secure worker runtime until its first assignment is dispatched", async () => {
     const manager = createAgentDescriptor({
       agentId: "secure-manager",

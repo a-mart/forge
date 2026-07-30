@@ -1,3 +1,4 @@
+import { EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS } from '@forge/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Runtime } from '../src/payload/service-worker/index.js'
 import type { ChromeTab } from '../src/runtime/chrome-api.js'
@@ -20,6 +21,37 @@ describe('service-worker navigation orchestration', () => {
     expect(chrome.commands.map(({ method }) => method)).toContain('Page.navigate')
     expect(chrome.attached).toEqual(new Set([7]))
     expect((runtime as unknown as { authorities: { forTab(id: number): { state: string } | null } }).authorities.forTab(7)).toMatchObject({ state: 'idle' })
+  })
+
+  it('does not dispatch navigation when content preflight crosses the request deadline', async () => {
+    const startedAt = Date.parse('2026-01-01T00:00:00.000Z')
+    let currentTime = startedAt
+    const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
+    const runtime = new Runtime({ chrome, now: () => currentTime })
+    const authority = (runtime as unknown as { authorities: { acquire(input: unknown): Promise<unknown> } }).authorities
+    await authority.acquire({ tabId: 7, ownerId: 'owner', ownerEpoch: 1, sessionAgentId: 'session', expectedOwnerEpoch: 0 })
+    const executeScript = chrome.scripting.executeScript.bind(chrome.scripting)
+    chrome.scripting.executeScript = async (injection) => {
+      const result = await executeScript(injection)
+      currentTime = startedAt + 100
+      return result
+    }
+    const execute = (runtime as unknown as { execute(input: unknown): Promise<unknown> }).execute.bind(runtime)
+
+    await expect(execute(navigateRequest({
+      requestId: 'deadline-crossed-during-injection',
+      deadlineAt: new Date(startedAt + 100).toISOString(),
+      input: { url: 'https://fixture.invalid/expired-preflight', readiness: 'load', timeoutMs: 1_000 },
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'timeout',
+        details: EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+      },
+    })
+    expect(chrome.injections).toHaveLength(1)
+    expect(chrome.commands.filter(({ method }) => method === 'Page.navigate')).toEqual([])
+    expect(chrome.attached).toEqual(new Set())
   })
 
   it('transitions a fresh neutral target once before using normal page authority', async () => {
@@ -227,7 +259,7 @@ describe('service-worker navigation orchestration', () => {
         deadlineAt: new Date((mode === 'expired' ? start : Date.now()) + 100).toISOString(),
         input: { url: 'https://destination.example.test/', readiness: 'none', timeoutMs: 1_000 },
       }))).resolves.toMatchObject({
-        ok: false, error: { code: mode === 'expired' ? 'timeout' : 'control-interrupted' },
+        ok: false, error: { code: mode === 'expired' ? 'timeout' : 'request-cancelled' },
       })
       expect(chrome.updates).toEqual([])
       expect(chrome.injections).toEqual([])
@@ -339,6 +371,8 @@ function pngBase64(width: number, height: number): string {
   const bytes = new Uint8Array(24)
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
   const view = new DataView(bytes.buffer)
+  view.setUint32(8, 13)
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12)
   view.setUint32(16, width)
   view.setUint32(20, height)
   return Buffer.from(bytes).toString('base64')

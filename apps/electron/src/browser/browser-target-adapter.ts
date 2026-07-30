@@ -35,6 +35,12 @@ export interface BrowserTargetFailureMetadata {
   readonly phase: BrowserFailurePhase
   readonly mutationState: BrowserMutationState
   readonly fallbackReason?: AutomaticBrowserFallbackReason
+  /** Exact extension proof that this failed operation must never be replayed or fall back. */
+  readonly noReplay?: boolean
+  /** Exact extension proof that the same physical debugger is safely attached-idle. */
+  readonly preserveAuthority?: boolean
+  /** A fresh snapshot must succeed before another potentially mutating operation. */
+  readonly requiresReobserve?: boolean
 }
 
 export interface BrowserTargetExecution {
@@ -108,8 +114,11 @@ export interface AutomaticExternalBrowserAdapter extends BrowserTargetAdapter {
   releaseAuthority(
     session: BrowserTargetSession,
     authority: ExternalBrowserTargetAuthority,
-    reason: 'idle' | 'operation-failed' | 'turn-ended' | BrowserHostLifecycleReason,
+    reason: 'idle' | 'operation-failed' | 'turn-ended' | 'take-control' | BrowserHostLifecycleReason,
+    deadlineAt?: number,
   ): Promise<void>
+  /** Release an exact durable tab checkpoint when Desktop host memory did not survive restart. */
+  releaseTargetAuthority(session: BrowserTargetSession, tabId: string, reason: 'take-control'): Promise<boolean>
   revealTarget(session: BrowserTargetSession, tabId: string): Promise<ExternalBrowserRevealResult>
 }
 

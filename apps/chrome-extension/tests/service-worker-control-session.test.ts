@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Runtime } from '../src/payload/service-worker/index.js'
 import type { ChromeDebuggerSession } from '../src/runtime/chrome-api.js'
+import { ExactSyntheticInputGuard, parseSyntheticTrustedEventSequence } from '../src/runtime/human-control.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
 
 afterEach(() => {
@@ -13,6 +14,7 @@ const TAB = { id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/',
 class ContentPort {
   readonly sent: unknown[] = []
   disconnected = false
+  onPost?: (message: unknown) => void
   private readonly messageListeners: Array<(message: unknown) => void> = []
   private readonly disconnectListeners: Array<() => void> = []
   constructor(
@@ -29,7 +31,11 @@ class ContentPort {
   readonly onDisconnect = {
     addListener: (listener: () => void): void => { this.disconnectListeners.push(listener) },
   }
-  postMessage(message: unknown): void { this.sent.push(structuredClone(message)) }
+  postMessage(message: unknown): void {
+    const cloned = structuredClone(message)
+    this.sent.push(cloned)
+    this.onPost?.(cloned)
+  }
   disconnect(): void {
     if (this.disconnected) return
     this.disconnected = true
@@ -39,11 +45,14 @@ class ContentPort {
 }
 
 describe('service-worker control-session lifecycle', () => {
-  it('reuses one attachment across same-lease operations, reports agent-idle, and detaches on exact release', async () => {
+  it('reuses one attachment across five calls, reports agent-idle, and detaches at turn end', async () => {
     const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness()
 
-    await expect(execute('first')).resolves.toMatchObject({ ok: true, result: { value: 'first' } })
-    await expect(execute('second', 'evaluate-2')).resolves.toMatchObject({ ok: true, result: { value: 'second' } })
+    for (let index = 1; index <= 5; index += 1) {
+      await expect(execute(`call-${index}`, `evaluate-${index}`)).resolves.toMatchObject({
+        ok: true, result: { value: `call-${index}` },
+      })
+    }
     await expect(status(runtime)).resolves.toMatchObject({
       ok: true,
       result: { selectedTab: { controller: 'agent-idle' } },
@@ -53,15 +62,15 @@ describe('service-worker control-session lifecycle', () => {
     expect(chrome.attached).toEqual(new Set([7]))
     expect(runtime.diagnostics()).toMatchObject({
       authorities: [{ tabId: 7, state: 'idle' }],
-      debuggerMetrics: { attachments: 1, attachmentReuses: 1, activeAttachments: 1, maximumObservedAttachments: 1 },
+      debuggerMetrics: { attachments: 1, attachmentReuses: 4, activeAttachments: 1, maximumObservedAttachments: 1 },
     })
 
-    await expect(release('idle')).resolves.toMatchObject({ releasedTabIds: [7] })
+    await expect(release('turn-ended')).resolves.toMatchObject({ releasedTabIds: [7] })
     expect(chrome.attached).toEqual(new Set())
     expect(detachCalls()).toBe(1)
     expect(runtime.diagnostics()).toMatchObject({
       authorities: [],
-      debuggerMetrics: { activeAttachments: 0, detachments: 1, detachReasons: { 'release:idle': 1 } },
+      debuggerMetrics: { activeAttachments: 0, detachments: 1, detachReasons: { 'release:turn-ended': 1 } },
     })
     await expect(release('retry-after-lost-ack')).resolves.toMatchObject({ releasedTabIds: [7] })
   })
@@ -106,14 +115,12 @@ describe('service-worker control-session lifecycle', () => {
     await release('idle')
   })
 
-  it('revokes an active epoch and waits for detach settlement on trusted human input without replaying CDP', async () => {
-    let rejectPending: ((error: Error) => void) | null = null
-    let pending = true
-    const { chrome, runtime, execute, release, attachCalls } = await harness({
-      evaluate: (expression) => expression === 'pending' && pending
-        ? new Promise((_resolve, reject) => { rejectPending = reject })
+  it('settles a collided command, preserves attached-idle authority, and requires re-observation without replay', async () => {
+    let resolvePending!: (result: unknown) => void
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness({
+      evaluate: (expression) => expression === 'pending'
+        ? new Promise((resolve) => { resolvePending = resolve })
         : Promise.resolve(value(expression)),
-      onDetach: () => { rejectPending?.(new Error('debugger detached')); rejectPending = null },
     })
     const operation = execute('pending')
     await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'pending')).toBe(true))
@@ -123,23 +130,94 @@ describe('service-worker control-session lifecycle', () => {
     runtime.onShellEvent('runtime.connect', [guard.port])
     guard.ready()
     guard.human(0)
+    resolvePending(value('late-result'))
 
-    await expect(operation).resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'possible', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
     await expect(staleQueuedOperation).resolves.toMatchObject({ ok: false, error: { code: 'request-cancelled' } })
-    await vi.waitFor(() => expect(chrome.attached).toEqual(new Set()))
-    expect(runtime.diagnostics().authorities).toEqual([expect.objectContaining({ tabId: 7, state: 'idle' })])
-    expect((runtime as unknown as { authorities: { forTab(tabId: number): { controlEpoch: number } | null } }).authorities.forTab(7))
-      .toMatchObject({ controlEpoch: 1 })
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(runtime.diagnostics().authorities).toEqual([
+      expect.objectContaining({ tabId: 7, state: 'idle' }),
+    ])
+    expect((runtime as unknown as {
+      authorities: { forTab(tabId: number): { requiresObservation: boolean; controlEpoch: number } | null }
+    }).authorities.forTab(7)).toMatchObject({ requiresObservation: true, controlEpoch: 1 })
     expect(chrome.commands.filter(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'pending')).toHaveLength(1)
     expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'queued-before-human')).toBe(false)
-    expect(runtime.diagnostics().debuggerMetrics.detachReasons).toMatchObject({ 'trusted-input': 1 })
-    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'human', controlEpoch: 1 }))
+    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 1 }))
 
-    pending = false
-    await expect(execute('resumed', 'evaluate-resumed')).resolves.toMatchObject({ ok: true, result: { value: 'resumed' } })
-    expect(guard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'agent', controlEpoch: 1 }))
-    expect(attachCalls()).toBe(2)
-    await release('idle')
+    await expect(execute('blocked-until-observed', 'evaluate-blocked')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true } },
+    })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'blocked-until-observed')).toBe(false)
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+    expect(chrome.attached).toEqual(new Set())
+    expect(detachCalls()).toBe(1)
+  })
+
+  it('keeps attached-idle authority when collaborative input wins before the first page command', async () => {
+    const { chrome, runtime, execute, release, detachCalls } = await harness()
+    const guard = bridge(7, 0, 'document-before-dispatch', 2)
+    runtime.onShellEvent('runtime.connect', [guard.port])
+    guard.ready()
+
+    const originalExecuteScript = chrome.scripting.executeScript.bind(chrome.scripting)
+    let signalInjectionStarted!: () => void
+    let resumeInjection!: () => void
+    const injectionStarted = new Promise<void>((resolve) => { signalInjectionStarted = resolve })
+    const injectionGate = new Promise<void>((resolve) => { resumeInjection = resolve })
+    chrome.scripting.executeScript = async (injection) => {
+      signalInjectionStarted()
+      await injectionGate
+      return originalExecuteScript(injection)
+    }
+
+    const operation = execute('must-not-dispatch-after-input')
+    await injectionStarted
+    guard.human(0)
+    await vi.waitFor(() => expect((runtime as unknown as {
+      authorities: { forTab(tabId: number): { controlEpoch: number; requiresObservation: boolean } | null }
+    }).authorities.forTab(7)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+    resumeInjection()
+
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' &&
+      params?.expression === 'must-not-dispatch-after-input')).toBe(false)
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+  })
+
+  it('lets explicit Take Control terminally release active physical work', async () => {
+    let rejectPending: ((error: Error) => void) | null = null
+    const { chrome, execute, release, detachCalls } = await harness({
+      evaluate: (expression) => expression === 'active-before-take-control'
+        ? new Promise((_resolve, reject) => { rejectPending = reject })
+        : Promise.resolve(value(expression)),
+      onDetach: () => { rejectPending?.(new Error('debugger detached by Take Control')); rejectPending = null },
+    })
+    const active = execute('active-before-take-control')
+    await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) =>
+      method === 'Runtime.evaluate' && params?.expression === 'active-before-take-control')).toBe(true))
+
+    await expect(release('take-control')).resolves.toMatchObject({ releasedTabIds: [7] })
+    await expect(active).resolves.toMatchObject({ ok: false })
+    expect(chrome.attached).toEqual(new Set())
+    expect(detachCalls()).toBe(1)
   })
 
   it('cancels and detaches one timed-out command before allowing a later same-lease operation', async () => {
@@ -251,29 +329,140 @@ describe('service-worker control-session lifecycle', () => {
     expect(runtime.diagnostics()).toMatchObject({ authorities: [], debuggerSessions: [], debuggerMetrics: { activeAttachments: 0 } })
   })
 
-  it('revokes retained idle control when the root navigates outside an admitted operation', async () => {
-    const { chrome, runtime, execute, release, attachCalls } = await harness()
-    await expect(execute('before-external-navigation')).resolves.toMatchObject({ ok: true })
+  it('retains one attachment across a trusted click navigation and positively adopts its replacement root', async () => {
+    let rootTargetId = 'root-before-click'
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness({
+      rootTargetId: () => rootTargetId,
+    })
+    await expect(execute('before-trusted-link')).resolves.toMatchObject({ ok: true })
+    const guard = bridge(7, 0, 'document-before-link', 3)
+    runtime.onShellEvent('runtime.connect', [guard.port])
+    guard.ready()
+    guard.human(0)
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+
+    rootTargetId = 'root-after-click'
+    await chrome.tabs.update(7, { url: 'https://navigated-by-click.invalid/' })
     runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
-      frame: { id: 'frame-tab-7', url: 'https://navigated-by-page.invalid/' },
+      frame: { id: 'replacement-frame', url: 'https://navigated-by-click.invalid/' },
+    }])
+    runtime.onShellEvent('navigation.committed', [{
+      tabId: 7, frameId: 0, documentId: 'document-after-link', url: 'https://navigated-by-click.invalid/',
     }])
 
-    await vi.waitFor(() => expect(chrome.attached).toEqual(new Set()))
-    expect(runtime.diagnostics()).toMatchObject({
-      authorities: [{ state: 'idle' }],
-      debuggerMetrics: { activeAttachments: 0, detachReasons: { 'external-navigation': 1 } },
+    await vi.waitFor(() => expect((runtime as unknown as {
+      debuggers: { targetId(tabId: number): string | undefined }
+    }).debuggers.targetId(7)).toBe('root-after-click'))
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 2, requiresObservation: true }))
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics().debuggerMetrics).toMatchObject({ attachments: 1, activeAttachments: 1 })
+    await vi.waitFor(() => expect(chrome.injections.some(({ target }) => target.allFrames === true)).toBe(true))
+
+    const replacementGuard = bridge(7, 0, 'document-after-link', 4)
+    runtime.onShellEvent('runtime.connect', [replacementGuard.port])
+    replacementGuard.ready()
+    expect(replacementGuard.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 2 }))
+    await expect(execute('blocked-after-trusted-link')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true } },
     })
-    await expect(execute('after-external-navigation')).resolves.toMatchObject({ ok: true })
-    expect(attachCalls()).toBe(2)
-    await release('idle')
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'blocked-after-trusted-link')).toBe(false)
+
+    await expect(runSnapshot(runtime, 'snapshot-after-trusted-link')).resolves.toMatchObject({ ok: true })
+    expect(authorityFor(runtime)).toMatchObject({ requiresObservation: false })
+    await expect(execute('after-trusted-link-observation')).resolves.toMatchObject({ ok: true })
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    await release('take-control')
+  })
+
+  it('retains attached-idle authority across ordinary eligible page navigation and reload', async () => {
+    const { chrome, runtime, execute, release, attachCalls, detachCalls } = await harness()
+    await expect(execute('before-page-navigation')).resolves.toMatchObject({ ok: true })
+
+    for (const [index, url] of ['https://page-navigation.invalid/', 'https://page-navigation.invalid/'].entries()) {
+      await chrome.tabs.update(7, { url })
+      runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+        frame: { id: 'frame-tab-7', url },
+      }])
+      runtime.onShellEvent('navigation.committed', [{
+        tabId: 7, frameId: 0, documentId: `ordinary-document-${index}`, url,
+      }])
+      if (index === 0) {
+        await expect(execute('while-page-navigation-is-revalidated')).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'request-cancelled', details: { requiresReobserve: true } },
+        })
+        expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' &&
+          params?.expression === 'while-page-navigation-is-revalidated')).toBe(false)
+      }
+      await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({
+        controlEpoch: index + 1,
+        requiresObservation: true,
+      }))
+      await vi.waitFor(() => expect(runtime.diagnostics().debuggerMetrics.attachmentReuses).toBeGreaterThanOrEqual(index * 2 + 1))
+      expect(chrome.attached).toEqual(new Set([7]))
+      await expect(execute(`blocked-after-ordinary-navigation-${index}`)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'request-cancelled', details: { requiresReobserve: true } },
+      })
+      await expect(runSnapshot(runtime, `snapshot-after-ordinary-navigation-${index}`)).resolves.toMatchObject({ ok: true })
+    }
+
+    expect(attachCalls()).toBe(1)
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics().debuggerMetrics).toMatchObject({ attachments: 1, activeAttachments: 1 })
+    await release('take-control')
+  })
+
+  it('does not report attached-idle during deferred root revalidation, then reports success or terminal loss', async () => {
+    const successful = await harness()
+    await successful.execute('before-deferred-navigation')
+    const successRevalidation = deferredRootRevalidation(successful.chrome)
+    await successful.chrome.tabs.update(7, { url: 'https://deferred-success.invalid/' })
+    successful.runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'deferred-success-frame', url: 'https://deferred-success.invalid/' },
+    }])
+    await successRevalidation.started
+    await expect(status(successful.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'none' } },
+    })
+    successRevalidation.release()
+    await vi.waitFor(() => expect(reconciliationCount(successful.runtime)).toBe(0))
+    await expect(status(successful.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'agent-idle' } },
+    })
+    await successful.release('deferred-success')
+
+    let rootTargetId: string | null = 'root-valid'
+    const failed = await harness({ rootTargetId: () => rootTargetId ?? '' })
+    await failed.execute('before-deferred-failure')
+    const failureRevalidation = deferredRootRevalidation(failed.chrome, true)
+    rootTargetId = null
+    await failed.chrome.tabs.update(7, { url: 'https://deferred-failure.invalid/' })
+    failed.runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'deferred-failure-frame', url: 'https://deferred-failure.invalid/' },
+    }])
+    await failureRevalidation.started
+    await expect(status(failed.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'none' } },
+    })
+    failureRevalidation.release()
+    await vi.waitFor(() => expect(failed.runtime.diagnostics().authorities).toEqual([]))
+    await expect(status(failed.runtime)).resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
   })
 
   it('terminally detaches and receipts a retained attachment that navigates into a restricted target', async () => {
     const { chrome, runtime, execute, release } = await harness()
     await execute('before-restricted-navigation')
     await chrome.tabs.update(7, { url: 'chrome://settings/' })
-    runtime.onShellEvent('navigation.committed', [{
-      tabId: 7, frameId: 0, documentId: 'restricted-document', url: 'chrome://settings/',
+    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'frame-tab-7', url: 'chrome://settings/' },
     }])
 
     await vi.waitFor(() => expect(runtime.diagnostics().authorities).toEqual([]))
@@ -298,8 +487,9 @@ describe('service-worker control-session lifecycle', () => {
       return send(target, method, params)
     }
     rootTargetId = null
-    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Target.targetInfoChanged', {
-      targetInfo: { targetId: 'unproven', type: 'page', attached: false },
+    await chrome.tabs.update(7, { url: 'https://unproven-navigation.invalid/' })
+    runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'unproven-frame', url: 'https://unproven-navigation.invalid/' },
     }])
 
     await vi.waitFor(() => expect(runtime.diagnostics().authorities).toEqual([]))
@@ -308,11 +498,24 @@ describe('service-worker control-session lifecycle', () => {
     await expect(release('desktop-retry')).resolves.toMatchObject({ releasedTabIds: [7] })
   })
 
-  it('terminally receipts DevTools preemption and rejects stale lease reuse', async () => {
-    const { chrome, runtime, execute, release } = await harness()
-    await execute('before-devtools')
+  it('cancels active work, terminally receipts DevTools preemption, and requires reacquisition', async () => {
+    let rejectActive!: (error: Error) => void
+    const { chrome, runtime, execute, release } = await harness({
+      evaluate: (expression) => expression === 'active-at-devtools'
+        ? new Promise((_resolve, reject) => { rejectActive = reject })
+        : Promise.resolve(value(expression)),
+    })
+    const active = execute('active-at-devtools')
+    await vi.waitFor(() => expect(chrome.commands.some(({ method, params }) =>
+      method === 'Runtime.evaluate' && params?.expression === 'active-at-devtools')).toBe(true))
+    const queued = execute('queued-at-devtools', 'queued-at-devtools')
     chrome.attached.delete(7)
     runtime.onShellEvent('debugger.detach', [{ tabId: 7 }, 'replaced_with_devtools'])
+    rejectActive(new Error('debugger detached during active work'))
+
+    await expect(active).resolves.toMatchObject({ ok: false, error: { code: 'request-cancelled' } })
+    await expect(queued).resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
+    expect(chrome.commands.some(({ method, params }) => method === 'Runtime.evaluate' && params?.expression === 'queued-at-devtools')).toBe(false)
 
     const authorities = runtime as unknown as {
       authorities: {
@@ -376,6 +579,99 @@ describe('service-worker control-session lifecycle', () => {
     await expect(runEvaluate(runtime, 8, 'lease-2', 2, 'tab-two-retry')).resolves.toMatchObject({ ok: true })
     expect(chrome.attached).toEqual(new Set([8]))
     await releaseOwner(runtime, 'lease-2', 2, 'idle')
+  })
+
+  it('cancels an active click on hover-changing trusted pointer interleaving and requires re-observation', async () => {
+    const { chrome, runtime, release, detachCalls } = await harness()
+    const content = bridge(7, 0, 'document-pointer-interleave', 5)
+    const exactGuard = new ExactSyntheticInputGuard()
+    let activeOperationId = ''
+    let activeControlEpoch = -1
+    content.port.onPost = (message) => {
+      if (typeof message !== 'object' || message === null) return
+      const record = message as Record<string, unknown>
+      if (record.type !== 'synthetic-start' || typeof record.operationId !== 'string' || !Number.isSafeInteger(record.controlEpoch)) return
+      const sequence = parseSyntheticTrustedEventSequence(record.expectedEvents)
+      if (sequence === null) return
+      activeOperationId = record.operationId
+      activeControlEpoch = record.controlEpoch as number
+      exactGuard.start(activeOperationId, activeControlEpoch, sequence)
+      const nonce = content.port.name.slice('forge-leased-frame:'.length)
+      queueMicrotask(() => content.port.emit({
+        type: 'synthetic-ack', nonce, operationId: activeOperationId, controlEpoch: activeControlEpoch,
+      }))
+    }
+    runtime.onShellEvent('runtime.connect', [content.port])
+    content.ready()
+
+    const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
+    let signalMovePending!: () => void
+    let settleMove!: () => void
+    const movePending = new Promise<void>((resolve) => { signalMovePending = resolve })
+    const moveGate = new Promise<void>((resolve) => { settleMove = resolve })
+    let exactMoveDisposition: string | null = null
+    let interleavedMoveDisposition: string | null = null
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      const result = await sendCommand(target, method, params)
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseMoved') {
+        const start = content.port.sent.find((message) =>
+          typeof message === 'object' && message !== null && (message as Record<string, unknown>).type === 'synthetic-start') as Record<string, unknown> | undefined
+        const sequence = parseSyntheticTrustedEventSequence(start?.expectedEvents)
+        const expectedMove = sequence?.[0]
+        if (expectedMove?.kind !== 'pointer') throw new Error('fixture did not receive the exact pointer sequence')
+        exactMoveDisposition = exactGuard.observe({ ...expectedMove, type: expectedMove.phase, isTrusted: true })
+        interleavedMoveDisposition = exactGuard.observe({
+          ...expectedMove, type: expectedMove.phase, isTrusted: true, clientX: expectedMove.clientX + 80,
+        })
+        if (interleavedMoveDisposition === 'interrupted') content.human(activeControlEpoch)
+        signalMovePending()
+        await moveGate
+      }
+      return result
+    }
+
+    const click = (runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+      protocolVersion: 1, requestId: 'click-pointer-interleave', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'click', input: { x: 20, y: 30, timeoutMs: 1_000 },
+      deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    })
+    await movePending
+    expect(exactMoveDisposition).toBe('synthetic')
+    expect(interleavedMoveDisposition).toBe('interrupted')
+    await vi.waitFor(() => expect(authorityFor(runtime)).toMatchObject({ controlEpoch: 1, requiresObservation: true }))
+    settleMove()
+
+    await expect(click).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'possible', noReplay: true, requiresReobserve: true, authorityState: 'attached-idle' },
+      },
+    })
+    expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent')).toEqual([
+      expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mouseMoved' }) }),
+    ])
+    expect(chrome.attached).toEqual(new Set([7]))
+    expect(detachCalls()).toBe(0)
+    expect(runtime.diagnostics()).toMatchObject({
+      authorities: [{ tabId: 7, state: 'idle' }],
+      debuggerMetrics: { activeAttachments: 1 },
+    })
+    expect(content.port.sent).toContainEqual(expect.objectContaining({ type: 'status', state: 'attached-idle', controlEpoch: 1 }))
+
+    await expect((runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+      protocolVersion: 1, requestId: 'click-before-pointer-reobserve', leaseId: 'lease-1', leaseEpoch: 1, tabId: 7,
+      operation: 'click', input: { x: 20, y: 30, timeoutMs: 1_000 },
+      deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'request-cancelled', details: { mutationState: 'not-started', requiresReobserve: true } },
+    })
+    expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent')).toHaveLength(1)
+    await expect(runSnapshot(runtime, 'snapshot-after-pointer-interleave')).resolves.toMatchObject({ ok: true })
+    expect(authorityFor(runtime)).toMatchObject({ requiresObservation: false })
+    expect(chrome.attached).toEqual(new Set([7]))
+    await release('take-control')
   })
 
   it('cancels before synthetic input when the singleton guard disconnects without acknowledgement', async () => {
@@ -514,7 +810,27 @@ function configuredChrome(
     if (method === 'Runtime.evaluate') {
       chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
       const expression = String(params?.expression ?? '')
+      if (expression === 'window.devicePixelRatio') return value(1)
+      if (expression.includes('interactiveElements')) {
+        const tab = await chrome.tabs.get(target.tabId ?? 7)
+        return value({
+          url: tab.url ?? '', title: tab.title ?? 'Fixture', loading: false,
+          visibleText: 'Observed after navigation', interactiveElements: [],
+        })
+      }
       return options.evaluate === undefined ? value(expression) : options.evaluate(expression)
+    }
+    if (method === 'Page.getLayoutMetrics') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { cssVisualViewport: { clientWidth: 320, clientHeight: 180, pageX: 0, pageY: 0 } }
+    }
+    if (method === 'Page.captureScreenshot') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { data: pngBase64(320, 180) }
+    }
+    if (method === 'Accessibility.getFullAXTree') {
+      chrome.commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+      return { nodes: [] }
     }
     return send(target, method, params)
   }
@@ -548,6 +864,25 @@ function runEvaluate(
   })
 }
 
+function runSnapshot(runtime: Runtime, requestId: string): Promise<unknown> {
+  return (runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
+    protocolVersion: 1,
+    requestId,
+    leaseId: 'lease-1',
+    leaseEpoch: 1,
+    tabId: 7,
+    operation: 'snapshot',
+    input: {},
+    deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+  })
+}
+
+function authorityFor(runtime: Runtime): { controlEpoch: number; requiresObservation: boolean } | null {
+  return (runtime as unknown as {
+    authorities: { forTab(tabId: number): { controlEpoch: number; requiresObservation: boolean } | null }
+  }).authorities.forTab(7)
+}
+
 function status(runtime: Runtime): Promise<unknown> {
   return (runtime as unknown as { execute(params: Record<string, unknown>): Promise<unknown> }).execute({
     protocolVersion: 1,
@@ -559,6 +894,30 @@ function status(runtime: Runtime): Promise<unknown> {
     input: {},
     deadlineAt: new Date(Date.now() + 5_000).toISOString(),
   })
+}
+
+function deferredRootRevalidation(chrome: ReturnType<typeof configuredChrome>, fail = false): {
+  started: Promise<void>
+  release: () => void
+} {
+  let release!: () => void
+  let resolveStarted!: () => void
+  const started = new Promise<void>((resolve) => { resolveStarted = resolve })
+  const waitForRelease = new Promise<void>((resolve) => { release = resolve })
+  const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
+  chrome.debugger.sendCommand = async (target: ChromeDebuggerSession, method: string, params?: Record<string, unknown>) => {
+    if (method === 'Target.getTargetInfo') {
+      resolveStarted()
+      await waitForRelease
+      if (fail) return { targetInfo: { type: 'page', attached: false } }
+    }
+    return sendCommand(target, method, params)
+  }
+  return { started, release }
+}
+
+function reconciliationCount(runtime: Runtime): number {
+  return (runtime as unknown as { externalNavigationReconciliations: Map<number, number> }).externalNavigationReconciliations.size
 }
 
 function releaseOwner(runtime: Runtime, leaseId: string, leaseEpoch: number, reason: string): Promise<Record<string, unknown>> {
@@ -588,4 +947,15 @@ function bridge(tabId: number, frameId: number, documentId: string, index: numbe
 
 function value(result: unknown): Record<string, unknown> {
   return { result: { type: typeof result, value: result } }
+}
+
+function pngBase64(width: number, height: number): string {
+  const bytes = new Uint8Array(24)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(8, 13)
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12)
+  view.setUint32(16, width)
+  view.setUint32(20, height)
+  return Buffer.from(bytes).toString('base64')
 }

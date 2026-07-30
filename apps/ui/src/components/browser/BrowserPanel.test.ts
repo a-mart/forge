@@ -33,7 +33,7 @@ function snapshot(tabs: BrowserTabSnapshot[], activeTabId = tabs[0]?.tabId ?? nu
   return { schemaVersion: 2, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs, activeTabId, defaultTabId: activeTabId, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
 }
 function port(): BrowserWorkspaceCommandPort {
-  return { open: vi.fn(), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn(), popOut: vi.fn(), dock: vi.fn() }
+  return { open: vi.fn(), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn(), takeControl: vi.fn(), popOut: vi.fn(), dock: vi.fn() }
 }
 function render(state: BrowserSessionSnapshot, commands = port(), mode: 'docked' | 'popped-out' = 'docked') {
   act(() => root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: state, host, commandPort: commands, mode, popoutAvailable: true })))
@@ -101,6 +101,9 @@ describe('BrowserPanel automatic experience', () => {
     const show = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Show in Chrome')!
     act(() => show.click())
     expect(commands.reveal).toHaveBeenCalledWith(externalTab.tabId)
+    const takeControl = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Take Control')!
+    act(() => takeControl.click())
+    expect(commands.takeControl).toHaveBeenCalledWith(externalTab.tabId)
   })
 
   it('dispatches an explicit new-tab command from the plus button', () => {

@@ -28,7 +28,7 @@ import {
   useModelPresets,
 } from '@/lib/model-preset'
 import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
-import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 
 const NO_CATEGORY_VALUE = '__none__'
 
@@ -334,7 +334,7 @@ export function ChannelSettingsSheet({
                     <SelectContent>
                       {supportedLevels.map((level) => (
                         <SelectItem key={level} value={level}>
-                          {REASONING_LEVEL_LABELS[level] || level}
+                          {formatReasoningLevel(level, supportedLevels)}
                         </SelectItem>
                       ))}
                     </SelectContent>

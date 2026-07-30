@@ -34,4 +34,4 @@ describe('BuilderBrowserPanel', () => {
 const now = new Date(0).toISOString()
 const host: BrowserHostConnectionSnapshot = { connected: true, hostId: 'host', hostGeneration: 2, focused: true, capabilities: null, connectedAt: now }
 const snapshot: BrowserSessionSnapshot = { schemaVersion: 2, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
-const commandPort = { open: vi.fn(async () => undefined), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn() }
+const commandPort = { open: vi.fn(async () => undefined), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(), capture: vi.fn(async () => ''), startRecording: vi.fn(), stopRecording: vi.fn(), reveal: vi.fn(), takeControl: vi.fn() }

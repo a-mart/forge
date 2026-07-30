@@ -1,5 +1,6 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
+  EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
   type BrowserAutomationFailure,
   type BrowserAutomationOperation,
   type BrowserAutomationRequest,
@@ -71,8 +72,9 @@ interface AuthorityBurst {
   session: BrowserTargetSession
   authority: ExternalBrowserTargetAuthority
   operations: number
+  requiresReobserve: boolean
   timer: ReturnType<typeof setTimeout> | null
-  pendingReleaseReason: 'idle' | 'operation-failed' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'] | null
+  pendingReleaseReason: 'idle' | 'operation-failed' | 'turn-ended' | 'take-control' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'] | null
 }
 
 interface ExternalAttemptOptions {
@@ -114,9 +116,12 @@ export class AutomaticBrowserHost {
     this.now = options.now ?? Date.now
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
-    this.initialIdleMs = boundedDelay(options.authorityBurst?.initialIdleMs, 250)
-    this.incrementMs = boundedDelay(options.authorityBurst?.incrementMs, 150)
-    this.maximumIdleMs = Math.max(this.initialIdleMs, boundedDelay(options.authorityBurst?.maximumIdleMs, 1_000))
+    this.initialIdleMs = boundedDelay(options.authorityBurst?.initialIdleMs, EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS)
+    this.incrementMs = boundedDelay(options.authorityBurst?.incrementMs, 0)
+    this.maximumIdleMs = Math.max(
+      this.initialIdleMs,
+      boundedDelay(options.authorityBurst?.maximumIdleMs, EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS),
+    )
   }
 
   get capabilities(): AutomaticBrowserHostCapabilities {
@@ -236,6 +241,42 @@ export class AutomaticBrowserHost {
       const logicalTabId = tabKey.slice(key.length + 1)
       if (this.targetOwners.get(logicalTabId)?.sessionKey === key) this.targetOwners.delete(logicalTabId)
     }
+  }
+
+  async takeControl(session: BrowserTargetSession, tabId: string): Promise<{ released: boolean; tabId: string }> {
+    if (this.targetAffinities.get(targetKey(session, tabId)) !== 'external-chrome') {
+      throw failureError('tab-not-found', 'Take Control requires an External Chrome tab.', false, {
+        phase: 'discovery', mutationState: 'not-started', fallbackReason: 'no-eligible-target',
+      })
+    }
+    const key = sessionKey(session)
+    const release = async (burst: AuthorityBurst | undefined): Promise<{ released: boolean; tabId: string }> => {
+      if (burst === undefined) return { released: false, tabId }
+      if (burst.authority.tabId !== tabId) {
+        throw failureError('lease-conflict', 'Another Chrome tab owns the active control authority.', true, {
+          phase: 'cleanup', mutationState: 'not-started', fallbackReason: 'authority-conflict',
+        })
+      }
+      await this.releaseAndForgetBurst(key, burst, 'take-control')
+      return { released: true, tabId }
+    }
+    const burst = this.bursts.get(key)
+    if (burst === undefined) {
+      // An acquisition may be between durable request delivery and host-side burst publication.
+      // Queue that edge first, then consult the adapter's exact durable checkpoint so Take Control
+      // also works after a Desktop process restart erased only this host's in-memory burst.
+      return this.serialize(key, async () => {
+        const acquired = this.bursts.get(key)
+        if (acquired !== undefined) return release(acquired)
+        const external = this.external
+        const released = isAutomaticExternalBrowserAdapter(external)
+          ? await external.releaseTargetAuthority(session, tabId, 'take-control')
+          : false
+        return { released, tabId }
+      })
+    }
+    // Known authority bypasses the operation queue so user release can invalidate active work.
+    return release(burst)
   }
 
   revealTarget(session: BrowserTargetSession, tabId: string): Promise<AutomaticBrowserRevealResult> {
@@ -408,9 +449,26 @@ export class AutomaticBrowserHost {
       && burst.pendingReleaseReason === null
       && reuseExisting
       && (!preferredTabId || preferredTabId === burst.authority.tabId))
+    if (burst?.requiresReobserve === true && canReuseBurst && request.operation !== 'snapshot') {
+      this.scheduleBurstRelease(burst)
+      return failureResponse(
+        request,
+        'request-cancelled',
+        'Trusted collaborative input changed the Chrome page; take a fresh snapshot before continuing.',
+        true,
+        {
+          reason: 'trusted-input-reobserve',
+          automaticPolicyPhase: 'execution',
+          mutationState: 'not-started',
+          fallbackReason: 'authority-conflict',
+          noReplay: true,
+          requiresReobserve: true,
+        },
+      )
+    }
     if (burst && !canReuseBurst) {
       try {
-        await this.releaseAndForgetBurst(burstKey, burst, burst.pendingReleaseReason ?? 'idle')
+        await this.releaseAndForgetBurst(burstKey, burst, burst.pendingReleaseReason ?? 'idle', Date.parse(request.deadlineAt))
       } catch (error) {
         return failureResponse(request, 'host-disconnected', error instanceof Error ? error.message : 'Pending Chrome authority release failed.', true,
           policyDetails({ phase: 'cleanup', mutationState: 'not-started', fallbackReason: 'transport-disconnected' }, false))
@@ -437,7 +495,14 @@ export class AutomaticBrowserHost {
           ...policyDetails(acquired.metadata, false),
         })
       }
-      burst = { session, authority: acquired.authority, operations: 0, timer: null, pendingReleaseReason: null }
+      burst = {
+        session,
+        authority: acquired.authority,
+        operations: 0,
+        requiresReobserve: false,
+        timer: null,
+        pendingReleaseReason: null,
+      }
       this.bursts.set(burstKey, burst)
     } else if (burst.timer) {
       this.clearTimer(burst.timer)
@@ -456,21 +521,29 @@ export class AutomaticBrowserHost {
     }
     const response = this.acceptResponse(targeted, execution.response, 'external-chrome')
     if (response.ok) {
+      if (request.operation === 'snapshot') burst.requiresReobserve = false
       burst.operations += 1
       this.scheduleBurstRelease(burst)
       return response
     }
 
-    // Cleanup cannot replace the original no-replay operation result. If the
-    // acknowledgement is lost, retain this exact authority and retry before any
-    // later acquisition or lifecycle acknowledgement.
-    await this.releaseAndForgetBurst(burstKey, burst, 'operation-failed').catch(() => undefined)
     const metadata = execution.failure ?? {
       phase: 'execution' as const,
       mutationState: mutationDefault(request.operation),
     }
-    const terminal = withPolicyFailure(response, metadata, metadata.mutationState !== 'not-started')
-    if (explicit || metadata.mutationState !== 'not-started') return terminal
+    if (metadata.preserveAuthority && metadata.requiresReobserve) {
+      burst.requiresReobserve = true
+      burst.operations += 1
+      this.scheduleBurstRelease(burst)
+      return withPolicyFailure(response, metadata, true)
+    }
+
+    // Cleanup cannot replace the original no-replay operation result. If the
+    // acknowledgement is lost, retain this exact authority and retry before any
+    // later acquisition or lifecycle acknowledgement.
+    await this.releaseAndForgetBurst(burstKey, burst, 'operation-failed', Date.parse(request.deadlineAt)).catch(() => undefined)
+    const terminal = withPolicyFailure(response, metadata, metadata.noReplay === true || metadata.mutationState !== 'not-started')
+    if (explicit || metadata.noReplay === true || metadata.mutationState !== 'not-started') return terminal
     return this.performManaged(request, managedFallbackTabId, metadata.fallbackReason)
   }
 
@@ -531,6 +604,7 @@ export class AutomaticBrowserHost {
   }
 
   private scheduleBurstRelease(burst: AuthorityBurst): void {
+    if (burst.pendingReleaseReason !== null || this.bursts.get(sessionKey(burst.session)) !== burst) return
     if (burst.timer) this.clearTimer(burst.timer)
     const delay = Math.min(this.maximumIdleMs, this.initialIdleMs + Math.max(0, burst.operations - 1) * this.incrementMs)
     burst.timer = this.setTimer(() => {
@@ -553,7 +627,8 @@ export class AutomaticBrowserHost {
   private async releaseAndForgetBurst(
     key: string,
     burst: AuthorityBurst,
-    reason: 'idle' | 'operation-failed' | 'turn-ended' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
+    reason: 'idle' | 'operation-failed' | 'turn-ended' | 'take-control' | Extract<BrowserHostLifecycleRequest, { kind: 'release-session' }>['reason'],
+    deadlineAt?: number,
   ): Promise<void> {
     if (burst.timer) {
       this.clearTimer(burst.timer)
@@ -561,7 +636,11 @@ export class AutomaticBrowserHost {
     }
     burst.pendingReleaseReason ??= reason
     if (isAutomaticExternalBrowserAdapter(this.external)) {
-      await this.external.releaseAuthority(burst.session, burst.authority, burst.pendingReleaseReason)
+      await this.external.releaseAuthority(burst.session, burst.authority, burst.pendingReleaseReason, deadlineAt)
+    }
+    if (burst.timer) {
+      this.clearTimer(burst.timer)
+      burst.timer = null
     }
     if (this.bursts.get(key) === burst) this.bursts.delete(key)
   }
@@ -597,7 +676,7 @@ function sessionKey(session: BrowserTargetSession): string {
 }
 
 function isCanonicalExternalTabId(value: string): boolean {
-  const match = /^ext\.([A-Za-z0-9_-]{1,64})\.([0-9]+)$/u.exec(value)
+  const match = /^ext\.([A-Za-z0-9_-]{1,128})\.([0-9]+)$/u.exec(value)
   return match !== null && Number.isSafeInteger(Number(match[2]))
 }
 

@@ -34,6 +34,7 @@ export interface BrowserAutomationHostHandle {
   startRecording(tabId: string): Promise<void>
   stopRecording(tabId: string, recordingId: string): Promise<void>
   reveal(tabId: string): Promise<void>
+  takeControl(tabId: string): Promise<void>
   popOut(): Promise<void>
   dock(): Promise<void>
   bringToFront(): Promise<void>
@@ -452,6 +453,12 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         const profileId = selectedProfileRef.current
         if (!bridgeRef.current || !sessionAgentId || !profileId) throw new Error('Browser is unavailable')
         await bridgeRef.current.reveal(sessionAgentId, profileId, tabId)
+      },
+      takeControl: async (tabId) => {
+        const sessionAgentId = selectedSessionRef.current
+        const profileId = selectedProfileRef.current
+        if (!bridgeRef.current || !sessionAgentId || !profileId) throw new Error('Browser is unavailable')
+        await bridgeRef.current.takeControl(sessionAgentId, profileId, tabId)
       },
       popOut: async () => { await workspace?.popOut(workspaceEpochRef.current) },
       dock: async () => { await workspace?.dock(workspaceEpochRef.current) },

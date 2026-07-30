@@ -3,13 +3,20 @@ import {
   BROWSER_AUTOMATION_MAX_EVALUATE_BYTES,
   BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS,
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT,
   BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_VIEWPORT_MAX_DIMENSION,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+  EXTERNAL_CHROME_MAX_URL_LENGTH,
+  EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_HEIGHT,
+  EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_WIDTH,
   EXTERNAL_CHROME_RESPONSE_SAFETY_MARGIN_BYTES,
-  externalChromeScreenshotOverflowDetails,
+  externalChromeControlCollisionDetails,
+  externalChromeMinimumQualifiedScreenshotOverflowDetails,
   type BrowserActionTimelineEntry,
   type BrowserAutomationErrorCode,
   type BrowserAutomationFailure,
@@ -35,8 +42,11 @@ interface OperationAuthority {
   isCurrent(): boolean
   wasHumanInterrupted(): boolean
   navigationGeneration: number
-  /** Revokes lease authority, detaches, and settles all outstanding CDP work. */
+  /** Revokes or invalidates authority and settles all outstanding CDP work. */
   cancelOutstanding(): Promise<void>
+  markMutationDispatched?(): void
+  mutationState?(): 'not-started' | 'possible'
+  canPreserveAttachedIdle?(): boolean
   /** Brackets only the actual CDP input dispatch with its exact trusted DOM event sequence. */
   beginSyntheticInput?(expectedEvents: readonly SyntheticTrustedEventSignature[]): Promise<void>
   endSyntheticInput?(): void
@@ -164,13 +174,15 @@ export class ExternalChromeOperationExecutor {
         case 'waitFor': result = await this.waitFor(params, authority); break
         default: throw new ExternalChromeOperationError('unsupported-operation', `External Chrome does not implement ${params.operation}.`)
       }
-      const resultBytes = new TextEncoder().encode(JSON.stringify(result)).byteLength
-      // Snapshot responses are adaptively compacted against the complete native
-      // JSON-RPC envelope by NativeRpcClient after this operation returns.
-      if (params.operation !== 'snapshot' && resultBytes > MAX_OPERATION_RESULT_BYTES) {
-        throw new ExternalChromeOperationError('response-too-large', 'External Chrome result exceeds the bounded native relay payload.', false, {
-          resultBytes, maximumBytes: MAX_OPERATION_RESULT_BYTES,
-        })
+      // Snapshot responses are adaptively compacted against the complete native JSON-RPC
+      // envelope by NativeRpcClient; avoid an otherwise redundant whole-snapshot UTF-8 copy here.
+      if (params.operation !== 'snapshot') {
+        const resultBytes = new TextEncoder().encode(JSON.stringify(result)).byteLength
+        if (resultBytes > MAX_OPERATION_RESULT_BYTES) {
+          throw new ExternalChromeOperationError('response-too-large', 'External Chrome result exceeds the bounded native relay payload.', false, {
+            resultBytes, maximumBytes: MAX_OPERATION_RESULT_BYTES,
+          })
+        }
       }
       this.assertCurrent(params, authority)
       Object.assign(timeline, { status: 'succeeded', completedAt: new Date(this.now()).toISOString() })
@@ -219,28 +231,13 @@ export class ExternalChromeOperationExecutor {
       throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an invalid root document device pixel ratio.', true)
     }
     const deviceScaleFactor = rawDeviceScaleFactor
-    const scale = Math.min(1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH / width)
-    const capture = record(await this.command(params, authority, routes[0]!, 'Page.captureScreenshot', {
-      format: 'png', fromSurface: true, captureBeyondViewport: false,
-      clip: { x: finiteNumber(visual.pageX, 0), y: finiteNumber(visual.pageY, 0), width, height, scale },
-    }))
-    if (typeof capture.data !== 'string' || capture.data.length === 0) throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
-    const bytes = base64Bytes(capture.data)
-    if (bytes === 0) throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
-    if (bytes > EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES) {
-      throw new ExternalChromeOperationError(
-        'response-too-large',
-        'External Chrome screenshot exceeds the decoded PNG byte limit.',
-        false,
-        externalChromeScreenshotOverflowDetails(
-          bytes,
-          'decoded-png',
-          EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
-          'decoded-png',
-        ),
-      )
-    }
-    const dimensions = pngDimensions(capture.data) ?? { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+    const capture = await this.captureQualifiedPng(params, authority, routes[0]!, {
+      x: finiteNumber(visual.pageX, 0),
+      y: finiteNumber(visual.pageY, 0),
+      width,
+      height,
+      deviceScaleFactor,
+    })
     const axResults = await Promise.all(routes.map((route) => this.command(params, authority, route, 'Accessibility.getFullAXTree').catch(() => ({ nodes: [] }))))
     const accessibility = {
       frames: axResults.map((value, index) => ({
@@ -251,7 +248,14 @@ export class ExternalChromeOperationExecutor {
     const visibleText = pages.map((page) => typeof page.visibleText === 'string' ? page.visibleText : '').filter(Boolean).join('\n').slice(0, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH)
     const interactiveElements = pages.flatMap((page) => Array.isArray(page.interactiveElements)
       ? page.interactiveElements.filter(validSnapshotElement).map((element) => ({
-        ...element, x: element.x + page.transform.x, y: element.y + page.transform.y,
+        tag: element.tag.slice(0, 128),
+        role: element.role === null ? null : element.role.slice(0, 128),
+        name: element.name.slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+        selector: element.selector.slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+        x: element.x + page.transform.x,
+        y: element.y + page.transform.y,
+        width: element.width,
+        height: element.height,
       }))
       : []).slice(0, BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS)
     return {
@@ -261,8 +265,86 @@ export class ExternalChromeOperationExecutor {
       consoleEntries: (this.consoleByTab.get(params.tabId) ?? []).slice(-BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES),
       networkEntries: (this.networkByTab.get(params.tabId) ?? []).slice(-BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES),
       actionTimeline: (this.actionsByTab.get(params.tabId) ?? []).slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS),
-      screenshot: { mimeType: 'image/png', data: capture.data, width: dimensions.width, height: dimensions.height },
+      screenshot: { mimeType: 'image/png', data: capture.data, width: capture.width, height: capture.height },
     }
+  }
+
+  private async captureQualifiedPng(
+    params: Extract<ExternalChromeExecuteParams, { operation: 'snapshot' }>,
+    authority: OperationAuthority,
+    route: DebuggerRoute,
+    viewport: { x: number; y: number; width: number; height: number; deviceScaleFactor: number },
+  ): Promise<{ data: string; width: number; height: number }> {
+    const sourceWidth = viewport.width * viewport.deviceScaleFactor
+    const sourceHeight = viewport.height * viewport.deviceScaleFactor
+    if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+      throw new ExternalChromeOperationError('execution-failed', 'Chrome returned unsafe screenshot source dimensions.', true)
+    }
+    const initialScale = Math.min(
+      1,
+      BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH / sourceWidth,
+      BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT / sourceHeight,
+    )
+    const initialWidth = Math.max(1, sourceWidth * initialScale)
+    const initialHeight = Math.max(1, sourceHeight * initialScale)
+    const minimumScale = Math.min(initialScale, Math.max(
+      Math.min(EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_WIDTH, initialWidth) / sourceWidth,
+      Math.min(EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_HEIGHT, initialHeight) / sourceHeight,
+    ))
+    const scales = adaptiveCaptureScales(initialScale, minimumScale)
+    let lastBytes = 0
+    let lastBase64Bytes = 0
+    let lastDimensions: { width: number; height: number } | null = null
+    for (const scale of scales) {
+      const response = record(await this.command(params, authority, route, 'Page.captureScreenshot', {
+        format: 'png', fromSurface: true, captureBeyondViewport: false,
+        clip: { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height, scale },
+      }))
+      if (typeof response.data !== 'string' || response.data.length === 0) {
+        throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
+      }
+      const dimensions = pngDimensions(response.data)
+      if (dimensions === null) {
+        throw new ExternalChromeOperationError('execution-failed', 'Chrome returned a PNG with an invalid IHDR.', true)
+      }
+      const bytes = base64Bytes(response.data)
+      if (bytes === 0) throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an empty screenshot.', true)
+      lastBytes = bytes
+      // Base64 is ASCII. Avoid duplicating an already-oversized Chrome string merely to prove it
+      // exceeds the bound; exact UTF-8 measurement remains bounded for candidates that can fit.
+      lastBase64Bytes = response.data.length > EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES
+        ? response.data.length
+        : new TextEncoder().encode(response.data).byteLength
+      lastDimensions = dimensions
+      const dimensionsQualified = dimensions.width <= BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH &&
+        dimensions.height <= BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT
+      if (dimensionsQualified && bytes <= EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES &&
+        lastBase64Bytes <= EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES) {
+        return { data: response.data, ...dimensions }
+      }
+    }
+    if (lastDimensions !== null && (lastDimensions.width > BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH ||
+      lastDimensions.height > BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT)) {
+      throw new ExternalChromeOperationError('response-too-large', 'External Chrome screenshot exceeds the qualified pixel dimensions.', false, {
+        limitation: 'external-chrome-screenshot-dimension-bound',
+        screenshotWidth: lastDimensions.width,
+        screenshotHeight: lastDimensions.height,
+        maximumWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
+        maximumHeight: BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT,
+      })
+    }
+    const base64Overflow = lastBase64Bytes > EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES
+    throw new ExternalChromeOperationError(
+      'response-too-large',
+      'External Chrome screenshot cannot fit at the minimum qualified capture scale.',
+      false,
+      externalChromeMinimumQualifiedScreenshotOverflowDetails(
+        base64Overflow ? lastBase64Bytes : lastBytes,
+        base64Overflow ? 'base64-utf8' : 'decoded-png',
+        base64Overflow ? EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES : EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
+        base64Overflow ? 'base64-utf8' : 'decoded-png',
+      ),
+    )
   }
 
   private async click(params: Extract<ExternalChromeExecuteParams, { operation: 'click' }>, authority: OperationAuthority): Promise<BrowserAutomationResultByOperation['click']> {
@@ -278,12 +360,15 @@ export class ExternalChromeOperationExecutor {
       point = { route, x: input.x, y: input.y }
     } else {
       const spec = parseLocator('locator' in input ? input.locator : `css=${input.selector}`)
+      authority.markMutationDispatched?.()
       point = await this.pollLocator(params, authority, spec, input.timeoutMs, 'click')
     }
     let syntheticInput = false
     try {
       await authority.beginSyntheticInput?.(pointerClickSequence(point.x, point.y))
       syntheticInput = true
+      this.assertCurrent(params, authority)
+      authority.markMutationDispatched?.()
       await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none' })
       await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 })
       await this.command(params, authority, point.route, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 })
@@ -298,11 +383,14 @@ export class ExternalChromeOperationExecutor {
     let route = this.debuggers.routes(params.tabId)[0]
     if (!route) throw new ExternalChromeOperationError('debugger-unavailable', 'The leased tab debugger is not attached.', true)
     if (input.locator || input.selector) {
+      // Locator typing focuses the page and may clear it before Input.insertText.
+      authority.markMutationDispatched?.()
       const point = await this.pollLocator(params, authority, parseLocator(input.locator ?? `css=${input.selector}`), input.timeoutMs, 'type', input.clear)
       route = point.route
       if (!point.editable) throw new ExternalChromeOperationError('target-not-editable', 'Type target is disabled, read-only, or not editable.')
     } else {
       const routes = this.debuggers.routes(params.tabId)
+      if (input.clear) authority.markMutationDispatched?.()
       const probes = await Promise.all(routes.map(async (candidate) => ({
         route: candidate,
         focused: objectValue(await this.evaluateValue(params, authority, candidate, focusedEditableExpression(input.clear)), 'Focused target result') as { found?: boolean; editable?: boolean },
@@ -322,6 +410,8 @@ export class ExternalChromeOperationExecutor {
         // sentinels. An empty expectation means any interleaved trusted event interrupts.
         await authority.beginSyntheticInput?.([])
         syntheticInput = true
+        this.assertCurrent(params, authority)
+        authority.markMutationDispatched?.()
         await this.command(params, authority, route, 'Input.insertText', { text: input.text })
       } finally {
         if (syntheticInput) authority.endSyntheticInput?.()
@@ -340,6 +430,8 @@ export class ExternalChromeOperationExecutor {
     try {
       await authority.beginSyntheticInput?.(keyPressSequence(event.down))
       syntheticInput = true
+      this.assertCurrent(params, authority)
+      authority.markMutationDispatched?.()
       await this.command(params, authority, route, 'Input.dispatchKeyEvent', { type: 'keyDown', ...event.down })
       down = true
       await this.command(params, authority, route, 'Input.dispatchKeyEvent', { type: 'keyUp', ...event.up })
@@ -356,6 +448,7 @@ export class ExternalChromeOperationExecutor {
     const deltaX = input.deltaX ?? 0
     const deltaY = input.deltaY ?? 0
     if (input.locator || input.selector) {
+      authority.markMutationDispatched?.()
       const match = await this.resolveLocator(params, authority, parseLocator(input.locator ?? `css=${input.selector}`), 'scroll', false, deltaX, deltaY)
       if (match.kind === 'invalid-selector') throw new ExternalChromeOperationError('invalid-selector', match.message ?? 'Invalid CSS selector.')
       const matchCount = match.count ?? 0
@@ -365,6 +458,7 @@ export class ExternalChromeOperationExecutor {
     }
     const route = this.debuggers.routes(params.tabId)[0]
     if (!route) throw new ExternalChromeOperationError('debugger-unavailable', 'The leased tab debugger is not attached.', true)
+    authority.markMutationDispatched?.()
     const value = objectValue(await this.evaluateValue(params, authority, route, windowScrollExpression(deltaX, deltaY)), 'Scroll result') as LocatorResult
     return { tabId: String(params.tabId), deltaX, deltaY, scrollX: finiteNumber(value.scrollX, 0), scrollY: finiteNumber(value.scrollY, 0) }
   }
@@ -372,6 +466,7 @@ export class ExternalChromeOperationExecutor {
   private async evaluate(params: Extract<ExternalChromeExecuteParams, { operation: 'evaluate' }>, authority: OperationAuthority): Promise<BrowserAutomationResultByOperation['evaluate']> {
     const route = this.debuggers.routes(params.tabId)[0]
     if (!route) throw new ExternalChromeOperationError('debugger-unavailable', 'The leased tab debugger is not attached.', true)
+    authority.markMutationDispatched?.()
     const response = record(await this.command(params, authority, route, 'Runtime.evaluate', {
       expression: params.input.expression, awaitPromise: params.input.awaitPromise, returnByValue: params.input.returnByValue,
       // Arbitrary evaluation never receives transient user activation. Synthetic input has its
@@ -556,8 +651,8 @@ export class ExternalChromeOperationExecutor {
         // detach if Chrome also stalls the termination command itself.
         if (terminateOnTimeout) void this.debuggers.sendCommand(params.tabId, 'Runtime.terminateExecution', {}, route.sessionId).catch(() => undefined)
         await authority.cancelOutstanding()
-        // Debugger detach is the cancellation acknowledgement. Do not release the
-        // per-tab queue until Chrome has settled the original command callback.
+        // Collaborative cancellation may retain an exact attachment; every path still proves
+        // the original callback settled (or detaches) before releasing the per-tab queue.
         await command.catch(() => undefined)
       }
       throw error
@@ -573,15 +668,19 @@ export class ExternalChromeOperationExecutor {
       throw new ExternalChromeOperationError('request-cancelled', 'Page navigation cancelled the stale operation.', true, { reason: 'navigation' })
     }
     if (!authority.isCurrent()) {
-      if (authority.wasHumanInterrupted()) throw new ExternalChromeOperationError('control-interrupted', 'Trusted human input interrupted the operation.', true)
+      if (authority.wasHumanInterrupted()) throw collaborativeCollision(authority)
       throw new ExternalChromeOperationError('request-cancelled', 'Lease or debugger authority changed during the operation.', true)
     }
   }
 
   private normalizeError(error: unknown, params: ExternalChromeExecuteParams, authority: OperationAuthority): ExternalChromeOperationError {
-    if (error instanceof ExternalChromeOperationError) return error
+    if (error instanceof ExternalChromeOperationError) {
+      return error.code === 'control-interrupted' && authority.wasHumanInterrupted()
+        ? collaborativeCollision(authority)
+        : error
+    }
     if (!authority.isCurrent()) return authority.wasHumanInterrupted()
-      ? new ExternalChromeOperationError('control-interrupted', 'Trusted human input interrupted the operation.', true)
+      ? collaborativeCollision(authority)
       : new ExternalChromeOperationError('request-cancelled', 'Lease authority changed during the operation.', true)
     const message = error instanceof Error ? error.message : String(error)
     if (/detached|not attached|No tab with given id/iu.test(message)) return new ExternalChromeOperationError('lease-lost', 'The leased debugger target was detached.', true)
@@ -644,7 +743,7 @@ function locatorExpression(spec: LocatorSpec, mode: string, clear: boolean, delt
       for(const element of elements){ const style=element.ownerDocument.defaultView.getComputedStyle(element); const rect=element.getBoundingClientRect(); if(style.visibility==='hidden'||style.display==='none'||rect.width<=0||rect.height<=0)continue; matches.push({entry,element}); }
     }} catch(error){ return {kind:'invalid-selector',count:0,message:String(error).slice(0,512)}; }
     if(matches.length!==1)return {kind:'match',count:matches.length};
-    const match=matches[0], element=match.element; element.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+    const match=matches[0], element=match.element; if(mode!=='probe')element.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
     const rect=element.getBoundingClientRect(); const editable=(element instanceof element.ownerDocument.defaultView.HTMLTextAreaElement)||(element instanceof element.ownerDocument.defaultView.HTMLInputElement&&!new Set(['button','checkbox','color','file','hidden','image','radio','range','reset','submit']).has(element.type))||element.isContentEditable;
     const allowed=editable&&!element.disabled&&!element.readOnly;
     if(mode==='type'){ element.focus(); if(allowed&&shouldClear){ if('value' in element){ const proto=element.tagName==='TEXTAREA'?element.ownerDocument.defaultView.HTMLTextAreaElement.prototype:element.ownerDocument.defaultView.HTMLInputElement.prototype; const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set; if(setter)setter.call(element,''); else element.value=''; } else element.textContent=''; element.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'})); } }
@@ -657,9 +756,9 @@ function snapshotExpression(): string {
   return `(() => {
     const limit=${BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS}, textLimit=${BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH};
     const documents=[]; const visit=(doc,offsetX,offsetY)=>{if(!doc||documents.length>=32)return;documents.push({doc,offsetX,offsetY});for(const frame of Array.from(doc.querySelectorAll('iframe,frame'))){try{const child=frame.contentDocument;if(child){const rect=frame.getBoundingClientRect();visit(child,offsetX+rect.left,offsetY+rect.top);}}catch{}}};visit(document,0,0);
-    const selectorFor=element=>{if(element.id)return '#'+CSS.escape(element.id);for(const attribute of ['data-testid','name']){const value=element.getAttribute(attribute);if(value)return element.tagName.toLowerCase()+'['+attribute+'='+JSON.stringify(value)+']';}const parts=[];let current=element;while(current&&parts.length<8){const siblings=current.parentElement?Array.from(current.parentElement.children).filter(child=>child.tagName===current.tagName):[];const base=current.tagName.toLowerCase();parts.unshift(siblings.length>1?base+':nth-of-type('+(siblings.indexOf(current)+1)+')':base);current=current.parentElement;}return parts.join(' > ');};
-    const elements=[];for(const entry of documents){for(const element of Array.from(entry.doc.querySelectorAll('a[href],button,input,textarea,select,[role],[tabindex]'))){if(elements.length>=limit)break;const style=element.ownerDocument.defaultView.getComputedStyle(element),rect=element.getBoundingClientRect();if(style.visibility==='hidden'||style.display==='none'||rect.width<=0||rect.height<=0)continue;elements.push({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),name:String(element.getAttribute('aria-label')||element.innerText||element.getAttribute('name')||'').slice(0,512),selector:selectorFor(element),x:entry.offsetX+rect.x,y:entry.offsetY+rect.y,width:rect.width,height:rect.height});}}
-    return {url:location.href,title:document.title,loading:document.readyState!=='complete',visibleText:documents.map(entry=>entry.doc.body?.innerText||'').join('\\n').slice(0,textLimit),interactiveElements:elements};
+    const selectorFor=element=>{if(element.id&&element.id.length<=512)return '#'+CSS.escape(element.id);for(const attribute of ['data-testid','name']){const value=element.getAttribute(attribute);if(value&&value.length<=512)return element.tagName.toLowerCase()+'['+attribute+'='+JSON.stringify(value)+']';}const parts=[];let current=element;while(current&&parts.length<8){const siblings=current.parentElement?Array.from(current.parentElement.children).filter(child=>child.tagName===current.tagName):[];const base=current.tagName.toLowerCase();parts.unshift(siblings.length>1?base+':nth-of-type('+(siblings.indexOf(current)+1)+')':base);current=current.parentElement;}return parts.join(' > ').slice(0,2048);};
+    const elements=[];for(const entry of documents){for(const element of Array.from(entry.doc.querySelectorAll('a[href],button,input,textarea,select,[role],[tabindex]'))){if(elements.length>=limit)break;const style=element.ownerDocument.defaultView.getComputedStyle(element),rect=element.getBoundingClientRect();if(style.visibility==='hidden'||style.display==='none'||rect.width<=0||rect.height<=0)continue;const role=element.getAttribute('role');elements.push({tag:element.tagName.toLowerCase().slice(0,128),role:role===null?null:role.slice(0,128),name:String(element.getAttribute('aria-label')||element.innerText||element.getAttribute('name')||'').slice(0,512),selector:selectorFor(element).slice(0,2048),x:entry.offsetX+rect.x,y:entry.offsetY+rect.y,width:rect.width,height:rect.height});}}
+    return {url:location.href.slice(0,2048),title:document.title.slice(0,512),loading:document.readyState!=='complete',visibleText:documents.map(entry=>(entry.doc.body?.innerText||'').slice(0,textLimit)).join('\\n').slice(0,textLimit),interactiveElements:elements};
   })()`
 }
 
@@ -726,16 +825,42 @@ function finiteNumber(value: unknown, fallback: number): number { return typeof 
 function positiveNumber(value: unknown, fallback: number): number { const resolved = finiteNumber(value, fallback); return resolved > 0 ? resolved : fallback }
 function positiveInteger(value: unknown, fallback: number): number { return Math.max(1, Math.round(positiveNumber(value, fallback))) }
 function base64Bytes(value: string): number { const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0; return Math.max(0, Math.floor(value.length * 3 / 4) - padding) }
+function adaptiveCaptureScales(initialScale: number, minimumScale: number): number[] {
+  const normalizedInitial = Math.max(Number.EPSILON, Math.min(1, initialScale))
+  const normalizedMinimum = Math.max(Number.EPSILON, Math.min(normalizedInitial, minimumScale))
+  const scales: number[] = []
+  let scale = normalizedInitial
+  while (scale > normalizedMinimum) {
+    scales.push(Number(scale.toFixed(8)))
+    const next = Math.max(normalizedMinimum, scale * 0.75)
+    if (next === scale) break
+    scale = next
+  }
+  if (scales.at(-1) !== Number(normalizedMinimum.toFixed(8))) scales.push(Number(normalizedMinimum.toFixed(8)))
+  return scales
+}
 function pngDimensions(base64: string): { width: number; height: number } | null {
   try {
-    const binary = atob(base64.slice(0, 32))
-    if (binary.length < 24 || binary.charCodeAt(0) !== 0x89 || binary.slice(1, 4) !== 'PNG') return null
-    const read = (offset: number) => ((binary.charCodeAt(offset) << 24) | (binary.charCodeAt(offset + 1) << 16) | (binary.charCodeAt(offset + 2) << 8) | binary.charCodeAt(offset + 3)) >>> 0
+    const binary = atob(base64.slice(0, 48))
+    const byte = (offset: number): number => binary.charCodeAt(offset)
+    if (binary.length < 24 || [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].some((value, index) => byte(index) !== value) ||
+      byte(8) !== 0 || byte(9) !== 0 || byte(10) !== 0 || byte(11) !== 13 || binary.slice(12, 16) !== 'IHDR') return null
+    const read = (offset: number) => ((byte(offset) << 24) | (byte(offset + 1) << 16) | (byte(offset + 2) << 8) | byte(offset + 3)) >>> 0
     const width = read(16); const height = read(20)
     return width > 0 && height > 0 ? { width, height } : null
   } catch { return null }
 }
 function safeException(value: unknown): string { const details = record(value); const exception = record(details.exception); return String(exception.description ?? details.text ?? 'JavaScript evaluation failed').slice(0, 1_024) }
+function collaborativeCollision(authority: OperationAuthority): ExternalChromeOperationError {
+  return new ExternalChromeOperationError(
+    'control-interrupted',
+    'Trusted collaborative input interrupted the operation; re-observe the page before continuing.',
+    true,
+    authority.canPreserveAttachedIdle?.() === true
+      ? externalChromeControlCollisionDetails(authority.mutationState?.() ?? 'not-started')
+      : undefined,
+  )
+}
 function boundedJsonArray(value: unknown, maximum: number): unknown[] { return Array.isArray(value) ? value.slice(0, maximum).map((entry) => boundJson(entry, 0)) : [] }
 function boundJson(value: unknown, depth: number): unknown {
   if (depth >= 8) return '[truncated]'

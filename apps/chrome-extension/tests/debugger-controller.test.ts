@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DebuggerAttachConflictError,
   DebuggerAttachmentLimitError,
@@ -73,6 +73,73 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     await navigation
     expect(settled).toBe(true)
     expect(chrome.commands).toContainEqual({ target: { tabId: 9 }, method: 'Page.navigate', params: { url: 'https://fixture.invalid/' } })
+  })
+
+  it.each(['none', 'domContentLoaded', 'load'] as const)(
+    'does not dispatch expired %s navigation or mark its mutation started',
+    async (readiness) => {
+      const chrome = fakeChrome()
+      const controller = new DebuggerController(chrome.debugger, undefined, () => 1_000)
+      await controller.attach(12)
+      const onDispatch = vi.fn()
+
+      await expect(controller.navigateAndWait(
+        12,
+        'https://fixture.invalid/expired',
+        readiness,
+        1_000,
+        () => true,
+        onDispatch,
+      )).rejects.toThrow(/timed out/u)
+      expect(onDispatch).not.toHaveBeenCalled()
+      expect(chrome.commands.filter(({ method }) => method === 'Page.navigate')).toEqual([])
+    },
+  )
+
+  it.each(['none', 'domContentLoaded', 'load'] as const)(
+    'rechecks exact lease authority before dispatching %s navigation',
+    async (readiness) => {
+      const chrome = fakeChrome()
+      const controller = new DebuggerController(chrome.debugger, undefined, () => 1_000)
+      await controller.attach(13)
+      const isAuthorized = vi.fn()
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false)
+      const onDispatch = vi.fn()
+
+      await expect(controller.navigateAndWait(
+        13,
+        'https://fixture.invalid/revoked',
+        readiness,
+        2_000,
+        isAuthorized,
+        onDispatch,
+      )).rejects.toThrow(/authority was interrupted/u)
+      expect(isAuthorized).toHaveBeenCalledTimes(2)
+      expect(onDispatch).not.toHaveBeenCalled()
+      expect(chrome.commands.filter(({ method }) => method === 'Page.navigate')).toEqual([])
+    },
+  )
+
+  it('waits for both the navigation command callback and the readiness milestone', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(11)
+    const originalSend = chrome.debugger.sendCommand.bind(chrome.debugger)
+    let resolveNavigate!: (value: unknown) => void
+    chrome.debugger.sendCommand = (target, method, params) => method === 'Page.navigate'
+      ? new Promise((resolve) => { resolveNavigate = resolve })
+      : originalSend(target, method, params)
+
+    let settled = false
+    const navigation = controller.navigateAndWait(11, 'https://fixture.invalid/', 'load', Date.now() + 1_000, () => true)
+      .then(() => { settled = true })
+    await controller.onEvent({ tabId: 11 }, 'Page.loadEventFired', {})
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    resolveNavigate({})
+    await navigation
+    expect(settled).toBe(true)
   })
 
   it('times out readiness and continuously rejects interrupted lease authority', async () => {

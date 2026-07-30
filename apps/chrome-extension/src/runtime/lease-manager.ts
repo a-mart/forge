@@ -28,14 +28,17 @@ export interface TabAuthorityRecord {
   sessionAgentId: string
   state: TabAuthorityState
   controlEpoch: number
+  /** Trusted collaborative input requires a fresh snapshot before another mutating operation. */
+  requiresObservation: boolean
   createdByForge: boolean
   initialNavigationPending: boolean
   payloadVersion: string
   expiresAt: number
 }
 
-type PersistedTabAuthorityRecord = Omit<TabAuthorityRecord, 'initialNavigationPending' | 'state'> & {
+type PersistedTabAuthorityRecord = Omit<TabAuthorityRecord, 'initialNavigationPending' | 'requiresObservation' | 'state'> & {
   initialNavigationPending?: boolean
+  requiresObservation?: boolean
   /** `human` is the pre-control-session name for operation-idle authority. */
   state: TabAuthorityState | 'human'
 }
@@ -76,6 +79,7 @@ function validRecord(value: unknown): value is PersistedTabAuthorityRecord {
     Number.isSafeInteger(record.ownerEpoch) && (record.ownerEpoch as number) > 0 &&
     typeof record.sessionAgentId === 'string' && record.sessionAgentId.length > 0 && record.sessionAgentId.length <= 128 && !record.sessionAgentId.includes('\0') &&
     ['human', 'idle', 'agent', 'lost'].includes(String(record.state)) && Number.isSafeInteger(record.controlEpoch) && (record.controlEpoch as number) >= 0 &&
+    (record.requiresObservation === undefined || typeof record.requiresObservation === 'boolean') &&
     typeof record.createdByForge === 'boolean' && (record.initialNavigationPending === undefined || typeof record.initialNavigationPending === 'boolean') &&
     typeof record.payloadVersion === 'string' && record.payloadVersion.length > 0 && record.payloadVersion.length <= 256 &&
     Number.isFinite(record.expiresAt) && (record.expiresAt as number) >= 0
@@ -243,6 +247,7 @@ export class LeaseManager {
         sessionAgentId: input.sessionAgentId,
         state: 'idle',
         controlEpoch: 0,
+        requiresObservation: false,
         createdByForge: input.createdByForge === true || initialNavigationPending,
         initialNavigationPending,
         payloadVersion: this.payloadVersion,
@@ -312,10 +317,32 @@ export class LeaseManager {
     return this.mutate(async () => {
       const authority = this.authorities.get(tabId)
       if (authority === undefined) return null
-      const interrupted = { ...authority, state: 'idle' as const, controlEpoch: authority.controlEpoch + 1 }
+      const interrupted = {
+        ...authority,
+        state: 'idle' as const,
+        controlEpoch: authority.controlEpoch + 1,
+        requiresObservation: true,
+      }
       this.authorities.set(tabId, interrupted)
       await this.persistAuthorities()
       return structuredClone(interrupted)
+    })
+  }
+
+  completeObservation(ownerId: string, ownerEpoch: number, tabId: number, controlEpoch: number): Promise<boolean> {
+    return this.mutate(async () => {
+      const authority = this.authorities.get(tabId)
+      if (authority === undefined || authority.ownerId !== ownerId || authority.ownerEpoch !== ownerEpoch ||
+        authority.controlEpoch !== controlEpoch || authority.state !== 'agent') return false
+      if (!authority.requiresObservation) return true
+      this.authorities.set(tabId, { ...authority, requiresObservation: false })
+      try {
+        await this.persistAuthorities()
+      } catch (error) {
+        this.authorities.set(tabId, authority)
+        throw error
+      }
+      return true
     })
   }
 
@@ -538,6 +565,9 @@ export class LeaseManager {
         nextAuthorities.set(record.tabId, {
           ...record,
           initialNavigationPending,
+          // A worker crash creates an unobserved interval even for an idle lease (and may follow a
+          // failed trusted-input persistence write). Fail closed until a fresh snapshot succeeds.
+          requiresObservation: true,
           state: needsTerminalCleanup ? 'lost' : 'idle',
         })
         if (initialNavigationPending) {

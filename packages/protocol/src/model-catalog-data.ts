@@ -206,7 +206,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-sol',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.6-terra': {
       modelId: 'gpt-5.6-terra',
@@ -224,7 +224,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-terra',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.6-luna': {
       modelId: 'gpt-5.6-luna',
@@ -242,7 +242,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-luna',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge follows the 272k context window reported by Codex capability metadata instead of the 372k value reported by Pi.',
     },
     'gpt-5.4': {
       modelId: 'gpt-5.4',

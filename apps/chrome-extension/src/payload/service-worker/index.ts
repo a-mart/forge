@@ -1,6 +1,12 @@
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
   EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_URL_LENGTH,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+  EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
+  externalChromeControlCollisionDetails,
+  isExternalChromeControlCollisionDetails,
   parseExternalChromeJsonRpcFrame,
   type BrowserAutomationResultByOperation,
   type BrowserTabSnapshot,
@@ -110,7 +116,12 @@ function deferred<Value>(): Deferred<Value> {
 
 function chromeVersion(): string { return /Chrom(?:e|ium)\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? 'unknown' }
 function acquiredTab(tab: ChromeTab): Record<string, unknown> {
-  return { tabId: tab.id ?? 0, title: tab.title ?? '', url: tab.url ?? tab.pendingUrl ?? '', active: tab.active === true }
+  return {
+    tabId: tab.id ?? 0,
+    title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+    url: (tab.url ?? tab.pendingUrl ?? '').slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+    active: tab.active === true,
+  }
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -132,6 +143,11 @@ export class Runtime implements ServiceWorkerPayload {
   private readonly initialNavigations = new Map<number, InitialNavigationTransition>()
   private readonly pendingClosedTabReceipts = new Set<number>()
   private readonly humanInterruptedOperations = new Map<number, number>()
+  private readonly humanInterruptionSettlements = new Map<number, {
+    controlEpoch: number
+    settled: Promise<void>
+  }>()
+  private readonly externalNavigationReconciliations = new Map<number, number>()
   private native: NativeRpcClient | null = null
   private directory = ''
   private extensionInstanceId = ''
@@ -352,6 +368,7 @@ export class Runtime implements ServiceWorkerPayload {
           }
         }
         this.humanInterruptedOperations.delete(tab.id!)
+        this.humanInterruptionSettlements.delete(tab.id!)
         this.notifyLeaseChanged(request.params.leaseId, request.params.leaseEpoch, 'acquired', [tab.id!])
         return {
           protocolVersion: 1,
@@ -420,6 +437,15 @@ export class Runtime implements ServiceWorkerPayload {
       return this.executeFailure(params, error instanceof LeaseError ? error.code : 'lease-lost', error instanceof Error ? error.message : 'Tab authority is stale.', true)
     }
     const requestedControlEpoch = authority.controlEpoch
+    if (params.operation !== 'status' && this.externalNavigationReconciliations.has(params.tabId)) {
+      return this.executeFailure(
+        params,
+        'request-cancelled',
+        'Chrome is revalidating collaborative page navigation; retry with a fresh snapshot.',
+        true,
+        this.hasCollaborativeAttachedIdle(params) ? EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS : undefined,
+      )
+    }
     if (params.operation === 'status') {
       try {
         const tab = await this.chrome.tabs.get(params.tabId)
@@ -443,6 +469,16 @@ export class Runtime implements ServiceWorkerPayload {
     if (!['navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'].includes(params.operation)) {
       return this.executeFailure(params, 'unsupported-operation', `External Chrome does not support ${params.operation}.`, false)
     }
+    if (authority.requiresObservation && params.operation !== 'snapshot') {
+      const attached = this.hasCollaborativeAttachedIdle(params)
+      return this.executeFailure(
+        params,
+        'request-cancelled',
+        'Trusted collaborative input changed the page; take a fresh snapshot before continuing.',
+        true,
+        attached ? EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS : undefined,
+      )
+    }
     return this.operations.runExclusive(params.tabId, async () => {
       let resolveTracked!: () => void
       const tracked = new Promise<void>((resolve) => { resolveTracked = resolve })
@@ -450,9 +486,19 @@ export class Runtime implements ServiceWorkerPayload {
       let controlEpoch: number | null = null
       let syntheticOperationId: string | null = null
       let physicalOperation = false
+      let mutationState: 'not-started' | 'possible' = 'not-started'
       try {
         if (!this.acceptingOperations || Date.parse(params.deadlineAt) <= this.now()) {
           return this.executeFailure(params, 'timeout', 'Operation deadline elapsed.', true)
+        }
+        if (this.externalNavigationReconciliations.has(params.tabId)) {
+          return this.executeFailure(
+            params,
+            'request-cancelled',
+            'Chrome is revalidating collaborative page navigation; retry with a fresh snapshot.',
+            true,
+            this.hasCollaborativeAttachedIdle(params) ? EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS : undefined,
+          )
         }
         let operationAuthority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
         if (operationAuthority.controlEpoch !== requestedControlEpoch) {
@@ -488,11 +534,21 @@ export class Runtime implements ServiceWorkerPayload {
         if (neutralInitialTarget && navigateInput !== null) {
           controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
           this.broadcastState([params.tabId], 'agent')
-          const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
-          const authorityCurrent = () => this.authorities.isAuthorityCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const isCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+            this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+          const authorityCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+            this.authorities.isAuthorityCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
           const deadline = Math.min(Date.parse(params.deadlineAt), this.now() + navigateInput.timeoutMs)
           try {
-            const tab = await this.navigateInitialTarget(params, navigateInput.url as string, navigateInput.readiness, deadline, isCurrent, authorityCurrent)
+            const tab = await this.navigateInitialTarget(
+              params,
+              navigateInput.url as string,
+              navigateInput.readiness,
+              deadline,
+              isCurrent,
+              authorityCurrent,
+              () => { mutationState = 'possible' },
+            )
             if (!isCurrent()) return this.executeFailure(params, 'control-interrupted', 'Human input interrupted navigation.', true)
             const result: BrowserAutomationResultByOperation['navigate'] = {
               tab: this.browserTab(tab, operationAuthority),
@@ -501,8 +557,14 @@ export class Runtime implements ServiceWorkerPayload {
             return this.executeResponse(params, true, result)
           } catch {
             const remainedCurrent = isCurrent()
-            await this.authorities.markLost(params.tabId)
-            return this.executeFailure(params, remainedCurrent ? 'timeout' : 'control-interrupted', remainedCurrent ? 'Navigation timed out.' : 'Human input interrupted navigation.', true)
+            const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
+            if (!interrupted) await this.authorities.markLost(params.tabId)
+            return this.executeFailure(
+              params,
+              remainedCurrent ? 'timeout' : interrupted ? 'control-interrupted' : 'request-cancelled',
+              remainedCurrent ? 'Navigation timed out.' : interrupted ? 'Human input interrupted navigation.' : 'Navigation authority changed.',
+              true,
+            )
           }
         }
 
@@ -540,13 +602,36 @@ export class Runtime implements ServiceWorkerPayload {
           files: [`payloads/${this.directory}/content-script.js`],
           world: 'ISOLATED',
         })
-        controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
+        try {
+          controlEpoch = await this.authorities.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedEpoch)
+        } catch (error) {
+          const current = this.authorities.forTab(params.tabId)
+          const collaborativeBeforeDispatch = error instanceof LeaseError && current?.ownerId === params.leaseId &&
+            current.ownerEpoch === params.leaseEpoch && current.controlEpoch !== expectedEpoch && current.requiresObservation &&
+            this.hasCollaborativeAttachedIdle(params)
+          if (!collaborativeBeforeDispatch) throw error
+          return this.executeFailure(
+            params,
+            'control-interrupted',
+            'Trusted collaborative input interrupted execution before the first page command.',
+            true,
+            externalChromeControlCollisionDetails('not-started'),
+          )
+        }
         this.broadcastState([params.tabId], 'agent')
-        const isCurrent = () => this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
+        const isCurrent = () => !this.wasHumanInterrupted(params.tabId, controlEpoch as number) &&
+          this.authorities.isOperationCurrent(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch as number)
         if (navigateInput !== null) {
           const deadline = Math.min(Date.parse(params.deadlineAt), this.now() + navigateInput.timeoutMs)
           try {
-            await this.debuggers.navigateAndWait(params.tabId, navigateInput.url as string, navigateInput.readiness, deadline, isCurrent)
+            await this.debuggers.navigateAndWait(
+              params.tabId,
+              navigateInput.url as string,
+              navigateInput.readiness,
+              deadline,
+              isCurrent,
+              () => { mutationState = 'possible' },
+            )
             await this.debuggers.revalidateRoot(params.tabId)
           } catch (error) {
             const remainedCurrent = isCurrent()
@@ -554,20 +639,52 @@ export class Runtime implements ServiceWorkerPayload {
               await this.terminateTab(params.tabId, 'identity-loss')
               return this.executeFailure(params, 'lease-lost', error.message, true)
             }
-            await this.cancelPhysicalOperation(params, controlEpoch, 'operation-cancelled')
+            const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
+            else await this.cancelPhysicalOperation(params, controlEpoch, 'operation-cancelled')
             return this.executeFailure(
               params,
-              remainedCurrent ? 'timeout' : this.wasHumanInterrupted(params.tabId, controlEpoch) ? 'control-interrupted' : 'request-cancelled',
-              remainedCurrent ? 'Navigation timed out.' : this.wasHumanInterrupted(params.tabId, controlEpoch) ? 'Human input interrupted navigation.' : 'Navigation authority changed.',
+              remainedCurrent ? 'timeout' : interrupted ? 'control-interrupted' : 'request-cancelled',
+              remainedCurrent ? 'Navigation timed out.' : interrupted ? 'Human input interrupted navigation.' : 'Navigation authority changed.',
               true,
+              interrupted && this.hasCollaborativeAttachedIdle(params)
+                ? externalChromeControlCollisionDetails(mutationState)
+                : remainedCurrent && mutationState === 'not-started'
+                  ? EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS
+                  : undefined,
             )
           }
-          if (!isCurrent()) return this.executeFailure(params, 'control-interrupted', 'Human input interrupted navigation.', true)
+          if (!isCurrent()) {
+            const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
+            return this.executeFailure(
+              params,
+              interrupted ? 'control-interrupted' : 'request-cancelled',
+              interrupted ? 'Human input interrupted navigation.' : 'Navigation authority changed.',
+              true,
+              interrupted && this.hasCollaborativeAttachedIdle(params)
+                ? externalChromeControlCollisionDetails(mutationState)
+                : undefined,
+            )
+          }
           const tab = await this.chrome.tabs.get(params.tabId)
           const restriction = restrictedTargetReason(tab.url)
           if (restriction !== null) {
             await this.terminateTab(params.tabId, 'restricted-target')
             return this.executeFailure(params, 'restricted-target', `Navigation entered a restricted target (${restriction}).`, false)
+          }
+          if (!isCurrent()) {
+            const interrupted = this.wasHumanInterrupted(params.tabId, controlEpoch)
+            if (interrupted) await this.settleCollaborativeOperation(params, controlEpoch)
+            return this.executeFailure(
+              params,
+              interrupted ? 'control-interrupted' : 'request-cancelled',
+              interrupted ? 'Human input interrupted navigation.' : 'Navigation authority changed.',
+              true,
+              interrupted && this.hasCollaborativeAttachedIdle(params)
+                ? externalChromeControlCollisionDetails(mutationState)
+                : undefined,
+            )
           }
           const result: BrowserAutomationResultByOperation['navigate'] = {
             tab: this.browserTab(tab, operationAuthority),
@@ -579,8 +696,13 @@ export class Runtime implements ServiceWorkerPayload {
           navigationGeneration: this.debuggers.navigationGeneration(params.tabId),
           isCurrent,
           wasHumanInterrupted: () => this.wasHumanInterrupted(params.tabId, controlEpoch as number),
+          mutationState: () => mutationState,
+          markMutationDispatched: () => { mutationState = 'possible' },
+          canPreserveAttachedIdle: () => this.hasCollaborativeAttachedIdle(params),
           cancelOutstanding: async () => {
-            await this.cancelPhysicalOperation(params, controlEpoch as number, 'operation-cancelled')
+            if (this.wasHumanInterrupted(params.tabId, controlEpoch as number)) {
+              await this.settleCollaborativeOperation(params, controlEpoch as number)
+            } else await this.cancelPhysicalOperation(params, controlEpoch as number, 'operation-cancelled')
           },
           beginSyntheticInput: async (expectedEvents) => {
             if (syntheticOperationId !== null) return
@@ -593,8 +715,25 @@ export class Runtime implements ServiceWorkerPayload {
             syntheticOperationId = null
           },
         })
-        if (!outcome.ok && this.controlSessions.isAttachedFor(params.tabId, params.leaseId, params.leaseEpoch)) {
-          const interrupted = ['timeout', 'request-cancelled', 'control-interrupted', 'lease-lost'].includes(outcome.error.code)
+        if (outcome.ok && params.operation === 'snapshot') {
+          const observed = await this.authorities.completeObservation(params.leaseId, params.leaseEpoch, params.tabId, controlEpoch)
+          if (!observed) {
+            return this.executeFailure(
+              params,
+              'control-interrupted',
+              'Trusted collaborative input interrupted the snapshot; take a fresh snapshot before continuing.',
+              true,
+              this.hasCollaborativeAttachedIdle(params)
+                ? externalChromeControlCollisionDetails('not-started')
+                : undefined,
+            )
+          }
+        }
+        const preservedCollision = !outcome.ok && outcome.error.code === 'control-interrupted' &&
+          isExternalChromeControlCollisionDetails(outcome.error.details)
+        if (!outcome.ok && !preservedCollision &&
+          this.controlSessions.isAttachedFor(params.tabId, params.leaseId, params.leaseEpoch)) {
+          const interrupted = ['timeout', 'request-cancelled', 'lease-lost'].includes(outcome.error.code)
           const ambiguousFailure = outcome.error.code === 'execution-failed' || outcome.error.code === 'evaluation-failed'
           if (interrupted || ambiguousFailure) {
             await this.cancelPhysicalOperation(params, controlEpoch, interrupted ? 'operation-cancelled' : 'operation-failed')
@@ -629,7 +768,11 @@ export class Runtime implements ServiceWorkerPayload {
         } finally {
           resolveTracked()
           if (this.activeOperations.get(params.tabId) === tracked) this.activeOperations.delete(params.tabId)
-          if (controlEpoch !== null && this.wasHumanInterrupted(params.tabId, controlEpoch)) this.humanInterruptedOperations.delete(params.tabId)
+          if (controlEpoch !== null && this.wasHumanInterrupted(params.tabId, controlEpoch)) {
+            this.humanInterruptedOperations.delete(params.tabId)
+            const settlement = this.humanInterruptionSettlements.get(params.tabId)
+            if (settlement?.controlEpoch === controlEpoch) this.humanInterruptionSettlements.delete(params.tabId)
+          }
         }
       }
     })
@@ -641,12 +784,38 @@ export class Runtime implements ServiceWorkerPayload {
   private browserTab(tab: ChromeTab, authority: TabAuthorityRecord): BrowserTabSnapshot {
     const now = new Date(this.now()).toISOString()
     const physicalSession = this.controlSessions.forTab(authority.tabId)
-    const controller = authority.state === 'agent'
-      ? 'agent'
-      : physicalSession?.leaseId === authority.ownerId && physicalSession.leaseEpoch === authority.ownerEpoch
-        ? 'agent-idle'
-        : 'human'
-    return { targetAffinity: 'external-chrome', tabId: String(tab.id), sessionAgentId: authority.sessionAgentId, profileId: this.extensionInstanceId, url: tab.url ?? tab.pendingUrl ?? '', title: tab.title ?? '', lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now }
+    // An external navigation keeps the debugger attached while its replacement root is proved.
+    // Do not project that retained physical session as authoritative until revalidation succeeds.
+    const controller = this.externalNavigationReconciliations.has(authority.tabId)
+      ? 'none'
+      : authority.state === 'agent'
+        ? 'agent'
+        : physicalSession?.leaseId === authority.ownerId && physicalSession.leaseEpoch === authority.ownerEpoch
+          ? 'agent-idle'
+          : 'human'
+    return {
+      targetAffinity: 'external-chrome',
+      tabId: String(tab.id),
+      sessionAgentId: authority.sessionAgentId,
+      profileId: this.extensionInstanceId,
+      url: (tab.url ?? tab.pendingUrl ?? '').slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+      title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+      lifecycle: 'ready',
+      loading: false,
+      live: true,
+      canGoBack: false,
+      canGoForward: false,
+      zoomFactor: 1,
+      controller,
+      agentCursor: null,
+      recording: null,
+      viewportSetting: { mode: 'fill' },
+      renderedViewport: null,
+      physicalVisible: false,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    }
   }
 
   private handleConnect(value: unknown): void {
@@ -781,17 +950,35 @@ export class Runtime implements ServiceWorkerPayload {
 
   private syntheticKey(tabId: number, operationId: string): string { return `${tabId}\0${operationId}` }
 
-  private async interrupt(tabId: number, event: unknown): Promise<void> {
+  private async revokeCollaborativeAuthority(tabId: number): Promise<TabAuthorityRecord | null> {
     const before = this.authorities.forTab(tabId)
-    if (before === null) return
+    if (before === null) return null
     if (before.state === 'agent') this.humanInterruptedOperations.set(tabId, before.controlEpoch)
-    let authority: TabAuthorityRecord
+    const revocation = this.authorities.trustedHumanInput(tabId)
+    if (before.state === 'agent') {
+      this.humanInterruptionSettlements.set(tabId, {
+        controlEpoch: before.controlEpoch,
+        // A rejected storage.session write still leaves the live worker's in-memory epoch revoked;
+        // recovery independently forces a fresh observation before another mutation.
+        settled: revocation.then(() => undefined, () => undefined),
+      })
+    }
     try {
-      authority = await this.authorities.trustedHumanInput(tabId) ?? before
+      return await revocation
     } catch {
       // In-memory operation authority is already revoked even if storage.session is temporarily unavailable.
-      authority = this.authorities.forTab(tabId) ?? { ...before, state: 'idle', controlEpoch: before.controlEpoch + 1 }
+      return this.authorities.forTab(tabId) ?? {
+        ...before,
+        state: 'idle',
+        controlEpoch: before.controlEpoch + 1,
+        requiresObservation: true,
+      }
     }
+  }
+
+  private async interrupt(tabId: number, event: unknown): Promise<void> {
+    const authority = await this.revokeCollaborativeAuthority(tabId)
+    if (authority === null) return
     try {
       this.native?.sendNotification('browser.userControl', {
         protocolVersion: 1,
@@ -803,25 +990,52 @@ export class Runtime implements ServiceWorkerPayload {
         at: new Date(this.now()).toISOString(),
       })
     } catch { /* Desktop still owns the exact lease checkpoint */ }
-    try {
-      await this.controlSessions.detach(tabId, 'trusted-input')
-      this.broadcastState([tabId], 'human')
-    } catch {
-      await this.authorities.markLost(tabId).catch(() => undefined)
-    }
+    // Collaborative input invalidates only the operation epoch. The exact debugger attachment
+    // remains available while the operation queue settles every already-dispatched CDP command.
+    const attached = this.controlSessions.isAttachedFor(tabId, authority.ownerId, authority.ownerEpoch)
+    this.broadcastState([tabId], attached ? 'attached-idle' : 'human')
   }
 
-  private async interruptExternalNavigation(tabId: number): Promise<void> {
-    const before = this.authorities.forTab(tabId)
-    if (before === null) return
-    try { await this.authorities.trustedHumanInput(tabId) }
-    catch { /* In-memory epoch revocation remains authoritative for this worker. */ }
+  private async retainExternalNavigation(tabId: number): Promise<void> {
+    const authority = await this.revokeCollaborativeAuthority(tabId)
+    if (authority === null) {
+      await this.controlSessions.detach(tabId, 'identity-loss').catch(() => undefined)
+      return
+    }
     try {
-      await this.controlSessions.detach(tabId, 'external-navigation')
-      this.operations.clear(tabId)
-      this.broadcastState([tabId], 'human')
+      const outcome = await this.operations.runExclusive(tabId, async (): Promise<'retained' | 'restricted'> => {
+        const current = this.authorities.forTab(tabId)
+        if (current?.ownerId !== authority.ownerId || current.ownerEpoch !== authority.ownerEpoch ||
+          current.state !== 'idle' || !current.requiresObservation) {
+          throw new Error('external navigation no longer has exact idle authority')
+        }
+        // Claim the existing session before an old idle timer can fire, then prove the current
+        // tab-scoped root. revalidateRoot may adopt a renderer/process-swap target ID only after
+        // Chrome proves its replacement frame tree on this exact debugger channel.
+        await this.controlSessions.ensure(tabId, current.ownerId, current.ownerEpoch)
+        const beforeInjection = await this.chrome.tabs.get(tabId)
+        if (restrictedTargetReason(beforeInjection.url ?? beforeInjection.pendingUrl) !== null) return 'restricted'
+        await this.chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          files: [`payloads/${this.directory}/content-script.js`],
+          world: 'ISOLATED',
+        })
+        await this.debuggers.revalidateRoot(tabId)
+        const afterInjection = await this.chrome.tabs.get(tabId)
+        if (restrictedTargetReason(afterInjection.url ?? afterInjection.pendingUrl) !== null) return 'restricted'
+        const retained = this.authorities.forTab(tabId)
+        if (retained?.ownerId !== current.ownerId || retained.ownerEpoch !== current.ownerEpoch ||
+          retained.state !== 'idle' || !retained.requiresObservation ||
+          !this.controlSessions.isAttachedFor(tabId, current.ownerId, current.ownerEpoch)) {
+          throw new Error('external navigation authority changed during root revalidation')
+        }
+        this.controlSessions.finishOperation(tabId, current.ownerId, current.ownerEpoch)
+        this.broadcastState([tabId], 'attached-idle')
+        return 'retained'
+      })
+      if (outcome === 'restricted') await this.terminateTab(tabId, 'restricted-target')
     } catch {
-      await this.authorities.markLost(tabId).catch(() => undefined)
+      await this.terminateTab(tabId, 'identity-loss')
     }
   }
 
@@ -832,6 +1046,7 @@ export class Runtime implements ServiceWorkerPayload {
     deadline: number,
     isCurrent: () => boolean,
     authorityCurrent: () => boolean,
+    onDispatch: () => void,
   ): Promise<ChromeTab> {
     if (this.initialNavigations.has(params.tabId)) throw new Error('initial navigation is already active')
     const transition: InitialNavigationTransition = {
@@ -851,6 +1066,7 @@ export class Runtime implements ServiceWorkerPayload {
       // preflight immediately before the one target mutation.
       const updated = await this.awaitInitialNavigationStep(() => {
         transition.dispatchStarted = true
+        onDispatch()
         return this.chrome.tabs.update(params.tabId, { url })
       }, deadline, isCurrent)
       if (readiness === 'none') {
@@ -969,16 +1185,35 @@ export class Runtime implements ServiceWorkerPayload {
     if (method === 'Page.frameNavigated' && source.sessionId === undefined) {
       const payload = asRecord(rawParams)
       const frame = asRecord(payload?.frame)
-      if (typeof frame?.parentId !== 'string' && typeof frame?.url === 'string') {
-        if (restrictedTargetReason(frame.url) !== null) {
+      if (typeof frame?.parentId !== 'string') {
+        if (restrictedTargetReason(typeof frame?.url === 'string' ? frame.url : undefined) !== null) {
           await this.terminateTab(source.tabId, 'restricted-target')
           return
         }
         const session = this.controlSessions.forTab(source.tabId)
         if (session !== null && !session.operationActive) {
-          // Address-bar, reload, renderer, and page-initiated navigation outside an admitted
-          // operation all invalidate the idle operation epoch before physical detach.
-          await this.interruptExternalNavigation(source.tabId)
+          this.controlSessions.refreshIdle(source.tabId, session.leaseId, session.leaseEpoch)
+          this.externalNavigationReconciliations.set(
+            source.tabId,
+            (this.externalNavigationReconciliations.get(source.tabId) ?? 0) + 1,
+          )
+          try {
+            const accepted = await this.debuggers.onEvent(source, method, rawParams)
+            if (accepted.rootIdentityLost || !accepted.accepted) {
+              await this.terminateTab(source.tabId, 'identity-loss')
+              return
+            }
+            const targetId = accepted.targetId ?? this.debuggers.targetId(source.tabId)
+            if (targetId !== undefined) this.operations.onCdpEvent(source.tabId, { targetId }, method, rawParams)
+            // A trusted click, reload, address-bar action, or eligible page navigation changes the
+            // observed document, not the exact tab lease. Re-prove/adopt its root and reinject the
+            // singleton guard without creating a detach/reattach interval.
+            await this.retainExternalNavigation(source.tabId)
+          } finally {
+            const remaining = (this.externalNavigationReconciliations.get(source.tabId) ?? 1) - 1
+            if (remaining === 0) this.externalNavigationReconciliations.delete(source.tabId)
+            else this.externalNavigationReconciliations.set(source.tabId, remaining)
+          }
           return
         }
       }
@@ -1073,6 +1308,52 @@ export class Runtime implements ServiceWorkerPayload {
     return this.humanInterruptedOperations.get(tabId) === controlEpoch
   }
 
+  private async settleCollaborativeOperation(
+    params: Pick<ExternalChromeExecuteParams, 'leaseId' | 'leaseEpoch' | 'tabId' | 'deadlineAt'>,
+    controlEpoch: number,
+  ): Promise<void> {
+    try {
+      const settlement = this.humanInterruptionSettlements.get(params.tabId)
+      if (settlement?.controlEpoch === controlEpoch) {
+        const remaining = Math.max(0, Date.parse(params.deadlineAt) - this.now())
+        let timer: ReturnType<typeof setTimeout> | null = null
+        try {
+          await Promise.race([
+            settlement.settled,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error('collaborative epoch settlement exceeded the operation deadline')), remaining)
+            }),
+          ])
+        } finally {
+          if (timer !== null) clearTimeout(timer)
+        }
+      }
+      await this.debuggers.settlePending(params.tabId, Date.parse(params.deadlineAt))
+    } catch (error) {
+      // A command whose callback cannot settle by the caller deadline cannot support the exact
+      // attached-idle proof. Detach physically; Desktop will terminally release logical authority.
+      try {
+        await this.controlSessions.detach(params.tabId, 'operation-cancelled')
+      } catch {
+        await this.authorities.markLost(params.tabId).catch(() => undefined)
+      }
+      throw error
+    }
+    const authority = this.authorities.forTab(params.tabId)
+    if (authority?.ownerId !== params.leaseId || authority.ownerEpoch !== params.leaseEpoch || authority.state !== 'idle' ||
+      !this.controlSessions.isAttachedFor(params.tabId, params.leaseId, params.leaseEpoch)) {
+      throw new LeaseError('lease-lost', 'collaborative input could not preserve exact attached-idle authority')
+    }
+  }
+
+  private hasCollaborativeAttachedIdle(
+    params: Pick<ExternalChromeExecuteParams, 'leaseId' | 'leaseEpoch' | 'tabId'>,
+  ): boolean {
+    const authority = this.authorities.forTab(params.tabId)
+    return authority?.ownerId === params.leaseId && authority.ownerEpoch === params.leaseEpoch && authority.state === 'idle' &&
+      this.controlSessions.isAttachedFor(params.tabId, params.leaseId, params.leaseEpoch)
+  }
+
   private async cancelPhysicalOperation(
     params: Pick<ExternalChromeExecuteParams, 'leaseId' | 'leaseEpoch' | 'tabId'>,
     controlEpoch: number,
@@ -1163,6 +1444,7 @@ export class Runtime implements ServiceWorkerPayload {
         for (const tabId of released) {
           this.operations.clear(tabId)
           this.humanInterruptedOperations.delete(tabId)
+          this.humanInterruptionSettlements.delete(tabId)
         }
         if (released.length > 0) this.notifyLeaseChanged(ownerId, ownerEpoch, 'released', released)
         this.cleanupCompleted += 1

@@ -78,7 +78,8 @@ import {
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { fetchModelPresets } from '@/lib/model-preset'
 import { fetchCompactionSettings, updateCompactionSettings } from '@/components/settings/compaction-settings-api'
-import { PROVIDER_LABELS, REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
+import { PROVIDER_LABELS } from '@/components/settings/specialists/types'
+import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
 import type { SettingsBackendTarget } from './settings-target'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 
@@ -421,6 +422,15 @@ export function SettingsGeneral({
   const availableCompactionReasoningLevels = useMemo(
     () => selectedCompactionModel?.supportedReasoningLevels ?? [...MANAGER_REASONING_LEVELS],
     [selectedCompactionModel],
+  )
+
+  const defaultCompactionReasoningLevels = useMemo(
+    () => compactionView
+      ? compactionModelOptions.find(
+          (option) => option.key === getCompactionModelKey(compactionView.defaults.model),
+        )?.supportedReasoningLevels
+      : undefined,
+    [compactionModelOptions, compactionView],
   )
 
   useEffect(() => {
@@ -980,7 +990,7 @@ export function SettingsGeneral({
                   <SelectContent>
                     {availableCompactionReasoningLevels.map((level) => (
                       <SelectItem key={level} value={level}>
-                        {REASONING_LEVEL_LABELS[level] ?? level}
+                        {formatReasoningLevel(level, availableCompactionReasoningLevels)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1023,7 +1033,7 @@ export function SettingsGeneral({
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-3">
                 <p className="text-xs text-muted-foreground">
-                  Defaults: {compactionView.defaults.model.modelId} · {REASONING_LEVEL_LABELS[compactionView.defaults.reasoningLevel] ?? compactionView.defaults.reasoningLevel} · {formatCompactionTimeoutLabel(Math.round(compactionView.defaults.timeoutMs / 60_000))}
+                  Defaults: {compactionView.defaults.model.modelId} · {formatReasoningLevel(compactionView.defaults.reasoningLevel, defaultCompactionReasoningLevels)} · {formatCompactionTimeoutLabel(Math.round(compactionView.defaults.timeoutMs / 60_000))}
                 </p>
                 <div className="flex items-center gap-2">
                   <Button

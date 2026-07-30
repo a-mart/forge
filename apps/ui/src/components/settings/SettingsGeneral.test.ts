@@ -385,7 +385,7 @@ describe('SettingsGeneral', () => {
           provider: 'openai-codex',
           modelId: 'gpt-5.6-sol',
           defaultReasoningLevel: 'max',
-          supportedReasoningLevels: ['low', 'medium', 'high', 'max', 'ultra'],
+          supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
           variants: [
             { modelId: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
             { modelId: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
@@ -402,6 +402,32 @@ describe('SettingsGeneral', () => {
       flushSync(() => {
         fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' })).toBeTruthy())
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' }))
+      })
+
+      let reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
+      flushSync(() => {
+        fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+      expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+        'Low',
+        'Medium',
+        'High',
+        'Extra High',
+        'Max',
+        'Ultra',
+      ])
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'Extra High' }))
+      })
+      await waitFor(() => expect(reasoningTrigger.textContent).toContain('Extra High'))
+
+      flushSync(() => {
+        fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
       await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' })).toBeTruthy())
       flushSync(() => {
         fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' }))
@@ -409,13 +435,43 @@ describe('SettingsGeneral', () => {
 
       await waitFor(() => expect(getByRole(container, 'combobox', { name: 'Compaction reasoning level' }).textContent).toContain('High'))
 
-      const reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
+      reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
       flushSync(() => {
         fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Low' })).toBeTruthy())
-      const reasoningOptions = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
-      expect(reasoningOptions).toEqual(['Low', 'Medium', 'High'])
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+      expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+        'Low',
+        'Medium',
+        'High',
+        'Extra High',
+        'Max',
+        'Ultra',
+      ])
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'Max' }))
+      })
+
+      flushSync(() => {
+        fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' })).toBeTruthy())
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' }))
+      })
+
+      reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
+      flushSync(() => {
+        fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+      expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+        'Low',
+        'Medium',
+        'High',
+        'Extra High',
+        'Max',
+      ])
     })
 
     it('shows a warning when the configured compaction provider is unavailable', async () => {

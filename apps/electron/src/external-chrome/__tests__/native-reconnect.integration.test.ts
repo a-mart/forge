@@ -101,7 +101,13 @@ describe('native relay reconnect across Desktop epoch replacement', () => {
       void host.finally(() => port.emitDisconnect())
       return port
     }
-    const chrome = fakeChrome()
+    const chrome = fakeChrome({
+      tabs: [{ id: 7, windowId: 1, active: true, title: 'Recovered epoch tab', url: 'https://epoch-recovered.invalid/', lastAccessed: 1_000 }],
+      windows: [{
+        id: 1, focused: false, type: 'normal',
+        tabs: [{ id: 7, windowId: 1, active: true, title: 'Recovered epoch tab', url: 'https://epoch-recovered.invalid/', lastAccessed: 1_000 }],
+      }],
+    })
     await chrome.storage.local.set({ 'forge.externalChrome.instanceId.v1': EXTENSION_INSTANCE_ID })
     chrome.runtime.connectNative = () => connectNative()
     vi.stubGlobal('chrome', chrome)
@@ -123,6 +129,11 @@ describe('native relay reconnect across Desktop epoch replacement', () => {
     await waitForInventory(next.runtime, EXTENSION_INSTANCE_ID, 3_000)
     expect(attempts).toBe(2)
     expect(next.runtime.inventory()).toEqual([expect.objectContaining({ extensionInstanceId: EXTENSION_INSTANCE_ID })])
+    await expect(next.runtime.listEligibleTabs({ sessionAgentId: 'session-after-restart', profileId: 'profile' }, Date.now() + 2_000))
+      .resolves.toMatchObject({
+        tabs: [{ title: 'Recovered epoch tab', url: 'https://epoch-recovered.invalid/' }],
+        truncated: false,
+      })
 
     runtime.shutdown()
     next.runtime.deactivate()

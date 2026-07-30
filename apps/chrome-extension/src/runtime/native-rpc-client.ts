@@ -1,5 +1,7 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
+  EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS,
+  EXTERNAL_CHROME_MAX_LATE_RESPONSE_TOMBSTONES,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
   EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES,
   EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES,
@@ -19,6 +21,7 @@ import {
   type ExternalChromeHelloParams,
   type ExternalChromeJsonRpcError,
   type ExternalChromeJsonRpcMessage,
+  type ExternalChromeRequest,
   type ExternalChromeRequestMethod,
   type ExternalChromeWelcomeResult,
 } from '@forge/protocol'
@@ -63,6 +66,11 @@ interface PendingRequest {
   resolve: (message: ExternalChromeJsonRpcMessage) => void
   reject: (error: Error) => void
   timer: unknown
+}
+
+interface TimedOutRequestTombstone {
+  method: ExternalChromeRequestMethod
+  expiresAt: number
 }
 
 function serializeMessage(message: unknown): { serialized: string; bytes: number } {
@@ -110,6 +118,7 @@ export class NativeRpcClient {
   private lastInboundAt = 0
   private requestSequence = 0
   private readonly pending = new Map<string, PendingRequest>()
+  private readonly timeoutTombstones = new Map<string, TimedOutRequestTombstone>()
 
   constructor(private readonly options: NativeRpcClientOptions) {
     this.scheduler = options.scheduler ?? browserScheduler
@@ -168,7 +177,9 @@ export class NativeRpcClient {
       return
     }
     this.port = port
-    port.onMessage.addListener((message) => this.receive(message))
+    port.onMessage.addListener((message) => {
+      if (this.port === port) this.receive(message)
+    })
     port.onDisconnect.addListener(() => {
       if (this.port !== port) return
       this.port = null
@@ -239,6 +250,7 @@ export class NativeRpcClient {
     return new Promise((resolve, reject) => {
       const timer = this.scheduler.setTimeout(() => {
         this.pending.delete(id)
+        this.rememberTimeout(id, method)
         reject(new Error(`${method} timed out`))
       }, 10_000)
       this.pending.set(id, { method, resolve, reject, timer })
@@ -262,19 +274,43 @@ export class NativeRpcClient {
       this.disconnectInvalid('malformed or oversized native message')
       return
     }
-    const id = typeof raw === 'object' && raw !== null && !Array.isArray(raw) && typeof (raw as Record<string, unknown>).id === 'string'
-      ? (raw as Record<string, unknown>).id as string
-      : undefined
+    const rawRecord = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : null
+    const id = typeof rawRecord?.id === 'string' ? rawRecord.id : undefined
+    const responseLike = rawRecord !== null && ('result' in rawRecord || 'error' in rawRecord)
+    this.pruneTimeouts()
     const pending = id === undefined ? undefined : this.pending.get(id)
+    const tombstone = id === undefined ? undefined : this.timeoutTombstones.get(id)
+    if (responseLike && pending === undefined && tombstone === undefined) {
+      this.disconnectInvalid('native response ID is unknown or expired')
+      return
+    }
     let parsed: ExternalChromeJsonRpcMessage
     try {
-      parsed = parseExternalChromeJsonRpcFrame(serialized, pending === undefined ? {} : { expectedResponseMethod: pending.method })
+      const expectedMethod = pending?.method ?? tombstone?.method
+      parsed = parseExternalChromeJsonRpcFrame(serialized, expectedMethod === undefined ? {} : {
+        expectedResponseMethod: expectedMethod,
+        protocolVersion: 1,
+      })
     } catch {
       this.disconnectInvalid('native message failed JSON-RPC validation')
       return
     }
     this.lastInboundAt = this.scheduler.now()
-    if (id !== undefined && pending !== undefined && !('method' in parsed)) {
+    if (id !== undefined && tombstone !== undefined) {
+      if ('method' in parsed) {
+        this.disconnectInvalid('native request reused a timed-out response ID')
+        return
+      }
+      this.timeoutTombstones.delete(id)
+      return
+    }
+    if (id !== undefined && pending !== undefined) {
+      if ('method' in parsed) {
+        this.disconnectInvalid('native request reused a pending response ID')
+        return
+      }
       this.pending.delete(id)
       this.scheduler.clearTimeout(pending.timer)
       pending.resolve(parsed)
@@ -286,18 +322,44 @@ export class NativeRpcClient {
         this.postBounded({ jsonrpc: '2.0', id: parsed.id, error: { code: -32601, message: 'Extension method is unavailable' } })
         return
       }
-      void Promise.resolve(handler(parsed)).then(
-        (result) => this.postBounded({
-          jsonrpc: '2.0', id: parsed.id,
-          result: compactSnapshotForJsonRpc(result, parsed.id, this.outboundMessageLimit),
-        }),
-        (error: unknown) => this.postBounded({
-          jsonrpc: '2.0', id: parsed.id, error: requestFailure(error),
-        }),
-      ).catch(() => this.disconnectInvalid('failed to send extension response'))
+      // Bind the eventual response to the exact native-port epoch that delivered the request.
+      // A slow handler from a disconnected Desktop must never answer on a replacement port.
+      void this.respond(parsed, handler, this.port)
       return
     }
     this.options.onRequest?.(parsed)
+  }
+
+  private async respond(
+    request: ExternalChromeRequest,
+    handler: NonNullable<NativeRpcClientOptions['onRequest']>,
+    requestPort: ChromeRuntimePort | null,
+  ): Promise<void> {
+    try {
+      const rawResult = await handler(request)
+      if (requestPort === null || this.port !== requestPort) return
+      const result = compactSnapshotForJsonRpc(rawResult, request.id, this.outboundMessageLimit)
+      this.postValidatedResponse(request, { jsonrpc: '2.0', id: request.id, result }, requestPort)
+    } catch (error) {
+      try {
+        this.postValidatedResponse(request, { jsonrpc: '2.0', id: request.id, error: requestFailure(error) }, requestPort)
+      } catch {
+        if (this.port === requestPort) this.disconnectInvalid('failed to send bounded extension error response')
+      }
+    }
+  }
+
+  private postValidatedResponse(request: ExternalChromeRequest, response: unknown, requestPort: ChromeRuntimePort | null): void {
+    // Returning from an old request after reconnect is expected cancellation, not a protocol fault.
+    if (requestPort === null || this.port !== requestPort) return
+    const encoded = serializeMessage(response)
+    if (encoded.bytes > this.outboundMessageLimit) throw new Error('extension response exceeds the negotiated bound')
+    const validated = parseExternalChromeJsonRpcFrame(encoded.serialized, {
+      expectedResponseMethod: request.method,
+      protocolVersion: 1,
+    })
+    if ('method' in validated || validated.id !== request.id) throw new Error('extension response failed outbound correlation')
+    requestPort.postMessage(response)
   }
 
   private postBounded(message: unknown): void {
@@ -343,11 +405,32 @@ export class NativeRpcClient {
     }, delay)
   }
 
+  private rememberTimeout(id: string, method: ExternalChromeRequestMethod): void {
+    this.pruneTimeouts()
+    while (this.timeoutTombstones.size >= EXTERNAL_CHROME_MAX_LATE_RESPONSE_TOMBSTONES) {
+      const oldest = this.timeoutTombstones.keys().next().value
+      if (typeof oldest !== 'string') break
+      this.timeoutTombstones.delete(oldest)
+    }
+    this.timeoutTombstones.set(id, {
+      method,
+      expiresAt: this.scheduler.now() + EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS,
+    })
+  }
+
+  private pruneTimeouts(): void {
+    const now = this.scheduler.now()
+    for (const [id, tombstone] of this.timeoutTombstones) {
+      if (tombstone.expiresAt <= now) this.timeoutTombstones.delete(id)
+    }
+  }
+
   private resetNegotiatedState(): void {
     this.heartbeatMs = 10_000
     this.inboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES)
     this.outboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES)
     this.lastInboundAt = 0
+    this.timeoutTombstones.clear()
   }
 
   private rejectPending(reason: string): void {
