@@ -61,11 +61,19 @@ The Desktop activity rail has one **Browser** workspace:
 
 The workspace renderer registers one Desktop host with the local Builder backend and forwards bounded calls through trusted IPC. It transiently relays complete `browser_status` inventory responses between the trusted bridge and backend, but does not project that inventory into Browser workspace UI or canonical renderer state. The renderer exposes no tab-attachment, group, lease, or authority controls.
 
+### Logical authority and physical debugger lifecycle
+
+Logical Chrome authority (the exact session/lease/tab ownership) and the physical `chrome.debugger` attachment are separate lifecycles. A logical tab can remain Chrome-affine and idle while no debugger is attached. Nearby operations may reuse one exact same-lease debugger attachment only for a bounded idle burst and bounded maximum lifetime; `attached-idle`/`agent-idle` is truthful only while that exact attachment and its leased root identity remain proven.
+
+Normal supported navigation remains on the same logical target. If a renderer swap changes the debugger root, Forge retains the physical attachment only after positive root-identity revalidation. Navigation outside an admitted Forge operation—such as address-bar navigation, reload, or page-initiated navigation—invalidates the idle operation epoch and detaches physical control, but preserves the logical lease for a later reattach. This distinction never permits an explicit target to migrate.
+
 ## Safety, fallback, and authority
 
 ### Safe fallback and no replay
 
 Automatic fallback is limited to requests whose failure metadata proves that mutation did not start. Forge makes one Chrome acquisition/execution attempt for the request; if that attempt fails before mutation, it falls back directly to the embedded browser. Forge does not make a dedicated-Chrome retry or promise focused-tab reuse.
+
+Desktop writes a durable, exact pre-acquisition journal before sending an acquisition request. If that journal cannot be written, the request has not been sent and a non-explicit request may still be eligible for embedded fallback with `mutationState: not-started`. Once delivery may have begun, a Desktop crash, lost response, or uncertain journal finalization is treated as `mutationState: possible`: Forge performs no fallback and no replay, and reconciles the exact lease/tab on authenticated reconnect. A possible mutation returns no-replay evidence to the caller.
 
 Forge does not replay an operation after it may have clicked, typed, navigated, evaluated code, or otherwise mutated the page. That failure returns typed `mutationState` and `noReplay` details to the caller. Explicit logical targets also never fall back to another affinity.
 
@@ -73,13 +81,19 @@ Forge does not replay an operation after it may have clicked, typed, navigated, 
 
 Chrome control is private, per-tab, compare-and-set authority. Consecutive operations may share a short adaptive authority burst so Forge does not repeatedly attach and release the debugger between nearby actions. Operations remain serialized, and trusted human input interrupts agent control instead of racing it.
 
-Every non-terminal release is tied to the exact Chrome instance, logical session, tab, lease identity, and owner epoch. Forge checkpoints that identity before control and removes the checkpoint only after Chrome acknowledges the exact release. If a normal release acknowledgement is lost:
+Every non-terminal release is tied to the exact Chrome instance, logical session, tab, lease identity, and owner epoch. Desktop checkpoints that identity before control. The extension durably retains an exact release receipt after releasing the tab; the receipt is not removed merely because the release response arrived. Desktop first durably records the pending acknowledgement, then sends the exact release acknowledgement; the extension removes its receipt only after that explicit acknowledgement succeeds. If either response or persistence is lost, both sides retain exact evidence and retry the same scope after reconnect. Later acquisition for that session is blocked until reconciliation.
 
-- the checkpoint remains durable;
-- Forge retries that same release after reconnection; and
-- later Chrome acquisition for that session is blocked until the exact release is acknowledged.
+Admission reserves bounded checkpoint and release-receipt capacity before a new acquisition or created tab can proceed. When that capacity or a transport/request queue is full, Forge rejects or backpressures new work rather than evicting receipts, guessing a scope, or abandoning cleanup.
 
-Turn end, stop, archive, host replacement, Desktop update, and Desktop quit use this fail-closed cleanup path. In particular, archive does not proceed when its browser release cannot be acknowledged. Deletion is different because it is terminal: Forge attempts exact browser revocation, but browser revocation is best-effort and a stale release cannot block deletion. After a delete request, Desktop clears the matching session's in-memory state, while External Chrome attempts to release and then forgets matching checkpoints and session affinity even if the extension is disconnected or the acknowledgement is lost. Chrome tabs remain open when authority is released. Opening DevTools, another debugger taking control, Chrome or extension disconnect, expiry, or human input can interrupt an operation; inspect or snapshot again before continuing.
+Physical control detaches on trusted human input, external navigation, DevTools/competing-debugger preemption, proven root-identity or restricted-target loss, target close, operation cancellation/failure/timeout, idle timeout, maximum lifetime, transport uncertainty, and runtime update/shutdown. Trusted input, external navigation, operation timeout, and physical expiry normally leave the exact logical lease idle for a later reattach; identity loss, restricted targets, DevTools preemption, target close, and terminal lifecycle cleanup release that logical lease with exact evidence. Chrome tabs remain open when authority is released. Inspect or snapshot again before continuing after an interruption.
+
+Turn end, stop, archive, host replacement, Desktop update, and Desktop quit use this fail-closed cleanup path. In particular, archive does not proceed when its browser release cannot be acknowledged. Deletion is different because it is terminal: Forge attempts exact browser revocation, but browser revocation is best-effort and a stale release cannot block deletion. After a delete request, Desktop clears the matching session's in-memory state, while External Chrome attempts to release and then forgets matching checkpoints and session affinity even if the extension is disconnected or the acknowledgement is lost.
+
+### Maintainer correctness boundaries
+
+- Re-injection is a recovery probe, not a second attachment mechanism. Each live document owns one singleton content bridge, keyed by exact tab, frame, and document identity; duplicate bridges are rejected, stale document bridges are replaced, and bridge cardinality is bounded.
+- Synthetic trusted-input suppression is sequence-based, not time-based. Every trusted pointer, key, wheel, or touch event must match and consume the next expected signature (including phase, modifiers, coordinates/buttons, key fields, wheel deltas, or touch points). A mismatch or interleaved trusted event immediately interrupts agent control. Untrusted page events are ignored.
+- `browser_evaluate` always invokes CDP `Runtime.evaluate` with `userGesture: false`. Synthetic input uses its separate narrowly bracketed CDP input path and trusted-event acknowledgement; arbitrary evaluation never receives transient user activation.
 
 ## Privacy and persistence
 
@@ -135,6 +149,8 @@ Compatible connected extensions can reload an authenticated local payload after 
 - **Different data directory:** load that data directory's stable extension folder in the intended Chrome profile and complete setup there.
 
 For maintainers diagnosing a newly dedicated Chrome open, the target may first appear as an inactive `about:blank`. A URL-bearing open performs the one authorized initial navigation for that exact target; it must not be treated as a generic navigation replay.
+
+The focused unit/build and isolated-profile checks do not prove live MV3 service-worker suspension/restart behavior, headed Chrome, native-host/Desktop end-to-end registration, or current-platform Chrome debugger behavior. macOS, Windows, and Linux reparenting/packaging/signing and release-SEA gates remain separate qualification gates.
 
 Canonical data paths and OS registration targets are in [Configuration](CONFIGURATION.md#chrome-adapter-local-integration). Maintainer staging, signing, package-content, and qualification gates are in the [Electron release guide](../apps/electron/README.md#optional-chrome-adapter-packaging-and-validation).
 
