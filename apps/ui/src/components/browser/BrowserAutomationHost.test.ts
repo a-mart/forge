@@ -28,7 +28,7 @@ beforeEach(() => {
       capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
       reconcile: vi.fn(async () => ({ applied: true, tabCount: 0 })), ensureProvisional, commitProvisional: vi.fn(), abortProvisional: vi.fn(),
       reportViewport: vi.fn(), setTabPresentation: vi.fn(async () => { throw new Error('not presented in this fixture') }), captureScreenshot: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(),
-      invoke, invokeLifecycle, reveal: vi.fn(), onStateChanged: vi.fn((listener) => { stateChanged = listener; return vi.fn() }),
+      invoke, invokeLifecycle, reveal: vi.fn(), takeControl: vi.fn(), onStateChanged: vi.fn((listener) => { stateChanged = listener; return vi.fn() }),
     },
   }
 })

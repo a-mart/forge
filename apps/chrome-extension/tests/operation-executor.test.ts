@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
   type ExternalChromeExecuteParams,
 } from '@forge/protocol'
@@ -164,7 +166,33 @@ describe('ExternalChromeOperationExecutor', () => {
     } })
   })
 
-  it('rejects oversized decoded PNGs with canonical envelope-overflow details before AX capture', async () => {
+  it('adapts DPR-aware capture scale against both dimensions and byte pressure', async () => {
+    const captureScales: number[] = []
+    const { controller, executor } = await harness((_target, method, params) => {
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('interactiveElements')) return value({
+        url: 'https://fixture.test/', title: 'Fixture', loading: false, visibleText: '', interactiveElements: [],
+      })
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(2)
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 1_000, clientHeight: 2_000, pageX: 0, pageY: 0, scale: 1 } }
+      if (method === 'Page.captureScreenshot') {
+        const scale = Number((params?.clip as { scale?: number } | undefined)?.scale)
+        captureScales.push(scale)
+        return captureScales.length === 1
+          ? { data: pngBase64(640, BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT, EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES) }
+          : { data: pngBase64(Math.round(2_000 * scale), Math.round(4_000 * scale)) }
+      }
+      if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+      return PASS
+    })
+
+    await expect(executor.execute(request('snapshot', {}), authority(controller))).resolves.toMatchObject({
+      ok: true,
+      result: { screenshot: { width: 480, height: 960 } },
+    })
+    expect(captureScales).toEqual([0.32, 0.24])
+  })
+
+  it('rejects a screenshot that cannot fit at minimum qualified capture before AX collection', async () => {
     const oversized = pngBase64(4, 3, EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES)
     let accessibilityCalls = 0
     const { chrome, controller, executor } = await harness((_target, method, params) => {
@@ -183,8 +211,8 @@ describe('ExternalChromeOperationExecutor', () => {
       error: {
         code: 'response-too-large', retryable: false,
         details: {
-          limitation: 'screenshot-only-envelope-overflow', screenshotBytes: 24 + EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES,
-          screenshotByteUnit: 'decoded-png', maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES, maximumByteUnit: 'decoded-png',
+          limitation: 'minimum-qualified-screenshot-overflow', screenshotBytes: new TextEncoder().encode(oversized).byteLength,
+          screenshotByteUnit: 'base64-utf8', maximumBytes: EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES, maximumByteUnit: 'base64-utf8',
         },
       },
     })
@@ -355,6 +383,33 @@ describe('ExternalChromeOperationExecutor', () => {
     expect(second.ok && 'actionTimeline' in second.result ? second.result.actionTimeline : []).toHaveLength(1)
   })
 
+  it('reports collision mutation certainty before the first synthetic dispatch', async () => {
+    let current = true
+    let mutationState: 'not-started' | 'possible' = 'not-started'
+    const { controller, executor } = await harness((_target, method) => {
+      if (method === 'Page.getLayoutMetrics') {
+        current = false
+        return { cssLayoutViewport: { clientWidth: 100, clientHeight: 100 } }
+      }
+      return PASS
+    })
+    await expect(executor.execute(request('click', { x: 1, y: 1, timeoutMs: 100 }), {
+      navigationGeneration: controller.navigationGeneration(7),
+      isCurrent: () => current,
+      wasHumanInterrupted: () => !current,
+      cancelOutstanding: async () => undefined,
+      mutationState: () => mutationState,
+      markMutationDispatched: () => { mutationState = 'possible' },
+      canPreserveAttachedIdle: () => true,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'control-interrupted',
+        details: { mutationState: 'not-started', noReplay: true, requiresReobserve: true },
+      },
+    })
+  })
+
   it('cancels stale work after navigation or trusted-human authority change', async () => {
     const { controller, executor } = await harness((_target, method) => method === 'Runtime.evaluate' ? value(true) : PASS)
     const stale = authority(controller)
@@ -371,6 +426,8 @@ function pngBase64(width: number, height: number, additionalBytes = 0): string {
   const bytes = new Uint8Array(24 + additionalBytes)
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
   const view = new DataView(bytes.buffer)
+  view.setUint32(8, 13)
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12)
   view.setUint32(16, width)
   view.setUint32(20, height)
   return Buffer.from(bytes).toString('base64')

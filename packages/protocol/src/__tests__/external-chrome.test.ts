@@ -2,15 +2,22 @@ import { describe, expect, it } from 'vitest'
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
+  EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
   EXTERNAL_CHROME_EXTENSION_ID,
   EXTERNAL_CHROME_EXTENSION_ORIGIN,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_METHODS,
   EXTERNAL_CHROME_NATIVE_HOST_NAME,
+  EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   EXTERNAL_CHROME_NOTIFICATION_METHODS,
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS,
+  EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS,
   EXTERNAL_CHROME_PROTOCOL_VERSIONS,
+  EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
   EXTERNAL_CHROME_REQUEST_METHODS,
   ExternalChromeContractError,
+  externalChromeControlCollisionDetails,
   negotiateExternalChromeProtocolVersion,
   parseExternalChromeJsonRpcFrame,
   type ExternalChromeRequestMethod,
@@ -86,6 +93,13 @@ describe('External Chrome automatic transport contract', () => {
   it('negotiates the sole supported version', () => {
     expect(negotiateExternalChromeProtocolVersion({ min: 1, max: 1 })).toBe(1)
     expect(() => negotiateExternalChromeProtocolVersion({ min: 2, max: 2 })).toThrow(ExternalChromeContractError)
+  })
+
+  it('centralizes staggered Desktop and physical authority inactivity bounds', () => {
+    expect(EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS).toBe(30_000)
+    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS).toBe(35_000)
+    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS).toBe(5 * 60_000)
+    expect(EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS).toBeLessThan(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS)
   })
 
   it('round-trips strict hello without profile display metadata', () => {
@@ -183,6 +197,35 @@ describe('External Chrome automatic transport contract', () => {
     expect(() => parse(obsolete, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
   })
 
+  it('enforces the screenshot-only base64 budget at the shared response boundary', () => {
+    const response = {
+      jsonrpc: '2.0', id: 'execute-snapshot',
+      result: {
+        ...lease, requestId: 'request-snapshot', tabId: 17, operation: 'snapshot', ok: true,
+        result: {
+          tabId: '17', url: 'https://example.test/', title: 'Page', loading: false,
+          viewportSetting: { mode: 'fill' }, viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+          visibleText: '', interactiveElements: [], accessibility: { frames: [] },
+          consoleEntries: [], networkEntries: [], actionTimeline: [],
+          screenshot: {
+            mimeType: 'image/png', data: 'A'.repeat(EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES), width: 800, height: 600,
+          },
+        },
+      },
+    }
+    expect(parse(response, 'forge.browser.execute')).toEqual(response)
+    expect(() => parse({
+      ...response,
+      result: {
+        ...response.result,
+        result: {
+          ...response.result.result,
+          screenshot: { ...response.result.result.screenshot, data: `${response.result.result.screenshot.data}A` },
+        },
+      },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+  })
+
   it('accepts only exact debugger attach-conflict safety evidence', () => {
     const response = {
       jsonrpc: '2.0', id: 'execute-conflict',
@@ -206,6 +249,68 @@ describe('External Chrome automatic transport contract', () => {
     expect(() => parse({
       ...response,
       result: { ...response.result, error: { ...response.result.error, code: 'execution-failed' } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+  })
+
+  it('accepts only exact pre-dispatch navigation deadline evidence', () => {
+    const response = {
+      jsonrpc: '2.0', id: 'execute-navigation-timeout',
+      result: {
+        ...lease, requestId: 'request-navigation-timeout', tabId: 17, operation: 'navigate', ok: false,
+        error: {
+          code: 'timeout', message: 'Navigation timed out', retryable: true,
+          details: EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
+        },
+      },
+    }
+    expect(parse(response, 'forge.browser.execute')).toEqual(response)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, details: { ...response.result.error.details, noReplay: false } } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, error: { ...response.result.error, code: 'execution-failed' } },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...response,
+      result: { ...response.result, operation: 'click' },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+  })
+
+  it('accepts only exact collaborative collision and re-observation safety evidence', () => {
+    const collision = {
+      jsonrpc: '2.0', id: 'execute-collision',
+      result: {
+        ...lease, requestId: 'request-collision', tabId: 17, operation: 'click', ok: false,
+        error: {
+          code: 'control-interrupted', message: 'Trusted input interrupted execution', retryable: true,
+          details: externalChromeControlCollisionDetails('possible'),
+        },
+      },
+    }
+    expect(parse(collision, 'forge.browser.execute')).toEqual(collision)
+    const reobserve = {
+      ...collision,
+      result: {
+        ...collision.result,
+        error: {
+          code: 'request-cancelled', message: 'Snapshot required', retryable: true,
+          details: EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
+        },
+      },
+    }
+    expect(parse(reobserve, 'forge.browser.execute')).toEqual(reobserve)
+    expect(() => parse({
+      ...collision,
+      result: {
+        ...collision.result,
+        error: { ...collision.result.error, details: { ...collision.result.error.details, noReplay: false } },
+      },
+    }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
+    expect(() => parse({
+      ...collision,
+      result: { ...collision.result, error: { ...collision.result.error, code: 'execution-failed' } },
     }, 'forge.browser.execute')).toThrow(ExternalChromeContractError)
   })
 

@@ -22,7 +22,7 @@ export const BROWSER_IPC = {
   presentation: 'forge:browser-presentation', viewport: 'forge:browser-viewport', capture: 'forge:browser-capture',
   humanNavigate: 'forge:browser-human-navigate', humanHistory: 'forge:browser-human-history',
   humanReload: 'forge:browser-human-reload', humanZoom: 'forge:browser-human-zoom', execute: 'forge:browser-execute',
-  lifecycle: 'forge:browser-lifecycle', reveal: 'forge:browser-reveal',
+  lifecycle: 'forge:browser-lifecycle', reveal: 'forge:browser-reveal', takeControl: 'forge:browser-take-control',
   prepareRecording: 'forge:browser-recording-prepare', stopRecordingCapture: 'forge:browser-recording-stop-capture',
   saveRecording: 'forge:browser-recording-save', cancelRecording: 'forge:browser-recording-cancel',
   recordingFrame: 'forge:browser-recording-frame', stateChanged: 'forge:browser-state-changed',
@@ -110,6 +110,7 @@ export interface BrowserAutomationBridge {
   invoke(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse>
   invokeLifecycle(request: BrowserHostLifecycleRequest): Promise<BrowserHostLifecycleResponse>
   reveal(sessionAgentId: string, profileId: string, tabId: string): Promise<{ targetAffinity: 'managed-electron' | 'external-chrome'; revealed: boolean; tabId: string }>
+  takeControl(sessionAgentId: string, profileId: string, tabId: string): Promise<{ released: boolean; tabId: string }>
   onStateChanged(listener: (tab: BrowserTabSnapshot) => void): () => void
 }
 

@@ -273,7 +273,7 @@ export function BuilderSurface({
       history: async (tabId, direction) => host().history(tabId, direction), reload: async (tabId, hard) => host().reload(tabId, hard),
       zoom: async (tabId, factor) => host().setZoom(tabId, factor), capture: (tabId) => host().captureScreenshot(tabId),
       startRecording: (tabId) => host().startRecording(tabId), stopRecording: (tabId, recordingId) => host().stopRecording(tabId, recordingId),
-      reveal: (tabId) => host().reveal(tabId),
+      reveal: (tabId) => host().reveal(tabId), takeControl: (tabId) => host().takeControl(tabId),
       popOut: () => host().popOut(), dock: () => host().dock(),
     }
   }, [])

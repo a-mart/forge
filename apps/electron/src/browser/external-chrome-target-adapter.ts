@@ -1,6 +1,9 @@
 import {
   EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  isExternalChromeControlCollisionDetails,
   isExternalChromeDebuggerAttachConflictDetails,
+  isExternalChromeNavigationNotDispatchedDetails,
+  isExternalChromeReobserveRequiredDetails,
   type BrowserAutomationFailure,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
@@ -29,7 +32,8 @@ export interface ExternalChromeTransport {
   execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult>
   listEligibleTabs?(session: BrowserTargetSession, deadlineAt?: number): Promise<ExternalBrowserInventory>
   acquireTarget?(input: ExternalBrowserAcquireInput): Promise<ExternalBrowserAcquireResult>
-  releaseAuthority?(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string): Promise<void>
+  releaseAuthority?(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: string, deadlineAt?: number): Promise<void>
+  releaseTargetAuthority?(session: BrowserTargetSession, tabId: string, reason: string, deadlineAt?: number): Promise<boolean>
   endTurn?(session: BrowserTargetSession, turnId: string): Promise<void>
   releaseSession?(session: BrowserTargetSession, reason: BrowserHostLifecycleReason): Promise<void>
   revealTarget?(session: BrowserTargetSession, tabId: string): Promise<ExternalBrowserRevealResult>
@@ -65,7 +69,7 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
     const response = await this.executeTransported(input.request)
     if (response.ok) return { response }
 
-    const evidence = debuggerAttachConflictEvidence(response.error)
+    const evidence = executionSafetyEvidence(response.error, input.request.operation)
     if (evidence === 'malformed') {
       return {
         response: {
@@ -79,12 +83,31 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
         failure: { phase: 'execution', mutationState: mutationDefault(input.request.operation) },
       }
     }
-    if (evidence === 'proven') {
+    if (evidence === 'navigation-not-dispatched') {
+      return {
+        response,
+        failure: { phase: 'execution', mutationState: 'not-started', noReplay: true },
+      }
+    }
+    if (evidence === 'debugger-attach-conflict') {
       const { details: _privateEvidence, ...error } = response.error
       void _privateEvidence
       return {
         response: { ...response, error },
         failure: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'foreign-debugger' },
+      }
+    }
+    if (evidence === 'control-collision' || evidence === 'reobserve-required') {
+      return {
+        response,
+        failure: {
+          phase: 'execution',
+          mutationState: response.error.details!.mutationState as 'not-started' | 'possible',
+          fallbackReason: 'authority-conflict',
+          noReplay: true,
+          preserveAuthority: true,
+          requiresReobserve: true,
+        },
       }
     }
     return {
@@ -97,8 +120,12 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
     }
   }
 
-  releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: 'idle' | 'operation-failed' | 'turn-ended' | BrowserHostLifecycleReason): Promise<void> {
-    return this.transport.releaseAuthority?.(session, authority, reason) ?? Promise.resolve()
+  releaseAuthority(session: BrowserTargetSession, authority: ExternalBrowserTargetAuthority, reason: 'idle' | 'operation-failed' | 'turn-ended' | 'take-control' | BrowserHostLifecycleReason, deadlineAt?: number): Promise<void> {
+    return this.transport.releaseAuthority?.(session, authority, reason, deadlineAt) ?? Promise.resolve()
+  }
+
+  releaseTargetAuthority(session: BrowserTargetSession, tabId: string, reason: 'take-control'): Promise<boolean> {
+    return this.transport.releaseTargetAuthority?.(session, tabId, reason) ?? Promise.resolve(false)
   }
 
   endTurn(session: BrowserTargetSession, turnId: string): Promise<void> {
@@ -117,8 +144,8 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
     const response = await this.executeTransported(request)
     if (response.ok) return response
-    const evidence = debuggerAttachConflictEvidence(response.error)
-    if (evidence === 'absent') return response
+    const evidence = executionSafetyEvidence(response.error, request.operation)
+    if (evidence === 'absent' || evidence === 'navigation-not-dispatched' || evidence === 'control-collision' || evidence === 'reobserve-required') return response
     if (evidence === 'malformed') {
       return {
         ...response,
@@ -163,12 +190,18 @@ function mutationDefault(operation: BrowserAutomationRequest['operation']): 'not
   return operation === 'status' || operation === 'snapshot' || operation === 'waitFor' ? 'not-started' : 'possible'
 }
 
-function debuggerAttachConflictEvidence(error: BrowserAutomationFailure): 'absent' | 'proven' | 'malformed' {
+function executionSafetyEvidence(
+  error: BrowserAutomationFailure,
+  operation: BrowserAutomationRequest['operation'],
+): 'absent' | 'debugger-attach-conflict' | 'navigation-not-dispatched' | 'control-collision' | 'reobserve-required' | 'malformed' {
   const details = error.details
-  const hasReservedField = details !== undefined && ['failurePhase', 'mutationState', 'fallbackReason']
-    .some((key) => Object.prototype.hasOwnProperty.call(details, key))
+  const hasReservedField = details !== undefined &&
+    ['failurePhase', 'mutationState', 'fallbackReason', 'noReplay', 'requiresReobserve', 'authorityState']
+      .some((key) => Object.prototype.hasOwnProperty.call(details, key))
   if (!hasReservedField) return 'absent'
-  return error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(details)
-    ? 'proven'
-    : 'malformed'
+  if (error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(details)) return 'debugger-attach-conflict'
+  if (error.code === 'timeout' && operation === 'navigate' && isExternalChromeNavigationNotDispatchedDetails(details)) return 'navigation-not-dispatched'
+  if (error.code === 'control-interrupted' && isExternalChromeControlCollisionDetails(details)) return 'control-collision'
+  if (error.code === 'request-cancelled' && isExternalChromeReobserveRequiredDetails(details)) return 'reobserve-required'
+  return 'malformed'
 }

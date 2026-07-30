@@ -74,6 +74,7 @@ export interface BrowserAutomationBridge {
   invoke(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse>
   invokeLifecycle(request: BrowserHostLifecycleRequest): Promise<BrowserHostLifecycleResponse>
   reveal(sessionAgentId: string, profileId: string, tabId: string): Promise<{ targetAffinity: 'managed-electron' | 'external-chrome'; revealed: boolean; tabId: string }>
+  takeControl(sessionAgentId: string, profileId: string, tabId: string): Promise<{ released: boolean; tabId: string }>
   onStateChanged(listener: (tab: BrowserTabSnapshot) => void): () => void
 }
 export interface ManagedBrowserWorkspaceProjection {

@@ -29,6 +29,7 @@ export interface BrowserWorkspaceCommandPort {
   startRecording(tabId: string): Promise<void>
   stopRecording(tabId: string, recordingId: string): Promise<void>
   reveal(tabId: string): Promise<void>
+  takeControl(tabId: string): Promise<void>
   popOut?(): Promise<void>
   dock?(): Promise<void>
 }
@@ -193,6 +194,7 @@ export function BrowserPanel({
             <span>This tab is open in Chrome.</span>
             {activeTab ? <TabStatus tab={activeTab} /> : null}
             <button type="button" className="rounded border px-3 py-1.5 text-foreground hover:bg-muted focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+            <button type="button" className="rounded border px-3 py-1.5 text-foreground hover:bg-muted focus-visible:ring-2" onClick={() => activeTab && void run(() => commands.takeControl(activeTab.tabId))}>Take Control</button>
             <HelpTrigger contextKey="chat.browser" size="sm" className="size-8" />
           </div>
         )}
@@ -205,7 +207,10 @@ export function BrowserPanel({
           <Globe2 className="mx-auto mb-3 size-9 text-muted-foreground" />
           <h2 className="font-medium">Browser tab open in Chrome</h2>
           <p className="mt-2 text-sm text-muted-foreground">Forge can use this tab while it stays in your Chrome window.</p>
-          <button type="button" className="mt-4 rounded border px-3 py-1.5 hover:bg-muted focus-visible:ring-2" onClick={() => void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+          <div className="mt-4 flex justify-center gap-2">
+            <button type="button" className="rounded border px-3 py-1.5 hover:bg-muted focus-visible:ring-2" onClick={() => void run(() => commands.reveal(activeTab.tabId))}>Show in Chrome</button>
+            <button type="button" className="rounded border px-3 py-1.5 hover:bg-muted focus-visible:ring-2" onClick={() => void run(() => commands.takeControl(activeTab.tabId))}>Take Control</button>
+          </div>
         </div>
       ) : activeTab ? (
         <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/40 p-2">
@@ -242,6 +247,7 @@ function createLegacyLocalPort(client: ManagerWsClient | null, sessionAgentId: s
     startRecording: async (tabId) => { if (hostRef?.current) await hostRef.current.startRecording(tabId); else await client?.startBrowserRecording(sessionAgentId, tabId) },
     stopRecording: async (tabId, recordingId) => { if (hostRef?.current) await hostRef.current.stopRecording(tabId, recordingId); else await client?.stopBrowserRecording(sessionAgentId, tabId, recordingId) },
     reveal: (tabId) => handle().reveal(tabId),
+    takeControl: (tabId) => handle().takeControl(tabId),
     popOut: hostRef ? () => handle().popOut() : undefined,
     dock: hostRef ? () => handle().dock() : undefined,
   }

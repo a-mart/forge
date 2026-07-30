@@ -108,6 +108,10 @@ export class BrowserAutomationManager {
     return this.automaticHost.releaseSession(session, reason)
   }
 
+  takeControl(session: BrowserTargetSession, tabId: string): Promise<{ released: boolean; tabId: string }> {
+    return this.automaticHost.takeControl(session, tabId)
+  }
+
   revealTarget(session: BrowserTargetSession, tabId: string): Promise<AutomaticBrowserRevealResult> {
     return this.automaticHost.revealTarget(session, tabId)
   }

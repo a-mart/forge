@@ -241,6 +241,121 @@ async function fakeExtensionLoop(
 }
 
 describe('authenticated External Chrome Desktop relay runtime', () => {
+  it('ignores a valid late response by method tombstone and keeps the authenticated runtime healthy', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
+    const first = runtime.listEligibleTabs(session, Date.now() + 15)
+    const timedOutRequest = await client.receive()
+    expect(timedOutRequest).toMatchObject({ method: 'forge.browser.inventory' })
+    await expect(first).resolves.toMatchObject({ tabs: [], truncated: true })
+
+    await client.send({ jsonrpc: '2.0', id: timedOutRequest!.id, result: {
+      protocolVersion: 1,
+      tabs: [{
+        tabId: 40, windowId: 4, title: 'Late', url: 'https://late.invalid/', active: true,
+        windowFocused: false, lastAccessed: 1_000,
+      }],
+      truncated: false,
+    } })
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    expect(runtime.inventory()).toHaveLength(1)
+
+    const second = runtime.listEligibleTabs(session, Date.now() + 1_000)
+    const liveRequest = await client.receive()
+    await client.send({ jsonrpc: '2.0', id: liveRequest!.id, result: {
+      protocolVersion: 1,
+      tabs: [{
+        tabId: 41, windowId: 4, title: 'Live', url: 'https://live.invalid/', active: true,
+        windowFocused: false, lastAccessed: 2_000,
+      }],
+      truncated: false,
+    } })
+    await expect(second).resolves.toMatchObject({ tabs: [{ title: 'Live' }], truncated: false })
+    runtime.deactivate(); client.close()
+  })
+
+  it('fails closed when a late response does not match its tombstoned method contract', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const listing = runtime.listEligibleTabs({ sessionAgentId: 'session-a', profileId: 'profile-a' }, Date.now() + 15)
+    const timedOutRequest = await client.receive()
+    await listing
+    await client.send({ jsonrpc: '2.0', id: timedOutRequest!.id, result: {
+      protocolVersion: 1, nonce: 'wrong-method', receivedAt: new Date().toISOString(),
+    } })
+    await expect.poll(() => runtime.inventory().length).toBe(0)
+    runtime.deactivate(); client.close()
+  })
+
+  it('bounds caller-expired cleanup, retains exact intent, and gives later lifecycle cleanup its own budget', async () => {
+    const { runtime, client } = await connectedRuntime('instance_profile_a', Date.now)
+    const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }
+    const acquiring = runtime.acquireTarget({
+      ...session,
+      operation: 'open',
+      preferredTabId: 'ext.instance_profile_a.40',
+      reuseExisting: true,
+      createIfNeeded: false,
+      ownerEpoch: 77,
+      deadlineAt: Date.now() + 1_000,
+    })
+    const acquireRequest = await client.receive()
+    await client.send({ jsonrpc: '2.0', id: acquireRequest!.id, result: {
+      protocolVersion: 1,
+      leaseId: acquireRequest!.params.leaseId,
+      leaseEpoch: acquireRequest!.params.leaseEpoch,
+      sessionAgentId: acquireRequest!.params.sessionAgentId,
+      extensionInstanceId: 'instance_profile_a',
+      tab: { tabId: 40, title: 'Selected', url: 'https://selected.invalid/', active: true },
+      created: false,
+    } })
+    const acquired = await acquiring
+    expect(acquired).toMatchObject({ ok: true })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+
+    const started = Date.now()
+    const expiredCleanup = runtime.releaseAuthority(session, acquired.authority, 'operation-failed', Date.now() - 1)
+    const firstRelease = await client.receive()
+    await expect(expiredCleanup).rejects.toThrow('timed out')
+    expect(Date.now() - started).toBeLessThan(1_000)
+
+    const lifecycle = runtime.releaseSession(session, 'turn-ended')
+    const secondRelease = await client.receive()
+    expect(secondRelease).toMatchObject({ method: 'forge.browser.release', params: { reason: 'operation-failed' } })
+    await client.send({ jsonrpc: '2.0', id: firstRelease!.id, result: {
+      protocolVersion: 1,
+      leaseId: firstRelease!.params.leaseId,
+      leaseEpoch: firstRelease!.params.leaseEpoch,
+      releasedTabIds: [40],
+    } })
+    await client.send({ jsonrpc: '2.0', id: secondRelease!.id, result: {
+      protocolVersion: 1,
+      leaseId: secondRelease!.params.leaseId,
+      leaseEpoch: secondRelease!.params.leaseEpoch,
+      releasedTabIds: [40],
+    } })
+    const acknowledgement = await client.receive()
+    expect(acknowledgement).toMatchObject({ method: 'forge.browser.acknowledgeRelease' })
+    await client.send({ jsonrpc: '2.0', id: acknowledgement!.id, result: {
+      protocolVersion: 1,
+      leaseId: acknowledgement!.params.leaseId,
+      leaseEpoch: acknowledgement!.params.leaseEpoch,
+      releasedTabIds: [40],
+      acknowledged: true,
+    } })
+    await expect(lifecycle).resolves.toBeUndefined()
+    expect(runtime.inventory()).toHaveLength(1)
+    runtime.deactivate(); client.close()
+  })
+
+  it('closes an authenticated runtime for an unknown response ID', async () => {
+    const { runtime, client } = await connectedRuntime()
+    await client.send({ jsonrpc: '2.0', id: 'never-requested', result: {
+      protocolVersion: 1, tabs: [], truncated: false,
+    } })
+    await expect.poll(() => runtime.inventory().length).toBe(0)
+    runtime.deactivate(); client.close()
+  })
+
   it('waits through a transient extension disconnect before reacquiring automatic authority', async () => {
     const { runtime, client, root } = await connectedRuntime()
     const endpoint = path.join(root, 'relay.sock')
@@ -589,6 +704,28 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
       'forge.browser.inventory', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.acknowledgeRelease',
     ])
     expect(requests[1]?.params).toMatchObject({ tabId: 40, createIfNeeded: false })
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('releases an exact recovered tab checkpoint for Take Control without host burst memory', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await expect(runtime.acquireTarget({
+      sessionAgentId: 'session-a', profileId: 'profile-a', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 28,
+    })).resolves.toMatchObject({ ok: true, authority: { tabId: 'ext.instance_profile_a.40' } })
+
+    await expect(runtime.releaseTargetAuthority(
+      { sessionAgentId: 'session-a', profileId: 'profile-a' },
+      'ext.instance_profile_a.40',
+      'take-control',
+    )).resolves.toBe(true)
+    expect(requests.map(({ method }) => method)).toEqual([
+      'forge.browser.inventory', 'forge.browser.acquire', 'forge.browser.release', 'forge.browser.acknowledgeRelease',
+    ])
+    expect(requests.at(-2)?.params).toMatchObject({ reason: 'take-control' })
     expect(await runtime.leaseCheckpoints()).toEqual([])
     runtime.deactivate(); client.close(); await loop
   })

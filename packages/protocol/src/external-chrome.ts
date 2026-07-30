@@ -4,6 +4,7 @@ import {
   BROWSER_AUTOMATION_MAX_EVALUATE_BYTES,
   BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS,
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT,
   BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
@@ -51,10 +52,43 @@ export const EXTERNAL_CHROME_MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_NEGOTIATED_MESSAGE_BYTES = 256 * 1_024
 /** Maximum raw decoded PNG bytes accepted before snapshot envelope compaction. */
 export const EXTERNAL_CHROME_MAX_SCREENSHOT_PNG_BYTES = 192 * 1_024
+/** Conservative screenshot-only budget inside the negotiated JSON-RPC response envelope. */
+export const EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES = 224 * 1_024
+/** Smallest useful adaptive capture. Smaller source viewports are never upscaled. */
+export const EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_WIDTH = 320
+export const EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_HEIGHT = 180
+/** Shared lifecycle timing keeps Desktop cleanup ahead of the physical debugger expiry. */
+export const EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS = 30_000
+export const EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS = 35_000
+export const EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS = 5 * 60_000
+/** A caller-expired operation gets only this bounded synchronous cleanup attempt. */
+export const EXTERNAL_CHROME_EXPIRED_CLEANUP_ATTEMPT_MS = 250
+/** Timed-out request IDs remain parseable only for this bounded late-response window. */
+export const EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS = 30_000
+export const EXTERNAL_CHROME_MAX_LATE_RESPONSE_TOMBSTONES = 128
+/** Stable limitation subtype for adaptive capture that is still too large at its useful floor. */
+export const EXTERNAL_CHROME_MINIMUM_QUALIFIED_SCREENSHOT_OVERFLOW_LIMITATION = 'minimum-qualified-screenshot-overflow' as const
 /** Stable limitation subtype for a screenshot that cannot fit without dropping the image. */
 export const EXTERNAL_CHROME_SCREENSHOT_ONLY_OVERFLOW_LIMITATION = 'screenshot-only-envelope-overflow' as const
 export const EXTERNAL_CHROME_SCREENSHOT_BYTE_UNITS = ['decoded-png', 'base64-utf8', 'json-rpc-envelope-utf8'] as const
 export type ExternalChromeScreenshotByteUnit = (typeof EXTERNAL_CHROME_SCREENSHOT_BYTE_UNITS)[number]
+
+export function externalChromeMinimumQualifiedScreenshotOverflowDetails(
+  screenshotBytes: number,
+  screenshotByteUnit: ExternalChromeScreenshotByteUnit,
+  maximumBytes: number,
+  maximumByteUnit: ExternalChromeScreenshotByteUnit,
+): Record<string, string | number> {
+  return {
+    limitation: EXTERNAL_CHROME_MINIMUM_QUALIFIED_SCREENSHOT_OVERFLOW_LIMITATION,
+    screenshotBytes,
+    screenshotByteUnit,
+    maximumBytes,
+    maximumByteUnit,
+    minimumQualifiedWidth: EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_WIDTH,
+    minimumQualifiedHeight: EXTERNAL_CHROME_MIN_QUALIFIED_SCREENSHOT_HEIGHT,
+  }
+}
 
 export function externalChromeScreenshotOverflowDetails(
   screenshotBytes: number,
@@ -368,6 +402,47 @@ export const EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS = {
  */
 export type ExternalChromeDebuggerAttachConflictDetails = typeof EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS
 
+export const EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS = {
+  reason: 'navigation-deadline-before-dispatch',
+  failurePhase: 'execution',
+  mutationState: 'not-started',
+  noReplay: true,
+} as const
+
+/** Exact proof that navigation expired before Chrome received Page.navigate. */
+export type ExternalChromeNavigationNotDispatchedDetails = typeof EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS
+
+export const EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS = {
+  interruption: 'trusted-input',
+  failurePhase: 'execution',
+  fallbackReason: 'authority-conflict',
+  noReplay: true,
+  requiresReobserve: true,
+  authorityState: 'attached-idle',
+} as const
+
+export type ExternalChromeControlCollisionDetails = typeof EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS & {
+  mutationState: 'not-started' | 'possible'
+}
+
+export function externalChromeControlCollisionDetails(
+  mutationState: ExternalChromeControlCollisionDetails['mutationState'],
+): ExternalChromeControlCollisionDetails {
+  return { ...EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS, mutationState }
+}
+
+export const EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS = {
+  reason: 'trusted-input-reobserve',
+  failurePhase: 'execution',
+  mutationState: 'not-started',
+  fallbackReason: 'authority-conflict',
+  noReplay: true,
+  requiresReobserve: true,
+  authorityState: 'attached-idle',
+} as const
+
+export type ExternalChromeReobserveRequiredDetails = typeof EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS
+
 export function isExternalChromeDebuggerAttachConflictDetails(
   value: unknown,
 ): value is ExternalChromeDebuggerAttachConflictDetails {
@@ -377,6 +452,40 @@ export function isExternalChromeDebuggerAttachConflictDetails(
     details.failurePhase === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.failurePhase &&
     details.mutationState === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.mutationState &&
     details.fallbackReason === EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS.fallbackReason
+}
+
+export function isExternalChromeNavigationNotDispatchedDetails(
+  value: unknown,
+): value is ExternalChromeNavigationNotDispatchedDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).sort().join(',') === Object.keys(EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS).sort().join(',') &&
+    Object.entries(EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS).every(([key, expected]) => details[key] === expected)
+}
+
+export function isExternalChromeControlCollisionDetails(
+  value: unknown,
+): value is ExternalChromeControlCollisionDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).sort().join(',') === [
+    'authorityState', 'failurePhase', 'fallbackReason', 'interruption', 'mutationState', 'noReplay', 'requiresReobserve',
+  ].sort().join(',') &&
+    details.interruption === EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS.interruption &&
+    details.failurePhase === EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS.failurePhase &&
+    details.fallbackReason === EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS.fallbackReason &&
+    (details.mutationState === 'not-started' || details.mutationState === 'possible') &&
+    details.noReplay === true && details.requiresReobserve === true &&
+    details.authorityState === EXTERNAL_CHROME_CONTROL_COLLISION_DETAILS.authorityState
+}
+
+export function isExternalChromeReobserveRequiredDetails(
+  value: unknown,
+): value is ExternalChromeReobserveRequiredDetails {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const details = value as Record<string, unknown>
+  return Object.keys(details).sort().join(',') === Object.keys(EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS).sort().join(',') &&
+    Object.entries(EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS).every(([key, expected]) => details[key] === expected)
 }
 
 export type ExternalChromeExecuteResult = {
@@ -870,10 +979,15 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
   if (error.details !== undefined) {
     const rawDetails = object(error.details, `${path}.details`)
     if (Object.keys(rawDetails).length > EXTERNAL_CHROME_MAX_OBJECT_PROPERTIES) fail('invalid-result', `${path}.details exceeds property bound`)
-    const hasAttachEvidenceField = ['failurePhase', 'mutationState', 'fallbackReason']
+    const hasSafetyEvidenceField = ['failurePhase', 'mutationState', 'fallbackReason', 'noReplay', 'requiresReobserve', 'authorityState']
       .some((key) => Object.prototype.hasOwnProperty.call(rawDetails, key))
-    if (hasAttachEvidenceField && (error.code !== 'debugger-unavailable' || !isExternalChromeDebuggerAttachConflictDetails(rawDetails))) {
-      fail('invalid-result', `${path}.details has malformed debugger attach conflict evidence`)
+    const validSafetyEvidence =
+      (error.code === 'debugger-unavailable' && isExternalChromeDebuggerAttachConflictDetails(rawDetails)) ||
+      (error.code === 'timeout' && isExternalChromeNavigationNotDispatchedDetails(rawDetails)) ||
+      (error.code === 'control-interrupted' && isExternalChromeControlCollisionDetails(rawDetails)) ||
+      (error.code === 'request-cancelled' && isExternalChromeReobserveRequiredDetails(rawDetails))
+    if (hasSafetyEvidenceField && !validSafetyEvidence) {
+      fail('invalid-result', `${path}.details has malformed execution safety evidence`)
     }
     details = Object.fromEntries(Object.entries(rawDetails).map(([key, entry]) => {
       boundedString(key, `${path}.details key`, EXTERNAL_CHROME_MAX_LABEL_LENGTH)
@@ -1187,9 +1301,12 @@ function validateSnapshotResult(result: Record<string, unknown>, path: string): 
   const screenshot = object(result.screenshot, `${path}.screenshot`)
   strictKeys(screenshot, `${path}.screenshot`, ['mimeType', 'data', 'width', 'height'])
   if (screenshot.mimeType !== 'image/png') fail('invalid-result', `${path}.screenshot.mimeType must be image/png`)
-  boundedString(screenshot.data, `${path}.screenshot.data`, EXTERNAL_CHROME_MAX_STRING_LENGTH, true)
+  const screenshotData = boundedString(screenshot.data, `${path}.screenshot.data`, EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES)
+  if (screenshotData.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(screenshotData)) {
+    fail('invalid-result', `${path}.screenshot.data must be canonical base64`)
+  }
   integer(screenshot.width, `${path}.screenshot.width`, 1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH)
-  integer(screenshot.height, `${path}.screenshot.height`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+  integer(screenshot.height, `${path}.screenshot.height`, 1, BROWSER_AUTOMATION_MAX_SCREENSHOT_HEIGHT)
 }
 
 function validateStrictOperationResult(operation: BrowserAutomationOperation, result: Record<string, unknown>): void {
@@ -1359,7 +1476,11 @@ function parseExecuteResult(value: unknown, expected?: ExternalChromeProtocolVer
   }
   if (result.ok === false) {
     if (result.error === undefined || result.result !== undefined) fail('invalid-result', 'failed execute result requires error and forbids result')
-    return { ...routing, ok: false, error: parseBrowserFailure(result.error, 'result.error') } as ExternalChromeExecuteResult
+    const error = parseBrowserFailure(result.error, 'result.error')
+    if (isExternalChromeNavigationNotDispatchedDetails(error.details) && result.operation !== 'navigate') {
+      fail('invalid-result', 'navigation non-dispatch evidence requires a navigate result')
+    }
+    return { ...routing, ok: false, error } as ExternalChromeExecuteResult
   }
   return fail('invalid-result', 'result.ok must be boolean')
 }
