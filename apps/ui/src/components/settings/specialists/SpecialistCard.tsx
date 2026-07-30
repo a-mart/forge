@@ -139,11 +139,9 @@ export function SpecialistCard({
                 </span>
               )}
             </div>
-            {usesTierModel ? (
+            {usesTierModel && !behaviorMode ? (
               <p className="text-xs text-muted-foreground">
-                {behaviorMode
-                  ? `Default policy: ${behaviorMode.defaultPolicy}`
-                  : `System compatibility tier: ${specialist.defaultTier ?? 'configured default'}`}
+                System compatibility tier: {specialist.defaultTier ?? 'configured default'}
               </p>
             ) : modelDisplay ? (
               <p className="text-xs text-muted-foreground">

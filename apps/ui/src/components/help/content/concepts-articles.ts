@@ -114,7 +114,7 @@ const conceptsSpecialists: HelpArticle = {
   id: 'concepts-specialists',
   title: 'Worker Delegation',
   category: 'concepts',
-  summary: 'Work modes, task types, worker rosters, custom specialists, and execution-profile routing.',
+  summary: 'Work modes, task types, delegation presets, model policies, and custom specialists.',
   content: conceptsSpecialistsContent,
   keywords: [
     'specialist',
@@ -124,6 +124,8 @@ const conceptsSpecialists: HelpArticle = {
     'execution profile',
     'execution route',
     'worker roster',
+    'model policy',
+    'delegation preset',
     'work mode',
     'worker',
     'routing',

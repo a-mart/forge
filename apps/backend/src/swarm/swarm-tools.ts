@@ -466,7 +466,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Delegate one concrete outcome to an independent worker. Choose a task mode for the output contract. Omit route to use that task type's baseline execution profile; name a route only when its current guidance clearly fits. Set requiresSecureRuntime=true when the assignment must use granted Secure Sessions material; Forge selects a compatible configured fallback and fails closed rather than dispatching insecurely. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
+        "Delegate one concrete outcome to an independent worker. Name a route to use a complete specialist from the active roster, including its task instructions and model. Otherwise choose a task mode and omit route to use that task's default specialist. Set requiresSecureRuntime=true when the assignment must use granted Secure Sessions material; Forge selects a compatible configured fallback and fails closed rather than dispatching insecurely. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -480,7 +480,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           minLength: 1,
           maxLength: 64,
           pattern: "^(auto|[a-z0-9][a-z0-9-]{0,63})$",
-          description: "Deliberate execution-profile override from the active roster. Omit for the task type's baseline profile.",
+          description: "Named specialist from the active delegation preset. Omit to use the selected task mode's default specialist.",
         })),
         customSpecialist: Type.Optional(
           Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and route." })

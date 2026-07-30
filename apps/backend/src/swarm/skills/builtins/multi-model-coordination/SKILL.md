@@ -21,7 +21,7 @@ purpose and graph shape and ask before creating the graph.
 
 ## When not to use
 
-- for routine delegation that the active roster already handles;
+- for routine delegation that the active delegation preset already handles;
 - merely because work is large, important, or graph-shaped;
 - to create several workers that repeat the same prompt without a reason for independence;
 - when one focused worker plus manager acceptance is enough.
@@ -31,7 +31,7 @@ purpose and graph shape and ask before creating the graph.
 1. Read exactly one best-fit scenario reference.
 2. Treat its graph as a topology example, not a fixed template. Keep the smallest useful graph.
 3. Give parallel nodes distinct questions, lenses, evidence requirements, or solution constraints.
-4. Omit `route` for the active roster's baseline. Select named routes only when their current
+4. Omit `route` for the active preset's task default. Select named model policies only when their current
    `[delegationRoster]` guidance clearly fits; never invent model or route ids.
 5. Keep contributors independent until their leaf results are accepted. Do not reveal other
    contributors' conclusions in their initial tasks.

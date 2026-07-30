@@ -12,10 +12,10 @@ import type { SaveSpecialistPayload } from '../specialists-api'
 export const SYSTEM_DELEGATION_SPECIALIST_IDS = new Set(['architect', 'codex-plugin'])
 
 const BEHAVIOR_MODE_BY_SPECIALIST_ID = {
-  planner: { mode: 'plan', defaultPolicy: 'deep' },
-  'code-reviewer': { mode: 'correctness-review', defaultPolicy: 'deep' },
-  'code-reviewer-2': { mode: 'design-review', defaultPolicy: 'deep' },
-  researcher: { mode: 'research', defaultPolicy: 'support' },
+  planner: { mode: 'plan' },
+  'code-reviewer': { mode: 'correctness-review' },
+  'code-reviewer-2': { mode: 'design-review' },
+  researcher: { mode: 'research' },
 } as const
 
 export type BehaviorModeCardMetadata =

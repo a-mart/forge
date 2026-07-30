@@ -28,6 +28,7 @@ import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 function getSettingsContentWidthClassName(activeTab: SettingsTab): string | undefined {
   if (activeTab === 'appearance') return 'max-w-6xl'
   if (activeTab === 'skills') return 'max-w-full'
+  if (activeTab === 'specialists') return 'max-w-[96rem]'
   return undefined
 }
 

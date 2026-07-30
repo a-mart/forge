@@ -69,5 +69,5 @@ most likely to change the recommendation.
 
 ## Adaptation
 
-Use named routes to obtain provider diversity only when the active roster explicitly offers suitable
+Use named model policies to obtain provider diversity only when the active preset explicitly offers suitable
 routes. Diversity is useful for search variance, but source quality remains the basis for acceptance.

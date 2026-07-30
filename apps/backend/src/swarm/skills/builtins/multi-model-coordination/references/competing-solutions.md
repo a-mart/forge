@@ -69,5 +69,5 @@ rejected complexity is not justified. Verify the decisive feasibility claim.
 
 ## Adaptation
 
-Two candidates are usually enough. Use provider or model diversity when the active roster offers it,
+Two candidates are usually enough. Use provider or model diversity when the active preset offers it,
 but choose routes by their current guidance rather than hardcoding provider names.

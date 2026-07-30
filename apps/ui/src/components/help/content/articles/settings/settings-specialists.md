@@ -1,4 +1,4 @@
-Delegation separates manager ownership, task instructions, and model selection. The manager chooses whether to own bounded work directly, which task type fits delegated work, and which execution profile in the selected roster should run it. The delegation tool identifies the task type with `mode` and the profile with its internal `route` field.
+Delegation separates manager ownership from worker configuration. A delegation preset is a roster of complete specialists. Each specialist combines one task type and its instructions with the model, reasoning, use/avoid guidance, fallback, and escalation behavior used to run it.
 
 ## Work mode
 
@@ -15,17 +15,17 @@ Projects can set a default work mode. An eligible Builder manager session can in
 - **Design review** — maintainability, API design, architecture fit, and consistency.
 - **Research** — fact-checking, documentation, and source-backed investigation.
 
-Task type describes the job; it does not choose model capability.
+Task type describes the specialist's job. A roster may contain more than one specialist for the same task type when different cost, capability, or provider choices are useful.
 
-## Worker rosters
+## Delegation presets
 
-A worker roster is a selectable catalog of execution profiles. Each profile has concise use/avoid guidance, one primary model and reasoning level, an optional availability fallback, and an optional escalation profile.
+A delegation preset is a team of complete roster specialists. Every specialist has one task type and a complete execution configuration. One specialist is the default for each task type; alternatives can provide cheaper, independent, or stronger execution when their guidance clearly fits.
 
-Each roster maps task types to baseline execution profiles. Build & execute also supplies the hidden compatibility fallback for an incomplete mapping, so there is no separate Default choice. Managers normally omit `route` and let the selected task type's baseline apply; they name a profile's route only when its guidance clearly fits cheaper bounded work or difficult cross-cutting work. Capability escalation is reserved for a later attempt after evidence that the selected executor was inadequate. Graph size and fan-in are not reasons to select a stronger profile.
+Managers normally choose the work to delegate and let Forge use that task type's default specialist. They name another specialist only when its guidance clearly fits. Capability escalation is reserved for a later attempt after evidence that the selected specialist was inadequate. Graph size and fan-in are not reasons to select a stronger specialist.
 
-The selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned route, model, fallback, and escalation target. Availability fallback handles provider/model unavailability. Capability escalation is a separate later attempt and never happens merely because a provider is rate-limited.
+The preset selection order is global default → project default → session override. Preset changes affect future attempts; running attempts keep their pinned specialist and execution settings. Availability fallback swaps only the model when the primary is unavailable and keeps the same attempt. Capability escalation starts a fresh attempt on another specialist and never happens merely because a provider is rate-limited.
 
-Configure definitions and the global default in **Worker Rosters**. Use the compact work menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
+Configure this under **Delegation presets**. Select a roster specialist to edit both what it does and how it runs. Its task-type badge shows its job; the **Default** badge shows whether Forge chooses it automatically for that task. Use **Make default** to replace the current default without editing a separate routing table. Use the compact work menu beside Send to select a session preset, return to the project default, or make the current choice the project default.
 
 ## Global, project, and Collaboration scopes
 
@@ -41,7 +41,7 @@ Definitions use `TargetSpace` to stay in Builder, Collaboration, or both. Channe
 
 ## Custom specialists
 
-Use **New Specialist** when a durable domain-specific worker needs a complete fixed execution template with its own saved prompt and model configuration. A manager selects it through the custom-specialist path instead of combining it with a task type or roster route.
+Use **New Specialist** in the Instruction library when a durable domain-specific worker needs a complete standalone prompt and fixed model configuration outside the normal roster task types.
 
 1. Enter a kebab-case handle and display name.
 2. Describe when the manager should use it.
@@ -63,6 +63,6 @@ Each scenario declares whether autonomous use needs confirmation and shows one a
 
 Codex Plugin is not a normal task type or custom specialist. When a user includes an active `@Codex` plugin selector, Forge provides a dedicated delegation tool and binds its worker to the server-owned selector scope. The model cannot supply or widen selectors. Explicit retry turns can reuse a stopped or failed worker's stored scope; unrelated turns require a fresh selector tag.
 
-## Roster prompt
+## Prompt preview
 
-In project or channel scope, click **Roster Prompt** to inspect the compact specialist block injected into the manager prompt. Model routes are supplied separately in a versioned runtime context so roster changes do not rewrite the stable system-prompt prefix.
+In project or channel scope, use the prompt preview to inspect the compact instruction/custom-specialist block injected into the manager prompt. The active roster is supplied separately in a versioned runtime context so preset changes do not rewrite the stable system-prompt prefix.

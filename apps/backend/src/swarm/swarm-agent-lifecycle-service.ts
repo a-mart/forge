@@ -76,6 +76,7 @@ import {
 import { isBuiltinModePromptId } from "./worker-mode-prompt.js";
 import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import { resolveDelegationRoute } from "./specialists/delegation-roster-store.js";
+import { getWorkerBehaviorModeLensId } from "./specialists/delegation-policy.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -535,7 +536,7 @@ export class SwarmAgentLifecycleService {
     const rawSpecialist = input.specialist?.trim();
     const requestedTier = normalizeEffortTier(input.tier);
     const rawLens = input.lens?.trim();
-    const requestedLensId = rawLens ? await this.options.normalizeSpecialistHandle(rawLens) : undefined;
+    let requestedLensId = rawLens ? await this.options.normalizeSpecialistHandle(rawLens) : undefined;
     const requestedRoute = input.route?.trim();
     let requestedSpecialistId: string | undefined;
     let tierSelection: { tier: EffortTier; lens?: string; legacySpecialistId?: string } | undefined;
@@ -579,7 +580,7 @@ export class SwarmAgentLifecycleService {
     }
 
     if (requestedSpecialistId && (input.tier !== undefined || requestedLensId || requestedRoute)) {
-      throw new Error("Cannot combine custom specialist with an execution profile, tier, or task mode.");
+      throw new Error("Cannot combine a saved custom specialist with a roster specialist, legacy tier, or task mode.");
     }
     if (requestedRoute && input.tier !== undefined) {
       throw new Error("Cannot combine route with legacy tier selection.");
@@ -615,6 +616,15 @@ export class SwarmAgentLifecycleService {
       );
       selectedDelegationRoster = resolved.roster;
       selectedDelegationRoute = resolved.route;
+      const taskBehaviorMode = requestedRoute === "auto"
+        ? behaviorMode
+        : selectedDelegationRoute.behaviorMode;
+      if (taskBehaviorMode) {
+        const specialistId = getWorkerBehaviorModeLensId(taskBehaviorMode);
+        requestedLensId = specialistId
+          ? await this.options.normalizeSpecialistHandle(specialistId)
+          : undefined;
+      }
 
       if (requestedLensId) {
         const roster = await resolveRoster();

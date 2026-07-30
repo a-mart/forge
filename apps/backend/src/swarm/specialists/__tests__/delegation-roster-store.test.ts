@@ -39,7 +39,7 @@ describe("delegation roster settings", () => {
       defaultRouteId: "fast-builder",
       modeRoutes: {
         general: "fast-builder",
-        plan: "research-analyst",
+        plan: "planner",
         "correctness-review": "independent-critic",
         "design-review": "independent-critic",
         research: "research-analyst",
@@ -47,18 +47,33 @@ describe("delegation roster settings", () => {
     });
     expect(settings.rosters[0]?.routes.find((route) => route.routeId === "deep-reasoner"))
       .toMatchObject({
-        label: "Deep Reasoning",
-        useWhen: expect.stringContaining("cross-cutting implementation"),
+        label: "Deep Specialist",
+        behaviorMode: "general",
+        useWhen: expect.stringContaining("architecturally ambiguous"),
+        avoidWhen: expect.stringContaining("routine implementation"),
       });
     expect(settings.rosters[0]?.routes.map((route) => route.routeId)).toEqual([
       "quick-scout",
       "fast-builder",
+      "planner",
       "research-analyst",
       "independent-critic",
       "deep-reasoner",
     ]);
+    expect(settings.rosters[0]?.routes.map((route) => [
+      route.routeId,
+      route.modelId,
+      route.reasoningLevel,
+    ])).toEqual([
+      ["quick-scout", "gpt-5.6-luna", "high"],
+      ["fast-builder", "gpt-5.6-terra", "xhigh"],
+      ["planner", "gpt-5.6-sol", "xhigh"],
+      ["research-analyst", "gpt-5.5", "medium"],
+      ["independent-critic", "gpt-5.5", "high"],
+      ["deep-reasoner", "gpt-5.6-sol", "xhigh"],
+    ]);
     expect(settings.rosters[0]?.description).toBe(
-      "General-purpose execution profiles derived from the existing Forge model bindings.",
+      "A balanced development team with a normal builder, focused alternatives, and evidence-based escalation.",
     );
     await expect(readFile(getDelegationRostersPath(dataDir), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -83,12 +98,12 @@ describe("delegation roster settings", () => {
     });
 
     expect(legacy.rosters[0]?.description).toBe(
-      "General-purpose execution profiles derived from the existing Forge model bindings.",
+      "A balanced development team with a normal builder, focused alternatives, and evidence-based escalation.",
     );
     expect(custom.rosters[0]?.description).toBe("My own route terminology.");
   });
 
-  it("updates canonical legacy profile labels without changing custom labels", async () => {
+  it("updates canonical built-in specialist copy without changing custom copy", async () => {
     const dataDir = await makeDataDir();
     const settings = await resolveDelegationRosterSettings(dataDir);
     const roster = settings.rosters[0]!;
@@ -98,19 +113,115 @@ describe("delegation roster settings", () => {
       rosters: [{
         ...roster,
         routes: roster.routes.map((route) => (
-          route.routeId === "fast-builder"
-            ? { ...route, label: "Fast Builder" }
+          route.routeId === "quick-scout"
+            ? {
+                ...route,
+                label: "Economy",
+                useWhen: "Use for cheap lookups, file discovery, and bounded source gathering when low cost matters more than depth.",
+                avoidWhen: "Avoid when ambiguity, risk, or synthesis quality matters more than minimizing cost.",
+                capabilityEscalationRouteId: "research-analyst",
+                modelId: "gpt-5.6-terra",
+                reasoningLevel: "low" as const,
+              }
+            : route.routeId === "fast-builder"
+            ? {
+                ...route,
+                label: "Fast Execution",
+                useWhen: "Well-specified implementation and focused fixes with clear acceptance.",
+                avoidWhen: undefined,
+                modelId: "gpt-5.6-luna",
+                reasoningLevel: "high" as const,
+              }
+            : route.routeId === "planner"
+              ? {
+                  ...route,
+                  provider: "xai",
+                  modelId: "grok-4.5",
+                  reasoningLevel: "high" as const,
+                }
             : route.routeId === "research-analyst"
               ? { ...route, label: "My Planning Model" }
+              : route.routeId === "deep-reasoner"
+                ? { ...route, reasoningLevel: "max" as const }
               : route
         )),
       }],
     });
 
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "fast-builder")?.label)
-      .toBe("Fast Execution");
+      .toBe("Builder");
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "fast-builder"))
+      .toMatchObject({
+        useWhen: expect.stringContaining("normal feature"),
+        avoidWhen: expect.stringContaining("quick builder"),
+      });
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "quick-scout"))
+      .toMatchObject({
+        label: "Quick Builder",
+        useWhen: expect.stringContaining("small, well-specified implementation"),
+        capabilityEscalationRouteId: "fast-builder",
+        modelId: "gpt-5.6-luna",
+        reasoningLevel: "high",
+      });
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "fast-builder"))
+      .toMatchObject({ modelId: "gpt-5.6-terra", reasoningLevel: "xhigh" });
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "planner"))
+      .toMatchObject({
+        useWhen: expect.stringContaining("decomposition"),
+        avoidWhen: expect.stringContaining("implementation or source research"),
+        modelId: "gpt-5.6-sol",
+        reasoningLevel: "xhigh",
+      });
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "research-analyst"))
+      .toMatchObject({ useWhen: expect.stringContaining("source-backed investigation") });
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "research-analyst")?.label)
       .toBe("My Planning Model");
+    expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "deep-reasoner"))
+      .toMatchObject({ modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" });
+  });
+
+  it("consolidates the generated design reviewer into the independent reviewer without touching custom alternatives", async () => {
+    const dataDir = await makeDataDir();
+    const settings = await resolveDelegationRosterSettings(dataDir);
+    const roster = settings.rosters[0]!;
+    const reviewer = roster.routes.find((route) => route.routeId === "independent-critic")!;
+    const generatedDesignReviewer = {
+      ...reviewer,
+      routeId: "design-reviewer",
+      label: "Design Reviewer",
+      behaviorMode: "design-review" as const,
+    };
+
+    const consolidated = normalizeDelegationRosterSettings({
+      ...settings,
+      rosters: [{
+        ...roster,
+        modeRoutes: { ...roster.modeRoutes, "design-review": "design-reviewer" },
+        routes: [...roster.routes, generatedDesignReviewer],
+      }],
+    });
+
+    expect(consolidated.rosters[0]?.modeRoutes?.["design-review"])
+      .toBe("independent-critic");
+    expect(consolidated.rosters[0]?.routes.some((route) => route.routeId === "design-reviewer"))
+      .toBe(false);
+
+    const customized = normalizeDelegationRosterSettings({
+      ...settings,
+      rosters: [{
+        ...roster,
+        modeRoutes: { ...roster.modeRoutes, "design-review": "design-reviewer" },
+        routes: [
+          ...roster.routes,
+          { ...generatedDesignReviewer, useWhen: "Custom design-review guidance." },
+        ],
+      }],
+    });
+
+    expect(customized.rosters[0]?.modeRoutes?.["design-review"])
+      .toBe("design-reviewer");
+    expect(customized.rosters[0]?.routes.some((route) => route.routeId === "design-reviewer"))
+      .toBe(true);
   });
 
   it("resolves automatic and named routes from the manager's active roster", async () => {
@@ -131,6 +242,9 @@ describe("delegation roster settings", () => {
     expect(automatic.route.routeId).toBe("research-analyst");
     expect(automatic.requestedRoute).toBe("auto");
     expect(named.route.routeId).toBe("deep-reasoner");
+
+    const designReview = await resolveDelegationRoute(dataDir, manager, "auto", "design-review");
+    expect(designReview.route.routeId).toBe("independent-critic");
   });
 
   it("increments only changed roster revisions and persists a clone-safe file", async () => {
@@ -205,7 +319,9 @@ describe("delegation roster settings", () => {
 
     expect(context).toMatch(/^\[delegationRoster\] /);
     expect(context).toContain('"id":"balanced"');
-    expect(context).toContain('"baselines":"general=');
+    expect(context).toContain('"defaults":"general=');
+    expect(context).toContain('"specialists":');
+    expect(context).toContain('"task":"research"');
     expect(context).not.toContain('"auto":');
     expect(context).toContain('"useWhen"');
     expect(context).toContain('"executor"');

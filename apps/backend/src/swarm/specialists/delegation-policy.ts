@@ -18,6 +18,12 @@ export const WORKER_EXECUTION_POLICIES = [
   "deep",
 ] as const satisfies readonly WorkerExecutionPolicy[];
 
+export function getWorkerBehaviorModeLensId(
+  mode: WorkerBehaviorMode,
+): string | undefined {
+  return BEHAVIOR_MODE_CONFIGS[mode].lens;
+}
+
 const EXECUTION_POLICY_TIERS: Record<WorkerExecutionPolicy, EffortTier> = {
   support: "fast",
   routine: "standard",

@@ -619,7 +619,7 @@ describe('MessageInput', () => {
 
       const trigger = getByLabelText(
         container,
-        'Work mode: Delegate first. Worker roster: balanced.',
+        'Work mode: Delegate first. Delegation preset: balanced.',
       )
       expect(trigger).toBeInstanceOf(HTMLButtonElement)
       expect((trigger as HTMLButtonElement).type).toBe('button')
@@ -636,7 +636,7 @@ describe('MessageInput', () => {
 
       const trigger = getByLabelText(
         container,
-        'Work mode: Delegate first. Worker roster: balanced.',
+        'Work mode: Delegate first. Delegation preset: balanced.',
       )
       expect((trigger as HTMLButtonElement).disabled).toBe(true)
     })

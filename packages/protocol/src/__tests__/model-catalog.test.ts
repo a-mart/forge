@@ -496,9 +496,9 @@ describe('model-catalog', () => {
 
   it('provides working lookup helpers', () => {
     expect(getCatalogModel('gpt-5.6-sol')?.displayName).toBe('GPT-5.6 Sol')
-    expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'max', 'ultra'])
-    expect(getCatalogModel('gpt-5.6-terra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high'])
-    expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high'])
+    expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(getCatalogModel('gpt-5.6-terra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')
     expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.5')

@@ -374,7 +374,7 @@ describe("SwarmSettingsService delegation settings", () => {
     await expect(service.saveDelegationRosterSettings(invalidModel))
       .rejects.toThrow("references unavailable model");
     await expect(service.saveDelegationRosterSettings(settings))
-      .rejects.toThrow('Cannot remove delegation roster "focused"');
+      .rejects.toThrow('Cannot remove delegation preset "focused"');
   });
 });
 

@@ -327,7 +327,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(out.modelId).toBe("gpt-5.6-terra");
   });
 
-  it("resolveSpawnModelWithCapacityFallback normalizes Sol max/ultra when rerouting to GPT-5.6 variants", () => {
+  it("resolveSpawnModelWithCapacityFallback preserves or clamps Sol reasoning for GPT-5.6 variants", () => {
     const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
     const block = (modelId: string) => {
       const key = buildModelCapacityBlockKey("openai-codex", modelId);
@@ -349,7 +349,7 @@ describe("SwarmAgentLifecycleService", () => {
     })).toEqual({
       provider: "openai-codex",
       modelId: "gpt-5.6-terra",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
     });
 
     block("gpt-5.6-terra");
@@ -360,7 +360,7 @@ describe("SwarmAgentLifecycleService", () => {
     })).toEqual({
       provider: "openai-codex",
       modelId: "gpt-5.6-luna",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
     });
   });
 
@@ -2791,7 +2791,7 @@ describe("SwarmAgentLifecycleService", () => {
     );
   });
 
-  it("pins the active roster route, executor, fallback, and escalation on a worker attempt", async () => {
+  it("uses a named roster specialist's task instructions and pins its execution settings", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-route-lifecycle-"));
     try {
       const manager = createAgentDescriptor({
@@ -2832,9 +2832,7 @@ describe("SwarmAgentLifecycleService", () => {
 
       const spawned = await svc.spawnAgent(manager.agentId, {
         agentId: "research-worker",
-        route: "auto",
-        behaviorMode: "research",
-        lens: "researcher",
+        route: "research-analyst",
       });
 
       expect(spawned).toMatchObject({
@@ -2876,12 +2874,68 @@ describe("SwarmAgentLifecycleService", () => {
     }
   });
 
+  it("keeps the requested design-review instructions when the automatic roster route uses the shared reviewer", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-shared-review-route-"));
+    try {
+      const manager = createAgentDescriptor({
+        agentId: "shared-review-manager",
+        role: "manager",
+        managerId: "shared-review-manager",
+        profileId: "shared-review-manager",
+        status: "idle",
+        cwd: "/proj",
+        delegationRosterId: "balanced",
+        delegationRosterOrigin: "global_default",
+      });
+      const descriptors = new Map([[manager.agentId, manager]]);
+      const resolveSystemPromptForDescriptor = vi.fn(async () => "composed design review prompt");
+      const svc = new SwarmAgentLifecycleService(
+        baseLifecycleOptions({
+          dataDir,
+          descriptors,
+          assertManager: () => manager,
+          resolveSystemPromptForDescriptor,
+          createRuntimeForDescriptor: vi.fn(async (descriptor: AgentDescriptor) =>
+            makeRuntimeStub({ descriptor })),
+          resolveSpecialistRosterForProfile: vi.fn(async () => [{
+            specialistId: "code-reviewer-2",
+            displayName: "Design review",
+            color: "#14b8a6",
+            enabled: true,
+            whenToUse: "design review",
+            promptBody: "Design review behavior.",
+            available: true,
+          }]),
+        }),
+      );
+
+      const spawned = await svc.spawnAgent(manager.agentId, {
+        agentId: "design-review-worker",
+        route: "auto",
+        behaviorMode: "design-review",
+      });
+
+      expect(spawned).toMatchObject({
+        delegationRouteId: "independent-critic",
+        specialistLens: "code-reviewer-2",
+      });
+      expect(resolveSystemPromptForDescriptor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          delegationRouteId: "independent-critic",
+          specialistLens: "code-reviewer-2",
+        }),
+      );
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses a route's configured availability fallback before the generic capacity chain", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-route-capacity-fallback-"));
     try {
       const settings = await resolveDelegationRosterSettings(dataDir);
       const roster = settings.rosters[0]!;
-      const route = roster.routes[0]!;
+      const route = roster.routes.find((candidate) => candidate.routeId === "fast-builder")!;
       const primary = {
         provider: "openai-codex",
         modelId: "gpt-5.3-codex-spark",

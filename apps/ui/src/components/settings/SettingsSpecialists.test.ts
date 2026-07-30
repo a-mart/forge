@@ -71,7 +71,7 @@ vi.mock('@/lib/model-preset', () => ({
   useModelPresets: () => [],
   getAllSelectableModels: () => [],
   getModelDisplayLabel: (modelId: string) => modelId,
-  getSupportedReasoningLevelsForModelId: () => ['none', 'low', 'medium', 'high', 'xhigh'],
+  getSupportedReasoningLevelsForModelId: () => ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
 }))
 
 vi.mock('@/components/help/help-hooks', () => ({
@@ -138,7 +138,7 @@ const DELEGATION_ROSTERS: DelegationRosterSettings = {
     routes: [
       {
         routeId: 'fast-builder',
-        label: 'Fast Execution',
+        label: 'Fast',
         useWhen: 'Well-specified implementation.',
         provider: 'cursor-sdk',
         modelId: 'composer-2.5',
@@ -147,7 +147,7 @@ const DELEGATION_ROSTERS: DelegationRosterSettings = {
       },
       {
         routeId: 'research-analyst',
-        label: 'Analysis',
+        label: 'Balanced',
         useWhen: 'Source-backed investigation.',
         provider: 'openai-codex',
         modelId: 'gpt-5.5',
@@ -220,6 +220,7 @@ async function flush(): Promise<void> {
 function renderSpecialists(
   specialists: ResolvedSpecialistDefinition[] = [],
   profiles = PROFILES,
+  section: 'instructions' | 'presets' | 'compatibility' = 'instructions',
 ): void {
   specialistsApiMock.fetchSharedSpecialists.mockResolvedValue(specialists)
   specialistsApiMock.fetchSpecialists.mockResolvedValue(specialists)
@@ -235,6 +236,17 @@ function renderSpecialists(
       }),
     )
   })
+  const sectionLabel = {
+    instructions: 'Instruction library',
+    presets: 'Delegation presets',
+    compatibility: 'System & compatibility',
+  }[section]
+  const trigger = Array.from(container.querySelectorAll('button')).find(
+    (button) => button.textContent?.includes(sectionLabel),
+  )
+  if (trigger) {
+    flushSync(() => fireEvent.mouseDown(trigger, { button: 0, ctrlKey: false }))
+  }
 }
 
 /* ================================================================== */
@@ -286,66 +298,87 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Enabled')
     })
 
-    it('renders execution profiles separately from task instructions', async () => {
-      renderSpecialists([makeSpecialist()])
+    it('renders complete roster specialists with task instructions and model settings together', async () => {
+      renderSpecialists([makeSpecialist()], PROFILES, 'presets')
       await flush()
       await flush()
 
       expect(specialistsApiMock.fetchDelegationRosterSettings)
         .toHaveBeenCalledWith('ws://127.0.0.1:47187')
-      expect(container.textContent).toContain('Worker Rosters')
-      expect(container.textContent).toContain('Automatic worker selection')
+      expect(container.textContent).toContain('Delegation presets')
+      expect(container.textContent).toContain('Roster specialists')
       expect(container.textContent).toContain('Build & execute')
-      const automaticSelection = Array.from(container.querySelectorAll('p'))
-        .find((element) => element.textContent === 'Automatic worker selection')
-        ?.parentElement
-      expect(automaticSelection).toBeTruthy()
-      expect(Array.from(automaticSelection!.querySelectorAll('label')).map((label) => label.textContent))
-        .toEqual([
-          'Build & execute',
-          'Planning',
-          'Correctness review',
-          'Design review',
-          'Research',
-        ])
-      expect(container.textContent).toContain('Execution profiles')
-      expect(container.textContent).toContain('Fast Execution')
-      expect(container.textContent).toContain('Analysis')
+      expect(container.textContent).toContain('Research')
+      expect(container.textContent).toContain('Task instructions')
+      expect(container.textContent).toContain('Fast')
+      expect(container.textContent).toContain('Balanced')
       expect(container.textContent).toContain('composer-2.5')
-      expect(container.textContent).toContain('Save rosters')
-      expect(container.textContent).toContain('Each profile defines model capability')
-      expect(container.textContent).toContain('Escalates to')
+      expect(container.textContent).toContain('Attempt chain')
+      expect(container.textContent).toContain('When to use this specialist')
+      expect(container.textContent).toContain('Advanced & recovery')
     })
 
-    it('uses Build & execute as the hidden fallback when its profile changes', async () => {
-      renderSpecialists([makeSpecialist()])
+    it('labels xhigh as Extra High when the selected model also supports Max', async () => {
+      specialistsApiMock.fetchDelegationRosterSettings.mockResolvedValue({
+        ...DELEGATION_ROSTERS,
+        rosters: DELEGATION_ROSTERS.rosters.map((roster) => ({
+          ...roster,
+          routes: roster.routes.map((route) => route.routeId === 'fast-builder'
+            ? {
+                ...route,
+                provider: 'openai-codex',
+                modelId: 'gpt-5.6-terra',
+                reasoningLevel: 'xhigh' as const,
+              }
+            : route),
+        })),
+      })
+      renderSpecialists([makeSpecialist()], PROFILES, 'presets')
       await flush()
       await flush()
 
-      const buildLabel = Array.from(container.querySelectorAll('label'))
-        .find((label) => label.textContent === 'Build & execute')
-      const trigger = buildLabel?.parentElement?.querySelector('[role="combobox"]')
-      expect(trigger).toBeTruthy()
+      expect(container.textContent).toContain('Extra High reasoning')
+    })
+
+    it('can make an alternative specialist the default for its task', async () => {
+      renderSpecialists([makeSpecialist()], PROFILES, 'presets')
+      await flush()
+      await flush()
 
       flushSync(() => {
-        fireEvent.pointerDown(trigger!, {
+        const balancedCard = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.includes('Balanced')
+            && button.textContent?.includes('Research'),
+        )
+        fireEvent.click(balancedCard!)
+      })
+      await flush()
+
+      const taskTypeTrigger = Array.from(container.querySelectorAll('[role="combobox"]'))
+        .find((trigger) => trigger.getAttribute('aria-label') === 'Specialist task type')
+      expect(taskTypeTrigger).toBeTruthy()
+      flushSync(() => {
+        fireEvent.pointerDown(taskTypeTrigger!, {
           button: 0,
           ctrlKey: false,
           pointerType: 'mouse',
         })
       })
       await flush()
+      const generalOption = Array.from(document.body.querySelectorAll('[role="option"]'))
+        .find((option) => option.textContent === 'Build & execute')
+      expect(generalOption).toBeTruthy()
+      flushSync(() => fireEvent.click(generalOption!))
+      await flush()
 
-      const analysisOption = Array.from(document.body.querySelectorAll('[role="option"]'))
-        .find((option) => option.textContent === 'Analysis')
-      expect(analysisOption).toBeTruthy()
-      flushSync(() => {
-        fireEvent.click(analysisOption!)
-      })
+      const makeDefaultButton = Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Make default for Build & execute'))
+      expect(makeDefaultButton).toBeTruthy()
+      flushSync(() => fireEvent.click(makeDefaultButton!))
       await flush()
 
       const saveButton = Array.from(container.querySelectorAll('button'))
-        .find((button) => button.textContent?.includes('Save rosters'))
+        .find((button) => button.textContent?.includes('Save preset'))
       expect(saveButton).toBeTruthy()
       flushSync(() => {
         fireEvent.click(saveButton!)
@@ -673,7 +706,7 @@ describe('SettingsSpecialists', () => {
           provider: undefined,
           defaultTier: 'deep',
         }),
-      ])
+      ], PROFILES, 'compatibility')
       await flush()
       await flush()
 
@@ -682,8 +715,6 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Show 2 system definitions')
       expect(container.textContent).toContain('Architect')
       expect(container.textContent).toContain('Codex Plugin')
-      expect(container.textContent).toContain('Plan')
-      expect(container.textContent).toContain('Default policy: deep')
       expect(container.textContent).toContain('System compatibility tier: max')
       expect(container.textContent).not.toContain('Model selected by the manager execution policy')
       expect(container.textContent).not.toContain('Default tier:')

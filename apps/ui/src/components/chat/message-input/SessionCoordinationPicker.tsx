@@ -163,7 +163,7 @@ export function SessionCoordinationPicker({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50 sm:max-w-44',
           )}
-          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Worker roster: ${currentRosterLabel}.`}
+          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Delegation preset: ${currentRosterLabel}.`}
           title={`${formatPosture(config.managerPosture)} · ${currentRosterLabel}`}
         >
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
@@ -243,10 +243,10 @@ export function SessionCoordinationPicker({
         <div className="h-px bg-border/75" />
 
         <fieldset className="space-y-1.5" disabled={loading || saving || !!error}>
-          <legend className="sr-only">Worker roster</legend>
+          <legend className="sr-only">Delegation preset</legend>
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] font-medium text-muted-foreground">
-              Worker roster
+              Delegation preset
             </span>
             {loading && (
               <span className="text-[10px] text-muted-foreground" aria-live="polite">
@@ -387,5 +387,5 @@ function formatPosture(posture: ManagerPosture): string {
 function rosterLabel(rosters: RosterOption[], rosterId: string): string {
   return rosters.find((roster) => roster.rosterId === rosterId)?.name
     ?? rosterId
-    ?? 'Default roster'
+    ?? 'Default preset'
 }

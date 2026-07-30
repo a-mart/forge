@@ -465,9 +465,9 @@ export function generateTierLensRosterBlock(
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Delegate workers with a task `mode` and execution profile (`route`).",
+    "Delegate workers through the active roster of specialists.",
     "",
-    "Forge appends the active `[delegationRoster]` to manager-bound turns. Omit `route` to use the roster's baseline execution profile for the selected task type; this is not a task-complexity classifier. Name a route only when its current guidance clearly fits an obviously cheaper or stronger executor.",
+    "Forge appends `[delegationRoster]` to manager turns. A named `route` selects a complete specialist: task instructions, model, and recovery. Otherwise choose a task `mode` and omit `route` for that task's default specialist.",
   ];
 
   // Shipped mode handles contribute prompts only; their persisted model fields
@@ -504,12 +504,12 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- Task type controls the worker's operating contract; route selects only the execution profile.",
+    "- A named route selects the full specialist. Without one, mode selects the task and its default specialist.",
     "- Availability fallback is automatic, not capability escalation. For granted secrets, set `requiresSecureRuntime=true`; Forge fails closed without a compatible runtime.",
-    "- Omit `route` for the baseline. Name one before dispatch only when its roster guidance clearly matches. Use capability escalation only when evidence from an attempt shows the baseline was inadequate.",
-    "- Outside a work graph, escalation requires a fresh delegation on the stronger route; messaging the same worker does not change its pinned executor.",
+    "- Name a non-default specialist only when its guidance clearly fits. Escalate only after evidence that the first specialist was inadequate.",
+    "- Outside a work graph, escalation requires a fresh delegation on the stronger specialist; messaging the same worker does not change its pinned executor.",
     "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
-    "- Do not choose stronger routes merely because work is large, planned, reviewed, or graph-shaped.",
+    "- Do not choose a stronger specialist merely because work is large, planned, reviewed, or graph-shaped.",
   );
 
   return lines.join("\n");

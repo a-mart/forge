@@ -275,7 +275,7 @@ export class SwarmSettingsService {
       requestedRosterId
       && !rosterSettings?.rosters.some((roster) => roster.rosterId === requestedRosterId)
     ) {
-      throw new Error(`Unknown delegation roster: ${requestedRosterId}`);
+      throw new Error(`Unknown delegation preset: ${requestedRosterId}`);
     }
     const effectiveRosterId = requestedRosterId ?? rosterSettings?.defaultRosterId;
     const sessions = this.options.getSessionsForProfile(profileId);
@@ -418,7 +418,7 @@ export class SwarmSettingsService {
       requestedRosterId
       && !rosterSettings?.rosters.some((roster) => roster.rosterId === requestedRosterId)
     ) {
-      throw new Error(`Unknown delegation roster: ${requestedRosterId}`);
+      throw new Error(`Unknown delegation preset: ${requestedRosterId}`);
     }
     const targetPosture = updates.managerPosture?.mode === "override"
       ? updates.managerPosture.value
@@ -437,7 +437,7 @@ export class SwarmSettingsService {
         ? "project_default" as const
         : "global_default" as const;
     if (updates.delegationRoster && !targetRosterId) {
-      throw new Error("No default delegation roster is configured.");
+      throw new Error("No default delegation preset is configured.");
     }
     const postureChanged = Boolean(
       updates.managerPosture
@@ -491,10 +491,10 @@ export class SwarmSettingsService {
 
   async applyGlobalDelegationRosterDefault(rosterId: string): Promise<void> {
     const normalizedRosterId = rosterId.trim();
-    if (!normalizedRosterId) throw new Error("Global delegation roster id is required.");
+    if (!normalizedRosterId) throw new Error("Global delegation preset id is required.");
     const settings = await resolveDelegationRosterSettings(this.options.config.paths.dataDir);
     if (!settings.rosters.some((roster) => roster.rosterId === normalizedRosterId)) {
-      throw new Error(`Unknown delegation roster: ${normalizedRosterId}`);
+      throw new Error(`Unknown delegation preset: ${normalizedRosterId}`);
     }
     const sessions = this.options.getAllManagerSessions().filter((session) => (
       session.delegationRosterOrigin === "global_default"
@@ -1557,7 +1557,7 @@ function assertDelegationRosterReferencesRemainValid(
       && !available.has(profile.defaultDelegationRosterId)
     ) {
       throw new Error(
-        `Cannot remove delegation roster "${profile.defaultDelegationRosterId}" while project `
+        `Cannot remove delegation preset "${profile.defaultDelegationRosterId}" while project `
         + `"${profile.displayName}" uses it as its default.`,
       );
     }
@@ -1569,7 +1569,7 @@ function assertDelegationRosterReferencesRemainValid(
       && !available.has(session.delegationRosterId)
     ) {
       throw new Error(
-        `Cannot remove delegation roster "${session.delegationRosterId}" while session `
+        `Cannot remove delegation preset "${session.delegationRosterId}" while session `
         + `"${session.sessionLabel ?? session.displayName}" uses it.`,
       );
     }

@@ -96,7 +96,7 @@ const modelsRouting: HelpArticle = {
   id: 'models-routing',
   title: 'How Model Routing Works',
   category: 'models',
-  summary: 'How session models, work mode, task types, worker rosters, and fallbacks determine which model runs work.',
+  summary: 'How session models, work mode, task types, delegation presets, model policies, and fallbacks determine which model runs work.',
   content: modelsRoutingContent,
   keywords: [
     'routing',
@@ -106,6 +106,8 @@ const modelsRouting: HelpArticle = {
     'worker roster',
     'execution profile',
     'worker profile',
+    'model policy',
+    'delegation preset',
     'work mode',
     'manager',
     'worker',

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SettingsSection } from './settings-row'
 import {
   getAllSelectableModels,
@@ -38,7 +39,7 @@ import { PendingSaveDialog } from './specialists/PendingSaveDialog'
 import { CollabSettingsBanner } from './specialists/CollabSettingsBanner'
 import { CategoryDefaultsView } from './specialists/CategoryDefaultsView'
 import { ChannelSpecialistSelection } from './specialists/ChannelSpecialistSelection'
-import { DelegationRosterSettingsView } from './specialists/DelegationRosterSettings'
+import { DelegationPresetSettingsView } from './specialists/DelegationPresetSettings'
 import {
   getBehaviorModeCardMetadata,
   isDelegationChoiceSpecialist,
@@ -72,6 +73,9 @@ export function SettingsSpecialists({
 
   const [selectedScope, setSelectedScope] = useState<string>(
     initialChannelId ? `${SCOPE_CHANNEL_PREFIX}${initialChannelId}` : SCOPE_GLOBAL,
+  )
+  const [delegationTab, setDelegationTab] = useState<'presets' | 'instructions' | 'compatibility'>(
+    isCollab ? 'instructions' : 'presets',
   )
   const scopeKind = parseScopeKind(selectedScope)
   const isGlobal = scopeKind === 'global'
@@ -305,6 +309,8 @@ export function SettingsSpecialists({
     if (isGlobal) return visibleSpecialists.filter((s) => !s.enabled).length
     return [...profileOverrides, ...inheritedSpecialists].filter((s) => !s.enabled).length
   }, [isGlobal, visibleSpecialists, profileOverrides, inheritedSpecialists])
+  const showTaskInstructions = isCollab || delegationTab === 'instructions'
+  const showCompatibility = isCollab || delegationTab === 'compatibility'
 
   const headerButtons = (
     <div className="flex items-center gap-3">
@@ -327,7 +333,7 @@ export function SettingsSpecialists({
           className="gap-1.5"
         >
           <Eye className="size-3.5" />
-          Roster Prompt
+          Prompt preview
         </Button>
       )}
       <Button
@@ -360,23 +366,31 @@ export function SettingsSpecialists({
   )
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       {/* Collab settings banner */}
       {isCollab && apiClient && (
         <CollabSettingsBanner apiClient={apiClient} />
       )}
 
-      {/* Scope selector */}
-      <SettingsSection
-        label="Delegation Configuration"
-        description={isCollab
-          ? 'Configure task instructions and custom specialists shared across collaboration channels.'
-          : 'Configure how managers delegate work. Global task instructions and custom specialists are shared across all projects.'}
-      >
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-4">
+        <div>
+          <h2 className="text-lg font-semibold">Delegation</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {isCollab
+              ? 'Configure task instructions and custom specialists shared across collaboration channels.'
+              : 'A delegation preset is a roster of complete specialists. Each specialist combines task instructions with its model, reasoning, and recovery behavior.'}
+          </p>
+        </div>
         <div className="flex flex-col gap-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
-          <Select value={selectedScope} onValueChange={setSelectedScope}>
-            <SelectTrigger className="w-full sm:w-72">
+          <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Scope
+          </Label>
+          <Select
+            value={selectedScope}
+            disabled={!isCollab && delegationTab === 'presets'}
+            onValueChange={setSelectedScope}
+          >
+            <SelectTrigger className="w-full sm:w-64">
               <SelectValue placeholder="Select scope" />
             </SelectTrigger>
             <SelectContent>
@@ -386,26 +400,54 @@ export function SettingsSpecialists({
                 collabCategories={collabCategories}
                 collabChannels={collabChannels}
                 globalScopeValue={SCOPE_GLOBAL}
+                globalLabel="Global defaults"
               />
             </SelectContent>
           </Select>
         </div>
-      </SettingsSection>
+      </div>
 
       {!isCollab && (
-        <SettingsSection
-          label="Worker Rosters"
-          description="Define the execution profiles available for delegated work. Projects and sessions can select a roster without changing its definition."
+        <Tabs
+          value={delegationTab}
+          onValueChange={(value) => {
+            const nextTab = value as 'presets' | 'instructions' | 'compatibility'
+            setDelegationTab(nextTab)
+            if (nextTab === 'presets') setSelectedScope(SCOPE_GLOBAL)
+          }}
+          className="gap-4"
         >
-          <DelegationRosterSettingsView
-            clientOrWsUrl={clientOrWsUrl}
-            modelPresets={modelPresets}
-            selectableModels={selectableModels}
-            refreshKey={modelConfigChangeKey}
-          />
-        </SettingsSection>
+          <TabsList variant="line" aria-label="Delegation settings sections">
+            <TabsTrigger value="presets">
+              Delegation presets
+            </TabsTrigger>
+            <TabsTrigger value="instructions">
+              Instruction library
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {visibleSpecialists.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="compatibility">
+              System & compatibility
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {systemSpecialists.length}
+              </span>
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="presets">
+            <DelegationPresetSettingsView
+              clientOrWsUrl={clientOrWsUrl}
+              modelPresets={modelPresets}
+              selectableModels={selectableModels}
+              taskInstructions={visibleSpecialists}
+              refreshKey={modelConfigChangeKey}
+            />
+          </TabsContent>
+        </Tabs>
       )}
 
+      {showTaskInstructions && (
+        <>
       {/* ============================================================ */}
       {/*  Category Defaults View                                       */}
       {/* ============================================================ */}
@@ -463,10 +505,10 @@ export function SettingsSpecialists({
       {!loading && !error && isGlobal && (
         <div>
         <SettingsSection
-          label={isCollab ? 'Collaboration Task Instructions & Custom Specialists' : 'Task Instructions & Custom Specialists'}
+          label={isCollab ? 'Collaboration Task Instructions & Custom Specialists' : 'Shared Instruction Library'}
           description={isCollab
             ? 'Shared task-instruction prompts and custom specialist definitions available to collaboration channels.'
-            : 'Builtin task-instruction prompts and custom specialist definitions inherited by all projects. Builtins are editable but cannot be deleted.'}
+            : 'Advanced shared prompts used by roster specialists, plus custom specialist definitions inherited by all projects. Builtins are editable but cannot be deleted.'}
           cta={headerButtons}
         >
           {newFormElement}
@@ -613,8 +655,10 @@ export function SettingsSpecialists({
           )}
         </div>
       )}
+        </>
+      )}
 
-      {!loading && !error && !isCategory && systemSpecialists.length > 0 && (
+      {showCompatibility && !loading && !error && !isCategory && systemSpecialists.length > 0 && (
         <SettingsSection
           label="System & Compatibility"
           description="Retained legacy and system-managed definitions. They are not offered as normal task types, but remain configurable so existing customizations are not stranded."

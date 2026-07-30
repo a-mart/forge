@@ -1,14 +1,14 @@
 # Worker Delegation
 
-Forge keeps three decisions separate:
+Forge keeps manager ownership separate from worker configuration:
 
 - **Work mode** decides whether the manager normally delegates or owns bounded work itself.
-- **Task type** chooses a worker's instructions and output contract. The manager tool identifies it with the `mode` field.
-- **Execution profile** chooses a model, reasoning level, fallback, and escalation policy from the selected roster. The manager tool identifies that profile with its internal `route` field.
+- **Delegation preset** chooses the active team of roster specialists.
+- **Roster specialist** combines a task type and output contract with model, reasoning, use/avoid guidance, fallback, and escalation behavior.
 
-The manager-facing `spawn_agent` tool accepts a task `mode`, an optional execution-profile `route`, and a required concrete `initialMessage`. Omitting `route` uses the selected roster's baseline mapping for that task type; it is not a task-complexity classifier. A named route is appropriate when its current `useWhen` guidance clearly fits an obviously cheaper or stronger executor. Saved custom specialists remain available through `customSpecialist`. Explicit `route: auto`, older tier, effort, and execution-policy inputs remain internal compatibility paths for persisted work.
+The manager-facing `spawn_agent` tool accepts a required concrete `initialMessage`. It normally chooses a task type and lets Forge use that task's default roster specialist. It may name another specialist when its current `useWhen` guidance clearly fits a cheaper, independent, or stronger executor. Saved standalone custom specialists remain available through `customSpecialist`. The persisted `mode`, `route`, tier, effort, and execution-policy inputs remain internal compatibility paths for existing work.
 
-Work-graph nodes use the same optional named-route override. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest route.
+Work-graph nodes use the same optional named-specialist override. Forge pins the preset revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a preset is edited or a session selects another preset. Graph size, fan-in, planning, research, or review alone never selects the strongest specialist.
 
 ## Work Mode
 
@@ -28,23 +28,24 @@ A project can set its default work mode. A session can inherit that default or o
 | `design-review` | Maintainability, API design, architecture fit, and consistency |
 | `research` | Fact-checking, documentation, and source-backed investigation |
 
-## Worker Rosters
+## Delegation Presets and Roster Specialists
 
-A worker roster is a selectable catalog of model-backed execution profiles. It is not a set of live workers, a persona library, a permissions bundle, or graph topology. Each profile is stored internally as a delegation route and contains only:
+A delegation preset is a team of complete roster specialists. It is not a set of live workers, a permissions bundle, or graph topology. Each specialist is stored internally as a delegation route and contains:
 
 - a stable ID and label;
+- one task type and its shared instruction prompt;
 - concise `useWhen` and optional `avoidWhen` guidance;
 - the primary provider, model, and reasoning level;
 - an optional availability fallback; and
 - an optional capability-escalation route for a later attempt.
 
-Each roster maps task types to baseline execution profiles. Build & execute also supplies the compatibility fallback for an incomplete mapping, but Forge does not expose that fallback as a separate user choice. The manager normally omits `route` and lets the task mapping apply. It names a profile's route up front only when its guidance clearly matches cheaper bounded work or difficult cross-cutting work; capability escalation is reserved for a later attempt after evidence that the selected profile was inadequate.
+Each preset names one default specialist per task type and may contain alternatives for the same task. Build & execute supplies the compatibility fallback for an incomplete mapping, but Forge does not expose that fallback as a separate user choice. The manager normally uses the task default. It names an alternative up front only when its guidance clearly matches a cheaper, independent, or stronger executor; capability escalation is reserved for a later attempt after evidence that the selected specialist was inadequate.
 
-The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Roster changes affect only pending or future attempts.
+The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Preset changes affect only pending or future attempts.
 
-Forge supplies the manager a compact versioned `[delegationRoster]` runtime context. The roster's model data is intentionally outside the stable system-prompt prefix so switching rosters does not rewrite the cached prompt. The work mode is different: it is part of the system prompt because it changes the manager's operating policy.
+Forge supplies the manager a compact versioned `[delegationRoster]` context. The roster is intentionally outside the stable system-prompt prefix so switching presets does not rewrite the cached prompt. Work mode is different: it is part of the system prompt because it changes the manager's operating policy.
 
-Configure rosters under **Settings → Delegation → Worker Rosters**. The default Balanced roster is derived from existing tier bindings until roster settings are first saved.
+Configure presets under **Settings → Delegation → Delegation presets**. The default Balanced preset is derived from existing tier bindings until delegation settings are first saved.
 
 ## Multi-model Coordination Skill
 
@@ -102,7 +103,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
 | `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
 
-Tier settings remain global at `~/.forge/shared/specialists/tier-configs.json` for persisted workers and compatibility. When `~/.forge/shared/config/delegation-rosters.json` does not exist, Forge derives the Balanced roster from all five tier bindings. Saving rosters writes the new roster file; normal manager delegation then uses routes rather than tier names.
+Tier settings remain global at `~/.forge/shared/specialists/tier-configs.json` for persisted workers and compatibility. When `~/.forge/shared/config/delegation-rosters.json` does not exist, Forge derives the Balanced preset from the stored tier bindings. Saving delegation presets writes that compatibility file; normal manager delegation then uses roster specialists rather than tier names.
 
 ## Shipped Task Instructions and Dedicated Capabilities
 
@@ -195,7 +196,7 @@ You are not user-facing. Return status, summary, changed files, verification, an
 
 Go to **Settings → Delegation** to manage worker delegation:
 
-- **Worker Rosters**: Define execution profiles, automatic task mappings, availability fallbacks, capability escalation, and the global default roster.
+- **Delegation presets**: Manage complete roster specialists and their task instructions, model, reasoning, availability fallback, capability escalation, and the global default preset.
 - **Global scope**: View and edit shared specialists. Create new global specialists. Builtins are editable but cannot be deleted.
 - **Project scope**: View inherited specialists and create project-specific overrides or new project-only specialists.
 
@@ -209,11 +210,11 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 
 ### Fallback Models
 
-Each execution profile (delegation route), and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry. The fallback binding is pinned when the attempt starts.
+Each roster specialist, and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry. The fallback binding is pinned when the attempt starts.
 
 Only exhausted fallback failures surface upward.
 
-**Availability fallback is not capability escalation.** A provider outage or rate limit may use the configured fallback at equivalent intended capability; it must not silently buy a stronger execution profile. Capability escalation creates a new attempt with the profile explicitly linked for that purpose.
+**Availability fallback is not capability escalation.** A provider outage or rate limit may use the configured fallback at equivalent intended capability; it must not silently buy a stronger specialist. Capability escalation creates a new attempt with the specialist explicitly linked for that purpose.
 
 **Cross-provider fallback is supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 

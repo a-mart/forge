@@ -90,7 +90,7 @@ export interface MessageInputProps {
   onClearReplyTarget?: () => void
   /** Builder manager sessions only: compact access to the existing session model override flow. */
   sessionModelPicker?: SessionModelPickerConfig
-  /** Builder manager sessions only: manager posture and delegation roster controls. */
+  /** Builder manager sessions only: work mode and delegation preset controls. */
   sessionCoordinationPicker?: SessionCoordinationPickerConfig
   /** Builder-local Secure Session controls. Transport and secret values stay outside the composer. */
   secureSessionPicker?: SecureSessionPickerConfig

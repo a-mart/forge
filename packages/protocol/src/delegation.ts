@@ -35,6 +35,8 @@ export interface DelegationAvailabilityFallback {
 export interface DelegationRoute {
   routeId: string
   label: string
+  /** Task-instruction contract this roster specialist normally uses. */
+  behaviorMode?: DelegationBehaviorMode
   useWhen: string
   avoidWhen?: string
   color?: string

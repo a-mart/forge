@@ -25,18 +25,112 @@ const DEFAULT_ROSTER_ID = "balanced";
 const LEGACY_BALANCED_DESCRIPTIONS = new Set([
   "General-purpose routes migrated from the existing Forge worker model bindings.",
   "General-purpose worker profiles derived from the existing Forge model bindings.",
+  "General-purpose execution profiles derived from the existing Forge model bindings.",
+  "General-purpose model policies derived from the existing Forge model bindings.",
+  "A balanced team of task-focused specialists derived from the existing Forge model bindings.",
 ]);
 const BALANCED_DESCRIPTION =
-  "General-purpose execution profiles derived from the existing Forge model bindings.";
-const LEGACY_EXECUTION_PROFILE_LABELS: Readonly<Record<string, {
-  legacy: string;
+  "A balanced development team with a normal builder, focused alternatives, and evidence-based escalation.";
+const BUILTIN_MODEL_POLICY_LABELS: Readonly<Record<string, {
+  previous: readonly string[];
   current: string;
+  behaviorMode: DelegationBehaviorMode;
+  previousUseWhen: readonly string[];
+  previousAvoidWhen: readonly string[];
+  useWhen: string;
+  avoidWhen: string;
 }>> = {
-  "quick-scout": { legacy: "Quick Scout", current: "Quick Lookup" },
-  "fast-builder": { legacy: "Fast Builder", current: "Fast Execution" },
-  "research-analyst": { legacy: "Research Analyst", current: "Analysis" },
-  "independent-critic": { legacy: "Independent Critic", current: "Independent Review" },
-  "deep-reasoner": { legacy: "Deep Executor", current: "Deep Reasoning" },
+  "quick-scout": {
+    previous: ["Quick Scout", "Quick Lookup", "Economy", "Economy Scout"],
+    current: "Quick Builder",
+    behaviorMode: "general",
+    previousUseWhen: [
+      "Cheap lookups, file discovery, and bounded source gathering.",
+      "Use for cheap lookups, file discovery, and bounded source gathering when low cost matters more than depth.",
+    ],
+    previousAvoidWhen: ["Avoid when ambiguity, risk, or synthesis quality matters more than minimizing cost."],
+    useWhen: "Use for a small, well-specified implementation change with narrow scope and clear acceptance criteria when lower cost or latency matters.",
+    avoidWhen: "Avoid when the change needs broad investigation, unfamiliar codebase context, or ambiguous requirements.",
+  },
+  "fast-builder": {
+    previous: ["Fast Builder", "Fast Execution", "Fast"],
+    current: "Builder",
+    behaviorMode: "general",
+    previousUseWhen: [
+      "Well-specified implementation and focused fixes with clear acceptance.",
+      "Use when the outcome is well specified, bounded, and has clear acceptance criteria. Prefer when low latency materially improves the workflow.",
+    ],
+    previousAvoidWhen: ["Avoid when the work is architecturally ambiguous, high risk, cross-cutting, or requires independent judgment."],
+    useWhen: "Use for the normal feature, bug-fix, or refactor path when the work is understood and needs a capable implementation owner.",
+    avoidWhen: "Avoid when a quick builder has a clearly sufficient bounded path or evidence justifies a deep escalation.",
+  },
+  "research-analyst": {
+    previous: ["Research Analyst", "Analysis", "Balanced"],
+    current: "Researcher",
+    behaviorMode: "research",
+    previousUseWhen: [
+      "Ordinary planning, source gathering, analysis, and balanced synthesis.",
+      "Use for ordinary planning, research, implementation, and synthesis that need balanced capability, cost, and speed.",
+    ],
+    previousAvoidWhen: ["Avoid when a cheap bounded attempt is clearly sufficient or the highest-capability model is justified by risk."],
+    useWhen: "Use for source-backed investigation, documentation lookup, fact-checking, and focused technical analysis.",
+    avoidWhen: "Avoid when the primary outcome is implementation, a work plan, or high-risk synthesis that warrants deeper reasoning.",
+  },
+  "independent-critic": {
+    previous: ["Independent Critic", "Independent Review", "Independent", "Correctness Reviewer"],
+    current: "Independent Reviewer",
+    behaviorMode: "correctness-review",
+    previousUseWhen: [
+      "Correctness, regression, security, and design review where independent judgment matters.",
+      "Use when independent judgment, provider diversity, correctness, regression, security, or design review materially improves confidence.",
+    ],
+    previousAvoidWhen: ["Avoid for routine implementation or when a second perspective would not change the acceptance decision."],
+    useWhen: "Use for an independent review of a proposed or completed change when correctness, regressions, API/design quality, security, or maintainability could affect acceptance.",
+    avoidWhen: "Avoid for routine implementation or when a second perspective would not change the acceptance decision.",
+  },
+  "deep-reasoner": {
+    previous: ["Deep Executor", "Deep Reasoning", "Deep"],
+    current: "Deep Specialist",
+    behaviorMode: "general",
+    previousUseWhen: [
+      "Difficult architecture, cross-cutting implementation, ambiguous remediation, and high-risk synthesis.",
+      "Use for architecturally ambiguous, high-risk, cross-cutting work or difficult synthesis where the stronger model is justified.",
+    ],
+    previousAvoidWhen: ["Avoid when a bounded fast or balanced attempt has a clear path and adequate acceptance criteria."],
+    useWhen: "Use only when a normal specialist lacks a credible path: architecturally ambiguous, high-risk, cross-cutting work, or difficult synthesis with evidence that stronger reasoning is justified.",
+    avoidWhen: "Avoid for routine implementation, ordinary planning, or review with a clear bounded path and adequate acceptance criteria.",
+  },
+};
+
+const PLANNER_POLICY = {
+  current: "Planner",
+  behaviorMode: "plan" as const,
+  useWhen: "Use for decomposition, implementation planning, sequencing, scope and risk analysis, and decision preparation before substantial work.",
+  avoidWhen: "Avoid for implementation or source research when the user needs an answer or outcome rather than a plan.",
+};
+
+type RouteModelPolicy = Pick<DelegationRoute, "provider" | "modelId" | "reasoningLevel">;
+
+const BALANCED_DEFAULT_MODEL_POLICIES: Readonly<Record<string, {
+  previous: RouteModelPolicy;
+  current: RouteModelPolicy;
+}>> = {
+  "quick-scout": {
+    previous: { provider: "openai-codex", modelId: "gpt-5.6-terra", reasoningLevel: "low" },
+    current: { provider: "openai-codex", modelId: "gpt-5.6-luna", reasoningLevel: "high" },
+  },
+  "fast-builder": {
+    previous: { provider: "openai-codex", modelId: "gpt-5.6-luna", reasoningLevel: "high" },
+    current: { provider: "openai-codex", modelId: "gpt-5.6-terra", reasoningLevel: "xhigh" },
+  },
+  planner: {
+    previous: { provider: "xai", modelId: "grok-4.5", reasoningLevel: "high" },
+    current: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" },
+  },
+  "deep-reasoner": {
+    previous: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "max" },
+    current: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" },
+  },
 };
 
 type ManagerRouteDescriptor = Pick<
@@ -99,15 +193,15 @@ export async function resolveDelegationRosterForManager(
   if (roster) return cloneRoster(roster);
 
   if (manager.delegationRosterOrigin === "session_override") {
-    throw new Error(`Session delegation roster "${rosterId}" no longer exists.`);
+    throw new Error(`Session delegation preset "${rosterId}" no longer exists.`);
   }
   if (manager.delegationRosterOrigin === "project_default") {
-    throw new Error(`Project delegation roster "${rosterId}" no longer exists.`);
+    throw new Error(`Project delegation preset "${rosterId}" no longer exists.`);
   }
 
   const fallback = settings.rosters.find((entry) => entry.rosterId === settings.defaultRosterId);
   if (!fallback) {
-    throw new Error(`Global delegation roster "${settings.defaultRosterId}" does not exist.`);
+    throw new Error(`Global delegation preset "${settings.defaultRosterId}" does not exist.`);
   }
   return cloneRoster(fallback);
 }
@@ -126,10 +220,10 @@ export async function resolveDelegationRoute(
   const route = roster.routes.find((candidate) => candidate.routeId === routeId);
   if (!route) {
     const requestLabel = normalizedRequest === "auto"
-      ? `automatic execution profile for task mode "${behaviorMode}"`
+      ? `automatic model policy for task type "${behaviorMode}"`
       : `route "${normalizedRequest}"`;
     throw new Error(
-      `Delegation ${requestLabel} is not available in roster "${roster.name}" (${roster.rosterId}).`,
+      `Delegation ${requestLabel} is not available in preset "${roster.name}" (${roster.rosterId}).`,
     );
   }
   return {
@@ -143,9 +237,10 @@ export function formatDelegationRosterModelContext(roster: DelegationRoster): st
   const modeRoutes = DELEGATION_BEHAVIOR_MODES
     .map((mode) => `${mode}=${roster.modeRoutes?.[mode] ?? roster.defaultRouteId}`)
     .join(", ");
-  const routes = roster.routes.map((route) => ({
+  const specialists = roster.routes.map((route) => ({
     id: route.routeId,
     label: route.label,
+    task: route.behaviorMode ?? "general",
     useWhen: route.useWhen,
     ...(route.avoidWhen ? { avoidWhen: route.avoidWhen } : {}),
     executor: `${route.provider}/${route.modelId} ${route.reasoningLevel}`,
@@ -157,25 +252,25 @@ export function formatDelegationRosterModelContext(roster: DelegationRoster): st
     id: roster.rosterId,
     revision: roster.revision,
     name: roster.name,
-    baselines: modeRoutes,
-    routes,
+    defaults: modeRoutes,
+    specialists,
   })}`;
 }
 
 export function normalizeDelegationRosterSettings(input: unknown): DelegationRosterSettings {
-  if (!isRecord(input)) throw new Error("Delegation roster settings must be an object.");
-  if (input.version !== 1) throw new Error("Delegation roster settings version must be 1.");
+  if (!isRecord(input)) throw new Error("Delegation preset settings must be an object.");
+  if (input.version !== 1) throw new Error("Delegation preset settings version must be 1.");
   const defaultRosterId = normalizeId(input.defaultRosterId, "defaultRosterId", ROSTER_ID_PATTERN);
   if (!Array.isArray(input.rosters) || input.rosters.length === 0) {
-    throw new Error("Delegation roster settings must contain at least one roster.");
+    throw new Error("Delegation preset settings must contain at least one preset.");
   }
   if (input.rosters.length > MAX_ROSTERS) {
-    throw new Error(`Delegation roster settings may contain at most ${MAX_ROSTERS} rosters.`);
+    throw new Error(`Delegation preset settings may contain at most ${MAX_ROSTERS} presets.`);
   }
   const rosters = input.rosters.map((value, index) => normalizeRoster(value, index));
   assertUnique(rosters.map((roster) => roster.rosterId), "roster id");
   if (!rosters.some((roster) => roster.rosterId === defaultRosterId)) {
-    throw new Error(`Default delegation roster "${defaultRosterId}" does not exist.`);
+    throw new Error(`Default delegation preset "${defaultRosterId}" does not exist.`);
   }
   return { version: 1, defaultRosterId, rosters };
 }
@@ -198,14 +293,26 @@ function normalizeRoster(input: unknown, index: number): DelegationRoster {
     throw new Error(`${prefix}.routes may contain at most ${MAX_ROUTES} routes.`);
   }
   const routes = input.routes.map((route, routeIndex) => normalizeRoute(route, `${prefix}.routes[${routeIndex}]`));
-  const routeIds = routes.map((route) => route.routeId);
-  assertUnique(routeIds, `${prefix} route id`);
-  const routeIdSet = new Set(routeIds);
-  if (!routeIdSet.has(defaultRouteId)) {
+  const initialRouteIds = routes.map((route) => route.routeId);
+  assertUnique(initialRouteIds, `${prefix} route id`);
+  const initialRouteIdSet = new Set(initialRouteIds);
+  if (!initialRouteIdSet.has(defaultRouteId)) {
     throw new Error(`${prefix}.defaultRouteId references unknown route "${defaultRouteId}".`);
   }
-  const modeRoutes = normalizeModeRoutes(input.modeRoutes, prefix, routeIdSet);
-  for (const route of routes) {
+  const modeRoutes = normalizeModeRoutes(input.modeRoutes, prefix, initialRouteIdSet);
+  const migrated = migrateBuiltinRosterSpecialists({
+    rosterId,
+    revision,
+    name,
+    ...(description ? { description } : {}),
+    defaultRouteId,
+    ...(Object.keys(modeRoutes).length > 0 ? { modeRoutes } : {}),
+    routes,
+  });
+  const routeIds = migrated.routes.map((route) => route.routeId);
+  assertUnique(routeIds, `${prefix} route id`);
+  const routeIdSet = new Set(routeIds);
+  for (const route of migrated.routes) {
     if (
       route.capabilityEscalationRouteId
       && !routeIdSet.has(route.capabilityEscalationRouteId)
@@ -219,26 +326,30 @@ function normalizeRoster(input: unknown, index: number): DelegationRoster {
       throw new Error(`${prefix} route "${route.routeId}" cannot escalate to itself.`);
     }
   }
-  assertNoEscalationCycles(routes, prefix);
-  return {
-    rosterId,
-    revision,
-    name,
-    ...(description ? { description } : {}),
-    defaultRouteId,
-    ...(Object.keys(modeRoutes).length > 0 ? { modeRoutes } : {}),
-    routes,
-  };
+  assertNoEscalationCycles(migrated.routes, prefix);
+  return migrated;
 }
 
 function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
   if (!isRecord(input)) throw new Error(`${prefix} must be an object.`);
   const routeId = normalizeId(input.routeId, `${prefix}.routeId`, ROUTE_ID_PATTERN);
   const storedLabel = normalizeText(input.label, `${prefix}.label`, 80);
-  const legacyLabel = LEGACY_EXECUTION_PROFILE_LABELS[routeId];
-  const label = legacyLabel?.legacy === storedLabel ? legacyLabel.current : storedLabel;
+  const builtinLabel = BUILTIN_MODEL_POLICY_LABELS[routeId];
+  const label = builtinLabel?.previous.includes(storedLabel)
+    ? builtinLabel.current
+    : storedLabel;
+  const storedUseWhen = normalizeText(input.useWhen, `${prefix}.useWhen`, 240);
+  const useWhen = builtinLabel?.previousUseWhen.includes(storedUseWhen)
+    ? builtinLabel.useWhen
+    : storedUseWhen;
+  const storedAvoidWhen = normalizeOptionalText(input.avoidWhen, `${prefix}.avoidWhen`, 240);
+  const avoidWhen = builtinLabel && (
+    storedAvoidWhen === undefined
+    || builtinLabel.previousAvoidWhen.includes(storedAvoidWhen)
+  )
+    ? builtinLabel.avoidWhen
+    : storedAvoidWhen;
   const color = normalizeOptionalText(input.color, `${prefix}.color`, 7);
-  const avoidWhen = normalizeOptionalText(input.avoidWhen, `${prefix}.avoidWhen`, 240);
   if (color && !HEX_COLOR_PATTERN.test(color)) {
     throw new Error(`${prefix}.color must be a six-digit hex color.`);
   }
@@ -248,7 +359,15 @@ function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
   return {
     routeId,
     label,
-    useWhen: normalizeText(input.useWhen, `${prefix}.useWhen`, 240),
+    ...(input.behaviorMode === undefined
+      ? {}
+      : {
+          behaviorMode: normalizeBehaviorMode(
+            input.behaviorMode,
+            `${prefix}.behaviorMode`,
+          ),
+        }),
+    useWhen,
     ...(avoidWhen ? { avoidWhen } : {}),
     ...(color ? { color } : {}),
     provider: normalizeText(input.provider, `${prefix}.provider`, 100),
@@ -276,6 +395,148 @@ function normalizeFallback(input: unknown, prefix: string): DelegationRoute["ava
   };
 }
 
+function migrateBuiltinRosterSpecialists(roster: DelegationRoster): DelegationRoster {
+  const modeRoutes = { ...roster.modeRoutes };
+  const routeById = new Map(roster.routes.map((route) => [route.routeId, route]));
+  const hasBuiltinShape = roster.rosterId === DEFAULT_ROSTER_ID
+    && ["quick-scout", "fast-builder", "research-analyst", "independent-critic", "deep-reasoner"]
+      .every((routeId) => routeById.has(routeId));
+
+  if (!hasBuiltinShape) {
+    return {
+      ...roster,
+      routes: roster.routes.map((route) => ({
+        ...route,
+        behaviorMode: route.behaviorMode
+          ?? modeForUniquelyAssignedRoute(roster, route.routeId),
+      })),
+    };
+  }
+
+  const routes = roster.routes.map((route) => {
+    const builtin = BUILTIN_MODEL_POLICY_LABELS[route.routeId];
+    return builtin && route.behaviorMode === undefined
+      ? { ...route, behaviorMode: builtin.behaviorMode }
+      : route;
+  });
+
+  const researchRoute = routes.find((route) => route.routeId === "research-analyst")!;
+  if (
+    !routeById.has("planner")
+    && (modeRoutes.plan === undefined || modeRoutes.plan === researchRoute.routeId)
+  ) {
+    const researchIndex = routes.findIndex((route) => route.routeId === researchRoute.routeId);
+    routes.splice(researchIndex, 0, {
+      ...cloneRoute(researchRoute),
+      routeId: "planner",
+      label: PLANNER_POLICY.current,
+      behaviorMode: PLANNER_POLICY.behaviorMode,
+      useWhen: PLANNER_POLICY.useWhen,
+      avoidWhen: PLANNER_POLICY.avoidWhen,
+    });
+    modeRoutes.plan = "planner";
+  }
+
+  const reviewRoute = routes.find((route) => route.routeId === "independent-critic")!;
+  const legacyDesignReviewerIndex = routes.findIndex(
+    (route) => route.routeId === "design-reviewer" && isGeneratedDesignReviewer(route, reviewRoute),
+  );
+  if (legacyDesignReviewerIndex >= 0) {
+    routes.splice(legacyDesignReviewerIndex, 1);
+  }
+
+  modeRoutes.general ??= "fast-builder";
+  modeRoutes.plan ??= "planner";
+  modeRoutes["correctness-review"] ??= "independent-critic";
+  if (
+    modeRoutes["design-review"] === undefined
+    || (
+      modeRoutes["design-review"] === "design-reviewer"
+      && !routes.some((route) => route.routeId === "design-reviewer")
+    )
+  ) {
+    modeRoutes["design-review"] = reviewRoute.routeId;
+  }
+  modeRoutes.research ??= "research-analyst";
+
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index]!;
+    if (shouldAdoptBalancedDefaultModelPolicy(route)) {
+      routes[index] = applyBalancedDefaultModelPolicy(route);
+    }
+  }
+
+  const quickBuilder = routes.find((route) => route.routeId === "quick-scout");
+  if (
+    quickBuilder?.capabilityEscalationRouteId === "research-analyst"
+    && isBuiltinRouteWithUnchangedGuidance(quickBuilder, BUILTIN_MODEL_POLICY_LABELS["quick-scout"]!)
+  ) {
+    quickBuilder.capabilityEscalationRouteId = "fast-builder";
+  }
+
+  if (routes.length > MAX_ROUTES) {
+    throw new Error(`Delegation preset settings may contain at most ${MAX_ROUTES} specialists.`);
+  }
+  return { ...roster, modeRoutes, routes };
+}
+
+function isGeneratedDesignReviewer(
+  candidate: DelegationRoute,
+  reviewRoute: DelegationRoute,
+): boolean {
+  if (candidate.label !== "Design Reviewer" || candidate.behaviorMode !== "design-review") {
+    return false;
+  }
+  const { routeId: _candidateId, label: _candidateLabel, behaviorMode: _candidateMode, ...candidateConfig } = candidate;
+  const { routeId: _reviewId, label: _reviewLabel, behaviorMode: _reviewMode, ...reviewConfig } = reviewRoute;
+  return JSON.stringify(candidateConfig) === JSON.stringify(reviewConfig);
+}
+
+function isBuiltinRouteWithUnchangedGuidance(
+  route: DelegationRoute,
+  builtin: (typeof BUILTIN_MODEL_POLICY_LABELS)[string],
+): boolean {
+  return (
+    [...builtin.previous, builtin.current].includes(route.label)
+    && [...builtin.previousUseWhen, builtin.useWhen].includes(route.useWhen)
+    && (
+      route.avoidWhen === undefined
+      || [...builtin.previousAvoidWhen, builtin.avoidWhen].includes(route.avoidWhen)
+    )
+  );
+}
+
+function shouldAdoptBalancedDefaultModelPolicy(route: DelegationRoute): boolean {
+  const policy = BALANCED_DEFAULT_MODEL_POLICIES[route.routeId];
+  if (!policy || !routeUsesModelPolicy(route, policy.previous)) return false;
+  if (route.routeId === "planner") {
+    return route.label === PLANNER_POLICY.current && route.behaviorMode === "plan";
+  }
+  const builtin = BUILTIN_MODEL_POLICY_LABELS[route.routeId];
+  return builtin !== undefined && isBuiltinRouteWithUnchangedGuidance(route, builtin);
+}
+
+function applyBalancedDefaultModelPolicy(route: DelegationRoute): DelegationRoute {
+  const policy = BALANCED_DEFAULT_MODEL_POLICIES[route.routeId];
+  return policy ? { ...route, ...policy.current } : route;
+}
+
+function routeUsesModelPolicy(route: DelegationRoute, policy: RouteModelPolicy): boolean {
+  return route.provider === policy.provider
+    && route.modelId === policy.modelId
+    && route.reasoningLevel === policy.reasoningLevel;
+}
+
+function modeForUniquelyAssignedRoute(
+  roster: DelegationRoster,
+  routeId: string,
+): DelegationBehaviorMode | undefined {
+  const assigned = DELEGATION_BEHAVIOR_MODES.filter(
+    (mode) => (roster.modeRoutes?.[mode] ?? roster.defaultRouteId) === routeId,
+  );
+  return assigned.length === 1 ? assigned[0] : undefined;
+}
+
 function normalizeModeRoutes(
   input: unknown,
   prefix: string,
@@ -300,16 +561,20 @@ function buildMigratedDelegationRosterSettings(
 ): DelegationRosterSettings {
   const byTier = new Map(tiers.map((tier) => [tier.tier, tier]));
   const routes = [
-    routeFromTier(byTier.get("light"), "quick-scout", "Quick Lookup", "Cheap lookups, file discovery, and bounded source gathering."),
-    routeFromTier(byTier.get("fast"), "fast-builder", "Fast Execution", "Well-specified implementation and focused fixes with clear acceptance."),
-    routeFromTier(byTier.get("standard"), "research-analyst", "Analysis", "Ordinary planning, source gathering, analysis, and balanced synthesis."),
-    routeFromTier(byTier.get("deep"), "independent-critic", "Independent Review", "Correctness, regression, security, and design review where independent judgment matters."),
-    routeFromTier(byTier.get("max"), "deep-reasoner", "Deep Reasoning", "Difficult architecture, cross-cutting implementation, ambiguous remediation, and high-risk synthesis."),
+    routeFromTier(byTier.get("light"), "quick-scout"),
+    routeFromTier(byTier.get("fast"), "fast-builder"),
+    routeFromTier(byTier.get("standard"), "planner", "plan"),
+    routeFromTier(byTier.get("standard"), "research-analyst"),
+    routeFromTier(byTier.get("deep"), "independent-critic"),
+    routeFromTier(byTier.get("max"), "deep-reasoner"),
   ];
-  routes[0]!.capabilityEscalationRouteId = "research-analyst";
-  routes[1]!.capabilityEscalationRouteId = "deep-reasoner";
-  routes[2]!.capabilityEscalationRouteId = "deep-reasoner";
-  routes[3]!.capabilityEscalationRouteId = "deep-reasoner";
+  for (const route of routes) {
+    if (route.routeId !== "deep-reasoner") {
+      route.capabilityEscalationRouteId = route.routeId === "quick-scout"
+        ? "fast-builder"
+        : "deep-reasoner";
+    }
+  }
   return {
     version: 1,
     defaultRosterId: DEFAULT_ROSTER_ID,
@@ -321,7 +586,7 @@ function buildMigratedDelegationRosterSettings(
       defaultRouteId: "fast-builder",
       modeRoutes: {
         general: "fast-builder",
-        plan: "research-analyst",
+        plan: "planner",
         "correctness-review": "independent-critic",
         "design-review": "independent-critic",
         research: "research-analyst",
@@ -334,14 +599,18 @@ function buildMigratedDelegationRosterSettings(
 function routeFromTier(
   tier: TierConfig | undefined,
   routeId: string,
-  label: string,
-  useWhen: string,
+  behaviorModeOverride?: DelegationBehaviorMode,
 ): DelegationRoute {
   if (!tier) throw new Error(`Cannot migrate delegation route "${routeId}" without its tier binding.`);
-  return {
+  const policy = BUILTIN_MODEL_POLICY_LABELS[routeId]
+    ?? (routeId === "planner" ? PLANNER_POLICY : undefined);
+  if (!policy) throw new Error(`Cannot migrate unknown built-in roster specialist "${routeId}".`);
+  const route: DelegationRoute = {
     routeId,
-    label,
-    useWhen,
+    label: policy.current,
+    behaviorMode: behaviorModeOverride ?? policy.behaviorMode,
+    useWhen: policy.useWhen,
+    avoidWhen: policy.avoidWhen,
     color: tier.color,
     provider: tier.provider,
     modelId: tier.modelId,
@@ -360,6 +629,7 @@ function routeFromTier(
         }
       : {}),
   };
+  return applyBalancedDefaultModelPolicy(route);
 }
 
 function sameRosterDefinition(left: DelegationRoster, right: DelegationRoster): boolean {
@@ -398,6 +668,16 @@ function normalizeReasoning(value: unknown, field: string): ManagerReasoningLeve
     throw new Error(`${field} must be one of ${supported.join(", ")}.`);
   }
   return value as ManagerReasoningLevel;
+}
+
+function normalizeBehaviorMode(value: unknown, field: string): DelegationBehaviorMode {
+  if (
+    typeof value !== "string"
+    || !DELEGATION_BEHAVIOR_MODES.includes(value as DelegationBehaviorMode)
+  ) {
+    throw new Error(`${field} must be one of ${DELEGATION_BEHAVIOR_MODES.join(", ")}.`);
+  }
+  return value as DelegationBehaviorMode;
 }
 
 function normalizeId(value: unknown, field: string, pattern: RegExp): string {

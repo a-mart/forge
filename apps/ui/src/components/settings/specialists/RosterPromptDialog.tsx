@@ -24,9 +24,9 @@ export function RosterPromptDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Generated Roster Prompt</DialogTitle>
+          <DialogTitle>Generated Delegation Prompt</DialogTitle>
           <DialogDescription>
-            This is the specialist roster block injected into the manager system prompt.
+            This is the task-instruction and custom-specialist block injected into the manager system prompt.
           </DialogDescription>
         </DialogHeader>
         {loading ? (
