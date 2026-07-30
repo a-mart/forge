@@ -348,7 +348,9 @@ describe('model-catalog', () => {
 
   it('documents intentional catalog divergences from Pi upstream', () => {
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
-    expect(getCatalogModel('gpt-5.6-sol')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
+    expect(getCatalogModel('gpt-5.6-sol')?.intentionalDivergenceNotes).toContain('context window at 272k')
+    expect(getCatalogModel('gpt-5.6-terra')?.intentionalDivergenceNotes).toContain('constrained to low, medium, and high')
+    expect(getCatalogModel('gpt-5.6-luna')?.intentionalDivergenceNotes).toContain('constrained to low, medium, and high')
     expect(getCatalogModel('claude-opus-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain(
       'restricted to low, medium, and high reasoning levels',
@@ -496,7 +498,7 @@ describe('model-catalog', () => {
 
   it('provides working lookup helpers', () => {
     expect(getCatalogModel('gpt-5.6-sol')?.displayName).toBe('GPT-5.6 Sol')
-    expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'max', 'ultra'])
+    expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
     expect(getCatalogModel('gpt-5.6-terra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high'])
     expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')

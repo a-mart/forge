@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 
+import { fireEvent, getAllByRole, getByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CollaborationChannel } from '@forge/protocol'
+import type { CollaborationChannel, ModelPresetInfo } from '@forge/protocol'
 
 // Radix UI components require ResizeObserver in jsdom
 globalThis.ResizeObserver ??= class ResizeObserver {
@@ -13,24 +14,23 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
+const modelPresetMocks = vi.hoisted(() => ({
+  presets: [] as ModelPresetInfo[],
+}))
+
 vi.mock('@/lib/model-preset', () => ({
-  useModelPresets: () => [],
-  getAvailableChangeManagerFamilies: () => [],
-  getSupportedReasoningLevelsForModelId: () => [],
+  useModelPresets: () => modelPresetMocks.presets,
+  getAvailableChangeManagerFamilies: (presets: ModelPresetInfo[]) => presets.map((preset) => ({
+    familyId: preset.presetId,
+    displayName: preset.displayName,
+  })),
+  getSupportedReasoningLevelsForModelId: (modelId: string, presets: ModelPresetInfo[]) => (
+    presets.find((preset) => preset.modelId === modelId || preset.presetId === modelId)?.supportedReasoningLevels ?? []
+  ),
 }))
 
 vi.mock('@/lib/collaboration-endpoints', () => ({
   resolveCollaborationApiBaseUrl: () => 'http://localhost:47187',
-}))
-
-vi.mock('@/components/settings/specialists/types', () => ({
-  REASONING_LEVEL_LABELS: {
-    none: 'None',
-    low: 'Low',
-    medium: 'Medium',
-    high: 'High',
-    xhigh: 'Max',
-  },
 }))
 
 const apiMocks = vi.hoisted(() => ({
@@ -79,11 +79,16 @@ function renderSheet(overrides: Partial<CollaborationChannel> = {}, extraProps: 
 }
 
 beforeEach(() => {
+  Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+  Element.prototype.setPointerCapture ??= vi.fn()
+  Element.prototype.releasePointerCapture ??= vi.fn()
+  Element.prototype.scrollIntoView ??= vi.fn()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   apiMocks.getChannel.mockReset()
   apiMocks.updateChannel.mockReset()
+  modelPresetMocks.presets = []
 })
 
 afterEach(() => {
@@ -152,6 +157,33 @@ describe('ChannelSettingsSheet', () => {
       aiEnabled: true,
       promptOverlay: 'Updated guidance',
     })
+  })
+
+  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-5.6 Sol', async () => {
+    modelPresetMocks.presets = [{
+      presetId: 'pi-5.6',
+      displayName: 'GPT-5.6 Sol',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.6-sol',
+      defaultReasoningLevel: 'max',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    }]
+    renderSheet({ modelId: 'gpt-5.6-sol', reasoningLevel: 'xhigh' })
+
+    const reasoningTrigger = document.getElementById('collab-channel-settings-reasoning-level')
+    expect(reasoningTrigger).toBeTruthy()
+    flushSync(() => {
+      fireEvent.pointerDown(reasoningTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+    })
+    await vi.waitFor(() => expect(getByRole(document.body, 'option', { name: 'Extra High' })).toBeTruthy())
+    expect(getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')).toEqual([
+      'Low',
+      'Medium',
+      'High',
+      'Extra High',
+      'Max',
+      'Ultra',
+    ])
   })
 
   it('tracks reasoningLevel in baseline and change detection', () => {

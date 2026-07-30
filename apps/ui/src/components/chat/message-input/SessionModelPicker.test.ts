@@ -172,6 +172,20 @@ describe('SessionModelPicker compact menu', () => {
     expect(getByRole(document.body, 'menuitemradio', { name: 'Max' })).toBeTruthy()
   })
 
+  it('shows Extra High, Max, and Ultra for GPT-5.6 Sol', async () => {
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, {
+      currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'xhigh' },
+    })
+
+    expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
+    await openPicker()
+    await openSubmenu(/Reasoning/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Extra High' })).toBeTruthy()
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Max' })).toBeTruthy()
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeTruthy()
+  })
+
   it('applies a reasoning override immediately', async () => {
     const onUpdate = vi.fn(async () => {})
     renderPicker(onUpdate)

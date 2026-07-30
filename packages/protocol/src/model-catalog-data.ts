@@ -197,7 +197,7 @@ export const FORGE_MODEL_CATALOG = {
       displayName: 'GPT-5.6 Sol',
       isFamilyDefault: true,
       supportsReasoning: true,
-      supportedReasoningLevels: ['low', 'medium', 'high', 'max', 'ultra'],
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       defaultReasoningLevel: 'max',
       contextWindow: 272_000,
       maxOutputTokens: 128_000,
@@ -206,7 +206,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-sol',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge keeps the GPT-5.6 Sol context window at 272k pending provider verification.',
     },
     'gpt-5.6-terra': {
       modelId: 'gpt-5.6-terra',
@@ -224,7 +224,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-terra',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge keeps GPT-5.6 Terra constrained to low, medium, and high reasoning with a 272k context window pending provider verification.',
     },
     'gpt-5.6-luna': {
       modelId: 'gpt-5.6-luna',
@@ -242,7 +242,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.6-luna',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; projected via Forge catalog using GPT-5.4 runtime metadata as a synthetic bridge until upstream publishes authoritative limits.',
+        'Intentional divergence: Forge keeps GPT-5.6 Luna constrained to low, medium, and high reasoning with a 272k context window pending provider verification.',
     },
     'gpt-5.4': {
       modelId: 'gpt-5.4',
