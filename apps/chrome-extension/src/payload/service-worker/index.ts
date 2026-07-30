@@ -781,11 +781,15 @@ export class Runtime implements ServiceWorkerPayload {
   private browserTab(tab: ChromeTab, authority: TabAuthorityRecord): BrowserTabSnapshot {
     const now = new Date(this.now()).toISOString()
     const physicalSession = this.controlSessions.forTab(authority.tabId)
-    const controller = authority.state === 'agent'
-      ? 'agent'
-      : physicalSession?.leaseId === authority.ownerId && physicalSession.leaseEpoch === authority.ownerEpoch
-        ? 'agent-idle'
-        : 'human'
+    // An external navigation keeps the debugger attached while its replacement root is proved.
+    // Do not project that retained physical session as authoritative until revalidation succeeds.
+    const controller = this.externalNavigationReconciliations.has(authority.tabId)
+      ? 'none'
+      : authority.state === 'agent'
+        ? 'agent'
+        : physicalSession?.leaseId === authority.ownerId && physicalSession.leaseEpoch === authority.ownerEpoch
+          ? 'agent-idle'
+          : 'human'
     return {
       targetAffinity: 'external-chrome',
       tabId: String(tab.id),

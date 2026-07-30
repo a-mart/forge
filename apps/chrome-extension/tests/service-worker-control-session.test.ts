@@ -411,6 +411,46 @@ describe('service-worker control-session lifecycle', () => {
     await release('take-control')
   })
 
+  it('does not report attached-idle during deferred root revalidation, then reports success or terminal loss', async () => {
+    const successful = await harness()
+    await successful.execute('before-deferred-navigation')
+    const successRevalidation = deferredRootRevalidation(successful.chrome)
+    await successful.chrome.tabs.update(7, { url: 'https://deferred-success.invalid/' })
+    successful.runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'deferred-success-frame', url: 'https://deferred-success.invalid/' },
+    }])
+    await successRevalidation.started
+    await expect(status(successful.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'none' } },
+    })
+    successRevalidation.release()
+    await vi.waitFor(() => expect(reconciliationCount(successful.runtime)).toBe(0))
+    await expect(status(successful.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'agent-idle' } },
+    })
+    await successful.release('deferred-success')
+
+    let rootTargetId: string | null = 'root-valid'
+    const failed = await harness({ rootTargetId: () => rootTargetId ?? '' })
+    await failed.execute('before-deferred-failure')
+    const failureRevalidation = deferredRootRevalidation(failed.chrome, true)
+    rootTargetId = null
+    await failed.chrome.tabs.update(7, { url: 'https://deferred-failure.invalid/' })
+    failed.runtime.onShellEvent('debugger.event', [{ tabId: 7 }, 'Page.frameNavigated', {
+      frame: { id: 'deferred-failure-frame', url: 'https://deferred-failure.invalid/' },
+    }])
+    await failureRevalidation.started
+    await expect(status(failed.runtime)).resolves.toMatchObject({
+      ok: true,
+      result: { selectedTab: { controller: 'none' } },
+    })
+    failureRevalidation.release()
+    await vi.waitFor(() => expect(failed.runtime.diagnostics().authorities).toEqual([]))
+    await expect(status(failed.runtime)).resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
+  })
+
   it('terminally detaches and receipts a retained attachment that navigates into a restricted target', async () => {
     const { chrome, runtime, execute, release } = await harness()
     await execute('before-restricted-navigation')
@@ -755,6 +795,30 @@ function status(runtime: Runtime): Promise<unknown> {
     input: {},
     deadlineAt: new Date(Date.now() + 5_000).toISOString(),
   })
+}
+
+function deferredRootRevalidation(chrome: ReturnType<typeof configuredChrome>, fail = false): {
+  started: Promise<void>
+  release: () => void
+} {
+  let release!: () => void
+  let resolveStarted!: () => void
+  const started = new Promise<void>((resolve) => { resolveStarted = resolve })
+  const waitForRelease = new Promise<void>((resolve) => { release = resolve })
+  const sendCommand = chrome.debugger.sendCommand.bind(chrome.debugger)
+  chrome.debugger.sendCommand = async (target: ChromeDebuggerSession, method: string, params?: Record<string, unknown>) => {
+    if (method === 'Target.getTargetInfo') {
+      resolveStarted()
+      await waitForRelease
+      if (fail) return { targetInfo: { type: 'page', attached: false } }
+    }
+    return sendCommand(target, method, params)
+  }
+  return { started, release }
+}
+
+function reconciliationCount(runtime: Runtime): number {
+  return (runtime as unknown as { externalNavigationReconciliations: Map<number, number> }).externalNavigationReconciliations.size
 }
 
 function releaseOwner(runtime: Runtime, leaseId: string, leaseEpoch: number, reason: string): Promise<Record<string, unknown>> {
