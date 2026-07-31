@@ -465,6 +465,9 @@ export class ExternalChromeHostCoordinator {
     const sameDataDirStaleAuthority = authority.state === 'stale' && authorityOwner?.dataDirHash === this.dataDirHash
     const authorityAvailable = authority.state !== 'other-live' &&
       (authority.state !== 'stale' || sameDataDirStaleAuthority) && takeoverAuthorization === null
+    // A fresh Desktop install has neither an authenticated extension nor a
+    // native-host registration. It needs the manual unpacked-extension setup,
+    // not a destructive repair path.
     const hasInstalledState = auth !== 'missing' || registration.registration !== 'not-registered' || state !== 'disabled'
     const markerRecovery = await this.readMarkerRecovery()
     const runtimeRecovery = this.relay.recoveryStatus()
@@ -488,7 +491,7 @@ export class ExternalChromeHostCoordinator {
       platform,
       canEnable: platform !== 'unsupported' && authorityAvailable && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable && state !== 'online',
       canDisable: authority.state !== 'other-live' && (state === 'online' || state === 'offline' || state === 'quiesced'),
-      canRepair: platform !== 'unsupported' && authorityAvailable && registration.registration !== 'conflict' && (trustAllowsEnable || this.repairDeployment !== undefined),
+      canRepair: platform !== 'unsupported' && authorityAvailable && registration.registration !== 'conflict' && hasInstalledState && (trustAllowsEnable || this.repairDeployment !== undefined),
       canRollback: authorityAvailable && canRollback,
       canRemove: authority.state !== 'other-live' && hasInstalledState,
       canTakeover: platform !== 'unsupported' && exactTransfer && authority.state !== 'owned' && authority.state !== 'other-live' && setup.pathState === 'ready' && trustAllowsEnable,
