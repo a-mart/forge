@@ -49,6 +49,11 @@ export function SettingsExternalChrome() {
 
   const ready = status?.state === 'online' && status.setup.pathState === 'ready'
   const connected = ready && status.auth === 'secure'
+  const firstTime = status?.state === 'disabled' && status.auth === 'missing' &&
+    status.registration === 'not-registered' && status.setup.pathState !== 'mismatch'
+  const firstTimeSetupAvailable = firstTime && status?.canEnable && status.canReveal
+  const repairable = !connected && !firstTime && !status?.canEnable && status?.canRepair
+  const unavailable = !connected && !status?.canEnable && !status?.canRepair
   const loadPath = status?.setup.pathState === 'ready' ? status.setup.loadUnpackedPath : undefined
 
   return (
@@ -73,34 +78,58 @@ export function SettingsExternalChrome() {
             <div className="flex flex-wrap items-center gap-3">
               <CheckCircle2 className={`size-5 ${connected ? 'text-emerald-600' : 'text-muted-foreground'}`} />
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{connected ? 'Chrome is ready for Forge' : ready ? 'Finish connecting Chrome' : 'Set up Chrome'}</p>
+                <p className="text-sm font-medium">
+                  {connected ? 'Chrome is ready for Forge' : firstTimeSetupAvailable ? 'Set up Chrome' : repairable ? 'Repair Chrome setup' : unavailable ? 'Chrome setup is unavailable' : 'Finish connecting Chrome'}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {connected
                     ? 'No host or tab selection is required.'
-                    : 'Load Forge’s extension once, then Forge handles browser tabs automatically.'}
+                    : firstTimeSetupAvailable
+                      ? 'Load Forge’s unpacked extension once, then turn on Chrome here.'
+                      : repairable
+                        ? 'Repair the installed Chrome integration before connecting.'
+                        : unavailable
+                          ? 'Forge could not prepare a trusted Chrome setup resource.'
+                          : 'Turn on the installed Chrome integration, then Forge handles browser tabs automatically.'}
                 </p>
               </div>
-              {!connected ? (
-                <Button type="button" size="sm" onClick={() => void run(status.canEnable ? 'enable' : 'repair')} disabled={busy !== null || (!status.canEnable && !status.canRepair)}>
-                  {busy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
-                  {status.canEnable ? 'Use Chrome with Forge' : 'Repair'}
+              {firstTimeSetupAvailable ? (
+                <Button type="button" size="sm" onClick={() => void run('revealExtensionFolder')} disabled={busy !== null}>
+                  {busy === 'reveal' ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <FolderOpen className="mr-1.5 size-3.5" />}
+                  Show Forge extension folder
                 </Button>
-              ) : status.canRepair ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => void run('repair')} disabled={busy !== null}>Repair</Button>
+              ) : !connected && status.canEnable ? (
+                <Button type="button" size="sm" onClick={() => void run('enable')} disabled={busy !== null}>
+                  {busy === 'enable' ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+                  Use Chrome with Forge
+                </Button>
+              ) : repairable ? (
+                <Button type="button" size="sm" onClick={() => void run('repair')} disabled={busy !== null}>
+                  {busy === 'repair' ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+                  Repair
+                </Button>
               ) : null}
             </div>
 
-            {!connected && loadPath ? (
+            {firstTimeSetupAvailable && loadPath ? (
               <div className="mt-4 border-t pt-4 text-sm">
-                <p className="font-medium">One-time Chrome step</p>
+                <p className="font-medium">One-time Chrome setup</p>
                 <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
-                  <li>Open <code className="rounded bg-muted px-1 text-foreground">chrome://extensions</code> and enable Developer mode.</li>
-                  <li>Choose Load unpacked and select the Forge folder.</li>
+                  <li>Choose Show Forge extension folder.</li>
+                  <li>In the Chrome profile you want to use, open <code className="rounded bg-muted px-1 text-foreground">chrome://extensions</code>, enable Developer mode, then choose Load unpacked.</li>
+                  <li>Select the exact revealed <code className="rounded bg-muted px-1 text-foreground">extension</code> folder, not its parent.</li>
+                  <li>Return here, choose Use Chrome with Forge, then Refresh.</li>
                 </ol>
-                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void run('revealExtensionFolder')} disabled={!status.canReveal || busy !== null}>
-                  <FolderOpen className="mr-1.5 size-3.5" />Show Forge extension folder
+                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void run('enable')} disabled={busy !== null}>
+                  {busy === 'enable' ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+                  Use Chrome with Forge
                 </Button>
               </div>
+            ) : null}
+            {unavailable ? (
+              <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+                Refresh after fixing the Desktop resource problem. Forge will continue using the embedded browser until Chrome setup is available.
+              </p>
             ) : null}
           </div>
 

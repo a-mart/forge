@@ -10,14 +10,14 @@ const status = {
   recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' as const, pathState: 'ready' as const, loadUnpackedPath: '/forge/extension' },
 }
 
-function fixture() {
+function fixture(coordinatorStatus = status) {
   const handlers = new Map<string, (event: IpcMainInvokeEvent, input: unknown) => Promise<unknown>>()
   const ipcMain = { handle: vi.fn((channel: string, handler: (event: IpcMainInvokeEvent, input: unknown) => Promise<unknown>) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
   const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
   const coordinator = {
-    status: vi.fn(async () => status), enable: vi.fn(async () => status), disable: vi.fn(async () => status), repair: vi.fn(async () => status),
-    rollback: vi.fn(async () => status), remove: vi.fn(async () => status), takeover: vi.fn(async () => status),
-    validatedLoadUnpackedPath: vi.fn(async () => status.setup.loadUnpackedPath), transport: vi.fn(() => ({ inventory: () => [] })),
+    status: vi.fn(async () => coordinatorStatus), enable: vi.fn(async () => coordinatorStatus), disable: vi.fn(async () => coordinatorStatus), repair: vi.fn(async () => coordinatorStatus),
+    rollback: vi.fn(async () => coordinatorStatus), remove: vi.fn(async () => coordinatorStatus), takeover: vi.fn(async () => coordinatorStatus),
+    validatedLoadUnpackedPath: vi.fn(async () => coordinatorStatus.setup.loadUnpackedPath), transport: vi.fn(() => ({ inventory: () => [] })),
   } as unknown as ExternalChromeHostCoordinator
   return { handlers, ipcMain, mainWindow, coordinator }
 }
@@ -32,6 +32,31 @@ describe('trusted External Chrome IPC', () => {
     dispose()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(1)
     expect(handlers.has('forge:external-chrome-control')).toBe(true)
+  })
+
+  it('lets a first-time setup reveal the validated folder without admitting Repair', async () => {
+    const firstTimeStatus = {
+      ...status,
+      state: 'disabled' as const,
+      authority: 'none' as const,
+      auth: 'missing' as const,
+      registration: 'not-registered' as const,
+      canEnable: true,
+      canDisable: false,
+      canRepair: false,
+      canRemove: false,
+    }
+    const { handlers, ipcMain, mainWindow, coordinator } = fixture(firstTimeStatus)
+    const revealed = vi.fn(async () => undefined)
+    installExternalChromeIpc({ ipcMain, mainWindow, coordinator, revealExtensionFolder: revealed })
+    const control = handlers.get('forge:external-chrome-control')!
+
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'reveal-extension-folder' }))
+      .resolves.toEqual({ ok: true, status: firstTimeStatus })
+    expect(revealed).toHaveBeenCalledWith(firstTimeStatus.setup.loadUnpackedPath)
+    await expect(control({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'repair' }))
+      .resolves.toEqual({ ok: false, error: 'operation-failed' })
+    expect(coordinator.repair).not.toHaveBeenCalled()
   })
 
   it('dispatches each capability-gated operation, reveal, and failures', async () => {

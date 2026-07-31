@@ -639,7 +639,8 @@ describe('ExternalChromeHostCoordinator', () => {
     })
 
     expect(await coordinator.status()).toMatchObject({
-      canReveal: true,
+      state: 'disabled', auth: 'missing', registration: 'not-registered',
+      canEnable: true, canRepair: false, canReveal: true,
       setup: { pathState: 'ready', loadUnpackedPath: paths.extension, extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' },
     })
     expect(await coordinator.validatedLoadUnpackedPath()).toBe(paths.extension)
@@ -654,6 +655,25 @@ describe('ExternalChromeHostCoordinator', () => {
     }))
     expect(await coordinator.status()).toMatchObject({ canEnable: false, canReveal: false, setup: { pathState: 'mismatch' } })
     expect(await coordinator.validatedLoadUnpackedPath()).toBeNull()
+  })
+
+  it('offers repair only once native registration or deployment evidence exists', async () => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 608, username: 'repair-state-tester', uid: 501,
+      instanceId: 'desktop_repair_state', access, endpoints: new FakeEndpoints(), registration,
+      isProcessAlive: () => false, deploymentVerifier: deployer, repairDeployment: () => deployer.stage(),
+    })
+
+    expect(await coordinator.status()).toMatchObject({
+      state: 'disabled', auth: 'missing', registration: 'not-registered', canRepair: false,
+    })
+    registration.registration = 'needs-repair'
+    registration.trust = 'missing'
+    expect(await coordinator.status()).toMatchObject({
+      registration: 'needs-repair', canEnable: false, canRepair: true,
+    })
   })
 
   it('fails closed on corrupt shell, payload, install manifest, and native host content', async () => {
