@@ -41,12 +41,12 @@ The tests cover framing bounds, host boundaries, installed-path discovery, authe
 
 ## SEA and release gates
 
-`package:current` is pinned to the official Node 25.6.1 distribution and its direct `--build-sea` path. Release mode additionally requires `FORGE_SEA_NODE` to resolve to that exact executable. A runtime without the required `NODE_SEA_FUSE` fails rather than producing a releasable host.
+Validation-mode `package:current` uses the repository Node executable and accepts it only when its direct `--build-sea` invocation succeeds with the required `NODE_SEA_FUSE` capability. Release mode is pinned to the official Node 25.6.1 distribution and additionally requires `FORGE_SEA_NODE` to resolve to that exact executable. A runtime without the required fuse fails rather than producing a host.
 
 The release sequence is fail-closed:
 
 1. build the bundled host and deterministic SEA inputs with code cache and startup snapshots disabled;
-2. generate the current target/architecture executable with the pinned official Node;
+2. generate the current target/architecture executable with the validated Node (the pinned official Node in release mode);
 3. ad-hoc sign macOS output so the kernel can execute the validation artifact;
 4. smoke the generated executable;
 5. in release mode, apply the platform's configured signer (on macOS, replacing the ad-hoc signature);

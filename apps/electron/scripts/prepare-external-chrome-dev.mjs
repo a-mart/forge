@@ -41,8 +41,8 @@ export async function prepareExternalChromeDevelopmentResources({
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(
-        'External Chrome Windows development requires the official Node 25.6.1 executable with SEA support. ' +
-        `Install/select that Node runtime and rerun prepare:dev-external-chrome. ${detail}`,
+        'External Chrome Windows development requires the repository Node executable to support SEA (NODE_SEA_FUSE). ' +
+        `Select an official SEA-capable Node build for this checkout and rerun prepare:dev-external-chrome. ${detail}`,
       )
     }
 
@@ -183,9 +183,14 @@ export async function smokeDevelopmentHost(executable, origin) {
   }
 }
 
-async function buildInputs() {
-  await run('pnpm', ['--filter', '@forge/chrome-extension', 'build'], repoRoot)
-  await run('pnpm', ['--filter', '@forge/external-chrome-native-host', 'build'], repoRoot)
+export async function buildExternalChromeDevelopmentInputs({
+  platform = process.platform,
+  runCommand = run,
+} = {}) {
+  // Avoid shell:true on Windows (DEP0190) while preserving .cmd resolution.
+  const pnpmCommand = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+  await runCommand(pnpmCommand, ['--filter', '@forge/chrome-extension', 'build'], repoRoot, process.env, false)
+  await runCommand(pnpmCommand, ['--filter', '@forge/external-chrome-native-host', 'build'], repoRoot, process.env, false)
 }
 
 export async function packageWindowsDevelopmentHost({
@@ -200,7 +205,7 @@ export async function packageWindowsDevelopmentHost({
   }, false)
 }
 
-async function run(command, args, cwd, env = process.env, shell = process.platform === 'win32') {
+async function run(command, args, cwd, env = process.env, shell = false) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, stdio: 'inherit', shell })
     child.on('error', reject)
@@ -270,7 +275,7 @@ function stableJson(value) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  buildInputs().then(() => prepareExternalChromeDevelopmentResources())
+  buildExternalChromeDevelopmentInputs().then(() => prepareExternalChromeDevelopmentResources())
     .then((result) => process.stdout.write(`[external-chrome-dev] prepared ${result.outputRoot}\n`))
     .catch((error) => { console.error(error); process.exitCode = 1 })
 }

@@ -9,7 +9,10 @@ import {
   prepareReleaseExecutable,
   verifyReleaseSignature,
 } from '../../../native-messaging-host/scripts/release-signing.mjs'
-import { prepareAndSmokeExecutable } from '../../../native-messaging-host/scripts/package-current.mjs'
+import {
+  inspectSeaBuildCapability,
+  prepareAndSmokeExecutable,
+} from '../../../native-messaging-host/scripts/package-current.mjs'
 
 const roots = []
 
@@ -32,6 +35,23 @@ describe('External Chrome release signing policy', () => {
       .rejects.toThrow('FORGE_SEA_NODE')
     await expect(assertReleaseEnvironment({ platform: 'win32', env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation' } }))
       .resolves.toMatchObject({ mode: 'validation' })
+  })
+
+  it('accepts repository Node 24 validation only after the direct SEA capability probe succeeds', () => {
+    expect(() => assertSeaToolchain({
+      nodeVersion: '24.18.0', execPath: 'C:\\Program Files\\nodejs\\node.exe',
+      env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation' },
+    })).not.toThrow()
+    expect(inspectSeaBuildCapability({ status: 0 }, { nodeVersion: '24.18.0' }))
+      .toEqual({ supported: true })
+    expect(inspectSeaBuildCapability({
+      status: 1,
+      stderr: 'Error: NODE_SEA_FUSE is absent',
+      stdout: '',
+    }, { nodeVersion: '24.18.0' })).toEqual({
+      supported: false,
+      reason: 'Node 24.18.0 executable lacks the NODE_SEA_FUSE sentinel required by --build-sea',
+    })
   })
 
   it('pins release SEA packaging to the declared official Node executable and version', () => {
