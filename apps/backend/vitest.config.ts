@@ -28,6 +28,7 @@ export default defineConfig({
       "src/__tests__/**/*.test.ts",
       "../../scripts/__tests__/**/*.test.mjs"
     ],
-    globals: true
+    globals: true,
+    setupFiles: [resolve(__dirname, "src/test-support/vitest-test-environment.ts")],
   }
 });

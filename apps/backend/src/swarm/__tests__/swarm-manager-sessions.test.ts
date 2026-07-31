@@ -1666,7 +1666,7 @@ Never use plain assistant text for user communication.`
     )
   })
 
-  it('consumes inactive-session continuity requests when the runtime is later recreated', async () => {
+  it('marks inactive-session Cursor continuity applied only after startup recovery is consumed', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1688,6 +1688,11 @@ Never use plain assistant text for user communication.`
     expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('# Recovered Forge Conversation Context')
     expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable context from an inactive session.')
     expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).not.toContain('# Recovered Forge Conversation Context')
+
+    const beforeRecoveryConsumption = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(beforeRecoveryConsumption.applied).toHaveLength(0)
+    expect(recoveryOptions?.onStartupRecoveryConsumed).toBeTypeOf('function')
+    await recoveryOptions?.onStartupRecoveryConsumed?.()
 
     const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(afterState.applied).toHaveLength(1)

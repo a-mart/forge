@@ -21,7 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DockerSecureExecutionBackend,
   dockerSecureExecutionMetadata,
@@ -34,6 +34,7 @@ import type {
 } from "../secure-sessions/execution/secure-execution-backend.js";
 import { SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER } from "../secure-sessions/execution/secure-execution-backend.js";
 import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
+import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
 
 const execFileAsync = promisify(execFile);
 const { stdout: gitTopLevel } = await execFileAsync(
@@ -48,6 +49,7 @@ const probeBackend = new DockerSecureExecutionBackend({
 const dockerAvailability = await probeBackend.probe();
 const dockerSuite = dockerAvailability.available ? describe.sequential : describe.skip;
 const cleanupOperations: Array<() => Promise<unknown>> = [];
+let releaseDockerTestLock: (() => Promise<void>) | undefined;
 
 function uniqueScope(label: string): string {
   return `${label}-${process.pid}-${randomBytes(6).toString("hex")}`;
@@ -125,6 +127,30 @@ async function waitForContainerRunningState(
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error(`Timed out waiting for Docker running state ${String(expected)}`);
+}
+
+async function suspendHostHeartbeatForStaleHeartbeatTest(
+  backend: DockerSecureExecutionBackend,
+  sandboxId: string,
+): Promise<void> {
+  const backendForTest = backend as unknown as {
+    heartbeats: Map<string, {
+      stopped: boolean;
+      timer: NodeJS.Timeout | null;
+      file: { close(): Promise<void> };
+    }>;
+  };
+  const state = backendForTest.heartbeats.get(sandboxId);
+  if (!state) throw new Error("expected a host heartbeat for the sandbox");
+
+  // A stale heartbeat is evidence that the host owner is gone. Stop the host
+  // pulse before aging the bind-mounted file so Docker Desktop's delayed mount
+  // metadata propagation cannot race a later host refresh.
+  state.stopped = true;
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = null;
+  backendForTest.heartbeats.delete(sandboxId);
+  await state.file.close();
 }
 
 async function startCrashOwnedSandbox(
@@ -318,6 +344,15 @@ describe("Docker secure runner installation", () => {
 dockerSuite(
   `Docker secure execution conformance [${dockerAvailability.code}]`,
   () => {
+    beforeAll(async () => {
+      releaseDockerTestLock = await acquireSecureDockerTestLock();
+    }, 300_000);
+
+    afterAll(async () => {
+      await releaseDockerTestLock?.();
+      releaseDockerTestLock = undefined;
+    });
+
     it("resolves an arbitrary mapped UID and GID for common tools", async () => {
       const backend = new DockerSecureExecutionBackend({
         scope: uniqueScope("mapped-identity"),
@@ -1178,14 +1213,15 @@ dockerSuite(
         guardOutput: passThroughGuard(),
       });
       expect(guestWrite.exitCode).not.toBe(0);
+      await suspendHostHeartbeatForStaleHeartbeatTest(backend, sandbox.sandboxId);
       await utimes(heartbeatPath as string, new Date(0), new Date(0));
 
-      await waitForContainerRunningState(sandbox.sandboxId, false);
+      await waitForContainerRunningState(sandbox.sandboxId, false, 22_000);
       const stopped = await dockerInspect(sandbox.sandboxId);
       expect(stopped.State).toEqual(
         expect.objectContaining({ Running: false, ExitCode: 71 }),
       );
-    }, 10_000);
+    }, 30_000);
 
     it("stops descendants after the owning Forge process is SIGKILLed", async () => {
       const scope = uniqueScope("deadman-sigkill");

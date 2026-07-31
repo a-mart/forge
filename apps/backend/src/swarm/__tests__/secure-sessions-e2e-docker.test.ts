@@ -16,6 +16,7 @@ import {
   startFixtureTarget,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
+import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -58,6 +59,7 @@ const dockerSuite = dockerAvailable
 const runnerImage = `${uniqueManagedName("runner")}:latest`;
 const targetImage = `${uniqueManagedName("target")}:latest`;
 const cleanups: Array<() => Promise<unknown>> = [];
+let releaseDockerTestLock: (() => Promise<void>) | undefined;
 
 function makeCanary(): Buffer {
   return Buffer.from(
@@ -232,16 +234,22 @@ dockerSuite(
   `secure sessions exhaustive Docker harness [${dockerAvailable ? "available" : "backend_unavailable"}]`,
   () => {
     beforeAll(async () => {
+      releaseDockerTestLock = await acquireSecureDockerTestLock();
       await buildFixtureImages(
         repositoryRoot,
         runnerImage,
         targetImage,
       );
-    }, 240_000);
+    }, 300_000);
 
     afterAll(async () => {
-      await removeManagedImage(targetImage);
-      await removeManagedImage(runnerImage);
+      try {
+        await removeManagedImage(targetImage);
+        await removeManagedImage(runnerImage);
+      } finally {
+        await releaseDockerTestLock?.();
+        releaseDockerTestLock = undefined;
+      }
     }, 60_000);
 
     it("contains all delivery channels and encoded reflections across nineteen persistent commands", async () => {

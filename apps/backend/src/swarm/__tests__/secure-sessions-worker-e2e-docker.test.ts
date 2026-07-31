@@ -25,6 +25,7 @@ import {
   runCommand,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
+import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -81,6 +82,7 @@ if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
 const dockerSuite = dockerAvailable ? describe.sequential : describe.skip;
 const runnerImage = `${uniqueManagedName("team-runner")}:latest`;
 const emergencyCleanups = new Set<() => Promise<void>>();
+let releaseDockerTestLock: (() => Promise<void>) | undefined;
 
 interface ScopeContainer {
   name: string;
@@ -590,11 +592,17 @@ dockerSuite(
   }]`,
   () => {
     beforeAll(async () => {
+      releaseDockerTestLock = await acquireSecureDockerTestLock();
       await buildRunnerFixtureImage();
-    }, 240_000);
+    }, 300_000);
 
     afterAll(async () => {
-      await removeManagedImage(runnerImage);
+      try {
+        await removeManagedImage(runnerImage);
+      } finally {
+        await releaseDockerTestLock?.();
+        releaseDockerTestLock = undefined;
+      }
     }, 60_000);
 
     it("runs the manager team through one shared sandbox and authority lifecycle", async () => {
