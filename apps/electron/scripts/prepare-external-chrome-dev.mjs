@@ -183,14 +183,9 @@ export async function smokeDevelopmentHost(executable, origin) {
   }
 }
 
-export async function buildExternalChromeDevelopmentInputs({
-  platform = process.platform,
-  runCommand = run,
-} = {}) {
-  // Avoid shell:true on Windows (DEP0190) while preserving .cmd resolution.
-  const pnpmCommand = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-  await runCommand(pnpmCommand, ['--filter', '@forge/chrome-extension', 'build'], repoRoot, process.env, false)
-  await runCommand(pnpmCommand, ['--filter', '@forge/external-chrome-native-host', 'build'], repoRoot, process.env, false)
+async function buildInputs() {
+  await run('pnpm', ['--filter', '@forge/chrome-extension', 'build'], repoRoot)
+  await run('pnpm', ['--filter', '@forge/external-chrome-native-host', 'build'], repoRoot)
 }
 
 export async function packageWindowsDevelopmentHost({
@@ -205,7 +200,7 @@ export async function packageWindowsDevelopmentHost({
   }, false)
 }
 
-async function run(command, args, cwd, env = process.env, shell = false) {
+async function run(command, args, cwd, env = process.env, shell = process.platform === 'win32') {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, stdio: 'inherit', shell })
     child.on('error', reject)
@@ -275,7 +270,7 @@ function stableJson(value) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  buildExternalChromeDevelopmentInputs().then(() => prepareExternalChromeDevelopmentResources())
+  buildInputs().then(() => prepareExternalChromeDevelopmentResources())
     .then((result) => process.stdout.write(`[external-chrome-dev] prepared ${result.outputRoot}\n`))
     .catch((error) => { console.error(error); process.exitCode = 1 })
 }

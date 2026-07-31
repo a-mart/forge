@@ -4,11 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExternalChromeDeployer } from '../../src/external-chrome/deployer.js'
-import {
-  buildExternalChromeDevelopmentInputs,
-  packageWindowsDevelopmentHost,
-  prepareExternalChromeDevelopmentResources,
-} from '../prepare-external-chrome-dev.mjs'
+import { packageWindowsDevelopmentHost, prepareExternalChromeDevelopmentResources } from '../prepare-external-chrome-dev.mjs'
 
 const roots = []
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
@@ -185,18 +181,10 @@ describe('External Chrome development resource staging', () => {
     expect(packageCachedHost).not.toHaveBeenCalled()
   })
 
-  it('uses pnpm.cmd without a shell on Windows and executes a spaced Node path directly', async () => {
-    const buildRunCommand = vi.fn().mockResolvedValue(undefined)
-    await buildExternalChromeDevelopmentInputs({ platform: 'win32', runCommand: buildRunCommand })
-    expect(buildRunCommand).toHaveBeenCalledTimes(2)
-    for (const [command, _args, _cwd, _env, shell] of buildRunCommand.mock.calls) {
-      expect(command).toBe('pnpm.cmd')
-      expect(shell).toBe(false)
-    }
-
-    const packageRunCommand = vi.fn().mockResolvedValue(undefined)
-    await packageWindowsDevelopmentHost({ executable: 'C:\\Program Files\\nodejs\\node.exe', runCommand: packageRunCommand })
-    expect(packageRunCommand).toHaveBeenCalledWith(
+  it('executes a spaced Windows Node path directly while forcing validation mode', async () => {
+    const runCommand = vi.fn().mockResolvedValue(undefined)
+    await packageWindowsDevelopmentHost({ executable: 'C:\\Program Files\\nodejs\\node.exe', runCommand })
+    expect(runCommand).toHaveBeenCalledWith(
       'C:\\Program Files\\nodejs\\node.exe',
       [expect.stringMatching(/apps[\\/]native-messaging-host[\\/]scripts[\\/]package-current\.mjs$/u)],
       expect.stringMatching(/apps[\\/]native-messaging-host$/u),
