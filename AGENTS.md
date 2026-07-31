@@ -93,9 +93,12 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
 - Treat authentication data, credential-pool files, exported connector artifacts, and session data as
   sensitive. Do not print secrets or copy sensitive payloads into chat, fixtures, or committed docs.
 - Desktop release work must follow `apps/electron/README.md`. Build and validate before publishing,
-  use the draft-first beta-first workflow, and never treat validation branches as published releases.
-- Keep platform support intact on macOS, Linux, and Windows. Use Node path APIs, `os.tmpdir()`, guarded
-  signal handling, and graceful `ENOENT`/permission-error handling instead of platform assumptions.
+  use the draft-first beta-first workflow, and never treat validation branches as published releases. Forge
+  Desktop supports published releases on macOS and Windows only; Linux `dir` packaging is experimental,
+  local-only, and non-publishable.
+- Keep source/server, development, CLI, and configuration portability intact on macOS, Linux, and Windows.
+  Use Node path APIs, `os.tmpdir()`, guarded signal handling, and graceful `ENOENT`/permission-error
+  handling instead of platform assumptions.
 
 ## Validation
 
