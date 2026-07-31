@@ -61,14 +61,18 @@ export function assertSeaToolchain({
   execPath = process.execPath,
   env = process.env,
 } = {}) {
+  // Validation packages the same Node executable that runs this package script.
+  // Its direct --build-sea invocation is the authoritative capability probe; do
+  // not replace that probe with an unqualified semver range. Release artifacts
+  // remain qualified to the separately pinned official Node distribution.
+  if (externalChromeBuildMode(env) !== 'release') return
+
   if (nodeVersion !== SEA_NODE_VERSION) {
-    throw new Error(`External Chrome SEA packaging requires official Node ${SEA_NODE_VERSION}; running ${nodeVersion}`)
+    throw new Error(`External Chrome SEA release packaging requires official Node ${SEA_NODE_VERSION}; running ${nodeVersion}`)
   }
-  if (externalChromeBuildMode(env) === 'release') {
-    const expected = path.resolve(env.FORGE_SEA_NODE ?? '')
-    if (!expected || path.resolve(execPath) !== expected) {
-      throw new Error(`SEA packaging must run with FORGE_SEA_NODE (${expected || '<unset>'}), not ${execPath}`)
-    }
+  const expected = path.resolve(env.FORGE_SEA_NODE ?? '')
+  if (!expected || path.resolve(execPath) !== expected) {
+    throw new Error(`SEA release packaging must run with FORGE_SEA_NODE (${expected || '<unset>'}), not ${execPath}`)
   }
 }
 

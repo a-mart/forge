@@ -199,7 +199,7 @@ describe('External Chrome development resource staging', () => {
     await expect(prepareExternalChromeDevelopmentResources({
       outputRoot: path.join(root, 'prepared'),
       platform: 'win32',
-      packageWindowsNativeHost: async () => { throw new Error('SEA build failed') },
-    })).rejects.toThrow('official Node 25.6.1 executable with SEA support')
+      packageWindowsNativeHost: async () => { throw new Error('Node 24.18.0 executable lacks the NODE_SEA_FUSE sentinel required by --build-sea') },
+    })).rejects.toThrow('repository Node executable to support SEA (NODE_SEA_FUSE)')
   })
 })

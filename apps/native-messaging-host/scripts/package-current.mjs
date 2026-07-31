@@ -52,6 +52,17 @@ export async function prepareAndSmokeExecutable(executable, arguments_, {
   return signature
 }
 
+/** The direct --build-sea result is the capability gate for validation packaging. */
+export function inspectSeaBuildCapability(result, { nodeVersion = process.versions.node } = {}) {
+  if (result.status === 0) return { supported: true }
+
+  const detail = String(result.stderr ?? '').trim() || String(result.stdout ?? '').trim()
+  const reason = detail.includes('NODE_SEA_FUSE')
+    ? `Node ${nodeVersion} executable lacks the NODE_SEA_FUSE sentinel required by --build-sea`
+    : `SEA build failed: ${detail || 'Node did not return a build result'}`
+  return { supported: false, reason }
+}
+
 export async function packageCurrent() {
   assertSeaToolchain()
   const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
@@ -70,11 +81,8 @@ export async function packageCurrent() {
     cwd: root,
     encoding: 'utf8',
   })
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim()
-    const reason = detail.includes('NODE_SEA_FUSE')
-      ? `Node ${process.versions.node} executable lacks the NODE_SEA_FUSE sentinel required by --build-sea`
-      : `SEA build failed: ${detail}`
+  const seaCapability = inspectSeaBuildCapability(result)
+  if (!seaCapability.supported) {
     const manifest = {
       schemaVersion: 1,
       package: '@forge/external-chrome-native-host',
@@ -87,13 +95,13 @@ export async function packageCurrent() {
       bundleSmoke: 'desktop-unavailable',
       sea: {
         status: 'unsupported-toolchain',
-        reason,
+        reason: seaCapability.reason,
         config: 'dist/sea-config.current.json',
         configSha256: await sha256(currentConfigPath),
       },
     }
     await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
-    throw new Error(`${reason}; use the official Node ${process.versions.node} distribution with SEA support`)
+    throw new Error(`${seaCapability.reason}; use the official Node ${process.versions.node} distribution with SEA support`)
   }
   if (process.platform !== 'win32') await chmod(executablePath, 0o755)
 

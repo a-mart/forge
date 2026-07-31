@@ -41,8 +41,8 @@ export async function prepareExternalChromeDevelopmentResources({
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(
-        'External Chrome Windows development requires the official Node 25.6.1 executable with SEA support. ' +
-        `Install/select that Node runtime and rerun prepare:dev-external-chrome. ${detail}`,
+        'External Chrome Windows development requires the repository Node executable to support SEA (NODE_SEA_FUSE). ' +
+        `Select an official SEA-capable Node build for this checkout and rerun prepare:dev-external-chrome. ${detail}`,
       )
     }
 
