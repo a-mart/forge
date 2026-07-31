@@ -26,11 +26,11 @@ describe('Pi package identity gate', () => {
     expect(result.patches).toEqual([
       expect.objectContaining({
         key: '@earendil-works/pi-ai@0.80.6',
-        sha256: '706a3210681dd037b19828165082826b1f82d2d5a279b0e800612fca66f9a46d',
+        sha256: '89209b363e4e576cbbb686175e0db6ee260035784bbc564b5192bd674de55626',
       }),
       expect.objectContaining({
         key: '@earendil-works/pi-coding-agent@0.80.6',
-        sha256: 'fa749eff036cc1af3c08757e8f7c523f3f0cd867f36d928ff519005e8c9ed5f1',
+        sha256: '39f5f02939e5b9eed7ccf6892f263051c9d56587c5933645f555f70dc344ab84',
       }),
     ])
     expect(result.oldScopeAllowlist).toEqual(['@mariozechner/clipboard*'])
