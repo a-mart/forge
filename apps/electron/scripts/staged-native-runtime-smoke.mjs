@@ -12,9 +12,17 @@ export const STAGED_ELECTRON_NATIVE_PACKAGES = Object.freeze([
 ])
 
 export const NODE_PTY_SMOKE_MARKER = 'forge-pty-ok'
-// node-pty can emit a fast Windows child process's final data before onData is
-// subscribed. Keep the child alive briefly so this remains an actual PTY smoke.
 export const NODE_PTY_SMOKE_SCRIPT = `setTimeout(() => process.stdout.write(${JSON.stringify(NODE_PTY_SMOKE_MARKER)}), 100)`
+
+export function nodePtySmokeCommand(platform = process.platform, windowsShell = process.env.ComSpec) {
+  if (platform === 'win32') {
+    // Electron-as-Node child stdout does not reach Windows ConPTY reliably.
+    // cmd.exe still validates the staged addon can create and read a real PTY.
+    return { file: windowsShell || 'cmd.exe', args: ['/d', '/s', '/c', `echo ${NODE_PTY_SMOKE_MARKER}`] }
+  }
+  // Keep the child alive briefly so node-pty listener setup cannot miss output.
+  return { file: process.execPath, args: ['-e', NODE_PTY_SMOKE_SCRIPT] }
+}
 
 export function assertNodePtySmokeResult(exitCode, output) {
   if (exitCode !== 0 || !output.includes(NODE_PTY_SMOKE_MARKER)) {
@@ -67,7 +75,8 @@ export async function runStagedNativeRuntimeSmoke(stagedNodeModulesDir) {
 
   const pty = loaded.get('node-pty')
   await new Promise((resolve, reject) => {
-    const child = pty.spawn(process.execPath, ['-e', NODE_PTY_SMOKE_SCRIPT], {
+    const command = nodePtySmokeCommand()
+    const child = pty.spawn(command.file, command.args, {
       cols: 80,
       rows: 24,
       cwd: path.dirname(stagedNodeModulesDir),

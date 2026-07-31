@@ -20,6 +20,7 @@ import {
   assertResolvedInsideStage,
   NODE_PTY_SMOKE_MARKER,
   NODE_PTY_SMOKE_SCRIPT,
+  nodePtySmokeCommand,
   STAGED_ELECTRON_NATIVE_PACKAGES,
 } from '../../apps/electron/scripts/staged-native-runtime-smoke.mjs'
 
@@ -64,9 +65,11 @@ describe('staged Electron-as-Node native runtime smoke', () => {
     ])
   })
 
-  it('delays the PTY marker for Windows listener registration and enforces its exit result', () => {
-    expect(NODE_PTY_SMOKE_SCRIPT).toContain('setTimeout')
-    expect(NODE_PTY_SMOKE_SCRIPT).toContain(NODE_PTY_SMOKE_MARKER)
+  it('uses cmd.exe for the Windows ConPTY smoke and enforces its marker/exit result', () => {
+    expect(nodePtySmokeCommand('win32', 'C:\\Windows\\System32\\cmd.exe')).toEqual({
+      file: 'C:\\Windows\\System32\\cmd.exe', args: ['/d', '/s', '/c', `echo ${NODE_PTY_SMOKE_MARKER}`],
+    })
+    expect(nodePtySmokeCommand('darwin').args).toEqual(['-e', NODE_PTY_SMOKE_SCRIPT])
     expect(() => assertNodePtySmokeResult(0, NODE_PTY_SMOKE_MARKER)).not.toThrow()
     expect(() => assertNodePtySmokeResult(0, '')).toThrow('node-pty smoke failed')
     expect(() => assertNodePtySmokeResult(1, NODE_PTY_SMOKE_MARKER)).toThrow('node-pty smoke failed')
