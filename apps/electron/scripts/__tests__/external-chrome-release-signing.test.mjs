@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   assertReleaseEnvironment,
   assertSeaToolchain,
+  macReleaseEntitlementsPath,
   prepareExecutableForInitialSmoke,
   prepareReleaseExecutable,
   verifyReleaseSignature,
@@ -84,7 +85,7 @@ describe('External Chrome release signing policy', () => {
 
     expect(events).toEqual(['sign:-', 'verify', 'smoke', 'prepare-release', 'smoke'])
     expect(runCommand.mock.calls[0]).toEqual([
-      '/usr/bin/codesign', ['--force', '--sign', '-', executable],
+      '/usr/bin/codesign', ['--force', '--sign', '-', '--entitlements', macReleaseEntitlementsPath, executable],
     ])
     expect(signature).toMatchObject({ mode: 'validation', verified: false })
   })
@@ -111,7 +112,9 @@ describe('External Chrome release signing policy', () => {
       },
     })
     expect(signature).toEqual({ scheme: 'developer-id', mode: 'release', verified: true, signer: identity, teamId: 'TEAM123456' })
-    expect(runCommand.mock.calls[0][1]).toContain('--sign')
+    expect(runCommand.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      '--sign', identity, '--entitlements', macReleaseEntitlementsPath,
+    ]))
   })
 
   it('rejects a structurally valid macOS signature from the wrong team', async () => {

@@ -3,6 +3,13 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+export const macReleaseEntitlementsPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'build',
+  'entitlements.mac.plist',
+)
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -81,7 +88,7 @@ export async function prepareExecutableForInitialSmoke(executable, {
   runCommand = defaultRunCommand,
 } = {}) {
   if (platform !== 'darwin') return
-  await runCommand('/usr/bin/codesign', ['--force', '--sign', '-', executable])
+  await runCommand('/usr/bin/codesign', ['--force', '--sign', '-', '--entitlements', macReleaseEntitlementsPath, executable])
   await runCommand('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', executable])
 }
 
@@ -102,7 +109,8 @@ export async function prepareReleaseExecutable(executable, {
     const identity = env.FORGE_MACOS_SIGNING_IDENTITY
     const teamId = env.APPLE_TEAM_ID
     await runCommand('/usr/bin/codesign', [
-      '--force', '--options', 'runtime', '--timestamp', '--sign', identity, executable,
+      '--force', '--options', 'runtime', '--timestamp', '--sign', identity,
+      '--entitlements', macReleaseEntitlementsPath, executable,
     ])
     const signature = await inspectMacSignature(executable, { runCommand })
     if (signature.signer !== identity) {
