@@ -4,10 +4,12 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EXTERNAL_CHROME_EXTENSION_ORIGIN, EXTERNAL_CHROME_NATIVE_HOST_NAME } from '@forge/protocol'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
+import { sha256 } from '../package-manifest.js'
 import {
   DevelopmentExecutableTrustVerifier,
   PlatformExecutableTrustVerifier,
   PosixNativeRegistration,
+  WindowsHashPinnedExecutableTrustVerifier,
   WindowsRegistryFacade,
   WindowsNativeRegistration,
   buildNativeHostManifest,
@@ -139,6 +141,19 @@ describe('External Chrome native registration', () => {
       expect(await new DevelopmentExecutableTrustVerifier('darwin', uid + 1).verify(executable)).toBe('untrusted')
     }
     expect(await verifier.verify(`${executable}.missing`)).toBe('missing')
+  })
+
+  it('trusts an unsigned Windows release host only while its deployed SHA-256 stays pinned', async () => {
+    const dataRoot = await root()
+    await prepareExecutable(dataRoot, 'win32')
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'win32')
+    await mkdir(paths.state, { recursive: true })
+    await writeFile(paths.installState, JSON.stringify({ nativeSha256: sha256(await readFile(paths.nativeHostExecutable)) }))
+    const verifier = new WindowsHashPinnedExecutableTrustVerifier(dataRoot)
+    expect(await verifier.verify(paths.nativeHostExecutable)).toBe('trusted')
+    await writeFile(paths.nativeHostExecutable, 'tampered')
+    expect(await verifier.verify(paths.nativeHostExecutable)).toBe('untrusted')
+    expect(await verifier.verify(`${paths.nativeHostExecutable}.other`)).toBe('untrusted')
   })
 
   it('confines unsigned Windows trust to the dev SEA executable policy', async () => {

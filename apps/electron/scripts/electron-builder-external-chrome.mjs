@@ -10,10 +10,10 @@ export async function afterPackExternalChrome(context) {
   const platform = context.electronPlatformName
   const packagedRoot = packagedExternalChromeRoot(context)
 
-  // electron-builder's Windows extraResources transformer signs every copied
-  // .exe before afterPack. Restore the already-signed, manifest-hashed host here;
-  // signApp does not revisit resources/. macOS instead uses mac.signIgnore so the
-  // nested host remains byte-identical while the outer app is signed.
+  // Restore the manifest-hashed Windows resource tree after electron-builder's
+  // extra-resource processing. signApp does not revisit resources/. macOS uses
+  // mac.signIgnore so the nested host remains byte-identical while the outer app
+  // remains signed.
   if (platform === 'win32') {
     await restorePreSignedWindowsResources({ sourceRoot: stagedRoot, packagedRoot })
   }

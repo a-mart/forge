@@ -31,11 +31,13 @@ afterEach(async () => {
 })
 
 describe('External Chrome release signing policy', () => {
-  it('fails release credential gates closed while validation remains credential-free', async () => {
+  it('keeps macOS credential-gated while Windows release packaging is credential-free', async () => {
     await expect(assertReleaseEnvironment({ platform: 'darwin', env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release' } }))
       .rejects.toThrow('FORGE_SEA_NODE')
-    await expect(assertReleaseEnvironment({ platform: 'win32', env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation' } }))
-      .resolves.toMatchObject({ mode: 'validation' })
+    await expect(assertReleaseEnvironment({
+      platform: 'win32',
+      env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: process.execPath },
+    })).resolves.toMatchObject({ mode: 'release', seaNode: process.execPath })
   })
 
   it('accepts repository Node 24 validation only after the direct SEA capability probe succeeds', () => {
@@ -133,23 +135,29 @@ describe('External Chrome release signing policy', () => {
     })).rejects.toThrow('team mismatch')
   })
 
-  it('Authenticode-signs Windows before hashing and verifies the expected signer subject', async () => {
-    const { root, executable } = await executableFixture('host.exe')
-    const certificate = path.join(root, 'fixture.pfx')
-    await writeFile(certificate, 'synthetic certificate fixture')
-    const signWindows = vi.fn(async () => undefined)
-    const runCommand = vi.fn(async () => ({
+  it('emits explicit unsigned Windows release metadata without invoking a signer', async () => {
+    const { executable } = await executableFixture('host.exe')
+    const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    await expect(prepareReleaseExecutable(executable, {
+      platform: 'win32', runCommand,
+      env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: process.execPath },
+    })).resolves.toEqual({ scheme: 'unsigned', mode: 'release', verified: false, signer: null, teamId: null })
+    expect(runCommand).not.toHaveBeenCalled()
+  })
+
+  it('checks a Windows subject only when release metadata explicitly declares an Authenticode signer', async () => {
+    const unsignedRun = vi.fn(async () => { throw new Error('unsigned Windows metadata must not inspect Authenticode') })
+    const unsigned = { scheme: 'unsigned', mode: 'release', verified: false, signer: null, teamId: null }
+    await expect(verifyReleaseSignature('host.exe', unsigned, { platform: 'win32', runCommand: unsignedRun })).resolves.toEqual(unsigned)
+    expect(unsignedRun).not.toHaveBeenCalled()
+
+    const signedRun = vi.fn(async () => ({
       stdout: JSON.stringify({ Status: 'Valid', Subject: 'CN=Forge Fixture', Thumbprint: '00AA' }), stderr: '',
     }))
-    const signature = await prepareReleaseExecutable(executable, {
-      platform: 'win32', runCommand, signWindows,
-      env: {
-        FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: process.execPath,
-        WIN_CSC_LINK: certificate, WIN_CSC_KEY_PASSWORD: 'synthetic', FORGE_WINDOWS_SIGNER_SUBJECT: 'CN=Forge Fixture',
-      },
-    })
-    expect(signWindows).toHaveBeenCalledOnce()
-    expect(signature).toEqual({ scheme: 'authenticode', mode: 'release', verified: true, signer: 'CN=Forge Fixture', teamId: null })
+    const signed = { scheme: 'authenticode', mode: 'release', verified: true, signer: 'CN=Forge Fixture', teamId: null }
+    await expect(verifyReleaseSignature('host.exe', signed, { platform: 'win32', runCommand: signedRun })).resolves.toMatchObject({ signer: signed.signer })
+    await expect(verifyReleaseSignature('host.exe', { ...signed, signer: 'CN=Other' }, { platform: 'win32', runCommand: signedRun }))
+      .rejects.toThrow('signer changed')
   })
 
   it('marks validation hosts unusable for release but permits explicit validation smoke', async () => {

@@ -49,12 +49,12 @@ The release sequence is fail-closed:
 2. generate the current target/architecture executable with the validated Node (the pinned official Node in release mode);
 3. ad-hoc sign macOS output so the kernel can execute the validation artifact;
 4. smoke the generated executable;
-5. in release mode, apply the platform's configured signer (on macOS, replacing the ad-hoc signature);
-6. verify the observed signer against the exact expected identity/subject;
-7. smoke it again after signing; and
+5. in macOS release mode, apply the configured signer (replacing the ad-hoc signature); Windows release mode records an explicit unsigned host;
+6. verify the observed macOS signer against the exact expected identity/team;
+7. smoke it again after the platform release preparation; and
 8. only then hash it into `dist/package-manifest.json` for Electron staging.
 
-The macOS ad-hoc signature is only an execution prerequisite and remains explicitly unverified in validation metadata; Windows does not use an ad-hoc first signature. macOS release mode replaces the ad-hoc signature and requires the exact configured `Developer ID Application` identity and Apple team. Windows release mode requires Authenticode and the exact configured certificate subject. Electron packaging preserves the pre-signed host bytes, then rechecks the packaged hash and signature after its own signing hooks.
+The macOS ad-hoc signature is only an execution prerequisite and remains explicitly unverified in validation metadata; Windows does not use an ad-hoc first signature. macOS release mode replaces the ad-hoc signature and requires the exact configured `Developer ID Application` identity and Apple team. Windows release mode is credential-free and unsigned: the staged, deployed, and runtime host must match the exact release-manifest SHA-256, and any hash drift fails closed. Electron packaging preserves the manifest-hashed host bytes, then rechecks the packaged hash and platform-specific release contract after its own hooks.
 
 A successful build or validation-mode SEA does not by itself qualify headed Chrome, live native registration, a target platform, installer behavior, or distribution. Those remain separate release gates in the [Electron guide](../electron/README.md#optional-chrome-adapter-packaging-and-validation).
 

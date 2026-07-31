@@ -106,8 +106,9 @@ export async function packageCurrent() {
   if (process.platform !== 'win32') await chmod(executablePath, 0o755)
 
   // macOS refuses to execute the unsigned --build-sea output, so give it an
-  // ad-hoc signature before the first smoke. Release mode replaces that signature
-  // with the required verified platform identity before the authoritative hash.
+  // ad-hoc signature before the first smoke. macOS release mode replaces that
+  // signature with its required verified identity; Windows remains explicitly
+  // unsigned and is protected by the authoritative manifest hash.
   const signature = await prepareAndSmokeExecutable(executablePath, platformArguments)
 
   const manifest = {

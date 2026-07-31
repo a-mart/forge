@@ -47,24 +47,23 @@ jobs:
           node-version: 25.6.1
           cache: pnpm
 
-      - name: Pin SEA executable and gate release credentials
+      - name: Pin SEA executable for credential-free Windows packaging
         shell: bash
-        env:
-          BUILD_MODE: ${{ github.event_name == 'workflow_dispatch' && 'release' || 'validation' }}
-          # Secrets are exposed only for workflow_dispatch release mode. Validation
-          # pushes (electron/*) must remain credential-free at the Actions layer.
-          WIN_CSC_LINK: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_LINK || '' }}
-          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ github.event_name == 'workflow_dispatch' && secrets.FORGE_WINDOWS_SIGNER_SUBJECT || '' }}
         run: |
           set -euo pipefail
-          echo "FORGE_SEA_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"
-          echo "FORGE_EXTERNAL_CHROME_BUILD_MODE=$BUILD_MODE" >> "$GITHUB_ENV"
-          if [[ "$BUILD_MODE" == "release" ]]; then
-            [[ -n "$WIN_CSC_LINK" ]] || { echo "WIN_CSC_LINK is required for release builds" >&2; exit 1; }
-            [[ -n "$WIN_CSC_KEY_PASSWORD" ]] || { echo "WIN_CSC_KEY_PASSWORD is required for release builds" >&2; exit 1; }
-            [[ -n "$FORGE_WINDOWS_SIGNER_SUBJECT" ]] || { echo "FORGE_WINDOWS_SIGNER_SUBJECT is required for release builds" >&2; exit 1; }
-          fi
+          {
+            echo "FORGE_SEA_NODE=$(node -p 'process.execPath')"
+            echo "FORGE_EXTERNAL_CHROME_BUILD_MODE=${{ github.event_name == 'workflow_dispatch' && 'release' || 'validation' }}"
+            echo "WIN_CSC_LINK="
+            echo "WIN_CSC_KEY_PASSWORD="
+            echo "WIN_CSC_NAME="
+            echo "CSC_LINK="
+            echo "CSC_KEY_PASSWORD="
+            echo "CSC_NAME="
+            echo "CSC_FOR_PULL_REQUEST="
+            echo "FORGE_WINDOWS_SIGNER_SUBJECT="
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false"
+          } >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -92,11 +91,6 @@ jobs:
         shell: bash
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          # Live signing secrets only for workflow_dispatch. Validation packaging
-          # then blanks WIN_CSC_*/CSC_* and disables identity auto-discovery.
-          WIN_CSC_LINK: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_LINK || '' }}
-          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-          FORGE_WINDOWS_SIGNER_SUBJECT: ${{ github.event_name == 'workflow_dispatch' && secrets.FORGE_WINDOWS_SIGNER_SUBJECT || '' }}
         run: |
           set -euo pipefail
           eval "$(node apps/electron/scripts/windows-ci-signing-env.mjs --export-shell)"

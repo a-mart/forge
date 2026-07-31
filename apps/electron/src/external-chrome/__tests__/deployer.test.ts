@@ -108,6 +108,21 @@ describe('ExternalChromeDeployer', () => {
     expect(sha256(await fs.readFile(workerPath))).toBe(selector.payloadFiles['service-worker.js'])
   })
 
+  it('deploys an explicit unsigned Windows release host and fails closed after native hash tampering', async () => {
+    const input = await fixture('1.0.0', 'windows-payload', 'win32', 'x64')
+    input.manifest.nativeHost.signature = {
+      scheme: 'unsigned', mode: 'release', verified: false, signer: null, teamId: null,
+    }
+    await fs.writeFile(path.join(input.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(input.manifest)}\n`)
+    const deployer = new ExternalChromeDeployer({
+      dataRoot: input.dataRoot, resourcesRoot: input.resourcesRoot, desktopVersion: '0.22.5', platform: 'win32', architecture: 'x64',
+    })
+    await deployer.deploy()
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    await fs.writeFile(deployer.paths.nativeHostExecutable, 'tampered unsigned host')
+    expect(await deployer.verifyDeployment()).toEqual({ state: 'mismatch' })
+  })
+
   it('activates same-version development content at startup while preserving the stable path and rollback pair', async () => {
     const first = await fixture('1.0.0', 'dev-payload-A', 'linux', 'x64', 'dev-bootstrap-A', 'dev-native-A')
     first.manifest.nativeHost.signature = {

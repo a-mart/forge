@@ -233,9 +233,6 @@ importers:
 
   apps/native-messaging-host:
     devDependencies:
-      '@electron/windows-sign':
-        specifier: 1.2.2
-        version: 1.2.2
       '@forge/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

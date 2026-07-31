@@ -50,7 +50,7 @@ export async function stageExternalChromeResources({
   const executableName = path.basename(nativeManifest.executable.file)
   const executableBytes = await readFile(executableSource)
   if (sha256(executableBytes) !== nativeManifest.executable.sha256) {
-    throw new Error('External Chrome signed native executable hash does not match its package manifest')
+    throw new Error('External Chrome native executable hash does not match its package manifest')
   }
   const signature = nativeManifest.executable.signature
   await verifyExecutable(executableSource, platform, signature, { allowValidation: buildMode === 'validation' })

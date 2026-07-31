@@ -2,78 +2,62 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  assertReleaseSigningSecretsPresent,
-  resolveWindowsCiSigningEnv,
-} from '../windows-ci-signing-env.mjs'
+import { resolveWindowsCiSigningEnv } from '../windows-ci-signing-env.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
 const workflowPath = path.join(repoRoot, '.github/workflows/electron-build.yml')
-const RELEASE_SECRET_GUARD = "github.event_name == 'workflow_dispatch' && secrets."
 
-describe('Windows CI signing credential isolation', () => {
-  it('blanks signing material and disables identity discovery for validation pushes', () => {
+const signingVariables = [
+  'WIN_CSC_LINK',
+  'WIN_CSC_KEY_PASSWORD',
+  'WIN_CSC_NAME',
+  'CSC_LINK',
+  'CSC_KEY_PASSWORD',
+  'CSC_NAME',
+  'CSC_FOR_PULL_REQUEST',
+  'FORGE_WINDOWS_SIGNER_SUBJECT',
+]
+
+describe('Windows CI unsigned release policy', () => {
+  it.each([
+    ['workflow_dispatch', 'release'],
+    ['push', 'validation'],
+  ])('blanks all signing material and disables identity discovery for %s', (eventName, buildMode) => {
     const leaked = {
       WIN_CSC_LINK: 'live-cert',
       WIN_CSC_KEY_PASSWORD: 'live-password',
+      WIN_CSC_NAME: 'live-name',
       CSC_LINK: 'alias-cert',
       CSC_KEY_PASSWORD: 'alias-password',
+      CSC_NAME: 'alias-name',
+      CSC_FOR_PULL_REQUEST: 'true',
       FORGE_WINDOWS_SIGNER_SUBJECT: 'CN=Leaked',
       CSC_IDENTITY_AUTO_DISCOVERY: 'true',
     }
-    expect(resolveWindowsCiSigningEnv({ eventName: 'push', env: leaked })).toEqual({
-      FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation',
+    expect(resolveWindowsCiSigningEnv({ eventName, env: leaked })).toEqual({
+      FORGE_EXTERNAL_CHROME_BUILD_MODE: buildMode,
       WIN_CSC_LINK: '',
       WIN_CSC_KEY_PASSWORD: '',
+      WIN_CSC_NAME: '',
       CSC_LINK: '',
       CSC_KEY_PASSWORD: '',
+      CSC_NAME: '',
+      CSC_FOR_PULL_REQUEST: '',
       CSC_IDENTITY_AUTO_DISCOVERY: 'false',
       FORGE_WINDOWS_SIGNER_SUBJECT: '',
     })
   })
 
-  it('passes release signing secrets through for workflow_dispatch and blanks CSC aliases', () => {
-    const secrets = {
-      WIN_CSC_LINK: 'release-cert',
-      WIN_CSC_KEY_PASSWORD: 'release-password',
-      FORGE_WINDOWS_SIGNER_SUBJECT: 'CN=Forge Release',
-      CSC_LINK: 'should-not-win',
-      CSC_KEY_PASSWORD: 'should-not-win',
-    }
-    const resolved = resolveWindowsCiSigningEnv({ eventName: 'workflow_dispatch', env: secrets })
-    expect(resolved).toEqual({
-      FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release',
-      WIN_CSC_LINK: 'release-cert',
-      WIN_CSC_KEY_PASSWORD: 'release-password',
-      FORGE_WINDOWS_SIGNER_SUBJECT: 'CN=Forge Release',
-      CSC_LINK: '',
-      CSC_KEY_PASSWORD: '',
-      CSC_IDENTITY_AUTO_DISCOVERY: 'true',
-    })
-    expect(() => assertReleaseSigningSecretsPresent(resolved)).not.toThrow()
-    expect(() => assertReleaseSigningSecretsPresent({
-      WIN_CSC_LINK: '',
-      WIN_CSC_KEY_PASSWORD: 'x',
-      FORGE_WINDOWS_SIGNER_SUBJECT: 'CN=x',
-    })).toThrow(/WIN_CSC_LINK/)
-  })
-
-  it('keeps electron-build.yml credential-free on push and fail-closed on workflow_dispatch', async () => {
+  it('keeps electron-build.yml credential-free and explicitly disables all Windows signing', async () => {
     const source = await readFile(workflowPath, 'utf8')
 
-    for (const secret of ['WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'FORGE_WINDOWS_SIGNER_SUBJECT']) {
-      const guarded = `\${{ ${RELEASE_SECRET_GUARD}${secret} || '' }}`
-      expect(source).toContain(guarded)
-      // Exactly two gated injections: credential gate step + package step.
-      expect(source.split(guarded).length - 1).toBe(2)
-    }
-
-    // No bare secrets.* injection remaining in the workflow source.
-    expect(source).not.toMatch(/\$\{\{\s*secrets\.(WIN_CSC_LINK|WIN_CSC_KEY_PASSWORD|FORGE_WINDOWS_SIGNER_SUBJECT)\s*\}\}/)
+    expect(source).not.toContain('secrets.')
     expect(source).toContain('windows-ci-signing-env.mjs --export-shell')
     expect(source).toContain('GITHUB_EVENT_NAME: ${{ github.event_name }}')
-    expect(source).toContain('WIN_CSC_LINK is required for release builds')
-    expect(source).toContain('WIN_CSC_KEY_PASSWORD is required for release builds')
-    expect(source).toContain('FORGE_WINDOWS_SIGNER_SUBJECT is required for release builds')
+    expect(source).toContain('CSC_IDENTITY_AUTO_DISCOVERY=false')
+    for (const variable of signingVariables) {
+      expect(source).toContain(`echo "${variable}="`)
+    }
+    expect(source).not.toMatch(/required for release builds/u)
   })
 })

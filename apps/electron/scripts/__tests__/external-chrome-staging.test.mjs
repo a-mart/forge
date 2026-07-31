@@ -112,7 +112,32 @@ describe('External Chrome packaged staging', () => {
     expect(hash(await readFile(deployedWorker))).toBe(selector.payloadFiles['service-worker.js'])
   })
 
-  it('fails post-package smoke on mutation and restores the pre-signed Windows resource tree', async () => {
+  it('stages explicit unsigned Windows release metadata while retaining post-package SHA-256 tamper detection', async () => {
+    const input = await fixture()
+    const native = Buffer.from('unsigned Windows native')
+    const executable = 'host.exe'
+    await writeFile(path.join(input.nativePackageRoot, executable), native)
+    await writeFile(path.join(input.nativePackageRoot, 'package-manifest.json'), JSON.stringify({
+      version: '1.0.0', nativeProtocol: { min: 1, max: 1, maxMessageBytes: 1048576 },
+      platform: 'win32', architecture: 'x64',
+      executable: {
+        file: `dist/${executable}`, sha256: hash(native),
+        signature: { scheme: 'unsigned', mode: 'release', verified: false, signer: null, teamId: null },
+      },
+    }))
+    const outputRoot = path.join(input.root, 'windows-output')
+    await stageExternalChromeResources({
+      ...input, outputRoot, platform: 'win32', architecture: 'x64', buildMode: 'release', verifyExecutable: async () => undefined,
+    })
+    await expect(verifyPackagedExternalChromeResources({ root: outputRoot, platform: 'win32', architecture: 'x64' }))
+      .resolves.toMatchObject({ nativeHost: { signature: { scheme: 'unsigned', mode: 'release', verified: false } } })
+
+    await writeFile(path.join(outputRoot, 'native-host', 'win32-x64', executable), 'tampered')
+    await expect(verifyPackagedExternalChromeResources({ root: outputRoot, platform: 'win32', architecture: 'x64' }))
+      .rejects.toThrow('hash mismatch')
+  })
+
+  it('fails post-package smoke on mutation and restores the manifest-hashed Windows resource tree', async () => {
     const input = await fixture()
     const outputRoot = path.join(input.root, 'output')
     await stageExternalChromeResources({ ...input, outputRoot, buildMode: 'validation', verifyExecutable: async () => undefined })

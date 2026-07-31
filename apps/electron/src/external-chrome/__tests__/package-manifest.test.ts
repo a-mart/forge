@@ -71,6 +71,20 @@ describe('External Chrome package manifest development policy', () => {
       .toThrow('development native-host provenance is invalid')
   })
 
+  it('accepts only explicit unsigned Windows release metadata in the production parser', () => {
+    const manifest = developmentManifest()
+    manifest.nativeHost.platform = 'win32'
+    manifest.nativeHost.architecture = 'x64'
+    manifest.nativeHost.executable = 'forge-external-chrome-native-host.exe'
+    manifest.nativeHost.signature = {
+      scheme: 'unsigned', mode: 'release', verified: false, signer: null, teamId: null,
+    }
+    expect(parseExternalChromePackageManifest(manifest)).toEqual(manifest)
+
+    manifest.nativeHost.signature = { ...manifest.nativeHost.signature, scheme: 'authenticode' }
+    expect(() => parseExternalChromePackageManifest(manifest)).toThrow('not release-verified')
+  })
+
   it('does not let the development policy weaken release signature validation', () => {
     const manifest = developmentManifest()
     manifest.nativeHost.signature = {

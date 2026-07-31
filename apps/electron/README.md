@@ -78,7 +78,7 @@ Press Ctrl+C once to stop development. The launcher asks Electron to quit over i
 
 Before Electron launches, the desktop workspace prepares a cached `better-sqlite3` binary for Electron's embedded Node runtime. The cache lives under `apps/electron/.dev-native/` and is separate from the Host-Node binary installed by pnpm, so switching between `pnpm dev` and `pnpm dev:electron` does not rebuild or overwrite shared dependencies. The cache is versioned by the Electron version, platform, architecture, and `better-sqlite3` source fingerprint, and is verified with an Electron-as-Node in-memory database smoke test before use.
 
-The dev command also builds the optional Chrome extension and native-relay bundle, wraps the bundle in an explicit current-Node shebang host, smokes it without registration, and stages the result under `apps/electron/.dev-external-chrome/`. Dev Electron validates and deploys that inventory through the same stable data-directory layout used by packaged releases, so Settings can reveal the unpacked `extension/` folder. This development manifest is opt-in and cannot pass the default release-manifest policy; packaged builds still require the SEA and platform signature. The shebang host supports macOS and Linux development. On Windows, dev preparation builds and reuses a credential-free validation SEA executable through the native-host packaging path with the repository Node executable when its direct `--build-sea` probe confirms `NODE_SEA_FUSE`; it reports an actionable failure when that capability is absent. This allowance is confined to the unpacked dev resource root and is rejected by packaged/release policy; packaged Windows builds still require the release-pinned official Node 25.6.1 and Authenticode. To build and smoke only these worktree-local resources without launching Electron or changing native registration, run `pnpm --dir apps/electron prepare:dev-external-chrome`.
+The dev command also builds the optional Chrome extension and native-relay bundle, wraps the bundle in an explicit current-Node shebang host, smokes it without registration, and stages the result under `apps/electron/.dev-external-chrome/`. Dev Electron validates and deploys that inventory through the same stable data-directory layout used by packaged releases, so Settings can reveal the unpacked `extension/` folder. This development manifest is opt-in and cannot pass the default release-manifest policy; packaged builds still require the SEA and platform-specific release integrity contract. The shebang host supports macOS and Linux development. On Windows, dev preparation builds and reuses a credential-free validation SEA executable through the native-host packaging path with the repository Node executable when its direct `--build-sea` probe confirms `NODE_SEA_FUSE`; it reports an actionable failure when that capability is absent. This allowance is confined to the unpacked dev resource root and is rejected by packaged/release policy; packaged Windows builds use the release-pinned official Node 25.6.1 and an explicit unsigned manifest protected by strict SHA-256 validation. To build and smoke only these worktree-local resources without launching Electron or changing native registration, run `pnpm --dir apps/electron prepare:dev-external-chrome`.
 
 Electron 42+ downloads its platform binary on first execution rather than during package postinstall. Materialize it early and assert the exact embedded runtime before native preparation or packaging:
 
@@ -167,7 +167,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron stage:exter
 FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron test:external-chrome-package
 ```
 
-`stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or signature-policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies the native-host signature metadata. Validation mode explicitly allows an unverified validation signature only for non-publishable staging, package-content, and installer validation; runtime deployment and the release path reject it.
+`stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or release-integrity policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies platform-specific native-host metadata: macOS requires its Developer ID signature while Windows requires explicit unsigned release metadata plus the exact manifest SHA-256. Validation mode explicitly allows an unverified validation signature only for non-publishable staging, package-content, and installer validation; runtime deployment and the release path reject it.
 
 The opt-in extension fixture can exercise a temporary isolated Chrome profile, but it is not a replacement for live MV3 service-worker suspension/restart, headed Chrome, Chrome debugger preemption, native-registration/Desktop end-to-end, or target-platform runs. Do not run live registration or load an everyday Chrome profile during routine CI/docs validation. Unit tests, builds, staging, and package-content smoke do not by themselves qualify those live gates, installer contents, or the release SEA/signing path.
 
@@ -200,14 +200,14 @@ The packaging pipeline:
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-9. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 25.6.1; release mode signs and signer-verifies the relay before calculating its hash, while explicit validation mode produces a non-publishable unverified manifest
+9. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 25.6.1; macOS release mode signs and signer-verifies the relay before calculating its hash, while Windows release mode emits explicit unsigned metadata protected by the exact manifest hash; explicit validation mode remains non-publishable
 10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, exercising `better-sqlite3`, `sqlite3`, `node-pty`, `sharp`, and `koffi` with Electron-as-Node and ensuring they do not silently fall back to repo-level `node_modules`
 11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-12. Runs `electron-builder --publish never`; the Windows `afterPack` hook restores the pre-signed host after electron-builder's recursive extra-resource signer, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform signature before installers are produced
+12. Runs `electron-builder --publish never`; Windows packaging disables all identity discovery and restores the manifest-hashed host after extra-resource processing, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform-specific release contract before installers are produced
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 
-The optional Chrome adapter adds fail-closed release gates to that pipeline. A publishable installer requires the pinned extension ID and deterministic shell/payload inventory, a required SEA for the package target/architecture, matching native protocol metadata, release-mode signature verification against the configured signer, byte-identical preservation through electron-builder, and post-package hash/signature verification. A validation-mode relay or manifest is deliberately non-deployable and must never be promoted by relabeling it as a release artifact. Complete headed Chrome, live native registration, target-platform, installer, and updater checks remain operator gates before any draft is published.
+The optional Chrome adapter adds fail-closed release gates to that pipeline. A publishable installer requires the pinned extension ID and deterministic shell/payload inventory, a required SEA for the package target/architecture, matching native protocol metadata, byte-identical preservation through electron-builder, and post-package hash verification. macOS additionally requires verified Developer ID identity/team; Windows is explicitly unsigned and may run only while its deployed executable matches the release manifest SHA-256. A validation-mode relay or manifest is deliberately non-deployable and must never be promoted by relabeling it as a release artifact. Complete headed Chrome, live native registration, target-platform, installer, and updater checks remain operator gates before any draft is published.
 
 ## Desktop CLI
 
@@ -246,16 +246,13 @@ Add signing variables to `.env` before packaging signed builds.
 
 Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The native host is signed first and its observed identity/team must match the two expected values; electron-builder then signs/notarizes the outer app.
 
-### Windows signing
+### Windows unsigned release packaging
 
 | Variable | Description |
 |----------|-------------|
-| `CSC_LINK` or `WIN_CSC_LINK` | Base64 or file path for the Windows code-signing certificate |
-| `CSC_KEY_PASSWORD` or `WIN_CSC_KEY_PASSWORD` | Password for that certificate |
-| `FORGE_WINDOWS_SIGNER_SUBJECT` | Exact Authenticode signer certificate subject expected on the native host |
 | `FORGE_SEA_NODE` | Official Node 25.6.1 executable installed by `actions/setup-node` |
 
-`workflow_dispatch` is release mode and fails before packaging when credentials or the expected signer are absent. `electron/*` pushes set `FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`; Actions does not expose `WIN_CSC_*` / signer secrets on those pushes, packaging blanks `WIN_CSC_*` plus `CSC_*` aliases, and `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder cannot auto-discover a signing identity. Validation native-host manifests stay explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
+`workflow_dispatch` releases are credential-free on Windows. Packaging blanks `WIN_CSC_*`, `CSC_*`, and the signer subject and sets `CSC_IDENTITY_AUTO_DISCOVERY=false`, so neither electron-builder nor the External Chrome native host can discover or use a signing identity. The Windows release manifest explicitly records an unsigned native host; staging, deployment, and runtime registration require exact SHA-256 agreement and fail closed on drift. `electron/*` pushes retain validation mode. Validation native-host manifests stay explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
 
 ```bash
 FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
@@ -311,8 +308,8 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 ### Windows CI notes
 
-- `workflow_dispatch` is the fail-closed signed release build path and requires the Windows certificate/password plus `FORGE_WINDOWS_SIGNER_SUBJECT`
-- `electron/*` branch pushes are unsigned validation-only builds: no signing secrets are injected, `CSC_*` aliases are blanked, identity auto-discovery is disabled, and the optional Chrome adapter package is deliberately non-deployable
+- `workflow_dispatch` is the credential-free unsigned Windows release build path: all `WIN_CSC_*` / `CSC_*` values and signer metadata are blanked and identity auto-discovery is disabled
+- `electron/*` branch pushes are validation-only builds with the same credential isolation; the optional Chrome adapter package is deliberately non-deployable
 - The workflow does not publish a GitHub Release on its own
 - Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable

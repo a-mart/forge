@@ -124,6 +124,30 @@ export class DevelopmentExecutableTrustVerifier implements ExecutableTrustVerifi
   }
 }
 
+/**
+ * Windows has no release signing identity. Trust only the exact native-host
+ * executable that the deployer atomically installed and hash-pinned in the
+ * current install record; a missing/mutated record or file fails closed.
+ */
+export class WindowsHashPinnedExecutableTrustVerifier implements ExecutableTrustVerifier {
+  constructor(private readonly dataRoot: string) {}
+
+  async verify(executable: string): Promise<ExternalChromeTrustState> {
+    const paths = resolveExternalChromeDataPaths(this.dataRoot, 'win32')
+    if (path.resolve(executable) !== path.resolve(paths.nativeHostExecutable)) return 'untrusted'
+    try {
+      const info = await fs.lstat(executable)
+      if (!info.isFile() || info.isSymbolicLink() || path.extname(executable).toLowerCase() !== '.exe') return 'untrusted'
+      const install = JSON.parse(await fs.readFile(paths.installState, 'utf8')) as { nativeSha256?: unknown }
+      if (typeof install.nativeSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(install.nativeSha256)) return 'untrusted'
+      const observed = createHash('sha256').update(await fs.readFile(executable)).digest('hex')
+      return observed === install.nativeSha256 ? 'trusted' : 'untrusted'
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'untrusted'
+    }
+  }
+}
+
 export class PlatformExecutableTrustVerifier implements ExecutableTrustVerifier {
   constructor(
     private readonly platform: NodeJS.Platform,
@@ -456,7 +480,7 @@ export class WindowsNativeRegistration extends OwnedNativeRegistration {
         executable: dataPaths.nativeHostExecutable,
       },
       registryKey,
-      options.trustVerifier ?? new PlatformExecutableTrustVerifier('win32'),
+      options.trustVerifier ?? new WindowsHashPinnedExecutableTrustVerifier(options.dataRoot),
     )
     this.registry = options.registry ?? new WindowsRegistryFacade()
   }

@@ -109,7 +109,10 @@ export function parseExternalChromePackageManifest(
   const signature = object(nativeHost.signature, 'nativeHost.signature')
   exactKeys(signature, ['scheme', 'mode', 'verified', 'signer', 'teamId'], 'nativeHost.signature')
   string(signature.scheme, 'nativeHost.signature.scheme')
-  const releaseSignature = signature.mode === 'release' && signature.verified === true
+  const signedRelease = signature.mode === 'release' && signature.verified === true
+  const unsignedWindowsRelease = nativeHost.platform === 'win32' &&
+    signature.scheme === 'unsigned' && signature.mode === 'release' && signature.verified === false &&
+    signature.signer === null && signature.teamId === null
   const developmentSignature = policy.allowDevelopmentHost === true &&
     (nativeHost.platform === 'darwin' || nativeHost.platform === 'linux') &&
     signature.mode === 'development' && signature.verified === false &&
@@ -121,18 +124,28 @@ export function parseExternalChromePackageManifest(
   if (Object.hasOwn(nativeHost, 'development') && !validationSeaDevelopment) {
     throw new Error('External Chrome development native-host provenance is invalid')
   }
-  if (!releaseSignature && !developmentSignature && !validationSeaDevelopment) {
+  if (!signedRelease && !unsignedWindowsRelease && !developmentSignature && !validationSeaDevelopment) {
     throw new Error('External Chrome native executable signature was not release-verified at packaging')
   }
   nullableString(signature.signer, 'nativeHost.signature.signer')
   nullableString(signature.teamId, 'nativeHost.signature.teamId')
-  if (releaseSignature && nativeHost.platform === 'darwin') {
-    if (!(signature.signer as string | null)?.startsWith('Developer ID Application: ') || signature.teamId === null) {
+  if (signedRelease && nativeHost.platform === 'darwin') {
+    if (signature.scheme !== 'developer-id' || !(signature.signer as string | null)?.startsWith('Developer ID Application: ') || signature.teamId === null) {
       throw new Error('External Chrome macOS native executable is missing its Developer ID identity/team')
     }
   }
-  if (releaseSignature && nativeHost.platform === 'win32' && signature.signer === null) {
-    throw new Error('External Chrome Windows native executable is missing its Authenticode signer')
+  if (signedRelease && nativeHost.platform === 'win32') {
+    if (signature.scheme !== 'authenticode' || signature.signer === null || signature.teamId !== null) {
+      throw new Error('External Chrome Windows native executable is missing its Authenticode signer')
+    }
+  }
+  if (signedRelease && nativeHost.platform === 'linux') {
+    if (signature.scheme !== 'packaged-resource-hash' || signature.signer !== null || signature.teamId !== null) {
+      throw new Error('External Chrome Linux native executable has invalid release signature metadata')
+    }
+  }
+  if (signedRelease && nativeHost.platform !== 'darwin' && nativeHost.platform !== 'win32' && nativeHost.platform !== 'linux') {
+    throw new Error('External Chrome native executable has an unsupported release platform')
   }
   const protocol = object(nativeHost.protocol, 'nativeHost.protocol')
   exactKeys(protocol, ['min', 'max', 'maxMessageBytes'], 'nativeHost.protocol')

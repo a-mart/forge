@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
-import os from 'node:os'
+import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 export const macReleaseEntitlementsPath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -10,7 +10,6 @@ export const macReleaseEntitlementsPath = path.join(
   'build',
   'entitlements.mac.plist',
 )
-import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 export const SEA_NODE_VERSION = '25.6.1'
@@ -49,15 +48,7 @@ export async function assertReleaseEnvironment({
       'APPLE_TEAM_ID',
       'FORGE_MACOS_SIGNING_IDENTITY',
     ], 'macOS release packaging')
-  } else if (platform === 'win32') {
-    if (!(env.WIN_CSC_LINK ?? env.CSC_LINK)) {
-      throw new Error('Windows release packaging requires WIN_CSC_LINK or CSC_LINK')
-    }
-    if (!(env.WIN_CSC_KEY_PASSWORD ?? env.CSC_KEY_PASSWORD)) {
-      throw new Error('Windows release packaging requires WIN_CSC_KEY_PASSWORD or CSC_KEY_PASSWORD')
-    }
-    requireEnvironment(env, ['FORGE_WINDOWS_SIGNER_SUBJECT'], 'Windows release packaging')
-  } else {
+  } else if (platform !== 'win32') {
     throw new Error(`External Chrome release packaging is not configured for ${platform}; use validation mode`)
   }
   return { mode, seaNode }
@@ -96,7 +87,6 @@ export async function prepareReleaseExecutable(executable, {
   platform = process.platform,
   env = process.env,
   runCommand = defaultRunCommand,
-  signWindows = defaultWindowsSigner,
 } = {}) {
   const mode = externalChromeBuildMode(env)
   const scheme = platform === 'darwin' ? 'developer-id' : platform === 'win32' ? 'authenticode' : 'packaged-resource-hash'
@@ -122,25 +112,9 @@ export async function prepareReleaseExecutable(executable, {
     return { scheme, mode, verified: true, ...signature }
   }
   if (platform === 'win32') {
-    const certificate = await materializeWindowsCertificate(env.WIN_CSC_LINK ?? env.CSC_LINK)
-    try {
-      await signWindows({
-        files: [executable],
-        certificateFile: certificate.file,
-        certificatePassword: env.WIN_CSC_KEY_PASSWORD ?? env.CSC_KEY_PASSWORD,
-        hashes: ['sha256'],
-        description: 'Forge External Chrome native host',
-        website: 'https://github.com/a-mart/forge',
-      })
-    } finally {
-      await certificate.cleanup()
-    }
-    const signature = await inspectWindowsSignature(executable, { runCommand })
-    const expectedSigner = env.FORGE_WINDOWS_SIGNER_SUBJECT
-    if (signature.signer !== expectedSigner) {
-      throw new Error(`External Chrome native host signer mismatch: expected ${expectedSigner}, got ${signature.signer ?? '<none>'}`)
-    }
-    return { scheme, mode, verified: true, signer: signature.signer, teamId: null }
+    // Windows release hosts are deliberately unsigned. Their production trust
+    // boundary is the pinned release manifest plus strict file SHA-256 checks.
+    return { scheme: 'unsigned', mode, verified: false, signer: null, teamId: null }
   }
   throw new Error(`External Chrome release signing is unsupported on ${platform}`)
 }
@@ -154,10 +128,19 @@ export async function verifyReleaseSignature(executable, signature, {
     if (!allowValidation) throw new Error('External Chrome validation-only native host is not release signed')
     return signature
   }
+
+  const unsignedWindowsRelease = platform === 'win32' &&
+    signature?.scheme === 'unsigned' && signature.mode === 'release' && signature.verified === false &&
+    signature.signer === null && signature.teamId === null
+  if (unsignedWindowsRelease) return signature
+
   if (signature?.mode !== 'release' || signature.verified !== true) {
     throw new Error('External Chrome native host has invalid release-signature metadata')
   }
   if (platform === 'darwin') {
+    if (signature.scheme !== 'developer-id' || typeof signature.signer !== 'string' || typeof signature.teamId !== 'string') {
+      throw new Error('External Chrome macOS native host has invalid Developer ID signature metadata')
+    }
     const observed = await inspectMacSignature(executable, { runCommand })
     if (observed.signer !== signature.signer || observed.teamId !== signature.teamId) {
       throw new Error('External Chrome native host Developer ID identity/team changed after staging')
@@ -165,11 +148,17 @@ export async function verifyReleaseSignature(executable, signature, {
     return observed
   }
   if (platform === 'win32') {
+    if (signature.scheme !== 'authenticode' || typeof signature.signer !== 'string' || signature.teamId !== null) {
+      throw new Error('External Chrome Windows native host has invalid Authenticode signature metadata')
+    }
     const observed = await inspectWindowsSignature(executable, { runCommand })
     if (observed.signer !== signature.signer) {
       throw new Error('External Chrome native host Authenticode signer changed after staging')
     }
     return observed
+  }
+  if (platform !== 'linux' || signature.scheme !== 'packaged-resource-hash' || signature.signer !== null || signature.teamId !== null) {
+    throw new Error('External Chrome native host has invalid release-signature metadata')
   }
   const info = await stat(executable)
   if ((info.mode & 0o111) === 0) throw new Error('External Chrome Linux native host is not executable')
@@ -205,35 +194,6 @@ export async function inspectWindowsSignature(executable, { runCommand = default
     throw new Error(`External Chrome native host Authenticode signature is not valid (${String(parsed.Status)})`)
   }
   return { signer: parsed.Subject, thumbprint: typeof parsed.Thumbprint === 'string' ? parsed.Thumbprint : null }
-}
-
-async function defaultWindowsSigner(options) {
-  const { sign } = await import('@electron/windows-sign')
-  await sign(options)
-}
-
-async function materializeWindowsCertificate(link) {
-  if (!link) throw new Error('Windows code-signing certificate is missing')
-  const fileUrl = link.startsWith('file://') ? fileURLToPath(link) : null
-  const candidate = fileUrl ?? path.resolve(link)
-  try {
-    const info = await stat(candidate)
-    if (info.isFile()) return { file: candidate, cleanup: async () => undefined }
-  } catch {
-    // Electron Builder also accepts a base64-encoded certificate in CSC_LINK.
-  }
-  if (/^https?:/iu.test(link)) {
-    throw new Error('External Chrome native-host signing does not fetch remote CSC_LINK values; provide a file or base64 certificate')
-  }
-  const encoded = link.replace(/^data:[^,]+;base64,/iu, '')
-  const bytes = Buffer.from(encoded, 'base64')
-  if (bytes.byteLength === 0 || bytes.toString('base64').replace(/=+$/u, '') !== encoded.replace(/\s+/gu, '').replace(/=+$/u, '')) {
-    throw new Error('Windows code-signing certificate is neither an accessible file nor valid base64')
-  }
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'forge-native-sign-'))
-  const file = path.join(directory, 'certificate.pfx')
-  await writeFile(file, bytes, { mode: 0o600 })
-  return { file, cleanup: async () => rm(directory, { recursive: true, force: true }) }
 }
 
 async function defaultRunCommand(command, args) {
