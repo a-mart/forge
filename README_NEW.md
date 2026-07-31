@@ -6,7 +6,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/a-mart/forge?style=flat-square)](https://github.com/a-mart/forge/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey?style=flat-square)](#quick-start)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows-lightgrey?style=flat-square)](#quick-start)
 [![GitHub Stars](https://img.shields.io/github/stars/a-mart/forge?style=flat-square)](https://github.com/a-mart/forge/stargazers)
 
 [**Download Desktop App**](https://github.com/a-mart/forge/releases) &nbsp;&middot;&nbsp; [**Get Started**](docs/GETTING_STARTED.md) &nbsp;&middot;&nbsp; [**Build from Source**](CONTRIBUTING.md)
@@ -40,11 +40,10 @@ Download the installer from [**GitHub Releases**](https://github.com/a-mart/forg
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **macOS** (Apple Silicon) | `Forge-<version>.dmg` | Signed and notarized |
+| **macOS** (Apple Silicon) | `Forge-<version>-arm64.dmg` | Signed and notarized |
 | **Windows** (x64) | `Forge-Setup-<version>.exe` | |
-| **Linux** | `Forge-<version>.AppImage` | |
 
-No dependencies required. The desktop app bundles everything and auto-updates.
+Forge Desktop's supported release platforms are macOS and Windows. No dependencies are required: the desktop app bundles everything and auto-updates. Linux source/server, development, CLI, and configuration support remain portable, but Linux has no released Desktop installer.
 
 On first launch, sign in with your **OpenAI** or **Anthropic** account in Settings. Then create a project, point it at a directory, and start chatting.
 

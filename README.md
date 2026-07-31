@@ -52,11 +52,10 @@ Download the native installer for your platform from [GitHub Releases](https://g
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **macOS** (Apple Silicon) | `Forge-<version>.dmg` | Signed and notarized |
+| **macOS** (Apple Silicon) | `Forge-<version>-arm64.dmg` | Signed and notarized |
 | **Windows** (x64) | `Forge-Setup-<version>.exe` | Signed; SmartScreen may still warn until reputation is established |
-| **Linux** | `Forge-<version>.AppImage` | |
 
-No Node.js or pnpm required. The desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features.
+Forge Desktop's supported release platforms are macOS and Windows. No Node.js or pnpm is required: the desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features. Linux source/server, development, CLI, and configuration support remain portable, but Linux has no released Desktop installer.
 
 On first launch, configure at least one model provider in Settings to run agents. **Settings → Authentication** currently shows OAuth account-pool cards for OpenAI and Anthropic. xAI has one direct, non-pooled credential row that accepts either an API key or OAuth; saving one replaces the other. OpenRouter and Cursor SDK remain key/token-only rows. Status and auth-type badges appear only on applicable cards. OpenAI/Codex can also use the Forge Auth broker in v1, which supplies short-lived leases that Forge acquires, renews, reports, and releases while runtimes are active. The primary broker setup path is a one-time setup link from your broker administrator: paste it in Settings → Authentication → OpenAI → Forge Auth broker, and Forge redeems it server-to-server without asking you to copy runtime tokens. While broker mode is active, local OpenAI credentials stay visible but are read-only. See [Provider Authentication](docs/CONFIGURATION.md#provider-authentication) for details. Forge will walk you through a short welcome conversation to learn your preferences.
 
@@ -93,7 +92,7 @@ Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189) and configure yo
 pnpm package:electron
 ```
 
-The package step clears `apps/electron/release/` first, then writes the current build there and runs a staged packaged-runtime preflight before handing off to `electron-builder`.
+The package step clears `apps/electron/release/` first, then writes the current build there and runs a staged packaged-runtime preflight before handing off to `electron-builder`. On Linux it may produce only an experimental local `dir` package for smoke work; that output is non-publishable and not a supported Desktop release.
 
 **Desktop release safety:** `pnpm package:electron` is the build step. It now treats `apps/electron/release/` as ephemeral output for the current run, so stale assets are cleared before packaging. Official desktop releases still follow a build-first, publish-last, draft-first flow. Desktop rollout is beta-first: beta versions must be published as GitHub prereleases, and stable release happens later as a separate intentional promotion. The old `pnpm release:electron` shortcut is intentionally disabled. Use the workflow documented in [`apps/electron/README.md`](apps/electron/README.md): bump and push the version first, build macOS locally, run Windows via GitHub Actions `workflow_dispatch`, create a draft GitHub Release, keep beta builds marked as prereleases, then upload the full updater asset set (installers, archives, `latest*.yml`, `*.blockmap`, and related release files) before publishing.
 
@@ -369,15 +368,18 @@ Production defaults:
 
 ## Platform Notes
 
-Forge runs on macOS, Linux, and Windows.
+Forge source/server, development, CLI, and configuration support run on macOS, Linux, and Windows. Official Forge Desktop releases are supported on macOS and Windows only. Linux's Electron `dir` target is experimental local packaging smoke work, is non-publishable, and is not Linux Desktop support coverage.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
+| Official Forge Desktop release | ✅ | — | ✅ |
 | Core functionality | ✅ | ✅ | ✅ |
 | Dashboard UI | ✅ | ✅ | ✅ |
 | Agent orchestration | ✅ | ✅ | ✅ |
 | Shell scripts (`scripts/*.sh`) | ✅ | ✅ | Requires WSL or Git Bash |
 | Default data directory | `~/.forge` | `~/.forge` | `%LOCALAPPDATA%\forge` |
+
+A standard Desktop release upload contains exactly eight assets: five macOS files (`Forge-<version>-arm64.dmg`, its `.blockmap`, `Forge-<version>-arm64-mac.zip`, its `.blockmap`, and `latest-mac.yml`) and three Windows files (`Forge-Setup-<version>.exe`, its `.blockmap`, and `latest.yml`). No Linux asset is published.
 
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for detailed Windows setup instructions.
 

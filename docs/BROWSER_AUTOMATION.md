@@ -155,7 +155,7 @@ Compatible connected extensions can reload an authenticated local payload after 
 
 For maintainers diagnosing a newly dedicated Chrome open, the target may first appear as an inactive `about:blank`. A URL-bearing open performs the one authorized initial navigation for that exact target; it must not be treated as a generic navigation replay.
 
-The focused unit/build and isolated-profile checks do not prove live MV3 service-worker suspension/restart behavior, headed Chrome, native-host/Desktop end-to-end registration, or current-platform Chrome debugger behavior. macOS, Windows, and Linux reparenting/packaging/signing and release-SEA gates remain separate qualification gates.
+The focused unit/build and isolated-profile checks do not prove live MV3 service-worker suspension/restart behavior, headed Chrome, native-host/Desktop end-to-end registration, or current-platform Chrome debugger behavior. Supported macOS and Windows reparenting, packaging, signing, and release-SEA gates remain separate qualification gates. Linux `dir` packaging is experimental local smoke work only: it is non-publishable and is not Linux Desktop support coverage.
 
 Canonical data paths and OS registration targets are in [Configuration](CONFIGURATION.md#chrome-adapter-local-integration). Maintainer staging, signing, package-content, and qualification gates are in the [Electron release guide](../apps/electron/README.md#optional-chrome-adapter-packaging-and-validation).
 

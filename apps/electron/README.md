@@ -1,6 +1,6 @@
 # Forge Electron Desktop App
 
-This workspace packages Forge as a standalone desktop application for macOS, Windows, and Linux. The desktop app bundles the backend, UI, and all dependencies so end users do not need Node.js or pnpm installed.
+This workspace packages Forge as a standalone desktop application for supported macOS and Windows releases. The desktop app bundles the backend, UI, and all dependencies so end users do not need Node.js or pnpm installed. Linux retains an experimental local `dir` packaging target for smoke work only; it is non-publishable and is not a supported Desktop release.
 
 ## Architecture
 
@@ -138,7 +138,7 @@ pnpm --dir apps/electron test:browser-package
 pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
 ```
 
-The real embedded-view fixtures require a graphical Electron environment. Passing on one operating system does not qualify another. Native Windows and Linux reparenting, recording/media, close-race, and packaged-layout qualification remain separate platform gates; do not infer headed or platform qualification from unit tests or one-machine smoke runs.
+The real embedded-view fixtures require a graphical Electron environment. Passing on one operating system does not qualify another. Native macOS and Windows reparenting, recording/media, close-race, and packaged-layout qualification remain separate supported-platform gates. Experimental Linux local-directory smoke work is separately qualified but is not Desktop support or release evidence; do not infer headed or platform qualification from unit tests or one-machine smoke runs.
 
 ### Optional Chrome adapter packaging and validation
 
@@ -215,7 +215,7 @@ The desktop app can install a user-local `forge` shim from **Settings → CLI Ac
 
 Install locations:
 
-- macOS/Linux: `~/.forge/bin/forge`
+- macOS and experimental local Linux directory builds: `~/.forge/bin/forge`
 - Windows: `%LOCALAPPDATA%\forge\bin\forge.cmd` plus an optional PowerShell helper
 
 The shim does not contain API keys. It reads a Forge-managed install hint to find the current app bundle/executable, then falls back to platform lookup. Re-running **Install CLI** is idempotent and overwrites only Forge-managed shim files. If the install directory is not on `PATH`, the renderer returns shell-specific instructions for the user to add it manually.
@@ -297,8 +297,8 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
 
 5. **Upload the full updater asset set**
    - Upload everything required by the auto-updater, not just installers
-   - Typical assets include the platform installers/archives plus generated updater metadata such as `latest*.yml` and any `*.blockmap` files
-   - In practice, upload the full current-run contents of `apps/electron/release/` for each platform. The package step now clears stale output first, so that directory should reflect only the current build plus transient builder metadata.
+   - Upload exactly the standard macOS and Windows asset set listed in [Platform Notes](#platform-notes); no Linux asset is publishable
+   - In practice, upload the standard current-run macOS and Windows files from `apps/electron/release/`. The package step clears stale output first; never promote an experimental Linux `dir` output.
 
 6. **Publish last**
    - Publish the draft only after both platforms are validated and the full asset set is attached
@@ -325,12 +325,14 @@ The root `pnpm dev:electron` workflow also uses backend port `47287`; only its U
 
 ## Platform Notes
 
-Current package targets and qualification boundaries are:
+Current supported release targets and qualification boundaries are:
 
 - **macOS** 12+ (Apple Silicon is exercised locally; Intel requires separate native qualification before claiming support evidence)
 - **Windows** 10+ (x64)
-- **Linux** (x64, AppImage format)
+- **Linux**: an experimental local `dir` target for packaging smoke work only. It is non-publishable, produces no release asset, and is not Desktop support coverage.
+
+A standard Desktop release contains exactly eight assets: five macOS files (`Forge-<version>-arm64.dmg`, its `.blockmap`, `Forge-<version>-arm64-mac.zip`, its `.blockmap`, and `latest-mac.yml`) and three Windows files (`Forge-Setup-<version>.exe`, its `.blockmap`, and `latest.yml`). No Linux asset is published.
 
 Forge accepts Electron 43's platform dialog default when a directory picker has no `defaultPath`: Downloads when available, otherwise the user's home directory. Pickers with a repository or working-directory path keep using that explicit location; Forge does not maintain a second app-owned recent-directory store.
 
-Windows builds use an NSIS installer with per-user installation by default. Linux builds use AppImage for maximum compatibility.
+Windows builds use a per-user NSIS installer by default. Linux local smoke builds use the `dir` target only.
