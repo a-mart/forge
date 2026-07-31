@@ -16,7 +16,10 @@ import {
   BACKEND_BUNDLE_EXTERNAL_PACKAGES,
 } from '../../apps/electron/scripts/build-all.mjs'
 import {
+  assertNodePtySmokeResult,
   assertResolvedInsideStage,
+  NODE_PTY_SMOKE_MARKER,
+  NODE_PTY_SMOKE_SCRIPT,
   STAGED_ELECTRON_NATIVE_PACKAGES,
 } from '../../apps/electron/scripts/staged-native-runtime-smoke.mjs'
 
@@ -59,6 +62,14 @@ describe('staged Electron-as-Node native runtime smoke', () => {
       'sharp',
       'koffi',
     ])
+  })
+
+  it('delays the PTY marker for Windows listener registration and enforces its exit result', () => {
+    expect(NODE_PTY_SMOKE_SCRIPT).toContain('setTimeout')
+    expect(NODE_PTY_SMOKE_SCRIPT).toContain(NODE_PTY_SMOKE_MARKER)
+    expect(() => assertNodePtySmokeResult(0, NODE_PTY_SMOKE_MARKER)).not.toThrow()
+    expect(() => assertNodePtySmokeResult(0, '')).toThrow('node-pty smoke failed')
+    expect(() => assertNodePtySmokeResult(1, NODE_PTY_SMOKE_MARKER)).toThrow('node-pty smoke failed')
   })
 
   it('accepts only entries physically inside staged node_modules', async () => {

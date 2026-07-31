@@ -11,6 +11,17 @@ export const STAGED_ELECTRON_NATIVE_PACKAGES = Object.freeze([
   'koffi',
 ])
 
+export const NODE_PTY_SMOKE_MARKER = 'forge-pty-ok'
+// node-pty can emit a fast Windows child process's final data before onData is
+// subscribed. Keep the child alive briefly so this remains an actual PTY smoke.
+export const NODE_PTY_SMOKE_SCRIPT = `setTimeout(() => process.stdout.write(${JSON.stringify(NODE_PTY_SMOKE_MARKER)}), 100)`
+
+export function assertNodePtySmokeResult(exitCode, output) {
+  if (exitCode !== 0 || !output.includes(NODE_PTY_SMOKE_MARKER)) {
+    throw new Error(`node-pty smoke failed with exitCode=${String(exitCode)} output=${JSON.stringify(output)}`)
+  }
+}
+
 export function assertResolvedInsideStage(resolvedEntry, stagedNodeModulesDir, packageName) {
   const stageRoot = realpathSync(stagedNodeModulesDir)
   const resolvedRealpath = realpathSync(resolvedEntry)
@@ -56,25 +67,40 @@ export async function runStagedNativeRuntimeSmoke(stagedNodeModulesDir) {
 
   const pty = loaded.get('node-pty')
   await new Promise((resolve, reject) => {
-    const child = pty.spawn(process.execPath, ['-e', 'process.stdout.write("forge-pty-ok")'], {
+    const child = pty.spawn(process.execPath, ['-e', NODE_PTY_SMOKE_SCRIPT], {
       cols: 80,
       rows: 24,
       cwd: path.dirname(stagedNodeModulesDir),
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     })
     let output = ''
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error('node-pty smoke timed out'))
-    }, 10_000)
-    child.onData((chunk) => { output += chunk })
-    child.onExit(({ exitCode }) => {
+    let settled = false
+    const settle = (callback) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
-      if (exitCode !== 0 || !output.includes('forge-pty-ok')) {
-        reject(new Error(`node-pty smoke failed with exitCode=${String(exitCode)} output=${JSON.stringify(output)}`))
-        return
+      dataSubscription.dispose()
+      exitSubscription.dispose()
+      try {
+        child.kill()
+      } catch {
+        // The child can already be gone after onExit.
       }
-      resolve()
+      callback()
+    }
+    const timer = setTimeout(() => settle(() => reject(new Error('node-pty smoke timed out'))), 10_000)
+    const dataSubscription = child.onData((chunk) => { output += chunk })
+    const exitSubscription = child.onExit(({ exitCode }) => {
+      // Windows ConPTY can signal the process exit just before dispatching its
+      // final data chunk. Drain one turn before enforcing the marker.
+      setTimeout(() => settle(() => {
+        try {
+          assertNodePtySmokeResult(exitCode, output)
+          resolve()
+        } catch (error) {
+          reject(error)
+        }
+      }), 25)
     })
   })
 
