@@ -10,7 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  docker-e2e:
+  # This Linux runner gates the shared Secure Sessions guest-container path used
+  # by supported macOS and Windows Docker Desktop hosts; it is not Linux Desktop packaging.
+  secure-container-e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

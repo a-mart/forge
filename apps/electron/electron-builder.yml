@@ -84,9 +84,8 @@ nsis:
   oneClick: true
   perMachine: false
   artifactName: "Forge-Setup-${version}.${ext}"
+# Forge Desktop releases are macOS and Windows only. Keep a non-publishable
+# directory target for local packaging smoke work; do not add Linux release artifacts here.
 linux:
   target:
-    - target: AppImage
-      arch:
-        - x64
-  category: Development
+    - target: dir

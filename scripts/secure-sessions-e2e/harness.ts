@@ -340,28 +340,28 @@ export async function dockerContainerExists(name: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
-export async function collectDockerEvidence(input: {
+export function forgeControlledDockerEvidenceCommands(input: {
   sandboxName: string;
   runnerImage: string;
-  targetName: string;
-  targetImage: string;
-  outputDirectory: string;
-}): Promise<Array<{ path: string; bytes: Buffer }>> {
+}): ReadonlyArray<readonly [string, readonly string[]]> {
   assertSandboxName(input.sandboxName);
   assertManagedName(input.runnerImage);
-  assertManagedName(input.targetName);
-  assertManagedName(input.targetImage);
-  await mkdir(input.outputDirectory, { recursive: true });
-  const exportedPath = resolve(input.outputDirectory, "sandbox-export.tar");
-  const evidenceCommands = [
+  return [
     ["sandbox-inspect.json", ["container", "inspect", input.sandboxName]],
     ["sandbox-logs.txt", ["logs", input.sandboxName]],
     ["sandbox-diff.txt", ["diff", input.sandboxName]],
     ["runner-history.txt", ["history", "--no-trunc", input.runnerImage]],
-    ["target-inspect.json", ["container", "inspect", input.targetName]],
-    ["target-logs.txt", ["logs", input.targetName]],
-    ["target-history.txt", ["history", "--no-trunc", input.targetImage]],
-  ] as const;
+  ];
+}
+
+export async function collectDockerEvidence(input: {
+  sandboxName: string;
+  runnerImage: string;
+  outputDirectory: string;
+}): Promise<Array<{ path: string; bytes: Buffer }>> {
+  await mkdir(input.outputDirectory, { recursive: true });
+  const exportedPath = resolve(input.outputDirectory, "sandbox-export.tar");
+  const evidenceCommands = forgeControlledDockerEvidenceCommands(input);
   const evidence: Array<{ path: string; bytes: Buffer }> = [];
   for (const [path, args] of evidenceCommands) {
     const result = await runCommand("docker", args, { timeoutMs: 30_000 });

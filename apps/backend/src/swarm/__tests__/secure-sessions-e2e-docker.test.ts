@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   collectDockerEvidence,
+  forgeControlledDockerEvidenceCommands,
   buildFixtureImages,
   dockerContainerExists,
   removeManagedContainer,
@@ -209,6 +210,22 @@ function sshTrustDelivery(
 afterEach(async () => {
   const pending = cleanups.splice(0).reverse();
   await Promise.allSettled(pending.map(async (cleanup) => await cleanup()));
+});
+
+describe("secure-session Docker privacy evidence scope", () => {
+  it("scans Forge-controlled runner surfaces but excludes fixture service observability", () => {
+    const commands = forgeControlledDockerEvidenceCommands({
+      sandboxName: "forge-secure-evidence-scope",
+      runnerImage: "forge-secure-e2e-runner:latest",
+    });
+
+    expect(commands.map(([path]) => path)).toEqual([
+      "sandbox-inspect.json",
+      "sandbox-logs.txt",
+      "sandbox-diff.txt",
+      "runner-history.txt",
+    ]);
+  });
 });
 
 dockerSuite(
@@ -509,8 +526,6 @@ dockerSuite(
       const dockerEvidence = await collectDockerEvidence({
         sandboxName: sandbox.sandboxId,
         runnerImage,
-        targetName,
-        targetImage,
         outputDirectory: evidenceDirectory,
       });
       expect(await backend.destroyTask(task)).toBe(true);
@@ -523,22 +538,9 @@ dockerSuite(
         needles,
       );
       const dockerReport = scanNamedBytes(dockerEvidence, needles);
-      const databaseEvidence = await Promise.all(
-        ([
-          ["database-inspect.json", ["container", "inspect", databaseName]],
-          ["database-logs.txt", ["logs", databaseName]],
-        ] as const).map(async ([path, args]) => {
-          const result = await runCommand("docker", args, {
-            timeoutMs: 30_000,
-          });
-          expect(result.exitCode).toBe(0);
-          return {
-            path,
-            bytes: Buffer.concat([result.stdout, result.stderr]),
-          };
-        }),
-      );
-      const databaseReport = scanNamedBytes(databaseEvidence, needles);
+      // Fixture PostgreSQL owns its inspect/log records and intentionally receives
+      // the test credential. Forge-controlled runner output, metadata, export, CLI
+      // invocations, and workspace surfaces remain covered by the scans below.
       const filesystemReport = await scanDirectory(temporaryRoot, needles);
 
       expect(invocationReport).toEqual({
@@ -548,8 +550,6 @@ dockerSuite(
       });
       expect(dockerReport.totalMatches).toBe(0);
       expect(dockerReport.matches).toEqual([]);
-      expect(databaseReport.totalMatches).toBe(0);
-      expect(databaseReport.matches).toEqual([]);
       expect(filesystemReport.totalMatches).toBe(0);
       expect(filesystemReport.matches).toEqual([]);
     }, 180_000);
