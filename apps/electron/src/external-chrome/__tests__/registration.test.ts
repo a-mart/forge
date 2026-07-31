@@ -8,6 +8,7 @@ import {
   DevelopmentExecutableTrustVerifier,
   PlatformExecutableTrustVerifier,
   PosixNativeRegistration,
+  WindowsRegistryFacade,
   WindowsNativeRegistration,
   buildNativeHostManifest,
   type ExecutableTrustVerifier,
@@ -140,6 +141,19 @@ describe('External Chrome native registration', () => {
     expect(await verifier.verify(`${executable}.missing`)).toBe('missing')
   })
 
+  it('confines unsigned Windows trust to the dev SEA executable policy', async () => {
+    const dataRoot = await root()
+    await prepareExecutable(dataRoot, 'win32')
+    const executable = resolveExternalChromeDataPaths(dataRoot, 'win32').nativeHostExecutable
+    const verifier = new DevelopmentExecutableTrustVerifier('win32')
+    expect(await verifier.verify(executable)).toBe('trusted')
+    await writeFile(`${executable}.cmd`, 'not a SEA executable')
+    expect(await verifier.verify(`${executable}.cmd`)).toBe('untrusted')
+    expect(await new PlatformExecutableTrustVerifier('win32', {
+      run: async () => ({ stdout: 'NotSigned', stderr: '', exitCode: 0 }),
+    }).verify(executable)).toBe('untrusted')
+  })
+
   it('reports deterministic platform signature states through an injected process facade', async () => {
     const dataRoot = await root()
     await prepareExecutable(dataRoot, 'darwin')
@@ -154,6 +168,36 @@ describe('External Chrome native registration', () => {
     expect(await new PlatformExecutableTrustVerifier('darwin', processFacade).verify(executable)).toBe('untrusted')
     expect(calls).toEqual(['/usr/bin/codesign', '/usr/sbin/spctl'])
     expect(await new PlatformExecutableTrustVerifier('linux', processFacade).verify(executable)).toBe('unsupported')
+  })
+
+  it('passes Windows registry paths as literal arguments and escapes Authenticode PowerShell paths', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const processFacade: NativeProcessFacade = {
+      run: async (command, args) => {
+        calls.push({ command, args })
+        if (command === 'reg.exe' && args[0] === 'query') return { stdout: '    (Default)    REG_SZ    C:\\Forge Dev\\host.json\n', stderr: '', exitCode: 0 }
+        if (command === 'powershell.exe') return { stdout: 'Valid\n', stderr: '', exitCode: 0 }
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    }
+    const key = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${EXTERNAL_CHROME_NATIVE_HOST_NAME}`
+    const manifestPath = 'C:\\Forge Dev\\native-host-manifests\\host.json'
+    const registry = new WindowsRegistryFacade(processFacade)
+    await registry.writeDefault(key, manifestPath)
+    await expect(registry.readDefault(key)).resolves.toBe('C:\\Forge Dev\\host.json')
+    await registry.removeKey(key)
+    expect(calls.slice(0, 3)).toEqual([
+      { command: 'reg.exe', args: ['add', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'] },
+      { command: 'reg.exe', args: ['query', key, '/ve'] },
+      { command: 'reg.exe', args: ['delete', key, '/f'] },
+    ])
+
+    const executable = path.join(await root(), "host's validation.exe")
+    await writeFile(executable, 'fixture')
+    expect(await new PlatformExecutableTrustVerifier('win32', processFacade).verify(executable)).toBe('trusted')
+    const authenticodeCall = calls.at(-1)!
+    expect(authenticodeCall.command).toBe('powershell.exe')
+    expect(authenticodeCall.args.at(-1)).toContain(`-LiteralPath '${executable.replaceAll("'", "''")}'`)
   })
 
   it('uses a current-user Windows registry pointer to the Forge-owned canonical manifest', async () => {

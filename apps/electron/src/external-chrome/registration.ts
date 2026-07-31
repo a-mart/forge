@@ -113,6 +113,8 @@ export class DevelopmentExecutableTrustVerifier implements ExecutableTrustVerifi
     try {
       const stat = await fs.lstat(executable)
       if (!stat.isFile() || stat.isSymbolicLink()) return 'untrusted'
+      // The dev Windows policy is reserved for the staged SEA executable, not a script or shim.
+      if (this.platform === 'win32' && path.extname(executable).toLowerCase() !== '.exe') return 'untrusted'
       if (this.platform !== 'win32' && (stat.mode & 0o111) === 0) return 'untrusted'
       if (this.uid !== undefined && stat.uid !== this.uid) return 'untrusted'
       return 'trusted'
@@ -489,7 +491,7 @@ export function createExternalChromeNativeRegistration(options: {
 }): ExternalChromeNativeRegistration {
   const platform = options.platform ?? process.platform
   const homeDirectory = options.homeDirectory ?? os.homedir()
-  const trustVerifier = options.allowDevelopmentHost && (platform === 'darwin' || platform === 'linux')
+  const trustVerifier = options.allowDevelopmentHost && (platform === 'darwin' || platform === 'linux' || platform === 'win32')
     ? new DevelopmentExecutableTrustVerifier(platform)
     : undefined
   if (platform === 'darwin') {

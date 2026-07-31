@@ -30,10 +30,17 @@ export interface ExternalChromePackageManifest {
     required: true
     signature: {
       scheme: string
-      mode: 'release' | 'development'
+      mode: 'release' | 'development' | 'validation'
       verified: boolean
       signer: string | null
       teamId: string | null
+    }
+    /** Only a credential-free Windows SEA emitted by dev preparation may carry this provenance. */
+    development?: {
+      source: 'validation-sea'
+      package: '@forge/external-chrome-native-host'
+      bundleSha256: string
+      seaConfigSha256: string
     }
   }
   compatibility: {
@@ -90,7 +97,9 @@ export function parseExternalChromePackageManifest(
   }
 
   const nativeHost = object(root.nativeHost, 'nativeHost')
-  exactKeys(nativeHost, ['protocol', 'version', 'platform', 'architecture', 'executable', 'sha256', 'required', 'signature'], 'nativeHost')
+  const nativeHostKeys = ['protocol', 'version', 'platform', 'architecture', 'executable', 'sha256', 'required', 'signature']
+  if (Object.hasOwn(nativeHost, 'development')) nativeHostKeys.push('development')
+  exactKeys(nativeHost, nativeHostKeys, 'nativeHost')
   if (nativeHost.required !== true) throw new Error('External Chrome packaged native executable must be required')
   string(nativeHost.version, 'nativeHost.version')
   string(nativeHost.platform, 'nativeHost.platform')
@@ -105,7 +114,14 @@ export function parseExternalChromePackageManifest(
     (nativeHost.platform === 'darwin' || nativeHost.platform === 'linux') &&
     signature.mode === 'development' && signature.verified === false &&
     signature.scheme === 'node-shebang' && signature.signer === null && signature.teamId === null
-  if (!releaseSignature && !developmentSignature) {
+  const validationSeaDevelopment = policy.allowDevelopmentHost === true &&
+    nativeHost.platform === 'win32' && signature.mode === 'validation' && signature.verified === false &&
+    signature.scheme === 'authenticode' && signature.signer === null && signature.teamId === null &&
+    isValidationSeaProvenance(nativeHost.development)
+  if (Object.hasOwn(nativeHost, 'development') && !validationSeaDevelopment) {
+    throw new Error('External Chrome development native-host provenance is invalid')
+  }
+  if (!releaseSignature && !developmentSignature && !validationSeaDevelopment) {
     throw new Error('External Chrome native executable signature was not release-verified at packaging')
   }
   nullableString(signature.signer, 'nativeHost.signature.signer')
@@ -168,6 +184,15 @@ function positiveInteger(value: unknown, label: string): asserts value is number
 
 function hash(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || !SHA256.test(value)) throw new Error(`${label} must be a lowercase SHA-256`)
+}
+
+function isValidationSeaProvenance(value: unknown): value is NonNullable<ExternalChromePackageManifest['nativeHost']['development']> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const provenance = value as Record<string, unknown>
+  if (Object.keys(provenance).sort().join('\0') !== 'bundleSha256\0package\0seaConfigSha256\0source') return false
+  return provenance.source === 'validation-sea' && provenance.package === '@forge/external-chrome-native-host' &&
+    typeof provenance.bundleSha256 === 'string' && SHA256.test(provenance.bundleSha256) &&
+    typeof provenance.seaConfigSha256 === 'string' && SHA256.test(provenance.seaConfigSha256)
 }
 
 function safeFile(value: unknown, label: string): asserts value is string {

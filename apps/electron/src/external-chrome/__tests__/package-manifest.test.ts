@@ -52,6 +52,25 @@ describe('External Chrome package manifest development policy', () => {
       .toThrow('not release-verified')
   })
 
+  it('accepts only an explicit Windows validation SEA provenance through the dev policy', () => {
+    const manifest = developmentManifest()
+    manifest.nativeHost.platform = 'win32'
+    manifest.nativeHost.architecture = 'x64'
+    manifest.nativeHost.executable = 'forge-external-chrome-native-host.exe'
+    manifest.nativeHost.signature = {
+      scheme: 'authenticode', mode: 'validation', verified: false, signer: null, teamId: null,
+    }
+    manifest.nativeHost.development = {
+      source: 'validation-sea', package: '@forge/external-chrome-native-host', bundleSha256: hash, seaConfigSha256: hash,
+    }
+    expect(() => parseExternalChromePackageManifest(manifest)).toThrow('development native-host provenance is invalid')
+    expect(parseExternalChromePackageManifest(manifest, { allowDevelopmentHost: true })).toEqual(manifest)
+
+    manifest.nativeHost.development.source = 'unbounded' as 'validation-sea'
+    expect(() => parseExternalChromePackageManifest(manifest, { allowDevelopmentHost: true }))
+      .toThrow('development native-host provenance is invalid')
+  })
+
   it('does not let the development policy weaken release signature validation', () => {
     const manifest = developmentManifest()
     manifest.nativeHost.signature = {
