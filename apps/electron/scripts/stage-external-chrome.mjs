@@ -18,6 +18,8 @@ export async function stageExternalChromeResources({
   electronManifestPath = path.join(electronDir, 'package.json'),
   verifyExecutable = verifyReleaseExecutable,
   buildMode = externalChromeBuildMode(),
+  /** Credential-free SEA artifact accepted only by the unpacked Windows dev preparation path. */
+  developmentHost = false,
 } = {}) {
   const extensionRoot = path.join(extensionPackageRoot, 'extension')
   const extensionManifest = JSON.parse(await readFile(path.join(extensionPackageRoot, 'package-manifest.json'), 'utf8'))
@@ -28,9 +30,13 @@ export async function stageExternalChromeResources({
 
   if (!nativeManifest.executable) {
     const reason = nativeManifest.sea?.reason ?? 'the native package did not produce an executable'
-    if (requireExecutable) throw new Error(`External Chrome packaged release requires a SEA executable: ${reason}`)
+    if (requireExecutable) {
+      const label = developmentHost ? 'External Chrome Windows development requires a validation SEA executable' : 'External Chrome packaged release requires a SEA executable'
+      throw new Error(`${label}: ${reason}`)
+    }
     return { staged: false, reason, nativeManifest }
   }
+  if (developmentHost) assertWindowsDevelopmentSea(nativeManifest, platform, buildMode)
   if (nativeManifest.platform !== platform || nativeManifest.architecture !== architecture) {
     throw new Error(`External Chrome native package targets ${nativeManifest.platform}/${nativeManifest.architecture}, expected ${platform}/${architecture}`)
   }
@@ -84,6 +90,7 @@ export async function stageExternalChromeResources({
       sha256: nativeManifest.executable.sha256,
       required: true,
       signature,
+      ...(developmentHost ? { development: developmentSeaProvenance(nativeManifest) } : {}),
     },
     compatibility: {
       desktop: { min: '0.22.0', max: '0.22.999' },
@@ -109,6 +116,36 @@ async function copyInventory(sourceRoot, targetRoot, inventory) {
     if (sha256(bytes) !== inventory[relative]) throw new Error(`External Chrome staging hash mismatch: ${relative}`)
     await writeFile(target, bytes)
   }
+}
+
+function assertWindowsDevelopmentSea(nativeManifest, platform, buildMode) {
+  const signature = nativeManifest.executable?.signature
+  if (platform !== 'win32' || buildMode !== 'validation') {
+    throw new Error('External Chrome validation SEA development staging is Windows-only and requires validation build mode')
+  }
+  if (
+    nativeManifest.package !== '@forge/external-chrome-native-host' ||
+    nativeManifest.bundle?.file !== 'dist/host.cjs' || !isSha256(nativeManifest.bundle?.sha256) ||
+    nativeManifest.seaConfig?.file !== 'dist/sea-config.current.json' || !isSha256(nativeManifest.seaConfig?.sha256) ||
+    nativeManifest.smoke !== 'desktop-unavailable' ||
+    signature?.scheme !== 'authenticode' || signature.mode !== 'validation' || signature.verified !== false ||
+    signature.signer !== null || signature.teamId !== null
+  ) {
+    throw new Error('External Chrome Windows development requires the native host package validation SEA manifest')
+  }
+}
+
+function developmentSeaProvenance(nativeManifest) {
+  return {
+    source: 'validation-sea',
+    package: '@forge/external-chrome-native-host',
+    bundleSha256: nativeManifest.bundle.sha256,
+    seaConfigSha256: nativeManifest.seaConfig.sha256,
+  }
+}
+
+function isSha256(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value)
 }
 
 function verifiedExtensionInventories(extensionManifest, selector) {
