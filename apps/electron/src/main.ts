@@ -29,6 +29,7 @@ import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
 import { isDockManagedBrowserShortcut, isManagedBrowserPopoutAvailable } from './browser/managed-browser-platform.js'
 import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 import { LifecycleLog } from './lifecycle-log.js'
+import { installElectronDevelopmentProcessControl } from './dev-process-control.js'
 import {
   createSecureVaultController,
   initializeSecureVaultAtStartup,
@@ -560,6 +561,12 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     handleTerminationSignal(signal)
   })
 }
+
+installElectronDevelopmentProcessControl({
+  isPackaged: app.isPackaged,
+  processPort: process,
+  requestQuit: () => handleTerminationSignal('SIGINT'),
+})
 
 process.on('exit', (code) => {
   lifecycleLog.record('electron_process_exit', { code })

@@ -23,8 +23,8 @@
     "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
     "prepare:dev-external-chrome": "node ./scripts/prepare-external-chrome-dev.mjs",
     "verify:runtime": "node ./scripts/verify-electron-runtime.mjs",
-    "dev": "pnpm verify:runtime && pnpm prepare:dev-native && pnpm prepare:dev-external-chrome && node esbuild.config.mjs && electron .",
-    "start": "pnpm verify:runtime && pnpm prepare:dev-native && electron .",
+    "dev": "pnpm verify:runtime && pnpm prepare:dev-native && pnpm prepare:dev-external-chrome && node esbuild.config.mjs && node ./scripts/run-electron-dev.mjs",
+    "start": "pnpm verify:runtime && pnpm prepare:dev-native && node ./scripts/run-electron-dev.mjs",
     "pack": "pnpm build:all && electron-builder --dir",
     "package": "pnpm build:all && electron-builder --publish never",
     "dist": "pnpm run package"

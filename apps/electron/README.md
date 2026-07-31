@@ -72,7 +72,9 @@ To run the Electron app in dev mode from the repository root:
 pnpm dev:electron
 ```
 
-This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). Electron forks its backend child on `47287`. The root script publishes that backend port to the UI; Electron's preload keeps the Desktop renderer on loopback, while any explicitly exposed browser UI derives the station hostname from the page it opened.
+This command runs the shared Electron development launcher, starts the UI dev server and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). Electron forks its backend child on `47287`. The root script publishes that backend port to the UI; Electron's preload keeps the Desktop renderer on loopback, while any explicitly exposed browser UI derives the station hostname from the page it opened.
+
+Press Ctrl+C once to stop development. The launcher asks Electron to quit over its development-only IPC channel so the backend can finish its shutdown before the UI process is stopped. A second Ctrl+C is ignored when it is the immediate duplicate that Windows package runners can forward; after a short delay, a deliberate second Ctrl+C force-terminates only the development process tree. The launcher also removes an inherited `ELECTRON_RUN_AS_NODE` value at the Electron child boundary. These controls are not enabled in packaged Forge Desktop builds.
 
 Before Electron launches, the desktop workspace prepares a cached `better-sqlite3` binary for Electron's embedded Node runtime. The cache lives under `apps/electron/.dev-native/` and is separate from the Host-Node binary installed by pnpm, so switching between `pnpm dev` and `pnpm dev:electron` does not rebuild or overwrite shared dependencies. The cache is versioned by the Electron version, platform, architecture, and `better-sqlite3` source fingerprint, and is verified with an Electron-as-Node in-memory database smoke test before use.
 
