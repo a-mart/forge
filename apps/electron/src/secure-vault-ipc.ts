@@ -12,7 +12,6 @@ import {
 export const SECURE_VAULT_REQUEST_TYPE = 'secure_vault_request'
 export const SECURE_VAULT_RESPONSE_TYPE = 'secure_vault_response'
 export const SECURE_VAULT_RENDERER_CHANNEL = 'forge:secure-vault'
-export const SECURE_VAULT_DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 export const SECURE_VAULT_MAX_PLAINTEXT_BYTES = 256 * 1024
 export const SECURE_VAULT_MAX_CIPHERTEXT_BYTES = 512 * 1024
 export const SECURE_VAULT_REMOTE_ENTRY_TTL_MS = 2 * 60_000
@@ -24,13 +23,6 @@ const SECURE_VAULT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]+$/
 const SECURE_VAULT_REMOTE_CONTEXT_BYTES = 1024
 const SECURE_VAULT_REMOTE_ENVELOPE_BYTES = 512 * 1024
 const SECURE_VAULT_REMOTE_AAD_PREFIX = 'forge-secure-browser-private-entry:v1'
-
-export type SecureVaultOperation =
-  | 'status'
-  | 'encrypt'
-  | 'decrypt'
-  | 'remote_entry_challenge'
-  | 'remote_entry_encrypt'
 
 export type SecureVaultErrorCode =
   | 'SECURE_VAULT_INVALID_REQUEST'

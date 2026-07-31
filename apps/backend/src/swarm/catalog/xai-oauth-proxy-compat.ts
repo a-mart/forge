@@ -1,15 +1,8 @@
 import {
   configureXaiOAuthProxyClient,
   getXaiOAuthProxyHeaders,
-  XAI_GROK_PROXY_COMPATIBILITY_SOURCE,
-  XAI_GROK_PROXY_COMPATIBILITY_VERSION,
 } from "@earendil-works/pi-ai/oauth";
 import { getForgeAppVersion } from "../../utils/app-version.js";
-
-export {
-  XAI_GROK_PROXY_COMPATIBILITY_SOURCE,
-  XAI_GROK_PROXY_COMPATIBILITY_VERSION,
-};
 
 /** Configure Pi's OAuth model transform with Forge's actual package version. */
 export function configureForgeXaiOAuthProxyClient(): void {

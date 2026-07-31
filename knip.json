@@ -10,6 +10,9 @@
   "vite": true,
   "tsx": true,
   "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "wait-on"
+  ],
   "ignoreIssues": {
     "apps/ui/src/routeTree.gen.ts": [
       "exports",
@@ -73,6 +76,18 @@
       "ignoreDependencies": [
         "mermaid",
         "tailwindcss"
+      ]
+    },
+    "apps/chrome-extension": {
+      "entry": [
+        "src/payload/content-script/index.ts",
+        "src/payload/service-worker/index.ts",
+        "src/shell/service-worker-bootstrap.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "scripts/**/*.mjs",
+        "tests/**/*.ts"
       ]
     },
     "apps/electron": {

@@ -19,27 +19,6 @@ const EMPTY_BYTES = Buffer.alloc(0);
 const QUARANTINE_BYTES = Buffer.from(SECURE_OUTPUT_QUARANTINE, "utf8");
 const STRUCTURED_QUARANTINE = new Error("SECURE_STRUCTURED_OUTPUT_QUARANTINED");
 
-/**
- * Stable default policy. Empty values are rejected because they match every
- * boundary. Every non-empty value within the configured hard caps is
- * protected. Values below the selective thresholds buffer each output stream
- * until completion so an exact match can quarantine the result without
- * revealing the match position; harmless output is then released unchanged.
- * NUL and invalid UTF-8 remain exact raw-byte patterns and receive byte-safe
- * Base64, Base64url, and hexadecimal variants.
- */
-export const secureValueGuardPolicy = Object.freeze({
-  defaultMaxValueBytes: DEFAULT_MAX_VALUE_BYTES,
-  defaultMaxRegisteredBytes: DEFAULT_MAX_REGISTERED_BYTES,
-  defaultMaxDerivedBytes: DEFAULT_MAX_DERIVED_BYTES,
-  defaultMaxRegisteredValues: DEFAULT_MAX_REGISTERED_VALUES,
-  defaultMaxOutputStreams: DEFAULT_MAX_OUTPUT_STREAMS,
-  minSelectiveBytes: MIN_SELECTIVE_BYTES,
-  minSelectiveDistinctBytes: MIN_SELECTIVE_DISTINCT_BYTES,
-  minSelectiveEntropyBitsPerByte: MIN_SELECTIVE_ENTROPY_BITS_PER_BYTE,
-  maxVariantsPerValue: MAX_VARIANTS_PER_VALUE,
-});
-
 export type SecureValue = string | Uint8Array;
 
 export type SecureValueGuardErrorCode =

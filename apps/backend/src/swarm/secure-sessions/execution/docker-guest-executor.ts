@@ -568,7 +568,6 @@ process.stdin.once("end", async () => {
 
 export const DOCKER_HEARTBEAT_PATH = "/run/forge-secure-host-heartbeat";
 export const DOCKER_HEARTBEAT_INTERVAL_MS = 4_000;
-export const DOCKER_HEARTBEAT_TTL_MS = 15_000;
 
 /**
  * PID 1 exits when its host-owned heartbeat becomes stale. Docker then tears

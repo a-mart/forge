@@ -19,7 +19,6 @@ import {
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
-  type BrowserViewportSetting,
 } from "@forge/protocol";
 import {
   BrowserAutomationBrokerError,
@@ -584,8 +583,3 @@ function cancelled<Operation extends BrowserAutomationOperation>(operation: Oper
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot { return JSON.parse(JSON.stringify(snapshot)) as BrowserSessionSnapshot; }
 function isPathBelow(parent: string, candidate: string): boolean { if (!isAbsolute(candidate)) return false; const rel = relative(resolve(parent), resolve(candidate)); return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel); }
 function isRecord(value: unknown): value is Record<string, any> { return !!value && typeof value === "object" && !Array.isArray(value); }
-export function viewportInput(viewport: BrowserViewportSetting, tabId: string) {
-  if (viewport.mode === "fill") return { tabId, mode: "fill" as const, timeoutMs: 15_000 };
-  if (viewport.mode === "freeform") return { tabId, mode: "freeform" as const, width: viewport.width, height: viewport.height, timeoutMs: 15_000 };
-  return { tabId, mode: "preset" as const, presetId: viewport.presetId, orientation: viewport.orientation, timeoutMs: 15_000 };
-}

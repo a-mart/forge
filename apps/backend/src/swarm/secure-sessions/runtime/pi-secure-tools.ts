@@ -18,16 +18,6 @@ import {
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
 
-export const SECURE_PI_CODING_TOOL_NAMES = Object.freeze([
-  "bash",
-  "read",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-] as const);
-
 export function createSecurePiCodingTools(options: {
   cwd: string;
   binding: SecureRuntimeBinding;

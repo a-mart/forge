@@ -1,4 +1,4 @@
-import { Type, type TSchema } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
@@ -602,13 +602,3 @@ export function buildSecureSessionTools(
   }
   return tools;
 }
-
-export const secureSessionToolSchemas: Readonly<{
-  secure_session_status: TSchema;
-  request_secret_access: TSchema;
-  request_ssh_host_trust: TSchema;
-}> = Object.freeze({
-  secure_session_status: Type.Object({}, { additionalProperties: false }),
-  request_secret_access: requestSecretAccessSchema,
-  request_ssh_host_trust: requestSshHostTrustSchema,
-});

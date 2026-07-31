@@ -486,11 +486,6 @@ export interface SecureSessionRequestedExposure {
   fileMode: number | null;
 }
 
-export interface SecureSessionCatalogMutationResult<T> {
-  record: T;
-  catalog: SecureSessionCatalogState;
-}
-
 export interface SecureSessionSecretWithBindings {
   secret: SecureSessionSecret;
   bindings: SecureSessionBinding[];
