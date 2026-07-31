@@ -539,28 +539,20 @@ describe('SwarmManager', () => {
     verifiedDatabase.pragma('foreign_keys = ON')
     runSecureSessionMigrations(verifiedDatabase)
     const verified = new SecureSessionStore(verifiedDatabase)
-    // Unknown profile-bound secrets are retained until their owning profile is explicitly deleted;
-    // boot still removes the stale session state and keeps the live bindings intact.
+    // Descriptor hydration identifies unavailable owners before Secure Sessions
+    // initialization purges their profile defaults, session state, and secrets.
     expect(verified.listSecrets().map(({ secretId }) => secretId).sort()).toEqual([
       'live-instance-secret',
       'live-project-secret',
-      'orphaned-project-secret',
-      'orphaned-session-secret',
     ])
     expect(verified.listProjectDefaults()).toEqual([
       expect.objectContaining({
         profileId: 'cortex',
         secretId: 'live-project-secret',
       }),
-      expect.objectContaining({
-        profileId: 'deleted-project',
-        secretId: 'orphaned-project-secret',
-      }),
     ])
     expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
-      .toContain('cortex')
-    expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
-      .toContain('deleted-session')
+      .toEqual(['cortex'])
     verified.close()
     await restarted.closeSecureSessions()
   })

@@ -29,6 +29,10 @@ export default defineConfig({
       "../../scripts/__tests__/**/*.test.mjs"
     ],
     globals: true,
+    // Bound file parallelism so Docker-backed lifecycle tests and server cleanup
+    // retain scheduling time on developer workstations and CI runners.
+    maxWorkers: 4,
+    minWorkers: 1,
     setupFiles: [resolve(__dirname, "src/test-support/vitest-test-environment.ts")],
   }
 });
