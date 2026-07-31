@@ -53,7 +53,7 @@ Download the native installer for your platform from [GitHub Releases](https://g
 | Platform | Download | Notes |
 |----------|----------|-------|
 | **macOS** (Apple Silicon) | `Forge-<version>-arm64.dmg` | Signed and notarized |
-| **Windows** (x64) | `Forge-Setup-<version>.exe` | Signed; SmartScreen may still warn until reputation is established |
+| **Windows** (x64) | `Forge-Setup-<version>.exe` | Credential-free and unsigned; SmartScreen may warn. The optional Chrome native host is SHA-256-pinned and fails closed on drift. |
 
 Forge Desktop's supported release platforms are macOS and Windows. No Node.js or pnpm is required: the desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features. Linux source/server, development, CLI, and configuration support remain portable, but Linux has no released Desktop installer.
 

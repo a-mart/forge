@@ -30,7 +30,7 @@ The optional Chrome adapter has no Electron view or recording authority. Its coo
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
 - **Embedded browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
-- **Optional Chrome adapter resources** — deterministic extension shell/payload and a platform/architecture SEA native relay under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release builds require the official pinned SEA Node plus platform signing before the native-host hash/manifest is created
+- **Optional Chrome adapter resources** — deterministic extension shell/payload and a platform/architecture SEA native relay under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release builds use the official pinned SEA Node, require macOS Developer ID signing before the native-host hash/manifest is created, and hash-pin the credential-free unsigned Windows host
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -169,7 +169,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron test:extern
 
 `stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or release-integrity policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies platform-specific native-host metadata: macOS requires its Developer ID signature while Windows requires explicit unsigned release metadata plus the exact manifest SHA-256. Validation mode explicitly allows an unverified validation signature only for non-publishable staging, package-content, and installer validation; runtime deployment and the release path reject it.
 
-The opt-in extension fixture can exercise a temporary isolated Chrome profile, but it is not a replacement for live MV3 service-worker suspension/restart, headed Chrome, Chrome debugger preemption, native-registration/Desktop end-to-end, or target-platform runs. Do not run live registration or load an everyday Chrome profile during routine CI/docs validation. Unit tests, builds, staging, and package-content smoke do not by themselves qualify those live gates, installer contents, or the release SEA/signing path.
+The opt-in extension fixture can exercise a temporary isolated Chrome profile, but it is not a replacement for live MV3 service-worker suspension/restart, headed Chrome, Chrome debugger preemption, native-registration/Desktop end-to-end, or target-platform runs. Do not run live registration or load an everyday Chrome profile during routine CI/docs validation. Unit tests, builds, staging, and package-content smoke do not by themselves qualify those live gates, installer contents, or the release SEA and platform-integrity path.
 
 If you only want to run the Electron app without starting the UI dev server separately:
 
@@ -232,7 +232,7 @@ On Windows, run `%LOCALAPPDATA%\forge\bin\forge.cmd --version` and `forge doctor
 
 ## Code Signing
 
-Add signing variables to `.env` before packaging signed builds.
+Add the macOS signing variables to `.env` before packaging a macOS release build.
 
 ### macOS signing and notarization
 
