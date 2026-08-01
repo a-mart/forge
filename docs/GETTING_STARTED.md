@@ -233,6 +233,18 @@ If the backend detects real provider credentials for OpenAI, Anthropic, or Curso
 
 Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Cursor SDK usage is included in the same stats, analytics, and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. Broker-backed OpenAI/Codex auth can provide broker status and usage when the broker reports it. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
+### Generation throughput
+
+Open **Stats → Throughput** to compare manager and worker generation rates, daily model trends, model summaries, and recent calls. Filter by date range (including a custom range), project, role, provider/model, attribution, or specialist. Stats remains a local Builder surface even when a Remote Project is selected.
+
+Throughput is intentionally **Pi-runtime-only**: it records manager and worker model-call generations that run through Pi, rather than treating a provider name or every runtime as evidence of support. Other runtime paths do not add throughput records. The rate covers the observed output-generation span from first streamed output to completion, not an entire agent run or time spent in tools. An agent-level Pi retry becomes a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
+
+During an eligible manager generation, the header first shows **Measuring…**, then an approximate `tok/s` rate once enough streamed output exists. The final provider-reported value replaces the estimate when available. Active eligible workers can show the same approximate rate on their pill and in Quick Look. Missing final token usage, a missing output boundary, a zero-duration span, or an in-progress call never becomes a fabricated `0 tok/s` rate.
+
+Terminal measurements are saved with session history, so a reconnect or backend restart can rebuild the header's weighted last-20 measured-generation summary across the manager and its workers. They are also scanned into the separate historical Throughput view; generations from before this feature was recorded do not appear. Forks deliberately omit source throughput measurements, so a fork begins its own history.
+
+The default **All measured** filter requires provider-final output and a usable observed stream boundary. **Strict boundaries** narrows that to calls with observed output through stream end; **All calls** exposes unmeasured or incomplete lifecycle records for coverage, but does not assign them a rate. Provider-output `tok/s` includes provider-reported reasoning tokens when available.
+
 ---
 
 ## 4. Working with Your Manager
@@ -302,7 +314,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Historical Codex sidecar display cards are omitted from forked sessions. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Pi generation-throughput measurements are also omitted, so the fork starts its own throughput history. Historical Codex sidecar display cards are omitted from forked sessions. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 

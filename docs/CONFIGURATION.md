@@ -353,7 +353,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── provider-usage-cache.json
 │   │   ├── provider-usage-history.jsonl
 │   │   ├── stats-cache.json
-│   │   └── token-analytics-cache.json
+│   │   ├── token-analytics-cache.json
+│   │   └── generation-throughput-cache.json # Regenerable Pi throughput scan cache
 │   ├── state/
 │   │   ├── mobile-devices.json
 │   │   ├── project-agent-shares.json

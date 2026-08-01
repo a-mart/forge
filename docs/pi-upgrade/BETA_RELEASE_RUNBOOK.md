@@ -54,7 +54,7 @@ scripts/pi-upgrade/start-isolated-instance.sh
 scripts/pi-upgrade/stop-isolated-instance.sh
 ```
 
-Start records the **actual TCP listener PID**, validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop kills only the verified owned wrapper/listener tree.
+Start forces the normal non-Desktop backend path, disables the unnecessary local UI Devtools sidecar, records the **actual TCP listener PID**, validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop collects nonce-bearing descendants before signalling only the verified owned tree; it never adopts an arbitrary listener or process tree.
 
 ## Packaging / Electron
 

@@ -16,6 +16,7 @@ import chatSessionsContent from './articles/chat/chat-sessions.md?raw'
 import chatSidebarContent from './articles/chat/chat-sidebar.md?raw'
 import chatSourceControlContent from './articles/chat/chat-source-control.md?raw'
 import chatSystemPromptContent from './articles/chat/chat-system-prompt.md?raw'
+import chatThroughputContent from './articles/chat/chat-throughput.md?raw'
 import chatWorkersContent from './articles/chat/chat-workers.md?raw'
 
 export const chatArticles: HelpArticle[] = [
@@ -28,6 +29,9 @@ export const chatArticles: HelpArticle[] = [
     keywords: [
       'chat',
       'streaming',
+      'throughput',
+      'generation rate',
+      'tok/s',
       'stop',
       'status',
       'channel',
@@ -65,6 +69,7 @@ export const chatArticles: HelpArticle[] = [
       'chat-browser',
       'chat-files',
       'chat-source-control',
+      'chat-throughput',
       'chat-restart-recovery',
     ],
     contextKeys: ['chat.main'],
@@ -232,7 +237,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-workers',
     title: 'Worker Agents',
     category: 'chat',
-    summary: 'How worker pills, quick look, and worker monitoring work.',
+    summary: 'How worker pills, quick look, live Pi throughput, and worker monitoring work.',
     content: chatWorkersContent,
     keywords: [
       'worker',
@@ -243,9 +248,40 @@ export const chatArticles: HelpArticle[] = [
       'streaming',
       'monitoring',
       'activity',
+      'throughput',
+      'generation rate',
+      'tok/s',
     ],
-    relatedIds: ['chat-overview', 'chat-sidebar'],
+    relatedIds: ['chat-overview', 'chat-sidebar', 'chat-throughput'],
     contextKeys: ['chat.workers'],
+  },
+  {
+    id: 'chat-throughput',
+    title: 'Generation Throughput',
+    category: 'chat',
+    summary: 'Understand live Pi generation rates and the Stats Throughput history.',
+    content: chatThroughputContent,
+    keywords: [
+      'throughput',
+      'generation throughput',
+      'generation rate',
+      'tok/s',
+      'tokens per second',
+      'measuring',
+      'estimated',
+      'provider final',
+      'stats',
+      'trend',
+      'time to first token',
+      'TTFT',
+      'Pi runtime',
+      'worker throughput',
+      'manager throughput',
+      'strict boundaries',
+      'all measured',
+    ],
+    relatedIds: ['chat-overview', 'chat-workers', 'chat-fork-session'],
+    contextKeys: ['chat.main', 'chat.workers'],
   },
   {
     id: 'chat-restart-recovery',
@@ -360,7 +396,7 @@ export const chatArticles: HelpArticle[] = [
       'checkpoint',
       'split',
     ],
-    relatedIds: ['chat-sessions', 'chat-sidebar'],
+    relatedIds: ['chat-sessions', 'chat-sidebar', 'chat-throughput'],
     contextKeys: ['chat.fork'],
   },
   {
