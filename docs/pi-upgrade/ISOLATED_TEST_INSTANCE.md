@@ -78,7 +78,7 @@ chmod +x scripts/pi-upgrade/*.sh
 ./scripts/pi-upgrade/stop-isolated-instance.sh
 ```
 
-Start records the **actual TCP listener PID** (not the `pnpm` wrapper), validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop kills only that verified owned wrapper/listener tree.
+Start forces the normal non-Desktop backend path, disables the unnecessary local UI Devtools sidecar, records the **actual TCP listener PID** (not the `pnpm` wrapper), validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop first collects nonce-bearing descendants of that verified wrapper tree, then signals only still-verified descendants, the wrapper, and the recorded listener; it never adopts an arbitrary listener or process tree.
 
 **Never** use `vite preview` or a production UI build for worktree testing — only `vite dev` honors `VITE_FORGE_WS_URL`. UI ports above `47188` otherwise silently target production backend `47287`.
 
