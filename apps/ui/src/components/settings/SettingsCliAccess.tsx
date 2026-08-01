@@ -337,7 +337,10 @@ export function SettingsCliAccess({
   }, [apiClient, keys, loadKeys])
 
   const activeKeys = keys.filter((k) => !k.revokedAt)
-  const revokedKeys = keys.filter((k) => !!k.revokedAt)
+  const revokedKeys = keys
+    .filter((k) => !!k.revokedAt)
+    .sort((a, b) => Date.parse(b.revokedAt!) - Date.parse(a.revokedAt!))
+    .slice(0, 3)
 
   return (
     <div className="space-y-6">
