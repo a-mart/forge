@@ -39,6 +39,7 @@ export { GenerationThroughputError } from "./generation-throughput/generation-th
  */
 export interface GenerationThroughputServiceOptions {
   scanProfiles?: typeof scanGenerationThroughputProfiles;
+  persistCache?: typeof persistGenerationThroughputCache;
 }
 
 export class GenerationThroughputService {
@@ -47,8 +48,10 @@ export class GenerationThroughputService {
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
   private cacheGeneration = 0;
+  private disposed = false;
   private readonly cacheFilePath: string;
   private readonly scanProfiles: typeof scanGenerationThroughputProfiles;
+  private readonly persistCache: typeof persistGenerationThroughputCache;
 
   constructor(
     private readonly swarmManager: SwarmManager,
@@ -56,6 +59,7 @@ export class GenerationThroughputService {
   ) {
     this.cacheFilePath = getSharedGenerationThroughputCachePath(this.swarmManager.getConfig().paths.dataDir);
     this.scanProfiles = options.scanProfiles ?? scanGenerationThroughputProfiles;
+    this.persistCache = options.persistCache ?? persistGenerationThroughputCache;
     this.swarmManager.on("generation_measurement_terminal_persisted", this.onTerminalRecordPersisted);
   }
 
@@ -67,6 +71,19 @@ export class GenerationThroughputService {
   /** A post-append terminal event invalidates stale disk scans without trusting live payloads. */
   invalidateFromRuntimeCompletion(): void {
     this.clearCache();
+  }
+
+  /** Wait for background cache writes before callers tear down the data directory. */
+  async drainPersistence(): Promise<void> {
+    await this.persistQueue;
+  }
+
+  /** Detach runtime listeners and drain scan-triggered persistence during shutdown. */
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.swarmManager.off("generation_measurement_terminal_persisted", this.onTerminalRecordPersisted);
+    await this.inFlightScan?.promise.catch(() => undefined);
+    await this.drainPersistence();
   }
 
   private readonly onTerminalRecordPersisted = (record: GenerationMeasurementRecordV1): void => {
@@ -128,7 +145,7 @@ export class GenerationThroughputService {
       trends: buildGenerationTrends(scoped, resolved.query.timezone, scopedCoverage),
       diagnostics: {
         ...scanResult.diagnostics,
-        incompleteCallCount: base.filter((record) => record.recordState === "started").length,
+        incompleteCallCount: scopedCoverage.filter((record) => record.recordState === "started").length,
       },
     };
   }
@@ -207,9 +224,10 @@ export class GenerationThroughputService {
   }
 
   private queuePersistCacheWrite(generation: number, entry: GenerationThroughputCacheEntry): void {
+    if (this.disposed) return;
     this.persistQueue = this.persistQueue
       .then(() => generation === this.cacheGeneration
-        ? persistGenerationThroughputCache(this.cacheFilePath, entry)
+        ? this.persistCache(this.cacheFilePath, entry)
         : undefined)
       .catch(() => undefined);
   }

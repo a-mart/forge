@@ -1106,6 +1106,7 @@ export class SwarmWebSocketServer {
       currentCliWss ? closeWebSocketServer(currentCliWss) : Promise.resolve(),
       currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
     ]);
+    await this.generationThroughputService.dispose();
 
     if (this.ownsControlPidFile) {
       await removeOwnedControlPidFile(this.controlPidFile);

@@ -3,18 +3,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GenerationMeasurementRecordV1 } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { persistGenerationThroughputCache } from "../stats/generation-throughput/generation-throughput-cache.js";
 import { GenerationThroughputService } from "../stats/generation-throughput-service.js";
 
 const tempDirs: string[] = [];
+const services: GenerationThroughputService[] = [];
 
 afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.dispose()));
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
+
+function createService(
+  swarmManager: ReturnType<typeof createSwarmManager>,
+  options: ConstructorParameters<typeof GenerationThroughputService>[1] = {},
+): GenerationThroughputService {
+  const service = new GenerationThroughputService(swarmManager as never, options);
+  services.push(service);
+  return service;
+}
 
 describe("GenerationThroughputService", () => {
   it("streams manager and worker records, folds global duplicates, and uses token-weighted throughput", async () => {
     const dataDir = await createFixtureData();
-    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never);
+    const service = createService(createSwarmManager(dataDir));
 
     const snapshot = await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
 
@@ -71,7 +83,7 @@ describe("GenerationThroughputService", () => {
     const scanProfiles = vi.fn()
       .mockReturnValueOnce(stale)
       .mockReturnValueOnce(fresh);
-    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never, { scanProfiles: scanProfiles as never });
+    const service = createService(createSwarmManager(dataDir), { scanProfiles: scanProfiles as never });
 
     const staleRequest = service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
     await vi.waitFor(() => expect(scanProfiles).toHaveBeenCalledTimes(1));
@@ -92,7 +104,7 @@ describe("GenerationThroughputService", () => {
     const dataDir = await createFixtureData();
     const manager = createSwarmManager(dataDir);
     const scanProfiles = vi.fn(async () => scanFixture("scan"));
-    const service = new GenerationThroughputService(manager as never, { scanProfiles: scanProfiles as never });
+    const service = createService(manager, { scanProfiles: scanProfiles as never });
 
     await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
     manager.emitPersistedTerminal({ recordState: "terminal" });
@@ -103,7 +115,7 @@ describe("GenerationThroughputService", () => {
 
   it("keeps strict quality separate from proxy measurements and validates custom query windows", async () => {
     const dataDir = await createFixtureData();
-    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never);
+    const service = createService(createSwarmManager(dataDir));
 
     const strict = await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "strict" });
     expect(strict.totals.measuredCallCount).toBe(1);
@@ -114,6 +126,48 @@ describe("GenerationThroughputService", () => {
       statusCode: 400,
       message: "custom rangePreset requires startDate and endDate",
     });
+  });
+
+  it("scopes incomplete diagnostics to the selected provider and model", async () => {
+    const dataDir = await createFixtureData();
+    const service = createService(createSwarmManager(dataDir));
+    const query = { rangePreset: "all" as const, timezone: "UTC", quality: "all" as const };
+
+    const openAi = await service.getSnapshot({ ...query, provider: "openai-codex" });
+    const anthropic = await service.getSnapshot({ ...query, provider: "anthropic" });
+    const gpt = await service.getSnapshot({ ...query, modelId: "gpt-test" });
+    const claude = await service.getSnapshot({ ...query, modelId: "claude-test" });
+
+    expect(openAi.diagnostics.incompleteCallCount).toBe(1);
+    expect(anthropic.diagnostics.incompleteCallCount).toBe(0);
+    expect(gpt.diagnostics.incompleteCallCount).toBe(1);
+    expect(claude.diagnostics.incompleteCallCount).toBe(0);
+  });
+
+  it("drains in-flight cache persistence before fixture cleanup", async () => {
+    const dataDir = await createFixtureData();
+    let releasePersist: (() => void) | undefined;
+    const persistStarted = new Promise<void>((resolve) => { releasePersist = resolve; });
+    const persistCache = vi.fn(async (...args: Parameters<typeof persistGenerationThroughputCache>) => {
+      await persistStarted;
+      await persistGenerationThroughputCache(...args);
+    });
+    const service = createService(createSwarmManager(dataDir), {
+      scanProfiles: (async () => scanFixture("persisting")) as never,
+      persistCache,
+    });
+
+    await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+    await vi.waitFor(() => expect(persistCache).toHaveBeenCalledTimes(1));
+
+    let disposed = false;
+    const disposing = service.dispose().then(() => { disposed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(disposed).toBe(false);
+
+    releasePersist?.();
+    await disposing;
+    await expect(rm(dataDir, { recursive: true })).resolves.toBeUndefined();
   });
 });
 
@@ -234,6 +288,9 @@ function createSwarmManager(dataDir: string) {
     listUserProfiles: () => [{ profileId: "project-a", displayName: "Project A" }],
     on: (event: string, listener: (record: { recordState: "terminal" }) => void) => {
       if (event === "generation_measurement_terminal_persisted") persistedListener = listener;
+    },
+    off: (event: string, listener: (record: { recordState: "terminal" }) => void) => {
+      if (event === "generation_measurement_terminal_persisted" && persistedListener === listener) persistedListener = undefined;
     },
     emitPersistedTerminal: (record: { recordState: "terminal" }) => persistedListener?.(record),
   };

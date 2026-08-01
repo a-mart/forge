@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getByText, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -21,7 +21,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   useGenerationThroughputMock.mockReset()
-  fetchCallsMock.mockResolvedValue({ computedAt: '2026-04-02T00:00:00.000Z', items: [], totalCount: 0, nextCursor: null })
+  fetchCallsMock.mockReset().mockResolvedValue({ computedAt: '2026-04-02T00:00:00.000Z', items: [], totalCount: 0, nextCursor: null })
 })
 
 afterEach(() => {
@@ -46,6 +46,48 @@ describe('GenerationThroughputPanel', () => {
     await waitFor(() => expect(fetchCallsMock).toHaveBeenCalled())
   })
 
+  it('appends unique calls from later pages', async () => {
+    const first = recentCall('first-call', 'First session')
+    const second = recentCall('second-call', 'Second session')
+    fetchCallsMock
+      .mockResolvedValueOnce(callsPage([first], 'page-two'))
+      .mockResolvedValueOnce(callsPage([first, second], null))
+    useGenerationThroughputMock.mockReturnValue({ snapshot: fixture(), isLoading: false, isRefreshing: false, isSwitchingQuery: false, error: null, refresh: vi.fn() })
+    root = createRoot(container)
+    flushSync(() => root?.render(createElement(GenerationThroughputPanel, { wsUrl: 'ws://127.0.0.1:47187', onBack: vi.fn() })))
+
+    await waitFor(() => expect(getByText(container, 'First session')).toBeTruthy())
+    fireEvent.click(getByText(container, 'Load more'))
+    await waitFor(() => expect(getByText(container, 'Second session')).toBeTruthy())
+
+    expect(Array.from(container.querySelectorAll('tbody tr')).filter((row) => row.textContent?.includes('First session'))).toHaveLength(1)
+    expect(fetchCallsMock.mock.calls[1]?.[1]).toMatchObject({ cursor: 'page-two', limit: 25 })
+  })
+
+  it('replaces paginated calls when a filter query changes', async () => {
+    const first = recentCall('first-call', 'First session')
+    const second = recentCall('second-call', 'Second session')
+    const replacement = recentCall('replacement-call', 'Filtered session')
+    fetchCallsMock
+      .mockResolvedValueOnce(callsPage([first], 'page-two'))
+      .mockResolvedValueOnce(callsPage([second], 'page-three'))
+      .mockResolvedValueOnce(callsPage([replacement], null))
+    useGenerationThroughputMock.mockReturnValue({ snapshot: fixture(), isLoading: false, isRefreshing: false, isSwitchingQuery: false, error: null, refresh: vi.fn() })
+    root = createRoot(container)
+    flushSync(() => root?.render(createElement(GenerationThroughputPanel, { wsUrl: 'ws://127.0.0.1:47187', onBack: vi.fn() })))
+
+    await waitFor(() => expect(getByText(container, 'First session')).toBeTruthy())
+    fireEvent.click(getByText(container, 'Load more'))
+    await waitFor(() => expect(getByText(container, 'Second session')).toBeTruthy())
+    fireEvent.click(getByText(container, 'All time'))
+    await waitFor(() => expect(getByText(container, 'Filtered session')).toBeTruthy())
+
+    expect(container.textContent).not.toContain('First session')
+    expect(container.textContent).not.toContain('Second session')
+    expect(fetchCallsMock.mock.calls[2]?.[1]).toMatchObject({ rangePreset: 'all', limit: 25 })
+    expect(fetchCallsMock.mock.calls[2]?.[1]?.cursor).toBeUndefined()
+  })
+
   it('uses the post-update empty state instead of showing zero speed', () => {
     const snapshot = fixture()
     snapshot.totals.terminalCallCount = 0
@@ -56,6 +98,26 @@ describe('GenerationThroughputPanel', () => {
     expect(getByText(container, 'Throughput is available for generations recorded after this Forge update.')).toBeTruthy()
   })
 })
+
+function callsPage(items: unknown[], nextCursor: string | null) {
+  return { computedAt: '2026-04-02T00:00:00.000Z', items, totalCount: items.length, nextCursor }
+}
+
+function recentCall(measurementId: string, sessionLabel: string) {
+  return {
+    measurementId,
+    completedAt: '2026-04-02T00:00:00.000Z',
+    sessionLabel,
+    role: 'manager',
+    specialistDisplayName: null,
+    modelId: 'gpt-test',
+    provider: 'openai-codex',
+    outputTokens: 100,
+    generationDurationMs: 2000,
+    tokensPerSecond: 50,
+    quality: { boundarySource: 'content_delta_to_stream_end' },
+  }
+}
 
 function fixture(): GenerationThroughputSnapshot {
   const metrics = {

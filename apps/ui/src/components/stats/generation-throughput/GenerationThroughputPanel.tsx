@@ -123,17 +123,42 @@ function RecentCalls({ wsUrl, query }: { wsUrl: string; query: GenerationThrough
   const [page, setPage] = useState<GenerationThroughputCallsPage | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [cursor, setCursor] = useState<string | undefined>()
-  const queryKey = JSON.stringify(query)
-  useEffect(() => { setCursor(undefined) }, [queryKey])
+  const requestKey = useMemo(() => `${wsUrl}\u0000${JSON.stringify(query)}`, [query, wsUrl])
+  const [pagination, setPagination] = useState(() => ({ requestKey, cursor: undefined as string | undefined }))
+
   useEffect(() => {
+    if (pagination.requestKey === requestKey) return
+    setPage(null)
+    setError(null)
+    setLoading(true)
+    setPagination({ requestKey, cursor: undefined })
+  }, [pagination.requestKey, requestKey])
+
+  useEffect(() => {
+    if (pagination.requestKey !== requestKey) return
     let cancelled = false
+    const { cursor } = pagination
     setLoading(true)
     setError(null)
-    fetchGenerationCalls(wsUrl, { ...query, cursor, limit: 25 }).then((next) => { if (!cancelled) setPage(next) }).catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Failed to load calls') }).finally(() => { if (!cancelled) setLoading(false) })
+    fetchGenerationCalls(wsUrl, { ...query, cursor, limit: 25 }).then((next) => {
+      if (!cancelled) setPage((current) => cursor ? appendCallsPage(current, next) : next)
+    }).catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Failed to load calls') }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [cursor, query, queryKey, wsUrl])
-  return <Card className="overflow-hidden border-border/50 bg-card/80"><div className="flex items-center justify-between border-b border-border/50 px-4 py-3"><div><h2 className="text-sm font-semibold">Recent generations</h2><p className="text-xs text-muted-foreground">Per-provider calls, not agent-run duration.</p></div>{loading ? <RefreshCw className="size-4 animate-spin text-muted-foreground" /> : null}</div>{error ? <p className="p-4 text-xs text-destructive">{error}</p> : <CallsTable calls={page?.items ?? []} />}{page?.nextCursor ? <div className="border-t border-border/50 p-2 text-right"><Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setCursor(page.nextCursor ?? undefined)}>Load more <ChevronRight className="size-3" /></Button></div> : null}</Card>
+  }, [pagination, query, requestKey, wsUrl])
+
+  return <Card className="overflow-hidden border-border/50 bg-card/80"><div className="flex items-center justify-between border-b border-border/50 px-4 py-3"><div><h2 className="text-sm font-semibold">Recent generations</h2><p className="text-xs text-muted-foreground">Per-provider calls, not agent-run duration.</p></div>{loading ? <RefreshCw className="size-4 animate-spin text-muted-foreground" /> : null}</div>{error ? <p className="p-4 text-xs text-destructive">{error}</p> : <CallsTable calls={page?.items ?? []} />}{page?.nextCursor ? <div className="border-t border-border/50 p-2 text-right"><Button variant="ghost" size="sm" className="gap-1 text-xs" disabled={loading || pagination.requestKey !== requestKey} onClick={() => setPagination({ requestKey, cursor: page.nextCursor ?? undefined })}>Load more <ChevronRight className="size-3" /></Button></div> : null}</Card>
+}
+
+function appendCallsPage(current: GenerationThroughputCallsPage | null, next: GenerationThroughputCallsPage): GenerationThroughputCallsPage {
+  if (!current) return next
+  const measurementIds = new Set(current.items.map((call) => call.measurementId))
+  const items = current.items.slice()
+  for (const call of next.items) {
+    if (measurementIds.has(call.measurementId)) continue
+    measurementIds.add(call.measurementId)
+    items.push(call)
+  }
+  return { ...next, items }
 }
 
 function CallsTable({ calls }: { calls: GenerationThroughputCall[] }) {
