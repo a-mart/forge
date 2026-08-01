@@ -33,6 +33,8 @@ import type {
   CollaborationCategory,
   CollaborationServerEvent,
   ForgeModelCatalog,
+  GenerationMeasurementRecordV1,
+  GenerationThroughputEvent,
   ManagerProfile,
   MessageChannel,
   ResolvedSpecialistDefinition,
@@ -872,6 +874,77 @@ describe('protocol root barrel contract', () => {
     expect(specialist.targetSpace).toContain('builder')
     expect(codexSidecar.externalThread?.threadId).toBe('codex-thread-1')
     expect(codexParentCard.externalThreadContext?.excludeFromModelContext).toBe(true)
+  })
+
+  it('exports Pi-only generation throughput contracts from the root barrel', () => {
+    const record = {
+      version: 1,
+      measurementId: 'measurement-1',
+      recordState: 'terminal',
+      recordSequence: 2,
+      startedAt: now,
+      completedAt: now,
+      identity: {
+        profileId: profile.profileId,
+        sessionId: agent.agentId,
+        agentId: agent.agentId,
+        managerId: agent.agentId,
+        role: 'manager',
+        specialistId: null,
+        specialistAttributionKnown: null,
+      },
+      model: {
+        provider: 'openai-codex',
+        requestedModelId: 'gpt-5.4',
+        responseModelId: null,
+        api: 'openai-codex-responses',
+        reasoningLevel: 'xhigh',
+      },
+      correlation: { turnId: null },
+      timing: {
+        responseStreamStartedAt: now,
+        firstOutputAt: now,
+        lastOutputAt: now,
+        requestWallMs: 1,
+        timeToFirstOutputMs: 1,
+        responseStreamOpenMs: 1,
+        generationDurationMs: 1,
+        interOutputSpanMs: 0,
+        boundarySource: 'content_delta_to_stream_end',
+      },
+      usage: { outputTokens: 1, reasoningTokens: null, tokenSource: 'provider_final' },
+      outcome: 'completed',
+      reasoningBoundaryCoverage: 'not_reported',
+    } satisfies GenerationMeasurementRecordV1
+    const live = {
+      type: 'generation_throughput',
+      measurement: {
+        measurementId: record.measurementId,
+        sequence: 1,
+        phase: 'completed',
+        profileId: profile.profileId,
+        sessionId: agent.agentId,
+        agentId: agent.agentId,
+        managerId: agent.agentId,
+        role: 'manager',
+        provider: record.model.provider,
+        modelId: record.model.requestedModelId,
+        sampledAt: now,
+        firstOutputAt: now,
+        elapsedGenerationMs: 1,
+        outputTokens: 1,
+        instantaneousTokensPerSecond: null,
+        generationAverageTokensPerSecond: 1,
+        valueKind: 'provider_final',
+        quality: {
+          tokenSource: 'provider_final',
+          boundarySource: 'content_delta_to_stream_end',
+          reasoningBoundaryCoverage: 'not_reported',
+        },
+      },
+    } satisfies GenerationThroughputEvent
+
+    expect(record.measurementId).toBe(live.measurement.measurementId)
   })
 
   it('exports session audit protocol contracts from the root barrel', () => {

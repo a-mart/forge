@@ -7,7 +7,7 @@ import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
-import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
+import type { RuntimeGenerationEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import {
   SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
   type SecureRuntimeBinding,
@@ -368,6 +368,48 @@ describe("SwarmRuntimeController", () => {
 
     controller.clearRuntimeToken("agent-a", second);
     expect(controller.getRuntimeToken("agent-a")).toBeUndefined();
+  });
+
+  it("drops stale generation callbacks before they can append durable records", async () => {
+    const config = await makeTempConfig();
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "manager-throughput",
+      role: "manager",
+      managerId: "manager-throughput",
+      profileId: "profile-1",
+    });
+    descriptors.set(manager.agentId, manager);
+    const appendCustomEntry = vi.fn(() => "entry-1");
+    controller.attachRuntime(manager.agentId, {
+      appendCustomEntry,
+    } as unknown as SwarmAgentRuntime);
+    const firstToken = controller.allocateRuntimeToken(manager.agentId);
+    const requestStarted = {
+      phase: "request_started",
+      measurementId: "stale-call",
+      wallTimeMs: 1_000,
+      monotonicTimeMs: 10,
+      requestedProvider: "openai-codex",
+      requestedModelId: "gpt-5.5",
+      reasoningLevel: "high",
+    } satisfies RuntimeGenerationEvent;
+
+    await expect(controller.handleRuntimeGenerationEvent(firstToken, manager.agentId, requestStarted)).resolves.toBe(true);
+    expect(appendCustomEntry).toHaveBeenCalledTimes(1);
+
+    controller.allocateRuntimeToken(manager.agentId);
+    const staleCompletion = {
+      phase: "completed",
+      measurementId: "stale-call",
+      wallTimeMs: 2_000,
+      monotonicTimeMs: 1_010,
+      outcome: "completed",
+      meta: { usage: { output: 50 } },
+    } satisfies RuntimeGenerationEvent;
+    await expect(controller.handleRuntimeGenerationEvent(firstToken, manager.agentId, staleCompletion)).resolves.toBe(false);
+    expect(appendCustomEntry).toHaveBeenCalledTimes(1);
   });
 
   it("forwards an accepted terminal agent turn with its pre-consumption turn authority", async () => {

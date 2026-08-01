@@ -9,6 +9,7 @@ import type { SkillMetadata } from "./skills/skill-metadata-service.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
+  RuntimeGenerationEvent,
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
   SwarmAgentRuntime
@@ -24,6 +25,7 @@ import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import { RuntimeEventProjector, type ManagerAssistantOutputRouteResult } from "./runtime/runtime-event-projector.js";
+import { GenerationMeasurementCoordinator } from "./generation-throughput/generation-measurement-coordinator.js";
 import type {
   AssistantOutputTarget,
   SessionTranscriptAssistantOutputTarget,
@@ -216,6 +218,7 @@ export class SwarmRuntimeController {
   private readonly runtimeBinding: RuntimeBinding;
   private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
+  private readonly generationMeasurementCoordinator: GenerationMeasurementCoordinator;
   private runtimeStatusProjector: RuntimeStatusProjector | null = null;
   private runtimeErrorProjector: RuntimeErrorProjector | null = null;
   private runtimeEventProjector: RuntimeEventProjector | null = null;
@@ -247,6 +250,12 @@ export class SwarmRuntimeController {
     this.runtimeCallbackGate = new RuntimeCallbackGate({
       getCurrentRuntimeToken: (agentId) => this.runtimeBinding.getRuntimeToken(agentId),
       now: () => this.now()
+    });
+    this.generationMeasurementCoordinator = new GenerationMeasurementCoordinator({
+      descriptors: this.host.descriptors,
+      getRuntime: (agentId) => this.getRuntime(agentId),
+      getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
+      logDebug: (message, details) => this.logDebug(message, details),
     });
     this.runtimeFactory = new RuntimeFactory({
       host,
@@ -288,6 +297,9 @@ export class SwarmRuntimeController {
         },
         onRuntimeError: async (runtimeToken, agentId, error) => {
           await this.handleRuntimeError(runtimeToken, agentId, error);
+        },
+        onGenerationEvent: async (runtimeToken, agentId, event) => {
+          await this.handleRuntimeGenerationEvent(runtimeToken, agentId, event);
         },
         onRuntimeExtensionSnapshot: async (runtimeToken, agentId, snapshot) => {
           this.handleRuntimeExtensionSnapshot(runtimeToken, agentId, snapshot);
@@ -898,6 +910,23 @@ export class SwarmRuntimeController {
         this.host.logDebug("browser:turn-cleanup-pending", { agentId, turnId: terminalTurnId, error: String(error) });
       }
     }
+    return true;
+  }
+
+  /**
+   * Generation telemetry has a separate ingress from conversation projection.
+   * Keep the stale-runtime gate ahead of all coordinator mutation and JSONL IO.
+   */
+  async handleRuntimeGenerationEvent(
+    runtimeToken: number,
+    agentId: string,
+    event: RuntimeGenerationEvent,
+  ): Promise<boolean> {
+    if (this.shouldIgnoreRuntimeCallback(agentId, runtimeToken)) {
+      return false;
+    }
+
+    await this.generationMeasurementCoordinator.handleRuntimeGenerationEvent(runtimeToken, agentId, event);
     return true;
   }
 

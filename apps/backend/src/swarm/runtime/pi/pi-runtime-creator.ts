@@ -17,6 +17,7 @@ import {
   type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
+import { PiGenerationTelemetryAdapter } from "../generation-telemetry.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import { resizeImageIfNeeded } from "../image-utils.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
@@ -30,8 +31,10 @@ import { formatPiExtensionLoadError } from "../../pi-extension-migration-diagnos
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
+  RuntimeGenerationEvent,
   RuntimeSessionEvent,
-  SwarmAgentRuntime
+  SwarmAgentRuntime,
+  SwarmRuntimeCallbacks
 } from "../../runtime-contracts.js";
 import { installOpenAICodexWebSocketDiagnostics } from "../../runtime-utils.js";
 import {
@@ -221,6 +224,11 @@ interface PiRuntimeCreatorDependencies {
     onSessionEvent: (runtimeToken: number, agentId: string, event: RuntimeSessionEvent) => Promise<void>;
     onAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>;
     onRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>;
+    onGenerationEvent?: (
+      runtimeToken: number,
+      agentId: string,
+      event: RuntimeGenerationEvent,
+    ) => Promise<void>;
     onRuntimeExtensionSnapshot: (
       runtimeToken: number,
       agentId: string,
@@ -457,6 +465,33 @@ export class PiRuntimeCreator {
         : {}),
     });
     installPiProviderContextImageResize(session, secureRuntimeBinding);
+    const runtimeCallbacks: SwarmRuntimeCallbacks = {
+      onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
+        await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
+      },
+      onSessionEvent: async (agentId, event) => {
+        await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
+      },
+      onAgentEnd: async (agentId) => {
+        await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
+      },
+      onRuntimeError: async (agentId, error) => {
+        await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
+      },
+      onGenerationEvent: async (agentId, event) => {
+        await this.deps.callbacks.onGenerationEvent?.(runtimeToken, agentId, event);
+      },
+      getLastUserFacingManagerOutputAt: (agentId) =>
+        this.deps.callbacks.getLastUserFacingManagerOutputAt?.(agentId),
+    };
+    const generationTelemetry = new PiGenerationTelemetryAdapter({
+      session: session as AgentSession,
+      reasoningLevel: descriptor.model.thinkingLevel,
+      onGenerationEvent: async (event) => {
+        await runtimeCallbacks.onGenerationEvent?.(descriptor.agentId, event);
+      },
+    });
+    generationTelemetry.install();
 
     const extensionSnapshot = buildRuntimeExtensionSnapshot({
       descriptor,
@@ -560,22 +595,8 @@ export class PiRuntimeCreator {
       systemPrompt,
       compactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider(),
       compactionFailureScopeKey,
-      callbacks: {
-        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
-        },
-        onSessionEvent: async (agentId, event) => {
-          await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
-        },
-        onAgentEnd: async (agentId) => {
-          await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
-        },
-        onRuntimeError: async (agentId, error) => {
-          await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
-        },
-        getLastUserFacingManagerOutputAt: (agentId) =>
-          this.deps.callbacks.getLastUserFacingManagerOutputAt?.(agentId)
-      },
+      generationTelemetry,
+      callbacks: runtimeCallbacks,
       now: this.deps.now
     });
 

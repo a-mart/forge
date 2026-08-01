@@ -118,6 +118,8 @@ export interface AgentDescriptor {
   streamingStartedAt?: number;
   pendingChoiceCount?: number;
   specialistId?: string;
+  /** Internal provenance fact captured for durable worker analytics records. */
+  specialistAttributionKnown?: boolean;
   specialistTier?: EffortTier;
   specialistLens?: string;
   specialistDisplayName?: string;

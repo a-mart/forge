@@ -65,6 +65,56 @@ export interface RuntimeTurnMeta extends RuntimeModelCallMeta {
   outcome?: string;
 }
 
+/**
+ * Content-safe subset of a model call. Generation lifecycle callbacks must
+ * never carry prompt messages, tool arguments, invocation parameters, or
+ * provider metadata because they cross the durable telemetry boundary.
+ */
+export type RuntimeGenerationCallMeta = Pick<
+  RuntimeModelCallMeta,
+  "usage" | "modelId" | "responseModelId" | "provider" | "api" | "stopReason" | "durationMs"
+>;
+
+/**
+ * Count-only provider-generation lifecycle signal. This is intentionally
+ * runtime-neutral so recording does not depend on conversation projection;
+ * Pi is the sole producer in the initial implementation.
+ */
+export type RuntimeGenerationEvent =
+  | {
+      phase: "request_started";
+      measurementId: string;
+      wallTimeMs: number;
+      monotonicTimeMs: number;
+      requestedProvider: string;
+      requestedModelId: string;
+      reasoningLevel: string | null;
+    }
+  | {
+      phase: "response_stream_started";
+      measurementId: string;
+      wallTimeMs: number;
+      monotonicTimeMs: number;
+    }
+  | {
+      phase: "output_delta";
+      measurementId: string;
+      wallTimeMs: number;
+      monotonicTimeMs: number;
+      deltaKind: "text" | "thinking" | "tool_call";
+      deltaUtf16CodeUnits: number;
+      deltaUtf8Bytes: number;
+      partialOutputTokens?: number;
+    }
+  | {
+      phase: "completed";
+      measurementId: string;
+      wallTimeMs: number;
+      monotonicTimeMs: number;
+      outcome: "completed" | "length" | "tool_use" | "aborted" | "error" | "unknown";
+      meta?: RuntimeGenerationCallMeta;
+    };
+
 export interface SpecialistFallbackReplaySnapshot {
   messages: RuntimeUserMessage[];
 }
@@ -195,6 +245,8 @@ export interface SwarmRuntimeCallbacks {
   onSessionEvent?: (agentId: string, event: RuntimeSessionEvent) => void | Promise<void>;
   onAgentEnd?: (agentId: string) => void | Promise<void>;
   onRuntimeError?: (agentId: string, error: RuntimeErrorEvent) => void | Promise<void>;
+  /** Count-only per-provider-generation lifecycle; not a conversation event. */
+  onGenerationEvent?: (agentId: string, event: RuntimeGenerationEvent) => void | Promise<void>;
   /**
    * Epoch-ms of the last user-facing manager output actually PROJECTED to the
    * conversation (assistant text on any cycle, a choices prompt, a backstop

@@ -66,6 +66,7 @@ import {
 } from "../compaction/forge-pi-compaction-extension.js";
 import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
 import { hasNoReplySentinelLine } from "./manager-assistant-final-message.js";
+import { PiGenerationTelemetryAdapter } from "./generation-telemetry.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -181,6 +182,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly systemPrompt: string;
   private readonly compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
   private readonly compactionFailureScopeKey: string;
+  private readonly generationTelemetry: PiGenerationTelemetryAdapter | undefined;
   private pendingDeliveries: PendingDelivery[] = [];
   private promotedPendingDeliveryId: string | undefined;
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
@@ -230,6 +232,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     systemPrompt?: string;
     compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
     compactionFailureScopeKey?: string;
+    generationTelemetry?: PiGenerationTelemetryAdapter;
   }) {
     this.descriptor = options.descriptor;
     this.session = options.session;
@@ -239,6 +242,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.compactionRuntimeSettingsProvider =
       options.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
     this.compactionFailureScopeKey = options.compactionFailureScopeKey ?? options.descriptor.agentId;
+    this.generationTelemetry = options.generationTelemetry;
     this.status = options.descriptor.status;
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
@@ -442,6 +446,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
+    await this.generationTelemetry?.abortActive();
     await this.shutdownSessionResourcesOnce({ reason: "quit" });
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
@@ -507,6 +512,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
+    await this.generationTelemetry?.abortActive();
     this.pendingDeliveries = [];
     this.promotedPendingDeliveryId = undefined;
     this.recoveryBufferedMessages.length = 0;
@@ -1273,11 +1279,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "agent_settled") {
+      await this.generationTelemetry?.handleSessionEvent(event);
       await this.finalizeAgentRunSettlement();
       return;
     }
 
     const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
+    await this.generationTelemetry?.handleSessionEvent(
+      event,
+      normalizedEvent?.type === "message_end" ? normalizedEvent.meta : undefined,
+    );
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }
@@ -3151,6 +3162,7 @@ function normalizePiUsage(value: unknown): { usage: RuntimeModelCallMeta["usage"
       output: readNumber(record.output),
       cacheRead: readNumber(record.cacheRead),
       cacheWrite: readNumber(record.cacheWrite),
+      reasoning: readNumber(record.reasoning),
       total: readNumber(record.totalTokens),
     },
     costUsd: cost ? {

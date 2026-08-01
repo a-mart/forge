@@ -267,6 +267,7 @@ function createFactory(
     buildCursorSdkRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
     callbacks?: Partial<{
       onRuntimeError: (runtimeToken: number, agentId: string, error: unknown) => Promise<void>;
+      onGenerationEvent: (runtimeToken: number, agentId: string, event: unknown) => Promise<void>;
       onRuntimeExtensionSnapshot: (runtimeToken: number, agentId: string, snapshot: unknown) => Promise<void>;
     }>;
     skipProjectionBootstrap?: boolean;
@@ -338,6 +339,7 @@ function createFactory(
       onSessionEvent: async () => {},
       onAgentEnd: async () => {},
       onRuntimeError: overrides.callbacks?.onRuntimeError ?? (async () => {}),
+      onGenerationEvent: overrides.callbacks?.onGenerationEvent ?? (async () => {}),
       onRuntimeExtensionSnapshot: overrides.callbacks?.onRuntimeExtensionSnapshot ?? (async () => {}),
     },
   });
@@ -618,6 +620,31 @@ describe("RuntimeFactory", () => {
     expect(loaderOptions.additionalSkillPaths).toEqual([profileSkillPath]);
     expect(loaderOptions.additionalSkillPaths).not.toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
     expect(loaderOptions.skillsOverride).toBeUndefined();
+  });
+
+  it("chains count-only Pi generation hooks through the runtime callback plumbing", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const piSession = createMockPiSession();
+    const priorPayload = vi.fn(async () => ({ transformed: true }));
+    piSession.agent.onPayload = priorPayload;
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: piSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const onGenerationEvent = vi.fn(async () => undefined);
+    const factory = createFactory(rootDir, { callbacks: { onGenerationEvent } });
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 41);
+    await expect(piSession.agent.onPayload({}, { provider: "anthropic", id: "claude-test" }))
+      .resolves.toEqual({ transformed: true });
+
+    expect(priorPayload).toHaveBeenCalledOnce();
+    expect(onGenerationEvent).toHaveBeenCalledWith(41, "worker-1", expect.objectContaining({
+      phase: "request_started",
+      requestedProvider: "anthropic",
+      requestedModelId: "claude-test",
+    }));
   });
 
   it("installs provider-context image normalization on every created Pi session", async () => {

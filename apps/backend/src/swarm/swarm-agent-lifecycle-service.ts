@@ -904,6 +904,9 @@ export class SwarmAgentLifecycleService {
         manager.agentId,
         agentId
       ),
+      // New workers have explicit current attribution; legacy descriptors that
+      // lack this field remain unknown when historical records are scanned.
+      specialistAttributionKnown: true,
       ...(webSearch ? { webSearch: true } : {})
     };
 

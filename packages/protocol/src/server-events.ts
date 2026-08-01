@@ -133,6 +133,10 @@ import type {
   SecureSessionSnapshotEvent,
 } from './secure-sessions.js'
 import type { StreamDeckNavigationRequestedEvent } from './stream-deck.js'
+import type {
+  GenerationThroughputEvent,
+  GenerationThroughputSnapshotEvent,
+} from './generation-throughput.js'
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
@@ -194,6 +198,8 @@ export type ServerEvent =
   | SecureSessionSnapshotEvent
   | SecureSecretCatalogChangedEvent
   | StreamDeckNavigationRequestedEvent
+  | GenerationThroughputEvent
+  | GenerationThroughputSnapshotEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent

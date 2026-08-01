@@ -7,6 +7,7 @@ import type { ProjectExecutableTrustPlan } from "../project-executable-trust.js"
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
+  RuntimeGenerationEvent,
   RuntimeSessionEvent,
   SwarmAgentRuntime
 } from "../runtime-contracts.js";
@@ -75,6 +76,11 @@ interface RuntimeFactoryDependencies {
     onSessionEvent: (runtimeToken: number, agentId: string, event: RuntimeSessionEvent) => Promise<void>;
     onAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>;
     onRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>;
+    onGenerationEvent?: (
+      runtimeToken: number,
+      agentId: string,
+      event: RuntimeGenerationEvent,
+    ) => Promise<void>;
     onRuntimeExtensionSnapshot: (
       runtimeToken: number,
       agentId: string,
