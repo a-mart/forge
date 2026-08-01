@@ -253,6 +253,9 @@ describe("collaboration HTTP auth middleware", () => {
     expect(classifyCollaborationHttpRequest("/api/settings/cli-access/keys", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/debug/sidebar-perf", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/stats", "GET", REMOTE_BUILD_ON)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/stats/throughput", "GET", REMOTE_BUILD_ON)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/stats/throughput/refresh", "POST", REMOTE_BUILD_ON)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/stats/throughput/calls", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/terminals/settings", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/restart-recovery", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/mobile/push/register", "POST", REMOTE_BUILD_ON)).toBe("admin");

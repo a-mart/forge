@@ -7,7 +7,7 @@ export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
 export type ActiveView = 'chat' | 'settings' | 'stats' | 'archive'
 export type ActiveSurface = 'builder' | 'collab'
-export type StatsTab = 'overview' | 'tokens'
+export type StatsTab = 'overview' | 'tokens' | 'throughput'
 export type DeckPanel = 'git' | 'browser' | 'terminal'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string; origin?: string; deckPanel?: DeckPanel }
@@ -113,8 +113,8 @@ export function parseRouteStateFromLocation(
   }
 
   if (view === 'stats') {
-    const statsTab = typeof routeSearch.statsTab === 'string' && ['overview', 'tokens'].includes(routeSearch.statsTab)
-      ? (routeSearch.statsTab as 'overview' | 'tokens')
+    const statsTab = typeof routeSearch.statsTab === 'string' && ['overview', 'tokens', 'throughput'].includes(routeSearch.statsTab)
+      ? (routeSearch.statsTab as StatsTab)
       : undefined
     return { view: 'stats', statsTab }
   }

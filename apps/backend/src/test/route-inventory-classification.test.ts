@@ -188,6 +188,9 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/stats/tokens/refresh", expect: { POST: "admin" } },
   { sample: "/api/stats/tokens/workers", expect: { GET: "admin" } },
   { sample: "/api/stats/tokens/worker-events", expect: { GET: "admin" } },
+  { sample: "/api/stats/throughput", expect: { GET: "admin" } },
+  { sample: "/api/stats/throughput/refresh", expect: { POST: "admin" } },
+  { sample: "/api/stats/throughput/calls", expect: { GET: "admin" } },
   { sample: "/api/provider-usage", expect: { GET: "admin" } },
   { sample: "/api/telemetry/send-now", expect: { POST: "admin" }, optional: true },
 

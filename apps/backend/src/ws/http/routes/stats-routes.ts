@@ -5,9 +5,15 @@ import type {
   TokenAnalyticsRangePreset,
   TokenAnalyticsSortDirection,
   TokenAnalyticsWorkerSort,
+  GenerationThroughputCallsQuery,
+  GenerationThroughputQuery,
+  GenerationThroughputRangePreset,
+  GenerationRoleFilter,
+  GenerationQualityFilter,
 } from "@forge/protocol";
 import type { StatsService } from "../../../stats/stats-service.js";
 import { TokenAnalyticsError, type TokenAnalyticsService } from "../../../stats/token-analytics-service.js";
+import { GenerationThroughputError, type GenerationThroughputService } from "../../../stats/generation-throughput-service.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
@@ -17,13 +23,17 @@ const STATS_TOKENS_ENDPOINT_PATH = "/api/stats/tokens";
 const STATS_TOKENS_REFRESH_ENDPOINT_PATH = "/api/stats/tokens/refresh";
 const STATS_TOKENS_WORKERS_ENDPOINT_PATH = "/api/stats/tokens/workers";
 const STATS_TOKENS_WORKER_EVENTS_ENDPOINT_PATH = "/api/stats/tokens/worker-events";
+const STATS_THROUGHPUT_ENDPOINT_PATH = "/api/stats/throughput";
+const STATS_THROUGHPUT_REFRESH_ENDPOINT_PATH = "/api/stats/throughput/refresh";
+const STATS_THROUGHPUT_CALLS_ENDPOINT_PATH = "/api/stats/throughput/calls";
 const PROVIDER_USAGE_ENDPOINT_PATH = "/api/provider-usage";
 
 export function createStatsRoutes(options: {
   statsService: StatsService;
   tokenAnalyticsService: TokenAnalyticsService;
+  generationThroughputService: GenerationThroughputService;
 }): HttpRoute[] {
-  const { statsService, tokenAnalyticsService } = options;
+  const { statsService, tokenAnalyticsService, generationThroughputService } = options;
 
   return [
     {
@@ -217,6 +227,86 @@ export function createStatsRoutes(options: {
     },
     {
       methods: "GET, OPTIONS",
+      matches: (pathname) => pathname === STATS_THROUGHPUT_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        const methods = "GET, OPTIONS";
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, methods);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, methods);
+          response.setHeader("Allow", methods);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        applyCorsHeaders(request, response, methods);
+        try {
+          const snapshot = await generationThroughputService.getSnapshot(parseGenerationThroughputQuery(requestUrl));
+          sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
+        } catch (error) {
+          handleGenerationThroughputError(response, error);
+        }
+      },
+    },
+    {
+      methods: "POST, OPTIONS",
+      matches: (pathname) => pathname === STATS_THROUGHPUT_REFRESH_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        const methods = "POST, OPTIONS";
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, methods);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        if (request.method !== "POST") {
+          applyCorsHeaders(request, response, methods);
+          response.setHeader("Allow", methods);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        applyCorsHeaders(request, response, methods);
+        try {
+          const snapshot = await generationThroughputService.getSnapshot(parseGenerationThroughputQuery(requestUrl), {
+            forceRefresh: true,
+          });
+          sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
+        } catch (error) {
+          handleGenerationThroughputError(response, error);
+        }
+      },
+    },
+    {
+      methods: "GET, OPTIONS",
+      matches: (pathname) => pathname === STATS_THROUGHPUT_CALLS_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        const methods = "GET, OPTIONS";
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, methods);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, methods);
+          response.setHeader("Allow", methods);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        applyCorsHeaders(request, response, methods);
+        try {
+          const page = await generationThroughputService.getCallsPage(parseGenerationThroughputCallsQuery(requestUrl));
+          sendJson(response, 200, page as unknown as Record<string, unknown>);
+        } catch (error) {
+          handleGenerationThroughputError(response, error);
+        }
+      },
+    },
+    {
+      methods: "GET, OPTIONS",
       matches: (pathname) => pathname === PROVIDER_USAGE_ENDPOINT_PATH,
       handle: async (request, response) => {
         const methods = "GET, OPTIONS";
@@ -247,6 +337,15 @@ export function createStatsRoutes(options: {
       }
     },
   ];
+}
+
+function handleGenerationThroughputError(response: NodeJS.WritableStream & { statusCode?: number; setHeader(name: string, value: string): void }, error: unknown): void {
+  if (error instanceof GenerationThroughputError) {
+    sendJson(response as never, error.statusCode, { error: error.message });
+    return;
+  }
+  const message = error instanceof Error ? error.message : "Internal server error";
+  sendJson(response as never, 500, { error: message });
 }
 
 function handleTokenAnalyticsError(response: NodeJS.WritableStream & { statusCode?: number; setHeader(name: string, value: string): void }, error: unknown): void {
@@ -309,6 +408,61 @@ function parseTokenAnalyticsWorkerEventsQuery(requestUrl: URL) {
     sessionId: trimOptional(requestUrl.searchParams.get("sessionId")) ?? "",
     workerId: trimOptional(requestUrl.searchParams.get("workerId")) ?? "",
   };
+}
+
+function parseGenerationThroughputQuery(requestUrl: URL): GenerationThroughputQuery {
+  const query: GenerationThroughputQuery = {
+    rangePreset: parseGenerationRangePreset(requestUrl.searchParams.get("rangePreset")),
+    startDate: trimOptional(requestUrl.searchParams.get("startDate")),
+    endDate: trimOptional(requestUrl.searchParams.get("endDate")),
+    timezone: parseTimezone(requestUrl.searchParams.get("tz")),
+    profileId: trimOptional(requestUrl.searchParams.get("profileId")),
+    role: parseGenerationRole(requestUrl.searchParams.get("role")),
+    provider: trimOptional(requestUrl.searchParams.get("provider")),
+    modelId: trimOptional(requestUrl.searchParams.get("modelId")),
+    quality: parseGenerationQuality(requestUrl.searchParams.get("quality")),
+    attribution: parseAttribution(requestUrl.searchParams.get("attribution")),
+    specialistId: trimOptional(requestUrl.searchParams.get("specialistId")),
+  };
+  validateGenerationThroughputQuery(query);
+  return query;
+}
+
+function parseGenerationThroughputCallsQuery(requestUrl: URL): GenerationThroughputCallsQuery {
+  return {
+    ...parseGenerationThroughputQuery(requestUrl),
+    limit: parsePositiveInt(requestUrl.searchParams.get("limit")),
+    cursor: trimOptional(requestUrl.searchParams.get("cursor")),
+  };
+}
+
+function validateGenerationThroughputQuery(query: GenerationThroughputQuery): void {
+  if (query.specialistId && (query.attribution === "ad_hoc" || query.attribution === "unknown")) {
+    throw new GenerationThroughputError(
+      400,
+      `specialistId cannot be combined with attribution=${query.attribution}; use attribution=all or attribution=specialist`,
+    );
+  }
+  if (query.rangePreset === "custom") {
+    if (!query.startDate || !query.endDate) {
+      throw new GenerationThroughputError(400, "custom rangePreset requires startDate and endDate");
+    }
+    if (query.endDate < query.startDate) {
+      throw new GenerationThroughputError(400, "endDate must be on or after startDate");
+    }
+  }
+}
+
+function parseGenerationRangePreset(value: string | null): GenerationThroughputRangePreset {
+  return value === "7d" || value === "30d" || value === "all" || value === "custom" ? value : "7d";
+}
+
+function parseGenerationRole(value: string | null): GenerationRoleFilter {
+  return value === "manager" || value === "worker" ? value : "all";
+}
+
+function parseGenerationQuality(value: string | null): GenerationQualityFilter {
+  return value === "strict" || value === "all" ? value : "all_measured";
 }
 
 function validateTokenAnalyticsQuery(query: TokenAnalyticsQuery): void {

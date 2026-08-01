@@ -144,6 +144,7 @@ import type { HttpRoute } from "./http/shared/http-route.js";
 import type { PromptRegistryForRoutes } from "../swarm/prompt-contracts.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
+import { GenerationThroughputService } from "../stats/generation-throughput-service.js";
 import type { TelemetryService } from "../telemetry/telemetry-service.js";
 import { LocalRemoteUpdateAwarenessService } from "./http/services/remote-update-awareness-service.js";
 
@@ -199,6 +200,7 @@ export class SwarmWebSocketServer {
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
   private readonly tokenAnalyticsService: TokenAnalyticsService;
+  private readonly generationThroughputService: GenerationThroughputService;
   private readonly telemetryService: TelemetryService | null;
   private readonly observabilityService: ObservabilityFacade;
   private readonly feedbackService: FeedbackService;
@@ -211,6 +213,7 @@ export class SwarmWebSocketServer {
 
   private statsRefreshInterval: NodeJS.Timeout | null = null;
   private tokenAnalyticsRefreshInterval: NodeJS.Timeout | null = null;
+  private generationThroughputRefreshInterval: NodeJS.Timeout | null = null;
 
   private ownsControlPidFile = false;
 
@@ -704,6 +707,7 @@ export class SwarmWebSocketServer {
       statsService: this.statsService,
     });
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
+    this.generationThroughputService = new GenerationThroughputService(this.swarmManager);
 
     const secureTransportService = this.swarmManager as unknown as
       SecureSecretTransportService
@@ -835,6 +839,7 @@ export class SwarmWebSocketServer {
       ...createStatsRoutes({
         statsService: this.statsService,
         tokenAnalyticsService: this.tokenAnalyticsService,
+        generationThroughputService: this.generationThroughputService,
       }),
       ...(this.telemetryService ? createTelemetryRoutes({ telemetryService: this.telemetryService }) : []),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
@@ -1000,12 +1005,16 @@ export class SwarmWebSocketServer {
     const refreshTokenAnalyticsInBackground = () => {
       void this.tokenAnalyticsService.refreshScanInBackground().catch(() => false);
     };
+    const refreshGenerationThroughputInBackground = () => {
+      void this.generationThroughputService.refreshScanInBackground().catch(() => false);
+    };
 
     // Backstop behavior: keep an automatic refresh cadence (every cache TTL) so telemetry still
     // gets refresh-completion triggers even when nobody calls /api/stats/refresh manually.
     // Avoid an unconditional startup stats refresh here so provider-usage auth probing only runs
     // on demand or on the scheduled background cadence.
     void this.tokenAnalyticsService.prewarmInBackground().catch(() => false);
+    void this.generationThroughputService.prewarmInBackground().catch(() => false);
     this.statsRefreshInterval = setInterval(() => {
       refreshStatsInBackground();
     }, STATS_CACHE_TTL_MS);
@@ -1014,6 +1023,10 @@ export class SwarmWebSocketServer {
       refreshTokenAnalyticsInBackground();
     }, STATS_CACHE_TTL_MS);
     this.tokenAnalyticsRefreshInterval.unref?.();
+    this.generationThroughputRefreshInterval = setInterval(() => {
+      refreshGenerationThroughputInBackground();
+    }, STATS_CACHE_TTL_MS);
+    this.generationThroughputRefreshInterval.unref?.();
 
     await this.telemetryService?.start();
   }
@@ -1030,6 +1043,10 @@ export class SwarmWebSocketServer {
     if (this.tokenAnalyticsRefreshInterval) {
       clearInterval(this.tokenAnalyticsRefreshInterval);
       this.tokenAnalyticsRefreshInterval = null;
+    }
+    if (this.generationThroughputRefreshInterval) {
+      clearInterval(this.generationThroughputRefreshInterval);
+      this.generationThroughputRefreshInterval = null;
     }
 
     this.swarmManager.off("conversation_message", this.onConversationMessage);

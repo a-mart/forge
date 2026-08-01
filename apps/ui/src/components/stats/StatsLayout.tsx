@@ -14,6 +14,7 @@ const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
 const TAB_OPTIONS: { value: StatsTab; label: string }[] = [
   { value: 'overview', label: 'Overview' },
   { value: 'tokens', label: 'Token Analytics' },
+  { value: 'throughput', label: 'Throughput' },
 ]
 
 interface StatsLayoutProps {
@@ -56,7 +57,7 @@ export function StatsLayout({
               size="icon"
               className="h-9 w-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
               onClick={onBack}
-              aria-label={activeTab === 'tokens' ? 'Back to overview' : 'Back to chat'}
+              aria-label={activeTab !== 'overview' ? 'Back to overview' : 'Back to chat'}
             >
               <ArrowLeft className="size-4" />
             </Button>

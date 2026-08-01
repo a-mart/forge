@@ -591,6 +591,11 @@ export function getSharedTokenAnalyticsCachePath(dataDir: string): string {
   return join(getSharedCacheDir(dataDir), "token-analytics-cache.json");
 }
 
+/** Independent cache for Pi generation-throughput scans; never shares token analytics totals. */
+export function getSharedGenerationThroughputCachePath(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "generation-throughput-cache.json");
+}
+
 export function getTelemetryConfigPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "telemetry.json");
 }

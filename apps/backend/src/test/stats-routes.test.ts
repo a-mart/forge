@@ -150,6 +150,36 @@ describe('createStatsRoutes', () => {
     })
   })
 
+  it('wires bounded throughput snapshot, refresh, and keyset-call routes to its dedicated service', async () => {
+    const getSnapshot = vi.fn(async () => createStatsSnapshot())
+    const refreshAllRangesInBackground = vi.fn(async () => createStatsSnapshot())
+    const getProviderUsage = vi.fn(async () => ({}))
+    const throughputSnapshot = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }))
+    const throughputCalls = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z', items: [], nextCursor: null, totalCount: 0 }))
+    const server = await createRouteServer(
+      { getSnapshot, refreshAllRangesInBackground, getProviderUsage },
+      undefined,
+      { getSnapshot: throughputSnapshot, getCallsPage: throughputCalls },
+    )
+
+    expect((await fetch(`${server.baseUrl}/api/stats/throughput?rangePreset=custom&startDate=2026-04-01&endDate=2026-04-03&role=worker&quality=strict&limit=200`)).status).toBe(200)
+    expect(throughputSnapshot).toHaveBeenCalledWith({
+      rangePreset: 'custom', startDate: '2026-04-01', endDate: '2026-04-03', timezone: null,
+      profileId: undefined, role: 'worker', provider: undefined, modelId: undefined,
+      quality: 'strict', attribution: 'all', specialistId: undefined,
+    })
+
+    expect((await fetch(`${server.baseUrl}/api/stats/throughput/refresh?rangePreset=all`, { method: 'POST' })).status).toBe(200)
+    expect(throughputSnapshot).toHaveBeenLastCalledWith({
+      rangePreset: 'all', startDate: undefined, endDate: undefined, timezone: null,
+      profileId: undefined, role: 'all', provider: undefined, modelId: undefined,
+      quality: 'all_measured', attribution: 'all', specialistId: undefined,
+    }, { forceRefresh: true })
+
+    expect((await fetch(`${server.baseUrl}/api/stats/throughput/calls?rangePreset=7d&cursor=next&limit=200`)).status).toBe(200)
+    expect(throughputCalls).toHaveBeenCalledWith(expect.objectContaining({ rangePreset: '7d', cursor: 'next', limit: 200 }))
+  })
+
   it('returns 400 for contradictory specialistId and attribution params', async () => {
     const getSnapshot = vi.fn(async () => createStatsSnapshot())
     const refreshAllRangesInBackground = vi.fn(async () => createStatsSnapshot())
@@ -202,10 +232,18 @@ async function createRouteServer(
     getWorkerPage: async () => ({ computedAt: '2026-04-03T00:00:00.000Z', items: [], nextCursor: null, totalCount: 0 }),
     getWorkerEvents: async () => ({ computedAt: '2026-04-03T00:00:00.000Z', worker: {}, events: [] }),
   },
+  generationThroughputService: {
+    getSnapshot: (...args: unknown[]) => Promise<Record<string, unknown>>
+    getCallsPage: (...args: unknown[]) => Promise<Record<string, unknown>>
+  } = {
+    getSnapshot: async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }),
+    getCallsPage: async () => ({ computedAt: '2026-04-03T00:00:00.000Z', items: [], nextCursor: null, totalCount: 0 }),
+  },
 ): Promise<TestServer> {
   const routes = createStatsRoutes({
     statsService: statsService as never,
     tokenAnalyticsService: tokenAnalyticsService as never,
+    generationThroughputService: generationThroughputService as never,
   })
   const server = createServer((request, response) => {
     void handleRouteRequest(routes, request, response)
