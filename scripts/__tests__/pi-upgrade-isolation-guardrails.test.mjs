@@ -60,6 +60,9 @@ describe("pi-upgrade isolation guardrails", () => {
     expect(script).toContain(".wrapper.pid");
     expect(script).toContain("backend health did not match recorded listener/parent/data/nonce identity");
     expect(script).toContain("isolated identity is empty");
+    expect(script).toContain("FORGE_DESKTOP=0 FORGE_ELECTRON_DEV=0");
+    expect(script).toContain("FORGE_DISABLE_TANSTACK_DEVTOOLS=true VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS=true");
+    expect(script).toContain('kill "$BACKEND_LISTENER_PID" "$BACKEND_WRAPPER_PID"');
   });
 
   it("stop script kills only verified owned listener/wrapper trees, never arbitrary listeners", () => {

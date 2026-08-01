@@ -161,8 +161,12 @@ resolve_listener_pid() {
 }
 
 echo "Starting isolated backend on 127.0.0.1:${BACKEND_PORT} (data=${FORGE_DATA_DIR})"
+# This standalone Node launcher may itself be invoked from an Electron shell.
+# Never inherit Electron's child-process contract: it requires fd 4 to carry a
+# per-launch secure-control capability that this worktree launcher does not own.
+# The isolated Builder backend must instead use its normal non-Desktop path.
 # Prefer non-watch tsx for stable E2E (avoids protocol rebuild lock races).
-nohup env FORGE_HOST=127.0.0.1 FORGE_PORT="$BACKEND_PORT" FORGE_DATA_DIR="$FORGE_DATA_DIR" FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
+nohup env FORGE_DESKTOP=0 FORGE_ELECTRON_DEV=0 FORGE_HOST=127.0.0.1 FORGE_PORT="$BACKEND_PORT" FORGE_DATA_DIR="$FORGE_DATA_DIR" FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
   "$PNPM_BIN" --filter @forge/backend exec tsx src/index.ts \
   >"$BACKEND_LOG" 2>&1 &
 BACKEND_WRAPPER_PID=$!
@@ -203,7 +207,9 @@ if [[ -z "$BACKEND_LISTENER_PID" ]]; then
 fi
 
 echo "Starting isolated UI on 127.0.0.1:${UI_PORT} (vite dev only; VITE_FORGE_WS_URL=${VITE_FORGE_WS_URL})"
-nohup env VITE_FORGE_WS_URL="$VITE_FORGE_WS_URL" FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
+# The live UI may already own TanStack Devtools' fixed event-bus port. The
+# worktree acceptance UI does not need that sidecar, so disable it explicitly.
+nohup env VITE_FORGE_WS_URL="$VITE_FORGE_WS_URL" FORGE_DISABLE_TANSTACK_DEVTOOLS=true VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS=true FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
   "$PNPM_BIN" --filter @forge/ui exec vite dev --port "$UI_PORT" --strictPort \
   >"$UI_LOG" 2>&1 &
 UI_WRAPPER_PID=$!
@@ -221,19 +227,25 @@ for i in $(seq 1 45); do
     fi
     echo "ERROR: UI health did not match recorded listener/parent/nonce identity." >&2
     tail -40 "$UI_LOG" >&2 || true
-    kill "$BACKEND_WRAPPER_PID" "$UI_WRAPPER_PID" 2>/dev/null || true
+    # The backend listener identity was verified before starting UI. Kill it
+    # directly as well as its wrapper: killing only pnpm can orphan tsx/node.
+    kill "$BACKEND_LISTENER_PID" "$BACKEND_WRAPPER_PID" "$UI_WRAPPER_PID" 2>/dev/null || true
     exit 1
   fi
   if ! kill -0 "$UI_WRAPPER_PID" 2>/dev/null; then
     echo "ERROR: UI exited early. Tail of log:" >&2
     tail -40 "$UI_LOG" >&2 || true
-    kill "$BACKEND_WRAPPER_PID" 2>/dev/null || true
+    # The backend listener identity was verified before starting UI. Kill it
+    # directly as well as its wrapper: killing only pnpm can orphan tsx/node.
+    kill "$BACKEND_LISTENER_PID" "$BACKEND_WRAPPER_PID" 2>/dev/null || true
     exit 1
   fi
   if [[ "$i" -eq 45 ]]; then
     echo "ERROR: UI did not become ready. Tail of log:" >&2
     tail -40 "$UI_LOG" >&2 || true
-    kill "$BACKEND_WRAPPER_PID" 2>/dev/null || true
+    # The backend listener identity was verified before starting UI. Kill it
+    # directly as well as its wrapper: killing only pnpm can orphan tsx/node.
+    kill "$BACKEND_LISTENER_PID" "$BACKEND_WRAPPER_PID" 2>/dev/null || true
     exit 1
   fi
   sleep 1
