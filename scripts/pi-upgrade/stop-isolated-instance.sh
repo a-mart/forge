@@ -72,6 +72,55 @@ owned_tree_has_nonce() {
   return 1
 }
 
+# Emit descendants leaves-first while the verified wrapper ancestry still
+# exists. Each candidate must also inherit this launch's nonce before it can be
+# signalled, so stopping cannot spill into an unrelated process tree.
+collect_owned_descendants() {
+  local parent_pid="$1"
+  local nonce="$2"
+  local child_pid
+  for child_pid in $(pgrep -P "$parent_pid" 2>/dev/null || true); do
+    collect_owned_descendants "$child_pid" "$nonce"
+    if process_env_contains "$child_pid" "FORGE_PI_UPGRADE_INSTANCE_NONCE=${nonce}"; then
+      printf '%s\n' "$child_pid"
+    fi
+  done
+}
+
+# pnpm may leave its exec/tsx descendants alive after its wrapper receives
+# SIGTERM. Capture the verified nonce-bearing tree before terminating the
+# wrapper, give it a graceful stop, then only force-kill survivors that still
+# prove ownership with the same nonce.
+terminate_owned_process_tree() {
+  local listener_pid="$1"
+  local wrapper_pid="$2"
+  local nonce="$3"
+  local candidate
+  local -a candidates=()
+
+  if [[ -n "$wrapper_pid" ]] && kill -0 "$wrapper_pid" 2>/dev/null; then
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" ]] && candidates+=("$candidate")
+    done < <(collect_owned_descendants "$wrapper_pid" "$nonce")
+    candidates+=("$wrapper_pid")
+  fi
+  candidates+=("$listener_pid")
+
+  for candidate in "${candidates[@]}"; do
+    if kill -0 "$candidate" 2>/dev/null && process_env_contains "$candidate" "FORGE_PI_UPGRADE_INSTANCE_NONCE=${nonce}"; then
+      kill "$candidate" 2>/dev/null || true
+    fi
+  done
+
+  sleep 1
+
+  for candidate in "${candidates[@]}"; do
+    if kill -0 "$candidate" 2>/dev/null && process_env_contains "$candidate" "FORGE_PI_UPGRADE_INSTANCE_NONCE=${nonce}"; then
+      kill -KILL "$candidate" 2>/dev/null || true
+    fi
+  done
+}
+
 stop_owned_tree() {
   local label="$1"
   local port="$2"
@@ -141,24 +190,7 @@ stop_owned_tree() {
   fi
 
   echo "Stopping verified owned $label tree (listener=$listener_pid wrapper=${wrapper_pid:-none}) on port $port"
-  # Prefer killing the wrapper root so the full pnpm→tsx/vite tree exits.
-  if [[ -n "$wrapper_pid" ]] && kill -0 "$wrapper_pid" 2>/dev/null; then
-    if owned_tree_has_nonce "$listener_pid" "$wrapper_pid" "$nonce"; then
-      kill "$wrapper_pid" 2>/dev/null || true
-    fi
-  fi
-  if kill -0 "$listener_pid" 2>/dev/null; then
-    kill "$listener_pid" 2>/dev/null || true
-  fi
-  # Best-effort: sweep remaining descendants of the wrapper that still carry the nonce.
-  if [[ -n "$wrapper_pid" ]]; then
-    local child
-    for child in $(pgrep -P "$wrapper_pid" 2>/dev/null || true); do
-      if process_env_contains "$child" "FORGE_PI_UPGRADE_INSTANCE_NONCE=${nonce}"; then
-        kill "$child" 2>/dev/null || true
-      fi
-    done
-  fi
+  terminate_owned_process_tree "$listener_pid" "$wrapper_pid" "$nonce"
 
   rm -f "$pid_file" "$nonce_file" "$wrapper_file"
 }

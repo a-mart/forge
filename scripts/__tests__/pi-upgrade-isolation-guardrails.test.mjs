@@ -73,6 +73,9 @@ describe("pi-upgrade isolation guardrails", () => {
     expect(script).toContain("refusing arbitrary kill");
     expect(script).toContain("is_descendant_of");
     expect(script).toContain(".wrapper.pid");
+    expect(script).toContain("collect_owned_descendants");
+    expect(script).toContain("terminate_owned_process_tree");
+    expect(script).toContain('kill -KILL "$candidate"');
     expect(script).not.toMatch(/kill \$pids/);
   });
 });
