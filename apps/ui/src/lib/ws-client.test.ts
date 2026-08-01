@@ -6800,6 +6800,10 @@ describe('ManagerWsClient', () => {
       generationAverageTokensPerSecond: 20,
       valueKind: 'estimated' as const,
       quality: {
+        measurementScope: 'agent_model_call' as const,
+        agentRetryAttempt: 0,
+        providerAttemptScope: 'unavailable' as const,
+        observedProviderAttemptCount: null,
         tokenSource: 'estimated_local' as const,
         boundarySource: 'content_delta_to_stream_end' as const,
         reasoningBoundaryCoverage: 'not_reported' as const,
@@ -6831,6 +6835,10 @@ describe('ManagerWsClient', () => {
         outputTokens: 100,
         valueKind: 'provider_final',
         quality: {
+          measurementScope: 'agent_model_call',
+          agentRetryAttempt: 0,
+          providerAttemptScope: 'unavailable',
+          observedProviderAttemptCount: null,
           tokenSource: 'provider_final',
           boundarySource: 'content_delta_to_stream_end',
           reasoningBoundaryCoverage: 'observed',

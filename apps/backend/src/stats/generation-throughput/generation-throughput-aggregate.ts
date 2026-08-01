@@ -187,6 +187,10 @@ export function toGenerationCall(record: GenerationMeasurementRecord): Generatio
     tokensPerSecond: tokensPerSecond(record),
     outcome: record.outcome,
     quality: {
+      measurementScope: record.attempt?.measurementScope ?? "agent_model_call",
+      agentRetryAttempt: record.attempt?.agentRetryAttempt ?? null,
+      providerAttemptScope: record.attempt?.providerAttemptScope ?? "unavailable",
+      observedProviderAttemptCount: record.attempt?.observedProviderAttemptCount ?? null,
       tokenSource: record.usage.tokenSource,
       boundarySource: record.timing.boundarySource,
       reasoningBoundaryCoverage: record.reasoningBoundaryCoverage,

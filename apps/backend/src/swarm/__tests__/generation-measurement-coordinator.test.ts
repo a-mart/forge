@@ -35,6 +35,9 @@ function event(
         requestedProvider: "openai-codex",
         requestedModelId: "gpt-5.5",
         reasoningLevel: "high",
+        measurementScope: "agent_model_call",
+        agentRetryAttempt: 0,
+        providerAttemptScope: "unavailable",
         ...overrides,
       } as RuntimeGenerationEvent;
     case "response_stream_started":
@@ -51,6 +54,7 @@ function event(
       return {
         ...base,
         outcome: "completed",
+        observedProviderAttemptCount: null,
         ...overrides,
       } as RuntimeGenerationEvent;
   }
@@ -81,13 +85,17 @@ describe("GenerationMeasurementCoordinator", () => {
   it("persists started and terminal manager records with a strict count-only generation span", async () => {
     const { coordinator, records, appendCustomEntry } = createCoordinator([descriptor()]);
 
-    await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("request_started", "call-1", 0));
+    await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("request_started", "call-1", 0, {
+      agentRetryAttempt: 1,
+      providerAttemptScope: "openai_codex_websocket_request",
+    }));
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("response_stream_started", "call-1", 400));
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("output_delta", "call-1", 1_000, {
       deltaUtf16CodeUnits: 12,
       deltaUtf8Bytes: 12,
     }));
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("completed", "call-1", 3_000, {
+      observedProviderAttemptCount: 2,
       meta: {
         provider: "openai-codex",
         responseModelId: "gpt-5.5-2026-07-01",
@@ -124,6 +132,12 @@ describe("GenerationMeasurementCoordinator", () => {
         reasoningLevel: "high",
       },
       correlation: { turnId: "turn-1" },
+      attempt: {
+        measurementScope: "agent_model_call",
+        agentRetryAttempt: 1,
+        providerAttemptScope: "openai_codex_websocket_request",
+        observedProviderAttemptCount: 2,
+      },
       timing: {
         requestWallMs: 3_000,
         timeToFirstOutputMs: 1_000,

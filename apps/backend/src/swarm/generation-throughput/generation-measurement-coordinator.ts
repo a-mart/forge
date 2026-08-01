@@ -1,5 +1,6 @@
 import type {
   GenerationBoundarySource,
+  GenerationMeasurementAttempt,
   GenerationMeasurementQuality,
   GenerationMeasurementRecordV1,
   GenerationReasoningBoundaryCoverage,
@@ -32,6 +33,7 @@ interface ActiveGenerationMeasurement {
   descriptor: GenerationMeasurementRecordV1["identity"];
   model: GenerationMeasurementRecordV1["model"];
   turnId: string | null;
+  attempt: GenerationMeasurementAttempt;
   startedWallTimeMs: number;
   startedMonotonicTimeMs: number;
   responseStreamStarted: Timestamp | undefined;
@@ -190,6 +192,12 @@ export class GenerationMeasurementCoordinator {
         reasoningLevel: nonEmptyString(event.reasoningLevel),
       },
       turnId: this.options.getActiveTurnId?.(agentId, runtimeToken) ?? null,
+      attempt: {
+        measurementScope: event.measurementScope,
+        agentRetryAttempt: event.agentRetryAttempt,
+        providerAttemptScope: event.providerAttemptScope,
+        observedProviderAttemptCount: null,
+      },
       startedWallTimeMs: startedAt.wallTimeMs,
       startedMonotonicTimeMs: startedAt.monotonicTimeMs,
       responseStreamStarted: undefined,
@@ -216,6 +224,7 @@ export class GenerationMeasurementCoordinator {
       identity: active.descriptor,
       model: active.model,
       correlation: { turnId: active.turnId },
+      attempt: active.attempt,
       timing: emptyTiming(),
       usage: {
         outputTokens: null,
@@ -256,6 +265,10 @@ export class GenerationMeasurementCoordinator {
       reasoningTokens,
       active.observedThinkingDelta,
     );
+    const attempt: GenerationMeasurementAttempt = {
+      ...active.attempt,
+      observedProviderAttemptCount: nonNegativeInteger(event.observedProviderAttemptCount) ?? null,
+    };
     const record: GenerationMeasurementRecordV1 = {
       version: 1,
       measurementId: event.measurementId,
@@ -266,6 +279,7 @@ export class GenerationMeasurementCoordinator {
       identity: active.descriptor,
       model: completeModel(active.model, event.meta),
       correlation: { turnId: active.turnId },
+      attempt,
       timing: {
         responseStreamStartedAt: active.responseStreamStarted
           ? isoAt(active.responseStreamStarted.wallTimeMs)
@@ -624,6 +638,7 @@ function deriveReasoningBoundaryCoverage(
 
 function qualityFromTerminal(record: GenerationMeasurementRecordV1): GenerationMeasurementQuality {
   return {
+    ...attemptQuality(record.attempt),
     tokenSource: record.usage.tokenSource,
     boundarySource: record.timing.boundarySource,
     reasoningBoundaryCoverage: record.reasoningBoundaryCoverage,
@@ -632,11 +647,21 @@ function qualityFromTerminal(record: GenerationMeasurementRecordV1): GenerationM
 
 function activeQuality(active: ActiveGenerationMeasurement): GenerationMeasurementQuality {
   return {
+    ...active.attempt,
     tokenSource: active.firstOutput ? "estimated_local" : "unavailable",
     boundarySource: active.firstOutput
       ? "content_delta_to_stream_end"
       : active.responseStreamStarted ? "response_stream_proxy" : "unavailable",
     reasoningBoundaryCoverage: active.observedThinkingDelta ? "observed" : "not_reported",
+  };
+}
+
+function attemptQuality(attempt: GenerationMeasurementAttempt | undefined): GenerationMeasurementAttempt {
+  return attempt ?? {
+    measurementScope: "agent_model_call",
+    agentRetryAttempt: null,
+    providerAttemptScope: "unavailable",
+    observedProviderAttemptCount: null,
   };
 }
 
@@ -666,6 +691,10 @@ function isoAt(wallTimeMs: number): string {
 
 function nonNegativeFinite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function nonEmptyString(value: unknown): string | null {

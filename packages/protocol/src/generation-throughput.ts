@@ -23,8 +23,32 @@ export type GenerationReasoningBoundaryCoverage =
   | "hidden_or_unobserved"
   | "not_reported";
 
+/**
+ * A measurement spans one Pi Agent `streamFn` invocation. Pi's agent-level
+ * retries invoke that seam again and therefore receive independent lifecycles.
+ */
+export type GenerationMeasurementScope = "agent_model_call";
+
+/**
+ * The narrower provider activity that Forge can count inside a model call.
+ * `openai_codex_websocket_request` counts sent `response.create` frames only;
+ * it does not imply timing boundaries for each frame or cover SSE/SDK retries.
+ */
+export type GenerationProviderAttemptScope =
+  | "openai_codex_websocket_request"
+  | "unavailable";
+
+export interface GenerationMeasurementAttempt {
+  measurementScope: GenerationMeasurementScope;
+  /** Zero for the initial agent call, positive for a Pi agent-level retry. */
+  agentRetryAttempt: number | null;
+  providerAttemptScope: GenerationProviderAttemptScope;
+  /** Count within providerAttemptScope; never a claim about all physical attempts. */
+  observedProviderAttemptCount: number | null;
+}
+
 /** Facts used to qualify a recorded provider generation without exposing content. */
-export interface GenerationMeasurementQuality {
+export interface GenerationMeasurementQuality extends GenerationMeasurementAttempt {
   tokenSource: GenerationTokenSource;
   boundarySource: GenerationBoundarySource;
   reasoningBoundaryCoverage: GenerationReasoningBoundaryCoverage;
@@ -65,6 +89,9 @@ export interface GenerationMeasurementRecordV1 {
   correlation: {
     turnId: string | null;
   };
+
+  /** Added additively in v1; absent historical records use conservative unknown-attempt defaults. */
+  attempt?: GenerationMeasurementAttempt;
 
   timing: {
     responseStreamStartedAt: string | null;

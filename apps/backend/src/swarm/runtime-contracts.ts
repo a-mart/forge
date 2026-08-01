@@ -1,4 +1,9 @@
 import type {
+  GenerationMeasurementScope,
+  GenerationOutcome,
+  GenerationProviderAttemptScope,
+} from "@forge/protocol";
+import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentStatus,
@@ -89,6 +94,9 @@ export type RuntimeGenerationEvent =
       requestedProvider: string;
       requestedModelId: string;
       reasoningLevel: string | null;
+      measurementScope: GenerationMeasurementScope;
+      agentRetryAttempt: number;
+      providerAttemptScope: GenerationProviderAttemptScope;
     }
   | {
       phase: "response_stream_started";
@@ -111,7 +119,9 @@ export type RuntimeGenerationEvent =
       measurementId: string;
       wallTimeMs: number;
       monotonicTimeMs: number;
-      outcome: "completed" | "length" | "tool_use" | "aborted" | "error" | "unknown";
+      outcome: GenerationOutcome;
+      /** Count is scoped by the matching request_started event, not all physical provider attempts. */
+      observedProviderAttemptCount: number | null;
       meta?: RuntimeGenerationCallMeta;
     };
 

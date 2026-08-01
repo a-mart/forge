@@ -1279,16 +1279,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "agent_settled") {
-      await this.generationTelemetry?.handleSessionEvent(event);
       await this.finalizeAgentRunSettlement();
       return;
     }
 
     const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
-    await this.generationTelemetry?.handleSessionEvent(
-      event,
-      normalizedEvent?.type === "message_end" ? normalizedEvent.meta : undefined,
-    );
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }

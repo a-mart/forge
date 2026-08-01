@@ -1,5 +1,6 @@
 import type {
   GenerationBoundarySource,
+  GenerationMeasurementAttempt,
   GenerationMeasurementRecordV1,
   GenerationOutcome,
   GenerationReasoningBoundaryCoverage,
@@ -71,6 +72,7 @@ export function parseGenerationMeasurementCustomEntry(entry: unknown): Generatio
   const identity = parseIdentity(data.identity);
   const model = parseModel(data.model);
   const correlation = parseCorrelation(data.correlation);
+  const attempt = parseAttempt(data.attempt);
   const timing = parseTiming(data.timing);
   const usage = parseUsage(data.usage);
   const outcome = readOutcome(data.outcome);
@@ -86,6 +88,7 @@ export function parseGenerationMeasurementCustomEntry(entry: unknown): Generatio
     !identity ||
     !model ||
     !correlation ||
+    attempt === null ||
     !timing ||
     !usage ||
     !outcome ||
@@ -112,6 +115,7 @@ export function parseGenerationMeasurementCustomEntry(entry: unknown): Generatio
     identity,
     model,
     correlation,
+    ...(attempt ? { attempt } : {}),
     timing,
     usage,
     outcome,
@@ -253,6 +257,29 @@ function parseCorrelation(value: unknown): GenerationMeasurementRecordV1["correl
   return turnId === undefined ? null : { turnId };
 }
 
+function parseAttempt(value: unknown): GenerationMeasurementAttempt | undefined | null {
+  if (value === undefined) return undefined;
+  const object = readObject(value);
+  if (!object || object.measurementScope !== "agent_model_call") return null;
+  const agentRetryAttempt = readNullableNonNegativeInteger(object.agentRetryAttempt);
+  const providerAttemptScope = object.providerAttemptScope;
+  const observedProviderAttemptCount = readNullableNonNegativeInteger(object.observedProviderAttemptCount);
+  if (
+    agentRetryAttempt === undefined
+    || (providerAttemptScope !== "openai_codex_websocket_request" && providerAttemptScope !== "unavailable")
+    || observedProviderAttemptCount === undefined
+    || (providerAttemptScope === "unavailable" && observedProviderAttemptCount !== null)
+  ) {
+    return null;
+  }
+  return {
+    measurementScope: "agent_model_call",
+    agentRetryAttempt,
+    providerAttemptScope,
+    observedProviderAttemptCount,
+  };
+}
+
 function parseTiming(value: unknown): GenerationMeasurementRecordV1["timing"] | null {
   const object = readObject(value);
   if (!object) return null;
@@ -376,4 +403,10 @@ function readNonNegativeFiniteNumber(value: unknown): number | undefined {
 
 function readNullableNonNegativeFiniteNumber(value: unknown): number | null | undefined {
   return value === null ? null : readNonNegativeFiniteNumber(value);
+}
+
+function readNullableNonNegativeInteger(value: unknown): number | null | undefined {
+  return value === null
+    ? null
+    : typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }

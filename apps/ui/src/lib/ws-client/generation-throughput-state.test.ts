@@ -31,6 +31,10 @@ function measurement(
     generationAverageTokensPerSecond: 20,
     valueKind: 'estimated',
     quality: {
+      measurementScope: 'agent_model_call',
+      agentRetryAttempt: 0,
+      providerAttemptScope: 'unavailable',
+      observedProviderAttemptCount: null,
       tokenSource: 'estimated_local',
       boundarySource: 'content_delta_to_stream_end',
       reasoningBoundaryCoverage: 'not_reported',

@@ -937,6 +937,10 @@ describe('protocol root barrel contract', () => {
         generationAverageTokensPerSecond: 1,
         valueKind: 'provider_final',
         quality: {
+          measurementScope: 'agent_model_call',
+          agentRetryAttempt: 0,
+          providerAttemptScope: 'unavailable',
+          observedProviderAttemptCount: null,
           tokenSource: 'provider_final',
           boundarySource: 'content_delta_to_stream_end',
           reasoningBoundaryCoverage: 'not_reported',

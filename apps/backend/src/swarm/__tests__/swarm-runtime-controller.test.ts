@@ -394,6 +394,9 @@ describe("SwarmRuntimeController", () => {
       requestedProvider: "openai-codex",
       requestedModelId: "gpt-5.5",
       reasoningLevel: "high",
+      measurementScope: "agent_model_call",
+      agentRetryAttempt: 0,
+      providerAttemptScope: "unavailable",
     } satisfies RuntimeGenerationEvent;
 
     await expect(controller.handleRuntimeGenerationEvent(firstToken, manager.agentId, requestStarted)).resolves.toBe(true);
@@ -406,6 +409,7 @@ describe("SwarmRuntimeController", () => {
       wallTimeMs: 2_000,
       monotonicTimeMs: 1_010,
       outcome: "completed",
+      observedProviderAttemptCount: null,
       meta: { usage: { output: 50 } },
     } satisfies RuntimeGenerationEvent;
     await expect(controller.handleRuntimeGenerationEvent(firstToken, manager.agentId, staleCompletion)).resolves.toBe(false);
@@ -431,6 +435,7 @@ describe("SwarmRuntimeController", () => {
     await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
       phase: "request_started", measurementId: "persisted-call", wallTimeMs: 1_000, monotonicTimeMs: 10,
       requestedProvider: "openai-codex", requestedModelId: "gpt-5.5", reasoningLevel: "high",
+      measurementScope: "agent_model_call", agentRetryAttempt: 0, providerAttemptScope: "unavailable",
     });
     await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
       phase: "output_delta", measurementId: "persisted-call", wallTimeMs: 1_500, monotonicTimeMs: 510,
@@ -438,7 +443,7 @@ describe("SwarmRuntimeController", () => {
     });
     await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
       phase: "completed", measurementId: "persisted-call", wallTimeMs: 2_000, monotonicTimeMs: 1_010,
-      outcome: "completed", meta: { usage: { output: 50 } },
+      outcome: "completed", observedProviderAttemptCount: null, meta: { usage: { output: 50 } },
     });
 
     expect(onGenerationMeasurementTerminalPersisted).toHaveBeenCalledWith(expect.objectContaining({

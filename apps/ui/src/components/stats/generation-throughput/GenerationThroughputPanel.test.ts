@@ -42,6 +42,7 @@ describe('GenerationThroughputPanel', () => {
     expect(getByText(container, 'Model performance')).toBeTruthy()
     expect(getByText(container, 'Recent generations')).toBeTruthy()
     expect(container.textContent).toContain('Coverage note.')
+    expect(container.textContent).toContain('provider-internal retries and Codex WebSocket replays are not timed as separate rates')
     await waitFor(() => expect(fetchCallsMock).toHaveBeenCalled())
   })
 

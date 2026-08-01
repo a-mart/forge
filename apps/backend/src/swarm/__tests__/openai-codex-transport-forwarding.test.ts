@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { streamSimple } from '../pi/pi-ai-compat.js'
 import type { Model } from '../pi/pi-ai-compat.js'
+import { getOpenAICodexWebSocketDebugStats } from '@earendil-works/pi-ai/api/openai-codex-responses'
 
 const originalWebSocket = globalThis.WebSocket
 const originalFetch = globalThis.fetch
@@ -224,6 +225,63 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(result.stopReason).toBe('stop')
     expect(result.responseId).toBe('resp_retry_success')
     expect(result.content).toEqual([])
+  })
+
+  it('counts each response.create frame when Codex replays a connection-limit failure inside one stream', async () => {
+    const sessionId = 'test-session-connection-limit-replay'
+    const sentPayloads: string[] = []
+    let socketCount = 0
+
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      readyState = FakeWebSocket.OPEN
+      readonly socketNumber = ++socketCount
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        queueMicrotask(() => this.dispatchEvent(new Event('open')))
+      }
+
+      send(payload: string) {
+        sentPayloads.push(payload)
+        if (this.socketNumber === 1) {
+          queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'error',
+              error: {
+                code: 'websocket_connection_limit_reached',
+                message: 'connection limit reached',
+              },
+            }),
+          })))
+          return
+        }
+        queueMicrotask(() => this.dispatchEvent(completedEvent('resp_connection_limit_replay')))
+      }
+
+      close(_code?: number, _reason?: string) {
+        this.readyState = FakeWebSocket.CLOSED
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = installFailingFetch('SSE fetch should not be used for connection-limit replay')
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'websocket',
+      sessionId,
+      reasoning: 'low',
+    }).result()
+
+    expect(result.stopReason).toBe('stop')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(socketCount).toBe(2)
+    expect(sentPayloads).toHaveLength(2)
+    expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({ requests: 2 })
   })
 
   it('does not retry or fall back after partial websocket output has started', async () => {

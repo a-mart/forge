@@ -347,7 +347,12 @@ function createFactory(
 
 function createMockPiSession() {
   return {
+    isStreaming: true,
+    sessionId: "mock-pi-session",
     agent: {
+      streamFn: vi.fn(async () => ({ kind: "mock-stream" })),
+      prompt: vi.fn(async () => undefined),
+      continue: vi.fn(async () => undefined),
       transformContext: vi.fn(async (messages: unknown, _signal?: AbortSignal) => messages),
     },
     bindExtensions: vi.fn(async () => undefined),
@@ -622,12 +627,11 @@ describe("RuntimeFactory", () => {
     expect(loaderOptions.skillsOverride).toBeUndefined();
   });
 
-  it("chains count-only Pi generation hooks through the runtime callback plumbing", async () => {
+  it("chains count-only Pi generation telemetry through the public streamFn callback plumbing", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     setupPiModel();
     const piSession = createMockPiSession();
-    const priorPayload = vi.fn(async () => ({ transformed: true }));
-    piSession.agent.onPayload = priorPayload;
+    const priorStreamFn = piSession.agent.streamFn;
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: piSession,
       extensionsResult: { extensions: [], errors: [] },
@@ -636,14 +640,20 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir, { callbacks: { onGenerationEvent } });
 
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 41);
-    await expect(piSession.agent.onPayload({}, { provider: "anthropic", id: "claude-test" }))
-      .resolves.toEqual({ transformed: true });
+    const telemetrySubscriber = piSession.subscribe.mock.calls[0]?.[0] as ((event: unknown) => void) | undefined;
+    telemetrySubscriber?.({ type: "agent_start" });
+    await expect(piSession.agent.streamFn(
+      { provider: "anthropic", id: "claude-test", api: "anthropic-messages" },
+      {},
+      {},
+    )).resolves.toEqual({ kind: "mock-stream" });
 
-    expect(priorPayload).toHaveBeenCalledOnce();
+    expect(priorStreamFn).toHaveBeenCalledOnce();
     expect(onGenerationEvent).toHaveBeenCalledWith(41, "worker-1", expect.objectContaining({
       phase: "request_started",
       requestedProvider: "anthropic",
       requestedModelId: "claude-test",
+      measurementScope: "agent_model_call",
     }));
   });
 
@@ -998,7 +1008,7 @@ describe("RuntimeFactory", () => {
     },
   );
 
-  it("keeps provider retries observable at the agent lifecycle while omitting Codex transport overrides", async () => {
+  it("preserves configured provider retries while omitting irrelevant Codex transport overrides", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -1033,9 +1043,9 @@ describe("RuntimeFactory", () => {
       expect.objectContaining({ withLock: expect.any(Function) }),
       expect.objectContaining({ projectTrusted: false }),
     );
-    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
-      retry: { provider: { maxRetries: 0 } },
-    });
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalledWith(
+      expect.objectContaining({ retry: expect.anything() }),
+    );
     expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalledWith(
       expect.objectContaining({ transport: expect.anything() }),
     );
@@ -1366,7 +1376,15 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir, { forgeExtensionHost });
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 9);
 
-    expect(sequence).toEqual(["prepare", "createAgentSession", "bindExtensions", "setActiveTools", "constructRuntime", "activate"]);
+    expect(sequence).toEqual([
+      "prepare",
+      "createAgentSession",
+      "constructRuntime", // Generation telemetry subscribes before runtime mapping.
+      "bindExtensions",
+      "setActiveTools",
+      "constructRuntime",
+      "activate",
+    ]);
 
     sequence.length = 0;
     activateSpy.mockClear();

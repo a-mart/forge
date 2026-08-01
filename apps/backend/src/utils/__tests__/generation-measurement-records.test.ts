@@ -31,6 +31,12 @@ function record(overrides: Partial<GenerationMeasurementRecordV1> = {}): Generat
       reasoningLevel: "high",
     },
     correlation: { turnId: "turn-1" },
+    attempt: {
+      measurementScope: "agent_model_call",
+      agentRetryAttempt: 1,
+      providerAttemptScope: "openai_codex_websocket_request",
+      observedProviderAttemptCount: 2,
+    },
     timing: {
       responseStreamStartedAt: "2026-01-01T00:00:00.100Z",
       firstOutputAt: "2026-01-01T00:00:00.500Z",
@@ -77,12 +83,21 @@ describe("generation measurement records", () => {
       completedAt: "2026-01-01T00:00:02.000Z",
     });
     const unknownReasoningCoverage = record({ reasoningBoundaryCoverage: "maybe" as never });
+    const invalidAttemptScope = record({
+      attempt: { ...record().attempt!, providerAttemptScope: "unavailable" },
+    });
 
     expect(() => parseGenerationMeasurementCustomEntry(wrapper(negativeDuration))).not.toThrow();
     expect(parseGenerationMeasurementCustomEntry(wrapper(negativeDuration))).toBeNull();
     expect(parseGenerationMeasurementCustomEntry(wrapper(nonFiniteTokens))).toBeNull();
     expect(parseGenerationMeasurementCustomEntry(wrapper(invalidStart))).toBeNull();
     expect(parseGenerationMeasurementCustomEntry(wrapper(unknownReasoningCoverage))).toBeNull();
+    expect(parseGenerationMeasurementCustomEntry(wrapper(invalidAttemptScope))).toBeNull();
+  });
+
+  it("keeps pre-attempt-scope v1 records readable with conservative downstream defaults", () => {
+    const { attempt: _attempt, ...legacyRecord } = record();
+    expect(parseGenerationMeasurementCustomEntry(wrapper(legacyRecord))).toEqual(legacyRecord);
   });
 
   it("accepts a start-only lifecycle record as incomplete rather than a terminal measurement", () => {

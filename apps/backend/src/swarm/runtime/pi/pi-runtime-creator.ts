@@ -5,6 +5,7 @@ import {
   type RuntimeExtensionSource
 } from "@forge/protocol";
 import type { Model, Transport } from "../../pi/pi-ai-compat.js";
+import { getOpenAICodexWebSocketDebugStats } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import type { ObservabilityFacade, ObservabilityToolDefinition } from "../../../observability/observability-types.js";
 import {
   AuthStorage,
@@ -490,6 +491,8 @@ export class PiRuntimeCreator {
       onGenerationEvent: async (event) => {
         await runtimeCallbacks.onGenerationEvent?.(descriptor.agentId, event);
       },
+      readOpenAICodexWebSocketRequestCount: () =>
+        getOpenAICodexWebSocketDebugStats(session.sessionId)?.requests,
     });
     generationTelemetry.install();
 
@@ -646,10 +649,6 @@ export class PiRuntimeCreator {
       // using Forge's ProjectExecutableTrustPlan below.
       projectTrusted: false,
     });
-    // Pi's provider-internal retries do not re-enter agent.onPayload, so they
-    // cannot be counted as independent telemetry attempts. Keep retry policy
-    // at Pi's agent lifecycle, where every retry starts a measurable request.
-    settingsManager.applyOverrides({ retry: { provider: { maxRetries: 0 } } });
     const transport = resolveOpenAICodexTransport(model);
     if (transport) {
       settingsManager.applyOverrides({ transport });

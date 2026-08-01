@@ -1,28 +1,61 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import { PiGenerationTelemetryAdapter } from "../runtime/generation-telemetry.js";
 import type { RuntimeGenerationEvent } from "../runtime-contracts.js";
 
+const tempDirs: string[] = [];
+const fauxRegistrations: Array<{ unregister: () => void }> = [];
+
+const STREAM_RESULT = { stream: "sentinel" };
+
+afterEach(async () => {
+  while (fauxRegistrations.length > 0) fauxRegistrations.pop()?.unregister();
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 function createSession(options: {
-  onPayload?: (payload: unknown, model: unknown) => unknown | Promise<unknown>;
+  streamFn?: (model: unknown, context: unknown, options: unknown) => unknown | Promise<unknown>;
   onResponse?: (response: unknown, model: unknown) => unknown | Promise<unknown>;
 } = {}) {
-  return {
+  const listeners: Array<(event: unknown) => void> = [];
+  const session = {
+    retryAttempt: 0,
+    isStreaming: true,
     agent: {
-      onPayload: options.onPayload,
+      streamFn: options.streamFn ?? (async () => STREAM_RESULT),
+      prompt: async () => undefined,
+      continue: async () => undefined,
       onResponse: options.onResponse,
     },
+    subscribe(listener: (event: unknown) => void) {
+      listeners.push(listener);
+      return () => undefined;
+    },
+    emit(event: unknown) {
+      for (const listener of listeners) listener(event);
+    },
   };
+  return session;
 }
 
-function message(role: "assistant" | "user" = "assistant") {
-  return { role, content: [] };
-}
-
-function assistantMeta(stopReason = "stop") {
+function assistantMessage(stopReason = "stop") {
   return {
+    role: "assistant",
+    content: [],
     provider: "openai-codex",
-    modelId: "gpt-5.5",
-    responseModelId: "gpt-5.5-2026-07-01",
+    model: "gpt-5.5-2026-07-01",
+    responseModel: "gpt-5.5-2026-07-01",
     api: "openai-codex-responses",
     stopReason,
     usage: { output: 100, reasoning: 25 },
@@ -32,7 +65,11 @@ function assistantMeta(stopReason = "stop") {
   };
 }
 
-function createAdapter(session: ReturnType<typeof createSession>, events: RuntimeGenerationEvent[]) {
+function createAdapter(
+  session: ReturnType<typeof createSession>,
+  events: RuntimeGenerationEvent[],
+  options: { readCodexRequests?: () => number | undefined } = {},
+) {
   let wallTimeMs = 1_000;
   let monotonicTimeMs = 10;
   let nextId = 1;
@@ -45,6 +82,7 @@ function createAdapter(session: ReturnType<typeof createSession>, events: Runtim
       monotonicTimeMs: () => monotonicTimeMs,
     },
     onGenerationEvent: async (event) => events.push(event),
+    readOpenAICodexWebSocketRequestCount: options.readCodexRequests,
   });
 
   return {
@@ -56,7 +94,12 @@ function createAdapter(session: ReturnType<typeof createSession>, events: Runtim
   };
 }
 
-describe("Pi generation telemetry adapter (WP0)", () => {
+async function drain(adapter: PiGenerationTelemetryAdapter): Promise<void> {
+  // message_end closes the active measurement before this queued no-op abort.
+  await adapter.abortActive();
+}
+
+describe("Pi generation telemetry adapter", () => {
   it.each([
     ["openai responses", "openai", "openai-responses"],
     ["openai codex responses", "openai-codex", "openai-codex-responses"],
@@ -66,35 +109,38 @@ describe("Pi generation telemetry adapter (WP0)", () => {
     const session = createSession();
     const { adapter, advance } = createAdapter(session, events);
     adapter.install();
+    session.emit({ type: "agent_start" });
 
-    await session.agent.onPayload?.({ prompt: "must not be retained" }, { provider, id: "model-a", api });
+    await expect(session.agent.streamFn(
+      { provider, id: "model-a", api },
+      { messages: [{ content: "must not be retained" }] },
+      { transport: "sse" },
+    )).resolves.toBe(STREAM_RESULT);
     advance(10);
     await session.agent.onResponse?.({ status: 200 }, { provider, id: "model-a" });
     advance(10);
-    await adapter.handleSessionEvent({ type: "message_start", message: message() } as never);
+    session.emit({ type: "message_start", message: assistantMessage() });
     advance(10);
-    await adapter.handleSessionEvent({
+    session.emit({
       type: "message_update",
-      message: message(),
+      message: assistantMessage(),
       assistantMessageEvent: { type: "text_delta", delta: "visible output" },
-    } as never);
+    });
     advance(10);
-    await adapter.handleSessionEvent({
+    session.emit({
       type: "message_update",
-      message: message(),
+      message: assistantMessage(),
       assistantMessageEvent: { type: "thinking_delta", delta: "private reasoning" },
-    } as never);
+    });
     advance(10);
-    await adapter.handleSessionEvent({
+    session.emit({
       type: "message_update",
-      message: message(),
+      message: assistantMessage(),
       assistantMessageEvent: { type: "toolcall_delta", delta: "{\"path\":\"secret\"}" },
-    } as never);
+    });
     advance(10);
-    await adapter.handleSessionEvent(
-      { type: "message_end", message: message() } as never,
-      assistantMeta(),
-    );
+    session.emit({ type: "message_end", message: assistantMessage() });
+    await drain(adapter);
 
     expect(events.map((event) => event.phase)).toEqual([
       "request_started",
@@ -109,6 +155,9 @@ describe("Pi generation telemetry adapter (WP0)", () => {
       requestedProvider: provider,
       requestedModelId: "model-a",
       reasoningLevel: "high",
+      measurementScope: "agent_model_call",
+      agentRetryAttempt: 0,
+      providerAttemptScope: "unavailable",
     });
     expect(events.filter((event) => event.phase === "output_delta")).toEqual([
       expect.objectContaining({ deltaKind: "text", deltaUtf16CodeUnits: 14 }),
@@ -118,24 +167,44 @@ describe("Pi generation telemetry adapter (WP0)", () => {
     expect(events.at(-1)).toMatchObject({
       phase: "completed",
       outcome: "completed",
+      observedProviderAttemptCount: null,
       meta: expect.objectContaining({ usage: { output: 100, reasoning: 25 } }),
     });
-    expect(JSON.stringify(events)).not.toContain("visible output");
-    expect(JSON.stringify(events)).not.toContain("private reasoning");
-    expect(JSON.stringify(events)).not.toContain('"path"');
-    expect(JSON.stringify(events)).not.toContain("hidden prompt");
-    expect(JSON.stringify(events)).not.toContain("invocation secret");
-    expect(JSON.stringify(events)).not.toContain("provider secret");
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("visible output");
+    expect(serialized).not.toContain("private reasoning");
+    expect(serialized).not.toContain('"path"');
+    expect(serialized).not.toContain("hidden prompt");
+    expect(serialized).not.toContain("invocation secret");
+    expect(serialized).not.toContain("provider secret");
   });
 
-  it("chains prior hooks after payload transforms while preserving their return values and errors", async () => {
+  it("does not classify idle compaction or summary streamFn calls as agent generations", async () => {
+    const events: RuntimeGenerationEvent[] = [];
+    const session = createSession();
+    session.isStreaming = false;
+    const originalStreamFn = session.agent.streamFn;
+    const { adapter } = createAdapter(session, events);
+    adapter.install();
+
+    expect(session.agent.streamFn).toBe(originalStreamFn);
+    session.emit({ type: "agent_start" });
+    expect(session.agent.streamFn).not.toBe(originalStreamFn);
+    session.emit({ type: "agent_end", messages: [] });
+    expect(session.agent.streamFn).toBe(originalStreamFn);
+    await expect(session.agent.streamFn({ provider: "anthropic", id: "summary-model" }, {}, {}))
+      .resolves.toBe(STREAM_RESULT);
+    await drain(adapter);
+    expect(events).toEqual([]);
+  });
+
+  it("chains the public streamFn and response hook while preserving return values and errors", async () => {
     const events: RuntimeGenerationEvent[] = [];
     const calls: string[] = [];
-    const payloadResult = { transformed: true };
     const session = createSession({
-      onPayload: async () => {
-        calls.push("previous-payload");
-        return payloadResult;
+      streamFn: async () => {
+        calls.push("previous-stream");
+        return STREAM_RESULT;
       },
       onResponse: async () => {
         calls.push("previous-response");
@@ -143,60 +212,58 @@ describe("Pi generation telemetry adapter (WP0)", () => {
     });
     const { adapter } = createAdapter(session, events);
     adapter.install();
+    session.emit({ type: "agent_start" });
 
-    await expect(session.agent.onPayload?.({ value: "raw" }, { provider: "x", id: "m" }))
-      .resolves.toBe(payloadResult);
+    await expect(session.agent.streamFn({ provider: "x", id: "m" }, {}, {})).resolves.toBe(STREAM_RESULT);
     await session.agent.onResponse?.({ status: 200 }, { provider: "x", id: "m" });
 
-    expect(calls).toEqual(["previous-payload", "previous-response"]);
+    expect(calls).toEqual(["previous-stream", "previous-response"]);
     expect(events.map((event) => event.phase)).toEqual(["request_started", "response_stream_started"]);
 
-    const failingPayload = vi.fn(async () => {
-      throw new Error("payload transform failed");
+    const failingStream = vi.fn(async () => {
+      throw new Error("stream dispatch failed");
     });
-    const failingSession = createSession({ onPayload: failingPayload });
+    const failingSession = createSession({ streamFn: failingStream });
     const failingEvents: RuntimeGenerationEvent[] = [];
     const failing = createAdapter(failingSession, failingEvents);
     failing.adapter.install();
+    failingSession.emit({ type: "agent_start" });
 
-    await expect(failingSession.agent.onPayload?.({}, { provider: "x", id: "m" }))
-      .rejects.toThrow("payload transform failed");
-    expect(failingEvents).toEqual([]);
+    await expect(failingSession.agent.streamFn({ provider: "x", id: "m" }, {}, {}))
+      .rejects.toThrow("stream dispatch failed");
+    expect(failingEvents.map((event) => event.phase)).toEqual(["request_started", "completed"]);
+    expect(failingEvents.at(-1)).toMatchObject({ outcome: "error", observedProviderAttemptCount: null });
   });
 
-  it("allocates separate attempts for retries and closes an orphan before the replacement request", async () => {
+  it("labels Codex WebSocket replay as multiple observed request frames inside one model-call rate span", async () => {
     const events: RuntimeGenerationEvent[] = [];
     const session = createSession();
-    const { adapter, advance } = createAdapter(session, events);
+    let sentRequestFrames = 11;
+    const { adapter } = createAdapter(session, events, { readCodexRequests: () => sentRequestFrames });
     adapter.install();
+    session.emit({ type: "agent_start" });
 
-    await session.agent.onPayload?.({}, { provider: "openai-codex", id: "model-a" });
-    advance(5_000); // Retry delay must not enter the next attempt's duration.
-    await session.agent.onPayload?.({}, { provider: "openai-codex", id: "model-a" });
-    advance(100);
-    await adapter.handleSessionEvent({ type: "message_start", message: message() } as never);
-    advance(100);
-    await adapter.handleSessionEvent({
-      type: "message_update",
-      message: message(),
-      assistantMessageEvent: { type: "text_delta", delta: "ok" },
-    } as never);
-    advance(100);
-    await adapter.handleSessionEvent(
-      { type: "message_end", message: message() } as never,
-      assistantMeta("length"),
+    await session.agent.streamFn(
+      { provider: "openai-codex", id: "gpt-5.5", api: "openai-codex-responses" },
+      {},
+      { transport: "websocket" },
     );
+    // Simulates a safe connection-limit replay: two response.create frames,
+    // but Pi exposes no independent timing/output boundary for each frame.
+    sentRequestFrames += 2;
+    session.emit({ type: "message_start", message: assistantMessage() });
+    session.emit({ type: "message_end", message: assistantMessage() });
+    await drain(adapter);
 
-    expect(events.map((event) => `${event.phase}:${event.measurementId}`)).toEqual([
-      "request_started:measurement-1",
-      "completed:measurement-1",
-      "request_started:measurement-2",
-      "response_stream_started:measurement-2",
-      "output_delta:measurement-2",
-      "completed:measurement-2",
-    ]);
-    expect(events[1]).toMatchObject({ phase: "completed", outcome: "aborted" });
-    expect(events.at(-1)).toMatchObject({ phase: "completed", outcome: "length" });
+    expect(events.filter((event) => event.phase === "request_started")).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      measurementScope: "agent_model_call",
+      providerAttemptScope: "openai_codex_websocket_request",
+    });
+    expect(events.at(-1)).toMatchObject({
+      phase: "completed",
+      observedProviderAttemptCount: 2,
+    });
   });
 
   it("handles error, abort, tool-use, and final-only lifecycle outcomes without inventing a delta", async () => {
@@ -210,12 +277,11 @@ describe("Pi generation telemetry adapter (WP0)", () => {
       const session = createSession();
       const { adapter } = createAdapter(session, events);
       adapter.install();
-      await session.agent.onPayload?.({}, { provider: "openai-codex", id: "model-a" });
-      await adapter.handleSessionEvent({ type: "message_start", message: message() } as never);
-      await adapter.handleSessionEvent(
-        { type: "message_end", message: message() } as never,
-        assistantMeta(stopReason),
-      );
+      session.emit({ type: "agent_start" });
+      await session.agent.streamFn({ provider: "openai-codex", id: "model-a" }, {}, {});
+      session.emit({ type: "message_start", message: assistantMessage(stopReason) });
+      session.emit({ type: "message_end", message: assistantMessage(stopReason) });
+      await drain(adapter);
 
       expect(events.map((event) => event.phase)).toEqual([
         "request_started",
@@ -224,5 +290,102 @@ describe("Pi generation telemetry adapter (WP0)", () => {
       ]);
       expect(events.at(-1)).toMatchObject({ phase: "completed", outcome: expectedOutcome });
     }
+  });
+
+  it("observes each real Pi agent retry as an independent streamFn lifecycle and preserves provider retries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-generation-retry-"));
+    tempDirs.push(root);
+    const agentDir = join(root, "agent");
+    const faux = registerFauxProvider({
+      api: "forge-telemetry-retry-api",
+      provider: "forge-telemetry-retry",
+      models: [{ id: "retry-model", name: "Retry", contextWindow: 32_000, maxTokens: 1_024 }],
+      tokensPerSecond: 100_000,
+    });
+    fauxRegistrations.push(faux);
+    faux.setResponses([
+      () => ({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "429 rate limit exceeded",
+      }) as never,
+      () => ({
+        role: "assistant",
+        content: [{ type: "text", text: "retry succeeded" }],
+        stopReason: "stop",
+      }) as never,
+    ]);
+
+    const settingsManager = SettingsManager.inMemory({
+      retry: {
+        enabled: true,
+        maxRetries: 1,
+        baseDelayMs: 1,
+        provider: { maxRetries: 4, timeoutMs: 123, maxRetryDelayMs: 456 },
+      },
+    });
+    const authStorage = AuthStorage.inMemory({});
+    authStorage.setRuntimeApiKey("forge-telemetry-retry", "faux-test-key");
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: root,
+      agentDir,
+      settingsManager,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+    await resourceLoader.reload();
+    const { session } = await createAgentSession({
+      cwd: root,
+      agentDir,
+      authStorage,
+      modelRegistry,
+      model: faux.getModel(),
+      thinkingLevel: "off",
+      sessionManager: SessionManager.inMemory(root),
+      resourceLoader,
+      settingsManager,
+      noTools: "all",
+      customTools: [],
+    });
+    const originalStreamFn = session.agent.streamFn;
+    const events: RuntimeGenerationEvent[] = [];
+    const adapter = new PiGenerationTelemetryAdapter({
+      session,
+      reasoningLevel: null,
+      createMeasurementId: () => `real-attempt-${events.filter((event) => event.phase === "request_started").length + 1}`,
+      onGenerationEvent: (event) => events.push(event),
+    });
+    adapter.install();
+    expect(session.agent.streamFn).toBe(originalStreamFn);
+
+    await session.prompt("exercise retry ordering");
+    await session.waitForIdle();
+    await adapter.abortActive();
+
+    expect(session.agent.streamFn).toBe(originalStreamFn);
+    expect(faux.state.callCount).toBe(2);
+    expect(settingsManager.getProviderRetrySettings()).toMatchObject({
+      maxRetries: 4,
+      timeoutMs: 123,
+      maxRetryDelayMs: 456,
+    });
+    const starts = events.filter((event) => event.phase === "request_started");
+    const terminals = events.filter((event) => event.phase === "completed");
+    expect(starts).toMatchObject([
+      { measurementId: "real-attempt-1", agentRetryAttempt: 0, providerAttemptScope: "unavailable" },
+      { measurementId: "real-attempt-2", agentRetryAttempt: 1, providerAttemptScope: "unavailable" },
+    ]);
+    expect(terminals).toMatchObject([
+      { measurementId: "real-attempt-1", outcome: "error" },
+      { measurementId: "real-attempt-2", outcome: "completed" },
+    ]);
+    expect(events.findIndex((event) => event.measurementId === "real-attempt-1" && event.phase === "completed"))
+      .toBeLessThan(events.findIndex((event) => event.measurementId === "real-attempt-2" && event.phase === "request_started"));
+
+    session.dispose();
   });
 });

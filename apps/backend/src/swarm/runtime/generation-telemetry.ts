@@ -18,11 +18,15 @@ export interface PiGenerationTelemetryAdapterOptions {
   onGenerationEvent?: (event: RuntimeGenerationEvent) => void | Promise<void>;
   createMeasurementId?: () => string;
   clock?: PiGenerationTelemetryClock;
+  /** Public Pi debug probe: cumulative sent Codex WebSocket response.create frames for this session. */
+  readOpenAICodexWebSocketRequestCount?: () => number | undefined;
 }
 
 interface ActivePiGeneration {
   measurementId: string;
   responseStreamStarted: boolean;
+  providerAttemptScope: Extract<RuntimeGenerationEvent, { phase: "request_started" }>["providerAttemptScope"];
+  providerAttemptCountAtStart: number | undefined;
 }
 
 /**
@@ -36,7 +40,11 @@ export class PiGenerationTelemetryAdapter {
   private readonly onGenerationEvent: ((event: RuntimeGenerationEvent) => void | Promise<void>) | undefined;
   private readonly createMeasurementId: () => string;
   private readonly clock: PiGenerationTelemetryClock;
+  private readonly readOpenAICodexWebSocketRequestCount: (() => number | undefined) | undefined;
   private active: ActivePiGeneration | undefined;
+  private operationQueue: Promise<void> = Promise.resolve();
+  private originalStreamFn: AgentSession["agent"]["streamFn"] | undefined;
+  private instrumentedStreamFn: AgentSession["agent"]["streamFn"] | undefined;
   private installed = false;
 
   constructor(options: PiGenerationTelemetryAdapterOptions) {
@@ -48,87 +56,153 @@ export class PiGenerationTelemetryAdapter {
       wallTimeMs: () => Date.now(),
       monotonicTimeMs: () => performance.now(),
     };
+    this.readOpenAICodexWebSocketRequestCount = options.readOpenAICodexWebSocketRequestCount;
   }
 
-  /** Chains Pi's public request hooks without changing prior return/error behavior. */
+  /**
+   * Instruments Pi's public Agent.streamFn seam. One invocation is one logical
+   * model-call attempt; Pi agent retries invoke it again. Provider SDK retries
+   * remain inside that invocation and are never presented as per-attempt TPS.
+   */
   install(): void {
     if (this.installed) return;
     this.installed = true;
 
     const agent = this.session.agent;
-    const existingOnPayload = agent.onPayload;
+    const existingStreamFn = agent.streamFn;
     const existingOnResponse = agent.onResponse;
+    this.originalStreamFn = existingStreamFn;
+    this.instrumentedStreamFn = async (model, context, options) => {
+      await this.enqueue(() => this.beginRequest(model, options));
+      try {
+        return await existingStreamFn.call(agent, model, context, options);
+      } catch (error) {
+        await this.enqueue(() => this.completeActive("error"));
+        throw error;
+      }
+    };
 
-    agent.onPayload = async (payload, model) => {
-      // Invoke existing transformations first: the generation boundary is after
-      // payload transforms and immediately before Pi dispatches the request.
-      const transformed = existingOnPayload
-        ? await existingOnPayload.call(agent, payload, model)
-        : undefined;
-      await this.beginRequest(model);
-      return transformed;
+    // Pi calls these two public Agent methods for the initial loop and every
+    // continuation (including retries). Restore immediately after each loop so
+    // idle compaction retains Pi's streamSimple identity/auth behavior.
+    const invokeAgentPrompt = agent.prompt.bind(agent) as (...args: unknown[]) => Promise<void>;
+    agent.prompt = (async (...args: unknown[]) => {
+      this.attachStreamInstrumentation();
+      try {
+        await invokeAgentPrompt(...args);
+      } finally {
+        this.restoreStreamFn();
+      }
+    }) as typeof agent.prompt;
+    const invokeAgentContinue = agent.continue.bind(agent);
+    agent.continue = async () => {
+      this.attachStreamInstrumentation();
+      try {
+        await invokeAgentContinue();
+      } finally {
+        this.restoreStreamFn();
+      }
     };
 
     agent.onResponse = async (response, model) => {
       if (existingOnResponse) {
         await existingOnResponse.call(agent, response, model);
       }
-      await this.markResponseStreamStarted();
+      await this.enqueue(() => this.markResponseStreamStarted());
     };
+
+    // Register directly at installation time so lifecycle events are enqueued
+    // before Pi can start a continuation/retry. External runtime event queues
+    // may process the same events later, but cannot reorder attribution here.
+    this.session.subscribe((event) => {
+      // Fallback for custom/direct Agent integrations. Normal Pi session loops
+      // are covered synchronously by the wrapped Agent methods above.
+      if (event.type === "agent_start") {
+        this.attachStreamInstrumentation();
+      } else if (event.type === "agent_end" || event.type === "agent_settled") {
+        this.restoreStreamFn();
+      }
+      void this.handleSessionEvent(event);
+    });
   }
 
   /** Receives raw Pi lifecycle events before Forge's conversation mapping. */
   async handleSessionEvent(event: AgentSessionEvent, modelCallMeta?: RuntimeModelCallMeta): Promise<void> {
-    switch (event.type) {
-      case "message_start":
-        if (isAssistantMessage(event.message)) {
-          await this.markResponseStreamStarted();
+    await this.enqueue(async () => {
+      switch (event.type) {
+        case "message_start":
+          if (isAssistantMessage(event.message)) {
+            await this.markResponseStreamStarted();
+          }
+          return;
+        case "message_update": {
+          if (!isAssistantMessage(event.message)) return;
+          const delta = extractCountableDelta(event.assistantMessageEvent);
+          if (!delta || !this.active) return;
+          const timestamp = this.timestamp();
+          await this.emit({
+            phase: "output_delta",
+            measurementId: this.active.measurementId,
+            ...timestamp,
+            deltaKind: delta.kind,
+            deltaUtf16CodeUnits: delta.value.length,
+            deltaUtf8Bytes: Buffer.byteLength(delta.value, "utf8"),
+          });
+          return;
         }
-        return;
-      case "message_update": {
-        if (!isAssistantMessage(event.message)) return;
-        const delta = extractCountableDelta(event.assistantMessageEvent);
-        if (!delta || !this.active) return;
-        const timestamp = this.timestamp();
-        await this.emit({
-          phase: "output_delta",
-          measurementId: this.active.measurementId,
-          ...timestamp,
-          deltaKind: delta.kind,
-          deltaUtf16CodeUnits: delta.value.length,
-          deltaUtf8Bytes: Buffer.byteLength(delta.value, "utf8"),
-        });
-        return;
+        case "message_end":
+          if (isAssistantMessage(event.message)) {
+            const effectiveMeta = modelCallMeta ?? modelCallMetaFromAssistantMessage(event.message);
+            await this.completeActive(outcomeFromMeta(effectiveMeta), effectiveMeta);
+          }
+          return;
+        case "agent_settled":
+          // A normal assistant message ends first. This only closes an orphan
+          // created by a failed/aborted attempt that did not emit message_end.
+          await this.completeActive("aborted");
+          break;
+        default:
+          break;
       }
-      case "message_end":
-        if (isAssistantMessage(event.message)) {
-          await this.completeActive(outcomeFromMeta(modelCallMeta), modelCallMeta);
-        }
-        return;
-      case "agent_settled":
-        // A normal assistant message ends first. This only closes an orphan
-        // created by a failed/aborted attempt that did not emit message_end.
-        await this.abortActive();
-        break;
-      default:
-        break;
+    });
+  }
+
+  /** Used by runtime replacement/termination paths to close an orphaned attempt and drain queued lifecycle work. */
+  async abortActive(): Promise<void> {
+    await this.enqueue(() => this.completeActive("aborted"));
+  }
+
+  private attachStreamInstrumentation(): void {
+    if (this.instrumentedStreamFn) {
+      this.session.agent.streamFn = this.instrumentedStreamFn;
     }
   }
 
-  /** Used by runtime replacement/termination paths to close an orphaned attempt. */
-  async abortActive(): Promise<void> {
-    await this.completeActive("aborted");
+  private restoreStreamFn(): void {
+    if (this.originalStreamFn && this.session.agent.streamFn === this.instrumentedStreamFn) {
+      this.session.agent.streamFn = this.originalStreamFn;
+    }
   }
 
-  private async beginRequest(model: unknown): Promise<void> {
-    // Agent-level retries re-enter onPayload without a message_end for the
-    // prior failed stream. Keep attempts independent rather than merging delay.
-    await this.abortActive();
+  private async beginRequest(model: unknown, streamOptions: unknown): Promise<void> {
+    // The stable stream contract normally emits message_end before a new call.
+    // Fail closed if a custom stream violates it rather than merging lifecycles.
+    await this.completeActive("aborted");
 
     const measurementId = this.createMeasurementId();
-    this.active = { measurementId, responseStreamStarted: false };
-    const timestamp = this.timestamp();
     const modelRecord = readObject(model);
+    const streamOptionsRecord = readObject(streamOptions);
+    const providerAttemptScope = this.resolveProviderAttemptScope(modelRecord, streamOptionsRecord);
+    const providerAttemptCountAtStart = providerAttemptScope === "openai_codex_websocket_request"
+      ? this.readCodexWebSocketRequestCount()
+      : undefined;
+    this.active = {
+      measurementId,
+      responseStreamStarted: false,
+      providerAttemptScope,
+      providerAttemptCountAtStart,
+    };
+    const timestamp = this.timestamp();
     await this.emit({
       phase: "request_started",
       measurementId,
@@ -136,6 +210,9 @@ export class PiGenerationTelemetryAdapter {
       requestedProvider: normalizeRequiredString(modelRecord?.provider, "unknown"),
       requestedModelId: normalizeRequiredString(modelRecord?.id, "unknown"),
       reasoningLevel: this.reasoningLevel,
+      measurementScope: "agent_model_call",
+      agentRetryAttempt: readNonNegativeInteger(this.session.retryAttempt) ?? 0,
+      providerAttemptScope,
     });
   }
 
@@ -157,13 +234,48 @@ export class PiGenerationTelemetryAdapter {
     if (!active) return;
     this.active = undefined;
     const generationMeta = toGenerationMeta(meta);
+    const observedProviderAttemptCount = active.providerAttemptScope === "openai_codex_websocket_request"
+      ? observedCountDelta(active.providerAttemptCountAtStart, this.readCodexWebSocketRequestCount())
+      : null;
     await this.emit({
       phase: "completed",
       measurementId: active.measurementId,
       ...this.timestamp(),
       outcome,
+      observedProviderAttemptCount,
       ...(generationMeta ? { meta: generationMeta } : {}),
     });
+  }
+
+  private resolveProviderAttemptScope(
+    model: Record<string, unknown> | undefined,
+    streamOptions: Record<string, unknown> | undefined,
+  ): ActivePiGeneration["providerAttemptScope"] {
+    const provider = normalizeOptionalString(model?.provider)?.toLowerCase();
+    const api = normalizeOptionalString(model?.api)?.toLowerCase();
+    const transport = normalizeOptionalString(streamOptions?.transport)?.toLowerCase();
+    const mayUseWebSocket = transport === "websocket"
+      || transport === "websocket-cached"
+      || transport === "auto";
+    return this.readOpenAICodexWebSocketRequestCount
+      && (provider === "openai-codex" || api === "openai-codex-responses")
+      && mayUseWebSocket
+      ? "openai_codex_websocket_request"
+      : "unavailable";
+  }
+
+  private readCodexWebSocketRequestCount(): number | undefined {
+    try {
+      return readNonNegativeInteger(this.readOpenAICodexWebSocketRequestCount?.());
+    } catch {
+      return undefined;
+    }
+  }
+
+  private enqueue(operation: () => void | Promise<void>): Promise<void> {
+    const next = this.operationQueue.then(operation);
+    this.operationQueue = next.catch(() => undefined);
+    return next;
   }
 
   private timestamp(): Pick<RuntimeGenerationEvent, "wallTimeMs" | "monotonicTimeMs"> {
@@ -198,6 +310,25 @@ function extractCountableDelta(value: unknown): { kind: "text" | "thinking" | "t
     default:
       return null;
   }
+}
+
+function modelCallMetaFromAssistantMessage(value: unknown): RuntimeModelCallMeta | undefined {
+  const message = readObject(value);
+  if (!message || message.role !== "assistant") return undefined;
+  const usageRecord = readObject(message.usage);
+  const usage = usageRecord
+    ? Object.fromEntries(
+        Object.entries(usageRecord).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry)),
+      ) as RuntimeModelCallMeta["usage"]
+    : undefined;
+  return {
+    ...(usage && Object.keys(usage).length > 0 ? { usage } : {}),
+    provider: normalizeOptionalString(message.provider) ?? undefined,
+    api: normalizeOptionalString(message.api) ?? undefined,
+    modelId: normalizeOptionalString(message.model) ?? undefined,
+    responseModelId: normalizeOptionalString(message.responseModel) ?? undefined,
+    stopReason: normalizeOptionalString(message.stopReason) ?? undefined,
+  };
 }
 
 function toGenerationMeta(meta: RuntimeModelCallMeta | undefined): RuntimeGenerationCallMeta | undefined {
@@ -253,6 +384,16 @@ function readObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function observedCountDelta(start: number | undefined, end: number | undefined): number | null {
+  if (end === undefined) return null;
+  const baseline = start ?? 0;
+  return end >= baseline ? end - baseline : null;
+}
+
+function readNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function normalizeOptionalString(value: unknown): string | null {
