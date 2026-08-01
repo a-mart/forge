@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createElectronDevelopmentWorkspaceEnvironment } from '../dev-electron.mjs'
+import {
+  createElectronDevelopmentSetupCommands,
+  createElectronDevelopmentWorkspaceEnvironment,
+} from '../dev-electron.mjs'
 
 describe('Electron development backend routing', () => {
   it('lets every renderer derive the Electron backend host from its own page', () => {
@@ -28,5 +31,49 @@ describe('Electron development backend routing', () => {
       VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS: 'true',
     })
     expect(environment).not.toHaveProperty('VITE_FORGE_WS_URL')
+  })
+
+  it('uses a JavaScript package-manager launcher directly', () => {
+    const [command] = createElectronDevelopmentSetupCommands({
+      environment: { npm_execpath: '/opt/pnpm/bin/pnpm.cjs' },
+      platform: 'darwin',
+    })
+
+    expect(command.command).toBe(process.execPath)
+    expect(command.args).toEqual([
+      '/opt/pnpm/bin/pnpm.cjs',
+      'run',
+      'streamdeck:build',
+    ])
+  })
+
+  it('does not ask Node to parse a native package-manager executable', () => {
+    const [command] = createElectronDevelopmentSetupCommands({
+      environment: { npm_execpath: '/opt/pnpm/bin/pnpm' },
+      platform: 'darwin',
+    })
+
+    expect(command.command).toBe('pnpm')
+    expect(command.args).toEqual(['run', 'streamdeck:build'])
+  })
+
+  it('keeps the Windows command-wrapper path for a native package-manager executable', () => {
+    const [command] = createElectronDevelopmentSetupCommands({
+      environment: {
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        npm_execpath: 'C:\\pnpm\\pnpm.exe',
+      },
+      platform: 'win32',
+    })
+
+    expect(command.command).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(command.args).toEqual([
+      '/d',
+      '/s',
+      '/c',
+      'pnpm.cmd',
+      'run',
+      'streamdeck:build',
+    ])
   })
 })

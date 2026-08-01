@@ -77,7 +77,10 @@ export function createDevelopmentInterruptController({
 
 function resolvePnpmInvocation(environment, platform) {
   const npmExecPath = environment.npm_execpath
-  if (typeof npmExecPath === 'string' && npmExecPath.trim().length > 0) {
+  const npmExecPathExtension = typeof npmExecPath === 'string'
+    ? path.extname(npmExecPath).toLowerCase()
+    : ''
+  if (['.js', '.cjs', '.mjs'].includes(npmExecPathExtension)) {
     return {
       command: process.execPath,
       prefixArgs: [npmExecPath],
