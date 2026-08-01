@@ -640,6 +640,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.queueVersionedToolMutation(agentId, event),
         emitModelCacheObservation: (event) =>
           this.eventCoordinator.emitModelCacheObservation(event),
+        // Deliberately direct: count-only throughput must not enter the
+        // conversation projector or Collaboration fanout path.
+        emitGenerationThroughput: (event) => this.emit("generation_throughput", event),
         logDebug: (message, details) => this.logDebug(message, details),
       },
       messaging: {

@@ -1,7 +1,12 @@
 import type {
   GenerationBoundarySource,
+  GenerationMeasurementQuality,
   GenerationMeasurementRecordV1,
   GenerationReasoningBoundaryCoverage,
+  GenerationThroughputEvent,
+  GenerationThroughputLiveMeasurement,
+  GenerationThroughputSessionSummary,
+  GenerationThroughputSnapshotEvent,
 } from "@forge/protocol";
 import {
   GENERATION_MEASUREMENT_ENTRY_TYPE,
@@ -13,8 +18,17 @@ import type {
 } from "../runtime-contracts.js";
 import type { AgentDescriptor } from "../types.js";
 
+const LIVE_PROGRESS_INTERVAL_MS = 500;
+const LIVE_RATE_MIN_ELAPSED_MS = 500;
+const LIVE_RATE_MIN_ESTIMATED_TOKENS = 8;
+const LIVE_RATE_WINDOW_MS = 3_000;
+const LIVE_RATE_EWMA_ALPHA = 0.35;
+const MAX_LIVE_RATE_SAMPLES = 128;
+const SESSION_SAMPLE_LIMIT = 20;
+
 interface ActiveGenerationMeasurement {
   runtimeToken: number;
+  measurementId: string;
   descriptor: GenerationMeasurementRecordV1["identity"];
   model: GenerationMeasurementRecordV1["model"];
   turnId: string | null;
@@ -25,6 +39,11 @@ interface ActiveGenerationMeasurement {
   lastOutput: Timestamp | undefined;
   estimatedOutputUtf16CodeUnits: number;
   observedThinkingDelta: boolean;
+  sequence: number;
+  lastProgressEmittedMonotonicTimeMs: number | undefined;
+  emittedGenerating: boolean;
+  liveRateSamples: EstimatedRateSample[];
+  smoothedInstantaneousTokensPerSecond: number | undefined;
 }
 
 interface Timestamp {
@@ -32,20 +51,38 @@ interface Timestamp {
   monotonicTimeMs: number;
 }
 
+interface EstimatedRateSample {
+  monotonicTimeMs: number;
+  estimatedOutputTokens: number;
+}
+
+interface TerminalSessionSample {
+  completedAt: string;
+  role: "manager" | "worker";
+  tokensPerSecond: number;
+  outputTokens: number;
+  generationDurationMs: number;
+}
+
 export interface GenerationMeasurementCoordinatorOptions {
   descriptors: ReadonlyMap<string, AgentDescriptor>;
   getRuntime(agentId: string): SwarmAgentRuntime | undefined;
   getActiveTurnId?(agentId: string, runtimeToken: number): string | undefined;
+  /** Ephemeral, count-only Builder delivery. It never enters conversation projection. */
+  emitLiveEvent?(event: GenerationThroughputEvent): void;
   logDebug?(message: string, details?: Record<string, unknown>): void;
 }
 
 /**
  * Records compact started/terminal lifecycle entries independently from
- * conversation projection. The controller invokes this only after its
+ * conversation projection, and projects a bounded count-only live view for
+ * the owning Builder session. The controller invokes this only after its
  * runtime-token gate accepts the callback.
  */
 export class GenerationMeasurementCoordinator {
   private readonly activeByKey = new Map<string, ActiveGenerationMeasurement>();
+  private readonly activeKeyByAgentId = new Map<string, string>();
+  private readonly terminalSamplesBySessionId = new Map<string, TerminalSessionSample[]>();
 
   constructor(private readonly options: GenerationMeasurementCoordinatorOptions) {}
 
@@ -75,12 +112,36 @@ export class GenerationMeasurementCoordinator {
         active.lastOutput = timestamp;
         active.estimatedOutputUtf16CodeUnits += nonNegativeFinite(event.deltaUtf16CodeUnits) ?? 0;
         active.observedThinkingDelta ||= event.deltaKind === "thinking";
+        this.recordLiveRateSample(active, timestamp);
+        this.emitProgressIfDue(active, timestamp);
         return;
       }
       case "completed":
         await this.completeMeasurement(key, agentId, event);
         break;
     }
+  }
+
+  /** Bootstrap contains only current active measurements plus the bounded session ring. */
+  getSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+    const normalizedSessionAgentId = sessionAgentId.trim();
+    const measurements = [...this.activeByKey.values()]
+      .filter((active) => active.descriptor.sessionId === normalizedSessionAgentId)
+      .map((active) => this.buildLiveMeasurement(
+        active,
+        "generating",
+        active.lastOutput ?? active.firstOutput ?? {
+          wallTimeMs: active.startedWallTimeMs,
+          monotonicTimeMs: active.startedMonotonicTimeMs,
+        },
+      ));
+
+    return {
+      type: "generation_throughput_snapshot",
+      sessionAgentId: normalizedSessionAgentId,
+      measurements,
+      sessionSummary: this.buildSessionSummary(normalizedSessionAgentId),
+    };
   }
 
   private async startMeasurement(
@@ -94,9 +155,24 @@ export class GenerationMeasurementCoordinator {
       return;
     }
 
+    const previousKey = this.activeKeyByAgentId.get(agentId);
+    if (previousKey && previousKey !== key) {
+      const previous = this.activeByKey.get(previousKey);
+      if (previous) {
+        const timestamp = timestampFromEvent(event);
+        previous.sequence += 1;
+        this.emitLive({
+          type: "generation_throughput",
+          measurement: this.buildLiveMeasurement(previous, "aborted", timestamp),
+        });
+        this.activeByKey.delete(previousKey);
+      }
+    }
+
     const startedAt = timestampFromEvent(event);
     const active: ActiveGenerationMeasurement = {
       runtimeToken,
+      measurementId: event.measurementId,
       descriptor: captureIdentity(descriptor),
       model: {
         provider: nonEmptyString(event.requestedProvider) ?? "unknown",
@@ -113,8 +189,14 @@ export class GenerationMeasurementCoordinator {
       lastOutput: undefined,
       estimatedOutputUtf16CodeUnits: 0,
       observedThinkingDelta: false,
+      sequence: 1,
+      lastProgressEmittedMonotonicTimeMs: undefined,
+      emittedGenerating: false,
+      liveRateSamples: [],
+      smoothedInstantaneousTokensPerSecond: undefined,
     };
     this.activeByKey.set(key, active);
+    this.activeKeyByAgentId.set(agentId, key);
 
     const record: GenerationMeasurementRecordV1 = {
       version: 1,
@@ -136,6 +218,10 @@ export class GenerationMeasurementCoordinator {
       reasoningBoundaryCoverage: "not_reported",
     };
     this.appendRecord(agentId, event.measurementId, "started", record);
+    this.emitLive({
+      type: "generation_throughput",
+      measurement: this.buildLiveMeasurement(active, "starting", startedAt),
+    });
   }
 
   private async completeMeasurement(
@@ -146,12 +232,22 @@ export class GenerationMeasurementCoordinator {
     const active = this.activeByKey.get(key);
     if (!active) return;
     this.activeByKey.delete(key);
+    if (this.activeKeyByAgentId.get(agentId) === key) {
+      this.activeKeyByAgentId.delete(agentId);
+    }
 
     const completed = timestampFromEvent(event);
     const outputTokens = nonNegativeFinite(event.meta?.usage?.output);
     const reasoningTokens = nonNegativeFinite(event.meta?.usage?.reasoning);
     const tokenSource = outputTokens === undefined ? "unavailable" : "provider_final";
     const boundarySource = deriveBoundarySource(active, completed);
+    const generationDurationMs = active.firstOutput
+      ? duration(active.firstOutput.monotonicTimeMs, completed.monotonicTimeMs)
+      : null;
+    const reasoningBoundaryCoverage = deriveReasoningBoundaryCoverage(
+      reasoningTokens,
+      active.observedThinkingDelta,
+    );
     const record: GenerationMeasurementRecordV1 = {
       version: 1,
       measurementId: event.measurementId,
@@ -175,9 +271,7 @@ export class GenerationMeasurementCoordinator {
         responseStreamOpenMs: active.responseStreamStarted
           ? duration(active.responseStreamStarted.monotonicTimeMs, completed.monotonicTimeMs)
           : null,
-        generationDurationMs: active.firstOutput
-          ? duration(active.firstOutput.monotonicTimeMs, completed.monotonicTimeMs)
-          : null,
+        generationDurationMs,
         interOutputSpanMs: active.firstOutput && active.lastOutput
           ? duration(active.firstOutput.monotonicTimeMs, active.lastOutput.monotonicTimeMs)
           : null,
@@ -189,10 +283,7 @@ export class GenerationMeasurementCoordinator {
         tokenSource,
       },
       outcome: event.outcome,
-      reasoningBoundaryCoverage: deriveReasoningBoundaryCoverage(
-        reasoningTokens,
-        active.observedThinkingDelta,
-      ),
+      reasoningBoundaryCoverage,
       ...(active.estimatedOutputUtf16CodeUnits > 0
         ? {
             estimator: {
@@ -203,6 +294,183 @@ export class GenerationMeasurementCoordinator {
         : {}),
     };
     this.appendRecord(agentId, event.measurementId, "terminal", record);
+
+    active.sequence += 1;
+    const phase = event.outcome === "aborted" || event.outcome === "error" ? "aborted" : "completed";
+    const sessionSummary = this.recordTerminalSessionSample(active, record);
+    this.emitLive({
+      type: "generation_throughput",
+      measurement: this.buildLiveMeasurement(active, phase, completed, record),
+      ...(sessionSummary ? { sessionSummary } : {}),
+    });
+  }
+
+  private recordLiveRateSample(active: ActiveGenerationMeasurement, timestamp: Timestamp): void {
+    const estimatedOutputTokens = estimatedTokens(active);
+    active.liveRateSamples.push({
+      monotonicTimeMs: timestamp.monotonicTimeMs,
+      estimatedOutputTokens,
+    });
+    while (
+      active.liveRateSamples.length > MAX_LIVE_RATE_SAMPLES
+      || (active.liveRateSamples.length > 1
+        && active.liveRateSamples[1]!.monotonicTimeMs < timestamp.monotonicTimeMs - LIVE_RATE_WINDOW_MS)
+    ) {
+      active.liveRateSamples.shift();
+    }
+  }
+
+  private emitProgressIfDue(active: ActiveGenerationMeasurement, timestamp: Timestamp): void {
+    const previous = active.lastProgressEmittedMonotonicTimeMs;
+    if (active.emittedGenerating && previous !== undefined && timestamp.monotonicTimeMs - previous < LIVE_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+
+    active.sequence += 1;
+    active.lastProgressEmittedMonotonicTimeMs = timestamp.monotonicTimeMs;
+    active.emittedGenerating = true;
+    this.emitLive({
+      type: "generation_throughput",
+      measurement: this.buildLiveMeasurement(active, "generating", timestamp),
+    });
+  }
+
+  private buildLiveMeasurement(
+    active: ActiveGenerationMeasurement,
+    phase: GenerationThroughputLiveMeasurement["phase"],
+    timestamp: Timestamp,
+    terminalRecord?: GenerationMeasurementRecordV1,
+  ): GenerationThroughputLiveMeasurement {
+    const terminal = terminalRecord?.recordState === "terminal" ? terminalRecord : undefined;
+    const estimatedOutputTokens = estimatedTokens(active);
+    const elapsedGenerationMs = active.firstOutput
+      ? duration(active.firstOutput.monotonicTimeMs, timestamp.monotonicTimeMs)
+      : null;
+    const finalOutputTokens = terminal?.usage.outputTokens ?? null;
+    const finalDuration = terminal?.timing.generationDurationMs ?? null;
+    const exactTokensPerSecond = finalOutputTokens !== null && finalDuration !== null && finalDuration > 0
+      ? finalOutputTokens * 1_000 / finalDuration
+      : null;
+    const estimatedRate = phase === "generating"
+      ? this.estimateLiveRates(active, timestamp, elapsedGenerationMs)
+      : null;
+    const valueKind = terminal
+      ? terminal.usage.tokenSource === "provider_final" ? "provider_final" : "unavailable"
+      : phase === "starting" || !active.firstOutput ? "unavailable" : "estimated";
+
+    return {
+      measurementId: active.measurementId,
+      sequence: active.sequence,
+      phase,
+      profileId: active.descriptor.profileId,
+      sessionId: active.descriptor.sessionId,
+      agentId: active.descriptor.agentId,
+      managerId: active.descriptor.managerId,
+      role: active.descriptor.role,
+      provider: terminal?.model.provider ?? active.model.provider,
+      modelId: terminal?.model.responseModelId ?? terminal?.model.requestedModelId ?? active.model.requestedModelId,
+      sampledAt: isoAt(timestamp.wallTimeMs),
+      firstOutputAt: active.firstOutput ? isoAt(active.firstOutput.wallTimeMs) : null,
+      elapsedGenerationMs: terminal ? finalDuration : elapsedGenerationMs,
+      outputTokens: terminal ? finalOutputTokens : phase === "starting" ? null : estimatedOutputTokens,
+      instantaneousTokensPerSecond: phase === "generating" ? estimatedRate?.instantaneous ?? null : null,
+      generationAverageTokensPerSecond: terminal ? exactTokensPerSecond : estimatedRate?.average ?? null,
+      valueKind,
+      quality: terminal
+        ? qualityFromTerminal(terminal)
+        : activeQuality(active),
+    };
+  }
+
+  private estimateLiveRates(
+    active: ActiveGenerationMeasurement,
+    timestamp: Timestamp,
+    elapsedGenerationMs: number | null,
+  ): { instantaneous: number; average: number } | null {
+    const outputTokens = estimatedTokens(active);
+    if (
+      elapsedGenerationMs === null
+      || elapsedGenerationMs < LIVE_RATE_MIN_ELAPSED_MS
+      || outputTokens < LIVE_RATE_MIN_ESTIMATED_TOKENS
+    ) {
+      return null;
+    }
+
+    const windowStart = timestamp.monotonicTimeMs - LIVE_RATE_WINDOW_MS;
+    const reference = active.liveRateSamples.find((sample) => sample.monotonicTimeMs >= windowStart)
+      ?? active.liveRateSamples[0];
+    if (!reference) return null;
+    const windowMs = timestamp.monotonicTimeMs - reference.monotonicTimeMs;
+    if (windowMs <= 0) return null;
+    const rawInstantaneous = Math.max(0, outputTokens - reference.estimatedOutputTokens) * 1_000 / windowMs;
+    active.smoothedInstantaneousTokensPerSecond = active.smoothedInstantaneousTokensPerSecond === undefined
+      ? rawInstantaneous
+      : LIVE_RATE_EWMA_ALPHA * rawInstantaneous
+        + (1 - LIVE_RATE_EWMA_ALPHA) * active.smoothedInstantaneousTokensPerSecond;
+
+    return {
+      instantaneous: active.smoothedInstantaneousTokensPerSecond,
+      average: outputTokens * 1_000 / elapsedGenerationMs,
+    };
+  }
+
+  private recordTerminalSessionSample(
+    active: ActiveGenerationMeasurement,
+    record: GenerationMeasurementRecordV1,
+  ): GenerationThroughputSessionSummary | undefined {
+    const outputTokens = record.usage.outputTokens;
+    const durationMs = record.timing.generationDurationMs;
+    if (
+      record.usage.tokenSource !== "provider_final"
+      || record.timing.boundarySource !== "content_delta_to_stream_end"
+      || outputTokens === null
+      || durationMs === null
+      || durationMs <= 0
+    ) {
+      return undefined;
+    }
+
+    const sessionSamples = this.terminalSamplesBySessionId.get(active.descriptor.sessionId) ?? [];
+    sessionSamples.push({
+      completedAt: record.completedAt ?? isoAt(active.startedWallTimeMs),
+      role: active.descriptor.role,
+      tokensPerSecond: outputTokens * 1_000 / durationMs,
+      outputTokens,
+      generationDurationMs: durationMs,
+    });
+    while (sessionSamples.length > SESSION_SAMPLE_LIMIT) {
+      sessionSamples.shift();
+    }
+    this.terminalSamplesBySessionId.set(active.descriptor.sessionId, sessionSamples);
+    return this.buildSessionSummary(active.descriptor.sessionId);
+  }
+
+  private buildSessionSummary(sessionAgentId: string): GenerationThroughputSessionSummary {
+    const samples = this.terminalSamplesBySessionId.get(sessionAgentId) ?? [];
+    const totalTokens = samples.reduce((sum, sample) => sum + sample.outputTokens, 0);
+    const totalDurationMs = samples.reduce((sum, sample) => sum + sample.generationDurationMs, 0);
+    return {
+      sessionAgentId,
+      window: "last_20_terminal_generations",
+      measuredGenerationCount: samples.length,
+      weightedTokensPerSecond: totalDurationMs > 0 ? totalTokens * 1_000 / totalDurationMs : null,
+      samples: samples.map(({ completedAt, role, tokensPerSecond }) => ({
+        completedAt,
+        role,
+        tokensPerSecond,
+      })),
+    };
+  }
+
+  private emitLive(event: GenerationThroughputEvent): void {
+    try {
+      this.options.emitLiveEvent?.(event);
+    } catch (error) {
+      this.options.logDebug?.("generation_measurement:live_emit:error", {
+        measurementId: event.measurement.measurementId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private appendRecord(
@@ -295,6 +563,28 @@ function deriveReasoningBoundaryCoverage(
 ): GenerationReasoningBoundaryCoverage {
   if (reasoningTokens === undefined) return "not_reported";
   return reasoningTokens === 0 || observedThinkingDelta ? "observed" : "hidden_or_unobserved";
+}
+
+function qualityFromTerminal(record: GenerationMeasurementRecordV1): GenerationMeasurementQuality {
+  return {
+    tokenSource: record.usage.tokenSource,
+    boundarySource: record.timing.boundarySource,
+    reasoningBoundaryCoverage: record.reasoningBoundaryCoverage,
+  };
+}
+
+function activeQuality(active: ActiveGenerationMeasurement): GenerationMeasurementQuality {
+  return {
+    tokenSource: active.firstOutput ? "estimated_local" : "unavailable",
+    boundarySource: active.firstOutput
+      ? "content_delta_to_stream_end"
+      : active.responseStreamStarted ? "response_stream_proxy" : "unavailable",
+    reasoningBoundaryCoverage: active.observedThinkingDelta ? "observed" : "not_reported",
+  };
+}
+
+function estimatedTokens(active: ActiveGenerationMeasurement): number {
+  return Math.ceil(active.estimatedOutputUtf16CodeUnits / 4);
 }
 
 function activeKey(agentId: string, runtimeToken: number, measurementId: string): string {

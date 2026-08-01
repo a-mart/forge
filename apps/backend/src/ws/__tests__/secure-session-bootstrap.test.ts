@@ -180,6 +180,47 @@ describe("secure session bootstrap projection", () => {
       .toEqual(["session"]);
   });
 
+  it("sends the bounded throughput snapshot only for a Builder subscription", async () => {
+    const swarmManager = manager() as ReturnType<typeof manager> & {
+      getGenerationThroughputSnapshot: ReturnType<typeof vi.fn>;
+    };
+    swarmManager.getGenerationThroughputSnapshot = vi.fn(() => ({
+      type: "generation_throughput_snapshot" as const,
+      sessionAgentId: "session",
+      measurements: [],
+      sessionSummary: {
+        sessionAgentId: "session",
+        window: "last_20_terminal_generations" as const,
+        measuredGenerationCount: 0,
+        weightedTokensPerSecond: null,
+        samples: [],
+      },
+    }));
+    const events: ServerEvent[] = [];
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: "worker-1",
+      swarmManager: swarmManager as never,
+      terminalService: null,
+      unreadTracker: null,
+      perf: perf(),
+      send: (_socket, event) => {
+        events.push(event);
+        return 1;
+      },
+      resolveTerminalScopeAgentId: () => "session",
+      resolvePlanSnapshotSessionAgentId: () => "session",
+      resolveGenerationThroughputSessionAgentId: () => "session",
+    });
+
+    expect(swarmManager.getGenerationThroughputSnapshot).toHaveBeenCalledWith("session");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "generation_throughput_snapshot",
+      sessionAgentId: "session",
+    }));
+  });
+
   it("does not expose vault/provider failures while continuing bootstrap", async () => {
     const canary = "RAW-PROVIDER-ERROR-CANARY";
     const swarmManager = manager({ secureSnapshotError: new Error(canary) });

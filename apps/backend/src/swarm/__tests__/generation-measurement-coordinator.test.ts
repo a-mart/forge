@@ -58,6 +58,7 @@ function event(
 
 function createCoordinator(descriptors: AgentDescriptor[]) {
   const records: unknown[] = [];
+  const liveEvents: Array<Extract<import("@forge/protocol").ServerEvent, { type: "generation_throughput" }>> = [];
   const appendCustomEntry = vi.fn((_type: string, data: unknown) => {
     records.push(data);
     return `entry-${records.length}`;
@@ -67,8 +68,9 @@ function createCoordinator(descriptors: AgentDescriptor[]) {
     descriptors: new Map(descriptors.map((entry) => [entry.agentId, entry])),
     getRuntime: () => runtime,
     getActiveTurnId: () => "turn-1",
+    emitLiveEvent: (liveEvent) => liveEvents.push(liveEvent),
   });
-  return { coordinator, records, appendCustomEntry };
+  return { coordinator, records, appendCustomEntry, liveEvents };
 }
 
 describe("GenerationMeasurementCoordinator", () => {
@@ -181,6 +183,60 @@ describe("GenerationMeasurementCoordinator", () => {
         expect.objectContaining({ measurementId: "before-tool", timing: expect.objectContaining({ generationDurationMs: 1_000 }) }),
         expect.objectContaining({ measurementId: "after-tool", timing: expect.objectContaining({ generationDurationMs: 1_000 }) }),
       ]));
+  });
+
+  it("publishes bounded cumulative live events and a token-weighted session ring without content", async () => {
+    const { coordinator, liveEvents } = createCoordinator([descriptor()]);
+
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("request_started", "live-call", 0));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_000, {
+      deltaUtf16CodeUnits: 32,
+    }));
+    // High-frequency deltas update the estimator, but do not exceed two progress events/second.
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_100, {
+      deltaUtf16CodeUnits: 32,
+    }));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_600, {
+      deltaUtf16CodeUnits: 32,
+    }));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("completed", "live-call", 3_000, {
+      meta: { usage: { output: 100 } },
+    }));
+
+    expect(liveEvents.map((liveEvent) => liveEvent.measurement.phase)).toEqual([
+      "starting",
+      "generating",
+      "generating",
+      "completed",
+    ]);
+    expect(liveEvents[2]?.measurement).toMatchObject({
+      sequence: 3,
+      valueKind: "estimated",
+      outputTokens: 24,
+      instantaneousTokensPerSecond: expect.any(Number),
+    });
+    expect(liveEvents[3]).toMatchObject({
+      measurement: expect.objectContaining({
+        phase: "completed",
+        sequence: 4,
+        valueKind: "provider_final",
+        generationAverageTokensPerSecond: 50,
+        instantaneousTokensPerSecond: null,
+      }),
+      sessionSummary: expect.objectContaining({
+        measuredGenerationCount: 1,
+        weightedTokensPerSecond: 50,
+        samples: [expect.objectContaining({ tokensPerSecond: 50 })],
+      }),
+    });
+    expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
+
+    const snapshot = coordinator.getSnapshot("manager-1");
+    expect(snapshot.measurements).toEqual([]);
+    expect(snapshot.sessionSummary).toMatchObject({
+      measuredGenerationCount: 1,
+      weightedTokensPerSecond: 50,
+    });
   });
 
   it("marks final-only, zero-duration, and malformed final usage unmeasurable without manufacturing a rate", async () => {

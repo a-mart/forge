@@ -328,6 +328,14 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastCollaborationSessionWorkersSnapshot(event);
   };
 
+  private readonly onGenerationThroughput = (event: ServerEvent): void => {
+    if (event.type !== "generation_throughput") return;
+    // Pi throughput is a Builder-local capability in v1. Do not forward it
+    // through CLI or Collaboration subscriptions.
+    if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) return;
+    this.wsHandler.broadcastGenerationThroughput(event.measurement.sessionId, event);
+  };
+
   private readonly onSessionActiveToolsSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_active_tools_snapshot") return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
@@ -970,6 +978,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("session_workers_snapshot", this.onSessionWorkersSnapshot);
+    this.swarmManager.on("generation_throughput", this.onGenerationThroughput);
     this.swarmManager.on("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.on("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.on("session_goal_snapshot", this.onSessionGoalSnapshot);
@@ -1037,6 +1046,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("session_workers_snapshot", this.onSessionWorkersSnapshot);
+    this.swarmManager.off("generation_throughput", this.onGenerationThroughput);
     this.swarmManager.off("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.off("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.off("session_goal_snapshot", this.onSessionGoalSnapshot);

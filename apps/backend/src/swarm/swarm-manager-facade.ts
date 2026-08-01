@@ -7,6 +7,7 @@ import type {
   CortexConsolidationRunRecord,
   CortexConsolidationTrigger,
   CredentialPoolState,
+  GenerationThroughputSnapshotEvent,
   CredentialPoolStrategy,
   ManagerExactModelSelection,
   ModelCacheObservationEvent,
@@ -1301,6 +1302,11 @@ export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
   getSessionActiveToolsSnapshot(sessionAgentId: string): SessionActiveToolsSnapshotEvent {
     this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
     return this.services.runtime.activeTools.buildSnapshotEvent(sessionAgentId);
+  }
+
+  getGenerationThroughputSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+    this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
+    return this.services.runtime.controller.getGenerationThroughputSnapshot(sessionAgentId);
   }
 
   recordToolSideEffect(callerAgentId: string, event: SwarmToolSideEffectEvent): void {

@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
+import type {
+  AgentRuntimeExtensionSnapshot,
+  GenerationThroughputEvent,
+  GenerationThroughputSnapshotEvent,
+} from "@forge/protocol";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { ProjectExecutableTrustPlan } from "./project-executable-trust.js";
@@ -197,6 +201,8 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   logDebug(message: string, details?: unknown): void;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
+  /** Builder-only, count-only live throughput delivery. */
+  emitGenerationThroughput?(event: GenerationThroughputEvent): void;
   resolveManagerAssistantFinalOutputTarget(
     agentId: string,
     activeTarget: AssistantOutputTarget | undefined
@@ -255,6 +261,7 @@ export class SwarmRuntimeController {
       descriptors: this.host.descriptors,
       getRuntime: (agentId) => this.getRuntime(agentId),
       getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
+      emitLiveEvent: (event) => this.host.emitGenerationThroughput?.(event),
       logDebug: (message, details) => this.logDebug(message, details),
     });
     this.runtimeFactory = new RuntimeFactory({
@@ -917,6 +924,10 @@ export class SwarmRuntimeController {
    * Generation telemetry has a separate ingress from conversation projection.
    * Keep the stale-runtime gate ahead of all coordinator mutation and JSONL IO.
    */
+  getGenerationThroughputSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+    return this.generationMeasurementCoordinator.getSnapshot(sessionAgentId);
+  }
+
   async handleRuntimeGenerationEvent(
     runtimeToken: number,
     agentId: string,

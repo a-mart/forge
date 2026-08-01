@@ -11,6 +11,8 @@ import { reduceSessionWorkersSnapshot } from './snapshot-reducers'
 export interface SessionWorkerCacheDeps {
   getState: () => ManagerWsState
   updateState: (patch: Partial<ManagerWsState>) => void
+  /** Removes local-only state for workers absent from an authoritative roster. */
+  onWorkersRemoved?: (agentIds: string[]) => void
   /**
    * Callback that issues a `get_session_workers` request over the WebSocket.
    * The cache never owns or imports a socket — transport remains in ManagerWsClient.
@@ -150,12 +152,18 @@ export class SessionWorkerCache {
     sessionAgentId: string,
     workers: AgentDescriptor[],
   ): void {
+    const state = this.deps.getState()
+    const incomingWorkerIds = new Set(workers.map((worker) => worker.agentId))
+    const removedWorkerIds = state.agents
+      .filter((agent) => agent.role === 'worker' && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId))
+      .map((agent) => agent.agentId)
     const result = reduceSessionWorkersSnapshot({
-      state: this.deps.getState(),
+      state,
       sessionAgentId,
       workers,
     })
     this.deps.updateState(result.patch)
+    if (removedWorkerIds.length > 0) this.deps.onWorkersRemoved?.(removedWorkerIds)
   }
 
   /**

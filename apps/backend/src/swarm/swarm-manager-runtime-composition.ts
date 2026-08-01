@@ -1,4 +1,9 @@
-import type { SessionActiveToolsSnapshotEvent, SessionGoalSnapshotEvent, SpecialistTargetSpace } from "@forge/protocol";
+import type {
+  GenerationThroughputEvent,
+  SessionActiveToolsSnapshotEvent,
+  SessionGoalSnapshotEvent,
+  SpecialistTargetSpace,
+} from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
@@ -111,6 +116,8 @@ export interface RuntimeCompositionEvents {
   saveStore(): Promise<void>;
   queueVersionedToolMutation: RuntimeHost["queueVersionedToolMutation"];
   emitModelCacheObservation: RuntimeHost["emitModelCacheObservation"];
+  /** Ephemeral Builder-only count telemetry; never conversation or Collaboration projection. */
+  emitGenerationThroughput(event: GenerationThroughputEvent): void;
   logDebug(message: string, details?: unknown): void;
 }
 
@@ -508,6 +515,7 @@ export class SwarmManagerRuntimeComposition {
       isModelCacheVisualizationEnabled: () =>
         this.requireServices().configuration.isModelCacheVisualizationEnabled(),
       emitModelCacheObservation: events.emitModelCacheObservation,
+      emitGenerationThroughput: events.emitGenerationThroughput,
       resolveManagerAssistantFinalOutputTarget: (agentId, target) =>
         this.assistantOutput.resolveManagerFinalTarget(agentId, target),
       resolveManagerAssistantFinalOutputRoute: (agentId, target) =>

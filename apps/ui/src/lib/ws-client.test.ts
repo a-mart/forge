@@ -6766,4 +6766,86 @@ describe('ManagerWsClient', () => {
       client.destroy()
     })
   })
+
+  it('hydrates cumulative throughput snapshots, rejects stale sequences, and clears active telemetry on reconnect', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit('open')
+
+    const sessionSummary = {
+      sessionAgentId: 'manager',
+      window: 'last_20_terminal_generations' as const,
+      measuredGenerationCount: 1,
+      weightedTokensPerSecond: 40,
+      samples: [{ completedAt: '2026-07-31T10:00:02.000Z', role: 'manager' as const, tokensPerSecond: 40 }],
+    }
+    const liveMeasurement = {
+      measurementId: 'call-1',
+      sequence: 2,
+      phase: 'generating' as const,
+      profileId: 'profile-1',
+      sessionId: 'manager',
+      agentId: 'manager',
+      managerId: 'manager',
+      role: 'manager' as const,
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      sampledAt: '2026-07-31T10:00:01.000Z',
+      firstOutputAt: '2026-07-31T10:00:00.000Z',
+      elapsedGenerationMs: 1_000,
+      outputTokens: 20,
+      instantaneousTokensPerSecond: 20,
+      generationAverageTokensPerSecond: 20,
+      valueKind: 'estimated' as const,
+      quality: {
+        tokenSource: 'estimated_local' as const,
+        boundarySource: 'content_delta_to_stream_end' as const,
+        reasoningBoundaryCoverage: 'not_reported' as const,
+      },
+    }
+    emitServerEvent(socket, {
+      type: 'generation_throughput_snapshot',
+      sessionAgentId: 'manager',
+      measurements: [liveMeasurement],
+      sessionSummary,
+    })
+    expect(client.getState().generationRateSamplesByAgentId.manager).toHaveLength(1)
+
+    emitServerEvent(socket, {
+      type: 'generation_throughput',
+      measurement: { ...liveMeasurement, sequence: 1, instantaneousTokensPerSecond: 1 },
+    })
+    expect(client.getState().generationThroughputByAgentId.manager?.sequence).toBe(2)
+
+    emitServerEvent(socket, {
+      type: 'generation_throughput',
+      measurement: {
+        ...liveMeasurement,
+        sequence: 3,
+        phase: 'completed',
+        sampledAt: '2026-07-31T10:00:02.000Z',
+        instantaneousTokensPerSecond: null,
+        generationAverageTokensPerSecond: 50,
+        outputTokens: 100,
+        valueKind: 'provider_final',
+        quality: {
+          tokenSource: 'provider_final',
+          boundarySource: 'content_delta_to_stream_end',
+          reasoningBoundaryCoverage: 'observed',
+        },
+      },
+      sessionSummary,
+    })
+    vi.advanceTimersByTime(5_000)
+    expect(client.getState().generationThroughputByAgentId).toEqual({})
+    expect(client.getState().generationThroughputSessionSummary).toEqual(sessionSummary)
+
+    socket.close()
+    expect(client.getState().generationThroughputByAgentId).toEqual({})
+    expect(client.getState().generationRateSamplesByAgentId).toEqual({})
+    expect(client.getState().generationThroughputSessionSummary).toBeNull()
+    client.destroy()
+  })
 })

@@ -13,8 +13,13 @@ import {
 import { formatElapsed } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
-import type { AgentDescriptor, AgentStatus } from '@forge/protocol'
+import type {
+  AgentDescriptor,
+  AgentStatus,
+  GenerationThroughputLiveMeasurement,
+} from '@forge/protocol'
 import { WorkerQuickLook } from './WorkerQuickLook'
+import { formatThroughputRate } from './throughput-format'
 import { WorkerHighlightOutline } from './WorkGraphWorkerHighlight'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -23,6 +28,7 @@ interface WorkerPillBarProps {
   workers: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus; streamingStartedAt?: number }>
   activityMessages: AgentActivityEntry[]
+  generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
   onNavigateToWorker: (agentId: string) => void
 }
 
@@ -90,11 +96,13 @@ const WorkerPill = memo(function WorkerPill({
   entry,
   tick,
   workerActivity,
+  throughput,
   onNavigateToWorker,
 }: {
   entry: PillEntry
   tick: number
   workerActivity: AgentActivityEntry[]
+  throughput?: GenerationThroughputLiveMeasurement
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -137,6 +145,9 @@ const WorkerPill = memo(function WorkerPill({
       ? `${modelId} · ${thinkingLevel}`
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
+  const estimatedRate = throughput?.phase === 'generating' && throughput.valueKind === 'estimated'
+    ? throughput.instantaneousTokensPerSecond
+    : null
 
   const handlePopoverOpenChange = useCallback((open: boolean) => {
     setPopoverOpen(open)
@@ -168,7 +179,7 @@ const WorkerPill = memo(function WorkerPill({
               type="button"
               data-worker-pill={worker.agentId}
               className={cn(
-                'group relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-500',
+                'group relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors duration-200',
                 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
                 'hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
@@ -188,6 +199,9 @@ const WorkerPill = memo(function WorkerPill({
               <span className="tabular-nums text-emerald-600/60 dark:text-emerald-400/60">
                 {elapsedLabel}
               </span>
+              {estimatedRate !== null ? (
+                <span className="tabular-nums text-emerald-700/80 dark:text-emerald-200/80">≈{formatThroughputRate(estimatedRate)} t/s</span>
+              ) : null}
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -219,6 +233,7 @@ const WorkerPill = memo(function WorkerPill({
           recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
           streamingStartedAt={entry.streamingStartedAt}
+          throughput={throughput}
         />
       </PopoverContent>
     </Popover>
@@ -231,6 +246,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   workers,
   statuses,
   activityMessages,
+  generationThroughputByAgentId = {},
   onNavigateToWorker,
 }: WorkerPillBarProps) {
   const [tick, setTick] = useState(0)
@@ -412,6 +428,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
                 entry={entry}
                 tick={tick}
                 workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
+                throughput={generationThroughputByAgentId[entry.worker.agentId]}
                 onNavigateToWorker={onNavigateToWorker}
               />
             ))}

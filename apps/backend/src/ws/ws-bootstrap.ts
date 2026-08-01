@@ -103,6 +103,8 @@ export async function sendSubscriptionBootstrap(options: {
   send: (socket: WebSocket, event: ServerEvent) => number | null | Promise<number | null>;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolvePlanSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
+  /** Builder-only manager session authority for count-only throughput state. */
+  resolveGenerationThroughputSessionAgentId?: (subscribedAgentId: string) => string | undefined;
   resolveBrowserSessionAgentId?: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
@@ -126,6 +128,7 @@ export async function sendSubscriptionBootstrap(options: {
     send,
     resolveTerminalScopeAgentId,
     resolvePlanSnapshotSessionAgentId,
+    resolveGenerationThroughputSessionAgentId = resolvePlanSnapshotSessionAgentId,
     resolveBrowserSessionAgentId = resolvePlanSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
@@ -273,6 +276,20 @@ export async function sendSubscriptionBootstrap(options: {
       // remains available for a fixed-code retry.
       metricFields.secureSessionSnapshotUnavailable = true;
     }
+  }
+
+  // This snapshot is deliberately outside conversation bootstrap/history and
+  // only exists for the local Builder transport. It contains no generated text.
+  const throughputSessionAgentId = resolveGenerationThroughputSessionAgentId(targetAgentId);
+  if (
+    throughputSessionAgentId
+    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
+    && typeof swarmManager.getGenerationThroughputSnapshot === "function"
+  ) {
+    await sendMeasured(
+      "generationThroughputSnapshot",
+      swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId),
+    );
   }
 
   const browserSessionAgentId = resolveBrowserSessionAgentId(targetAgentId);

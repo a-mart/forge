@@ -17,6 +17,8 @@ import type {
   CodexElicitationRequestEvent,
   BuilderTimelineChannelView,
   StreamDeckNavigationRequestedEvent,
+  GenerationThroughputLiveMeasurement,
+  GenerationThroughputSessionSummary,
 } from '@forge/protocol'
 import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
 import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
@@ -63,6 +65,12 @@ export interface BrowserPanelRevealRequest {
   sequence: number
 }
 
+/** A bounded accepted server sample for the active-generation mini sparkline. */
+export interface GenerationRateSample {
+  sampledAt: string
+  tokensPerSecond: number
+}
+
 export interface ManagerWsState {
   connected: boolean
   /** Monotonic transport-open generation; increments even if reconnect state is React-batched. */
@@ -91,6 +99,12 @@ export interface ManagerWsState {
   pendingChoiceIds: Set<string>
   /** Ephemeral only: never reconstructed from conversation history. */
   codexElicitations: CodexElicitationRequestEvent[]
+  /** Local Builder-only, count-only generation telemetry. Never transcript state. */
+  generationThroughputByAgentId: Record<string, GenerationThroughputLiveMeasurement>
+  generationRateSamplesByAgentId: Record<string, GenerationRateSample[]>
+  /** Sequence guard retained per measurement across cumulative WS frames. */
+  generationThroughputSequenceByMeasurementId: Record<string, number>
+  generationThroughputSessionSummary: GenerationThroughputSessionSummary | null
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
   profiles: ManagerProfile[]
@@ -171,6 +185,10 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     modelCacheVisualizationSettingLoaded: false,
     pendingChoiceIds: new Set(),
     codexElicitations: [],
+    generationThroughputByAgentId: {},
+    generationRateSamplesByAgentId: {},
+    generationThroughputSequenceByMeasurementId: {},
+    generationThroughputSessionSummary: null,
     agents: [],
     loadedSessionIds: new Set(),
     profiles: [],

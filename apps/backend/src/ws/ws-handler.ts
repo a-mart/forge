@@ -198,6 +198,13 @@ export class WsHandler {
     this.subscriptionManager.broadcastToSession(sessionAgentId, event);
   }
 
+  broadcastGenerationThroughput(
+    sessionAgentId: string,
+    event: Extract<ServerEvent, { type: "generation_throughput" }>,
+  ): void {
+    this.subscriptionManager.broadcastGenerationThroughput(sessionAgentId, event);
+  }
+
   broadcastSecureSessionSnapshot(
     event: Extract<ServerEvent, { type: "secure_session_snapshot" }>,
   ): void {

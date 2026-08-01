@@ -2167,6 +2167,18 @@ export function BuilderSurface({
                   onDetailedAllViewChange: undefined,
                   contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
+                  generationThroughput:
+                    !isRemoteOriginActive && isActiveManager && activeAgentId
+                      ? state.generationThroughputByAgentId[activeAgentId]
+                      : undefined,
+                  generationRateSamples:
+                    !isRemoteOriginActive && isActiveManager && activeAgentId
+                      ? state.generationRateSamplesByAgentId[activeAgentId]
+                      : undefined,
+                  generationThroughputSessionSummary:
+                    !isRemoteOriginActive && isActiveManager && state.generationThroughputSessionSummary?.sessionAgentId === activeAgentId
+                      ? state.generationThroughputSessionSummary
+                      : null,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,
@@ -2310,6 +2322,9 @@ export function BuilderSurface({
                         workers: sessionWorkers,
                         statuses: state.statuses,
                         activityMessages: state.activityMessages,
+                        generationThroughputByAgentId: !isRemoteOriginActive
+                          ? state.generationThroughputByAgentId
+                          : undefined,
                         onNavigateToWorker: panels.handleSelectAgent,
                       }
                     : undefined

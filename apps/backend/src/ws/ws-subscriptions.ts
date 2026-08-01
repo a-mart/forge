@@ -10,7 +10,7 @@ import {
   type TerminalDescriptor,
 } from "@forge/protocol";
 import { getCollaborationSocketAuthContext } from "../collaboration/auth/collaboration-auth-middleware.js";
-import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
+import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isEligibleLocalBuilderManager, type BrowserAutomationService } from "../swarm/browser-automation/index.js";
@@ -287,6 +287,30 @@ export class WsSubscriptions {
         continue;
       }
 
+      this.send(client, event);
+    }
+  }
+
+  /**
+   * Count-only throughput stays on the local Builder socket. In particular it
+   * intentionally does not use the Collaboration subscription manager or CLI.
+   */
+  broadcastGenerationThroughput(
+    sessionAgentId: string,
+    event: Extract<ServerEvent, { type: "generation_throughput" }>,
+  ): void {
+    if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+      return;
+    }
+
+    const wss = this.getServer();
+    if (!wss) return;
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      const subscribedAgentId = this.subscriptions.get(client);
+      if (!subscribedAgentId || this.resolveManagerContextAgentId(subscribedAgentId) !== sessionAgentId) {
+        continue;
+      }
       this.send(client, event);
     }
   }
@@ -825,6 +849,7 @@ export class WsSubscriptions {
       send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
+      resolveGenerationThroughputSessionAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       resolveBrowserSessionAgentId: (agentId) => {
         const managerAgentId = this.resolveManagerContextAgentId(agentId);
         const descriptor = managerAgentId ? this.swarmManager.getAgent(managerAgentId) : undefined;

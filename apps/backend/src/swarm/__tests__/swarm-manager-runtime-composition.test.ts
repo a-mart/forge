@@ -130,6 +130,7 @@ function createOptions(late: ReturnType<typeof vi.fn>): SwarmManagerRuntimeCompo
       saveStore: late,
       queueVersionedToolMutation: late,
       emitModelCacheObservation: late,
+      emitGenerationThroughput: late,
       logDebug: vi.fn(),
     },
     messaging: {

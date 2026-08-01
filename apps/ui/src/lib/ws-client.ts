@@ -88,6 +88,7 @@ import {
 const BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS = 2_000
 const BROWSER_HANDSHAKE_RETRY_MS = 500
 export const CONVERSATION_BOOTSTRAP_WATCHDOG_MS = 30_000
+const GENERATION_TERMINAL_SETTLE_MS = 5_000
 
 /** Server close code for a permanently invalidated collaboration session. */
 const SESSION_INVALIDATED_CLOSE_CODE = 4001
@@ -111,6 +112,12 @@ import {
   reduceManagerDeleted,
   reduceSessionDeleted,
 } from './ws-client/snapshot-reducers'
+import {
+  clearGenerationThroughputForAgents,
+  clearGenerationThroughputState,
+  removeGenerationThroughputTombstone,
+  type GenerationThroughputReduction,
+} from './ws-client/generation-throughput-state'
 import type {
   DirectoriesListedResult,
   DirectoryCreatedResult,
@@ -148,6 +155,7 @@ import {
 } from './ws-client/event-handlers/conversation-event-handlers'
 import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
+import { handleGenerationThroughputEvent } from './ws-client/event-handlers/generation-throughput-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
 import { handleProjectAgentEvent } from './ws-client/event-handlers/project-agent-event-handlers'
 import { handleConfigEvent } from './ws-client/event-handlers/config-event-handlers'
@@ -225,6 +233,7 @@ export class ManagerWsClient {
   private rejectedExplicitAgentSelectionId: string | null = null
   private sessionInvalidatedObserver: (() => void) | null = null
   private readonly optimisticSendExpiryTimers = new Set<ReturnType<typeof setTimeout>>()
+  private readonly generationTerminalCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -265,6 +274,7 @@ export class ManagerWsClient {
     this.sessionWorkerCache = new SessionWorkerCache({
       getState: () => this.state,
       updateState: (patch) => this.updateState(patch),
+      onWorkersRemoved: (agentIds) => this.clearGenerationThroughputForAgents(agentIds),
       requestSessionWorkers: (sessionAgentId) => {
         assertConnectedSocket(this.socket)
         // Short timeout: a lost response must not hold the cache's in-flight
@@ -586,6 +596,7 @@ export class ManagerWsClient {
       clearTimeout(timer)
     }
     this.optimisticSendExpiryTimers.clear()
+    this.clearGenerationTerminalCleanupTimers()
     this.stopBrowserHandshake()
 
     this.transport.disconnect()
@@ -1299,6 +1310,7 @@ export class ManagerWsClient {
     this.cancelConversationBootstrapWatchdog()
     if (input.captureOutgoingSnapshot !== false) this.captureCurrentConversationSnapshot()
     this.bootstrapBuffer.clear()
+    this.clearGenerationTerminalCleanupTimers()
 
     const subscriptionId = `${this.subscriptionIdPrefix}-${this.nextSubscriptionId++}`.slice(0, 128)
     const startedAt = Date.now()
@@ -1317,6 +1329,7 @@ export class ManagerWsClient {
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
       codexElicitations: [],
+      ...clearGenerationThroughputState(),
       secureSessionSnapshotLoadingSessionId: input.agentId,
       conversationPresentation: null,
       conversationBootstrap: {
@@ -1465,6 +1478,7 @@ export class ManagerWsClient {
         protocolMode: 'unknown',
       },
       conversationPresentation: null,
+      ...clearGenerationThroughputState(),
       lastError: null,
     })
 
@@ -1493,6 +1507,7 @@ export class ManagerWsClient {
       this.recordConversationBootstrapTerminal(pendingBootstrap.subscriptionId, 'disconnected')
     }
     this.stopBrowserHandshake()
+    this.clearGenerationTerminalCleanupTimers()
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
@@ -1513,6 +1528,7 @@ export class ManagerWsClient {
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
       browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
+      ...clearGenerationThroughputState(),
       ...(pendingBootstrap.phase === 'pending'
         ? {
             conversationBootstrap: {
@@ -1607,6 +1623,13 @@ export class ManagerWsClient {
       handleLifecycleRequest: this.browserLifecycleRequestHandler,
       sendHostResponse: (response) => this.send(buildBrowserHostResponseCommand(response)),
       sendLifecycleResponse: (response) => this.send(buildBrowserHostLifecycleResponseCommand(response)),
+    })) {
+      return
+    }
+
+    if (handleGenerationThroughputEvent(event, {
+      state: this.state,
+      applyGenerationThroughputReduction: (reduction) => this.applyGenerationThroughputReduction(reduction),
     })) {
       return
     }
@@ -1891,6 +1914,30 @@ export class ManagerWsClient {
     return true
   }
 
+  private applyGenerationThroughputReduction(reduction: GenerationThroughputReduction): void {
+    if (!reduction.accepted) return
+    this.updateState(reduction.patch)
+    if (!reduction.terminal) return
+
+    const timerKey = reduction.terminal.measurementId
+    const existingTimer = this.generationTerminalCleanupTimers.get(timerKey)
+    if (existingTimer) clearTimeout(existingTimer)
+    const timer = setTimeout(() => {
+      this.generationTerminalCleanupTimers.delete(timerKey)
+      this.updateState(removeGenerationThroughputTombstone(this.state, reduction.terminal!))
+    }, GENERATION_TERMINAL_SETTLE_MS)
+    this.generationTerminalCleanupTimers.set(timerKey, timer)
+  }
+
+  private clearGenerationTerminalCleanupTimers(): void {
+    for (const timer of this.generationTerminalCleanupTimers.values()) clearTimeout(timer)
+    this.generationTerminalCleanupTimers.clear()
+  }
+
+  private clearGenerationThroughputForAgents(agentIds: Iterable<string>): void {
+    this.updateState(clearGenerationThroughputForAgents(this.state, agentIds))
+  }
+
   private applyAgentStatus(
     event: Extract<ServerEvent, { type: 'agent_status' }>,
   ): void {
@@ -1943,16 +1990,27 @@ export class ManagerWsClient {
     }
 
     this.desiredAgentId = result.nextDesiredAgentId
+    const nextAgentIds = new Set((result.patch.agents ?? this.state.agents).map((agent) => agent.agentId))
+    const removedAgentIds = this.state.agents
+      .filter((agent) => !nextAgentIds.has(agent.agentId))
+      .map((agent) => agent.agentId)
+    const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
+    const removedSessionSummary = this.state.generationThroughputSessionSummary
+      && removedAgentIds.includes(this.state.generationThroughputSessionSummary.sessionAgentId)
+      ? { generationThroughputSessionSummary: null }
+      : {}
+    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({
         agentId: result.subscribeToAgentId,
         requestedView: this.conversationView,
         reason: 'fallback',
-        patch: result.patch,
+        patch,
         captureOutgoingSnapshot: false,
       })
     } else {
-      this.updateState(result.patch)
+      this.updateState(patch)
     }
   }
 
@@ -1999,16 +2057,22 @@ export class ManagerWsClient {
       this.desiredAgentId = result.nextDesiredAgentId
     }
 
+    const throughputCleanup = clearGenerationThroughputForAgents(this.state, result.deletedAgentIds)
+    const removedSessionSummary = this.state.generationThroughputSessionSummary?.sessionAgentId === managerId
+      ? { generationThroughputSessionSummary: null }
+      : {}
+    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({
         agentId: result.subscribeToAgentId,
         requestedView: this.conversationView,
         reason: 'fallback',
-        patch: result.patch,
+        patch,
         captureOutgoingSnapshot: false,
       })
     } else {
-      this.updateState(result.patch)
+      this.updateState(patch)
     }
   }
 
@@ -2031,16 +2095,25 @@ export class ManagerWsClient {
       this.desiredAgentId = result.nextDesiredAgentId
     }
 
+    const removedAgentIds = this.state.agents
+      .filter((agent) => agent.agentId === agentId || agent.managerId === agentId)
+      .map((agent) => agent.agentId)
+    const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
+    const removedSessionSummary = this.state.generationThroughputSessionSummary?.sessionAgentId === agentId
+      ? { generationThroughputSessionSummary: null }
+      : {}
+    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({
         agentId: result.subscribeToAgentId,
         requestedView: this.conversationView,
         reason: 'fallback',
-        patch: result.patch,
+        patch,
         captureOutgoingSnapshot: false,
       })
     } else {
-      this.updateState(result.patch)
+      this.updateState(patch)
     }
   }
 

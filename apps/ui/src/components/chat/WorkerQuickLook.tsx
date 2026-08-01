@@ -4,7 +4,12 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import { formatElapsed } from '@/lib/format-utils'
-import type { AgentDescriptor, AgentStatus } from '@forge/protocol'
+import type {
+  AgentDescriptor,
+  AgentStatus,
+  GenerationThroughputLiveMeasurement,
+} from '@forge/protocol'
+import { formatThroughputRate } from './throughput-format'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import {
   hydrateToolDisplayEntry,
@@ -24,6 +29,7 @@ interface WorkerQuickLookProps {
   recentActivity: AgentActivityEntry[]
   onViewFullConversation: () => void
   streamingStartedAt?: number
+  throughput?: GenerationThroughputLiveMeasurement
 }
 
 type QuickLookEntry =
@@ -196,6 +202,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   recentActivity,
   onViewFullConversation,
   streamingStartedAt,
+  throughput,
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -265,6 +272,10 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
+  const estimatedRate = throughput?.phase === 'generating' && throughput.valueKind === 'estimated'
+    ? throughput.instantaneousTokensPerSecond
+    : null
+  const callAverage = throughput?.generationAverageTokensPerSecond ?? null
   const statusText =
     status === 'streaming'
       ? 'Working'
@@ -292,8 +303,14 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
         <span className="shrink-0 text-[10px] text-muted-foreground">
           {statusText}
           {elapsedLabel ? <span className="tabular-nums"> · {elapsedLabel}</span> : null}
+          {estimatedRate !== null ? <span className="tabular-nums"> · ≈{formatThroughputRate(estimatedRate)} t/s</span> : null}
         </span>
       </div>
+      {estimatedRate !== null && callAverage !== null ? (
+        <div className="shrink-0 border-b border-border/50 px-3 pb-2 text-[11px] text-muted-foreground">
+          Now (estimated) ≈{formatThroughputRate(estimatedRate)} tok/s · Call avg ≈{formatThroughputRate(callAverage)} tok/s
+        </div>
+      ) : null}
 
       {/* Activity feed */}
       <div
