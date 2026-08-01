@@ -1,4 +1,5 @@
 import type {
+  GenerationMeasurementRecordV1,
   GenerationThroughputEvent,
   SessionActiveToolsSnapshotEvent,
   SessionGoalSnapshotEvent,
@@ -78,7 +79,6 @@ import type {
 import type { ResolvedSpecialistDefinitionLike } from "./prompt-resource-coordinator.js";
 
 type RuntimeHost = SwarmRuntimeControllerHostAdapterOptions;
-
 export interface RuntimeCompositionDescriptorMutations {
   upsertDescriptor(descriptor: AgentDescriptor): void;
   deleteDescriptor(agentId: string): void;
@@ -102,7 +102,6 @@ export interface RuntimeCompositionDescriptorMutations {
     patch: (descriptor: AgentDescriptor) => AgentDescriptor,
   ): AgentDescriptor | undefined;
 }
-
 export interface RuntimeCompositionEvents {
   emitConversationMessage: RuntimeHost["emitConversationMessage"];
   markSessionActivity: RuntimeHost["markSessionActivity"];
@@ -118,9 +117,10 @@ export interface RuntimeCompositionEvents {
   emitModelCacheObservation: RuntimeHost["emitModelCacheObservation"];
   /** Ephemeral Builder-only count telemetry; never conversation or Collaboration projection. */
   emitGenerationThroughput(event: GenerationThroughputEvent): void;
+  /** Internal post-append cache freshness notification; never client transport. */
+  emitGenerationMeasurementTerminalPersisted(record: GenerationMeasurementRecordV1): void;
   logDebug(message: string, details?: unknown): void;
 }
-
 export interface RuntimeCompositionMessaging {
   getConversationHistory(agentId?: string): ConversationEntryEvent[];
   sendMessage(
@@ -153,7 +153,6 @@ export interface RuntimeCompositionMessaging {
   ): Promise<void>;
   sendManagerBootstrapMessage(managerId: string): Promise<void>;
 }
-
 export interface RuntimeCompositionRuntimeResources {
   getPiModelsJsonPath(): string;
   getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
@@ -173,7 +172,6 @@ export interface RuntimeCompositionRuntimeResources {
   deleteManagerSchedulesFile(profileId: string): Promise<void>;
   getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor, requirements?: RuntimeAcquisitionRequirements): Promise<SwarmAgentRuntime>;
 }
-
 export interface RuntimeCompositionRuntimeFactory {
   createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
@@ -182,7 +180,6 @@ export interface RuntimeCompositionRuntimeFactory {
     options?: RuntimeCreationOptions,
   ): Promise<SwarmAgentRuntime>;
 }
-
 export interface RuntimeCompositionResolution {
   resolvePromptWithFallback(
     category: "archetype" | "operational",
@@ -209,7 +206,6 @@ export interface RuntimeCompositionResolution {
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
   resolveDefaultModelDescriptor(): AgentModelDescriptor;
 }
-
 export interface RuntimeCompositionCaptureOperations {
   forkSession(
     sourceAgentId: string,
@@ -217,7 +213,6 @@ export interface RuntimeCompositionCaptureOperations {
   ): Promise<{ sessionAgent: AgentDescriptor }>;
   deleteSession(agentId: string): Promise<void>;
 }
-
 export interface RuntimeCompositionSessionOperations {
   materializeSortOrder(): void;
   deleteConversationHistory(agentId: string, sessionFile: string): void;
@@ -232,7 +227,6 @@ export interface RuntimeCompositionSessionOperations {
       }
     | undefined;
 }
-
 export interface SwarmManagerRuntimeCompositionOptions {
   state: {
     config: SwarmConfig;
@@ -287,7 +281,6 @@ export class SwarmManagerRuntimeComposition {
   private compactionCoordinator: SwarmCompactionCoordinator | undefined;
   private services: SwarmManagerRuntimeBoundServices | undefined;
   private completed: SwarmManagerCompletedRuntimeComposition | undefined;
-
   constructor(private readonly options: SwarmManagerRuntimeCompositionOptions) {
     const { state, messaging } = options;
     this.captureCascade = this.createCaptureCascade();
@@ -341,7 +334,6 @@ export class SwarmManagerRuntimeComposition {
     this.specialistFallback = this.createSpecialistFallback();
     this.runtimeController.setSpecialistFallbackManager(this.specialistFallback);
   }
-
   get runtimes(): Map<string, SwarmAgentRuntime> {
     return this.runtimeController.runtimes;
   }
@@ -516,6 +508,7 @@ export class SwarmManagerRuntimeComposition {
         this.requireServices().configuration.isModelCacheVisualizationEnabled(),
       emitModelCacheObservation: events.emitModelCacheObservation,
       emitGenerationThroughput: events.emitGenerationThroughput,
+      onGenerationMeasurementTerminalPersisted: events.emitGenerationMeasurementTerminalPersisted,
       resolveManagerAssistantFinalOutputTarget: (agentId, target) =>
         this.assistantOutput.resolveManagerFinalTarget(agentId, target),
       resolveManagerAssistantFinalOutputRoute: (agentId, target) =>

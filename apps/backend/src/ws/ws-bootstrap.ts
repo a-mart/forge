@@ -283,12 +283,13 @@ export async function sendSubscriptionBootstrap(options: {
   const throughputSessionAgentId = resolveGenerationThroughputSessionAgentId(targetAgentId);
   if (
     throughputSessionAgentId
+    && typeof swarmManager.getConfig === "function"
     && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
     && typeof swarmManager.getGenerationThroughputSnapshot === "function"
   ) {
     await sendMeasured(
       "generationThroughputSnapshot",
-      swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId),
+      await swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId),
     );
   }
 

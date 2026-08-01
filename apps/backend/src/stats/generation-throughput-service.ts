@@ -3,6 +3,7 @@ import type {
   GenerationThroughputCallsQuery,
   GenerationThroughputQuery,
   GenerationThroughputSnapshot,
+  GenerationMeasurementRecordV1,
 } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getSharedGenerationThroughputCachePath } from "../swarm/data-paths.js";
@@ -36,25 +37,41 @@ export { GenerationThroughputError } from "./generation-throughput/generation-th
  * `swarm_generation_measurement` custom records and deliberately never feeds
  * Overview or Token Analytics usage totals.
  */
+export interface GenerationThroughputServiceOptions {
+  scanProfiles?: typeof scanGenerationThroughputProfiles;
+}
+
 export class GenerationThroughputService {
   private scanCache: GenerationThroughputCacheEntry | null = null;
-  private inFlightScan: Promise<GenerationThroughputScanResult> | null = null;
+  private inFlightScan: { generation: number; promise: Promise<GenerationThroughputScanResult> } | null = null;
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
+  private cacheGeneration = 0;
   private readonly cacheFilePath: string;
+  private readonly scanProfiles: typeof scanGenerationThroughputProfiles;
 
-  constructor(private readonly swarmManager: SwarmManager) {
+  constructor(
+    private readonly swarmManager: SwarmManager,
+    options: GenerationThroughputServiceOptions = {},
+  ) {
     this.cacheFilePath = getSharedGenerationThroughputCachePath(this.swarmManager.getConfig().paths.dataDir);
+    this.scanProfiles = options.scanProfiles ?? scanGenerationThroughputProfiles;
+    this.swarmManager.on("generation_measurement_terminal_persisted", this.onTerminalRecordPersisted);
   }
 
   clearCache(): void {
+    this.cacheGeneration += 1;
     this.scanCache = null;
   }
 
-  /** Runtime completion can call this until a direct cache upsert is wired. */
+  /** A post-append terminal event invalidates stale disk scans without trusting live payloads. */
   invalidateFromRuntimeCompletion(): void {
     this.clearCache();
   }
+
+  private readonly onTerminalRecordPersisted = (record: GenerationMeasurementRecordV1): void => {
+    if (record.recordState === "terminal") this.invalidateFromRuntimeCompletion();
+  };
 
   async prewarmInBackground(): Promise<void> {
     await this.ensurePersistentCacheLoaded();
@@ -109,7 +126,10 @@ export class GenerationThroughputService {
       models: modelSummaries.models,
       modelTableTruncated: modelSummaries.truncated,
       trends: buildGenerationTrends(scoped, resolved.query.timezone, scopedCoverage),
-      diagnostics: scanResult.diagnostics,
+      diagnostics: {
+        ...scanResult.diagnostics,
+        incompleteCallCount: base.filter((record) => record.recordState === "started").length,
+      },
     };
   }
 
@@ -159,29 +179,38 @@ export class GenerationThroughputService {
         return this.scanCache.result;
       }
     }
-    if (this.inFlightScan) return this.inFlightScan;
+    if (this.inFlightScan?.generation === this.cacheGeneration) return this.inFlightScan.promise;
 
-    this.inFlightScan = scanGenerationThroughputProfiles(this.swarmManager)
+    const generation = this.cacheGeneration;
+    const promise = this.scanProfiles(this.swarmManager)
       .then((result) => {
-        this.scanCache = createGenerationThroughputCacheEntry(result);
-        this.queuePersistCacheWrite();
+        if (generation === this.cacheGeneration) {
+          const entry = createGenerationThroughputCacheEntry(result);
+          this.scanCache = entry;
+          this.queuePersistCacheWrite(generation, entry);
+        }
         return result;
       })
       .finally(() => {
-        this.inFlightScan = null;
+        if (this.inFlightScan?.promise === promise) this.inFlightScan = null;
       });
-    return this.inFlightScan;
+    this.inFlightScan = { generation, promise };
+    return promise;
   }
 
   private async ensurePersistentCacheLoaded(): Promise<void> {
     if (this.persistentCacheLoaded) return;
     this.persistentCacheLoaded = true;
-    this.scanCache = await loadPersistedGenerationThroughputCache(this.cacheFilePath);
+    const generation = this.cacheGeneration;
+    const entry = await loadPersistedGenerationThroughputCache(this.cacheFilePath);
+    if (generation === this.cacheGeneration) this.scanCache = entry;
   }
 
-  private queuePersistCacheWrite(): void {
+  private queuePersistCacheWrite(generation: number, entry: GenerationThroughputCacheEntry): void {
     this.persistQueue = this.persistQueue
-      .then(() => persistGenerationThroughputCache(this.cacheFilePath, this.scanCache))
+      .then(() => generation === this.cacheGeneration
+        ? persistGenerationThroughputCache(this.cacheFilePath, entry)
+        : undefined)
       .catch(() => undefined);
   }
 }

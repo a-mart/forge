@@ -643,6 +643,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         // Deliberately direct: count-only throughput must not enter the
         // conversation projector or Collaboration fanout path.
         emitGenerationThroughput: (event) => this.emit("generation_throughput", event),
+        emitGenerationMeasurementTerminalPersisted: (record) =>
+          this.emit("generation_measurement_terminal_persisted", record),
         logDebug: (message, details) => this.logDebug(message, details),
       },
       messaging: {
@@ -1328,9 +1330,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     await this.projectAgentCoordinator.preflightRuntime(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor, requirements);
   }
-  private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
-    return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model);
-  }
+  private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor { return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model); }
   private async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
     return this.configurationCoordinator.resolveSystemPromptForDescriptor(descriptor);
   }
@@ -1351,9 +1351,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }> {
     return this.configurationCoordinator.getMemoryRuntimeResources(descriptor);
   }
-  protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
-    return this.configurationCoordinator.getSwarmContextFiles(cwd);
-  }
+  protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> { return this.configurationCoordinator.getSwarmContextFiles(cwd); }
   protected async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,

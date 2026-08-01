@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GenerationMeasurementRecordV1 } from "@forge/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GenerationThroughputService } from "../stats/generation-throughput-service.js";
 
 const tempDirs: string[] = [];
@@ -14,7 +14,7 @@ afterEach(async () => {
 describe("GenerationThroughputService", () => {
   it("streams manager and worker records, folds global duplicates, and uses token-weighted throughput", async () => {
     const dataDir = await createFixtureData();
-    const service = new GenerationThroughputService(createSwarmManager(dataDir));
+    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never);
 
     const snapshot = await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
 
@@ -45,6 +45,7 @@ describe("GenerationThroughputService", () => {
       conflictRecordCount: 0,
       malformedRecordCount: 1,
       startOnlyCallCount: 1,
+      incompleteCallCount: 1,
     });
     expect(snapshot.trends).toHaveLength(2);
 
@@ -61,9 +62,48 @@ describe("GenerationThroughputService", () => {
     expect(nextCalls.nextCursor).toBeNull();
   });
 
+  it("does not restore an invalidated cache from an older in-flight scan", async () => {
+    const dataDir = await createFixtureData();
+    let resolveStale: ((value: ReturnType<typeof scanFixture>) => void) | undefined;
+    let resolveFresh: ((value: ReturnType<typeof scanFixture>) => void) | undefined;
+    const stale = new Promise<ReturnType<typeof scanFixture>>((resolve) => { resolveStale = resolve; });
+    const fresh = new Promise<ReturnType<typeof scanFixture>>((resolve) => { resolveFresh = resolve; });
+    const scanProfiles = vi.fn()
+      .mockReturnValueOnce(stale)
+      .mockReturnValueOnce(fresh);
+    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never, { scanProfiles: scanProfiles as never });
+
+    const staleRequest = service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+    await vi.waitFor(() => expect(scanProfiles).toHaveBeenCalledTimes(1));
+    service.invalidateFromRuntimeCompletion();
+    resolveStale?.(scanFixture("stale"));
+    await staleRequest;
+
+    const freshRequest = service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+    await vi.waitFor(() => expect(scanProfiles).toHaveBeenCalledTimes(2));
+    resolveFresh?.(scanFixture("fresh"));
+    await freshRequest;
+    await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+
+    expect(scanProfiles).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates after the persisted terminal-completion signal", async () => {
+    const dataDir = await createFixtureData();
+    const manager = createSwarmManager(dataDir);
+    const scanProfiles = vi.fn(async () => scanFixture("scan"));
+    const service = new GenerationThroughputService(manager as never, { scanProfiles: scanProfiles as never });
+
+    await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+    manager.emitPersistedTerminal({ recordState: "terminal" });
+    await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+
+    expect(scanProfiles).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps strict quality separate from proxy measurements and validates custom query windows", async () => {
     const dataDir = await createFixtureData();
-    const service = new GenerationThroughputService(createSwarmManager(dataDir));
+    const service = new GenerationThroughputService(createSwarmManager(dataDir) as never);
 
     const strict = await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "strict" });
     expect(strict.totals.measuredCallCount).toBe(1);
@@ -179,9 +219,22 @@ function wrap(record: GenerationMeasurementRecordV1): string {
   return JSON.stringify({ type: "custom", customType: "swarm_generation_measurement", data: record });
 }
 
+function scanFixture(scannedAt: string) {
+  return {
+    scannedAt,
+    records: [],
+    diagnostics: { malformedRecordCount: 0, duplicateRecordCount: 0, conflictRecordCount: 0, startOnlyCallCount: 0 },
+  };
+}
+
 function createSwarmManager(dataDir: string) {
+  let persistedListener: ((record: { recordState: "terminal" }) => void) | undefined;
   return {
     getConfig: () => ({ paths: { dataDir } }),
     listUserProfiles: () => [{ profileId: "project-a", displayName: "Project A" }],
-  } as never;
+    on: (event: string, listener: (record: { recordState: "terminal" }) => void) => {
+      if (event === "generation_measurement_terminal_persisted") persistedListener = listener;
+    },
+    emitPersistedTerminal: (record: { recordState: "terminal" }) => persistedListener?.(record),
+  };
 }

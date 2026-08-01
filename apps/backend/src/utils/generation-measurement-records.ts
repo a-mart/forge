@@ -139,14 +139,16 @@ export function foldGenerationMeasurementRecords(
       continue;
     }
 
-    duplicateCount += 1;
     const comparison = compareLifecycleSources(source, selected);
-    if (comparison > 0) {
-      selectedByMeasurementId.set(source.record.measurementId, source);
+    // A started record followed by its terminal record is the normal durable
+    // lifecycle, not a copied duplicate or equal-sequence conflict.
+    if (source.record.recordSequence === selected.record.recordSequence) {
+      duplicateCount += 1;
+      if (!areEquivalentLifecycleRecords(source.record, selected.record)) {
+        conflictCount += 1;
+      }
     }
-    if (!areEquivalentLifecycleRecords(source.record, selected.record)) {
-      conflictCount += 1;
-    }
+    if (comparison > 0) selectedByMeasurementId.set(source.record.measurementId, source);
   }
 
   return {

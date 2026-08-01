@@ -142,7 +142,24 @@ describe("generation measurement records", () => {
     ]);
 
     expect(folded.records).toEqual([terminal]);
-    expect(folded.diagnostics).toEqual({ duplicateCount: 2, conflictCount: 1 });
+    expect(folded.diagnostics).toEqual({ duplicateCount: 1, conflictCount: 0 });
+  });
+
+  it("diagnoses equal-sequence copies as duplicates and only differing copies as conflicts", () => {
+    const terminal = record();
+    const conflicting = record({ model: { ...record().model, responseModelId: "other-model" } });
+
+    const equivalent = foldGenerationMeasurementRecords([
+      { record: terminal, sourcePath: "/a.jsonl", byteOffset: 1 },
+      { record: terminal, sourcePath: "/b.jsonl", byteOffset: 1 },
+    ]);
+    const conflict = foldGenerationMeasurementRecords([
+      { record: terminal, sourcePath: "/a.jsonl", byteOffset: 1 },
+      { record: conflicting, sourcePath: "/b.jsonl", byteOffset: 1 },
+    ]);
+
+    expect(equivalent.diagnostics).toEqual({ duplicateCount: 1, conflictCount: 0 });
+    expect(conflict.diagnostics).toEqual({ duplicateCount: 1, conflictCount: 1 });
   });
 
   it("uses terminal completeness then deterministic source ordering for conflicting fork copies", () => {

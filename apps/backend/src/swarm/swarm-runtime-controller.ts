@@ -29,6 +29,7 @@ import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import { RuntimeEventProjector, type ManagerAssistantOutputRouteResult } from "./runtime/runtime-event-projector.js";
+import { loadDurableGenerationMeasurements } from "./generation-throughput/durable-generation-measurements.js";
 import { GenerationMeasurementCoordinator } from "./generation-throughput/generation-measurement-coordinator.js";
 import type {
   AssistantOutputTarget,
@@ -203,6 +204,8 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
   /** Builder-only, count-only live throughput delivery. */
   emitGenerationThroughput?(event: GenerationThroughputEvent): void;
+  /** Internal post-append hook for cache freshness; never forwarded to clients. */
+  onGenerationMeasurementTerminalPersisted?(record: import("@forge/protocol").GenerationMeasurementRecordV1): void;
   resolveManagerAssistantFinalOutputTarget(
     agentId: string,
     activeTarget: AssistantOutputTarget | undefined
@@ -262,6 +265,12 @@ export class SwarmRuntimeController {
       getRuntime: (agentId) => this.getRuntime(agentId),
       getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
       emitLiveEvent: (event) => this.host.emitGenerationThroughput?.(event),
+      loadTerminalRecords: async (sessionAgentId) => {
+        const descriptor = this.host.descriptors.get(sessionAgentId);
+        if (!descriptor || descriptor.role !== "manager" || !descriptor.profileId) return [];
+        return loadDurableGenerationMeasurements(this.host.config.paths.dataDir, descriptor.profileId, sessionAgentId);
+      },
+      onTerminalRecordPersisted: (record) => this.host.onGenerationMeasurementTerminalPersisted?.(record),
       logDebug: (message, details) => this.logDebug(message, details),
     });
     this.runtimeFactory = new RuntimeFactory({
@@ -924,7 +933,7 @@ export class SwarmRuntimeController {
    * Generation telemetry has a separate ingress from conversation projection.
    * Keep the stale-runtime gate ahead of all coordinator mutation and JSONL IO.
    */
-  getGenerationThroughputSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+  getGenerationThroughputSnapshot(sessionAgentId: string): Promise<GenerationThroughputSnapshotEvent> {
     return this.generationMeasurementCoordinator.getSnapshot(sessionAgentId);
   }
 

@@ -57,11 +57,12 @@ interface EstimatedRateSample {
 }
 
 interface TerminalSessionSample {
+  measurementId: string;
   completedAt: string;
   role: "manager" | "worker";
-  tokensPerSecond: number;
-  outputTokens: number;
-  generationDurationMs: number;
+  outputTokens: number | null;
+  generationDurationMs: number | null;
+  measured: boolean;
 }
 
 export interface GenerationMeasurementCoordinatorOptions {
@@ -70,6 +71,10 @@ export interface GenerationMeasurementCoordinatorOptions {
   getActiveTurnId?(agentId: string, runtimeToken: number): string | undefined;
   /** Ephemeral, count-only Builder delivery. It never enters conversation projection. */
   emitLiveEvent?(event: GenerationThroughputEvent): void;
+  /** Reads manager and worker JSONL records for restart-correct bootstrap summaries. */
+  loadTerminalRecords?(sessionAgentId: string): Promise<readonly GenerationMeasurementRecordV1[]>;
+  /** Called only after appendCustomEntry accepted a terminal record. */
+  onTerminalRecordPersisted?(record: GenerationMeasurementRecordV1): void;
   logDebug?(message: string, details?: Record<string, unknown>): void;
 }
 
@@ -83,6 +88,8 @@ export class GenerationMeasurementCoordinator {
   private readonly activeByKey = new Map<string, ActiveGenerationMeasurement>();
   private readonly activeKeyByAgentId = new Map<string, string>();
   private readonly terminalSamplesBySessionId = new Map<string, TerminalSessionSample[]>();
+  private readonly terminalSampleHydrationsBySessionId = new Map<string, Promise<void>>();
+  private readonly hydratedTerminalSampleSessionIds = new Set<string>();
 
   constructor(private readonly options: GenerationMeasurementCoordinatorOptions) {}
 
@@ -122,9 +129,10 @@ export class GenerationMeasurementCoordinator {
     }
   }
 
-  /** Bootstrap contains only current active measurements plus the bounded session ring. */
-  getSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+  /** Bootstrap contains only current active measurements plus the durable bounded session ring. */
+  async getSnapshot(sessionAgentId: string): Promise<GenerationThroughputSnapshotEvent> {
     const normalizedSessionAgentId = sessionAgentId.trim();
+    await this.ensureTerminalSamplesHydrated(normalizedSessionAgentId);
     const measurements = [...this.activeByKey.values()]
       .filter((active) => active.descriptor.sessionId === normalizedSessionAgentId)
       .map((active) => this.buildLiveMeasurement(
@@ -293,7 +301,17 @@ export class GenerationMeasurementCoordinator {
           }
         : {}),
     };
-    this.appendRecord(agentId, event.measurementId, "terminal", record);
+    const persisted = this.appendRecord(agentId, event.measurementId, "terminal", record);
+    if (persisted) {
+      try {
+        this.options.onTerminalRecordPersisted?.(record);
+      } catch (error) {
+        this.options.logDebug?.("generation_measurement:terminal_persisted_hook:error", {
+          measurementId: event.measurementId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     active.sequence += 1;
     const phase = event.outcome === "aborted" || event.outcome === "error" ? "aborted" : "completed";
@@ -417,47 +435,64 @@ export class GenerationMeasurementCoordinator {
   private recordTerminalSessionSample(
     active: ActiveGenerationMeasurement,
     record: GenerationMeasurementRecordV1,
-  ): GenerationThroughputSessionSummary | undefined {
-    const outputTokens = record.usage.outputTokens;
-    const durationMs = record.timing.generationDurationMs;
-    if (
-      record.usage.tokenSource !== "provider_final"
-      || record.timing.boundarySource !== "content_delta_to_stream_end"
-      || outputTokens === null
-      || durationMs === null
-      || durationMs <= 0
-    ) {
-      return undefined;
-    }
-
-    const sessionSamples = this.terminalSamplesBySessionId.get(active.descriptor.sessionId) ?? [];
-    sessionSamples.push({
-      completedAt: record.completedAt ?? isoAt(active.startedWallTimeMs),
-      role: active.descriptor.role,
-      tokensPerSecond: outputTokens * 1_000 / durationMs,
-      outputTokens,
-      generationDurationMs: durationMs,
-    });
-    while (sessionSamples.length > SESSION_SAMPLE_LIMIT) {
-      sessionSamples.shift();
-    }
-    this.terminalSamplesBySessionId.set(active.descriptor.sessionId, sessionSamples);
+  ): GenerationThroughputSessionSummary {
+    this.mergeTerminalSamples(active.descriptor.sessionId, [toTerminalSessionSample(record)]);
     return this.buildSessionSummary(active.descriptor.sessionId);
   }
 
+  private async ensureTerminalSamplesHydrated(sessionAgentId: string): Promise<void> {
+    if (this.hydratedTerminalSampleSessionIds.has(sessionAgentId)) return;
+    const existing = this.terminalSampleHydrationsBySessionId.get(sessionAgentId);
+    if (existing) return existing;
+
+    const hydration = Promise.resolve(this.options.loadTerminalRecords?.(sessionAgentId) ?? [])
+      .then((records) => {
+        this.mergeTerminalSamples(
+          sessionAgentId,
+          records.filter((record) => record.recordState === "terminal" && record.identity.sessionId === sessionAgentId)
+            .map(toTerminalSessionSample),
+        );
+        this.hydratedTerminalSampleSessionIds.add(sessionAgentId);
+      })
+      .catch((error) => {
+        this.options.logDebug?.("generation_measurement:terminal_history:error", {
+          sessionAgentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        this.terminalSampleHydrationsBySessionId.delete(sessionAgentId);
+      });
+    this.terminalSampleHydrationsBySessionId.set(sessionAgentId, hydration);
+    return hydration;
+  }
+
+  private mergeTerminalSamples(sessionAgentId: string, additions: readonly TerminalSessionSample[]): void {
+    const byMeasurementId = new Map(
+      (this.terminalSamplesBySessionId.get(sessionAgentId) ?? []).map((sample) => [sample.measurementId, sample]),
+    );
+    for (const sample of additions) byMeasurementId.set(sample.measurementId, sample);
+    const samples = [...byMeasurementId.values()]
+      .sort((left, right) => left.completedAt.localeCompare(right.completedAt)
+        || left.measurementId.localeCompare(right.measurementId))
+      .slice(-SESSION_SAMPLE_LIMIT);
+    this.terminalSamplesBySessionId.set(sessionAgentId, samples);
+  }
+
   private buildSessionSummary(sessionAgentId: string): GenerationThroughputSessionSummary {
-    const samples = this.terminalSamplesBySessionId.get(sessionAgentId) ?? [];
-    const totalTokens = samples.reduce((sum, sample) => sum + sample.outputTokens, 0);
-    const totalDurationMs = samples.reduce((sum, sample) => sum + sample.generationDurationMs, 0);
+    const terminalWindow = this.terminalSamplesBySessionId.get(sessionAgentId) ?? [];
+    const samples = terminalWindow.filter((sample) => sample.measured);
+    const totalTokens = samples.reduce((sum, sample) => sum + sample.outputTokens!, 0);
+    const totalDurationMs = samples.reduce((sum, sample) => sum + sample.generationDurationMs!, 0);
     return {
       sessionAgentId,
       window: "last_20_terminal_generations",
       measuredGenerationCount: samples.length,
       weightedTokensPerSecond: totalDurationMs > 0 ? totalTokens * 1_000 / totalDurationMs : null,
-      samples: samples.map(({ completedAt, role, tokensPerSecond }) => ({
-        completedAt,
-        role,
-        tokensPerSecond,
+      samples: samples.map((sample) => ({
+        completedAt: sample.completedAt,
+        role: sample.role,
+        tokensPerSecond: sample.outputTokens! * 1_000 / sample.generationDurationMs!,
       })),
     };
   }
@@ -478,17 +513,39 @@ export class GenerationMeasurementCoordinator {
     measurementId: string,
     recordState: "started" | "terminal",
     record: GenerationMeasurementRecordV1,
-  ): void {
+  ): boolean {
     try {
-      this.options.getRuntime(agentId)?.appendCustomEntry(GENERATION_MEASUREMENT_ENTRY_TYPE, record);
+      const runtime = this.options.getRuntime(agentId);
+      if (!runtime) return false;
+      runtime.appendCustomEntry(GENERATION_MEASUREMENT_ENTRY_TYPE, record);
+      return true;
     } catch (error) {
       this.options.logDebug?.("generation_measurement:persist:error", {
         measurementId,
         recordState,
         message: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
+}
+
+function toTerminalSessionSample(record: GenerationMeasurementRecordV1): TerminalSessionSample {
+  const outputTokens = record.usage.outputTokens;
+  const generationDurationMs = record.timing.generationDurationMs;
+  const measured = record.usage.tokenSource === "provider_final"
+    && record.timing.boundarySource === "content_delta_to_stream_end"
+    && outputTokens !== null
+    && generationDurationMs !== null
+    && generationDurationMs > 0;
+  return {
+    measurementId: record.measurementId,
+    completedAt: record.completedAt ?? record.startedAt,
+    role: record.identity.role,
+    outputTokens,
+    generationDurationMs,
+    measured,
+  };
 }
 
 function captureIdentity(descriptor: AgentDescriptor): GenerationMeasurementRecordV1["identity"] {

@@ -998,7 +998,7 @@ describe("RuntimeFactory", () => {
     },
   );
 
-  it("keeps non-Codex Pi runtimes from applying Codex transport overrides", async () => {
+  it("keeps provider retries observable at the agent lifecycle while omitting Codex transport overrides", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -1033,7 +1033,12 @@ describe("RuntimeFactory", () => {
       expect.objectContaining({ withLock: expect.any(Function) }),
       expect.objectContaining({ projectTrusted: false }),
     );
-    expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
+      retry: { provider: { maxRetries: 0 } },
+    });
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalledWith(
+      expect.objectContaining({ transport: expect.anything() }),
+    );
     expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({ settingsManager: expect.any(Object) }),
     );

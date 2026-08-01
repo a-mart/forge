@@ -1292,31 +1292,25 @@ export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
         this.services.runtime.lifecycle.handleRuntimeAgentEnd(token, targetAgentId),
     });
   }
-
   getWorkerActivity(
     agentId: string,
   ): ReturnType<SwarmRuntimeLifecycleCoordinator["getWorkerActivity"]> {
     return this.services.runtime.lifecycle.getWorkerActivity(agentId);
   }
-
   getSessionActiveToolsSnapshot(sessionAgentId: string): SessionActiveToolsSnapshotEvent {
     this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
     return this.services.runtime.activeTools.buildSnapshotEvent(sessionAgentId);
   }
-
-  getGenerationThroughputSnapshot(sessionAgentId: string): GenerationThroughputSnapshotEvent {
+  async getGenerationThroughputSnapshot(sessionAgentId: string): Promise<GenerationThroughputSnapshotEvent> {
     this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
     return this.services.runtime.controller.getGenerationThroughputSnapshot(sessionAgentId);
   }
-
   recordToolSideEffect(callerAgentId: string, event: SwarmToolSideEffectEvent): void {
     this.services.observability.recordToolSideEffect(callerAgentId, event);
   }
-
   getConfig(): SwarmConfig {
     return this.services.host.config;
   }
-
   getObservabilityService(): ObservabilityFacade | undefined {
     return this.services.observability.getService();
   }

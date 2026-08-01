@@ -412,6 +412,40 @@ describe("SwarmRuntimeController", () => {
     expect(appendCustomEntry).toHaveBeenCalledTimes(1);
   });
 
+  it("signals only persisted terminal generation records for throughput cache invalidation", async () => {
+    const config = await makeTempConfig();
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const onGenerationMeasurementTerminalPersisted = vi.fn();
+    host.onGenerationMeasurementTerminalPersisted = onGenerationMeasurementTerminalPersisted;
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "manager-throughput-persisted",
+      role: "manager",
+      managerId: "manager-throughput-persisted",
+      profileId: "profile-1",
+    });
+    descriptors.set(manager.agentId, manager);
+    controller.attachRuntime(manager.agentId, { appendCustomEntry: vi.fn(() => "entry-1") } as unknown as SwarmAgentRuntime);
+    const token = controller.allocateRuntimeToken(manager.agentId);
+
+    await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
+      phase: "request_started", measurementId: "persisted-call", wallTimeMs: 1_000, monotonicTimeMs: 10,
+      requestedProvider: "openai-codex", requestedModelId: "gpt-5.5", reasoningLevel: "high",
+    });
+    await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
+      phase: "output_delta", measurementId: "persisted-call", wallTimeMs: 1_500, monotonicTimeMs: 510,
+      deltaKind: "text", deltaUtf16CodeUnits: 8, deltaUtf8Bytes: 8,
+    });
+    await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
+      phase: "completed", measurementId: "persisted-call", wallTimeMs: 2_000, monotonicTimeMs: 1_010,
+      outcome: "completed", meta: { usage: { output: 50 } },
+    });
+
+    expect(onGenerationMeasurementTerminalPersisted).toHaveBeenCalledWith(expect.objectContaining({
+      measurementId: "persisted-call", recordState: "terminal",
+    }));
+  });
+
   it("forwards an accepted terminal agent turn with its pre-consumption turn authority", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

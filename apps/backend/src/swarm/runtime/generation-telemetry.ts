@@ -121,8 +121,8 @@ export class PiGenerationTelemetryAdapter {
   }
 
   private async beginRequest(model: unknown): Promise<void> {
-    // Provider retries can invoke onPayload without a message_end for the prior
-    // failed stream. Keep attempts independent rather than merging retry delay.
+    // Agent-level retries re-enter onPayload without a message_end for the
+    // prior failed stream. Keep attempts independent rather than merging delay.
     await this.abortActive();
 
     const measurementId = this.createMeasurementId();
@@ -231,6 +231,7 @@ function outcomeFromMeta(meta: RuntimeModelCallMeta | undefined): Extract<Runtim
     case "max_tokens":
       return "length";
     case "tool_use":
+    case "tooluse":
     case "tool_calls":
       return "tool_use";
     case "aborted":

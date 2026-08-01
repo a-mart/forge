@@ -203,6 +203,7 @@ describe("Pi generation telemetry adapter (WP0)", () => {
     for (const [stopReason, expectedOutcome] of [
       ["error", "error"],
       ["aborted", "aborted"],
+      ["toolUse", "tool_use"],
       ["tool_use", "tool_use"],
     ] as const) {
       const events: RuntimeGenerationEvent[] = [];

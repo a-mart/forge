@@ -3,6 +3,7 @@ import type { GenerationThroughputLiveMeasurement } from '@forge/protocol'
 import { createInitialManagerWsState } from '../ws-state'
 import {
   MAX_GENERATION_RATE_SAMPLES,
+  MAX_GENERATION_THROUGHPUT_TOMBSTONES,
   reduceGenerationThroughputEvent,
   reduceGenerationThroughputSnapshot,
   removeGenerationThroughputTombstone,
@@ -139,6 +140,33 @@ describe('generation throughput WS reducer', () => {
     const cleanup = removeGenerationThroughputTombstone(settled, terminalResult.terminal!)
     expect(cleanup.generationThroughputByAgentId).toEqual({})
     expect(cleanup.generationRateSamplesByAgentId).toEqual({})
+    const cleaned = { ...settled, ...cleanup }
+    expect(cleaned.generationThroughputTombstonesByMeasurementId).toEqual({ 'call-1': 26 })
+    expect(reduceGenerationThroughputEvent(cleaned, {
+      type: 'generation_throughput', measurement: terminal,
+    }).accepted).toBe(false)
     expect(settled.generationThroughputSessionSummary).toEqual(summary)
+  })
+
+  it('bounds independent tombstones while replacement sequence keys cannot leak', () => {
+    let current = state()
+    for (let index = 1; index <= MAX_GENERATION_THROUGHPUT_TOMBSTONES + 3; index += 1) {
+      const result = reduceGenerationThroughputEvent(current, {
+        type: 'generation_throughput',
+        measurement: measurement({
+          measurementId: `call-${index}`,
+          sampledAt: new Date(Date.UTC(2026, 6, 31, 10, 0, index)).toISOString(),
+        }),
+      })
+      current = { ...current, ...result.patch }
+    }
+
+    expect(Object.keys(current.generationThroughputSequenceByMeasurementId)).toEqual([
+      `call-${MAX_GENERATION_THROUGHPUT_TOMBSTONES + 3}`,
+    ])
+    expect(current.generationThroughputTombstoneOrder).toHaveLength(MAX_GENERATION_THROUGHPUT_TOMBSTONES)
+    expect(current.generationThroughputTombstonesByMeasurementId['call-1']).toBeUndefined()
+    expect(current.generationThroughputTombstonesByMeasurementId['call-2']).toBeUndefined()
+    expect(current.generationThroughputTombstonesByMeasurementId['call-3']).toBe(1)
   })
 })

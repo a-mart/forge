@@ -184,7 +184,7 @@ describe("secure session bootstrap projection", () => {
     const swarmManager = manager() as ReturnType<typeof manager> & {
       getGenerationThroughputSnapshot: ReturnType<typeof vi.fn>;
     };
-    swarmManager.getGenerationThroughputSnapshot = vi.fn(() => ({
+    swarmManager.getGenerationThroughputSnapshot = vi.fn(async () => ({
       type: "generation_throughput_snapshot" as const,
       sessionAgentId: "session",
       measurements: [],

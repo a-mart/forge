@@ -102,8 +102,11 @@ export interface ManagerWsState {
   /** Local Builder-only, count-only generation telemetry. Never transcript state. */
   generationThroughputByAgentId: Record<string, GenerationThroughputLiveMeasurement>
   generationRateSamplesByAgentId: Record<string, GenerationRateSample[]>
-  /** Sequence guard retained per measurement across cumulative WS frames. */
+  /** Sequence guard for measurements still presented in the current session. */
   generationThroughputSequenceByMeasurementId: Record<string, number>
+  /** Bounded terminal/supersession guards that outlive presentation cleanup. */
+  generationThroughputTombstonesByMeasurementId: Record<string, number>
+  generationThroughputTombstoneOrder: string[]
   generationThroughputSessionSummary: GenerationThroughputSessionSummary | null
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
@@ -188,6 +191,8 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     generationThroughputByAgentId: {},
     generationRateSamplesByAgentId: {},
     generationThroughputSequenceByMeasurementId: {},
+    generationThroughputTombstonesByMeasurementId: {},
+    generationThroughputTombstoneOrder: [],
     generationThroughputSessionSummary: null,
     agents: [],
     loadedSessionIds: new Set(),

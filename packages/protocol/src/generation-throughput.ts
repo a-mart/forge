@@ -246,6 +246,8 @@ export interface GenerationThroughputDiagnostics {
   duplicateRecordCount: number;
   conflictRecordCount: number;
   startOnlyCallCount: number;
+  /** Started records in the selected scope that have no terminal lifecycle record. */
+  incompleteCallCount: number;
 }
 
 export interface GenerationThroughputSnapshot {

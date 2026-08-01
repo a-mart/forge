@@ -6,6 +6,7 @@ import type {
 import type { GenerationRateSample, ManagerWsState } from '../ws-state'
 
 export const MAX_GENERATION_RATE_SAMPLES = 20
+export const MAX_GENERATION_THROUGHPUT_TOMBSTONES = 64
 
 export interface GenerationThroughputReduction {
   patch: Partial<ManagerWsState>
@@ -25,10 +26,11 @@ export function reduceGenerationThroughputEvent(
   const measurement = event.measurement
   if (!isCurrentSession(state, measurement.sessionId)) return { patch: {}, accepted: false }
 
-  const knownSequence = state.generationThroughputSequenceByMeasurementId[measurement.measurementId]
-  if (knownSequence !== undefined && measurement.sequence <= knownSequence) {
+  if (state.generationThroughputTombstonesByMeasurementId[measurement.measurementId] !== undefined) {
     return { patch: {}, accepted: false }
   }
+  const knownSequence = state.generationThroughputSequenceByMeasurementId[measurement.measurementId]
+  if (knownSequence !== undefined && measurement.sequence <= knownSequence) return { patch: {}, accepted: false }
 
   const current = state.generationThroughputByAgentId[measurement.agentId]
   if (current && current.measurementId !== measurement.measurementId && !replacesCurrentMeasurement(current, measurement)) {
@@ -42,6 +44,23 @@ export function reduceGenerationThroughputEvent(
   const nextSequences = {
     ...state.generationThroughputSequenceByMeasurementId,
     [measurement.measurementId]: measurement.sequence,
+  }
+  let tombstones = state.generationThroughputTombstonesByMeasurementId
+  let tombstoneOrder = state.generationThroughputTombstoneOrder
+  if (current && current.measurementId !== measurement.measurementId) {
+    delete nextSequences[current.measurementId]
+    const replacementTombstone = addGenerationThroughputTombstone(
+      tombstones, tombstoneOrder, current.measurementId, current.sequence,
+    )
+    tombstones = replacementTombstone.generationThroughputTombstonesByMeasurementId
+    tombstoneOrder = replacementTombstone.generationThroughputTombstoneOrder
+  }
+  if (measurement.phase === 'completed' || measurement.phase === 'aborted') {
+    const terminalTombstone = addGenerationThroughputTombstone(
+      tombstones, tombstoneOrder, measurement.measurementId, measurement.sequence,
+    )
+    tombstones = terminalTombstone.generationThroughputTombstonesByMeasurementId
+    tombstoneOrder = terminalTombstone.generationThroughputTombstoneOrder
   }
   const nextSamples = current?.measurementId === measurement.measurementId
     ? state.generationRateSamplesByAgentId
@@ -64,6 +83,9 @@ export function reduceGenerationThroughputEvent(
       generationThroughputByAgentId: nextMeasurements,
       generationRateSamplesByAgentId: rateSamplesByAgentId,
       generationThroughputSequenceByMeasurementId: nextSequences,
+      ...(tombstones !== state.generationThroughputTombstonesByMeasurementId
+        ? { generationThroughputTombstonesByMeasurementId: tombstones, generationThroughputTombstoneOrder: tombstoneOrder }
+        : {}),
       ...(sessionSummary !== state.generationThroughputSessionSummary
         ? { generationThroughputSessionSummary: sessionSummary }
         : {}),
@@ -106,6 +128,8 @@ export function reduceGenerationThroughputSnapshot(
       generationThroughputByAgentId: nextMeasurements,
       generationRateSamplesByAgentId: nextSamples,
       generationThroughputSequenceByMeasurementId: nextSequences,
+      generationThroughputTombstonesByMeasurementId: {},
+      generationThroughputTombstoneOrder: [],
       generationThroughputSessionSummary: event.sessionSummary,
     },
   }
@@ -145,12 +169,16 @@ export function clearGenerationThroughputState(): Pick<
   | 'generationThroughputByAgentId'
   | 'generationRateSamplesByAgentId'
   | 'generationThroughputSequenceByMeasurementId'
+  | 'generationThroughputTombstonesByMeasurementId'
+  | 'generationThroughputTombstoneOrder'
   | 'generationThroughputSessionSummary'
 > {
   return {
     generationThroughputByAgentId: {},
     generationRateSamplesByAgentId: {},
     generationThroughputSequenceByMeasurementId: {},
+    generationThroughputTombstonesByMeasurementId: {},
+    generationThroughputTombstoneOrder: [],
     generationThroughputSessionSummary: null,
   }
 }
@@ -170,6 +198,24 @@ export function removeGenerationThroughputTombstone(
   }
 
   return clearGenerationThroughputForAgents(state, [input.agentId])
+}
+
+function addGenerationThroughputTombstone(
+  existing: ManagerWsState['generationThroughputTombstonesByMeasurementId'],
+  existingOrder: ManagerWsState['generationThroughputTombstoneOrder'],
+  measurementId: string,
+  sequence: number,
+): Pick<ManagerWsState, 'generationThroughputTombstonesByMeasurementId' | 'generationThroughputTombstoneOrder'> {
+  const tombstones = { ...existing, [measurementId]: Math.max(existing[measurementId] ?? 0, sequence) }
+  const tombstoneOrder = [...existingOrder.filter((id) => id !== measurementId), measurementId]
+  while (tombstoneOrder.length > MAX_GENERATION_THROUGHPUT_TOMBSTONES) {
+    const expired = tombstoneOrder.shift()
+    if (expired) delete tombstones[expired]
+  }
+  return {
+    generationThroughputTombstonesByMeasurementId: tombstones,
+    generationThroughputTombstoneOrder: tombstoneOrder,
+  }
 }
 
 function appendRateSample(

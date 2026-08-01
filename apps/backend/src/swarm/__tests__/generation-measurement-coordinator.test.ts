@@ -56,7 +56,10 @@ function event(
   }
 }
 
-function createCoordinator(descriptors: AgentDescriptor[]) {
+function createCoordinator(
+  descriptors: AgentDescriptor[],
+  options: { loadTerminalRecords?: () => Promise<readonly import("@forge/protocol").GenerationMeasurementRecordV1[]> } = {},
+) {
   const records: unknown[] = [];
   const liveEvents: Array<Extract<import("@forge/protocol").ServerEvent, { type: "generation_throughput" }>> = [];
   const appendCustomEntry = vi.fn((_type: string, data: unknown) => {
@@ -69,6 +72,7 @@ function createCoordinator(descriptors: AgentDescriptor[]) {
     getRuntime: () => runtime,
     getActiveTurnId: () => "turn-1",
     emitLiveEvent: (liveEvent) => liveEvents.push(liveEvent),
+    loadTerminalRecords: options.loadTerminalRecords,
   });
   return { coordinator, records, appendCustomEntry, liveEvents };
 }
@@ -231,12 +235,43 @@ describe("GenerationMeasurementCoordinator", () => {
     });
     expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
 
-    const snapshot = coordinator.getSnapshot("manager-1");
+    const snapshot = await coordinator.getSnapshot("manager-1");
     expect(snapshot.measurements).toEqual([]);
     expect(snapshot.sessionSummary).toMatchObject({
       measuredGenerationCount: 1,
       weightedTokensPerSecond: 50,
     });
+  });
+
+  it("hydrates the true last-20 durable terminal window after restart", async () => {
+    const first = createCoordinator([descriptor()]);
+    for (let index = 1; index <= 21; index += 1) {
+      const startedAt = index * 10_000;
+      await first.coordinator.handleRuntimeGenerationEvent(1, "manager-1", event("request_started", `call-${index}`, startedAt));
+      if (index % 2 !== 0) {
+        await first.coordinator.handleRuntimeGenerationEvent(1, "manager-1", event("output_delta", `call-${index}`, startedAt + 1_000));
+      } else {
+        await first.coordinator.handleRuntimeGenerationEvent(1, "manager-1", event("response_stream_started", `call-${index}`, startedAt + 1_000));
+      }
+      await first.coordinator.handleRuntimeGenerationEvent(1, "manager-1", event("completed", `call-${index}`, startedAt + 3_000, {
+        meta: { usage: { output: 100 } },
+      }));
+    }
+    const durableRecords = first.records
+      .filter((record): record is import("@forge/protocol").GenerationMeasurementRecordV1 =>
+        (record as { recordState?: string }).recordState === "terminal");
+    const loadTerminalRecords = vi.fn(async () => durableRecords);
+    const restarted = createCoordinator([descriptor()], { loadTerminalRecords });
+
+    const snapshot = await restarted.coordinator.getSnapshot("manager-1");
+
+    expect(loadTerminalRecords).toHaveBeenCalledOnce();
+    expect(snapshot.sessionSummary).toMatchObject({
+      measuredGenerationCount: 10,
+      weightedTokensPerSecond: 50,
+    });
+    expect(snapshot.sessionSummary.samples).toHaveLength(10);
+    expect(snapshot.sessionSummary.samples[0]?.completedAt).toBe(new Date(34_000).toISOString());
   });
 
   it("marks final-only, zero-duration, and malformed final usage unmeasurable without manufacturing a rate", async () => {

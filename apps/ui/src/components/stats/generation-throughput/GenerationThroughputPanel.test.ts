@@ -72,6 +72,6 @@ function fixture(): GenerationThroughputSnapshot {
     models: [{ provider: 'openai-codex', modelId: 'gpt-test', displayName: 'GPT Test', ...metrics }],
     modelTableTruncated: false,
     trends: [{ provider: 'openai-codex', modelId: 'gpt-test', displayName: 'GPT Test', points: [{ date: '2026-04-02', dateLabel: 'Apr 2', ...metrics }] }],
-    diagnostics: { malformedRecordCount: 0, duplicateRecordCount: 0, conflictRecordCount: 0, startOnlyCallCount: 1 },
+    diagnostics: { malformedRecordCount: 0, duplicateRecordCount: 0, conflictRecordCount: 0, startOnlyCallCount: 1, incompleteCallCount: 1 },
   }
 }
