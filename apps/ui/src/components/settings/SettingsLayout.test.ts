@@ -61,15 +61,15 @@ describe('SettingsLayout', () => {
     // Desktop nav includes all maintained settings tabs.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(19)
+    expect(buttons.length).toBe(18)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Appearance')
     expect(labels).toContain('Secrets')
     expect(labels).toContain('Stream Deck')
     expect(labels).toContain('Git monitoring')
-    expect(labels).toContain('Repository Resources')
+    expect(labels).not.toContain('Repository Resources')
     expect(labels).toContain('Observability')
-    expect(labels).toContain('Use Chrome with Forge')
+    expect(labels).toContain('Chrome')
   })
 
   it('filters tabs to only availableTabs when provided', () => {
