@@ -137,6 +137,7 @@ import type {
   GenerationThroughputEvent,
   GenerationThroughputSnapshotEvent,
 } from './generation-throughput.js'
+import type { ManagerToolActivityEvent } from './manager-tool-activity.js'
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
@@ -200,6 +201,7 @@ export type ServerEvent =
   | StreamDeckNavigationRequestedEvent
   | GenerationThroughputEvent
   | GenerationThroughputSnapshotEvent
+  | ManagerToolActivityEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent

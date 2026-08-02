@@ -341,8 +341,14 @@ export class SwarmWebSocketServer {
 
   private readonly onSessionActiveToolsSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_active_tools_snapshot") return;
-    this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
+    // Detail-bearing active-tool snapshots remain CLI-only. Builder uses the
+    // count-only manager_tool_activity projection below.
     this.cliWsHandler.broadcast(event);
+  };
+
+  private readonly onManagerToolActivity = (event: ServerEvent): void => {
+    if (event.type !== "manager_tool_activity") return;
+    this.wsHandler.broadcastManagerToolActivity(event);
   };
 
   private readonly onSessionPlanSnapshot = (event: ServerEvent): void => {
@@ -985,6 +991,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.on("generation_throughput", this.onGenerationThroughput);
     this.swarmManager.on("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
+    this.swarmManager.on("manager_tool_activity", this.onManagerToolActivity);
     this.swarmManager.on("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.on("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
@@ -1065,6 +1072,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.off("generation_throughput", this.onGenerationThroughput);
     this.swarmManager.off("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
+    this.swarmManager.off("manager_tool_activity", this.onManagerToolActivity);
     this.swarmManager.off("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.off("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);

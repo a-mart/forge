@@ -1,14 +1,17 @@
 import type {
   CodexElicitationDismissedEvent,
   CodexElicitationRequestEvent,
+  ManagerToolActivityEvent,
   ModelCacheObservationEvent,
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
   SessionWorkersSnapshotEvent,
 } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
+import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import type { ConversationProjector } from "./conversation-projector.js";
 import type { SessionActiveToolsState } from "./session-active-tools.js";
+import type { ManagerToolActivityState } from "./manager-tool-activity.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import type {
   AgentContextUsage,
@@ -41,6 +44,7 @@ export interface SwarmEventCoordinatorOptions {
   conversationProjector: ConversationProjector;
   observability: SwarmObservabilityCoordinator;
   sessionActiveTools: SessionActiveToolsState;
+  managerToolActivity: ManagerToolActivityState;
   now: () => string;
 }
 
@@ -93,6 +97,7 @@ export class SwarmEventCoordinator {
 
   emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
     this.options.conversationProjector.emitConversationReset(agentId, reason);
+    this.clearManagerToolActivity(agentId);
   }
 
   emitMessagePinned(agentId: string, messageId: string, pinned: boolean, timestamp: string): void {
@@ -142,6 +147,32 @@ export class SwarmEventCoordinator {
     }
   }
 
+  activateManagerToolActivity(sessionAgentId: string, turnId: string): void {
+    this.emitManagerToolActivity(this.options.managerToolActivity.activate(sessionAgentId, turnId));
+  }
+
+  emitManagerToolActivityForToolCall(event: import("./types.js").AgentToolCallEvent): void {
+    const descriptor = this.options.host.getDescriptor(event.actorAgentId);
+    if (
+      descriptor?.role !== "manager" ||
+      descriptor.agentId !== event.agentId ||
+      event.kind !== "tool_execution_start"
+    ) {
+      return;
+    }
+
+    this.emitManagerToolActivity(this.options.managerToolActivity.recordToolStart({
+      sessionAgentId: descriptor.agentId,
+      turnId: event.turnId,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+    }));
+  }
+
+  clearManagerToolActivity(sessionAgentId: string): void {
+    this.emitManagerToolActivity(this.options.managerToolActivity.clear(sessionAgentId));
+  }
+
   emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void {
     const payload: SessionWorkersSnapshotEvent = {
       type: "session_workers_snapshot",
@@ -177,6 +208,9 @@ export class SwarmEventCoordinator {
     this.options.host.emit("agent_status", payload);
     for (const snapshot of this.options.sessionActiveTools.recordAgentStatus(payload, descriptor)) {
       this.emitSessionActiveToolsSnapshot(snapshot);
+    }
+    if (descriptor?.role === "manager" && isNonRunningAgentStatus(status)) {
+      this.clearManagerToolActivity(descriptor.agentId);
     }
   }
 
@@ -223,6 +257,12 @@ export class SwarmEventCoordinator {
 
   emitSessionLifecycle(event: SessionLifecycleEvent): void {
     this.options.host.emit("session_lifecycle", event);
+  }
+
+  private emitManagerToolActivity(event: ManagerToolActivityEvent | null): void {
+    if (event) {
+      this.options.host.emit("manager_tool_activity", event);
+    }
   }
 
   private resolveSessionDescriptor(agentId: string): (AgentDescriptor & { role: "manager" }) | undefined {

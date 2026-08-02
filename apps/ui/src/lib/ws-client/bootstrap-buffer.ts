@@ -157,7 +157,7 @@ export class BootstrapBuffer {
     if (event.type === 'session_plan_snapshot') {
       return event.sessionAgentId === targetAgentId
     }
-    if (event.type === 'session_goal_snapshot') {
+    if (event.type === 'session_goal_snapshot' || event.type === 'manager_tool_activity') {
       return event.sessionAgentId === targetAgentId
     }
     if (event.type === 'secure_session_snapshot') {

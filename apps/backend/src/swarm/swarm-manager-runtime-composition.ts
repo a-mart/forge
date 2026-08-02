@@ -107,6 +107,7 @@ export interface RuntimeCompositionEvents {
   emitSessionGoalSnapshot(event: SessionGoalSnapshotEvent): void;
   emitSessionActiveToolsSnapshot(snapshot: SessionActiveToolsSnapshotEvent | null): void;
   clearSessionActiveTools(agentId: string): SessionActiveToolsSnapshotEvent | null;
+  activateManagerToolActivity(agentId: string, turnId: string): void; clearManagerToolActivity(agentId: string): void;
   saveStore(): Promise<void>;
   queueVersionedToolMutation: RuntimeHost["queueVersionedToolMutation"];
   emitModelCacheObservation: RuntimeHost["emitModelCacheObservation"];
@@ -643,6 +644,7 @@ export class SwarmManagerRuntimeComposition {
       },
       output: this.assistantOutput,
       codex: services.codexPlugin,
+      managerToolActivity: { activateManagerTurn: (agentId, turnId) => this.options.events.activateManagerToolActivity(agentId, turnId), clearManagerTurn: (agentId) => this.options.events.clearManagerToolActivity(agentId) },
       observability: {
         activateRoot: (agentId, rootTurnId, parentRootTurnId) =>
           this.options.foundation.observability.activateRoot(agentId, rootTurnId, parentRootTurnId),
@@ -853,8 +855,7 @@ export class SwarmManagerRuntimeComposition {
         closeManagerScopesAndRetry: (agentId) => services.codexPlugin.closeManagerScopesAndRetry(agentId),
       },
       activeTools: {
-        clearSession: (agentId) =>
-          events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)),
+        clearSession: (agentId) => { events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)); events.clearManagerToolActivity(agentId); },
       },
       browser: this.options.browserAutomation,
       secureSessions: this.options.secureSessions,

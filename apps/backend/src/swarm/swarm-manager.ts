@@ -76,7 +76,7 @@ import { TurnContextCoordinator } from "./turn-context-coordinator.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { ProjectAgentSharingService } from "./project-agent-sharing-service.js";
 import { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
-import { SessionActiveToolsState } from "./session-active-tools.js";
+import { SessionActiveToolsState } from "./session-active-tools.js"; import { ManagerToolActivityState } from "./manager-tool-activity.js";
 import { createModelChangeNoticeEvent } from "./runtime/model-change-continuity.js";
 import { ConversationAttachmentService } from "./conversation-attachment-service.js";
 import {
@@ -171,7 +171,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly profileSessionBookkeepingCoordinator: ProfileSessionBookkeepingCoordinator;
   private readonly configurationCoordinator: SwarmConfigurationCoordinator;
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
-  private readonly sessionActiveTools = new SessionActiveToolsState();
+  private readonly sessionActiveTools = new SessionActiveToolsState(); private readonly managerToolActivity = new ManagerToolActivityState();
   private readonly conversationProjector: ConversationProjector;
   private readonly eventCoordinator: SwarmEventCoordinator;
   private readonly conversationAttachmentService: ConversationAttachmentService;
@@ -329,7 +329,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       emitServerEvent: (eventName, payload) => {
         this.emit(eventName, payload);
         if (payload.type === "agent_tool_call") {
-          this.eventCoordinator.emitSessionActiveToolsSnapshot(this.sessionActiveTools.recordToolCall(payload));
+          this.eventCoordinator.emitSessionActiveToolsSnapshot(this.sessionActiveTools.recordToolCall(payload)); this.eventCoordinator.emitManagerToolActivityForToolCall(payload);
         }
       },
       logDebug: (message, details) => this.logDebug(message, details),
@@ -503,7 +503,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         specialists: this.specialistFallbackManager,
         turns: this.turnContextCoordinator,
         assistantOutput: this.assistantOutputRouter,
-        activeTools: this.sessionActiveTools,
+        activeTools: this.sessionActiveTools, managerToolActivity: this.managerToolActivity,
         runtimes: this.runtimes,
       },
       events: this.eventCoordinator,
@@ -633,7 +633,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         emitSessionGoalSnapshot: (event) => this.emit("session_goal_snapshot", event),
         emitSessionActiveToolsSnapshot: (snapshot) => this.eventCoordinator.emitSessionActiveToolsSnapshot(snapshot),
         clearSessionActiveTools: (agentId) => this.sessionActiveTools.clearSession(agentId),
-        saveStore: () => this.descriptorStoreAdapter.saveStore(),
+        activateManagerToolActivity: (agentId, turnId) => this.eventCoordinator.activateManagerToolActivity(agentId, turnId),
+        clearManagerToolActivity: (agentId) => this.eventCoordinator.clearManagerToolActivity(agentId), saveStore: () => this.descriptorStoreAdapter.saveStore(),
         queueVersionedToolMutation: (agentId, event) =>
           this.queueVersionedToolMutation(agentId, event),
         emitModelCacheObservation: (event) =>
@@ -809,7 +810,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       conversationProjector: this.conversationProjector,
       observability: this.observabilityCoordinator,
-      sessionActiveTools: this.sessionActiveTools,
+      sessionActiveTools: this.sessionActiveTools, managerToolActivity: this.managerToolActivity,
       now: this.now,
     });
   }

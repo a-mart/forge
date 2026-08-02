@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ClipboardList, Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { ClipboardList, Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -24,6 +24,7 @@ import type {
   AgentStatus,
   AgentSessionPurpose,
   GenerationThroughputLiveMeasurement,
+  ManagerToolActivityEvent,
 } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
@@ -60,6 +61,8 @@ interface ChatHeaderProps {
   showGenerationThroughput?: boolean
   /** Local Builder-only generation telemetry for the active manager. */
   generationThroughput?: GenerationThroughputLiveMeasurement
+  /** Ephemeral manager-turn tool count. Never includes tool input or output. */
+  managerToolActivity?: ManagerToolActivityEvent | null
   generationThroughputLatestFinal?: GenerationThroughputLiveMeasurement
   compactionCount?: number
   showCompact: boolean
@@ -181,6 +184,7 @@ export function ChatHeader({
   generationThroughputEligible = false,
   showGenerationThroughput = false,
   generationThroughput,
+  managerToolActivity,
   generationThroughputLatestFinal,
   compactionCount,
   showCompact,
@@ -356,6 +360,22 @@ export function ChatHeader({
             {statusLabel}
             {durationLabel ? <span className="tabular-nums"> · {durationLabel}</span> : null}
           </span>
+          {activeAgentRole === 'manager' && managerToolActivity && managerToolActivity.toolCount > 0 ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              data-testid="manager-tool-activity"
+              aria-label={`Manager tool activity: ${managerToolActivity.toolCount} tool${managerToolActivity.toolCount === 1 ? '' : 's'}${managerToolActivity.currentToolName ? `, ${managerToolActivity.currentToolName}` : ''}`}
+              title={managerToolActivity.currentToolName
+                ? `${managerToolActivity.toolCount} tool${managerToolActivity.toolCount === 1 ? '' : 's'} · ${managerToolActivity.currentToolName}`
+                : `${managerToolActivity.toolCount} tool${managerToolActivity.toolCount === 1 ? '' : 's'}`}
+            >
+              <Wrench className="size-3" aria-hidden="true" />
+              <span>{managerToolActivity.toolCount}</span>
+              {managerToolActivity.currentToolName ? (
+                <span className="max-w-24 truncate">· {managerToolActivity.currentToolName}</span>
+              ) : null}
+            </span>
+          ) : null}
           {activeAgentRole === 'manager' && showGenerationThroughput && generationThroughputEligible ? (
             <ThroughputPulse
               key={activeAgentId ?? 'manager-throughput'}

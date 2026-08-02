@@ -62,6 +62,7 @@ function createHarness() {
   const cleanFinals: ManagerOutputTurnEndContext[] = [];
   const codexActivations: Array<CodexTurnActivation<TestGate, TestDelegation, TestRetry>> = [];
   const activeRoots = new Map<string, { rootTurnId: string; parentRootTurnId?: string }>();
+  const managerToolActivity: string[] = [];
   let nextTurn = 0;
 
   const coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
@@ -117,6 +118,10 @@ function createHarness() {
         order.push("codex:reset");
       },
     },
+    managerToolActivity: {
+      activateManagerTurn: (agentId, turnId) => managerToolActivity.push(`activate:${agentId}:${turnId}`),
+      clearManagerTurn: (agentId) => managerToolActivity.push(`clear:${agentId}`),
+    },
     observability: {
       activateRoot: (agentId, rootTurnId, parentRootTurnId) => {
         activeRoots.set(agentId, { rootTurnId, parentRootTurnId });
@@ -153,6 +158,7 @@ function createHarness() {
     providerCycles,
     cleanFinals,
     codexActivations,
+    managerToolActivity,
   };
 }
 
@@ -486,6 +492,7 @@ describe("TurnContextCoordinator", () => {
     );
 
     expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe("turn-1");
+    expect(harness.managerToolActivity).toEqual(["activate:manager-1:turn-1"]);
     expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBeUndefined();
     expect(harness.outputActivations.at(-1)).toEqual({
       beginUserVisibleObligation: false,
@@ -597,6 +604,30 @@ describe("TurnContextCoordinator", () => {
       { type: "turn_end", toolResults: [] },
     );
     expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+  });
+
+  it("resets manager tool activity on actual activation and terminal paths but not provider turn_end", async () => {
+    const harness = createHarness();
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "task",
+    });
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "task"),
+    );
+    harness.coordinator.afterRuntimeEventProjection("manager-1", 41, { type: "turn_end", toolResults: [] });
+    expect(harness.managerToolActivity).toEqual(["activate:manager-1:turn-1"]);
+
+    harness.coordinator.afterRuntimeEventProjection("manager-1", 41, { type: "agent_end" });
+    harness.coordinator.handleRuntimeError("manager-1");
+    expect(harness.managerToolActivity).toEqual([
+      "activate:manager-1:turn-1",
+      "clear:manager-1",
+      "clear:manager-1",
+    ]);
   });
 
   it("applies agent-end cleanup before observability", async () => {

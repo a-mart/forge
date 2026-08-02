@@ -205,6 +205,12 @@ export class WsHandler {
     this.subscriptionManager.broadcastGenerationThroughput(sessionAgentId, event);
   }
 
+  broadcastManagerToolActivity(
+    event: Extract<ServerEvent, { type: "manager_tool_activity" }>,
+  ): void {
+    this.subscriptionManager.broadcastManagerToolActivity(event);
+  }
+
   broadcastSecureSessionSnapshot(
     event: Extract<ServerEvent, { type: "secure_session_snapshot" }>,
   ): void {

@@ -1301,6 +1301,7 @@ export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
     this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
     return this.services.runtime.activeTools.buildSnapshotEvent(sessionAgentId);
   }
+  getManagerToolActivitySnapshot(sessionAgentId: string) { this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId); return this.services.runtime.managerToolActivity.buildSnapshotEvent(sessionAgentId); }
   async getGenerationThroughputSnapshot(sessionAgentId: string): Promise<GenerationThroughputSnapshotEvent> {
     this.services.registry.directory.getRequiredSessionDescriptor(sessionAgentId);
     return this.services.runtime.controller.getGenerationThroughputSnapshot(sessionAgentId);
@@ -1314,7 +1315,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
   getObservabilityService(): ObservabilityFacade | undefined {
     return this.services.observability.getService();
   }
-
   beforeRuntimeEventProjection(
     agentId: string,
     runtimeToken: number | undefined,

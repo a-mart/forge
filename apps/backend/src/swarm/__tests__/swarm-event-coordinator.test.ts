@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationProjector } from "../conversation-projector.js";
 import { SessionActiveToolsState } from "../session-active-tools.js";
+import { ManagerToolActivityState } from "../manager-tool-activity.js";
 import { SwarmEventCoordinator } from "../swarm-event-coordinator.js";
 import type { SwarmObservabilityCoordinator } from "../swarm-observability-coordinator.js";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
@@ -52,6 +53,7 @@ function setup(initialDescriptors: AgentDescriptor[] = [manager()]) {
     conversationProjector,
     observability,
     sessionActiveTools: new SessionActiveToolsState(),
+    managerToolActivity: new ManagerToolActivityState(),
     now: () => "2026-07-13T00:00:05.000Z",
   });
   return { coordinator, emitted, upsertDescriptor, conversationProjector, observability };
@@ -93,6 +95,77 @@ describe("SwarmEventCoordinator", () => {
 
     expect(conversationProjector.emitConversationMessage).toHaveBeenCalledWith(event, undefined);
     expect(observability.recordUserVisibleMessage).toHaveBeenCalledWith(event);
+  });
+
+  it("projects only manager-owned tool starts into the count-only activity wire shape", () => {
+    const owner = manager();
+    const { coordinator, emitted } = setup([owner, worker("worker-1", owner.agentId)]);
+    coordinator.activateManagerToolActivity(owner.agentId, "turn-1");
+    emitted.length = 0;
+
+    coordinator.emitManagerToolActivityForToolCall({
+      type: "agent_tool_call",
+      agentId: owner.agentId,
+      actorAgentId: "worker-1",
+      turnId: "turn-1",
+      timestamp: "2026-07-13T00:00:04.000Z",
+      kind: "tool_execution_start",
+      toolCallId: "worker-tool-id",
+      toolName: "bash",
+      text: '{"command":"secret"}',
+    });
+    coordinator.emitManagerToolActivityForToolCall({
+      type: "agent_tool_call",
+      agentId: owner.agentId,
+      actorAgentId: owner.agentId,
+      turnId: "turn-1",
+      timestamp: "2026-07-13T00:00:04.000Z",
+      kind: "tool_execution_start",
+      toolCallId: "manager-tool-id",
+      toolName: "Read File!",
+      text: '{"path":"secret"}',
+    });
+
+    expect(emitted).toEqual([{
+      name: "manager_tool_activity",
+      event: {
+        type: "manager_tool_activity",
+        sessionAgentId: owner.agentId,
+        revision: 2,
+        toolCount: 1,
+        currentToolName: "read-file",
+      },
+    }]);
+  });
+
+  it("clears activity when a conversation reset starts a new session surface", () => {
+    const owner = manager();
+    const { coordinator, emitted } = setup([owner]);
+    coordinator.activateManagerToolActivity(owner.agentId, "turn-1");
+    coordinator.emitManagerToolActivityForToolCall({
+      type: "agent_tool_call",
+      agentId: owner.agentId,
+      actorAgentId: owner.agentId,
+      turnId: "turn-1",
+      timestamp: "2026-07-13T00:00:04.000Z",
+      kind: "tool_execution_start",
+      toolCallId: "manager-tool-id",
+      toolName: "bash",
+      text: "secret",
+    });
+    emitted.length = 0;
+
+    coordinator.emitConversationReset(owner.agentId, "user_new_command");
+
+    expect(emitted).toEqual([{
+      name: "manager_tool_activity",
+      event: {
+        type: "manager_tool_activity",
+        sessionAgentId: owner.agentId,
+        revision: 3,
+        toolCount: 0,
+      },
+    }]);
   });
 
   it("publishes the owning session worker snapshot", () => {

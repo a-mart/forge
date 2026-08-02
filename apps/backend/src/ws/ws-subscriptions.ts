@@ -315,6 +315,21 @@ export class WsSubscriptions {
     }
   }
 
+  /**
+   * Ephemeral manager-turn tool progress is local Builder-only. It is scoped to
+   * the manager's exact session subscription and never travels through the
+   * Collaboration or CLI transport paths.
+   */
+  broadcastManagerToolActivity(
+    event: Extract<ServerEvent, { type: "manager_tool_activity" }>,
+  ): void {
+    if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+      return;
+    }
+
+    this.broadcastToExactSubscription(event.sessionAgentId, event);
+  }
+
   broadcastSecureSessionSnapshot(
     event: Extract<ServerEvent, { type: "secure_session_snapshot" }>,
   ): void {
@@ -850,6 +865,7 @@ export class WsSubscriptions {
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
       resolveGenerationThroughputSessionAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
+      resolveManagerToolActivitySessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
       resolveBrowserSessionAgentId: (agentId) => {
         const managerAgentId = this.resolveManagerContextAgentId(agentId);
         const descriptor = managerAgentId ? this.swarmManager.getAgent(managerAgentId) : undefined;

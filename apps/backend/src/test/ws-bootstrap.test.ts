@@ -154,6 +154,74 @@ describe('sendSubscriptionBootstrap', () => {
     }
   })
 
+  it('hydrates empty manager tool activity as ephemeral Builder bootstrap authority', async () => {
+    const sent: ServerEvent[] = []
+    const manager = {
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      displayName: 'Manager',
+      role: 'manager' as const,
+      status: 'idle' as const,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: '/tmp',
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' as const },
+      sessionFile: '/tmp/manager-1.jsonl',
+    }
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: manager.agentId,
+      supportsConversationPaging: true,
+      swarmManager: {
+        listBootstrapAgents: () => [manager],
+        getAgent: () => manager,
+        listProfiles: () => [],
+        getConfig: () => ({ runtimeTarget: 'builder' }),
+        getManagerToolActivitySnapshot: vi.fn(() => ({
+          type: 'manager_tool_activity',
+          sessionAgentId: manager.agentId,
+          revision: 7,
+          toolCount: 0,
+        })),
+        getConversationHistoryPage: () => ({
+          messages: [],
+          page: {
+            hasOlder: false,
+            completeness: 'complete',
+            source: 'canonical',
+            sourceRevision: 'fixture',
+            pageBytes: 0,
+            scanBytes: 0,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+      } as any,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
+      resolveGenerationThroughputSessionAgentId: () => undefined,
+      resolveManagerToolActivitySessionAgentId: () => manager.agentId,
+    })
+
+    expect(sent).toContainEqual({
+      type: 'manager_tool_activity',
+      sessionAgentId: manager.agentId,
+      revision: 7,
+      toolCount: 0,
+    })
+    expect(sent.find((event) => event.type === 'manager_tool_activity')).not.toHaveProperty('currentToolName')
+  })
+
   it('retains the legacy full-history bootstrap for clients that do not advertise paging', async () => {
     const sent: ServerEvent[] = []
     const legacyHistory = Array.from({ length: 350 }, (_, index) => ({
