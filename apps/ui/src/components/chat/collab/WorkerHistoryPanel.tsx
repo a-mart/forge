@@ -23,6 +23,8 @@ interface WorkerHistoryPanelProps {
   workers: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus; streamingStartedAt?: number }>
   activityMessages: AgentActivityEntry[]
+  /** Browser preference controlling conversation-only throughput presentation. */
+  showGenerationThroughput?: boolean
   workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }
@@ -85,6 +87,7 @@ const WorkerEntry = memo(function WorkerEntry({
   status,
   recentActivity,
   streamingStartedAt,
+  showGenerationThroughput,
   workerMetadataSessionIds,
   onNavigateToWorker,
 }: {
@@ -92,6 +95,7 @@ const WorkerEntry = memo(function WorkerEntry({
   status: AgentStatus
   recentActivity: AgentActivityEntry[]
   streamingStartedAt?: number
+  showGenerationThroughput?: boolean
   workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }) {
@@ -181,6 +185,7 @@ const WorkerEntry = memo(function WorkerEntry({
           recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
           streamingStartedAt={streamingStartedAt}
+          showGenerationThroughput={showGenerationThroughput}
           workerMetadataSessionIds={workerMetadataSessionIds}
         />
       </PopoverContent>
@@ -194,6 +199,7 @@ export const WorkerHistoryPanel = memo(function WorkerHistoryPanel({
   workers,
   statuses,
   activityMessages,
+  showGenerationThroughput = false,
   workerMetadataSessionIds,
   onNavigateToWorker,
 }: WorkerHistoryPanelProps) {
@@ -257,6 +263,7 @@ export const WorkerHistoryPanel = memo(function WorkerHistoryPanel({
                 status={status}
                 recentActivity={recentActivity}
                 streamingStartedAt={startedAt}
+                showGenerationThroughput={showGenerationThroughput}
                 workerMetadataSessionIds={workerMetadataSessionIds}
                 onNavigateToWorker={onNavigateToWorker}
               />

@@ -33,6 +33,8 @@ interface WorkerQuickLookProps {
   streamingStartedAt?: number
   throughput?: GenerationThroughputLiveMeasurement
   latestFinal?: GenerationThroughputLiveMeasurement
+  /** Browser preference controlling conversation-only throughput presentation. */
+  showGenerationThroughput?: boolean
   /** Presentation is withheld until the current connection's worker roster is authoritative. */
   workerMetadataSessionIds?: ReadonlySet<string>
 }
@@ -209,6 +211,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   streamingStartedAt,
   throughput,
   latestFinal,
+  showGenerationThroughput = false,
   workerMetadataSessionIds = EMPTY_WORKER_METADATA_SESSION_IDS,
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -279,7 +282,8 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
-  const throughputEligible = workerMetadataSessionIds.has(worker.managerId)
+  const throughputEligible = showGenerationThroughput
+    && workerMetadataSessionIds.has(worker.managerId)
     && isPiGenerationThroughputEligible(worker)
   const displayedRate = throughputEligible
     ? finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)

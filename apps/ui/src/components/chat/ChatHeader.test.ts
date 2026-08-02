@@ -83,6 +83,7 @@ describe('ChatHeader generation throughput', () => {
       root.render(createElement(ChatHeader, {
         ...props,
         generationThroughputEligible: false,
+        showGenerationThroughput: true,
         generationThroughput: measurement,
         generationThroughputLatestFinal: measurement,
       }))
@@ -91,11 +92,25 @@ describe('ChatHeader generation throughput', () => {
     expect(container.querySelector('[data-testid="throughput-pulse"]')).toBeNull()
   })
 
-  it('renders the manager pulse when Pi runtime eligibility is explicit', () => {
+  it('defaults to hiding the manager pulse even for an eligible Pi runtime', () => {
     act(() => {
       root.render(createElement(ChatHeader, {
         ...props,
         generationThroughputEligible: true,
+        generationThroughput: measurement,
+        generationThroughputLatestFinal: measurement,
+      }))
+    })
+
+    expect(container.querySelector('[data-testid="throughput-pulse"]')).toBeNull()
+  })
+
+  it('renders the manager pulse when display and Pi runtime eligibility are explicit', () => {
+    act(() => {
+      root.render(createElement(ChatHeader, {
+        ...props,
+        generationThroughputEligible: true,
+        showGenerationThroughput: true,
         generationThroughput: measurement,
         generationThroughputLatestFinal: measurement,
       }))

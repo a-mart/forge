@@ -56,6 +56,8 @@ interface ChatHeaderProps {
   modelCacheHeaderSummary?: ModelCacheHeaderSummary | null
   /** Local Pi runtime makes the manager telemetry shell eligible. */
   generationThroughputEligible?: boolean
+  /** Browser preference controlling conversation-only throughput presentation. */
+  showGenerationThroughput?: boolean
   /** Local Builder-only generation telemetry for the active manager. */
   generationThroughput?: GenerationThroughputLiveMeasurement
   generationThroughputLatestFinal?: GenerationThroughputLiveMeasurement
@@ -177,6 +179,7 @@ export function ChatHeader({
   contextWindowUsage,
   modelCacheHeaderSummary,
   generationThroughputEligible = false,
+  showGenerationThroughput = false,
   generationThroughput,
   generationThroughputLatestFinal,
   compactionCount,
@@ -353,7 +356,7 @@ export function ChatHeader({
             {statusLabel}
             {durationLabel ? <span className="tabular-nums"> · {durationLabel}</span> : null}
           </span>
-          {activeAgentRole === 'manager' && generationThroughputEligible ? (
+          {activeAgentRole === 'manager' && showGenerationThroughput && generationThroughputEligible ? (
             <ThroughputPulse
               key={activeAgentId ?? 'manager-throughput'}
               measurement={generationThroughput}

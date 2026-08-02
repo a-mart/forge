@@ -32,6 +32,8 @@ interface WorkerPillBarProps {
   activityMessages: AgentActivityEntry[]
   generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
   generationThroughputLatestFinalByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
+  /** Browser preference controlling conversation-only throughput presentation. */
+  showGenerationThroughput?: boolean
   /** Worker descriptors must come from the current connection before telemetry is presented. */
   workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
@@ -103,6 +105,7 @@ const WorkerPill = memo(function WorkerPill({
   workerActivity,
   throughput,
   latestFinal,
+  showGenerationThroughput,
   workerMetadataCurrent,
   workerMetadataSessionIds,
   onNavigateToWorker,
@@ -112,6 +115,7 @@ const WorkerPill = memo(function WorkerPill({
   workerActivity: AgentActivityEntry[]
   throughput?: GenerationThroughputLiveMeasurement
   latestFinal?: GenerationThroughputLiveMeasurement
+  showGenerationThroughput: boolean
   /** True only when the current worker roster proves this descriptor is Pi-eligible. */
   workerMetadataCurrent: boolean
   workerMetadataSessionIds: ReadonlySet<string>
@@ -157,7 +161,8 @@ const WorkerPill = memo(function WorkerPill({
       ? `${modelId} · ${thinkingLevel}`
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
-  const throughputEligible = workerMetadataCurrent
+  const throughputEligible = showGenerationThroughput
+    && workerMetadataCurrent
     && workerMetadataSessionIds.has(worker.managerId)
     && isPiGenerationThroughputEligible(worker)
   const displayedRate = throughputEligible
@@ -256,6 +261,7 @@ const WorkerPill = memo(function WorkerPill({
           streamingStartedAt={entry.streamingStartedAt}
           throughput={throughputEligible ? throughput : undefined}
           latestFinal={throughputEligible ? latestFinal : undefined}
+          showGenerationThroughput={showGenerationThroughput}
           workerMetadataSessionIds={workerMetadataSessionIds}
         />
       </PopoverContent>
@@ -271,6 +277,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   activityMessages,
   generationThroughputByAgentId = {},
   generationThroughputLatestFinalByAgentId = {},
+  showGenerationThroughput = false,
   workerMetadataSessionIds = EMPTY_WORKER_METADATA_SESSION_IDS,
   onNavigateToWorker,
 }: WorkerPillBarProps) {
@@ -468,6 +475,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
                   workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
                   throughput={workerMetadataCurrent ? generationThroughputByAgentId[entry.worker.agentId] : undefined}
                   latestFinal={workerMetadataCurrent ? generationThroughputLatestFinalByAgentId[entry.worker.agentId] : undefined}
+                  showGenerationThroughput={showGenerationThroughput}
                   workerMetadataCurrent={workerMetadataCurrent}
                   workerMetadataSessionIds={workerMetadataSessionIds}
                   onNavigateToWorker={onNavigateToWorker}

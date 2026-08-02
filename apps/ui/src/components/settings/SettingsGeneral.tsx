@@ -4,6 +4,7 @@ import { HelpTooltip } from '@/components/help/HelpTooltip'
 import { Check, Code, RotateCcw, Terminal } from 'lucide-react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
+import { useConversationThroughputDisplayPreference } from '@/hooks/use-conversation-throughput-display-preference'
 import {
   Select,
   SelectContent,
@@ -221,6 +222,7 @@ export function SettingsGeneral({
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
   const [sidebarProviderUsage, setSidebarProviderUsage] = useState(() => readSidebarProviderUsagePref())
+  const [showConversationThroughput, setShowConversationThroughput] = useConversationThroughputDisplayPreference()
   const [editorPreference, setEditorPreference] = useState<EditorPreference>(() =>
     readStoredEditorPreference(),
   )
@@ -873,6 +875,22 @@ export function SettingsGeneral({
           </div>
         </SettingsSection>
       )}
+
+      <SettingsSection
+        label="Conversation Throughput"
+        description="Control throughput shown in manager and worker conversations. Stats → Throughput continues collecting history while this display is hidden."
+      >
+        <SettingsWithCTA
+          label="Show throughput in conversations"
+          description="Show final Pi generation rates in manager headers, worker pills, and worker Quick Look. This browser preference applies immediately to Builder and Collaboration conversations."
+        >
+          <Switch
+            id="conversation-throughput-display-toggle"
+            checked={showConversationThroughput}
+            onCheckedChange={setShowConversationThroughput}
+          />
+        </SettingsWithCTA>
+      </SettingsSection>
 
       {isBuilder && (
         <SettingsSection

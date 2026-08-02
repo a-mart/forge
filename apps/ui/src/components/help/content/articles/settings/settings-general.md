@@ -20,6 +20,10 @@ Working plans and explicit session goals are always available to Builder manager
 
 Use **Settings > General > Compaction** to choose the model, reasoning level, and timeout Forge uses for automatic compaction and manual Smart compact runs. These controls apply only to supported Pi-backed manager compaction runtimes: OpenAI/Codex and Anthropic. Cursor SDK and xAI/Grok runtimes are not eligible here. The default is **GPT-5.5**, **Low** reasoning, and a **5 minute** timeout. If the configured provider or model is unavailable, Forge shows a warning here so you can fix auth or pick a different model before automatic compaction needs it.
 
+## Conversation Throughput
+
+**Show throughput in conversations** is off by default. Turn it on to show final Pi generation rates in manager headers, worker pills, and Worker Quick Look in Builder and Collaboration conversations. This browser setting applies immediately. Turning it off hides only those conversation controls: **Stats → Throughput** continues collecting and showing historical throughput.
+
 ## Prompt Cache Visualization
 
 Use **Enable prompt cache visualization** to show a compact prompt-cache chip in manager chat headers for OpenAI/Codex Pi sessions. It is Builder-only and **off by default**.

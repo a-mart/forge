@@ -1,10 +1,11 @@
 const MODEL_ICONS_KEY = 'forge-sidebar-model-icons'
 const PROVIDER_USAGE_KEY = 'forge-sidebar-provider-usage'
 export const HIDE_CLI_SESSIONS_KEY = 'forge-sidebar-hide-cli-sessions'
-const PREF_CHANGE_EVENT = 'forge-sidebar-pref-change'
+export const CONVERSATION_THROUGHPUT_DISPLAY_KEY = 'forge-conversation-throughput-display'
+export const PREFERENCE_CHANGE_EVENT = 'forge-sidebar-pref-change'
 
 function dispatchSidebarPrefChange(key: string, value: boolean): void {
-  window.dispatchEvent(new CustomEvent(PREF_CHANGE_EVENT, { detail: { key, value } }))
+  window.dispatchEvent(new CustomEvent(PREFERENCE_CHANGE_EVENT, { detail: { key, value } }))
 }
 
 export function readSidebarModelIconsPref(): boolean {
@@ -57,4 +58,22 @@ export function storeHideCliSessionsPref(hidden: boolean): void {
   } catch {
     // Ignore localStorage write failures
   }
+}
+
+/** Conversation-only presentation preference. Unset installations stay hidden. */
+export function readConversationThroughputDisplayPref(): boolean {
+  try {
+    return localStorage.getItem(CONVERSATION_THROUGHPUT_DISPLAY_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function storeConversationThroughputDisplayPref(enabled: boolean): void {
+  try {
+    localStorage.setItem(CONVERSATION_THROUGHPUT_DISPLAY_KEY, String(enabled))
+  } catch {
+    // Keep the in-memory UI responsive even when browser persistence is unavailable.
+  }
+  dispatchSidebarPrefChange(CONVERSATION_THROUGHPUT_DISPLAY_KEY, enabled)
 }

@@ -1,16 +1,18 @@
 Generation throughput shows how quickly eligible model calls produce output. It is a performance signal, not a measure of the whole agent run: time in tools and gaps between model calls are not included.
 
+**Show throughput in conversations** in **Settings → General** is off by default. Turn it on to show conversation controls; turning it off hides only those controls, while **Stats → Throughput** continues collecting and showing history.
+
 ## Availability
 
 Throughput is currently recorded only for manager and worker model calls that run through the **Pi runtime**. A provider appearing in a model selector does not make every runtime eligible; other runtime paths do not add throughput records.
 
 ## Header and worker indicators
 
-For an eligible local manager, the header keeps one fixed throughput control visible. While a generation is active it uses a restrained activity pulse and holds the latest exact completed call value dimmed, or shows `— tok/s` until an exact result exists. It never estimates a live rate from streamed text.
+When conversation throughput is enabled, an eligible local manager header keeps one fixed throughput control visible. While a generation is active it uses a restrained activity pulse and holds the latest exact completed call value dimmed, or shows `— tok/s` until an exact result exists. It never estimates a live rate from streamed text.
 
 When provider-final output usage, a first-output boundary, and a positive generation duration are available at completion, the control updates to the exact final `tok/s` value. Open it to see the latest generation's final rate, TTFT, output tokens, and model/provider. Missing final usage, a missing output boundary, a zero-duration span, or an interrupted generation does not show `0 tok/s` or promote a prior value as the current call.
 
-Active worker pills and Quick Look reserve a throughput cell from the start. They show the final provider value or `—`; they do not show an approximate live rate.
+When conversation throughput is enabled, active worker pills and Quick Look reserve a throughput cell from the start. They show the final provider value or `—`; they do not show an approximate live rate.
 
 ## Throughput statistics
 

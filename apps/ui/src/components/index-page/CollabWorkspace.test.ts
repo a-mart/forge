@@ -74,8 +74,16 @@ const workerPillBarCapture = vi.hoisted(() => ({
   lastProps: null as Record<string, unknown> | null,
 }))
 
+const conversationThroughputPreferenceMock = vi.hoisted(() => ({
+  enabled: false,
+}))
+
 const collabAdapterCapture = vi.hoisted(() => ({
   entries: [] as unknown[],
+}))
+
+vi.mock('@/hooks/use-conversation-throughput-display-preference', () => ({
+  useConversationThroughputDisplayPreference: () => [conversationThroughputPreferenceMock.enabled, vi.fn()],
 }))
 
 vi.mock('@/components/chat/WorkerPillBar', () => ({
@@ -190,6 +198,7 @@ function buildStateWithChannel(overrides: Partial<CollabWsState> = {}): CollabWs
 }
 
 beforeEach(() => {
+  conversationThroughputPreferenceMock.enabled = false
   container = document.createElement('div')
   document.body.appendChild(container)
   messageInputCapture.lastPropsRef.current = null
@@ -666,6 +675,28 @@ describe('CollabWorkspace WorkerPillBar', () => {
     expect(pillBar).not.toBeNull()
     expect(workerPillBarCapture.rendered).toBe(true)
     expect((workerPillBarCapture.lastProps?.workers as unknown[])?.length).toBe(1)
+  })
+
+  it('passes the browser throughput preference to collaboration worker pills', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildStateWithChannel({
+        sessionWorkers: [makeWorker()],
+        sessionAgentStatuses: {
+          'worker-1': {
+            status: 'streaming' as const,
+            pendingCount: 0,
+          },
+        },
+      }),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+    expect(workerPillBarCapture.lastProps?.showGenerationThroughput).toBe(false)
+
+    conversationThroughputPreferenceMock.enabled = true
+    rerenderWorkspace({ channelId: 'channel-1' })
+    expect(workerPillBarCapture.lastProps?.showGenerationThroughput).toBe(true)
   })
 
   it('does not render WorkerPillBar when sessionWorkers is empty', () => {

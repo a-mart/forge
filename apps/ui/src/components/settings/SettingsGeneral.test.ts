@@ -36,6 +36,8 @@ const sidebarPrefsMock = vi.hoisted(() => ({
   readSidebarProviderUsagePref: vi.fn(),
   storeSidebarModelIconsPref: vi.fn(),
   storeSidebarProviderUsagePref: vi.fn(),
+  readConversationThroughputDisplayPref: vi.fn(),
+  storeConversationThroughputDisplayPref: vi.fn(),
 }))
 
 vi.mock('@/lib/sidebar-prefs', () => ({
@@ -43,6 +45,9 @@ vi.mock('@/lib/sidebar-prefs', () => ({
   readSidebarProviderUsagePref: () => sidebarPrefsMock.readSidebarProviderUsagePref(),
   storeSidebarModelIconsPref: (v: boolean) => sidebarPrefsMock.storeSidebarModelIconsPref(v),
   storeSidebarProviderUsagePref: (v: boolean) => sidebarPrefsMock.storeSidebarProviderUsagePref(v),
+  readConversationThroughputDisplayPref: () => sidebarPrefsMock.readConversationThroughputDisplayPref(),
+  storeConversationThroughputDisplayPref: (v: boolean) => sidebarPrefsMock.storeConversationThroughputDisplayPref(v),
+  PREFERENCE_CHANGE_EVENT: 'forge-sidebar-pref-change',
 }))
 
 const editorMock = vi.hoisted(() => ({
@@ -196,6 +201,7 @@ beforeEach(() => {
   editorMock.readStoredEditorPreference.mockReturnValue('vscode')
   sidebarPrefsMock.readSidebarModelIconsPref.mockReturnValue(true)
   sidebarPrefsMock.readSidebarProviderUsagePref.mockReturnValue(true)
+  sidebarPrefsMock.readConversationThroughputDisplayPref.mockReturnValue(false)
   onboardingMock.useOnboardingState.mockReturnValue({
     onboardingState: null,
     isMutating: false,
@@ -1060,6 +1066,23 @@ describe('SettingsGeneral — collab target', () => {
 
     const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
     expect(toggle?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('renders conversation throughput off by default and persists an immediate change', async () => {
+    renderGeneral()
+    await flush()
+
+    expect(container.textContent).toContain('Show throughput in conversations')
+    expect(container.textContent).toContain('Stats → Throughput continues collecting history')
+    const toggle = container.querySelector('#conversation-throughput-display-toggle') as HTMLInputElement | null
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+
+    flushSync(() => {
+      fireEvent.click(toggle!)
+    })
+    await flush()
+
+    expect(sidebarPrefsMock.storeConversationThroughputDisplayPref).toHaveBeenCalledWith(true)
   })
 
   it('updates prompt cache visualization via PUT when toggled on', async () => {

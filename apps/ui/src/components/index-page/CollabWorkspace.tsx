@@ -15,6 +15,7 @@ import { MessageList } from '@/components/chat/MessageList'
 import type { MessageListHandle } from '@/components/chat/MessageList'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { useCollabWsContext } from '@/hooks/index-page/use-collab-ws-connection'
+import { useConversationThroughputDisplayPreference } from '@/hooks/use-conversation-throughput-display-preference'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import type { ChoiceAnswer, CollaborationCategory, CollaborationChannel, ConversationAttachment, ConversationEntry } from '@forge/protocol'
@@ -72,6 +73,7 @@ export function CollabWorkspace({
   onSignIn,
 }: CollabWorkspaceProps) {
   const { clientRef, state } = useCollabWsContext()
+  const [showConversationThroughput] = useConversationThroughputDisplayPreference()
   const messageListRef = useRef<MessageListHandle>(null)
   const messageInputRef = useRef<MessageInputHandle>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -392,6 +394,7 @@ export function CollabWorkspace({
           workers={state.sessionWorkers}
           statuses={state.sessionAgentStatuses}
           activityMessages={workerActivityMessages}
+          showGenerationThroughput={showConversationThroughput}
           workerMetadataSessionIds={workerMetadataSessionIds}
           onNavigateToWorker={handleNavigateToWorker}
         />
@@ -402,6 +405,7 @@ export function CollabWorkspace({
           workers={state.sessionWorkers}
           statuses={state.sessionAgentStatuses}
           activityMessages={workerActivityMessages}
+          showGenerationThroughput={showConversationThroughput}
           workerMetadataSessionIds={workerMetadataSessionIds}
           onNavigateToWorker={handleNavigateToWorker}
         />

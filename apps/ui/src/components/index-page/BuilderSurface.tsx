@@ -127,6 +127,7 @@ import {
 } from '@/hooks/index-page/project-agent-suggestions'
 import { useSlashCommands } from '@/hooks/index-page/use-slash-commands'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
+import { useConversationThroughputDisplayPreference } from '@/hooks/use-conversation-throughput-display-preference'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
 import {
@@ -196,6 +197,7 @@ export function BuilderSurface({
     () => createLocalBuilderSidebarOrderApi(localWsUrl),
     [localWsUrl],
   )
+  const [showConversationThroughput] = useConversationThroughputDisplayPreference()
 
   // Wave R: the route's `origin` selects which origin's state/client feed the
   // chat surface. Absent = the local origin. Non-chat views always render
@@ -2173,6 +2175,7 @@ export function BuilderSurface({
                   modelCacheHeaderSummary,
                   generationThroughputEligible:
                     !isRemoteOriginActive && isActiveManager && isPiGenerationThroughputEligible(activeAgent),
+                  showGenerationThroughput: showConversationThroughput,
                   generationThroughput:
                     !isRemoteOriginActive && isActiveManager && activeAgentId && isPiGenerationThroughputEligible(activeAgent)
                       ? state.generationThroughputByAgentId[activeAgentId]
@@ -2331,6 +2334,7 @@ export function BuilderSurface({
                           ? state.generationThroughputLatestFinalByAgentId
                           : undefined,
                         workerMetadataSessionIds: state.workerMetadataSessionIds,
+                        showGenerationThroughput: showConversationThroughput,
                         onNavigateToWorker: panels.handleSelectAgent,
                       }
                     : undefined

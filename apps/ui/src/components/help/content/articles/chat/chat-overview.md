@@ -18,7 +18,7 @@ Remote chat can show author chips on messages from other signed-in users. The vi
 
 ## Streaming and status
 
-While a manager is responding, you'll see a green status dot in the header and the text "Streaming." The message appears incrementally as it's generated. For an eligible local Pi-runtime model call, the manager header keeps a fixed generation-throughput control visible: it pulses while generating and shows the latest provider-final `tok/s` value, or `— tok/s` before one is available. Open the **Generation Throughput** help article for availability, missing-data behavior, and the historical **Stats → Throughput** view.
+While a manager is responding, you'll see a green status dot in the header and the text "Streaming." The message appears incrementally as it's generated. When **Show throughput in conversations** is enabled in **Settings → General**, an eligible local Pi-runtime model call gets a fixed generation-throughput control in the manager header: it pulses while generating and shows the latest provider-final `tok/s` value, or `— tok/s` before one is available. Open the **Generation Throughput** help article for availability, missing-data behavior, and the historical **Stats → Throughput** view.
 
 ## Stopping a response
 

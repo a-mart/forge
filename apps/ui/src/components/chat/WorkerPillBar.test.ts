@@ -107,6 +107,7 @@ function render(
   workerDescriptor: AgentDescriptor = worker,
   workerMetadataSessionIds: ReadonlySet<string> = new Set([workerDescriptor.managerId]),
   generationThroughputLatestFinalByAgentId?: Record<string, GenerationThroughputLiveMeasurement>,
+  showGenerationThroughput = true,
 ) {
   act(() => {
     root.render(createElement(WorkerPillBar, {
@@ -120,6 +121,7 @@ function render(
       activityMessages,
       generationThroughputByAgentId,
       generationThroughputLatestFinalByAgentId,
+      showGenerationThroughput,
       workerMetadataSessionIds,
       onNavigateToWorker,
     }))
@@ -230,6 +232,47 @@ describe('WorkerPillBar quick look', () => {
     expect(telemetryRow?.textContent).toContain('Latest final throughput')
     expect(telemetryRow?.textContent).toContain('50 tok/s')
     expect(telemetryRow?.className).toContain('h-7')
+  })
+
+  it('hides conversation throughput immediately without dropping retained final telemetry', () => {
+    let state: ReturnType<typeof createInitialManagerWsState> = {
+      ...createInitialManagerWsState('manager-1'),
+      targetAgentId: 'manager-1',
+      subscribedAgentId: 'manager-1',
+      agents: [manager, worker],
+      workerMetadataSessionIds: new Set(['manager-1']),
+    }
+    state = {
+      ...state,
+      ...reduceGenerationThroughputEvent(state, {
+        type: 'generation_throughput',
+        measurement: retainedFinal,
+      }).patch,
+    }
+
+    render(
+      [replayedSummary],
+      state.generationThroughputByAgentId,
+      worker,
+      state.workerMetadataSessionIds,
+      state.generationThroughputLatestFinalByAgentId,
+      false,
+    )
+
+    expect(getPill().querySelector('[data-worker-throughput]')).toBeNull()
+    act(() => getPill().click())
+    expect(document.body.querySelector('[data-worker-throughput-row]')).toBeNull()
+    expect(state.generationThroughputLatestFinalByAgentId[worker.agentId]).toEqual(retainedFinal)
+
+    render(
+      [replayedSummary],
+      state.generationThroughputByAgentId,
+      worker,
+      state.workerMetadataSessionIds,
+      state.generationThroughputLatestFinalByAgentId,
+      true,
+    )
+    expect(getPill().querySelector('[data-worker-throughput]')?.textContent).toContain('50 t/s')
   })
 
   it('suppresses throughput cells and the Quick Look row for Cursor SDK workers', () => {
