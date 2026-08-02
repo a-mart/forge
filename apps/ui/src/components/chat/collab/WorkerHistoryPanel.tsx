@@ -23,6 +23,7 @@ interface WorkerHistoryPanelProps {
   workers: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus; streamingStartedAt?: number }>
   activityMessages: AgentActivityEntry[]
+  workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }
 
@@ -84,12 +85,14 @@ const WorkerEntry = memo(function WorkerEntry({
   status,
   recentActivity,
   streamingStartedAt,
+  workerMetadataSessionIds,
   onNavigateToWorker,
 }: {
   worker: AgentDescriptor
   status: AgentStatus
   recentActivity: AgentActivityEntry[]
   streamingStartedAt?: number
+  workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -178,6 +181,7 @@ const WorkerEntry = memo(function WorkerEntry({
           recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
           streamingStartedAt={streamingStartedAt}
+          workerMetadataSessionIds={workerMetadataSessionIds}
         />
       </PopoverContent>
     </Popover>
@@ -190,6 +194,7 @@ export const WorkerHistoryPanel = memo(function WorkerHistoryPanel({
   workers,
   statuses,
   activityMessages,
+  workerMetadataSessionIds,
   onNavigateToWorker,
 }: WorkerHistoryPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false)
@@ -252,6 +257,7 @@ export const WorkerHistoryPanel = memo(function WorkerHistoryPanel({
                 status={status}
                 recentActivity={recentActivity}
                 streamingStartedAt={startedAt}
+                workerMetadataSessionIds={workerMetadataSessionIds}
                 onNavigateToWorker={onNavigateToWorker}
               />
             )

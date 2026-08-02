@@ -141,6 +141,12 @@ export function CollabWorkspace({
   }, [clientRef, selectedChannel?.channelId, state.hasBootstrapped])
 
   const sessionAgentId = selectedChannel?.sessionAgentId ?? ''
+  const workerMetadataSessionIds = useMemo(
+    () => state.hasBootstrapped && sessionAgentId
+      ? new Set([sessionAgentId])
+      : EMPTY_WORKER_METADATA_SESSION_IDS,
+    [sessionAgentId, state.hasBootstrapped],
+  )
 
   const conversationEntries = useMemo(
     () =>
@@ -386,6 +392,7 @@ export function CollabWorkspace({
           workers={state.sessionWorkers}
           statuses={state.sessionAgentStatuses}
           activityMessages={workerActivityMessages}
+          workerMetadataSessionIds={workerMetadataSessionIds}
           onNavigateToWorker={handleNavigateToWorker}
         />
       ) : null}
@@ -395,6 +402,7 @@ export function CollabWorkspace({
           workers={state.sessionWorkers}
           statuses={state.sessionAgentStatuses}
           activityMessages={workerActivityMessages}
+          workerMetadataSessionIds={workerMetadataSessionIds}
           onNavigateToWorker={handleNavigateToWorker}
         />
       ) : null}
@@ -474,6 +482,8 @@ export function CollabWorkspace({
     </div>
   )
 }
+
+const EMPTY_WORKER_METADATA_SESSION_IDS: ReadonlySet<string> = new Set()
 
 function findFallbackChannelId(
   channels: CollaborationChannel[],

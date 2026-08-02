@@ -32,6 +32,8 @@ interface WorkerPillBarProps {
   activityMessages: AgentActivityEntry[]
   generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
   generationThroughputLatestFinalByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
+  /** Worker descriptors must come from the current connection before telemetry is presented. */
+  workerMetadataSessionIds?: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }
 
@@ -101,6 +103,8 @@ const WorkerPill = memo(function WorkerPill({
   workerActivity,
   throughput,
   latestFinal,
+  workerMetadataCurrent,
+  workerMetadataSessionIds,
   onNavigateToWorker,
 }: {
   entry: PillEntry
@@ -108,6 +112,9 @@ const WorkerPill = memo(function WorkerPill({
   workerActivity: AgentActivityEntry[]
   throughput?: GenerationThroughputLiveMeasurement
   latestFinal?: GenerationThroughputLiveMeasurement
+  /** True only when the current worker roster proves this descriptor is Pi-eligible. */
+  workerMetadataCurrent: boolean
+  workerMetadataSessionIds: ReadonlySet<string>
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -150,7 +157,9 @@ const WorkerPill = memo(function WorkerPill({
       ? `${modelId} · ${thinkingLevel}`
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
-  const throughputEligible = isPiGenerationThroughputEligible(worker)
+  const throughputEligible = workerMetadataCurrent
+    && workerMetadataSessionIds.has(worker.managerId)
+    && isPiGenerationThroughputEligible(worker)
   const displayedRate = throughputEligible
     ? finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
     : null
@@ -245,8 +254,9 @@ const WorkerPill = memo(function WorkerPill({
           recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
           streamingStartedAt={entry.streamingStartedAt}
-          throughput={throughput}
-          latestFinal={latestFinal}
+          throughput={throughputEligible ? throughput : undefined}
+          latestFinal={throughputEligible ? latestFinal : undefined}
+          workerMetadataSessionIds={workerMetadataSessionIds}
         />
       </PopoverContent>
     </Popover>
@@ -261,6 +271,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   activityMessages,
   generationThroughputByAgentId = {},
   generationThroughputLatestFinalByAgentId = {},
+  workerMetadataSessionIds = EMPTY_WORKER_METADATA_SESSION_IDS,
   onNavigateToWorker,
 }: WorkerPillBarProps) {
   const [tick, setTick] = useState(0)
@@ -436,17 +447,33 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         {/* Fix #15: Single TooltipProvider for all pills */}
         <TooltipProvider delayDuration={400}>
           <div className="flex items-center gap-1.5 overflow-x-auto border-t border-border/40 bg-background px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-            {pillEntries.map((entry) => (
-              <WorkerPill
-                key={entry.worker.agentId}
-                entry={entry}
-                tick={tick}
-                workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
-                throughput={generationThroughputByAgentId[entry.worker.agentId]}
-                latestFinal={generationThroughputLatestFinalByAgentId[entry.worker.agentId]}
-                onNavigateToWorker={onNavigateToWorker}
-              />
-            ))}
+            {pillEntries.map((entry) => {
+              // The pill entry intentionally survives reconnects for UI continuity, but its
+              // descriptor is stale until this socket delivers the authoritative roster.
+              const currentWorker = workersById.get(entry.worker.agentId)
+              const workerMetadataCurrent = Boolean(
+                currentWorker
+                && workerMetadataSessionIds.has(currentWorker.managerId)
+                && isPiGenerationThroughputEligible(currentWorker),
+              )
+              const presentationEntry = currentWorker && currentWorker !== entry.worker
+                ? { ...entry, worker: currentWorker }
+                : entry
+
+              return (
+                <WorkerPill
+                  key={entry.worker.agentId}
+                  entry={presentationEntry}
+                  tick={tick}
+                  workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
+                  throughput={workerMetadataCurrent ? generationThroughputByAgentId[entry.worker.agentId] : undefined}
+                  latestFinal={workerMetadataCurrent ? generationThroughputLatestFinalByAgentId[entry.worker.agentId] : undefined}
+                  workerMetadataCurrent={workerMetadataCurrent}
+                  workerMetadataSessionIds={workerMetadataSessionIds}
+                  onNavigateToWorker={onNavigateToWorker}
+                />
+              )
+            })}
           </div>
         </TooltipProvider>
       </div>
@@ -455,3 +482,4 @@ export const WorkerPillBar = memo(function WorkerPillBar({
 })
 
 const EMPTY_ACTIVITY: AgentActivityEntry[] = []
+const EMPTY_WORKER_METADATA_SESSION_IDS: ReadonlySet<string> = new Set()

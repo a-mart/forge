@@ -33,6 +33,8 @@ interface WorkerQuickLookProps {
   streamingStartedAt?: number
   throughput?: GenerationThroughputLiveMeasurement
   latestFinal?: GenerationThroughputLiveMeasurement
+  /** Presentation is withheld until the current connection's worker roster is authoritative. */
+  workerMetadataSessionIds?: ReadonlySet<string>
 }
 
 type QuickLookEntry =
@@ -207,6 +209,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   streamingStartedAt,
   throughput,
   latestFinal,
+  workerMetadataSessionIds = EMPTY_WORKER_METADATA_SESSION_IDS,
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -276,7 +279,8 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
-  const throughputEligible = isPiGenerationThroughputEligible(worker)
+  const throughputEligible = workerMetadataSessionIds.has(worker.managerId)
+    && isPiGenerationThroughputEligible(worker)
   const displayedRate = throughputEligible
     ? finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
     : null
@@ -369,3 +373,5 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     </div>
   )
 })
+
+const EMPTY_WORKER_METADATA_SESSION_IDS: ReadonlySet<string> = new Set()

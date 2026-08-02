@@ -2324,12 +2324,13 @@ export function BuilderSurface({
                         workers: sessionWorkers,
                         statuses: state.statuses,
                         activityMessages: state.activityMessages,
-                        generationThroughputByAgentId: !isRemoteOriginActive
+                        generationThroughputByAgentId: !isRemoteOriginActive && workerMetadataHydrated
                           ? state.generationThroughputByAgentId
                           : undefined,
-                        generationThroughputLatestFinalByAgentId: !isRemoteOriginActive
+                        generationThroughputLatestFinalByAgentId: !isRemoteOriginActive && workerMetadataHydrated
                           ? state.generationThroughputLatestFinalByAgentId
                           : undefined,
+                        workerMetadataSessionIds: state.workerMetadataSessionIds,
                         onNavigateToWorker: panels.handleSelectAgent,
                       }
                     : undefined

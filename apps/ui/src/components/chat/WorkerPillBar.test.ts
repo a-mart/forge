@@ -5,6 +5,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentDescriptor, ConversationEntry, GenerationThroughputLiveMeasurement } from '@forge/protocol'
 import type { AgentActivityEntry } from '@/lib/ws-state'
+import { createInitialManagerWsState } from '@/lib/ws-state'
+import {
+  clearGenerationThroughputState,
+  reduceGenerationThroughputEvent,
+} from '@/lib/ws-client/generation-throughput-state'
+import { reduceSessionWorkersSnapshot } from '@/lib/ws-client/snapshot-reducers'
 import { WorkerPillBar } from './WorkerPillBar'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -24,6 +30,44 @@ const worker: AgentDescriptor = {
   cwd: '/tmp',
   model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'high' },
   sessionFile: '/tmp/worker-1.jsonl',
+}
+
+const manager: AgentDescriptor = {
+  ...worker,
+  agentId: 'manager-1',
+  managerId: 'manager-1',
+  displayName: 'Manager',
+  role: 'manager',
+}
+
+const retainedFinal: GenerationThroughputLiveMeasurement = {
+  measurementId: 'worker-call',
+  sequence: 2,
+  phase: 'completed',
+  profileId: 'profile-1',
+  sessionId: 'manager-1',
+  agentId: worker.agentId,
+  managerId: worker.managerId,
+  role: 'worker',
+  provider: 'openai-codex',
+  modelId: 'gpt-5.5',
+  sampledAt: '2026-07-21T10:00:02.000Z',
+  firstOutputAt: '2026-07-21T10:00:01.000Z',
+  timeToFirstOutputMs: 1_000,
+  elapsedGenerationMs: 2_000,
+  outputTokens: 100,
+  instantaneousTokensPerSecond: null,
+  generationAverageTokensPerSecond: 50,
+  valueKind: 'provider_final',
+  quality: {
+    measurementScope: 'agent_model_call',
+    agentRetryAttempt: 0,
+    providerAttemptScope: 'unavailable',
+    observedProviderAttemptCount: null,
+    tokenSource: 'provider_final',
+    boundarySource: 'content_delta_to_stream_end',
+    reasoningBoundaryCoverage: 'observed',
+  },
 }
 
 function summary(index: number, prefix = 'Activity'): Extract<ConversationEntry, { type: 'activity_summary' }> {
@@ -61,6 +105,8 @@ function render(
   activityMessages: AgentActivityEntry[],
   generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>,
   workerDescriptor: AgentDescriptor = worker,
+  workerMetadataSessionIds: ReadonlySet<string> = new Set([workerDescriptor.managerId]),
+  generationThroughputLatestFinalByAgentId?: Record<string, GenerationThroughputLiveMeasurement>,
 ) {
   act(() => {
     root.render(createElement(WorkerPillBar, {
@@ -73,6 +119,8 @@ function render(
       },
       activityMessages,
       generationThroughputByAgentId,
+      generationThroughputLatestFinalByAgentId,
+      workerMetadataSessionIds,
       onNavigateToWorker,
     }))
   })
@@ -224,6 +272,102 @@ describe('WorkerPillBar quick look', () => {
     expect(getPill().querySelector('[data-worker-throughput]')).toBeNull()
     act(() => getPill().click())
     expect(document.body.querySelector('[data-worker-throughput-row]')).toBeNull()
+  })
+
+  it('withholds retained worker throughput until reconnect metadata is authoritative', () => {
+    let state: ReturnType<typeof createInitialManagerWsState> = {
+      ...createInitialManagerWsState('manager-1'),
+      targetAgentId: 'manager-1',
+      subscribedAgentId: 'manager-1',
+      agents: [manager, worker],
+      workerMetadataSessionIds: new Set(['manager-1']),
+    }
+    state = {
+      ...state,
+      ...reduceGenerationThroughputEvent(state, {
+        type: 'generation_throughput',
+        measurement: retainedFinal,
+      }).patch,
+    }
+
+    const renderState = () => render(
+      [replayedSummary],
+      state.generationThroughputByAgentId,
+      state.agents.find((agent) => agent.agentId === worker.agentId) ?? worker,
+      state.workerMetadataSessionIds,
+      state.generationThroughputLatestFinalByAgentId,
+    )
+
+    // The cached Pi descriptor and retained final are visible on the original connection.
+    renderState()
+    expect(getPill().querySelector('[data-worker-throughput]')?.textContent).toContain('50 t/s')
+    act(() => getPill().click())
+    expect(document.body.querySelector('[data-worker-throughput-row]')?.textContent).toContain('50 tok/s')
+
+    // Reconnect keeps the worker row and exact final internally, but invalidates the roster.
+    state = {
+      ...state,
+      ...clearGenerationThroughputState(),
+      workerMetadataSessionIds: new Set(),
+    }
+    renderState()
+    expect(getPill().querySelector('[data-worker-throughput]')).toBeNull()
+    expect(document.body.querySelector('[data-worker-throughput-row]')).toBeNull()
+    expect(state.generationThroughputLatestFinalByAgentId[worker.agentId]).toEqual(retainedFinal)
+
+    // A fresh Pi roster restores the retained final and fixed throughput geometry.
+    state = {
+      ...state,
+      ...reduceSessionWorkersSnapshot({
+        state,
+        sessionAgentId: manager.agentId,
+        workers: [worker],
+      }).patch,
+    }
+    renderState()
+    expect(getPill().querySelector('[data-worker-throughput]')?.textContent).toContain('50 t/s')
+    expect(document.body.querySelector('[data-worker-throughput-row]')?.textContent).toContain('50 tok/s')
+
+    // Cursor authority clears/tombstones the retained Pi anchor and keeps both surfaces hidden.
+    const cursorWorker: AgentDescriptor = {
+      ...worker,
+      model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' },
+    }
+    state = {
+      ...state,
+      ...reduceSessionWorkersSnapshot({
+        state,
+        sessionAgentId: manager.agentId,
+        workers: [cursorWorker],
+      }).patch,
+    }
+    renderState()
+    expect(getPill().querySelector('[data-worker-throughput]')).toBeNull()
+    expect(document.body.querySelector('[data-worker-throughput-row]')).toBeNull()
+    expect(state.generationThroughputLatestFinalByAgentId).toEqual({})
+    expect(state.generationThroughputTombstonesByMeasurementId[retainedFinal.measurementId]).toBe(retainedFinal.sequence)
+
+    // Pi authority can start a new eligible lifecycle after Cursor tombstoning.
+    const freshFinal = { ...retainedFinal, measurementId: 'fresh-worker-call', sequence: 1 }
+    state = {
+      ...state,
+      ...reduceSessionWorkersSnapshot({
+        state,
+        sessionAgentId: manager.agentId,
+        workers: [worker],
+      }).patch,
+    }
+    state = {
+      ...state,
+      ...reduceGenerationThroughputEvent(state, {
+        type: 'generation_throughput',
+        measurement: freshFinal,
+      }).patch,
+    }
+    expect(state.generationThroughputByAgentId[worker.agentId]).toEqual(freshFinal)
+    renderState()
+    expect(getPill().querySelector('[data-worker-throughput]')?.textContent).toContain('50 t/s')
+    expect(document.body.querySelector('[data-worker-throughput-row]')?.textContent).toContain('50 tok/s')
   })
 
   it('uses a fixed responsive frame with an internal flex scroll region', () => {
