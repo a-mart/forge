@@ -14,7 +14,7 @@ Say the builtin manager prompt works for most of your projects, but one project 
 
 ## Prompt inspection
 
-Open the **Initial Model Input** viewer from the wide chat header's **All** view to inspect the retained provider-independent context for a session's first Pi model request. It shows that request's resolved prompt, messages, and tools—not a live preview of a later or current prompt. Use it to understand what was sent on that first request; use **Settings > Prompts** to inspect or change prompt sources.
+Open the **Initial Model Input** viewer from the wide chat header's **All** view to inspect the retained provider-independent context for a session's first Pi model request. Its default **Prompt** view shows that request's resolved prompt as provenance-labeled sections and renders structured tool definitions; switch to **Raw JSON** to inspect the complete captured record, including provider-independent messages and safe request metadata. It is not a live preview of a later or current prompt. Use it to understand what was sent on that first request; use **Settings > Prompts** to inspect or change prompt sources.
 
 ## Archetypes
 
