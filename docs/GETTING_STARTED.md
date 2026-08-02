@@ -239,7 +239,9 @@ Open **Stats → Throughput** to compare manager and worker generation rates, da
 
 Throughput is intentionally **Pi-runtime-only**: it records manager and worker model-call generations that run through Pi, rather than treating a provider name or every runtime as evidence of support. Other runtime paths do not add throughput records. The rate covers the observed output-generation span from first streamed output to completion, not an entire agent run or time spent in tools. An agent-level Pi retry becomes a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
 
-During an eligible local manager generation, the fixed header control pulses and holds the latest exact provider-final `tok/s` rate, or `— tok/s` before an exact result exists. Active eligible workers reserve the same final-only cell in their pill and Quick Look. Missing final token usage, a missing output boundary, a zero-duration span, or an in-progress call never becomes a fabricated `0 tok/s` rate.
+**Show throughput in conversations** in **Settings → General** is a browser-local preference and is off by default. It controls only `tok/s` presentation in manager and worker conversations; it does not affect Pi provider-final measurement, durable session records, or **Stats → Throughput** history.
+
+When that preference is enabled, an eligible local manager's fixed header control pulses and holds the latest exact provider-final `tok/s` rate, or `— tok/s` before an exact result exists. Active eligible workers reserve the same final-only cell in their pill and Quick Look. Missing final token usage, a missing output boundary, a zero-duration span, or an in-progress call never becomes a fabricated `0 tok/s` rate.
 
 Terminal measurements are saved with session history and scanned into the separate historical Throughput view; generations from before this feature was recorded do not appear. Reconnecting preserves the latest in-app exact header value while fresh lifecycle state is restored. Forks deliberately omit source throughput measurements, so a fork begins its own history.
 
