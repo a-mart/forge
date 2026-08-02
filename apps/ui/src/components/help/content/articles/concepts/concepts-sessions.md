@@ -31,6 +31,6 @@ Sessions are either **running** (actively connected) or **idle** (saved but not 
 
 You can fork a session to branch off from a specific point in the conversation. The fork copies history up to that message and creates a fresh session memory with a note about where it branched. This is useful when you want to try an alternative approach without losing the original thread.
 
-Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Historical Codex sidecar display cards are also omitted from forked sessions.
+Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. A source session's initial Pi model-input record is also omitted; a Pi-backed fork records its own initial input on its first model request. Historical Codex sidecar display cards are also omitted from forked sessions.
 
 New sessions and forks inherit all config from the parent profile unless you explicitly override the session model.

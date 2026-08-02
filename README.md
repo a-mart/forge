@@ -135,7 +135,7 @@ Need to run unrelated tasks at the same time? Just tell the manager. It'll figur
 
 Each manager supports multiple named sessions. These are independent workstreams with their own conversation history, context, and memory. Working on a backend refactor and a UI redesign at the same time? Separate sessions under the same manager.
 
-Session forking lets you run discovery in one conversation, gather context, narrow down an approach, then fork into parallel workstreams that all inherit that context. You can fork from the current point or from any earlier message, carrying forward only the relevant context. It's branching for conversations. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak SDK state or double-count usage. Pi generation-throughput measurements and historical Codex sidecar display cards are also omitted, so a fork starts its own throughput history.
+Session forking lets you run discovery in one conversation, gather context, narrow down an approach, then fork into parallel workstreams that all inherit that context. You can fork from the current point or from any earlier message, carrying forward only the relevant context. It's branching for conversations. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak SDK state or double-count usage. Initial Pi model-input captures, Pi generation-throughput measurements, and historical Codex sidecar display cards are also omitted, so a Pi-backed fork records its own initial request and begins its own throughput history.
 
 ### Remote Projects
 
