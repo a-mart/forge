@@ -62,7 +62,13 @@ function agent(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
 }
 
 function state(agents: AgentDescriptor[] = [agent()]) {
-  return { ...createInitialManagerWsState('manager-1'), agents }
+  return {
+    ...createInitialManagerWsState('manager-1'),
+    agents,
+    workerMetadataSessionIds: new Set(
+      agents.filter((candidate) => candidate.role === 'worker').map((candidate) => candidate.managerId),
+    ),
+  }
 }
 
 const legacySummary = {

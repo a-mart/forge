@@ -86,6 +86,7 @@ function manager(options: { secureSnapshotError?: Error } = {}) {
   return {
     getConfig: () => ({ runtimeTarget: "builder" as const }),
     listBootstrapAgents: () => [agent, worker],
+    listWorkersForSession: vi.fn(() => [worker]),
     getAgent: (agentId: string) =>
       agentId === worker.agentId ? worker : agentId === agent.agentId ? agent : undefined,
     listProfiles: () => [],
@@ -215,10 +216,16 @@ describe("secure session bootstrap projection", () => {
     });
 
     expect(swarmManager.getGenerationThroughputSnapshot).toHaveBeenCalledWith("session");
-    expect(events).toContainEqual(expect.objectContaining({
-      type: "generation_throughput_snapshot",
+    expect(swarmManager.listWorkersForSession).toHaveBeenCalledWith("session");
+    const workerMetadataIndex = events.findIndex((event) => event.type === "session_workers_snapshot");
+    const throughputSnapshotIndex = events.findIndex((event) => event.type === "generation_throughput_snapshot");
+    expect(workerMetadataIndex).toBeGreaterThanOrEqual(0);
+    expect(throughputSnapshotIndex).toBeGreaterThan(workerMetadataIndex);
+    expect(events[workerMetadataIndex]).toMatchObject({
+      type: "session_workers_snapshot",
       sessionAgentId: "session",
-    }));
+      workers: [expect.objectContaining({ agentId: "worker-1" })],
+    });
   });
 
   it("does not expose vault/provider failures while continuing bootstrap", async () => {

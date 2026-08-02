@@ -6767,6 +6767,102 @@ describe('ManagerWsClient', () => {
     })
   })
 
+  it('uses a fresh worker roster rather than the manager-only snapshot across runtime transitions', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      // The real bootstrap projection deliberately omits workers.
+      agents: [makeManagerDescriptor({ workerCount: 1, activeWorkerCount: 0 })],
+    })
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [makeWorkerDescriptor('worker-1')],
+    })
+
+    const piFinal = {
+      measurementId: 'pi-before-reroute',
+      sequence: 2,
+      phase: 'completed' as const,
+      profileId: 'profile-1',
+      sessionId: 'manager',
+      agentId: 'worker-1',
+      managerId: 'manager',
+      role: 'worker' as const,
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      sampledAt: '2026-08-01T10:00:02.000Z',
+      firstOutputAt: '2026-08-01T10:00:01.000Z',
+      timeToFirstOutputMs: 1_000,
+      elapsedGenerationMs: 1_000,
+      outputTokens: 100,
+      instantaneousTokensPerSecond: null,
+      generationAverageTokensPerSecond: 100,
+      valueKind: 'provider_final' as const,
+      quality: {
+        measurementScope: 'agent_model_call' as const,
+        agentRetryAttempt: 0,
+        providerAttemptScope: 'unavailable' as const,
+        observedProviderAttemptCount: null,
+        tokenSource: 'provider_final' as const,
+        boundarySource: 'content_delta_to_stream_end' as const,
+        reasoningBoundaryCoverage: 'observed' as const,
+      },
+    }
+    emitServerEvent(socket, { type: 'generation_throughput', measurement: piFinal })
+    expect(client.getState().generationThroughputLatestFinalByAgentId['worker-1']).toEqual(piFinal)
+
+    // Reconnect preserves cached workers, and the fresh manager-only snapshot
+    // has the same workerCount. It cannot describe the rerouted worker model.
+    socket.close()
+    vi.advanceTimersByTime(1_200)
+    const reconnectedSocket = FakeWebSocket.instances.at(-1)!
+    reconnectedSocket.emit('open')
+    emitServerEvent(reconnectedSocket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 1, activeWorkerCount: 0 })],
+    })
+    expect(client.getState().agents.find((agent) => agent.agentId === 'worker-1')?.model.provider)
+      .toBe('openai-codex')
+
+    // A pre-roster stale Pi event is deferred, not accepted against that cache.
+    emitServerEvent(reconnectedSocket, {
+      type: 'generation_throughput',
+      measurement: { ...piFinal, measurementId: 'stale-after-reroute', sequence: 1 },
+    })
+    expect(client.getState().generationThroughputByAgentId).toEqual({})
+
+    // The authoritative event changes only the model, not worker count.
+    emitServerEvent(reconnectedSocket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [{
+        ...makeWorkerDescriptor('worker-1'),
+        model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' },
+      }],
+    })
+    expect(client.getState().generationThroughputLatestFinalByAgentId).toEqual({})
+    expect(client.getState().generationThroughputTombstonesByMeasurementId['pi-before-reroute']).toBe(2)
+    expect(client.getState().generationThroughputByAgentId).toEqual({})
+
+    // A later authoritative Pi descriptor restores eligibility for new data.
+    emitServerEvent(reconnectedSocket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [makeWorkerDescriptor('worker-1')],
+    })
+    const restoredPi = { ...piFinal, measurementId: 'pi-after-rollback', sequence: 1 }
+    emitServerEvent(reconnectedSocket, { type: 'generation_throughput', measurement: restoredPi })
+    expect(client.getState().generationThroughputByAgentId['worker-1']).toEqual(restoredPi)
+
+    client.destroy()
+  })
+
   it('hydrates cumulative throughput snapshots, rejects stale sequences, and clears active telemetry on reconnect', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
     client.start()

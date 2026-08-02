@@ -128,6 +128,9 @@ export interface SwarmSpecialistFallbackManagerOptions {
     contextUsage?: AgentContextUsage
   ): void;
   emitAgentsSnapshot(): void;
+  /** Authoritative worker roster refresh; agents_snapshot intentionally excludes workers. */
+  listWorkersForSession?(sessionAgentId: string): AgentDescriptor[];
+  emitSessionWorkersSnapshot?(sessionAgentId: string, workers: AgentDescriptor[]): void;
   clearTrackedToolPaths(agentId: string): void;
   logDebug(message: string, details?: unknown): void;
 }
@@ -321,6 +324,7 @@ export class SwarmSpecialistFallbackManager {
         replacementRuntime.getPendingCount(),
         replacementRuntime.getContextUsage()
       );
+      this.emitAuthoritativeSessionWorkersSnapshot(reroutedDescriptor.managerId);
       this.options.emitAgentsSnapshot();
 
       if (!this.isSpecialistFallbackHandoffStillValid(input.agentId, replacementRuntime)) {
@@ -826,6 +830,15 @@ export class SwarmSpecialistFallbackManager {
       handoffState?.bufferedStatus?.pendingCount ?? currentRuntime.getPendingCount(),
       restoredDescriptor.contextUsage
     );
+    this.emitAuthoritativeSessionWorkersSnapshot(restoredDescriptor.managerId);
     this.options.emitAgentsSnapshot();
+  }
+
+  private emitAuthoritativeSessionWorkersSnapshot(sessionAgentId: string): void {
+    const listWorkersForSession = this.options.listWorkersForSession;
+    if (!listWorkersForSession || !this.options.emitSessionWorkersSnapshot) {
+      return;
+    }
+    this.options.emitSessionWorkersSnapshot(sessionAgentId, listWorkersForSession(sessionAgentId));
   }
 }

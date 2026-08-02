@@ -1,10 +1,4 @@
-import type {
-  GenerationMeasurementRecordV1,
-  GenerationThroughputEvent,
-  SessionActiveToolsSnapshotEvent,
-  SessionGoalSnapshotEvent,
-  SpecialistTargetSpace,
-} from "@forge/protocol";
+import type { GenerationMeasurementRecordV1, GenerationThroughputEvent, SessionActiveToolsSnapshotEvent, SessionGoalSnapshotEvent, SpecialistTargetSpace } from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
@@ -107,6 +101,7 @@ export interface RuntimeCompositionEvents {
   markSessionActivity: RuntimeHost["markSessionActivity"];
   emitStatus: RuntimeHost["emitStatus"];
   emitAgentsSnapshot(): void;
+  emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void;
   emitProfilesSnapshot(): void;
   emitSessionLifecycle(event: SessionLifecycleEvent): void;
   emitSessionGoalSnapshot(event: SessionGoalSnapshotEvent): void;
@@ -617,6 +612,9 @@ export class SwarmManagerRuntimeComposition {
       patchDescriptorInLiveMaps: this.options.descriptors.patchDescriptorInLiveMaps,
       emitStatus: events.emitStatus,
       emitAgentsSnapshot: events.emitAgentsSnapshot,
+      listWorkersForSession: (sessionAgentId) =>
+        this.requireServices().directory.listWorkersForSession(sessionAgentId),
+      emitSessionWorkersSnapshot: events.emitSessionWorkersSnapshot,
       clearTrackedToolPaths: (agentId) => this.runtimeController.clearTrackedToolPaths(agentId),
       logDebug: events.logDebug,
     });

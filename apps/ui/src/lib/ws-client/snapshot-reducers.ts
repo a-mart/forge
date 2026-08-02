@@ -200,6 +200,8 @@ export function reduceSessionWorkersSnapshot(input: {
   const { state, sessionAgentId, workers } = input
   const nextLoadedSessionIds = new Set(state.loadedSessionIds)
   nextLoadedSessionIds.add(sessionAgentId)
+  const nextWorkerMetadataSessionIds = new Set(state.workerMetadataSessionIds)
+  nextWorkerMetadataSessionIds.add(sessionAgentId)
 
   const incomingWorkerIds = new Set(workers.map((worker) => worker.agentId))
 
@@ -248,6 +250,7 @@ export function reduceSessionWorkersSnapshot(input: {
       agents: nextAgents,
       statuses: nextStatuses,
       loadedSessionIds: nextLoadedSessionIds,
+      workerMetadataSessionIds: nextWorkerMetadataSessionIds,
       ...clearGenerationThroughputForIneligibleAgents(state, nextAgents),
       ...(removedSecureSessionSnapshot
         ? { secureSessionSnapshots: nextSecureSessionSnapshots }

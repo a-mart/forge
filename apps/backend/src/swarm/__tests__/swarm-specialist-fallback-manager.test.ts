@@ -668,7 +668,9 @@ describe("SwarmSpecialistFallbackManager", () => {
     const runtimeTokensByAgentId = new Map<string, number>();
 
     const worker = buildWorkerDescriptor(config, { agentId: "w-replay" });
+    const sibling = buildWorkerDescriptor(config, { agentId: "w-replay-sibling" });
     descriptors.set(worker.agentId, worker);
+    descriptors.set(sibling.agentId, sibling);
 
     const current = new FakeRuntime(worker, "sys");
     current.specialistFallbackReplayMessage = { text: "do-the-thing" };
@@ -709,6 +711,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       return updatedDescriptor;
     });
     const recordWorkGraphWorkerModelReroute = vi.fn(async () => undefined);
+    const emitSessionWorkersSnapshot = vi.fn();
 
     const manager = new SwarmSpecialistFallbackManager({
       descriptors,
@@ -734,6 +737,11 @@ describe("SwarmSpecialistFallbackManager", () => {
       patchDescriptor,
       emitStatus: vi.fn(),
       emitAgentsSnapshot: vi.fn(),
+      listWorkersForSession: (sessionAgentId) =>
+        [...descriptors.values()].filter(
+          (descriptor) => descriptor.role === "worker" && descriptor.managerId === sessionAgentId,
+        ),
+      emitSessionWorkersSnapshot,
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
@@ -767,6 +775,13 @@ describe("SwarmSpecialistFallbackManager", () => {
         }),
       }),
     );
+    expect(emitSessionWorkersSnapshot).toHaveBeenCalledWith(worker.managerId, [
+      expect.objectContaining({
+        agentId: worker.agentId,
+        model: expect.objectContaining({ provider: "openai-codex", modelId: "gpt-5.5" }),
+      }),
+      expect.objectContaining({ agentId: sibling.agentId }),
+    ]);
   });
 
   it.each([
@@ -959,6 +974,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       logDebug: vi.fn()
     });
 
+    const emitSessionWorkersSnapshot = vi.fn();
     const manager = new SwarmSpecialistFallbackManager({
       descriptors,
       runtimes,
@@ -983,6 +999,11 @@ describe("SwarmSpecialistFallbackManager", () => {
       saveStore: vi.fn(),
       emitStatus: vi.fn(),
       emitAgentsSnapshot: vi.fn(),
+      listWorkersForSession: (sessionAgentId) =>
+        [...descriptors.values()].filter(
+          (descriptor) => descriptor.role === "worker" && descriptor.managerId === sessionAgentId,
+        ),
+      emitSessionWorkersSnapshot,
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
@@ -1000,6 +1021,12 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(restoreSpy).toHaveBeenCalled();
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("anthropic");
     expect(runtimes.get(worker.agentId)).toBe(current);
+    expect(emitSessionWorkersSnapshot).toHaveBeenCalledWith(worker.managerId, [
+      expect.objectContaining({
+        agentId: worker.agentId,
+        model: expect.objectContaining({ provider: "anthropic" }),
+      }),
+    ]);
   });
 
   it("rolls back and clears the discarded replacement token when reroute persistence fails before attach", async () => {
@@ -1188,6 +1215,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       return updatedDescriptor;
     });
 
+    const emitSessionWorkersSnapshot = vi.fn();
     const manager = new SwarmSpecialistFallbackManager({
       descriptors,
       runtimes,
@@ -1212,6 +1240,11 @@ describe("SwarmSpecialistFallbackManager", () => {
       patchDescriptorInLiveMaps,
       emitStatus: vi.fn(),
       emitAgentsSnapshot: vi.fn(),
+      listWorkersForSession: (sessionAgentId) =>
+        [...descriptors.values()].filter(
+          (descriptor) => descriptor.role === "worker" && descriptor.managerId === sessionAgentId,
+        ),
+      emitSessionWorkersSnapshot,
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
@@ -1235,6 +1268,18 @@ describe("SwarmSpecialistFallbackManager", () => {
       model: expect.objectContaining({ provider: "anthropic" })
     });
     expect(runtimes.get(worker.agentId)).toBe(current);
+    expect(emitSessionWorkersSnapshot).toHaveBeenNthCalledWith(1, worker.managerId, [
+      expect.objectContaining({
+        agentId: worker.agentId,
+        model: expect.objectContaining({ provider: "openai-codex" }),
+      }),
+    ]);
+    expect(emitSessionWorkersSnapshot).toHaveBeenLastCalledWith(worker.managerId, [
+      expect.objectContaining({
+        agentId: worker.agentId,
+        model: expect.objectContaining({ provider: "anthropic" }),
+      }),
+    ]);
   });
 
   it("replays buffered old-runtime status then agent_end when fallback aborts", async () => {

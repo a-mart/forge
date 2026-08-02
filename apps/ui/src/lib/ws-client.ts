@@ -89,6 +89,7 @@ const BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS = 2_000
 const BROWSER_HANDSHAKE_RETRY_MS = 500
 export const CONVERSATION_BOOTSTRAP_WATCHDOG_MS = 30_000
 const GENERATION_TERMINAL_SETTLE_MS = 5_000
+const MAX_DEFERRED_WORKER_THROUGHPUT_EVENTS = 64
 
 /** Server close code for a permanently invalidated collaboration session. */
 const SESSION_INVALIDATED_CLOSE_CODE = 4001
@@ -115,6 +116,7 @@ import {
 import {
   clearGenerationThroughputForAgents,
   clearGenerationThroughputState,
+  pendingGenerationThroughputWorkerMetadataSessionId,
   removeGenerationThroughputTombstone,
   type GenerationThroughputReduction,
 } from './ws-client/generation-throughput-state'
@@ -234,6 +236,10 @@ export class ManagerWsClient {
   private sessionInvalidatedObserver: (() => void) | null = null
   private readonly optimisticSendExpiryTimers = new Set<ReturnType<typeof setTimeout>>()
   private readonly generationTerminalCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Worker telemetry that arrived before this connection received its roster. */
+  private deferredWorkerThroughputEvents: Array<Extract<ServerEvent, {
+    type: 'generation_throughput' | 'generation_throughput_snapshot'
+  }>> = []
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -1459,6 +1465,7 @@ export class ManagerWsClient {
       secureSessionSnapshotLoadingSessionId: this.desiredAgentId,
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
+      workerMetadataSessionIds: new Set(),
       remoteUpdateAwarenessSnapshot: null,
       codexElicitations: [],
       browserHost: {
@@ -1502,6 +1509,7 @@ export class ManagerWsClient {
     this.rejectedExplicitAgentSelectionId = null
     this.bootstrapBuffer.clear()
     this.cancelConversationBootstrapWatchdog()
+    this.deferredWorkerThroughputEvents = []
     const pendingBootstrap = this.state.conversationBootstrap
     if (pendingBootstrap.phase === 'pending' && pendingBootstrap.subscriptionId) {
       this.recordConversationBootstrapTerminal(pendingBootstrap.subscriptionId, 'disconnected')
@@ -1514,6 +1522,7 @@ export class ManagerWsClient {
       connected: false,
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
+      workerMetadataSessionIds: new Set(),
       subscribedAgentId: null,
       remoteUpdateAwarenessSnapshot: null,
       codexElicitations: [],
@@ -1625,6 +1634,15 @@ export class ManagerWsClient {
       sendLifecycleResponse: (response) => this.send(buildBrowserHostLifecycleResponseCommand(response)),
     })) {
       return
+    }
+
+    if (event.type === 'generation_throughput' || event.type === 'generation_throughput_snapshot') {
+      const pendingWorkerMetadataSessionId =
+        pendingGenerationThroughputWorkerMetadataSessionId(this.state, event)
+      if (pendingWorkerMetadataSessionId) {
+        this.deferWorkerThroughputEvent(event)
+        return
+      }
     }
 
     if (handleGenerationThroughputEvent(event, {
@@ -1914,6 +1932,33 @@ export class ManagerWsClient {
     return true
   }
 
+  private deferWorkerThroughputEvent(
+    event: Extract<ServerEvent, { type: 'generation_throughput' | 'generation_throughput_snapshot' }>,
+  ): void {
+    this.deferredWorkerThroughputEvents.push(event)
+    if (this.deferredWorkerThroughputEvents.length > MAX_DEFERRED_WORKER_THROUGHPUT_EVENTS) {
+      this.deferredWorkerThroughputEvents.shift()
+    }
+  }
+
+  private flushDeferredWorkerThroughputEvents(sessionAgentId: string): void {
+    const deferred = this.deferredWorkerThroughputEvents
+    this.deferredWorkerThroughputEvents = []
+    for (const event of deferred) {
+      const eventSessionAgentId = event.type === 'generation_throughput'
+        ? event.measurement.sessionId
+        : event.sessionAgentId
+      if (eventSessionAgentId !== sessionAgentId) {
+        this.deferredWorkerThroughputEvents.push(event)
+        continue
+      }
+      handleGenerationThroughputEvent(event, {
+        state: this.state,
+        applyGenerationThroughputReduction: (reduction) => this.applyGenerationThroughputReduction(reduction),
+      })
+    }
+  }
+
   private applyGenerationThroughputReduction(reduction: GenerationThroughputReduction): void {
     if (!reduction.accepted) return
     this.updateState(reduction.patch)
@@ -2019,6 +2064,7 @@ export class ManagerWsClient {
     requestId?: string,
   ): void {
     this.sessionWorkerCache.applySessionWorkersSnapshot(sessionAgentId, workers)
+    this.flushDeferredWorkerThroughputEvents(sessionAgentId)
 
     if (requestId) {
       this.requestDispatcher.tracker.resolve('get_session_workers', requestId, {

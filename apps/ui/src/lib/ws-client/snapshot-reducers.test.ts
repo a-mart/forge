@@ -240,7 +240,7 @@ describe('reduceSessionWorkersSnapshot', () => {
     expect(updatedManager!.activeWorkerCount).toBe(2)
   })
 
-  it('marks session as loaded in loadedSessionIds', () => {
+  it('marks session as loaded and fresh for worker metadata', () => {
     const manager = makeManager()
     const state = {
       ...createInitialManagerWsState('manager-1'),
@@ -254,6 +254,7 @@ describe('reduceSessionWorkersSnapshot', () => {
     })
 
     expect(result.patch.loadedSessionIds!.has('manager-1')).toBe(true)
+    expect(result.patch.workerMetadataSessionIds!.has('manager-1')).toBe(true)
   })
 
   it('replaces existing workers for the same manager session', () => {

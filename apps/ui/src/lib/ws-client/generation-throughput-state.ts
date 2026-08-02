@@ -15,6 +15,29 @@ export interface GenerationThroughputReduction {
   terminal?: { agentId: string; measurementId: string; sequence: number }
 }
 
+/** Returns the current-session worker roster needed before this event can be classified. */
+export function pendingGenerationThroughputWorkerMetadataSessionId(
+  state: ManagerWsState,
+  event: GenerationThroughputEvent | GenerationThroughputSnapshotEvent,
+): string | null {
+  const sessionAgentId = event.type === 'generation_throughput'
+    ? event.measurement.sessionId
+    : event.sessionAgentId
+  const workerMeasurements = event.type === 'generation_throughput'
+    ? event.measurement.role === 'worker' ? [event.measurement] : []
+    : event.measurements.filter((measurement) => measurement.role === 'worker')
+  if (workerMeasurements.length === 0) return null
+
+  const selectedAgentId = state.targetAgentId ?? state.subscribedAgentId
+  const selectedWorkerTelemetry = selectedAgentId !== null
+    && workerMeasurements.some((measurement) => measurement.agentId === selectedAgentId)
+  if (!isCurrentSession(state, sessionAgentId) && !selectedWorkerTelemetry) return null
+
+  return !state.workerMetadataSessionIds.has(sessionAgentId)
+    ? sessionAgentId
+    : null
+}
+
 /**
  * Cumulative generation updates are intentionally independent from transcript
  * reducers. They can arrive before a local start, after reconnect, or out of
@@ -267,6 +290,7 @@ function replacesCurrentMeasurement(
 function isPiGenerationThroughputEligibleForAgent(state: ManagerWsState, agentId: string): boolean {
   const agent = state.agents.find((candidate) => candidate.agentId === agentId)
   return isPiGenerationThroughputEligible(agent)
+    && (agent?.role !== 'worker' || state.workerMetadataSessionIds.has(agent.managerId))
 }
 
 function isCurrentSession(state: ManagerWsState, sessionAgentId: string): boolean {

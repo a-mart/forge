@@ -278,13 +278,24 @@ export async function sendSubscriptionBootstrap(options: {
     }
   }
 
+  // Worker descriptors are deliberately absent from agents_snapshot. Hydrate
+  // the authoritative session roster before count-only worker telemetry so a
+  // reconnect cannot classify Pi/Cursor measurements from a preserved cache.
+  const throughputSessionAgentId = resolveGenerationThroughputSessionAgentId(targetAgentId);
+  const localBuilderThroughputSession = throughputSessionAgentId
+    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget);
+  if (localBuilderThroughputSession) {
+    await sendMeasured("sessionWorkersSnapshot", {
+      type: "session_workers_snapshot",
+      sessionAgentId: throughputSessionAgentId,
+      workers: swarmManager.listWorkersForSession(throughputSessionAgentId),
+    });
+  }
+
   // This snapshot is deliberately outside conversation bootstrap/history and
   // only exists for the local Builder transport. It contains no generated text.
-  const throughputSessionAgentId = resolveGenerationThroughputSessionAgentId(targetAgentId);
   if (
-    throughputSessionAgentId
-    && typeof swarmManager.getConfig === "function"
-    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
+    localBuilderThroughputSession
     && typeof swarmManager.getGenerationThroughputSnapshot === "function"
   ) {
     await sendMeasured(

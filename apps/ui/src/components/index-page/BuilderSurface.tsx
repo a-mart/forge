@@ -815,11 +815,14 @@ export function BuilderSurface({
     () => resolveWorkerFetchManagerId(activeAgent),
     [activeAgent],
   )
+  const workerMetadataHydrated = Boolean(
+    workerFetchManagerId && state.workerMetadataSessionIds.has(workerFetchManagerId),
+  )
 
   useEffect(() => {
-    if (!workerFetchManagerId) return
+    if (!workerFetchManagerId || workerMetadataHydrated) return
     hydrateSessionWorkers(activeOriginId, workerFetchManagerId)
-  }, [activeOriginId, workerFetchManagerId, activeManagerWorkerCount])
+  }, [activeOriginId, workerFetchManagerId, workerMetadataHydrated, activeManagerWorkerCount])
 
   // Resolve parent manager label for the worker back-bar
   const parentManagerLabel = useMemo(() => {

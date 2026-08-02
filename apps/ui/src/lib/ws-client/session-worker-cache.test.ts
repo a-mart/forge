@@ -108,13 +108,14 @@ describe('SessionWorkerCache', () => {
   // Cache hit path
   // ---------------------------------------------------------------------------
 
-  it('returns cached workers without a WS request when loadedSessionIds contains the session', async () => {
+  it('returns cached workers without a WS request when current worker metadata covers the session', async () => {
     const worker = makeWorker('w1', 'mgr')
     const manager = makeManager('mgr', { workerCount: 1 })
 
     const { cache, requestSessionWorkers } = setup({
       agents: [manager, worker],
       loadedSessionIds: new Set(['mgr']),
+      workerMetadataSessionIds: new Set(['mgr']),
     })
 
     const result = await cache.getSessionWorkers('mgr')
@@ -125,12 +126,27 @@ describe('SessionWorkerCache', () => {
     expect(requestSessionWorkers).not.toHaveBeenCalled()
   })
 
+  it('refreshes preserved workers when reconnect metadata is not current', () => {
+    const worker = makeWorker('w1', 'mgr')
+    const manager = makeManager('mgr', { workerCount: 1 })
+    const { cache, requestSessionWorkers } = setup({
+      agents: [manager, worker],
+      loadedSessionIds: new Set(['mgr']),
+    })
+
+    void cache.getSessionWorkers('mgr')
+
+    expect(requestSessionWorkers).toHaveBeenCalledWith('mgr')
+    cache.destroy()
+  })
+
   it('returns empty workers array for cached session with zero workers', async () => {
     const manager = makeManager('mgr', { workerCount: 0 })
 
     const { cache, requestSessionWorkers } = setup({
       agents: [manager],
       loadedSessionIds: new Set(['mgr']),
+      workerMetadataSessionIds: new Set(['mgr']),
     })
 
     const result = await cache.getSessionWorkers('mgr')
@@ -151,6 +167,7 @@ describe('SessionWorkerCache', () => {
     const { cache, requestSessionWorkers, resolveRequest, getState } = setup({
       agents: [manager, worker],
       loadedSessionIds: new Set(['mgr']),
+      workerMetadataSessionIds: new Set(['mgr']),
     })
 
     const promise = cache.getSessionWorkers('mgr')
@@ -651,6 +668,7 @@ describe('SessionWorkerCache', () => {
     const { cache, requestSessionWorkers } = setup({
       agents: [manager, worker],
       loadedSessionIds: new Set(['mgr']),
+      workerMetadataSessionIds: new Set(['mgr']),
     })
 
     const result = await cache.getSessionWorkers('  mgr  ')

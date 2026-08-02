@@ -15,10 +15,7 @@ import { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
 import { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import { SwarmEventCoordinator } from "./swarm-event-coordinator.js";
 import { CollaborationStorageProvisioner } from "./collaboration-storage-provisioner.js";
-import {
-  AgentMessageDispatcher,
-  type AgentMessageLedgerPort,
-} from "./agent-message-dispatcher.js";
+import { AgentMessageDispatcher, type AgentMessageLedgerPort } from "./agent-message-dispatcher.js";
 import { SwarmCompactionCoordinator } from "./swarm-compaction-coordinator.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import {
@@ -630,6 +627,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         emitStatus: (agentId, status, pendingCount, contextUsage) =>
           this.eventCoordinator.emitStatus(agentId, status, pendingCount, contextUsage),
         emitAgentsSnapshot: () => this.eventCoordinator.emitAgentsSnapshot(),
+        emitSessionWorkersSnapshot: (sessionAgentId, workers) => this.eventCoordinator.emitSessionWorkersSnapshot(sessionAgentId, workers),
         emitProfilesSnapshot: () => this.eventCoordinator.emitProfilesSnapshot(),
         emitSessionLifecycle: (event) => this.eventCoordinator.emitSessionLifecycle(event),
         emitSessionGoalSnapshot: (event) => this.emit("session_goal_snapshot", event),

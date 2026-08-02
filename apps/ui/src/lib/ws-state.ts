@@ -103,6 +103,8 @@ export interface ManagerWsState {
   generationThroughputTombstoneOrder: string[]
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
+  /** Authoritative worker roster received during the current socket connection. */
+  workerMetadataSessionIds: Set<string>
   profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean; streamingStartedAt?: number }>
   lastError: string | null
@@ -188,6 +190,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     generationThroughputTombstoneOrder: [],
     agents: [],
     loadedSessionIds: new Set(),
+    workerMetadataSessionIds: new Set(),
     profiles: [],
     statuses: {},
     lastError: null,

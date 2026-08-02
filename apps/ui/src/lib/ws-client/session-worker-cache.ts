@@ -55,9 +55,10 @@ export class SessionWorkerCache {
 
   /**
    * Returns session workers for the given session, using the in-memory cache
-   * when `loadedSessionIds` covers the session and the cached worker count
-   * matches the manager's `workerCount` hint. Otherwise dispatches a new fetch
-   * (de-duplicated against any in-flight request for the same session).
+   * when `loadedSessionIds` and current-connection worker metadata cover the
+   * session and the cached worker count matches the manager's `workerCount`
+   * hint. Otherwise dispatches a new fetch (de-duplicated against any
+   * in-flight request for the same session).
    */
   getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
     const trimmed = sessionAgentId.trim()
@@ -67,8 +68,10 @@ export class SessionWorkerCache {
 
     const state = this.deps.getState()
 
-    // Cache-hit path: session was previously loaded and worker count still matches.
-    if (state.loadedSessionIds.has(trimmed)) {
+    // Cache-hit path: session was previously loaded, refreshed on this socket,
+    // and worker count still matches. A reconnect keeps old rows for UI
+    // continuity but must fetch fresh descriptors before classifying telemetry.
+    if (state.loadedSessionIds.has(trimmed) && state.workerMetadataSessionIds.has(trimmed)) {
       const cachedWorkers = state.agents.filter(
         (agent) => agent.role === 'worker' && agent.managerId === trimmed,
       )
