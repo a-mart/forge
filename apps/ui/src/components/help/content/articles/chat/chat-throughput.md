@@ -20,7 +20,7 @@ Open **Stats → Throughput** for historical manager/worker totals, role compari
 - **Strict boundaries** requires observed output through stream end.
 - **All calls** also exposes unmeasured or incomplete lifecycle records for coverage, but does not assign them a rate.
 
-The historical top-line rate is token weighted: provider-final output tokens divided by the sum of first-output-to-stream-end duration. Provider-output `tok/s` includes provider-reported reasoning tokens when available. An agent-level Pi retry is a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
+The historical top-line rate is token weighted: provider-final output tokens divided by the sum of first-output-to-stream-end duration. Reasoning-token metadata, when a provider reports it, is recorded separately and does not change `tok/s`. An agent-level Pi retry is a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
 
 ## History and forks
 

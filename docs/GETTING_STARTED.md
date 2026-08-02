@@ -243,7 +243,7 @@ During an eligible local manager generation, the fixed header control pulses and
 
 Terminal measurements are saved with session history and scanned into the separate historical Throughput view; generations from before this feature was recorded do not appear. Reconnecting preserves the latest in-app exact header value while fresh lifecycle state is restored. Forks deliberately omit source throughput measurements, so a fork begins its own history.
 
-The default **All measured** filter requires provider-final output and a usable observed stream boundary. **Strict boundaries** narrows that to calls with observed output through stream end; **All calls** exposes unmeasured or incomplete lifecycle records for coverage, but does not assign them a rate. Provider-output `tok/s` includes provider-reported reasoning tokens when available.
+The default **All measured** filter requires provider-final output and a usable observed stream boundary. **Strict boundaries** narrows that to calls with observed output through stream end; **All calls** exposes unmeasured or incomplete lifecycle records for coverage, but does not assign them a rate. Provider-output `tok/s` uses provider-final output tokens; separately recorded reasoning-token metadata does not change the rate.
 
 ---
 
