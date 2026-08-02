@@ -9,6 +9,7 @@ Switch to the **All** channel view using the toggle in the chat header. In the w
 The default **Prompt** view keeps the captured request readable:
 
 - The final **system prompt** is one continuous page with colored source labels for resolved system instructions, project files such as `AGENTS.md`, memory, skills, reference material, recovery context, and runtime details.
+- The available-skills catalog is formatted as cards with each skill's name, description, and source location instead of showing its XML markup.
 - Tool definitions appear as cards with their descriptions, required inputs, and top-level parameter types. Each card can reveal its complete schema.
 - The provider, model, and capture time appear as compact context above the prompt.
 

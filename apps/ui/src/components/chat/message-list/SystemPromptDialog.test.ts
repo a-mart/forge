@@ -148,7 +148,7 @@ describe('SystemPromptDialog', () => {
             '</project_context>',
             'The following skills provide specialized instructions for specific tasks.',
             '<available_skills>',
-            '<skill><name>review</name><description>Review changes</description></skill>',
+            '<skill><name>review &amp; verify</name><description>Review &lt;changes&gt; safely.</description><location>/skills/review/SKILL.md</location></skill>',
             '</available_skills>',
             'Current date: 2026-01-01\nCurrent working directory: /repo',
           ].join('\n\n'),
@@ -182,6 +182,12 @@ describe('SystemPromptDialog', () => {
     expect(document.body.textContent).toContain('Memory')
     expect(document.body.textContent).toContain('/profile/memory.md')
     expect(document.body.textContent).toContain('Skills')
+    expect(document.body.textContent).toContain('1 skill')
+    expect(document.body.textContent).toContain('review & verify')
+    expect(document.body.textContent).toContain('Review <changes> safely.')
+    expect(document.body.textContent).toContain('/skills/review/SKILL.md')
+    expect(document.body.textContent).not.toContain('<skill>')
+    expect(document.body.textContent).not.toContain('<name>')
     expect(document.body.textContent).toContain('Runtime')
     expect(document.body.textContent).toContain('Tools sent to the model')
     expect(document.body.textContent).toContain('Read a file from disk.')
@@ -192,6 +198,26 @@ describe('SystemPromptDialog', () => {
     expect(document.body.textContent).not.toContain('raw-only user message')
     expect(container.querySelectorAll('.overflow-y-auto')).toHaveLength(1)
     expect(container.querySelector('.overflow-auto')).toBeNull()
+  })
+
+  it('keeps malformed skill markup out of Prompt view', async () => {
+    apiMocks.fetchAgentSystemPrompt.mockResolvedValue(initialInputResponse(
+      'agent-1',
+      [
+        'Skill guidance.',
+        '<available_skills>',
+        '<skill><name>missing-location</name></skill>',
+        '</available_skills>',
+      ].join('\n'),
+    ))
+
+    renderDialog()
+    await flushFetch()
+
+    expect(document.body.textContent).toContain('One skill entry could not be formatted')
+    expect(document.body.textContent).toContain('Open Raw JSON')
+    expect(document.body.textContent).not.toContain('<skill>')
+    expect(document.body.textContent).not.toContain('missing-location')
   })
 
   it('preserves custom prompt text and does not infer recovery context from an arbitrary path', async () => {

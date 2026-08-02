@@ -26,6 +26,19 @@ interface PromptDisplaySection {
   content: string
 }
 
+interface SkillDisplayModel {
+  id: string
+  name: string
+  description?: string
+  location: string
+}
+
+interface SkillCatalogModel {
+  skills: SkillDisplayModel[]
+  unformattedEntries: number
+  hasSkillMarkup: boolean
+}
+
 interface ToolParameter {
   name: string
   type: string
@@ -165,6 +178,7 @@ export function InitialModelInputContent({
 
 function PromptSourceBlock({ section }: { section: PromptDisplaySection }) {
   const style = SOURCE_STYLES[section.kind]
+  const skillCatalog = section.kind === 'skills' ? deriveSkills(section.content) : undefined
   return (
     <article className="relative overflow-hidden rounded-lg border border-border/60 bg-muted/15 px-5 py-3">
       <span className={cn('absolute inset-y-0 left-0 w-1', style.accent)} aria-hidden="true" />
@@ -177,11 +191,54 @@ function PromptSourceBlock({ section }: { section: PromptDisplaySection }) {
             {section.source}
           </span>
         ) : null}
+        {skillCatalog?.hasSkillMarkup && skillCatalog.skills.length > 0 ? (
+          <Badge variant="secondary" className="font-mono text-[10px] font-normal text-muted-foreground">
+            {skillCatalog.skills.length} {skillCatalog.skills.length === 1 ? 'skill' : 'skills'}
+          </Badge>
+        ) : null}
       </header>
-      <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-foreground/90">
-        {section.content}
-      </pre>
+      {skillCatalog?.hasSkillMarkup ? (
+        <SkillCatalog catalog={skillCatalog} />
+      ) : (
+        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-foreground/90">
+          {section.content}
+        </pre>
+      )}
     </article>
+  )
+}
+
+function SkillCatalog({ catalog }: { catalog: SkillCatalogModel }) {
+  return (
+    <div className="space-y-3">
+      {catalog.skills.length > 0 ? (
+        <div className="grid gap-2 xl:grid-cols-2">
+          {catalog.skills.map((skill) => (
+            <div key={skill.id} className="rounded-md border border-border/50 bg-background/35 p-3">
+              <code className="text-sm font-semibold text-foreground">{skill.name}</code>
+              {skill.description ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  {skill.description}
+                </p>
+              ) : null}
+              <div className="mt-2 border-t border-border/40 pt-2">
+                <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground/75">
+                  Location
+                </span>
+                <code className="mt-0.5 block truncate text-[10px] leading-relaxed text-muted-foreground" title={skill.location}>
+                  {skill.location}
+                </code>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {catalog.unformattedEntries > 0 ? (
+        <p className="rounded-md border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
+          {catalog.unformattedEntries === 1 ? 'One skill entry could' : `${catalog.unformattedEntries} skill entries could`} not be formatted. Open Raw JSON to inspect the exact captured value.
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -336,6 +393,45 @@ function classifyProjectSource(source: string): { kind: PromptSourceKind; label:
     return { kind: 'recovery', label: 'Recovery context' }
   }
   return { kind: 'project', label: 'Project instructions' }
+}
+
+function deriveSkills(content: string): SkillCatalogModel {
+  const skills: SkillDisplayModel[] = []
+  let unformattedEntries = 0
+  let matchedEntries = 0
+  const skillBlock = /<skill>\s*([\s\S]*?)\s*<\/skill>/g
+  let match: RegExpExecArray | null
+
+  while ((match = skillBlock.exec(content)) !== null) {
+    matchedEntries += 1
+    const name = readXmlElement(match[1], 'name')
+    const description = readXmlElement(match[1], 'description')
+    const location = readXmlElement(match[1], 'location')
+    if (!name || !location) {
+      unformattedEntries += 1
+      continue
+    }
+    skills.push({
+      id: `${name}-${matchedEntries}`,
+      name,
+      ...(description ? { description } : {}),
+      location,
+    })
+  }
+
+  const residualMarkup = content.replace(/<skill>\s*[\s\S]*?\s*<\/skill>/g, '').trim()
+  const hasSkillMarkup = matchedEntries > 0 || /<\/?skill(?:\s|>)/.test(content)
+  if (hasSkillMarkup && residualMarkup.length > 0) {
+    unformattedEntries += 1
+  }
+
+  return { skills, unformattedEntries, hasSkillMarkup }
+}
+
+function readXmlElement(value: string, element: 'name' | 'description' | 'location'): string | undefined {
+  const match = new RegExp(`<${element}>([\\s\\S]*?)<\\/${element}>`).exec(value)
+  if (!match) return undefined
+  return readString(decodeXml(match[1]))
 }
 
 function deriveTools(values: InitialModelInputCapture['tools']): ToolDisplayModel[] {
