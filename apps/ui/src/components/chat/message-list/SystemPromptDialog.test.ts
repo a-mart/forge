@@ -31,10 +31,6 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: { children?: unknown }) => children,
 }))
 
-vi.mock('@/components/ui/scroll-area', () => ({
-  ScrollArea: ({ children }: { children?: unknown }) => children,
-}))
-
 const { SystemPromptDialog } = await import('./SystemPromptDialog')
 
 let root: Root
@@ -107,6 +103,10 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   apiMocks.fetchAgentSystemPrompt.mockReset()
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  })
 })
 
 afterEach(() => {
@@ -116,7 +116,7 @@ afterEach(() => {
 })
 
 describe('SystemPromptDialog', () => {
-  it('renders the captured initial Pi request, including raw context sections', async () => {
+  it('renders one readable prompt flow with provenance labels and formatted tools', async () => {
     apiMocks.fetchAgentSystemPrompt.mockResolvedValue({
       agentId: 'agent-1',
       role: 'manager',
@@ -135,11 +135,38 @@ describe('SystemPromptDialog', () => {
             images: 'byte_summary',
             requestMetadata: 'safe_projection',
           },
-          systemPrompt: 'Final prompt with AGENTS and memory',
-          messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
-          tools: [{ name: 'read', parameters: { type: 'object' } }],
+          systemPrompt: [
+            'Base manager instructions.',
+            '<project_context>',
+            'Project-specific instructions and guidelines:',
+            '<project_instructions path="/repo/AGENTS.md">',
+            'Repository guidance.',
+            '</project_instructions>',
+            '<project_instructions path="/profile/memory.md">',
+            'Remembered preference.',
+            '</project_instructions>',
+            '</project_context>',
+            'The following skills provide specialized instructions for specific tasks.',
+            '<available_skills>',
+            '<skill><name>review</name><description>Review changes</description></skill>',
+            '</available_skills>',
+            'Current date: 2026-01-01\nCurrent working directory: /repo',
+          ].join('\n\n'),
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'raw-only user message' }] }],
+          tools: [{
+            name: 'read',
+            description: 'Read a file from disk.',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Absolute file path.' },
+                offset: { type: 'number', description: 'First line to read.' },
+              },
+              required: ['path'],
+            },
+          }],
           model: { provider: 'openai-codex', id: 'gpt-5.4', api: 'openai-codex-responses' },
-          requestMetadata: { reasoning: 'high' },
+          requestMetadata: { reasoning: 'high', maxTokens: 128000 },
         },
       },
     })
@@ -148,13 +175,107 @@ describe('SystemPromptDialog', () => {
     await flushFetch()
 
     expect(document.body.textContent).toContain('Initial Model Input')
-    expect(document.body.textContent).toContain('Final system prompt')
-    expect(document.body.textContent).toContain('Final prompt with AGENTS and memory')
-    expect(document.body.textContent).toContain('Converted messages')
-    expect(document.body.textContent).toContain('Active tools and schemas')
-    expect(document.body.textContent).toContain('Safe request metadata')
-    expect(document.body.textContent).toContain('Raw capture')
-    expect(document.body.textContent).toContain('openai-codex/gpt-5.4')
+    expect(document.body.textContent).toContain('System prompt')
+    expect(document.body.textContent).toContain('System instructions')
+    expect(document.body.textContent).toContain('Project instructions')
+    expect(document.body.textContent).toContain('/repo/AGENTS.md')
+    expect(document.body.textContent).toContain('Memory')
+    expect(document.body.textContent).toContain('/profile/memory.md')
+    expect(document.body.textContent).toContain('Skills')
+    expect(document.body.textContent).toContain('Runtime')
+    expect(document.body.textContent).toContain('Tools sent to the model')
+    expect(document.body.textContent).toContain('Read a file from disk.')
+    expect(document.body.textContent).toContain('Absolute file path.')
+    expect(document.body.textContent).toContain('required')
+    expect(document.body.textContent).not.toContain('Converted messages')
+    expect(document.body.textContent).not.toContain('Safe request metadata')
+    expect(document.body.textContent).not.toContain('raw-only user message')
+    expect(container.querySelectorAll('.overflow-y-auto')).toHaveLength(1)
+    expect(container.querySelector('.overflow-auto')).toBeNull()
+  })
+
+  it('preserves custom prompt text and does not infer recovery context from an arbitrary path', async () => {
+    const baseResponse = initialInputResponse('agent-1', 'unused')
+    apiMocks.fetchAgentSystemPrompt.mockResolvedValue({
+      ...baseResponse,
+      initialModelInput: {
+        ...baseResponse.initialModelInput,
+        capture: {
+          ...baseResponse.initialModelInput.capture,
+          systemPrompt: [
+            'Project-specific instructions and guidelines:',
+            'Current date: user-authored value',
+            '<project_context>',
+            'Project-specific instructions and guidelines:',
+            '<project_instructions path="/repo/recovery-service/AGENTS.md">',
+            'Recovery service project guidance.',
+            '</project_instructions>',
+            '</project_context>',
+          ].join('\n'),
+          tools: [null, 'legacy-tool-shape'],
+        },
+      },
+    })
+
+    renderDialog()
+    await flushFetch()
+
+    expect(document.body.textContent).toContain('Project-specific instructions and guidelines:')
+    expect(document.body.textContent).toContain('Current date: user-authored value')
+    expect(document.body.textContent).toContain('/repo/recovery-service/AGENTS.md')
+    expect(document.body.textContent).toContain('Project instructions')
+    expect(document.body.textContent).not.toContain('Recovery context')
+    expect(document.body.textContent).toContain('Tool 1')
+    expect(document.body.textContent).toContain('Tool 2')
+  })
+
+  it('shows the complete capture only after switching to Raw JSON', async () => {
+    const baseResponse = initialInputResponse('agent-1', 'Readable system prompt')
+    const response = {
+      ...baseResponse,
+      initialModelInput: {
+        ...baseResponse.initialModelInput,
+        capture: {
+          ...baseResponse.initialModelInput.capture,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'raw-only user message' }] },
+          ],
+          requestMetadata: { maxTokens: 128000 },
+        },
+      },
+    }
+    apiMocks.fetchAgentSystemPrompt.mockResolvedValue(response)
+
+    renderDialog()
+    await flushFetch()
+    await flushFetch()
+    expect(document.body.textContent).not.toContain('raw-only user message')
+
+    const promptCopyButton = container.querySelector<HTMLButtonElement>('button[aria-label="Copy system prompt"]')
+    expect(promptCopyButton).not.toBeNull()
+    flushSync(() => {
+      promptCopyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushFetch()
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Readable system prompt')
+    expect(container.querySelector('.text-emerald-600')).not.toBeNull()
+
+    const rawButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Raw JSON')
+    const scrollContainer = container.querySelector<HTMLElement>('.overflow-y-auto')
+    expect(rawButton).toBeDefined()
+    expect(scrollContainer).not.toBeNull()
+    scrollContainer!.scrollTop = 500
+    flushSync(() => {
+      rawButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(scrollContainer!.scrollTop).toBe(0)
+    expect(container.querySelector('.text-emerald-600')).toBeNull()
+    expect(document.body.textContent).toContain('Raw JSON')
+    expect(document.body.textContent).toContain('raw-only user message')
+    expect(document.body.textContent).toContain('maxTokens')
+    expect(document.body.textContent).not.toContain('Tools sent to the model')
   })
 
   it('does not render an older agent capture when its request resolves after a newer agent', async () => {

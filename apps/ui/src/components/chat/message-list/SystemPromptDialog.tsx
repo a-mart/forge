@@ -3,8 +3,11 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { Check, Copy, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import {
+  InitialModelInputContent,
+  type InitialModelInputViewMode,
+} from './InitialModelInputContent'
 import {
   fetchAgentSystemPrompt,
   type AgentSystemPromptResponse,
@@ -29,13 +32,18 @@ export function SystemPromptDialog({
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<AgentSystemPromptResponse | null>(null)
   const [copied, setCopied] = useState(false)
+  const [viewMode, setViewMode] = useState<InitialModelInputViewMode>('prompt')
   const requestGeneration = useRef(0)
+  const contentScrollRef = useRef<HTMLDivElement>(null)
+  const copyGeneration = useRef(0)
+  const copyResetTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const doFetch = useCallback(async () => {
     const generation = ++requestGeneration.current
     setLoading(true)
     setError(null)
     setData(null)
+    setViewMode('prompt')
     try {
       const result = await fetchAgentSystemPrompt(wsUrl, agentId)
       if (requestGeneration.current === generation) {
@@ -59,6 +67,7 @@ export function SystemPromptDialog({
       setError(null)
       setData(null)
       setCopied(false)
+      setViewMode('prompt')
       return
     }
 
@@ -76,13 +85,57 @@ export function SystemPromptDialog({
     : undefined
   const rawCapture = capture ? JSON.stringify(capture, null, 2) : undefined
 
+  useEffect(() => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0
+    }
+  }, [viewMode, capture?.capturedAt])
+
+  useEffect(() => {
+    copyGeneration.current += 1
+    setCopied(false)
+    if (copyResetTimeout.current) {
+      clearTimeout(copyResetTimeout.current)
+      copyResetTimeout.current = null
+    }
+
+    return () => {
+      copyGeneration.current += 1
+      if (copyResetTimeout.current) {
+        clearTimeout(copyResetTimeout.current)
+        copyResetTimeout.current = null
+      }
+    }
+  }, [viewMode, capture?.capturedAt])
+
+  const handleViewModeChange = useCallback((mode: InitialModelInputViewMode) => {
+    copyGeneration.current += 1
+    setCopied(false)
+    if (copyResetTimeout.current) {
+      clearTimeout(copyResetTimeout.current)
+      copyResetTimeout.current = null
+    }
+    setViewMode(mode)
+  }, [])
+
+  const copyText = viewMode === 'raw' ? rawCapture : capture?.systemPrompt
   const handleCopy = useCallback(() => {
-    if (!rawCapture) return
-    void navigator.clipboard.writeText(rawCapture).then(() => {
+    if (!copyText) return
+    const generation = ++copyGeneration.current
+    void navigator.clipboard.writeText(copyText).then(() => {
+      if (copyGeneration.current !== generation) return
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      if (copyResetTimeout.current) {
+        clearTimeout(copyResetTimeout.current)
+      }
+      copyResetTimeout.current = setTimeout(() => {
+        if (copyGeneration.current === generation) {
+          setCopied(false)
+        }
+        copyResetTimeout.current = null
+      }, 1500)
     })
-  }, [rawCapture])
+  }, [copyText])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -113,20 +166,54 @@ export function SystemPromptDialog({
             </DialogTitle>
 
             {rawCapture ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0"
-                onClick={handleCopy}
-                aria-label="Copy initial model input"
-              >
-                {copied ? (
-                  <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                ) : (
-                  <Copy className="size-3.5 text-muted-foreground" />
-                )}
-              </Button>
+              <>
+                <div
+                  className="flex shrink-0 items-center rounded-md border border-border/60 bg-muted/30 p-0.5"
+                  aria-label="Initial model input view"
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      'h-6 rounded px-2 text-[11px]',
+                      viewMode === 'prompt' && 'bg-background text-foreground shadow-sm',
+                    )}
+                    aria-pressed={viewMode === 'prompt'}
+                    onClick={() => handleViewModeChange('prompt')}
+                  >
+                    Prompt
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      'h-6 rounded px-2 text-[11px]',
+                      viewMode === 'raw' && 'bg-background text-foreground shadow-sm',
+                    )}
+                    aria-pressed={viewMode === 'raw'}
+                    onClick={() => handleViewModeChange('raw')}
+                  >
+                    Raw JSON
+                  </Button>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0"
+                  onClick={handleCopy}
+                  aria-label={viewMode === 'raw' ? 'Copy raw initial model input' : 'Copy system prompt'}
+                >
+                  {copied ? (
+                    <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <Copy className="size-3.5 text-muted-foreground" />
+                  )}
+                </Button>
+              </>
             ) : null}
 
             <DialogPrimitive.Close asChild>
@@ -142,8 +229,17 @@ export function SystemPromptDialog({
             </DialogPrimitive.Close>
           </div>
 
-          <ScrollArea className="h-[calc(100%-49px)]">
-            <div className="space-y-5 p-5">
+          <div
+            ref={contentScrollRef}
+            className={cn(
+              'h-[calc(100%-49px)] overflow-y-auto overscroll-contain [scrollbar-gutter:stable]',
+              '[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-muted/20',
+              '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+              '[&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground/50',
+              '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+            )}
+          >
+            <div className="p-5">
               {loading ? (
                 <div className="flex items-center justify-center py-16">
                   <Loader2
@@ -164,7 +260,11 @@ export function SystemPromptDialog({
                   </Button>
                 </div>
               ) : capture ? (
-                <InitialModelInputCapture capture={capture} rawCapture={rawCapture!} />
+                <InitialModelInputContent
+                  capture={capture}
+                  rawCapture={rawCapture!}
+                  mode={viewMode}
+                />
               ) : currentData?.initialModelInput.status === 'unsupported' ? (
                 <p className="py-16 text-center text-sm text-muted-foreground">
                   {currentData.initialModelInput.message}
@@ -175,58 +275,9 @@ export function SystemPromptDialog({
                 </p>
               ) : null}
             </div>
-          </ScrollArea>
+          </div>
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
-  )
-}
-
-function InitialModelInputCapture({
-  capture,
-  rawCapture,
-}: {
-  capture: Extract<AgentSystemPromptResponse['initialModelInput'], { status: 'available' }>['capture']
-  rawCapture: string
-}) {
-  return (
-    <>
-      <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="text-muted-foreground">Provider / model</dt>
-          <dd className="font-mono text-foreground">{capture.model.provider}/{capture.model.id}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Captured</dt>
-          <dd className="font-mono text-foreground">{capture.capturedAt}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Capture point</dt>
-          <dd className="font-mono text-foreground">{capture.fidelity.capturePoint}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Image payloads</dt>
-          <dd className="font-mono text-foreground">{capture.fidelity.images}</dd>
-        </div>
-      </dl>
-
-      <CaptureSection title="Final system prompt" value={capture.systemPrompt} />
-      <CaptureSection title="Converted messages" value={capture.messages} />
-      <CaptureSection title="Active tools and schemas" value={capture.tools} />
-      <CaptureSection title="Safe request metadata" value={capture.requestMetadata} />
-      <CaptureSection title="Raw capture" value={rawCapture} />
-    </>
-  )
-}
-
-function CaptureSection({ title, value }: { title: string; value: unknown }) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-  return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold">{title}</h3>
-      <pre className="max-h-[42vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-muted/30 p-3 font-mono text-[13px] leading-relaxed text-foreground/90">
-        {text}
-      </pre>
-    </section>
   )
 }

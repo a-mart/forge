@@ -6,18 +6,17 @@ Switch to the **All** channel view using the toggle in the chat header. In the w
 
 ## What's included
 
-After the first request, the viewer shows:
+The default **Prompt** view keeps the captured request readable:
 
-- The final **system prompt** as it existed for that request. Depending on the session, it can include the base prompt, memory, `AGENTS.md` guidance, knowledge, loaded skills, date, working directory, and a `before_agent_start` override.
-- The provider-independent request messages and the tool definitions supplied for that request, including their schemas.
-- The selected provider and model, capture timestamp, fidelity notes, and a safe projection of request metadata.
-- A raw JSON copy of the captured record.
+- The final **system prompt** is one continuous page with colored source labels for resolved system instructions, project files such as `AGENTS.md`, memory, skills, reference material, recovery context, and runtime details.
+- Tool definitions appear as cards with their descriptions, required inputs, and top-level parameter types. Each card can reveal its complete schema.
+- The provider, model, and capture time appear as compact context above the prompt.
 
-Image payloads are summarized by byte count instead of retaining base64 data, and executable functions are not retained. Request metadata omits recognized sensitive fields, but the prompt, messages, and tool definitions are shown as captured rather than being a general-purpose redaction view. Treat the viewer and its copied JSON as sensitive session content.
+Use the **Raw JSON** toggle for the complete persisted record, including provider-independent messages and safe request metadata. Image payloads are summarized by byte count instead of retaining base64 data, and executable functions are not retained. Request metadata omits recognized sensitive fields, but the prompt, messages, and tool definitions are shown as captured rather than being a general-purpose redaction view. Treat the viewer and copied content as sensitive session content.
 
 ## Persistence, copies, and forks
 
-Forge stores one first-request record with the session history. Reopening the dialog, reconnecting, restarting, compacting, or recycling the runtime reads that same record; later requests do not replace it. The copy button copies the complete displayed record to your system clipboard.
+Forge stores one first-request record with the session history. Reopening the dialog, reconnecting, restarting, compacting, or recycling the runtime reads that same record; later requests do not replace it. The copy button copies the system prompt in **Prompt** view or the complete record in **Raw JSON** view.
 
 Forks deliberately omit the source record. A Pi-backed fork records its own initial input when it makes its first model request.
 
