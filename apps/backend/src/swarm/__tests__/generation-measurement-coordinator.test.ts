@@ -80,7 +80,7 @@ function createCoordinator(
 }
 
 describe("GenerationMeasurementCoordinator", () => {
-  it("persists started and terminal manager records with a strict count-only generation span", async () => {
+  it("persists started and terminal manager records with full-request timing plus output diagnostics", async () => {
     const { coordinator, records, appendCustomEntry } = createCoordinator([descriptor()]);
 
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("request_started", "call-1", 0, {
@@ -135,6 +135,7 @@ describe("GenerationMeasurementCoordinator", () => {
       },
       timing: {
         requestWallMs: 3_000,
+        responseThroughputDurationBasis: "request_wall_monotonic",
         timeToFirstOutputMs: 1_000,
         responseStreamOpenMs: 2_600,
         generationDurationMs: 2_000,
@@ -197,7 +198,7 @@ describe("GenerationMeasurementCoordinator", () => {
       ]));
   });
 
-  it("publishes lifecycle-only live events while preserving final and weighted-session formulas", async () => {
+  it("publishes request-wall response throughput while preserving output-tail diagnostics", async () => {
     const { coordinator, liveEvents } = createCoordinator([descriptor()]);
 
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("request_started", "live-call", 0));
@@ -228,13 +229,20 @@ describe("GenerationMeasurementCoordinator", () => {
         valueKind: "provider_final",
         outputTokens: 100,
         timeToFirstOutputMs: 1_000,
-        generationAverageTokensPerSecond: 50,
+        responseDurationMs: 3_000,
+        responseThroughputDurationBasis: "request_wall_monotonic",
+        responseThroughputTokensPerSecond: 100 / 3,
+        // Compatibility alias mirrors response throughput, not the 2s tail.
+        generationAverageTokensPerSecond: 100 / 3,
+        generationTailDurationMs: 2_000,
+        outputSpanMs: 600,
         instantaneousTokensPerSecond: null,
       }),
       sessionSummary: expect.objectContaining({
         measuredGenerationCount: 1,
-        weightedTokensPerSecond: 50,
-        samples: [expect.objectContaining({ tokensPerSecond: 50 })],
+        weightedResponseTokensPerSecond: 100 / 3,
+        weightedTokensPerSecond: 100 / 3,
+        samples: [expect.objectContaining({ responseTokensPerSecond: 100 / 3, tokensPerSecond: 100 / 3 })],
       }),
     });
     expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
@@ -245,8 +253,61 @@ describe("GenerationMeasurementCoordinator", () => {
     expect(snapshot.measurements).toEqual([]);
     expect(snapshot.sessionSummary).toMatchObject({
       measuredGenerationCount: 1,
-      weightedTokensPerSecond: 50,
+      weightedResponseTokensPerSecond: 100 / 3,
+      weightedTokensPerSecond: 100 / 3,
     });
+  });
+
+  it("uses full request wall time for hidden reasoning, buffered output, normal streams, aborts, and retries", async () => {
+    const { coordinator, records, liveEvents } = createCoordinator([descriptor()]);
+
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("request_started", "hidden-buffered", 0));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("response_stream_started", "hidden-buffered", 100));
+    // No thinking delta is observed despite provider-final reasoning usage.
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("output_delta", "hidden-buffered", 7_887.107));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("completed", "hidden-buffered", 7_959.446, {
+      meta: { usage: { output: 390, reasoning: 200 } },
+    }));
+
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("request_started", "normal-stream", 10_000));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("output_delta", "normal-stream", 11_000));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("output_delta", "normal-stream", 25_000));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("completed", "normal-stream", 25_786, {
+      meta: { usage: { output: 407 } },
+    }));
+
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("request_started", "aborted", 30_000));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("completed", "aborted", 31_000, {
+      outcome: "aborted",
+    }));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("request_started", "retry", 32_000, {
+      agentRetryAttempt: 1,
+    }));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("output_delta", "retry", 32_100));
+    await coordinator.handleRuntimeGenerationEvent(9, "manager-1", event("completed", "retry", 33_000, {
+      meta: { usage: { output: 9 } },
+    }));
+
+    const terminals = records.filter((record): record is import("@forge/protocol").GenerationMeasurementRecordV1 =>
+      (record as { recordState?: string }).recordState === "terminal");
+    const hidden = terminals.find((record) => record.measurementId === "hidden-buffered")!;
+    expect(hidden).toMatchObject({
+      timing: { requestWallMs: 7_959.446 },
+      usage: { outputTokens: 390, tokenSource: "provider_final" },
+      reasoningBoundaryCoverage: "hidden_or_unobserved",
+    });
+    expect(hidden.timing.generationDurationMs).toBeCloseTo(72.339, 3);
+    expect(terminals.find((record) => record.measurementId === "aborted")?.usage.tokenSource).toBe("unavailable");
+    expect(terminals.find((record) => record.measurementId === "retry")?.attempt?.agentRetryAttempt).toBe(1);
+
+    const finalById = new Map(liveEvents
+      .filter((entry) => entry.measurement.phase === "completed")
+      .map((entry) => [entry.measurement.measurementId, entry.measurement]));
+    expect(finalById.get("hidden-buffered")?.responseThroughputTokensPerSecond).toBeCloseTo(49.0, 1);
+    expect(finalById.get("normal-stream")?.responseThroughputTokensPerSecond).toBeCloseTo(25.8, 1);
+    expect(finalById.get("hidden-buffered")?.generationTailDurationMs).toBeCloseTo(72.339, 3);
+    expect(liveEvents.find((entry) => entry.measurement.measurementId === "aborted")?.measurement.responseThroughputTokensPerSecond).toBeNull();
+    expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
   });
 
   it("hydrates the true last-20 durable terminal window after restart", async () => {
@@ -273,11 +334,12 @@ describe("GenerationMeasurementCoordinator", () => {
 
     expect(loadTerminalRecords).toHaveBeenCalledOnce();
     expect(snapshot.sessionSummary).toMatchObject({
-      measuredGenerationCount: 10,
-      weightedTokensPerSecond: 50,
+      measuredGenerationCount: 20,
+      weightedResponseTokensPerSecond: 100 / 3,
+      weightedTokensPerSecond: 100 / 3,
     });
-    expect(snapshot.sessionSummary.samples).toHaveLength(10);
-    expect(snapshot.sessionSummary.samples[0]?.completedAt).toBe(new Date(34_000).toISOString());
+    expect(snapshot.sessionSummary.samples).toHaveLength(20);
+    expect(snapshot.sessionSummary.samples[0]?.completedAt).toBe(new Date(24_000).toISOString());
   });
 
   it("marks final-only, zero-duration, and malformed final usage unmeasurable without manufacturing a rate", async () => {

@@ -18,6 +18,9 @@ export type GenerationBoundarySource =
   | "response_stream_proxy"
   | "unavailable";
 
+/** The only denominator accepted for response-throughput measurements. */
+export type ResponseThroughputDurationBasis = "request_wall_monotonic";
+
 export type GenerationReasoningBoundaryCoverage =
   | "observed"
   | "hidden_or_unobserved"
@@ -97,10 +100,15 @@ export interface GenerationMeasurementRecordV1 {
     responseStreamStartedAt: string | null;
     firstOutputAt: string | null;
     lastOutputAt: string | null;
+    /** Complete monotonic request-start → terminal duration; the response-throughput denominator. */
     requestWallMs: number | null;
+    /** Additive marker. Absent records are re-derived from requestWallMs, never stored TPS. */
+    responseThroughputDurationBasis?: ResponseThroughputDurationBasis;
     timeToFirstOutputMs: number | null;
     responseStreamOpenMs: number | null;
+    /** @deprecated Diagnostic former generation-tail duration (first output → terminal), never a TPS denominator. */
     generationDurationMs: number | null;
+    /** Diagnostic first-output → last-output span. */
     interOutputSpanMs: number | null;
     boundarySource: GenerationBoundarySource;
   };
@@ -135,15 +143,29 @@ export interface GenerationThroughputLiveMeasurement {
   provider: string;
   modelId: string;
   sampledAt: string;
+  /** Additive lifecycle diagnostics. Current senders populate these without output content. */
+  requestStartedAt?: string;
+  completedAt?: string | null;
   firstOutputAt: string | null;
+  lastOutputAt?: string | null;
   /** Additive terminal/live detail for the header popover; absent from older senders. */
   timeToFirstOutputMs?: number | null;
+  /** Complete request-start → sampled/terminal monotonic duration. */
+  responseDurationMs?: number | null;
+  responseThroughputDurationBasis?: ResponseThroughputDurationBasis;
+  /** Diagnostic first-output → last-output span. */
+  outputSpanMs?: number | null;
+  /** Diagnostic former generation-tail duration (first output → sampled/terminal). */
+  generationTailDurationMs?: number | null;
+  /** @deprecated Use responseDurationMs for the primary metric; this remains an output-tail diagnostic. */
   elapsedGenerationMs: number | null;
   /** Null until provider-final output usage is available. */
   outputTokens: number | null;
   /** @deprecated Live estimates are no longer produced; this is always null from current producers. */
   instantaneousTokensPerSecond: number | null;
-  /** Null while active; completed provider-final measurements carry the exact TPS. */
+  /** Primary provider-final output tokens / complete request-start → terminal duration. */
+  responseThroughputTokensPerSecond?: number | null;
+  /** @deprecated Use responseThroughputTokensPerSecond. Current producers mirror the corrected value for compatibility. */
   generationAverageTokensPerSecond: number | null;
   /** `estimated` remains readable for older senders but current producers never emit it. */
   valueKind: "estimated" | "provider_final" | "unavailable";
@@ -154,10 +176,15 @@ export interface GenerationThroughputSessionSummary {
   sessionAgentId: string;
   window: "last_20_terminal_generations";
   measuredGenerationCount: number;
+  /** Primary weighted provider output / complete request duration. */
+  weightedResponseTokensPerSecond?: number | null;
+  /** @deprecated Use weightedResponseTokensPerSecond. Current producers mirror the corrected value. */
   weightedTokensPerSecond: number | null;
   samples: Array<{
     completedAt: string;
     role: "manager" | "worker";
+    responseTokensPerSecond?: number;
+    /** @deprecated Use responseTokensPerSecond. Current producers mirror the corrected value. */
     tokensPerSecond: number;
   }>;
 }
@@ -213,9 +240,18 @@ export interface GenerationThroughputMetrics {
   measuredCallCount: number;
   incompleteCallCount: number;
   outputTokens: number;
+  /** Sum of complete monotonic request-start → terminal durations for measured calls. */
+  responseDurationMs?: number;
+  /** @deprecated Sum of former first-output → terminal diagnostics, not a TPS denominator. */
   generationDurationMs: number;
+  weightedResponseTokensPerSecond?: number | null;
+  p50ResponseTokensPerSecond?: number | null;
+  p90ResponseTokensPerSecond?: number | null;
+  /** @deprecated Use weightedResponseTokensPerSecond. Current producers mirror the corrected value. */
   weightedTokensPerSecond: number | null;
+  /** @deprecated Use p50ResponseTokensPerSecond. Current producers mirror the corrected value. */
   p50TokensPerSecond: number | null;
+  /** @deprecated Use p90ResponseTokensPerSecond. Current producers mirror the corrected value. */
   p90TokensPerSecond: number | null;
   p50TimeToFirstOutputMs: number | null;
   coverage: number;
@@ -321,10 +357,22 @@ export interface GenerationThroughputCall {
   requestedModelId: string;
   responseModelId: string | null;
   modelId: string;
+  /** Count-only lifecycle diagnostics retained for auditability without response content. */
+  requestStartedAt?: string;
+  firstOutputAt?: string | null;
+  lastOutputAt?: string | null;
   outputTokens: number | null;
   reasoningTokens: number | null;
+  /** Complete request-start → terminal duration used for response throughput. */
+  responseDurationMs?: number | null;
+  responseThroughputDurationBasis?: ResponseThroughputDurationBasis;
+  /** Diagnostic former first-output → terminal duration. */
   generationDurationMs: number | null;
+  /** Diagnostic first-output → last-output span. */
+  outputSpanMs?: number | null;
   timeToFirstOutputMs: number | null;
+  responseTokensPerSecond?: number | null;
+  /** @deprecated Use responseTokensPerSecond. Current producers mirror the corrected value. */
   tokensPerSecond: number | null;
   outcome: GenerationOutcome;
   quality: GenerationMeasurementQuality;

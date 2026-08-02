@@ -54,6 +54,9 @@ const retainedFinal: GenerationThroughputLiveMeasurement = {
   sampledAt: '2026-07-21T10:00:02.000Z',
   firstOutputAt: '2026-07-21T10:00:01.000Z',
   timeToFirstOutputMs: 1_000,
+  responseDurationMs: 2_000,
+  responseThroughputDurationBasis: 'request_wall_monotonic',
+  responseThroughputTokensPerSecond: 50,
   elapsedGenerationMs: 2_000,
   outputTokens: 100,
   instantaneousTokensPerSecond: null,
@@ -202,13 +205,16 @@ describe('WorkerPillBar quick look', () => {
         profileId: 'profile-1',
         sessionId: 'manager-1',
         agentId: worker.agentId,
-        managerId: 'manager-1',
+        managerId: worker.managerId,
         role: 'worker',
         provider: 'openai-codex',
         modelId: 'gpt-5.5',
         sampledAt: '2026-07-21T10:00:02.000Z',
         firstOutputAt: '2026-07-21T10:00:01.000Z',
         timeToFirstOutputMs: 1_000,
+        responseDurationMs: 2_000,
+        responseThroughputDurationBasis: 'request_wall_monotonic',
+        responseThroughputTokensPerSecond: 50,
         elapsedGenerationMs: 2_000,
         outputTokens: 100,
         instantaneousTokensPerSecond: null,
@@ -229,7 +235,7 @@ describe('WorkerPillBar quick look', () => {
 
     act(() => getPill().click())
     const telemetryRow = document.body.querySelector('[data-worker-throughput-row]')
-    expect(telemetryRow?.textContent).toContain('Latest final throughput')
+    expect(telemetryRow?.textContent).toContain('Latest final response throughput')
     expect(telemetryRow?.textContent).toContain('50 tok/s')
     expect(telemetryRow?.className).toContain('h-7')
   })
@@ -295,6 +301,9 @@ describe('WorkerPillBar quick look', () => {
         sampledAt: '2026-07-21T10:00:02.000Z',
         firstOutputAt: '2026-07-21T10:00:01.000Z',
         timeToFirstOutputMs: 1_000,
+        responseDurationMs: 2_000,
+        responseThroughputDurationBasis: 'request_wall_monotonic',
+        responseThroughputTokensPerSecond: 50,
         elapsedGenerationMs: 2_000,
         outputTokens: 100,
         instantaneousTokensPerSecond: null,

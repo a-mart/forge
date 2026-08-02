@@ -95,6 +95,19 @@ describe("generation measurement records", () => {
     expect(parseGenerationMeasurementCustomEntry(wrapper(invalidAttemptScope))).toBeNull();
   });
 
+  it("accepts the additive request-wall basis while keeping legacy v1 timing readable", () => {
+    const current = record({
+      timing: { ...record().timing, responseThroughputDurationBasis: "request_wall_monotonic" },
+    });
+    expect(parseGenerationMeasurementCustomEntry(wrapper(current))).toEqual(current);
+
+    // Existing JSONL has no stored TPS or basis marker. It remains readable so
+    // downstream aggregation can re-derive only from requestWallMs and usage.
+    const { responseThroughputDurationBasis: _basis, ...legacyTiming } = current.timing;
+    const legacy = { ...current, timing: legacyTiming };
+    expect(parseGenerationMeasurementCustomEntry(wrapper(legacy))).toEqual(legacy);
+  });
+
   it("keeps pre-attempt-scope v1 records readable with conservative downstream defaults", () => {
     const { attempt: _attempt, ...legacyRecord } = record();
     expect(parseGenerationMeasurementCustomEntry(wrapper(legacyRecord))).toEqual(legacyRecord);

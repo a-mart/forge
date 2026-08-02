@@ -1073,7 +1073,7 @@ describe('SettingsGeneral — collab target', () => {
     renderGeneral()
     await flush()
 
-    expect(container.textContent).toContain('Show throughput in conversations')
+    expect(container.textContent).toContain('Show response throughput in conversations')
     expect(container.textContent).toContain('Stats → Throughput continues collecting history')
     const toggle = container.querySelector('#conversation-throughput-display-toggle') as HTMLInputElement | null
     expect(toggle?.getAttribute('aria-checked')).toBe('false')

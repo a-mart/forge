@@ -268,9 +268,10 @@ function addGenerationThroughputTombstone(
 }
 
 function isExactFinal(measurement: GenerationThroughputLiveMeasurement): boolean {
-  const rate = measurement.generationAverageTokensPerSecond
+  const rate = measurement.responseThroughputTokensPerSecond
   return measurement.phase === 'completed'
     && measurement.valueKind === 'provider_final'
+    && measurement.responseThroughputDurationBasis === 'request_wall_monotonic'
     && measurement.outputTokens !== null
     && typeof rate === 'number'
     && Number.isFinite(rate)

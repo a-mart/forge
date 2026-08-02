@@ -14,7 +14,7 @@ const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
 const TAB_OPTIONS: { value: StatsTab; label: string }[] = [
   { value: 'overview', label: 'Overview' },
   { value: 'tokens', label: 'Token Analytics' },
-  { value: 'throughput', label: 'Throughput' },
+  { value: 'throughput', label: 'Response throughput' },
 ]
 
 interface StatsLayoutProps {

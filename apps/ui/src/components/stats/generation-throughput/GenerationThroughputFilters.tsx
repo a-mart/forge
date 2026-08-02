@@ -52,9 +52,9 @@ export function GenerationThroughputFilters({
       </div>
       {filters.rangePreset === 'custom' ? (
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <input aria-label="Throughput start date" type="date" value={filters.startDate ?? ''} onChange={(event) => patch({ startDate: event.target.value || undefined })} className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground" />
+          <input aria-label="Response throughput start date" type="date" value={filters.startDate ?? ''} onChange={(event) => patch({ startDate: event.target.value || undefined })} className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground" />
           <span>–</span>
-          <input aria-label="Throughput end date" type="date" value={filters.endDate ?? ''} onChange={(event) => patch({ endDate: event.target.value || undefined })} className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground" />
+          <input aria-label="Response throughput end date" type="date" value={filters.endDate ?? ''} onChange={(event) => patch({ endDate: event.target.value || undefined })} className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground" />
         </div>
       ) : null}
       <Select value={filters.role ?? 'all'} onValueChange={(value) => patch({ role: value as GenerationRoleFilter })}>
@@ -63,7 +63,7 @@ export function GenerationThroughputFilters({
       </Select>
       <Select value={filters.quality ?? 'all_measured'} onValueChange={(value) => patch({ quality: value as GenerationQualityFilter })}>
         <SelectTrigger className="h-8 w-auto min-w-[128px] border-border/50 bg-card/80 text-xs"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectItem value="all_measured">All measured</SelectItem><SelectItem value="strict">Strict boundaries</SelectItem><SelectItem value="all">All calls</SelectItem></SelectContent>
+        <SelectContent><SelectItem value="all_measured">All measured responses</SelectItem><SelectItem value="strict">Observed-output diagnostics</SelectItem><SelectItem value="all">All calls</SelectItem></SelectContent>
       </Select>
       {availableFilters?.profiles.length ? <Select value={filters.profileId ?? 'all'} onValueChange={(value) => patch({ profileId: value === 'all' ? undefined : value })}><SelectTrigger className="h-8 w-auto min-w-[115px] border-border/50 bg-card/80 text-xs"><SelectValue placeholder="All projects" /></SelectTrigger><SelectContent><SelectItem value="all">All projects</SelectItem>{availableFilters.profiles.map((profile) => <SelectItem key={profile.profileId} value={profile.profileId}>{profile.displayName}</SelectItem>)}</SelectContent></Select> : null}
       {availableFilters?.providers.length ? <Select value={filters.provider ?? 'all'} onValueChange={(value) => patch(providerFilterPatch(value))}><SelectTrigger className="h-8 w-auto min-w-[115px] border-border/50 bg-card/80 text-xs"><SelectValue placeholder="All providers" /></SelectTrigger><SelectContent><SelectItem value="all">All providers</SelectItem>{availableFilters.providers.map((provider) => <SelectItem key={provider.provider} value={provider.provider}>{provider.provider}</SelectItem>)}</SelectContent></Select> : null}

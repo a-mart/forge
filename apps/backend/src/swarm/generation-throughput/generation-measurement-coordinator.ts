@@ -48,7 +48,8 @@ interface TerminalSessionSample {
   completedAt: string;
   role: "manager" | "worker";
   outputTokens: number | null;
-  generationDurationMs: number | null;
+  /** Complete request-start → terminal duration, never the output-tail diagnostic. */
+  responseDurationMs: number | null;
   measured: boolean;
 }
 
@@ -266,6 +267,7 @@ export class GenerationMeasurementCoordinator {
         firstOutputAt: active.firstOutput ? isoAt(active.firstOutput.wallTimeMs) : null,
         lastOutputAt: active.lastOutput ? isoAt(active.lastOutput.wallTimeMs) : null,
         requestWallMs: duration(active.startedMonotonicTimeMs, completed.monotonicTimeMs),
+        responseThroughputDurationBasis: "request_wall_monotonic",
         timeToFirstOutputMs: active.firstOutput
           ? duration(active.startedMonotonicTimeMs, active.firstOutput.monotonicTimeMs)
           : null,
@@ -331,13 +333,14 @@ export class GenerationMeasurementCoordinator {
     terminalRecord?: GenerationMeasurementRecordV1,
   ): GenerationThroughputLiveMeasurement {
     const terminal = terminalRecord?.recordState === "terminal" ? terminalRecord : undefined;
-    const elapsedGenerationMs = active.firstOutput
+    const generationTailDurationMs = active.firstOutput
       ? duration(active.firstOutput.monotonicTimeMs, timestamp.monotonicTimeMs)
       : null;
     const finalOutputTokens = terminal?.usage.outputTokens ?? null;
-    const finalDuration = terminal?.timing.generationDurationMs ?? null;
-    const exactTokensPerSecond = finalOutputTokens !== null && finalDuration !== null && finalDuration > 0
-      ? finalOutputTokens * 1_000 / finalDuration
+    const responseDurationMs = terminal?.timing.requestWallMs
+      ?? duration(active.startedMonotonicTimeMs, timestamp.monotonicTimeMs);
+    const exactTokensPerSecond = finalOutputTokens !== null && responseDurationMs !== null && responseDurationMs > 0
+      ? finalOutputTokens * 1_000 / responseDurationMs
       : null;
     const valueKind = terminal?.usage.tokenSource === "provider_final"
       ? "provider_final"
@@ -355,13 +358,26 @@ export class GenerationMeasurementCoordinator {
       provider: terminal?.model.provider ?? active.model.provider,
       modelId: terminal?.model.responseModelId ?? terminal?.model.requestedModelId ?? active.model.requestedModelId,
       sampledAt: isoAt(timestamp.wallTimeMs),
+      requestStartedAt: isoAt(active.startedWallTimeMs),
+      completedAt: terminal?.completedAt ?? null,
       firstOutputAt: active.firstOutput ? isoAt(active.firstOutput.wallTimeMs) : null,
+      lastOutputAt: active.lastOutput ? isoAt(active.lastOutput.wallTimeMs) : null,
       timeToFirstOutputMs: active.firstOutput
         ? duration(active.startedMonotonicTimeMs, active.firstOutput.monotonicTimeMs)
         : null,
-      elapsedGenerationMs: terminal ? finalDuration : elapsedGenerationMs,
+      responseDurationMs,
+      responseThroughputDurationBasis: "request_wall_monotonic",
+      outputSpanMs: terminal?.timing.interOutputSpanMs
+        ?? (active.firstOutput && active.lastOutput
+          ? duration(active.firstOutput.monotonicTimeMs, active.lastOutput.monotonicTimeMs)
+          : null),
+      generationTailDurationMs: terminal?.timing.generationDurationMs ?? generationTailDurationMs,
+      elapsedGenerationMs: terminal?.timing.generationDurationMs ?? generationTailDurationMs,
       outputTokens: terminal ? finalOutputTokens : null,
       instantaneousTokensPerSecond: null,
+      responseThroughputTokensPerSecond: terminal ? exactTokensPerSecond : null,
+      // Preserve the historical key for older UIs, but never derive it from
+      // first-output timing again.
       generationAverageTokensPerSecond: terminal ? exactTokensPerSecond : null,
       valueKind,
       quality: terminal
@@ -421,17 +437,24 @@ export class GenerationMeasurementCoordinator {
     const terminalWindow = this.terminalSamplesBySessionId.get(sessionAgentId) ?? [];
     const samples = terminalWindow.filter((sample) => sample.measured);
     const totalTokens = samples.reduce((sum, sample) => sum + sample.outputTokens!, 0);
-    const totalDurationMs = samples.reduce((sum, sample) => sum + sample.generationDurationMs!, 0);
+    const totalDurationMs = samples.reduce((sum, sample) => sum + sample.responseDurationMs!, 0);
+    const weightedResponseTokensPerSecond = totalDurationMs > 0 ? totalTokens * 1_000 / totalDurationMs : null;
     return {
       sessionAgentId,
       window: "last_20_terminal_generations",
       measuredGenerationCount: samples.length,
-      weightedTokensPerSecond: totalDurationMs > 0 ? totalTokens * 1_000 / totalDurationMs : null,
-      samples: samples.map((sample) => ({
-        completedAt: sample.completedAt,
-        role: sample.role,
-        tokensPerSecond: sample.outputTokens! * 1_000 / sample.generationDurationMs!,
-      })),
+      weightedResponseTokensPerSecond,
+      // Compatibility alias; current value has request-wall semantics.
+      weightedTokensPerSecond: weightedResponseTokensPerSecond,
+      samples: samples.map((sample) => {
+        const responseTokensPerSecond = sample.outputTokens! * 1_000 / sample.responseDurationMs!;
+        return {
+          completedAt: sample.completedAt,
+          role: sample.role,
+          responseTokensPerSecond,
+          tokensPerSecond: responseTokensPerSecond,
+        };
+      }),
     };
   }
 
@@ -470,18 +493,19 @@ export class GenerationMeasurementCoordinator {
 
 function toTerminalSessionSample(record: GenerationMeasurementRecordV1): TerminalSessionSample {
   const outputTokens = record.usage.outputTokens;
-  const generationDurationMs = record.timing.generationDurationMs;
+  const responseDurationMs = record.timing.requestWallMs;
+  // Durable history contains only source timing and usage, not persisted TPS.
+  // This deliberately re-derives legacy v1 records from request-wall timing.
   const measured = record.usage.tokenSource === "provider_final"
-    && record.timing.boundarySource === "content_delta_to_stream_end"
     && outputTokens !== null
-    && generationDurationMs !== null
-    && generationDurationMs > 0;
+    && responseDurationMs !== null
+    && responseDurationMs > 0;
   return {
     measurementId: record.measurementId,
     completedAt: record.completedAt ?? record.startedAt,
     role: record.identity.role,
     outputTokens,
-    generationDurationMs,
+    responseDurationMs,
     measured,
   };
 }
@@ -531,6 +555,7 @@ function emptyTiming(): GenerationMeasurementRecordV1["timing"] {
     firstOutputAt: null,
     lastOutputAt: null,
     requestWallMs: null,
+    responseThroughputDurationBasis: "request_wall_monotonic",
     timeToFirstOutputMs: null,
     responseStreamOpenMs: null,
     generationDurationMs: null,

@@ -877,12 +877,12 @@ export function SettingsGeneral({
       )}
 
       <SettingsSection
-        label="Conversation Throughput"
-        description="Control throughput shown in manager and worker conversations. Stats → Throughput continues collecting history while this display is hidden."
+        label="Conversation Response Throughput"
+        description="Control full-request response throughput shown in manager and worker conversations. Stats → Throughput continues collecting history while this display is hidden."
       >
         <SettingsWithCTA
-          label="Show throughput in conversations"
-          description="Show final Pi generation rates in manager headers, worker pills, and worker Quick Look. This browser preference applies immediately to Builder and Collaboration conversations."
+          label="Show response throughput in conversations"
+          description="Show final Pi response throughput in manager headers, worker pills, and worker Quick Look. This browser preference applies immediately to Builder and Collaboration conversations."
         >
           <Switch
             id="conversation-throughput-display-toggle"

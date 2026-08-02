@@ -24,4 +24,4 @@ Workers spawned from a specialist template show a colored badge with the special
 
 The session row itself shows a numbered amber ring when workers are actively streaming, telling you at a glance how many are running. If compaction or context recovery is also active, a violet pulsing `C` badge appears beside the worker-count badge. Hover the session in the sidebar for model and reasoning details.
 
-When **Show throughput in conversations** is enabled in **Settings → General**, eligible Pi-runtime worker pills and Quick Look reserve a stable `tok/s` cell. It shows a provider-final rate when available, otherwise `—`; live streamed text is never converted into an approximate rate. See **Generation Throughput** for the final-value and historical Stats behavior.
+When **Show response throughput in conversations** is enabled in **Settings → General**, eligible Pi-runtime worker pills and Quick Look reserve a stable `tok/s` cell. It shows a provider-final rate across the complete request when available, otherwise `—`; live streamed text is never converted into an approximate rate. See **Response Throughput** for the final-value and historical Stats behavior.

@@ -36,11 +36,11 @@ describe('GenerationThroughputPanel', () => {
     root = createRoot(container)
     flushSync(() => root?.render(createElement(GenerationThroughputPanel, { wsUrl: 'ws://127.0.0.1:47187', onBack: vi.fn(), activeTab: 'throughput', onTabChange: vi.fn() })))
 
-    expect(getByText(container, 'Provider output tok/s')).toBeTruthy()
+    expect(container.textContent).toContain('Response throughput')
     expect(getByText(container, 'Manager vs worker')).toBeTruthy()
     expect(getByText(container, 'Model performance trends')).toBeTruthy()
     expect(getByText(container, 'Model performance')).toBeTruthy()
-    expect(getByText(container, 'Recent generations')).toBeTruthy()
+    expect(getByText(container, 'Recent responses')).toBeTruthy()
     expect(container.textContent).toContain('Coverage note.')
     expect(container.textContent).toContain('provider-internal retries and Codex WebSocket replays are not timed as separate rates')
     await waitFor(() => expect(fetchCallsMock).toHaveBeenCalled())
@@ -95,7 +95,7 @@ describe('GenerationThroughputPanel', () => {
     useGenerationThroughputMock.mockReturnValue({ snapshot, isLoading: false, isRefreshing: false, isSwitchingQuery: false, error: null, refresh: vi.fn() })
     root = createRoot(container)
     flushSync(() => root?.render(createElement(GenerationThroughputPanel, { wsUrl: 'ws://127.0.0.1:47187', onBack: vi.fn() })))
-    expect(getByText(container, 'Throughput is available for generations recorded after this Forge update.')).toBeTruthy()
+    expect(getByText(container, 'Response throughput is available for generations with a complete request duration.')).toBeTruthy()
   })
 })
 
@@ -113,8 +113,11 @@ function recentCall(measurementId: string, sessionLabel: string) {
     modelId: 'gpt-test',
     provider: 'openai-codex',
     outputTokens: 100,
+    responseDurationMs: 3000,
+    responseThroughputDurationBasis: 'request_wall_monotonic',
+    responseTokensPerSecond: 100 / 3,
     generationDurationMs: 2000,
-    tokensPerSecond: 50,
+    tokensPerSecond: 100 / 3,
     quality: { boundarySource: 'content_delta_to_stream_end' },
   }
 }
@@ -122,8 +125,9 @@ function recentCall(measurementId: string, sessionLabel: string) {
 function fixture(): GenerationThroughputSnapshot {
   const metrics = {
     allCallCount: 3, terminalCallCount: 2, measuredCallCount: 1, incompleteCallCount: 1,
-    outputTokens: 100, generationDurationMs: 2000, weightedTokensPerSecond: 50,
-    p50TokensPerSecond: 50, p90TokensPerSecond: 50, p50TimeToFirstOutputMs: 100,
+    outputTokens: 100, responseDurationMs: 3000, generationDurationMs: 2000,
+    weightedResponseTokensPerSecond: 100 / 3, p50ResponseTokensPerSecond: 100 / 3, p90ResponseTokensPerSecond: 100 / 3,
+    weightedTokensPerSecond: 100 / 3, p50TokensPerSecond: 100 / 3, p90TokensPerSecond: 100 / 3, p50TimeToFirstOutputMs: 100,
     coverage: 0.5, timeToFirstOutputCoverage: 1, hiddenReasoningBoundaryCallCount: 1,
   }
   return {

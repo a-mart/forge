@@ -32,11 +32,12 @@ export interface GenerationThroughputCacheEntry {
 }
 
 export interface PersistedGenerationThroughputCache {
-  version: 1;
+  /** v2 rejects first-output-tail cache semantics and forces request-wall re-derivation. */
+  version: 2;
   entry: GenerationThroughputCacheEntry | null;
 }
 
-export const GENERATION_THROUGHPUT_CACHE_VERSION = 1 as const;
+export const GENERATION_THROUGHPUT_CACHE_VERSION = 2 as const;
 export const DEFAULT_GENERATION_CALLS_PAGE_LIMIT = 25;
 export const MAX_GENERATION_CALLS_PAGE_LIMIT = 100;
 export const MAX_GENERATION_MODEL_TABLE_ROWS = 100;

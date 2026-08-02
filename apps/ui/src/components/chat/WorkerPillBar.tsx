@@ -223,7 +223,7 @@ const WorkerPill = memo(function WorkerPill({
                 <span
                   data-worker-throughput
                   className="w-[42px] shrink-0 truncate whitespace-nowrap text-right tabular-nums text-emerald-700/80 dark:text-emerald-200/80"
-                  aria-label={displayedRate === null ? 'Final throughput unavailable' : `Final throughput ${formatThroughputRate(displayedRate)} tokens per second`}
+                  aria-label={displayedRate === null ? 'Final response throughput unavailable' : `Final response throughput ${formatThroughputRate(displayedRate)} tokens per second`}
                 >
                   {formatThroughputRate(displayedRate)} t/s
                 </span>

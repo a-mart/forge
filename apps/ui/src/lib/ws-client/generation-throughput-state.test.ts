@@ -27,6 +27,9 @@ function measurement(
     sampledAt: '2026-07-31T10:00:00.000Z',
     firstOutputAt: '2026-07-31T09:59:59.000Z',
     timeToFirstOutputMs: 1_000,
+    responseDurationMs: 1_000,
+    responseThroughputDurationBasis: 'request_wall_monotonic',
+    responseThroughputTokensPerSecond: null,
     elapsedGenerationMs: 1_000,
     outputTokens: null,
     instantaneousTokensPerSecond: null,
@@ -75,8 +78,9 @@ const legacySummary = {
   sessionAgentId: 'manager-1',
   window: 'last_20_terminal_generations' as const,
   measuredGenerationCount: 1,
+  weightedResponseTokensPerSecond: 40,
   weightedTokensPerSecond: 40,
-  samples: [{ completedAt: '2026-07-31T10:00:03.000Z', role: 'manager' as const, tokensPerSecond: 40 }],
+  samples: [{ completedAt: '2026-07-31T10:00:03.000Z', role: 'manager' as const, responseTokensPerSecond: 40, tokensPerSecond: 40 }],
 }
 
 describe('generation throughput WS reducer', () => {
@@ -130,6 +134,8 @@ describe('generation throughput WS reducer', () => {
       phase: 'completed',
       sampledAt: '2026-07-31T10:00:03.000Z',
       outputTokens: 100,
+      responseDurationMs: 2_000,
+      responseThroughputTokensPerSecond: 50,
       generationAverageTokensPerSecond: 50,
       valueKind: 'provider_final',
       quality: {
@@ -200,6 +206,7 @@ describe('generation throughput WS reducer', () => {
     const initial = state()
     const final = measurement({
       measurementId: 'pi-call', sequence: 2, phase: 'completed', outputTokens: 100,
+      responseDurationMs: 2_000, responseThroughputTokensPerSecond: 50,
       generationAverageTokensPerSecond: 50, valueKind: 'provider_final',
       quality: { ...measurement().quality, tokenSource: 'provider_final' },
     })
@@ -246,7 +253,7 @@ describe('generation throughput WS reducer', () => {
     const initial = state([agent(), piWorker])
     const final = measurement({
       measurementId: 'pi-worker-call', sequence: 2, agentId: piWorker.agentId, role: 'worker',
-      phase: 'completed', outputTokens: 100, generationAverageTokensPerSecond: 50,
+      phase: 'completed', outputTokens: 100, responseDurationMs: 2_000, responseThroughputTokensPerSecond: 50, generationAverageTokensPerSecond: 50,
       valueKind: 'provider_final', quality: { ...measurement().quality, tokenSource: 'provider_final' },
     })
     const piState = { ...initial, ...reduceGenerationThroughputEvent(initial, {

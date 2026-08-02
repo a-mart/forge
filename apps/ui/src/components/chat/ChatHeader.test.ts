@@ -25,6 +25,9 @@ const measurement: GenerationThroughputLiveMeasurement = {
   sampledAt: '2026-07-31T10:00:02.000Z',
   firstOutputAt: '2026-07-31T10:00:01.000Z',
   timeToFirstOutputMs: 1_000,
+  responseDurationMs: 2_000,
+  responseThroughputDurationBasis: 'request_wall_monotonic',
+  responseThroughputTokensPerSecond: 50,
   elapsedGenerationMs: 2_000,
   outputTokens: 100,
   instantaneousTokensPerSecond: null,
@@ -77,7 +80,7 @@ afterEach(() => {
   container.remove()
 })
 
-describe('ChatHeader generation throughput', () => {
+describe('ChatHeader response throughput', () => {
   it('renders only count and normalized current tool metadata for manager activity', () => {
     act(() => {
       root.render(createElement(ChatHeader, {

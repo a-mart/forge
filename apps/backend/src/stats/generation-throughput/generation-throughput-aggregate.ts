@@ -18,12 +18,17 @@ export function buildGenerationMetrics(
 ): GenerationThroughputMetrics {
   const terminal = coverageRecords.filter((record) => record.recordState === "terminal");
   const measured = records.filter(isMeasuredGeneration);
-  const rates = measured.map(tokensPerSecond).filter((value): value is number => value !== null);
+  const rates = measured.map(responseTokensPerSecond).filter((value): value is number => value !== null);
   const ttft = terminal
     .map((record) => record.timing.timeToFirstOutputMs)
     .filter((value): value is number => value !== null);
   const outputTokens = measured.reduce((sum, record) => sum + (record.usage.outputTokens ?? 0), 0);
+  const responseDurationMs = measured.reduce((sum, record) => sum + (record.timing.requestWallMs ?? 0), 0);
+  // Retain this output-tail sum as a diagnostic only; it never feeds a rate.
   const generationDurationMs = measured.reduce((sum, record) => sum + (record.timing.generationDurationMs ?? 0), 0);
+  const weightedResponseTokensPerSecond = responseDurationMs > 0 ? outputTokens * 1000 / responseDurationMs : null;
+  const p50ResponseTokensPerSecond = nearestRank(rates, 0.5);
+  const p90ResponseTokensPerSecond = nearestRank(rates, 0.9);
 
   return {
     allCallCount: coverageRecords.length,
@@ -31,10 +36,15 @@ export function buildGenerationMetrics(
     measuredCallCount: measured.length,
     incompleteCallCount: coverageRecords.length - terminal.length,
     outputTokens,
+    responseDurationMs,
     generationDurationMs,
-    weightedTokensPerSecond: generationDurationMs > 0 ? outputTokens * 1000 / generationDurationMs : null,
-    p50TokensPerSecond: nearestRank(rates, 0.5),
-    p90TokensPerSecond: nearestRank(rates, 0.9),
+    weightedResponseTokensPerSecond,
+    p50ResponseTokensPerSecond,
+    p90ResponseTokensPerSecond,
+    // Deprecated aliases preserve existing API consumers with corrected semantics.
+    weightedTokensPerSecond: weightedResponseTokensPerSecond,
+    p50TokensPerSecond: p50ResponseTokensPerSecond,
+    p90TokensPerSecond: p90ResponseTokensPerSecond,
     p50TimeToFirstOutputMs: nearestRank(ttft, 0.5),
     coverage: terminal.length > 0 ? measured.length / terminal.length : 0,
     timeToFirstOutputCoverage: terminal.length > 0 ? ttft.length / terminal.length : 0,
@@ -180,11 +190,19 @@ export function toGenerationCall(record: GenerationMeasurementRecord): Generatio
     requestedModelId: record.model.requestedModelId,
     responseModelId: record.model.responseModelId,
     modelId: record.effectiveModelId,
+    requestStartedAt: record.startedAt,
+    firstOutputAt: record.timing.firstOutputAt,
+    lastOutputAt: record.timing.lastOutputAt,
     outputTokens: record.usage.outputTokens,
     reasoningTokens: record.usage.reasoningTokens,
+    responseDurationMs: record.timing.requestWallMs,
+    responseThroughputDurationBasis: "request_wall_monotonic",
     generationDurationMs: record.timing.generationDurationMs,
+    outputSpanMs: record.timing.interOutputSpanMs,
     timeToFirstOutputMs: record.timing.timeToFirstOutputMs,
-    tokensPerSecond: tokensPerSecond(record),
+    responseTokensPerSecond: responseTokensPerSecond(record),
+    // Deprecated API alias retains the corrected request-wall result.
+    tokensPerSecond: responseTokensPerSecond(record),
     outcome: record.outcome,
     quality: {
       measurementScope: record.attempt?.measurementScope ?? "agent_model_call",
@@ -198,10 +216,13 @@ export function toGenerationCall(record: GenerationMeasurementRecord): Generatio
   };
 }
 
-export function tokensPerSecond(record: GenerationMeasurementRecord): number | null {
+export function responseTokensPerSecond(record: GenerationMeasurementRecord): number | null {
   if (!isMeasuredGeneration(record)) return null;
-  return record.usage.outputTokens! * 1000 / record.timing.generationDurationMs!;
+  return record.usage.outputTokens! * 1000 / record.timing.requestWallMs!;
 }
+
+/** @deprecated Use responseTokensPerSecond. This alias deliberately has request-wall semantics. */
+export const tokensPerSecond = responseTokensPerSecond;
 
 function nearestRank(values: number[], percentile: number): number | null {
   if (values.length === 0) return null;

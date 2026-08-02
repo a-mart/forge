@@ -26,6 +26,9 @@ function measurement(overrides: Partial<GenerationThroughputLiveMeasurement> = {
     sampledAt: '2026-07-31T10:00:02.000Z',
     firstOutputAt: null,
     timeToFirstOutputMs: null,
+    responseDurationMs: null,
+    responseThroughputDurationBasis: 'request_wall_monotonic',
+    responseThroughputTokensPerSecond: null,
     elapsedGenerationMs: null,
     outputTokens: null,
     instantaneousTokensPerSecond: null,
@@ -50,9 +53,12 @@ function finalMeasurement(overrides: Partial<GenerationThroughputLiveMeasurement
     sequence: 3,
     firstOutputAt: '2026-07-31T10:00:00.800Z',
     timeToFirstOutputMs: 800,
+    responseDurationMs: 3_000,
+    responseThroughputDurationBasis: 'request_wall_monotonic',
+    responseThroughputTokensPerSecond: 100 / 3,
     elapsedGenerationMs: 2_000,
     outputTokens: 100,
-    generationAverageTokensPerSecond: 50,
+    generationAverageTokensPerSecond: 100 / 3,
     valueKind: 'provider_final',
     quality: {
       measurementScope: 'agent_model_call',
@@ -105,12 +111,14 @@ describe('ThroughputPulse', () => {
 
     const trigger = container.querySelector('[data-testid="throughput-pulse"]') as HTMLButtonElement
     expect(trigger.dataset.throughputState).toBe('final')
-    expect(trigger.textContent).toContain('50')
+    expect(trigger.textContent).toContain('33')
     expect(trigger.textContent).not.toContain('≈')
     act(() => trigger.click())
 
-    expect(document.body.textContent).toContain('Latest final TPS')
-    expect(document.body.textContent).toContain('50 tok/s · final')
+    expect(document.body.textContent).toContain('Latest response TPS')
+    expect(document.body.textContent).toContain('33 tok/s · final')
+    expect(document.body.textContent).toContain('Request duration')
+    expect(document.body.textContent).toContain('3.0 s')
     expect(document.body.textContent).toContain('TTFT')
     expect(document.body.textContent).toContain('0.8 s')
     expect(document.body.textContent).toContain('Output tokens')
@@ -129,7 +137,7 @@ describe('ThroughputPulse', () => {
     })
     let trigger = container.querySelector('[data-testid="throughput-pulse"]') as HTMLButtonElement
     expect(trigger.dataset.throughputState).toBe('generating')
-    expect(trigger.textContent).toContain('50')
+    expect(trigger.textContent).toContain('33')
     expect(container.querySelector('[data-throughput-value]')?.className).toContain('opacity-55')
 
     render({
@@ -143,7 +151,7 @@ describe('ThroughputPulse', () => {
     })
     render({ latestFinal: completed })
     trigger = container.querySelector('[data-testid="throughput-pulse"]') as HTMLButtonElement
-    expect(trigger.textContent).toContain('50')
+    expect(trigger.textContent).toContain('33')
     expect(trigger.textContent).not.toContain('Measuring')
   })
 
@@ -152,8 +160,8 @@ describe('ThroughputPulse', () => {
     expect(container.textContent).not.toContain('≈')
 
     render({ measurement: finalMeasurement({ measurementId: 'short-call', elapsedGenerationMs: 100 }) })
-    expect(container.textContent).toContain('50')
+    expect(container.textContent).toContain('33')
     expect(container.textContent).not.toContain('≈')
-    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe('Final generation throughput 50 tokens per second.')
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe('Final response throughput 33 tokens per second.')
   })
 })

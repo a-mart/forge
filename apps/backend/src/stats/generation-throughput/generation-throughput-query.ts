@@ -112,16 +112,21 @@ export function matchesQuality(record: GenerationMeasurementRecord, quality: Gen
   return quality === "all_measured" || isStrictGeneration(record);
 }
 
+/**
+ * A measured response needs provider-final output and a complete monotonic
+ * request-start → terminal duration. Output boundaries stay diagnostic only:
+ * hidden reasoning, buffered tool calls, and batched deltas must not shorten
+ * or exclude the primary response-throughput measurement.
+ */
 export function isMeasuredGeneration(record: GenerationMeasurementRecord): boolean {
   return record.recordState === "terminal"
     && record.usage.tokenSource === "provider_final"
-    && record.timing.boundarySource !== "unavailable"
-    && record.timing.firstOutputAt !== null
-    && record.timing.generationDurationMs !== null
-    && record.timing.generationDurationMs > 0
+    && record.timing.requestWallMs !== null
+    && record.timing.requestWallMs > 0
     && record.usage.outputTokens !== null;
 }
 
+/** @deprecated Retained for query compatibility; it only filters the output-boundary diagnostic. */
 export function isStrictGeneration(record: GenerationMeasurementRecord): boolean {
   return isMeasuredGeneration(record) && record.timing.boundarySource === "content_delta_to_stream_end";
 }

@@ -257,14 +257,15 @@ export const chatArticles: HelpArticle[] = [
   },
   {
     id: 'chat-throughput',
-    title: 'Generation Throughput',
+    title: 'Response Throughput',
     category: 'chat',
-    summary: 'Understand final Pi generation throughput and the Stats Throughput history.',
+    summary: 'Understand final Pi response throughput across full requests and the Stats Throughput history.',
     content: chatThroughputContent,
     keywords: [
       'throughput',
+      'response throughput',
+      'full request duration',
       'generation throughput',
-      'generation rate',
       'tok/s',
       'tokens per second',
       'provider final',

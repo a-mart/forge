@@ -5,6 +5,7 @@ import type {
   GenerationOutcome,
   GenerationReasoningBoundaryCoverage,
   GenerationTokenSource,
+  ResponseThroughputDurationBasis,
 } from "@forge/protocol";
 
 export const GENERATION_MEASUREMENT_ENTRY_TYPE = "swarm_generation_measurement";
@@ -31,6 +32,9 @@ const REASONING_BOUNDARY_COVERAGE = new Set<GenerationReasoningBoundaryCoverage>
   "observed",
   "hidden_or_unobserved",
   "not_reported",
+]);
+const RESPONSE_THROUGHPUT_DURATION_BASES = new Set<ResponseThroughputDurationBasis>([
+  "request_wall_monotonic",
 ]);
 
 export interface GenerationMeasurementRecordSource {
@@ -287,6 +291,7 @@ function parseTiming(value: unknown): GenerationMeasurementRecordV1["timing"] | 
   const firstOutputAt = readNullableIsoTimestamp(object.firstOutputAt);
   const lastOutputAt = readNullableIsoTimestamp(object.lastOutputAt);
   const requestWallMs = readNullableNonNegativeFiniteNumber(object.requestWallMs);
+  const responseThroughputDurationBasis = readOptionalResponseThroughputDurationBasis(object.responseThroughputDurationBasis);
   const timeToFirstOutputMs = readNullableNonNegativeFiniteNumber(object.timeToFirstOutputMs);
   const responseStreamOpenMs = readNullableNonNegativeFiniteNumber(object.responseStreamOpenMs);
   const generationDurationMs = readNullableNonNegativeFiniteNumber(object.generationDurationMs);
@@ -297,6 +302,7 @@ function parseTiming(value: unknown): GenerationMeasurementRecordV1["timing"] | 
     firstOutputAt === undefined ||
     lastOutputAt === undefined ||
     requestWallMs === undefined ||
+    responseThroughputDurationBasis === null ||
     timeToFirstOutputMs === undefined ||
     responseStreamOpenMs === undefined ||
     generationDurationMs === undefined ||
@@ -310,6 +316,7 @@ function parseTiming(value: unknown): GenerationMeasurementRecordV1["timing"] | 
     firstOutputAt,
     lastOutputAt,
     requestWallMs,
+    ...(responseThroughputDurationBasis ? { responseThroughputDurationBasis } : {}),
     timeToFirstOutputMs,
     responseStreamOpenMs,
     generationDurationMs,
@@ -364,6 +371,16 @@ function readBoundarySource(value: unknown): GenerationBoundarySource | null {
 function readReasoningBoundaryCoverage(value: unknown): GenerationReasoningBoundaryCoverage | null {
   return typeof value === "string" && REASONING_BOUNDARY_COVERAGE.has(value as GenerationReasoningBoundaryCoverage)
     ? value as GenerationReasoningBoundaryCoverage
+    : null;
+}
+
+/** undefined is the valid v1 compatibility path; no alternative basis is accepted. */
+function readOptionalResponseThroughputDurationBasis(
+  value: unknown,
+): ResponseThroughputDurationBasis | undefined | null {
+  if (value === undefined) return undefined;
+  return typeof value === "string" && RESPONSE_THROUGHPUT_DURATION_BASES.has(value as ResponseThroughputDurationBasis)
+    ? value as ResponseThroughputDurationBasis
     : null;
 }
 

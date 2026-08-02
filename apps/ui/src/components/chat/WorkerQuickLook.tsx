@@ -322,7 +322,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
           data-worker-throughput-row
           className="flex h-7 shrink-0 items-center justify-between border-b border-border/50 px-3 text-[11px] text-muted-foreground"
         >
-          <span>Latest final throughput</span>
+          <span>Latest final response throughput</span>
           <span className="w-[72px] truncate whitespace-nowrap text-right tabular-nums text-foreground">
             {formatThroughputRate(displayedRate)} tok/s
           </span>

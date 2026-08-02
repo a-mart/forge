@@ -1,10 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { GenerationMeasurementRecordV1 } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildGenerationMetrics } from "../stats/generation-throughput/generation-throughput-aggregate.js";
 import { persistGenerationThroughputCache } from "../stats/generation-throughput/generation-throughput-cache.js";
+import type { GenerationMeasurementRecord } from "../stats/generation-throughput/generation-throughput-types.js";
 import { GenerationThroughputService } from "../stats/generation-throughput-service.js";
+import { getSharedGenerationThroughputCachePath } from "../swarm/data-paths.js";
 
 const tempDirs: string[] = [];
 const services: GenerationThroughputService[] = [];
@@ -36,10 +39,15 @@ describe("GenerationThroughputService", () => {
       measuredCallCount: 2,
       incompleteCallCount: 1,
       outputTokens: 150,
+      responseDurationMs: 6000,
+      // Output-tail diagnostics remain available but do not drive TPS.
       generationDurationMs: 3000,
-      weightedTokensPerSecond: 50,
-      p50TokensPerSecond: 50,
-      p90TokensPerSecond: 50,
+      weightedResponseTokensPerSecond: 25,
+      p50ResponseTokensPerSecond: 50 / 3,
+      p90ResponseTokensPerSecond: 100 / 3,
+      weightedTokensPerSecond: 25,
+      p50TokensPerSecond: 50 / 3,
+      p90TokensPerSecond: 100 / 3,
       p50TimeToFirstOutputMs: 100,
       coverage: 1,
       timeToFirstOutputCoverage: 1,
@@ -63,8 +71,8 @@ describe("GenerationThroughputService", () => {
 
     const calls = await service.getCallsPage({ rangePreset: "all", timezone: "UTC", quality: "all_measured", limit: 1 });
     expect(calls.totalCount).toBe(2);
-    expect(calls.items.map((call) => [call.measurementId, call.role, call.tokensPerSecond])).toEqual([
-      ["worker-call", "worker", 50],
+    expect(calls.items.map((call) => [call.measurementId, call.role, call.responseDurationMs, call.responseTokensPerSecond])).toEqual([
+      ["worker-call", "worker", 3000, 50 / 3],
     ]);
     expect(calls.nextCursor).toEqual(expect.any(String));
     const nextCalls = await service.getCallsPage({
@@ -72,6 +80,52 @@ describe("GenerationThroughputService", () => {
     });
     expect(nextCalls.items.map((call) => call.measurementId)).toEqual(["manager-call"]);
     expect(nextCalls.nextCursor).toBeNull();
+  });
+
+  it("derives historical weighted, p50, and p90 response throughput from request-wall timing", () => {
+    const records = [
+      toMeasurementRecord(record({
+        measurementId: "anomaly-49", role: "manager", outputTokens: 390, durationMs: 72.339,
+        requestWallMs: 7_959.446, completedAt: "2026-04-02T00:00:03.000Z", provider: "openai-codex",
+        modelId: "gpt-test", boundarySource: "content_delta_to_stream_end",
+      })),
+      toMeasurementRecord(record({
+        measurementId: "anomaly-26", role: "worker", outputTokens: 407, durationMs: 786,
+        requestWallMs: 15_786, completedAt: "2026-04-02T00:00:20.000Z", provider: "anthropic",
+        modelId: "claude-test", boundarySource: "response_stream_proxy",
+      })),
+      // Provider output alone cannot rescue a missing/zero full-request duration.
+      toMeasurementRecord(record({
+        measurementId: "legacy-no-request-duration", role: "manager", outputTokens: 10, durationMs: 1,
+        requestWallMs: 0, completedAt: "2026-04-02T00:00:30.000Z", provider: "openai-codex",
+        modelId: "gpt-test", boundarySource: "content_delta_to_stream_end",
+      })),
+    ];
+
+    const metrics = buildGenerationMetrics(records);
+    expect(metrics.measuredCallCount).toBe(2);
+    expect(metrics.weightedResponseTokensPerSecond).toBeCloseTo(33.6, 1);
+    expect(metrics.p50ResponseTokensPerSecond).toBeCloseTo(25.8, 1);
+    expect(metrics.p90ResponseTokensPerSecond).toBeCloseTo(49.0, 1);
+    expect(metrics.weightedTokensPerSecond).toBe(metrics.weightedResponseTokensPerSecond);
+    // A first-output tail would have incorrectly reported roughly 5,391 tok/s.
+    expect(metrics.p90ResponseTokensPerSecond).toBeLessThan(100);
+  });
+
+  it("rejects persisted v1 first-output cache entries and rescans request-wall records", async () => {
+    const dataDir = await createFixtureData();
+    const cachePath = getSharedGenerationThroughputCachePath(dataDir);
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, JSON.stringify({
+      version: 1,
+      entry: { expiresAt: Date.now() + 60_000, result: scanFixture("legacy-tail-cache") },
+    }), "utf8");
+    const scanProfiles = vi.fn(async () => scanFixture("request-wall-rescan"));
+    const service = createService(createSwarmManager(dataDir), { scanProfiles: scanProfiles as never });
+
+    await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "all" });
+
+    expect(scanProfiles).toHaveBeenCalledOnce();
   });
 
   it("does not restore an invalidated cache from an older in-flight scan", async () => {
@@ -120,7 +174,8 @@ describe("GenerationThroughputService", () => {
     const strict = await service.getSnapshot({ rangePreset: "all", timezone: "UTC", quality: "strict" });
     expect(strict.totals.measuredCallCount).toBe(1);
     expect(strict.totals.outputTokens).toBe(100);
-    expect(strict.totals.weightedTokensPerSecond).toBe(50);
+    expect(strict.totals.weightedResponseTokensPerSecond).toBe(100 / 3);
+    expect(strict.totals.weightedTokensPerSecond).toBe(100 / 3);
 
     await expect(service.getSnapshot({ rangePreset: "custom", timezone: "UTC" })).rejects.toMatchObject({
       statusCode: 400,
@@ -226,6 +281,7 @@ function record(input: {
   state?: "started" | "terminal";
   outputTokens: number | null;
   durationMs: number | null;
+  requestWallMs?: number;
   completedAt: string | null;
   provider: string;
   modelId: string;
@@ -256,7 +312,7 @@ function record(input: {
       responseStreamStartedAt: isTerminal ? "2026-04-02T00:00:00.050Z" : null,
       firstOutputAt: isTerminal ? "2026-04-02T00:00:01.000Z" : null,
       lastOutputAt: isTerminal ? "2026-04-02T00:00:02.000Z" : null,
-      requestWallMs: isTerminal ? 3000 : null,
+      requestWallMs: isTerminal ? input.requestWallMs ?? 3000 : null,
       timeToFirstOutputMs: isTerminal ? 100 : null,
       responseStreamOpenMs: isTerminal ? 2950 : null,
       generationDurationMs: input.durationMs,
@@ -266,6 +322,19 @@ function record(input: {
     usage: { outputTokens: input.outputTokens, reasoningTokens: null, tokenSource: isTerminal ? "provider_final" : "unavailable" },
     outcome: isTerminal ? "completed" : "aborted",
     reasoningBoundaryCoverage: "not_reported",
+  };
+}
+
+function toMeasurementRecord(record: GenerationMeasurementRecordV1): GenerationMeasurementRecord {
+  return {
+    ...record,
+    completedAtMs: record.completedAt ? Date.parse(record.completedAt) : null,
+    effectiveModelId: record.model.responseModelId ?? record.model.requestedModelId,
+    attributionKind: record.identity.role === "worker" ? "ad_hoc" : "unknown",
+    profileDisplayName: record.identity.profileId,
+    sessionLabel: record.identity.sessionId,
+    specialistDisplayName: null,
+    specialistColor: null,
   };
 }
 

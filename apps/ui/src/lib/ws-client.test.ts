@@ -6845,6 +6845,9 @@ describe('ManagerWsClient', () => {
       sampledAt: '2026-08-01T10:00:02.000Z',
       firstOutputAt: '2026-08-01T10:00:01.000Z',
       timeToFirstOutputMs: 1_000,
+      responseDurationMs: 1_000,
+      responseThroughputDurationBasis: 'request_wall_monotonic' as const,
+      responseThroughputTokensPerSecond: 100,
       elapsedGenerationMs: 1_000,
       outputTokens: 100,
       instantaneousTokensPerSecond: null,
@@ -6926,8 +6929,9 @@ describe('ManagerWsClient', () => {
       sessionAgentId: 'manager',
       window: 'last_20_terminal_generations' as const,
       measuredGenerationCount: 1,
+      weightedResponseTokensPerSecond: 40,
       weightedTokensPerSecond: 40,
-      samples: [{ completedAt: '2026-07-31T10:00:02.000Z', role: 'manager' as const, tokensPerSecond: 40 }],
+      samples: [{ completedAt: '2026-07-31T10:00:02.000Z', role: 'manager' as const, responseTokensPerSecond: 40, tokensPerSecond: 40 }],
     }
     const liveMeasurement = {
       measurementId: 'call-1',
@@ -6942,6 +6946,9 @@ describe('ManagerWsClient', () => {
       modelId: 'gpt-5.5',
       sampledAt: '2026-07-31T10:00:01.000Z',
       firstOutputAt: '2026-07-31T10:00:00.000Z',
+      responseDurationMs: 1_000,
+      responseThroughputDurationBasis: 'request_wall_monotonic' as const,
+      responseThroughputTokensPerSecond: null,
       elapsedGenerationMs: 1_000,
       outputTokens: null,
       instantaneousTokensPerSecond: null,
@@ -6978,6 +6985,8 @@ describe('ManagerWsClient', () => {
         sequence: 3,
         phase: 'completed',
         sampledAt: '2026-07-31T10:00:02.000Z',
+        responseDurationMs: 2_000,
+        responseThroughputTokensPerSecond: 50,
         instantaneousTokensPerSecond: null,
         generationAverageTokensPerSecond: 50,
         outputTokens: 100,
@@ -6996,11 +7005,11 @@ describe('ManagerWsClient', () => {
     })
     vi.advanceTimersByTime(5_000)
     expect(client.getState().generationThroughputByAgentId).toEqual({})
-    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.generationAverageTokensPerSecond).toBe(50)
+    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.responseThroughputTokensPerSecond).toBe(50)
 
     socket.close()
     expect(client.getState().generationThroughputByAgentId).toEqual({})
-    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.generationAverageTokensPerSecond).toBe(50)
+    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.responseThroughputTokensPerSecond).toBe(50)
     client.destroy()
   })
 })
