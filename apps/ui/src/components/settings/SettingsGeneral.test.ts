@@ -47,6 +47,7 @@ vi.mock('@/lib/sidebar-prefs', () => ({
   storeSidebarProviderUsagePref: (v: boolean) => sidebarPrefsMock.storeSidebarProviderUsagePref(v),
   readConversationThroughputDisplayPref: () => sidebarPrefsMock.readConversationThroughputDisplayPref(),
   storeConversationThroughputDisplayPref: (v: boolean) => sidebarPrefsMock.storeConversationThroughputDisplayPref(v),
+  CONVERSATION_THROUGHPUT_DISPLAY_KEY: 'forge-conversation-throughput-display',
   PREFERENCE_CHANGE_EVENT: 'forge-sidebar-pref-change',
 }))
 

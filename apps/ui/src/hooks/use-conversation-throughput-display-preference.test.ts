@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 
 import { act, createElement } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CONVERSATION_THROUGHPUT_DISPLAY_KEY,
@@ -65,6 +66,27 @@ describe('useConversationThroughputDisplayPreference', () => {
       root.render(createElement(PreferenceHarness, { id: 'preference' }))
     })
 
+    expect(container.querySelector('[data-testid="preference"]')?.getAttribute('data-enabled')).toBe('true')
+  })
+
+  it('hydrates a stored enabled preference without a recoverable SSR mismatch', async () => {
+    localStorage.setItem(CONVERSATION_THROUGHPUT_DISPLAY_KEY, 'true')
+    const serverMarkup = renderToString(createElement(PreferenceHarness, { id: 'preference' }))
+    expect(serverMarkup).toContain('data-enabled="false"')
+
+    act(() => root.unmount())
+    container.innerHTML = serverMarkup
+    const onRecoverableError = vi.fn()
+    act(() => {
+      root = hydrateRoot(container, createElement(PreferenceHarness, { id: 'preference' }), {
+        onRecoverableError,
+      })
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(onRecoverableError).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="preference"]')?.getAttribute('data-enabled')).toBe('true')
   })
 
