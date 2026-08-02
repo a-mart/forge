@@ -113,6 +113,10 @@ export interface GenerationMeasurementRecordV1 {
 
   outcome: GenerationOutcome;
   reasoningBoundaryCoverage: GenerationReasoningBoundaryCoverage;
+  /**
+   * Legacy records may contain a local character-based estimate. New producers
+   * never write it: provider-final output usage is the sole TPS authority.
+   */
   estimator?: {
     method: "characters_div_4_v1";
     estimatedOutputTokens: number;
@@ -132,10 +136,16 @@ export interface GenerationThroughputLiveMeasurement {
   modelId: string;
   sampledAt: string;
   firstOutputAt: string | null;
+  /** Additive terminal/live detail for the header popover; absent from older senders. */
+  timeToFirstOutputMs?: number | null;
   elapsedGenerationMs: number | null;
+  /** Null until provider-final output usage is available. */
   outputTokens: number | null;
+  /** @deprecated Live estimates are no longer produced; this is always null from current producers. */
   instantaneousTokensPerSecond: number | null;
+  /** Null while active; completed provider-final measurements carry the exact TPS. */
   generationAverageTokensPerSecond: number | null;
+  /** `estimated` remains readable for older senders but current producers never emit it. */
   valueKind: "estimated" | "provider_final" | "unavailable";
   quality: GenerationMeasurementQuality;
 }

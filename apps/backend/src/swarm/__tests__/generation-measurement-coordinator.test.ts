@@ -152,7 +152,6 @@ describe("GenerationMeasurementCoordinator", () => {
         tokenSource: "provider_final",
       },
       reasoningBoundaryCoverage: "hidden_or_unobserved",
-      estimator: { method: "characters_div_4_v1", estimatedOutputTokens: 3 },
     });
   });
 
@@ -203,14 +202,14 @@ describe("GenerationMeasurementCoordinator", () => {
       ]));
   });
 
-  it("publishes bounded cumulative live events and a token-weighted session ring without content", async () => {
+  it("publishes lifecycle-only live events while preserving final and weighted-session formulas", async () => {
     const { coordinator, liveEvents } = createCoordinator([descriptor()]);
 
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("request_started", "live-call", 0));
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_000, {
       deltaUtf16CodeUnits: 32,
     }));
-    // High-frequency deltas update the estimator, but do not exceed two progress events/second.
+    // Later deltas update timing boundaries only; no streamed text is tokenized.
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_100, {
       deltaUtf16CodeUnits: 32,
     }));
@@ -224,20 +223,22 @@ describe("GenerationMeasurementCoordinator", () => {
     expect(liveEvents.map((liveEvent) => liveEvent.measurement.phase)).toEqual([
       "starting",
       "generating",
-      "generating",
       "completed",
     ]);
-    expect(liveEvents[2]?.measurement).toMatchObject({
-      sequence: 3,
-      valueKind: "estimated",
-      outputTokens: 24,
-      instantaneousTokensPerSecond: expect.any(Number),
+    expect(liveEvents[1]?.measurement).toMatchObject({
+      sequence: 2,
+      valueKind: "unavailable",
+      outputTokens: null,
+      instantaneousTokensPerSecond: null,
+      generationAverageTokensPerSecond: null,
     });
-    expect(liveEvents[3]).toMatchObject({
+    expect(liveEvents[2]).toMatchObject({
       measurement: expect.objectContaining({
         phase: "completed",
-        sequence: 4,
+        sequence: 3,
         valueKind: "provider_final",
+        outputTokens: 100,
+        timeToFirstOutputMs: 1_000,
         generationAverageTokensPerSecond: 50,
         instantaneousTokensPerSecond: null,
       }),
@@ -248,6 +249,7 @@ describe("GenerationMeasurementCoordinator", () => {
       }),
     });
     expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
+    expect(JSON.stringify(liveEvents)).not.toContain("characters_div_4_v1");
 
     const snapshot = await coordinator.getSnapshot("manager-1");
     expect(snapshot.measurements).toEqual([]);

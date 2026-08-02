@@ -1995,11 +1995,7 @@ export class ManagerWsClient {
       .filter((agent) => !nextAgentIds.has(agent.agentId))
       .map((agent) => agent.agentId)
     const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
-    const removedSessionSummary = this.state.generationThroughputSessionSummary
-      && removedAgentIds.includes(this.state.generationThroughputSessionSummary.sessionAgentId)
-      ? { generationThroughputSessionSummary: null }
-      : {}
-    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+    const patch = { ...result.patch, ...throughputCleanup }
 
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({
@@ -2058,10 +2054,7 @@ export class ManagerWsClient {
     }
 
     const throughputCleanup = clearGenerationThroughputForAgents(this.state, result.deletedAgentIds)
-    const removedSessionSummary = this.state.generationThroughputSessionSummary?.sessionAgentId === managerId
-      ? { generationThroughputSessionSummary: null }
-      : {}
-    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+    const patch = { ...result.patch, ...throughputCleanup }
 
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({
@@ -2099,10 +2092,7 @@ export class ManagerWsClient {
       .filter((agent) => agent.agentId === agentId || agent.managerId === agentId)
       .map((agent) => agent.agentId)
     const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
-    const removedSessionSummary = this.state.generationThroughputSessionSummary?.sessionAgentId === agentId
-      ? { generationThroughputSessionSummary: null }
-      : {}
-    const patch = { ...result.patch, ...throughputCleanup, ...removedSessionSummary }
+    const patch = { ...result.patch, ...throughputCleanup }
 
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({

@@ -9,6 +9,7 @@ import type {
   AgentStatus,
   GenerationThroughputLiveMeasurement,
 } from '@forge/protocol'
+import { finalThroughputRate } from './throughput-final'
 import { formatThroughputRate } from './throughput-format'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import {
@@ -30,6 +31,7 @@ interface WorkerQuickLookProps {
   onViewFullConversation: () => void
   streamingStartedAt?: number
   throughput?: GenerationThroughputLiveMeasurement
+  latestFinal?: GenerationThroughputLiveMeasurement
 }
 
 type QuickLookEntry =
@@ -203,6 +205,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   onViewFullConversation,
   streamingStartedAt,
   throughput,
+  latestFinal,
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -272,10 +275,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
-  const estimatedRate = throughput?.phase === 'generating' && throughput.valueKind === 'estimated'
-    ? throughput.instantaneousTokensPerSecond
-    : null
-  const callAverage = throughput?.generationAverageTokensPerSecond ?? null
+  const displayedRate = finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
   const statusText =
     status === 'streaming'
       ? 'Working'
@@ -303,14 +303,17 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
         <span className="shrink-0 text-[10px] text-muted-foreground">
           {statusText}
           {elapsedLabel ? <span className="tabular-nums"> · {elapsedLabel}</span> : null}
-          {estimatedRate !== null ? <span className="tabular-nums"> · ≈{formatThroughputRate(estimatedRate)} t/s</span> : null}
         </span>
       </div>
-      {estimatedRate !== null && callAverage !== null ? (
-        <div className="shrink-0 border-b border-border/50 px-3 pb-2 text-[11px] text-muted-foreground">
-          Now (estimated) ≈{formatThroughputRate(estimatedRate)} tok/s · Call avg ≈{formatThroughputRate(callAverage)} tok/s
-        </div>
-      ) : null}
+      <div
+        data-worker-throughput-row
+        className="flex h-7 shrink-0 items-center justify-between border-b border-border/50 px-3 text-[11px] text-muted-foreground"
+      >
+        <span>Latest final throughput</span>
+        <span className="w-[72px] truncate whitespace-nowrap text-right tabular-nums text-foreground">
+          {formatThroughputRate(displayedRate)} tok/s
+        </span>
+      </div>
 
       {/* Activity feed */}
       <div

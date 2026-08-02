@@ -19,6 +19,7 @@ import type {
   GenerationThroughputLiveMeasurement,
 } from '@forge/protocol'
 import { WorkerQuickLook } from './WorkerQuickLook'
+import { finalThroughputRate } from './throughput-final'
 import { formatThroughputRate } from './throughput-format'
 import { WorkerHighlightOutline } from './WorkGraphWorkerHighlight'
 
@@ -29,6 +30,7 @@ interface WorkerPillBarProps {
   statuses: Record<string, { status: AgentStatus; streamingStartedAt?: number }>
   activityMessages: AgentActivityEntry[]
   generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
+  generationThroughputLatestFinalByAgentId?: Record<string, GenerationThroughputLiveMeasurement>
   onNavigateToWorker: (agentId: string) => void
 }
 
@@ -97,12 +99,14 @@ const WorkerPill = memo(function WorkerPill({
   tick,
   workerActivity,
   throughput,
+  latestFinal,
   onNavigateToWorker,
 }: {
   entry: PillEntry
   tick: number
   workerActivity: AgentActivityEntry[]
   throughput?: GenerationThroughputLiveMeasurement
+  latestFinal?: GenerationThroughputLiveMeasurement
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -145,9 +149,7 @@ const WorkerPill = memo(function WorkerPill({
       ? `${modelId} · ${thinkingLevel}`
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
-  const estimatedRate = throughput?.phase === 'generating' && throughput.valueKind === 'estimated'
-    ? throughput.instantaneousTokensPerSecond
-    : null
+  const displayedRate = finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
 
   const handlePopoverOpenChange = useCallback((open: boolean) => {
     setPopoverOpen(open)
@@ -190,7 +192,7 @@ const WorkerPill = memo(function WorkerPill({
                 <WorkerHighlightOutline workerId={worker.agentId} className="rounded-full" />
               ) : null}
               {/* Fix #4: Subtle pulse instead of aggressive ping */}
-              <span className="relative inline-flex size-2 animate-pulse rounded-full bg-emerald-500" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse motion-reduce:animate-none" />
 
               {/* Worker name */}
               <span className="truncate">{truncatedName}</span>
@@ -199,9 +201,13 @@ const WorkerPill = memo(function WorkerPill({
               <span className="tabular-nums text-emerald-600/60 dark:text-emerald-400/60">
                 {elapsedLabel}
               </span>
-              {estimatedRate !== null ? (
-                <span className="tabular-nums text-emerald-700/80 dark:text-emerald-200/80">≈{formatThroughputRate(estimatedRate)} t/s</span>
-              ) : null}
+              <span
+                data-worker-throughput
+                className="w-[42px] shrink-0 truncate whitespace-nowrap text-right tabular-nums text-emerald-700/80 dark:text-emerald-200/80"
+                aria-label={displayedRate === null ? 'Final throughput unavailable' : `Final throughput ${formatThroughputRate(displayedRate)} tokens per second`}
+              >
+                {formatThroughputRate(displayedRate)} t/s
+              </span>
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -234,6 +240,7 @@ const WorkerPill = memo(function WorkerPill({
           onViewFullConversation={handleViewConversation}
           streamingStartedAt={entry.streamingStartedAt}
           throughput={throughput}
+          latestFinal={latestFinal}
         />
       </PopoverContent>
     </Popover>
@@ -247,6 +254,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   statuses,
   activityMessages,
   generationThroughputByAgentId = {},
+  generationThroughputLatestFinalByAgentId = {},
   onNavigateToWorker,
 }: WorkerPillBarProps) {
   const [tick, setTick] = useState(0)
@@ -429,6 +437,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
                 tick={tick}
                 workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
                 throughput={generationThroughputByAgentId[entry.worker.agentId]}
+                latestFinal={generationThroughputLatestFinalByAgentId[entry.worker.agentId]}
                 onNavigateToWorker={onNavigateToWorker}
               />
             ))}

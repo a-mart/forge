@@ -18,14 +18,12 @@ import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { ModelCacheHeaderIndicator } from '@/components/chat/model-cache'
 import type { ModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { ThroughputPulse } from '@/components/chat/ThroughputPulse'
-import type { GenerationRateSample } from '@/lib/ws-state'
 import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
 import type {
   AgentStatus,
   AgentSessionPurpose,
   GenerationThroughputLiveMeasurement,
-  GenerationThroughputSessionSummary,
 } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
@@ -56,10 +54,11 @@ interface ChatHeaderProps {
   onOpenSessionAudit?: () => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
   modelCacheHeaderSummary?: ModelCacheHeaderSummary | null
+  /** Local Pi runtime makes the manager telemetry shell eligible. */
+  generationThroughputEligible?: boolean
   /** Local Builder-only generation telemetry for the active manager. */
   generationThroughput?: GenerationThroughputLiveMeasurement
-  generationRateSamples?: GenerationRateSample[]
-  generationThroughputSessionSummary?: GenerationThroughputSessionSummary | null
+  generationThroughputLatestFinal?: GenerationThroughputLiveMeasurement
   compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
@@ -177,9 +176,9 @@ export function ChatHeader({
   onOpenSessionAudit,
   contextWindowUsage,
   modelCacheHeaderSummary,
+  generationThroughputEligible = false,
   generationThroughput,
-  generationRateSamples,
-  generationThroughputSessionSummary,
+  generationThroughputLatestFinal,
   compactionCount,
   showCompact,
   compactInProgress,
@@ -354,11 +353,11 @@ export function ChatHeader({
             {statusLabel}
             {durationLabel ? <span className="tabular-nums"> · {durationLabel}</span> : null}
           </span>
-          {activeAgentRole === 'manager' ? (
+          {activeAgentRole === 'manager' && generationThroughputEligible ? (
             <ThroughputPulse
+              key={activeAgentId ?? 'manager-throughput'}
               measurement={generationThroughput}
-              samples={generationRateSamples}
-              sessionSummary={generationThroughputSessionSummary}
+              latestFinal={generationThroughputLatestFinal}
             />
           ) : null}
           {activeAgentId && onSessionFeedbackVote ? (

@@ -3,7 +3,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
+import type { AgentDescriptor, ConversationEntry, GenerationThroughputLiveMeasurement } from '@forge/protocol'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import { WorkerPillBar } from './WorkerPillBar'
 
@@ -57,7 +57,10 @@ afterEach(() => {
   container.remove()
 })
 
-function render(activityMessages: AgentActivityEntry[]) {
+function render(
+  activityMessages: AgentActivityEntry[],
+  generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>,
+) {
   act(() => {
     root.render(createElement(WorkerPillBar, {
       workers: [worker],
@@ -68,6 +71,7 @@ function render(activityMessages: AgentActivityEntry[]) {
         },
       },
       activityMessages,
+      generationThroughputByAgentId,
       onNavigateToWorker,
     }))
   })
@@ -129,6 +133,54 @@ describe('WorkerPillBar quick look', () => {
     expect(getEntryCount()).toBe(65)
     expect(document.body.textContent).toContain('Initial 0')
     expect(document.body.textContent).toContain('Live 34')
+  })
+
+  it('reserves final-only throughput geometry in the pill and Quick Look', () => {
+    render([replayedSummary])
+    const pill = getPill()
+    const emptyCell = pill.querySelector('[data-worker-throughput]')
+    expect(emptyCell?.textContent).toContain('— t/s')
+    expect(emptyCell?.className).toContain('w-[42px]')
+    expect(pill.textContent).not.toContain('≈')
+
+    render([replayedSummary], {
+      [worker.agentId]: {
+        measurementId: 'worker-call',
+        sequence: 2,
+        phase: 'completed',
+        profileId: 'profile-1',
+        sessionId: 'manager-1',
+        agentId: worker.agentId,
+        managerId: 'manager-1',
+        role: 'worker',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        sampledAt: '2026-07-21T10:00:02.000Z',
+        firstOutputAt: '2026-07-21T10:00:01.000Z',
+        timeToFirstOutputMs: 1_000,
+        elapsedGenerationMs: 2_000,
+        outputTokens: 100,
+        instantaneousTokensPerSecond: null,
+        generationAverageTokensPerSecond: 50,
+        valueKind: 'provider_final',
+        quality: {
+          measurementScope: 'agent_model_call',
+          agentRetryAttempt: 0,
+          providerAttemptScope: 'unavailable',
+          observedProviderAttemptCount: null,
+          tokenSource: 'provider_final',
+          boundarySource: 'content_delta_to_stream_end',
+          reasoningBoundaryCoverage: 'observed',
+        },
+      },
+    })
+    expect(getPill().querySelector('[data-worker-throughput]')?.textContent).toContain('50 t/s')
+
+    act(() => getPill().click())
+    const telemetryRow = document.body.querySelector('[data-worker-throughput-row]')
+    expect(telemetryRow?.textContent).toContain('Latest final throughput')
+    expect(telemetryRow?.textContent).toContain('50 tok/s')
+    expect(telemetryRow?.className).toContain('h-7')
   })
 
   it('uses a fixed responsive frame with an internal flex scroll region', () => {

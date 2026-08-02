@@ -4,13 +4,13 @@ Generation throughput shows how quickly eligible model calls produce output. It 
 
 Throughput is currently recorded only for manager and worker model calls that run through the **Pi runtime**. A provider appearing in a model selector does not make every runtime eligible; other runtime paths do not add throughput records.
 
-## Live indicators
+## Header and worker indicators
 
-During an eligible manager generation, the header's throughput control starts at **Measuring…**. Once Forge has enough streamed output for a local estimate, it shows `≈ tok/s`. When the provider supplies final output usage at completion, the final rate replaces that estimate.
+For an eligible local manager, the header keeps one fixed throughput control visible. While a generation is active it uses a restrained activity pulse and holds the latest exact completed call value dimmed, or shows `— tok/s` until an exact result exists. It never estimates a live rate from streamed text.
 
-An active eligible worker can show the same approximate rate on its green pill and in its Quick Look. Open the manager header control to see the current estimate, the call average, and, when data qualifies, the weighted summary for the last 20 measured manager/worker generations in that session.
+When provider-final output usage, a first-output boundary, and a positive generation duration are available at completion, the control updates to the exact final `tok/s` value. Open it to see the latest generation's final rate, TTFT, output tokens, and model/provider. Missing final usage, a missing output boundary, a zero-duration span, or an interrupted generation does not show `0 tok/s` or promote a prior value as the current call.
 
-Missing final usage, a missing output boundary, a zero-duration span, or a generation still in progress is not shown as `0 tok/s`. Forge leaves the rate unavailable instead of inventing one.
+Active worker pills and Quick Look reserve a throughput cell from the start. They show the final provider value or `—`; they do not show an approximate live rate.
 
 ## Throughput statistics
 
@@ -20,10 +20,10 @@ Open **Stats → Throughput** for historical manager/worker totals, role compari
 - **Strict boundaries** requires observed output through stream end.
 - **All calls** also exposes unmeasured or incomplete lifecycle records for coverage, but does not assign them a rate.
 
-Provider-output `tok/s` includes provider-reported reasoning tokens when available. An agent-level Pi retry is a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
+The historical top-line rate is token weighted: provider-final output tokens divided by the sum of first-output-to-stream-end duration. Provider-output `tok/s` includes provider-reported reasoning tokens when available. An agent-level Pi retry is a separate call; provider-internal retries and Codex WebSocket replays are not timed as separate rates.
 
 ## History and forks
 
-Terminal measurements are saved with the session history. Reconnecting or restarting Forge rebuilds the bounded last-20 session summary from manager and worker records, and the Throughput tab scans the same durable records into its separate historical cache. Data begins with generations recorded after this feature was added.
+Terminal measurements are saved with the session history. Reconnecting keeps the latest in-app exact result anchored while fresh lifecycle state is restored; **Stats → Throughput** scans durable records into its separate historical cache. Data begins with generations recorded after this feature was added.
 
 Forked sessions deliberately omit the source session's throughput measurements, so a fork starts a new throughput history.

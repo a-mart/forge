@@ -6795,16 +6795,16 @@ describe('ManagerWsClient', () => {
       sampledAt: '2026-07-31T10:00:01.000Z',
       firstOutputAt: '2026-07-31T10:00:00.000Z',
       elapsedGenerationMs: 1_000,
-      outputTokens: 20,
-      instantaneousTokensPerSecond: 20,
-      generationAverageTokensPerSecond: 20,
-      valueKind: 'estimated' as const,
+      outputTokens: null,
+      instantaneousTokensPerSecond: null,
+      generationAverageTokensPerSecond: null,
+      valueKind: 'unavailable' as const,
       quality: {
         measurementScope: 'agent_model_call' as const,
         agentRetryAttempt: 0,
         providerAttemptScope: 'unavailable' as const,
         observedProviderAttemptCount: null,
-        tokenSource: 'estimated_local' as const,
+        tokenSource: 'unavailable' as const,
         boundarySource: 'content_delta_to_stream_end' as const,
         reasoningBoundaryCoverage: 'not_reported' as const,
       },
@@ -6815,11 +6815,11 @@ describe('ManagerWsClient', () => {
       measurements: [liveMeasurement],
       sessionSummary,
     })
-    expect(client.getState().generationRateSamplesByAgentId.manager).toHaveLength(1)
+    expect(client.getState().generationThroughputByAgentId.manager?.valueKind).toBe('unavailable')
 
     emitServerEvent(socket, {
       type: 'generation_throughput',
-      measurement: { ...liveMeasurement, sequence: 1, instantaneousTokensPerSecond: 1 },
+      measurement: { ...liveMeasurement, sequence: 1 },
     })
     expect(client.getState().generationThroughputByAgentId.manager?.sequence).toBe(2)
 
@@ -6848,12 +6848,11 @@ describe('ManagerWsClient', () => {
     })
     vi.advanceTimersByTime(5_000)
     expect(client.getState().generationThroughputByAgentId).toEqual({})
-    expect(client.getState().generationThroughputSessionSummary).toEqual(sessionSummary)
+    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.generationAverageTokensPerSecond).toBe(50)
 
     socket.close()
     expect(client.getState().generationThroughputByAgentId).toEqual({})
-    expect(client.getState().generationRateSamplesByAgentId).toEqual({})
-    expect(client.getState().generationThroughputSessionSummary).toBeNull()
+    expect(client.getState().generationThroughputLatestFinalByAgentId.manager?.generationAverageTokensPerSecond).toBe(50)
     client.destroy()
   })
 })

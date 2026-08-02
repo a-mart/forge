@@ -3,9 +3,8 @@ import type {
   GenerationThroughputLiveMeasurement,
   GenerationThroughputSnapshotEvent,
 } from '@forge/protocol'
-import type { GenerationRateSample, ManagerWsState } from '../ws-state'
+import type { ManagerWsState } from '../ws-state'
 
-export const MAX_GENERATION_RATE_SAMPLES = 20
 export const MAX_GENERATION_THROUGHPUT_TOMBSTONES = 64
 
 export interface GenerationThroughputReduction {
@@ -62,32 +61,19 @@ export function reduceGenerationThroughputEvent(
     tombstones = terminalTombstone.generationThroughputTombstonesByMeasurementId
     tombstoneOrder = terminalTombstone.generationThroughputTombstoneOrder
   }
-  const nextSamples = current?.measurementId === measurement.measurementId
-    ? state.generationRateSamplesByAgentId
-    : removeAgentSamples(state.generationRateSamplesByAgentId, measurement.agentId)
-  const samples = appendRateSample(
-    nextSamples[measurement.agentId] ?? [],
-    measurement,
-  )
-  const rateSamplesByAgentId = samples === nextSamples[measurement.agentId]
-    ? nextSamples
-    : { ...nextSamples, [measurement.agentId]: samples }
 
-  const sessionSummary = event.sessionSummary && event.sessionSummary.sessionAgentId === measurement.sessionId
-    ? event.sessionSummary
-    : state.generationThroughputSessionSummary
+  const nextLatestFinals = isExactFinal(measurement)
+    ? { ...state.generationThroughputLatestFinalByAgentId, [measurement.agentId]: measurement }
+    : state.generationThroughputLatestFinalByAgentId
 
   return {
     accepted: true,
     patch: {
       generationThroughputByAgentId: nextMeasurements,
-      generationRateSamplesByAgentId: rateSamplesByAgentId,
+      generationThroughputLatestFinalByAgentId: nextLatestFinals,
       generationThroughputSequenceByMeasurementId: nextSequences,
       ...(tombstones !== state.generationThroughputTombstonesByMeasurementId
         ? { generationThroughputTombstonesByMeasurementId: tombstones, generationThroughputTombstoneOrder: tombstoneOrder }
-        : {}),
-      ...(sessionSummary !== state.generationThroughputSessionSummary
-        ? { generationThroughputSessionSummary: sessionSummary }
         : {}),
     },
     ...(measurement.phase === 'completed' || measurement.phase === 'aborted'
@@ -110,7 +96,6 @@ export function reduceGenerationThroughputSnapshot(
 
   const nextMeasurements: Record<string, GenerationThroughputLiveMeasurement> = {}
   const nextSequences: Record<string, number> = {}
-  const nextSamples: Record<string, GenerationRateSample[]> = {}
 
   for (const measurement of event.measurements) {
     if (measurement.sessionId !== event.sessionAgentId) continue
@@ -118,19 +103,15 @@ export function reduceGenerationThroughputSnapshot(
     if (current && !replacesCurrentMeasurement(current, measurement)) continue
     nextMeasurements[measurement.agentId] = measurement
     nextSequences[measurement.measurementId] = measurement.sequence
-    const samples = appendRateSample([], measurement)
-    if (samples.length > 0) nextSamples[measurement.agentId] = samples
   }
 
   return {
     accepted: true,
     patch: {
       generationThroughputByAgentId: nextMeasurements,
-      generationRateSamplesByAgentId: nextSamples,
       generationThroughputSequenceByMeasurementId: nextSequences,
       generationThroughputTombstonesByMeasurementId: {},
       generationThroughputTombstoneOrder: [],
-      generationThroughputSessionSummary: event.sessionSummary,
     },
   }
 }
@@ -143,43 +124,44 @@ export function clearGenerationThroughputForAgents(
   if (ids.size === 0) return {}
   let changed = false
   const measurements = { ...state.generationThroughputByAgentId }
-  const samples = { ...state.generationRateSamplesByAgentId }
+  const latestFinals = { ...state.generationThroughputLatestFinalByAgentId }
   const sequences = { ...state.generationThroughputSequenceByMeasurementId }
 
   for (const agentId of ids) {
     const measurement = measurements[agentId]
-    if (!measurement) continue
-    changed = true
-    delete measurements[agentId]
-    delete samples[agentId]
-    delete sequences[measurement.measurementId]
+    if (measurement) {
+      changed = true
+      delete measurements[agentId]
+      delete sequences[measurement.measurementId]
+    }
+    if (latestFinals[agentId]) {
+      changed = true
+      delete latestFinals[agentId]
+    }
   }
 
   return changed
     ? {
         generationThroughputByAgentId: measurements,
-        generationRateSamplesByAgentId: samples,
+        generationThroughputLatestFinalByAgentId: latestFinals,
         generationThroughputSequenceByMeasurementId: sequences,
       }
     : {}
 }
 
+/** Clear transient calls while retaining the latest exact result through reconnects. */
 export function clearGenerationThroughputState(): Pick<
   ManagerWsState,
   | 'generationThroughputByAgentId'
-  | 'generationRateSamplesByAgentId'
   | 'generationThroughputSequenceByMeasurementId'
   | 'generationThroughputTombstonesByMeasurementId'
   | 'generationThroughputTombstoneOrder'
-  | 'generationThroughputSessionSummary'
 > {
   return {
     generationThroughputByAgentId: {},
-    generationRateSamplesByAgentId: {},
     generationThroughputSequenceByMeasurementId: {},
     generationThroughputTombstonesByMeasurementId: {},
     generationThroughputTombstoneOrder: [],
-    generationThroughputSessionSummary: null,
   }
 }
 
@@ -197,7 +179,16 @@ export function removeGenerationThroughputTombstone(
     return {}
   }
 
-  return clearGenerationThroughputForAgents(state, [input.agentId])
+  return {
+    generationThroughputByAgentId: Object.fromEntries(
+      Object.entries(state.generationThroughputByAgentId)
+        .filter(([agentId]) => agentId !== input.agentId),
+    ),
+    generationThroughputSequenceByMeasurementId: Object.fromEntries(
+      Object.entries(state.generationThroughputSequenceByMeasurementId)
+        .filter(([measurementId]) => measurementId !== input.measurementId),
+    ),
+  }
 }
 
 function addGenerationThroughputTombstone(
@@ -218,39 +209,14 @@ function addGenerationThroughputTombstone(
   }
 }
 
-function appendRateSample(
-  existing: GenerationRateSample[],
-  measurement: GenerationThroughputLiveMeasurement,
-): GenerationRateSample[] {
-  const tokensPerSecond = measurement.instantaneousTokensPerSecond
-  if (
-    measurement.phase !== 'generating'
-    || measurement.valueKind !== 'estimated'
-    || typeof tokensPerSecond !== 'number'
-    || !Number.isFinite(tokensPerSecond)
-    || tokensPerSecond < 0
-  ) {
-    return existing
-  }
-
-  const last = existing.at(-1)
-  if (last?.sampledAt === measurement.sampledAt && last.tokensPerSecond === tokensPerSecond) {
-    return existing
-  }
-  return [
-    ...existing,
-    { sampledAt: measurement.sampledAt, tokensPerSecond },
-  ].slice(-MAX_GENERATION_RATE_SAMPLES)
-}
-
-function removeAgentSamples(
-  samplesByAgentId: ManagerWsState['generationRateSamplesByAgentId'],
-  agentId: string,
-): ManagerWsState['generationRateSamplesByAgentId'] {
-  if (!samplesByAgentId[agentId]) return samplesByAgentId
-  const next = { ...samplesByAgentId }
-  delete next[agentId]
-  return next
+function isExactFinal(measurement: GenerationThroughputLiveMeasurement): boolean {
+  const rate = measurement.generationAverageTokensPerSecond
+  return measurement.phase === 'completed'
+    && measurement.valueKind === 'provider_final'
+    && measurement.outputTokens !== null
+    && typeof rate === 'number'
+    && Number.isFinite(rate)
+    && rate >= 0
 }
 
 function replacesCurrentMeasurement(

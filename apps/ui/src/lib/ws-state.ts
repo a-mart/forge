@@ -18,7 +18,6 @@ import type {
   BuilderTimelineChannelView,
   StreamDeckNavigationRequestedEvent,
   GenerationThroughputLiveMeasurement,
-  GenerationThroughputSessionSummary,
 } from '@forge/protocol'
 import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
 import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
@@ -65,12 +64,6 @@ export interface BrowserPanelRevealRequest {
   sequence: number
 }
 
-/** A bounded accepted server sample for the active-generation mini sparkline. */
-export interface GenerationRateSample {
-  sampledAt: string
-  tokensPerSecond: number
-}
-
 export interface ManagerWsState {
   connected: boolean
   /** Monotonic transport-open generation; increments even if reconnect state is React-batched. */
@@ -101,13 +94,13 @@ export interface ManagerWsState {
   codexElicitations: CodexElicitationRequestEvent[]
   /** Local Builder-only, count-only generation telemetry. Never transcript state. */
   generationThroughputByAgentId: Record<string, GenerationThroughputLiveMeasurement>
-  generationRateSamplesByAgentId: Record<string, GenerationRateSample[]>
+  /** Latest qualified provider-final result, retained across active-call cleanup and reconnect. */
+  generationThroughputLatestFinalByAgentId: Record<string, GenerationThroughputLiveMeasurement>
   /** Sequence guard for measurements still presented in the current session. */
   generationThroughputSequenceByMeasurementId: Record<string, number>
   /** Bounded terminal/supersession guards that outlive presentation cleanup. */
   generationThroughputTombstonesByMeasurementId: Record<string, number>
   generationThroughputTombstoneOrder: string[]
-  generationThroughputSessionSummary: GenerationThroughputSessionSummary | null
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
   profiles: ManagerProfile[]
@@ -189,11 +182,10 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     pendingChoiceIds: new Set(),
     codexElicitations: [],
     generationThroughputByAgentId: {},
-    generationRateSamplesByAgentId: {},
+    generationThroughputLatestFinalByAgentId: {},
     generationThroughputSequenceByMeasurementId: {},
     generationThroughputTombstonesByMeasurementId: {},
     generationThroughputTombstoneOrder: [],
-    generationThroughputSessionSummary: null,
     agents: [],
     loadedSessionIds: new Set(),
     profiles: [],

@@ -24,4 +24,4 @@ Workers spawned from a specialist template show a colored badge with the special
 
 The session row itself shows a numbered amber ring when workers are actively streaming, telling you at a glance how many are running. If compaction or context recovery is also active, a violet pulsing `C` badge appears beside the worker-count badge. Hover the session in the sidebar for model and reasoning details.
 
-When an eligible Pi-runtime worker is actively generating enough streamed output, its pill and Quick Look can append an approximate `tok/s` rate. The rate remains absent rather than showing `0` while it is still being measured or when the call lacks a usable estimate. See **Generation Throughput** for the provider-final value and historical Stats behavior.
+Eligible Pi-runtime worker pills and Quick Look reserve a stable `tok/s` cell. It shows a provider-final rate when available, otherwise `—`; live streamed text is never converted into an approximate rate. See **Generation Throughput** for the final-value and historical Stats behavior.

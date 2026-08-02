@@ -5,45 +5,29 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import type {
-  GenerationThroughputLiveMeasurement,
-  GenerationThroughputSessionSummary,
-} from '@forge/protocol'
-import type { GenerationRateSample } from '@/lib/ws-state'
+import type { GenerationThroughputLiveMeasurement } from '@forge/protocol'
 import { formatThroughputRate } from './throughput-format'
 
 interface ThroughputPulseProps {
+  /** Current model-call lifecycle, if one is active or awaiting cleanup. */
   measurement?: GenerationThroughputLiveMeasurement
-  samples?: GenerationRateSample[]
-  sessionSummary?: GenerationThroughputSessionSummary | null
+  /** Retained by the WebSocket state after terminal cleanup and reconnect. */
+  latestFinal?: GenerationThroughputLiveMeasurement
 }
 
-type PulseMode = 'measuring' | 'estimated' | 'final' | 'session'
-
 /**
- * Compact Builder header telemetry. It deliberately consumes only cumulative
- * server counts/rates; it never reads or tokenizes transcript text.
+ * Fixed-width manager header telemetry for eligible local Pi sessions.
+ * Streaming only changes the restrained pulse; numeric throughput appears once
+ * provider-final output usage and timing make it exact.
  */
-export function ThroughputPulse({
-  measurement,
-  samples = [],
-  sessionSummary = null,
-}: ThroughputPulseProps) {
-  const mode = resolveMode(measurement, sessionSummary)
-  if (!mode) return null
-
-  const activeEstimate = measurement?.instantaneousTokensPerSecond ?? null
-  const callAverage = measurement?.generationAverageTokensPerSecond ?? null
-  const finalRate = mode === 'final' ? callAverage : null
-  const sessionRate = sessionSummary?.weightedTokensPerSecond ?? null
-  const sparklineSamples = mode === 'session'
-    ? (sessionSummary?.samples ?? []).map((sample) => ({
-        sampledAt: sample.completedAt,
-        tokensPerSecond: sample.tokensPerSecond,
-      }))
-    : samples
-  const label = accessibleLabel(mode, activeEstimate, finalRate, sessionRate)
-  const announcement = phaseAnnouncement(mode)
+export function ThroughputPulse({ measurement, latestFinal }: ThroughputPulseProps) {
+  // The WebSocket state retains this anchor through terminal cleanup and
+  // reconnect; a current terminal event takes precedence in the same render.
+  const latest = exactFinal(measurement) ?? exactFinal(latestFinal)
+  const generating = measurement?.phase === 'starting' || measurement?.phase === 'generating'
+  const rate = latest?.generationAverageTokensPerSecond ?? null
+  const compactRate = formatCompactThroughputRate(rate)
+  const label = accessibleLabel(generating, rate)
 
   return (
     <Popover>
@@ -51,143 +35,120 @@ export function ThroughputPulse({
         <button
           type="button"
           data-testid="throughput-pulse"
-          className={cn(
-            'group inline-flex h-[30px] w-[116px] shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70',
-            mode === 'estimated' && 'border-emerald-500/35 text-emerald-700 dark:text-emerald-300',
-            mode === 'final' && 'border-emerald-500/30 text-foreground',
-          )}
+          data-throughput-state={generating ? 'generating' : latest ? 'final' : 'empty'}
+          className="inline-flex h-[30px] w-[104px] shrink-0 items-center rounded-md border border-border/60 bg-muted/30 px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 sm:w-[116px]"
           aria-label={label}
+          title={titleFor(generating, rate)}
         >
-          <span className="sr-only" aria-live="polite">{announcement}</span>
-          {mode === 'measuring' ? (
-            <span className="inline-flex h-4 w-7 items-center justify-center gap-0.5" aria-hidden="true">
-              <span className="size-1 rounded-full bg-muted-foreground/70 motion-safe:animate-pulse motion-reduce:animate-none" />
-              <span className="size-1 rounded-full bg-muted-foreground/70 motion-safe:animate-pulse motion-reduce:animate-none [animation-delay:150ms]" />
-              <span className="size-1 rounded-full bg-muted-foreground/70 motion-safe:animate-pulse motion-reduce:animate-none [animation-delay:300ms]" />
-            </span>
-          ) : mode === 'final' ? (
-            <span className="inline-flex size-4 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" aria-hidden="true">
-              <Check className="size-3" />
-            </span>
-          ) : (
-            <ThroughputSparkline samples={sparklineSamples} />
-          )}
-          <span className="min-w-0 flex-1 truncate text-right tabular-nums">
-            {mode === 'measuring'
-              ? 'Measuring…'
-              : mode === 'estimated'
-                ? `≈${formatThroughputRate(activeEstimate)} tok/s`
-                : mode === 'final'
-                  ? `${formatThroughputRate(finalRate)} tok/s`
-                  : `Session ${formatThroughputRate(sessionRate)} t/s`}
+          <span className="sr-only" aria-live="polite">
+            {latest ? `Final generation throughput ${formatThroughputRate(rate)} tokens per second.` : ''}
           </span>
+          <span
+            data-throughput-pulse
+            className={cn(
+              'inline-flex size-4 shrink-0 items-center justify-center',
+              generating && 'motion-safe:animate-[pulse_1.6s_ease-in-out_infinite] motion-reduce:animate-none',
+            )}
+            aria-hidden="true"
+          >
+            {latest && !generating ? (
+              <span className="inline-flex size-4 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                <Check className="size-3" />
+              </span>
+            ) : (
+              <span className={cn('size-2 rounded-full bg-muted-foreground/70', generating && 'bg-emerald-500')} />
+            )}
+          </span>
+          <span
+            data-throughput-value
+            className={cn('min-w-0 flex-1 truncate px-1 text-right tabular-nums', generating && 'opacity-55')}
+          >
+            {compactRate}
+          </span>
+          <span className="w-[27px] shrink-0 text-left">tok/s</span>
           <ChevronRight className="size-3 shrink-0 opacity-45" aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" side="bottom" sideOffset={6} className="w-64 p-3">
-        <div className="mb-2 flex items-center justify-between gap-3">
+      <PopoverContent align="start" side="bottom" sideOffset={6} className="w-72 p-3">
+        <div className="mb-2 flex h-4 items-center justify-between gap-3">
           <span className="text-xs font-medium">Generation throughput</span>
-          <ThroughputSparkline samples={sparklineSamples} className="w-16" />
+          <span className="text-[11px] text-muted-foreground">
+            {generating ? 'Generating' : latest ? 'Latest final' : 'No final result'}
+          </span>
         </div>
-        {mode === 'measuring' ? (
-          <p className="text-xs text-muted-foreground">Measuring streamed output…</p>
-        ) : null}
-        {mode === 'estimated' ? (
-          <div className="space-y-1 text-xs text-muted-foreground">
-            <p><span className="font-medium text-foreground">Now (estimated)</span> · ≈{formatThroughputRate(activeEstimate)} tok/s</p>
-            <p>This generation (average) · ≈{formatThroughputRate(callAverage)} tok/s</p>
-            <p className="pt-1 text-[11px]">Estimated from streamed content; final provider usage replaces this value.</p>
-          </div>
-        ) : null}
-        {mode === 'final' ? (
-          <div className="space-y-1 text-xs text-muted-foreground">
-            <p><span className="font-medium text-foreground">This generation (final)</span> · {formatThroughputRate(finalRate)} tok/s</p>
-            <p>Provider output includes reported reasoning tokens.</p>
-          </div>
-        ) : null}
-        {sessionSummary && sessionRate !== null ? (
-          <p className={cn('text-xs text-muted-foreground', mode !== 'session' && 'mt-2 border-t pt-2')}>
-            <span className="font-medium text-foreground">Session, last 20 generations</span> · {formatThroughputRate(sessionRate)} tok/s · last {sessionSummary.measuredGenerationCount}
-          </p>
-        ) : null}
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <PopoverRow label="Latest final TPS" value={`${formatThroughputRate(rate)} tok/s · final`} />
+          <PopoverRow label="TTFT" value={formatDuration(latest?.timeToFirstOutputMs)} />
+          <PopoverRow label="Output tokens" value={formatTokens(latest?.outputTokens)} />
+          <PopoverRow label="Model / provider" value={latest ? `${latest.modelId} · ${latest.provider}` : '—'} />
+        </div>
+        <p className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
+          Provider-final usage and first-output-to-stream-end timing determine the final rate.
+        </p>
       </PopoverContent>
     </Popover>
   )
 }
 
-export function ThroughputSparkline({
-  samples,
-  className,
-}: {
-  samples: GenerationRateSample[]
-  className?: string
-}) {
-  const values = samples.slice(-20).map((sample) => sample.tokensPerSecond).filter((value) => Number.isFinite(value) && value >= 0)
-  if (values.length === 0) {
-    return <span className={cn('inline-block h-4 w-7 rounded-sm bg-muted-foreground/10', className)} aria-hidden="true" />
-  }
-  const max = Math.max(...values, 1)
-  const min = Math.min(...values)
-  const range = Math.max(max - min, max * 0.2, 1)
-  const points = values.map((value, index) => {
-    const x = values.length === 1 ? 12 : index * 24 / (values.length - 1)
-    const y = 14 - ((value - min) / range) * 10
-    return `${x.toFixed(2)},${y.toFixed(2)}`
-  }).join(' ')
-
+function PopoverRow({ label, value }: { label: string; value: string }) {
   return (
-    <svg
-      viewBox="0 0 24 16"
-      className={cn('h-4 w-7 shrink-0 overflow-visible', className)}
-      role="img"
-      aria-label={`${values.length} throughput samples`}
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="opacity-80"
-      />
-      <circle cx={points.split(' ').at(-1)?.split(',')[0]} cy={points.split(' ').at(-1)?.split(',')[1]} r="1.2" fill="currentColor" />
-    </svg>
+    <div className="grid h-5 grid-cols-[108px_minmax(0,1fr)] items-center gap-2">
+      <span>{label}</span>
+      <span className="truncate text-right font-medium text-foreground" title={value}>{value}</span>
+    </div>
   )
 }
 
-function resolveMode(
+function exactFinal(
   measurement: GenerationThroughputLiveMeasurement | undefined,
-  sessionSummary: GenerationThroughputSessionSummary | null,
-): PulseMode | null {
-  if (measurement?.phase === 'starting') return 'measuring'
-  if (measurement?.phase === 'generating') {
-    return measurement.instantaneousTokensPerSecond === null ? 'measuring' : 'estimated'
-  }
-  if (measurement?.phase === 'completed' && measurement.generationAverageTokensPerSecond !== null) return 'final'
-  if (sessionSummary?.weightedTokensPerSecond !== null && sessionSummary?.weightedTokensPerSecond !== undefined) return 'session'
-  return null
+): GenerationThroughputLiveMeasurement | undefined {
+  const rate = measurement?.generationAverageTokensPerSecond
+  if (
+    measurement?.phase !== 'completed'
+    || measurement.valueKind !== 'provider_final'
+    || measurement.outputTokens === null
+    || typeof rate !== 'number'
+    || !Number.isFinite(rate)
+    || rate < 0
+  ) return undefined
+  return measurement
 }
 
-function accessibleLabel(
-  mode: PulseMode,
-  estimated: number | null,
-  finalRate: number | null,
-  sessionRate: number | null,
-): string {
-  switch (mode) {
-    case 'measuring': return 'Measuring generation throughput'
-    case 'estimated': return `Now estimated ${formatThroughputRate(estimated)} tokens per second`
-    case 'final': return `This generation final ${formatThroughputRate(finalRate)} tokens per second`
-    case 'session': return `Session last 20 generations ${formatThroughputRate(sessionRate)} tokens per second`
-  }
+function formatCompactThroughputRate(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '—'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`
+  return formatThroughputRate(value)
 }
 
-function phaseAnnouncement(mode: PulseMode): string {
-  switch (mode) {
-    case 'measuring': return 'Measuring generation throughput.'
-    case 'estimated': return 'Estimated generation throughput available.'
-    case 'final': return 'Final generation throughput available.'
-    case 'session': return 'Session generation throughput available.'
+function formatDuration(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? `${(value / 1_000).toFixed(1)} s`
+    : '—'
+}
+
+function formatTokens(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value.toLocaleString()
+    : '—'
+}
+
+function accessibleLabel(generating: boolean, rate: number | null): string {
+  if (generating) {
+    return rate === null
+      ? 'Generating; no final generation throughput yet'
+      : `Generating; showing last final ${formatThroughputRate(rate)} tokens per second`
   }
+  return rate === null
+    ? 'No final generation throughput yet'
+    : `Latest generation final ${formatThroughputRate(rate)} tokens per second`
+}
+
+function titleFor(generating: boolean, rate: number | null): string {
+  if (generating) {
+    return rate === null
+      ? 'Generating · waiting for provider-final throughput'
+      : `Generating · last final ${formatThroughputRate(rate)} tok/s`
+  }
+  return rate === null ? 'No final generation throughput yet' : `Latest generation · ${formatThroughputRate(rate)} tok/s final`
 }
