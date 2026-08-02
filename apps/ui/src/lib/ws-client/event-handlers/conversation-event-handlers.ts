@@ -1,6 +1,7 @@
 import { handleUnreadNotification } from '../../notification-service'
 import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
 import { routeModelCacheObservationsForState } from '../model-cache-visualization-state.js'
+import { reduceManagerToolActivity } from '../manager-tool-activity-state.js'
 import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import {
@@ -23,6 +24,7 @@ export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   'session_plan_snapshot',
   'session_goal_snapshot',
   'secure_session_snapshot',
+  'manager_tool_activity',
   'unread_counts_snapshot',
 ])
 
@@ -491,6 +493,12 @@ export function handleConversationEvent(
       return true
     }
 
+    case 'manager_tool_activity': {
+      const patch = reduceManagerToolActivity(context.state, event)
+      if (patch) context.updateState(patch)
+      return true
+    }
+
     case 'session_plan_snapshot': {
       const current = context.state.planSnapshots[event.sessionAgentId]
       if (current && event.revision < current.revision) {
@@ -540,6 +548,7 @@ export function handleConversationEvent(
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
+        managerToolActivity: null,
         conversationPage: null,
         conversationPageLoading: false,
         conversationPageRequestId: null,

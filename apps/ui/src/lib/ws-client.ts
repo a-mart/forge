@@ -1335,6 +1335,7 @@ export class ManagerWsClient {
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
       codexElicitations: [],
+      managerToolActivity: null,
       ...clearGenerationThroughputState(),
       secureSessionSnapshotLoadingSessionId: input.agentId,
       conversationPresentation: null,
@@ -1480,6 +1481,7 @@ export class ManagerWsClient {
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
       browserMetadataStale: false,
+      managerToolActivity: null,
       conversationBootstrap: {
         ...this.state.conversationBootstrap,
         protocolMode: 'unknown',
@@ -1537,6 +1539,7 @@ export class ManagerWsClient {
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
       browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
+      managerToolActivity: null,
       ...clearGenerationThroughputState(),
       ...(pendingBootstrap.phase === 'pending'
         ? {

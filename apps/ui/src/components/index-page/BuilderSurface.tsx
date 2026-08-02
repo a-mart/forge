@@ -2184,6 +2184,10 @@ export function BuilderSurface({
                     !isRemoteOriginActive && isActiveManager && activeAgentId && isPiGenerationThroughputEligible(activeAgent)
                       ? state.generationThroughputLatestFinalByAgentId[activeAgentId]
                       : undefined,
+                  managerToolActivity:
+                    !isRemoteOriginActive && isActiveManager && state.managerToolActivity?.sessionAgentId === activeAgentId
+                      ? state.managerToolActivity
+                      : null,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,

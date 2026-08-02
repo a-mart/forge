@@ -234,6 +234,52 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('hydrates count-only manager tool activity, rejects stale authority, and clears it on session switch or disconnect', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances[0]!
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'manager_tool_activity',
+      sessionAgentId: 'manager',
+      revision: 4,
+      toolCount: 0,
+    })
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+    expect(client.getState().managerToolActivity).toMatchObject({ revision: 4, toolCount: 0 })
+
+    emitServerEvent(socket, {
+      type: 'manager_tool_activity',
+      sessionAgentId: 'manager',
+      revision: 3,
+      toolCount: 9,
+      currentToolName: 'bash',
+    })
+    expect(client.getState().managerToolActivity).toMatchObject({ revision: 4, toolCount: 0 })
+
+    client.subscribeToAgent('other-manager')
+    expect(client.getState().managerToolActivity).toBeNull()
+    emitServerEvent(socket, {
+      type: 'manager_tool_activity',
+      sessionAgentId: 'manager',
+      revision: 5,
+      toolCount: 1,
+      currentToolName: 'bash',
+    })
+    expect(client.getState().managerToolActivity).toBeNull()
+
+    socket.emit('close')
+    expect(client.getState().managerToolActivity).toBeNull()
+    client.destroy()
+  })
+
   it('subscribes on connect and sends user_message commands to the active agent', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

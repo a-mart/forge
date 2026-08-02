@@ -417,6 +417,7 @@ const serverEventsByLeafModule = [
     status: { agentId: agent.agentId, status: 'idle', pendingCount: 0 },
   },
   { type: 'session_active_tools_snapshot', sessionAgentId: agent.agentId, activeTools: [], requestId: 'request-cli-1' },
+  { type: 'manager_tool_activity', sessionAgentId: agent.agentId, revision: 1, toolCount: 0 },
   { type: 'cli_request_success', requestId: 'request-cli-2', commandType: 'subscribe_headless' },
   {
     type: 'cli_request_error',
@@ -870,7 +871,7 @@ describe('protocol root barrel contract', () => {
   })
 
   it('exports representative collaboration, terminal, and specialist contracts from the root barrel', () => {
-    const collabEvent: CollaborationBootstrapEvent = serverEventsByLeafModule[5]
+    const collabEvent: CollaborationBootstrapEvent = serverEventsByLeafModule[6]
     const collabServerEvent: CollaborationServerEvent = collabEvent
     const terminalMeta: TerminalMeta = {
       version: 1,
@@ -1026,6 +1027,7 @@ describe('protocol root barrel contract', () => {
       'ready',
       'headless_ready',
       'session_active_tools_snapshot',
+      'manager_tool_activity',
       'cli_request_success',
       'cli_request_error',
       'collab_bootstrap',

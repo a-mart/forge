@@ -3563,14 +3563,14 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('routes active-tool snapshots to exact subscribed sessions', async () => {
+  it('keeps detail-bearing active-tool snapshots off Builder sockets and routes count-only manager activity to its owner', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
     const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
-    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root Worker' })
+    await manager.spawnAgent('manager', { agentId: 'Root Worker' })
     const secondaryWorker = await manager.spawnAgent(secondarySession.agentId, { agentId: 'Secondary Worker' })
 
     const server = new SwarmWebSocketServer({
@@ -3617,47 +3617,35 @@ describe('SwarmWebSocketServer', () => {
       { actorAgentId: secondaryWorker.agentId, toolCallId: 'secondary-tool' },
     ])
 
-    await waitForEventAfter(
-      secondaryEvents,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'session_active_tools_snapshot' &&
-        event.sessionAgentId === secondarySession.agentId &&
-        event.activeTools.some((tool) => tool.actorAgentId === secondaryWorker.agentId),
-    )
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(
-      rootEvents
-        .slice(rootBaseline)
-        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === secondarySession.agentId),
-    ).toBe(false)
+    expect(secondaryEvents.slice(secondaryBaseline).some((event) => event.type === 'session_active_tools_snapshot')).toBe(false)
+    expect(rootEvents.slice(rootBaseline).some((event) => event.type === 'session_active_tools_snapshot')).toBe(false)
+    expect(rootEvents.slice(rootBaseline).some((event) => event.type === 'manager_tool_activity')).toBe(false)
 
     const rootSecondBaseline = rootEvents.length
     const secondarySecondBaseline = secondaryEvents.length
-    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
-      type: 'tool_execution_start',
-      toolName: 'bash',
-      toolCallId: 'root-tool',
-      args: { command: 'echo root' },
-    })
-    expect(manager.getSessionActiveToolsSnapshot('manager').activeTools).toMatchObject([
-      { actorAgentId: rootWorker.agentId, toolCallId: 'root-tool' },
-    ])
+    manager.emit('manager_tool_activity', {
+      type: 'manager_tool_activity',
+      sessionAgentId: 'manager',
+      revision: 2,
+      toolCount: 1,
+      currentToolName: 'bash',
+    } satisfies ServerEvent)
 
-    await waitForEventAfter(
+    const managerActivity = await waitForEventAfter(
       rootEvents,
       rootSecondBaseline,
-      (event) =>
-        event.type === 'session_active_tools_snapshot' &&
-        event.sessionAgentId === 'manager' &&
-        event.activeTools.some((tool) => tool.actorAgentId === rootWorker.agentId),
+      (event) => event.type === 'manager_tool_activity' && event.sessionAgentId === 'manager',
     )
+    expect(managerActivity).toEqual({
+      type: 'manager_tool_activity',
+      sessionAgentId: 'manager',
+      revision: 2,
+      toolCount: 1,
+      currentToolName: 'bash',
+    })
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(
-      secondaryEvents
-        .slice(secondarySecondBaseline)
-        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === 'manager'),
-    ).toBe(false)
+    expect(secondaryEvents.slice(secondarySecondBaseline).some((event) => event.type === 'manager_tool_activity')).toBe(false)
 
     rootClient.close()
     await once(rootClient, 'close')

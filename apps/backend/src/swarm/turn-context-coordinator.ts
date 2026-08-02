@@ -161,6 +161,10 @@ export interface TurnContextCoordinatorOptions<
   output: ManagerOutputTurnPort;
   codex: CodexTurnScopePort<TCodexGate, TCodexDelegation, TCodexRetryAuthorization>;
   observability: TurnContextObservabilityPort;
+  managerToolActivity?: {
+    activateManagerTurn(agentId: string, turnId: string): void;
+    clearManagerTurn(agentId: string): void;
+  };
   logDebug(message: string, details?: unknown): void;
 }
 
@@ -351,12 +355,16 @@ export class TurnContextCoordinator<
       this.pendingByAgentId.delete(agentId);
       this.activatedByAgentId.delete(agentId);
       this.activeTurnByAgentId.delete(agentId);
+      this.options.managerToolActivity?.clearManagerTurn(agentId);
     }
     this.options.output.handleRuntimeError(agentId, descriptor);
     this.options.codex.handleRuntimeError(agentId, descriptor);
   }
 
   discard(agentId: string): void {
+    if (this.options.descriptors.get(agentId)?.role === "manager") {
+      this.options.managerToolActivity?.clearManagerTurn(agentId);
+    }
     this.pendingByAgentId.delete(agentId);
     this.activatedByAgentId.delete(agentId);
     this.activeTurnByAgentId.delete(agentId);
@@ -428,6 +436,9 @@ export class TurnContextCoordinator<
 
     if (phase === "after_projection" && event.type === "agent_end") {
       this.consumeActivePendingContext(agentId);
+      if (descriptor?.role === "manager") {
+        this.options.managerToolActivity?.clearManagerTurn(agentId);
+      }
       this.activatedByAgentId.delete(agentId);
       this.activeTurnByAgentId.delete(agentId);
       this.activeExternalTurnByAgentId.delete(agentId);
@@ -456,6 +467,12 @@ export class TurnContextCoordinator<
     }
 
     this.setActiveTurnFromContext(agentId, context);
+    if ((descriptor ?? this.options.descriptors.get(agentId))?.role === "manager") {
+      // Even id-only delivery is an authoritative inbound manager turn. Keep
+      // the count-only indicator keyed to it while preserving this path's
+      // deliberate no-surface-activation semantics below.
+      this.options.managerToolActivity?.activateManagerTurn(agentId, context.turnId);
+    }
     this.activateContext(agentId, descriptor, undefined, { preserveActiveTurn: true });
   }
 
@@ -504,6 +521,10 @@ export class TurnContextCoordinator<
     const manager = descriptor ?? this.options.descriptors.get(agentId);
     if (manager?.role !== "manager") {
       return;
+    }
+
+    if (context?.turnId) {
+      this.options.managerToolActivity?.activateManagerTurn(agentId, context.turnId);
     }
 
     const target = context?.assistantOutputProjectionTarget ?? context?.assistantOutputTarget;

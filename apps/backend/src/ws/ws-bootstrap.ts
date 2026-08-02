@@ -105,6 +105,8 @@ export async function sendSubscriptionBootstrap(options: {
   resolvePlanSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   /** Builder-only manager session authority for count-only throughput state. */
   resolveGenerationThroughputSessionAgentId?: (subscribedAgentId: string) => string | undefined;
+  /** Builder-only authority for ephemeral manager tool activity. */
+  resolveManagerToolActivitySessionAgentId?: (subscribedAgentId: string) => string | undefined;
   resolveBrowserSessionAgentId?: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
@@ -129,6 +131,7 @@ export async function sendSubscriptionBootstrap(options: {
     resolveTerminalScopeAgentId,
     resolvePlanSnapshotSessionAgentId,
     resolveGenerationThroughputSessionAgentId = resolvePlanSnapshotSessionAgentId,
+    resolveManagerToolActivitySessionAgentId = resolvePlanSnapshotSessionAgentId,
     resolveBrowserSessionAgentId = resolvePlanSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
@@ -149,6 +152,8 @@ export async function sendSubscriptionBootstrap(options: {
   let payloadBytesTotal = 0;
 
   const allProfiles = swarmManager.listProfiles();
+  const localBuilderRuntime = typeof (swarmManager as Partial<Pick<SwarmManager, "getConfig">>).getConfig === "function"
+    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget);
   const systemProfileIds = new Set(
     allProfiles.filter((profile) => isSystemProfile(profile)).map((profile) => profile.profileId),
   );
@@ -282,8 +287,7 @@ export async function sendSubscriptionBootstrap(options: {
   // the authoritative session roster before count-only worker telemetry so a
   // reconnect cannot classify Pi/Cursor measurements from a preserved cache.
   const throughputSessionAgentId = resolveGenerationThroughputSessionAgentId(targetAgentId);
-  const localBuilderThroughputSession = throughputSessionAgentId
-    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget);
+  const localBuilderThroughputSession = throughputSessionAgentId && localBuilderRuntime;
   if (localBuilderThroughputSession) {
     await sendMeasured("sessionWorkersSnapshot", {
       type: "session_workers_snapshot",
@@ -301,6 +305,18 @@ export async function sendSubscriptionBootstrap(options: {
     await sendMeasured(
       "generationThroughputSnapshot",
       await swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId),
+    );
+  }
+
+  const managerToolActivitySessionAgentId = resolveManagerToolActivitySessionAgentId(targetAgentId);
+  if (
+    managerToolActivitySessionAgentId &&
+    localBuilderRuntime &&
+    typeof swarmManager.getManagerToolActivitySnapshot === "function"
+  ) {
+    await sendMeasured(
+      "managerToolActivity",
+      swarmManager.getManagerToolActivitySnapshot(managerToolActivitySessionAgentId),
     );
   }
 

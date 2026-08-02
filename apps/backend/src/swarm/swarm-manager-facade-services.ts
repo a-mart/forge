@@ -17,6 +17,7 @@ import type { SessionLifecycleCoordinator } from "./session-lifecycle-coordinato
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import type { SecureSessionsService } from "./secure-sessions/secure-sessions-service.js";
 import type { SessionActiveToolsState } from "./session-active-tools.js";
+import type { ManagerToolActivityState } from "./manager-tool-activity.js";
 import type { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import type { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
@@ -64,6 +65,7 @@ export interface SwarmManagerFacadeRuntimeServices {
     "resolveManagerFinalRoute" | "resolveManagerFinalTarget"
   >;
   activeTools: Pick<SessionActiveToolsState, "buildSnapshotEvent">;
+  managerToolActivity: Pick<ManagerToolActivityState, "buildSnapshotEvent">;
   runtimes: ReadonlyMap<string, SwarmAgentRuntime>;
 }
 

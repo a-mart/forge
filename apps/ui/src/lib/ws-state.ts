@@ -18,6 +18,7 @@ import type {
   BuilderTimelineChannelView,
   StreamDeckNavigationRequestedEvent,
   GenerationThroughputLiveMeasurement,
+  ManagerToolActivityEvent,
 } from '@forge/protocol'
 import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
 import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
@@ -94,6 +95,8 @@ export interface ManagerWsState {
   codexElicitations: CodexElicitationRequestEvent[]
   /** Local Builder-only, count-only generation telemetry. Never transcript state. */
   generationThroughputByAgentId: Record<string, GenerationThroughputLiveMeasurement>
+  /** Ephemeral count-only manager tool activity for the subscribed manager turn. */
+  managerToolActivity: ManagerToolActivityEvent | null
   /** Latest qualified provider-final result, retained across active-call cleanup and reconnect. */
   generationThroughputLatestFinalByAgentId: Record<string, GenerationThroughputLiveMeasurement>
   /** Sequence guard for measurements still presented in the current session. */
@@ -184,6 +187,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     pendingChoiceIds: new Set(),
     codexElicitations: [],
     generationThroughputByAgentId: {},
+    managerToolActivity: null,
     generationThroughputLatestFinalByAgentId: {},
     generationThroughputSequenceByMeasurementId: {},
     generationThroughputTombstonesByMeasurementId: {},
