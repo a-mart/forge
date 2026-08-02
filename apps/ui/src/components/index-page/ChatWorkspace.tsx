@@ -3,6 +3,7 @@ import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
+import { ManagerToolActivityIndicator } from '@/components/chat/ManagerToolActivityIndicator'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { PlanDockIndicator } from '@/components/chat/plan'
 import { GoalBar } from '@/components/chat/goal'
@@ -16,6 +17,7 @@ import { cn } from '@/lib/utils'
 import type {
   RemoteUpdateAwarenessProjectSnapshot,
   RestartRecoverySnapshot,
+  ManagerToolActivityEvent,
   SessionGoalControlAction,
   SessionGoalSnapshotEvent,
   SessionPlanSnapshotEvent,
@@ -23,6 +25,7 @@ import type {
 
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
+  managerToolActivity?: ManagerToolActivityEvent | null
   /** Already filtered to the active local project by the Builder shell. */
   remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
   onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
@@ -52,6 +55,7 @@ interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
   headerProps,
+  managerToolActivity,
   remoteUpdateSnapshot = null,
   onRemoteUpdateSnapshotChange,
   onOpenRemoteUpdateIncoming,
@@ -158,6 +162,8 @@ export function ChatWorkspace({
           <div className="px-3">
             <TerminalPanel {...terminalPanelProps} />
           </div>
+
+          <ManagerToolActivityIndicator activity={managerToolActivity} />
 
           <MessageInput ref={messageInputRef} {...messageInputProps} />
         </>

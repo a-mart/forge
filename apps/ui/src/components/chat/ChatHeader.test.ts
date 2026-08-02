@@ -81,44 +81,6 @@ afterEach(() => {
 })
 
 describe('ChatHeader response throughput', () => {
-  it('renders only count and normalized current tool metadata for manager activity', () => {
-    act(() => {
-      root.render(createElement(ChatHeader, {
-        ...props,
-        managerToolActivity: {
-          type: 'manager_tool_activity',
-          sessionAgentId: 'manager-1',
-          revision: 2,
-          toolCount: 3,
-          currentToolName: 'read_file',
-        },
-      }))
-    })
-
-    const indicator = container.querySelector('[data-testid="manager-tool-activity"]')
-    expect(indicator?.textContent).toContain('3')
-    expect(indicator?.textContent).toContain('read_file')
-    expect(indicator?.getAttribute('aria-label')).toBe('Manager tool activity: 3 tools, read_file')
-  })
-
-  it('does not render activity for a worker header', () => {
-    act(() => {
-      root.render(createElement(ChatHeader, {
-        ...props,
-        activeAgentRole: 'worker',
-        managerToolActivity: {
-          type: 'manager_tool_activity',
-          sessionAgentId: 'manager-1',
-          revision: 2,
-          toolCount: 3,
-          currentToolName: 'read_file',
-        },
-      }))
-    })
-
-    expect(container.querySelector('[data-testid="manager-tool-activity"]')).toBeNull()
-  })
-
   it('suppresses a retained Pi anchor when the manager runtime is not eligible', () => {
     act(() => {
       root.render(createElement(ChatHeader, {
