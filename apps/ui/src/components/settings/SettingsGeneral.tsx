@@ -878,7 +878,7 @@ export function SettingsGeneral({
 
       <SettingsSection
         label="Conversation Response Throughput"
-        description="Control full-request response throughput shown in manager and worker conversations. Stats → Throughput continues collecting history while this display is hidden."
+        description="Control full-request response throughput shown in manager and worker conversations. Stats → Response throughput continues collecting history while this display is hidden."
       >
         <SettingsWithCTA
           label="Show response throughput in conversations"

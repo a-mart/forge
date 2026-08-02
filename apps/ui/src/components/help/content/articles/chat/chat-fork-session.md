@@ -25,7 +25,7 @@ The forked session's memory header records where the fork happened, so the bound
 - Session memory content from the parent is not carried over. The new session starts with its own empty memory (plus the fork header).
 - Cursor SDK runtime state and usage records are not copied, so forks do not leak SDK resume state or double-count usage.
 - A source session's initial Pi model-input record is not copied. A Pi-backed fork records its own initial input when it makes its first model request.
-- Pi generation-throughput measurements are not copied, so the fork starts its own throughput history.
+- Pi response-throughput measurements are not copied, so the fork starts its own response-throughput history.
 - Historical Codex sidecar display cards are not copied.
 - Workers from the parent session are not duplicated.
 

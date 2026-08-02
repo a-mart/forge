@@ -22,7 +22,7 @@ Use **Settings > General > Compaction** to choose the model, reasoning level, an
 
 ## Conversation Response Throughput
 
-**Show response throughput in conversations** is off by default. Turn it on to show final Pi response throughput in manager headers, worker pills, and Worker Quick Look in Builder and Collaboration conversations. The rate uses provider-final output across the complete request duration. This browser setting applies immediately. Turning it off hides only those conversation controls: **Stats → Throughput** continues collecting and showing historical response throughput.
+**Show response throughput in conversations** is off by default. Turn it on to show final Pi response throughput in manager headers, worker pills, and Worker Quick Look in Builder and Collaboration conversations. The rate uses provider-final output across the complete request duration. This browser setting applies immediately. Turning it off hides only those conversation controls: **Stats → Response throughput** continues collecting and showing historical response throughput.
 
 ## Prompt Cache Visualization
 

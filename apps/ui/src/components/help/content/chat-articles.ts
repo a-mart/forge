@@ -237,7 +237,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-workers',
     title: 'Worker Agents',
     category: 'chat',
-    summary: 'How worker pills, quick look, final Pi throughput, and worker monitoring work.',
+    summary: 'How worker pills, quick look, final Pi response throughput, and worker monitoring work.',
     content: chatWorkersContent,
     keywords: [
       'worker',
@@ -259,7 +259,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-throughput',
     title: 'Response Throughput',
     category: 'chat',
-    summary: 'Understand final Pi response throughput across full requests and the Stats Throughput history.',
+    summary: 'Understand final Pi response throughput across full requests and history in Stats → Response throughput.',
     content: chatThroughputContent,
     keywords: [
       'throughput',
