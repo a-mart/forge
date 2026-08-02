@@ -46,8 +46,6 @@ function event(
       return {
         ...base,
         deltaKind: "text",
-        deltaUtf16CodeUnits: 8,
-        deltaUtf8Bytes: 8,
         ...overrides,
       } as RuntimeGenerationEvent;
     case "completed":
@@ -90,10 +88,7 @@ describe("GenerationMeasurementCoordinator", () => {
       providerAttemptScope: "openai_codex_websocket_request",
     }));
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("response_stream_started", "call-1", 400));
-    await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("output_delta", "call-1", 1_000, {
-      deltaUtf16CodeUnits: 12,
-      deltaUtf8Bytes: 12,
-    }));
+    await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("output_delta", "call-1", 1_000));
     await coordinator.handleRuntimeGenerationEvent(7, "manager-1", event("completed", "call-1", 3_000, {
       observedProviderAttemptCount: 2,
       meta: {
@@ -206,16 +201,10 @@ describe("GenerationMeasurementCoordinator", () => {
     const { coordinator, liveEvents } = createCoordinator([descriptor()]);
 
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("request_started", "live-call", 0));
-    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_000, {
-      deltaUtf16CodeUnits: 32,
-    }));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_000));
     // Later deltas update timing boundaries only; no streamed text is tokenized.
-    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_100, {
-      deltaUtf16CodeUnits: 32,
-    }));
-    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_600, {
-      deltaUtf16CodeUnits: 32,
-    }));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_100));
+    await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("output_delta", "live-call", 1_600));
     await coordinator.handleRuntimeGenerationEvent(4, "manager-1", event("completed", "live-call", 3_000, {
       meta: { usage: { output: 100 } },
     }));
@@ -249,6 +238,7 @@ describe("GenerationMeasurementCoordinator", () => {
       }),
     });
     expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf16CodeUnits");
+    expect(JSON.stringify(liveEvents)).not.toContain("deltaUtf8Bytes");
     expect(JSON.stringify(liveEvents)).not.toContain("characters_div_4_v1");
 
     const snapshot = await coordinator.getSnapshot("manager-1");

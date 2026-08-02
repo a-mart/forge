@@ -160,9 +160,9 @@ describe("Pi generation telemetry adapter", () => {
       providerAttemptScope: "unavailable",
     });
     expect(events.filter((event) => event.phase === "output_delta")).toEqual([
-      expect.objectContaining({ deltaKind: "text", deltaUtf16CodeUnits: 14 }),
-      expect.objectContaining({ deltaKind: "thinking", deltaUtf16CodeUnits: 17 }),
-      expect.objectContaining({ deltaKind: "tool_call", deltaUtf16CodeUnits: 17 }),
+      expect.objectContaining({ deltaKind: "text" }),
+      expect.objectContaining({ deltaKind: "thinking" }),
+      expect.objectContaining({ deltaKind: "tool_call" }),
     ]);
     expect(events.at(-1)).toMatchObject({
       phase: "completed",
@@ -171,6 +171,8 @@ describe("Pi generation telemetry adapter", () => {
       meta: expect.objectContaining({ usage: { output: 100, reasoning: 25 } }),
     });
     const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("deltaUtf16CodeUnits");
+    expect(serialized).not.toContain("deltaUtf8Bytes");
     expect(serialized).not.toContain("visible output");
     expect(serialized).not.toContain("private reasoning");
     expect(serialized).not.toContain('"path"');

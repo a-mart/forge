@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import { formatElapsed } from '@/lib/format-utils'
+import { isPiGenerationThroughputEligible } from '@/lib/generation-throughput-eligibility'
 import type {
   AgentDescriptor,
   AgentStatus,
@@ -275,7 +276,10 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
-  const displayedRate = finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
+  const throughputEligible = isPiGenerationThroughputEligible(worker)
+  const displayedRate = throughputEligible
+    ? finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
+    : null
   const statusText =
     status === 'streaming'
       ? 'Working'
@@ -305,15 +309,17 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
           {elapsedLabel ? <span className="tabular-nums"> · {elapsedLabel}</span> : null}
         </span>
       </div>
-      <div
-        data-worker-throughput-row
-        className="flex h-7 shrink-0 items-center justify-between border-b border-border/50 px-3 text-[11px] text-muted-foreground"
-      >
-        <span>Latest final throughput</span>
-        <span className="w-[72px] truncate whitespace-nowrap text-right tabular-nums text-foreground">
-          {formatThroughputRate(displayedRate)} tok/s
-        </span>
-      </div>
+      {throughputEligible ? (
+        <div
+          data-worker-throughput-row
+          className="flex h-7 shrink-0 items-center justify-between border-b border-border/50 px-3 text-[11px] text-muted-foreground"
+        >
+          <span>Latest final throughput</span>
+          <span className="w-[72px] truncate whitespace-nowrap text-right tabular-nums text-foreground">
+            {formatThroughputRate(displayedRate)} tok/s
+          </span>
+        </div>
+      ) : null}
 
       {/* Activity feed */}
       <div

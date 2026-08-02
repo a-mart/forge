@@ -1,5 +1,6 @@
 import { chooseFallbackAgentId, filterBuilderVisibleAgents, isAgentEffectivelyArchived } from '../agent-hierarchy'
 import type { ManagerWsState } from '../ws-state'
+import { clearGenerationThroughputForIneligibleAgents } from './generation-throughput-state'
 import { isManagerAgent, isWorkerAgent } from './runtime-types'
 import {
   chooseMostRecentSessionAgentId,
@@ -156,6 +157,7 @@ export function reduceAgentsSnapshot(input: {
     statuses,
     loadedSessionIds: nextLoadedSessionIds,
     hasReceivedAgentsSnapshot: true,
+    ...clearGenerationThroughputForIneligibleAgents(state, mergedAgents),
   }
 
   if (targetChanged) {
@@ -246,6 +248,7 @@ export function reduceSessionWorkersSnapshot(input: {
       agents: nextAgents,
       statuses: nextStatuses,
       loadedSessionIds: nextLoadedSessionIds,
+      ...clearGenerationThroughputForIneligibleAgents(state, nextAgents),
       ...(removedSecureSessionSnapshot
         ? { secureSessionSnapshots: nextSecureSessionSnapshots }
         : {}),

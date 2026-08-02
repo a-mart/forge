@@ -1994,7 +1994,10 @@ export class ManagerWsClient {
     const removedAgentIds = this.state.agents
       .filter((agent) => !nextAgentIds.has(agent.agentId))
       .map((agent) => agent.agentId)
-    const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
+    const throughputCleanup = clearGenerationThroughputForAgents(
+      { ...this.state, ...result.patch },
+      removedAgentIds,
+    )
     const patch = { ...result.patch, ...throughputCleanup }
 
     if (result.subscribeToAgentId) {

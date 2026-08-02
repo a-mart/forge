@@ -11,6 +11,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatElapsed } from '@/lib/format-utils'
+import { isPiGenerationThroughputEligible } from '@/lib/generation-throughput-eligibility'
 import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import type {
@@ -149,7 +150,10 @@ const WorkerPill = memo(function WorkerPill({
       ? `${modelId} · ${thinkingLevel}`
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
-  const displayedRate = finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
+  const throughputEligible = isPiGenerationThroughputEligible(worker)
+  const displayedRate = throughputEligible
+    ? finalThroughputRate(throughput) ?? finalThroughputRate(latestFinal)
+    : null
 
   const handlePopoverOpenChange = useCallback((open: boolean) => {
     setPopoverOpen(open)
@@ -201,13 +205,15 @@ const WorkerPill = memo(function WorkerPill({
               <span className="tabular-nums text-emerald-600/60 dark:text-emerald-400/60">
                 {elapsedLabel}
               </span>
-              <span
-                data-worker-throughput
-                className="w-[42px] shrink-0 truncate whitespace-nowrap text-right tabular-nums text-emerald-700/80 dark:text-emerald-200/80"
-                aria-label={displayedRate === null ? 'Final throughput unavailable' : `Final throughput ${formatThroughputRate(displayedRate)} tokens per second`}
-              >
-                {formatThroughputRate(displayedRate)} t/s
-              </span>
+              {throughputEligible ? (
+                <span
+                  data-worker-throughput
+                  className="w-[42px] shrink-0 truncate whitespace-nowrap text-right tabular-nums text-emerald-700/80 dark:text-emerald-200/80"
+                  aria-label={displayedRate === null ? 'Final throughput unavailable' : `Final throughput ${formatThroughputRate(displayedRate)} tokens per second`}
+                >
+                  {formatThroughputRate(displayedRate)} t/s
+                </span>
+              ) : null}
             </button>
           </PopoverTrigger>
         </TooltipTrigger>

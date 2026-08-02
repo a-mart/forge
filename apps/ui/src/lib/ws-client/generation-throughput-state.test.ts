@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GenerationThroughputLiveMeasurement } from '@forge/protocol'
+import type { AgentDescriptor, GenerationThroughputLiveMeasurement } from '@forge/protocol'
 import { createInitialManagerWsState } from '../ws-state'
 import {
   MAX_GENERATION_THROUGHPUT_TOMBSTONES,
@@ -8,6 +8,7 @@ import {
   reduceGenerationThroughputSnapshot,
   removeGenerationThroughputTombstone,
 } from './generation-throughput-state'
+import { reduceAgentsSnapshot, reduceSessionWorkersSnapshot } from './snapshot-reducers'
 
 function measurement(
   overrides: Partial<GenerationThroughputLiveMeasurement> = {},
@@ -44,8 +45,24 @@ function measurement(
   }
 }
 
-function state() {
-  return createInitialManagerWsState('manager-1')
+function agent(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+  return {
+    agentId: 'manager-1',
+    managerId: 'manager-1',
+    displayName: 'Manager',
+    role: 'manager',
+    status: 'idle',
+    createdAt: '2026-07-31T10:00:00.000Z',
+    updatedAt: '2026-07-31T10:00:00.000Z',
+    cwd: '/tmp',
+    model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'high' },
+    sessionFile: '/tmp/manager-1.jsonl',
+    ...overrides,
+  }
+}
+
+function state(agents: AgentDescriptor[] = [agent()]) {
+  return { ...createInitialManagerWsState('manager-1'), agents }
 }
 
 const legacySummary = {
@@ -133,6 +150,122 @@ describe('generation throughput WS reducer', () => {
       measurement: measurement({ measurementId: 'short-call', sequence: 1, phase: 'completed' }),
     })
     expect(unmeasurable.patch.generationThroughputLatestFinalByAgentId).toEqual(terminalResult.patch.generationThroughputLatestFinalByAgentId)
+  })
+
+  it('rejects Cursor SDK manager telemetry and does not hydrate its retained anchors', () => {
+    const initial = state([agent({ model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' } })])
+    const event = { type: 'generation_throughput' as const, measurement: measurement() }
+
+    expect(reduceGenerationThroughputEvent(initial, event).accepted).toBe(false)
+    const snapshot = reduceGenerationThroughputSnapshot(initial, {
+      type: 'generation_throughput_snapshot',
+      sessionAgentId: 'manager-1',
+      measurements: [measurement()],
+      sessionSummary: legacySummary,
+    })
+    expect(snapshot.accepted).toBe(true)
+    expect(snapshot.patch.generationThroughputByAgentId).toEqual({})
+  })
+
+  it('rejects Cursor SDK worker telemetry while retaining eligible Pi workers in the same manager session', () => {
+    const worker = agent({
+      agentId: 'worker-1',
+      role: 'worker',
+      managerId: 'manager-1',
+      model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' },
+      sessionFile: '/tmp/worker-1.jsonl',
+    })
+    const initial = state([agent(), worker])
+    const cursorWorkerMeasurement = measurement({ agentId: worker.agentId, role: 'worker' })
+
+    expect(reduceGenerationThroughputEvent(initial, {
+      type: 'generation_throughput', measurement: cursorWorkerMeasurement,
+    }).accepted).toBe(false)
+    const snapshot = reduceGenerationThroughputSnapshot(initial, {
+      type: 'generation_throughput_snapshot',
+      sessionAgentId: 'manager-1',
+      measurements: [measurement(), cursorWorkerMeasurement],
+      sessionSummary: legacySummary,
+    })
+    expect(snapshot.patch.generationThroughputByAgentId).toEqual({ 'manager-1': measurement() })
+  })
+
+  it('clears and tombstones retained manager anchors on Pi-to-Cursor, then accepts a fresh Pi lifecycle', () => {
+    const initial = state()
+    const final = measurement({
+      measurementId: 'pi-call', sequence: 2, phase: 'completed', outputTokens: 100,
+      generationAverageTokensPerSecond: 50, valueKind: 'provider_final',
+      quality: { ...measurement().quality, tokenSource: 'provider_final' },
+    })
+    const piState = { ...initial, ...reduceGenerationThroughputEvent(initial, {
+      type: 'generation_throughput', measurement: final,
+    }).patch }
+
+    const cursorTransition = reduceAgentsSnapshot({
+      state: piState,
+      desiredAgentId: 'manager-1',
+      explicitAgentSelectionAgentId: null,
+      agents: [agent({ model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' } })],
+    })
+    const cursorState = { ...piState, ...cursorTransition.patch }
+    expect(cursorState.generationThroughputByAgentId).toEqual({})
+    expect(cursorState.generationThroughputLatestFinalByAgentId).toEqual({})
+    expect(cursorState.generationThroughputTombstonesByMeasurementId['pi-call']).toBe(2)
+    expect(reduceGenerationThroughputEvent(cursorState, {
+      type: 'generation_throughput', measurement: final,
+    }).accepted).toBe(false)
+
+    const piTransition = reduceAgentsSnapshot({
+      state: cursorState,
+      desiredAgentId: 'manager-1',
+      explicitAgentSelectionAgentId: null,
+      agents: [agent()],
+    })
+    const freshPiState = { ...cursorState, ...piTransition.patch }
+    const fresh = measurement({ measurementId: 'fresh-pi-call', sequence: 1 })
+    const freshResult = reduceGenerationThroughputEvent(freshPiState, {
+      type: 'generation_throughput', measurement: fresh,
+    })
+    expect(freshResult.accepted).toBe(true)
+    expect(freshResult.patch.generationThroughputByAgentId?.['manager-1']).toEqual(fresh)
+  })
+
+  it('clears and tombstones retained worker anchors on Pi-to-Cursor, then accepts a fresh Pi lifecycle', () => {
+    const piWorker = agent({
+      agentId: 'worker-1',
+      role: 'worker',
+      managerId: 'manager-1',
+      sessionFile: '/tmp/worker-1.jsonl',
+    })
+    const initial = state([agent(), piWorker])
+    const final = measurement({
+      measurementId: 'pi-worker-call', sequence: 2, agentId: piWorker.agentId, role: 'worker',
+      phase: 'completed', outputTokens: 100, generationAverageTokensPerSecond: 50,
+      valueKind: 'provider_final', quality: { ...measurement().quality, tokenSource: 'provider_final' },
+    })
+    const piState = { ...initial, ...reduceGenerationThroughputEvent(initial, {
+      type: 'generation_throughput', measurement: final,
+    }).patch }
+
+    const cursorWorker = { ...piWorker, model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' } }
+    const cursorTransition = reduceSessionWorkersSnapshot({
+      state: piState, sessionAgentId: 'manager-1', workers: [cursorWorker],
+    })
+    const cursorState = { ...piState, ...cursorTransition.patch }
+    expect(cursorState.generationThroughputLatestFinalByAgentId).toEqual({})
+    expect(cursorState.generationThroughputTombstonesByMeasurementId['pi-worker-call']).toBe(2)
+    expect(reduceGenerationThroughputEvent(cursorState, {
+      type: 'generation_throughput', measurement: final,
+    }).accepted).toBe(false)
+
+    const piTransition = reduceSessionWorkersSnapshot({
+      state: cursorState, sessionAgentId: 'manager-1', workers: [piWorker],
+    })
+    const freshPiState = { ...cursorState, ...piTransition.patch }
+    expect(reduceGenerationThroughputEvent(freshPiState, {
+      type: 'generation_throughput',
+      measurement: measurement({ measurementId: 'fresh-pi-worker-call', agentId: piWorker.agentId, role: 'worker' }),
+    }).accepted).toBe(true)
   })
 
   it('bounds independent tombstones while replacement sequence keys cannot leak', () => {

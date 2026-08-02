@@ -109,10 +109,8 @@ export type RuntimeGenerationEvent =
       measurementId: string;
       wallTimeMs: number;
       monotonicTimeMs: number;
+      /** Delta category preserves timing/reasoning boundaries without retaining counts or content. */
       deltaKind: "text" | "thinking" | "tool_call";
-      deltaUtf16CodeUnits: number;
-      deltaUtf8Bytes: number;
-      partialOutputTokens?: number;
     }
   | {
       phase: "completed";

@@ -112,6 +112,7 @@ import { getCollaborationConnectionOptions, resolveCollaborationTarget } from '@
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
+import { isPiGenerationThroughputEligible } from '@/lib/generation-throughput-eligibility'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
 import { useOriginConnection } from '@/hooks/index-page/use-origin-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
@@ -2167,13 +2168,14 @@ export function BuilderSurface({
                   onDetailedAllViewChange: undefined,
                   contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
-                  generationThroughputEligible: !isRemoteOriginActive && isActiveManager,
+                  generationThroughputEligible:
+                    !isRemoteOriginActive && isActiveManager && isPiGenerationThroughputEligible(activeAgent),
                   generationThroughput:
-                    !isRemoteOriginActive && isActiveManager && activeAgentId
+                    !isRemoteOriginActive && isActiveManager && activeAgentId && isPiGenerationThroughputEligible(activeAgent)
                       ? state.generationThroughputByAgentId[activeAgentId]
                       : undefined,
                   generationThroughputLatestFinal:
-                    !isRemoteOriginActive && isActiveManager && activeAgentId
+                    !isRemoteOriginActive && isActiveManager && activeAgentId && isPiGenerationThroughputEligible(activeAgent)
                       ? state.generationThroughputLatestFinalByAgentId[activeAgentId]
                       : undefined,
                   compactionCount: activeAgent?.compactionCount,

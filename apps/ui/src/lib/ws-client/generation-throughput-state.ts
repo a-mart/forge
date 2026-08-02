@@ -1,8 +1,10 @@
 import type {
+  AgentDescriptor,
   GenerationThroughputEvent,
   GenerationThroughputLiveMeasurement,
   GenerationThroughputSnapshotEvent,
 } from '@forge/protocol'
+import { isPiGenerationThroughputEligible } from '../generation-throughput-eligibility'
 import type { ManagerWsState } from '../ws-state'
 
 export const MAX_GENERATION_THROUGHPUT_TOMBSTONES = 64
@@ -23,7 +25,10 @@ export function reduceGenerationThroughputEvent(
   event: GenerationThroughputEvent,
 ): GenerationThroughputReduction {
   const measurement = event.measurement
-  if (!isCurrentSession(state, measurement.sessionId)) return { patch: {}, accepted: false }
+  if (
+    !isCurrentSession(state, measurement.sessionId)
+    || !isPiGenerationThroughputEligibleForAgent(state, measurement.agentId)
+  ) return { patch: {}, accepted: false }
 
   if (state.generationThroughputTombstonesByMeasurementId[measurement.measurementId] !== undefined) {
     return { patch: {}, accepted: false }
@@ -98,7 +103,10 @@ export function reduceGenerationThroughputSnapshot(
   const nextSequences: Record<string, number> = {}
 
   for (const measurement of event.measurements) {
-    if (measurement.sessionId !== event.sessionAgentId) continue
+    if (
+      measurement.sessionId !== event.sessionAgentId
+      || !isPiGenerationThroughputEligibleForAgent(state, measurement.agentId)
+    ) continue
     const current = nextMeasurements[measurement.agentId]
     if (current && !replacesCurrentMeasurement(current, measurement)) continue
     nextMeasurements[measurement.agentId] = measurement
@@ -126,6 +134,16 @@ export function clearGenerationThroughputForAgents(
   const measurements = { ...state.generationThroughputByAgentId }
   const latestFinals = { ...state.generationThroughputLatestFinalByAgentId }
   const sequences = { ...state.generationThroughputSequenceByMeasurementId }
+  let tombstones = state.generationThroughputTombstonesByMeasurementId
+  let tombstoneOrder = state.generationThroughputTombstoneOrder
+
+  const tombstone = (measurement: GenerationThroughputLiveMeasurement) => {
+    const next = addGenerationThroughputTombstone(
+      tombstones, tombstoneOrder, measurement.measurementId, measurement.sequence,
+    )
+    tombstones = next.generationThroughputTombstonesByMeasurementId
+    tombstoneOrder = next.generationThroughputTombstoneOrder
+  }
 
   for (const agentId of ids) {
     const measurement = measurements[agentId]
@@ -133,10 +151,14 @@ export function clearGenerationThroughputForAgents(
       changed = true
       delete measurements[agentId]
       delete sequences[measurement.measurementId]
+      tombstone(measurement)
     }
-    if (latestFinals[agentId]) {
+    const latestFinal = latestFinals[agentId]
+    if (latestFinal) {
       changed = true
       delete latestFinals[agentId]
+      delete sequences[latestFinal.measurementId]
+      tombstone(latestFinal)
     }
   }
 
@@ -145,8 +167,21 @@ export function clearGenerationThroughputForAgents(
         generationThroughputByAgentId: measurements,
         generationThroughputLatestFinalByAgentId: latestFinals,
         generationThroughputSequenceByMeasurementId: sequences,
+        generationThroughputTombstonesByMeasurementId: tombstones,
+        generationThroughputTombstoneOrder: tombstoneOrder,
       }
     : {}
+}
+
+/** Remove all Pi-only presentation state when descriptor metadata selects Cursor SDK. */
+export function clearGenerationThroughputForIneligibleAgents(
+  state: ManagerWsState,
+  agents: Iterable<Pick<AgentDescriptor, 'agentId' | 'model'>>,
+): Partial<ManagerWsState> {
+  const ineligibleAgentIds = [...agents]
+    .filter((agent) => !isPiGenerationThroughputEligible(agent))
+    .map((agent) => agent.agentId)
+  return clearGenerationThroughputForAgents(state, ineligibleAgentIds)
 }
 
 /** Clear transient calls while retaining the latest exact result through reconnects. */
@@ -227,6 +262,11 @@ function replacesCurrentMeasurement(
     return incoming.sequence > current.sequence
   }
   return Date.parse(incoming.sampledAt) >= Date.parse(current.sampledAt)
+}
+
+function isPiGenerationThroughputEligibleForAgent(state: ManagerWsState, agentId: string): boolean {
+  const agent = state.agents.find((candidate) => candidate.agentId === agentId)
+  return isPiGenerationThroughputEligible(agent)
 }
 
 function isCurrentSession(state: ManagerWsState, sessionAgentId: string): boolean {

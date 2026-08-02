@@ -6773,6 +6773,12 @@ describe('ManagerWsClient', () => {
     vi.advanceTimersByTime(60)
     const socket = FakeWebSocket.instances.at(-1)!
     socket.emit('open')
+    // Throughput is accepted only after the descriptor establishes that this
+    // manager is Pi-backed, mirroring bootstrap's agents_snapshot ordering.
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor()],
+    })
 
     const sessionSummary = {
       sessionAgentId: 'manager',

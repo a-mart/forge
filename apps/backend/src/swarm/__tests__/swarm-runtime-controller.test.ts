@@ -439,7 +439,7 @@ describe("SwarmRuntimeController", () => {
     });
     await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
       phase: "output_delta", measurementId: "persisted-call", wallTimeMs: 1_500, monotonicTimeMs: 510,
-      deltaKind: "text", deltaUtf16CodeUnits: 8, deltaUtf8Bytes: 8,
+      deltaKind: "text",
     });
     await controller.handleRuntimeGenerationEvent(token, manager.agentId, {
       phase: "completed", measurementId: "persisted-call", wallTimeMs: 2_000, monotonicTimeMs: 1_010,

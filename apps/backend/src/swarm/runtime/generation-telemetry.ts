@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { Buffer } from "node:buffer";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type {
   RuntimeGenerationCallMeta,
@@ -137,16 +136,14 @@ export class PiGenerationTelemetryAdapter {
           return;
         case "message_update": {
           if (!isAssistantMessage(event.message)) return;
-          const delta = extractCountableDelta(event.assistantMessageEvent);
+          const delta = extractOutputDeltaKind(event.assistantMessageEvent);
           if (!delta || !this.active) return;
           const timestamp = this.timestamp();
           await this.emit({
             phase: "output_delta",
             measurementId: this.active.measurementId,
             ...timestamp,
-            deltaKind: delta.kind,
-            deltaUtf16CodeUnits: delta.value.length,
-            deltaUtf8Bytes: Buffer.byteLength(delta.value, "utf8"),
+            deltaKind: delta,
           });
           return;
         }
@@ -295,18 +292,18 @@ export class PiGenerationTelemetryAdapter {
   }
 }
 
-function extractCountableDelta(value: unknown): { kind: "text" | "thinking" | "tool_call"; value: string } | null {
+function extractOutputDeltaKind(value: unknown): "text" | "thinking" | "tool_call" | null {
   const event = readObject(value);
   const delta = typeof event?.delta === "string" ? event.delta : "";
   if (delta.length === 0) return null;
 
   switch (event?.type) {
     case "text_delta":
-      return { kind: "text", value: delta };
+      return "text";
     case "thinking_delta":
-      return { kind: "thinking", value: delta };
+      return "thinking";
     case "toolcall_delta":
-      return { kind: "tool_call", value: delta };
+      return "tool_call";
     default:
       return null;
   }

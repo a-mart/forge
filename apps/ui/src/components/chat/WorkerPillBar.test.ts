@@ -60,12 +60,13 @@ afterEach(() => {
 function render(
   activityMessages: AgentActivityEntry[],
   generationThroughputByAgentId?: Record<string, GenerationThroughputLiveMeasurement>,
+  workerDescriptor: AgentDescriptor = worker,
 ) {
   act(() => {
     root.render(createElement(WorkerPillBar, {
-      workers: [worker],
+      workers: [workerDescriptor],
       statuses: {
-        [worker.agentId]: {
+        [workerDescriptor.agentId]: {
           status: 'streaming',
           streamingStartedAt: Date.now() - 5_000,
         },
@@ -181,6 +182,48 @@ describe('WorkerPillBar quick look', () => {
     expect(telemetryRow?.textContent).toContain('Latest final throughput')
     expect(telemetryRow?.textContent).toContain('50 tok/s')
     expect(telemetryRow?.className).toContain('h-7')
+  })
+
+  it('suppresses throughput cells and the Quick Look row for Cursor SDK workers', () => {
+    const cursorWorker: AgentDescriptor = {
+      ...worker,
+      model: { provider: 'cursor-sdk', modelId: 'composer-2.5', thinkingLevel: 'high' },
+    }
+    render([replayedSummary], {
+      [worker.agentId]: {
+        measurementId: 'stale-pi-call',
+        sequence: 2,
+        phase: 'completed',
+        profileId: 'profile-1',
+        sessionId: 'manager-1',
+        agentId: worker.agentId,
+        managerId: 'manager-1',
+        role: 'worker',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        sampledAt: '2026-07-21T10:00:02.000Z',
+        firstOutputAt: '2026-07-21T10:00:01.000Z',
+        timeToFirstOutputMs: 1_000,
+        elapsedGenerationMs: 2_000,
+        outputTokens: 100,
+        instantaneousTokensPerSecond: null,
+        generationAverageTokensPerSecond: 50,
+        valueKind: 'provider_final',
+        quality: {
+          measurementScope: 'agent_model_call',
+          agentRetryAttempt: 0,
+          providerAttemptScope: 'unavailable',
+          observedProviderAttemptCount: null,
+          tokenSource: 'provider_final',
+          boundarySource: 'content_delta_to_stream_end',
+          reasoningBoundaryCoverage: 'observed',
+        },
+      },
+    }, cursorWorker)
+
+    expect(getPill().querySelector('[data-worker-throughput]')).toBeNull()
+    act(() => getPill().click())
+    expect(document.body.querySelector('[data-worker-throughput-row]')).toBeNull()
   })
 
   it('uses a fixed responsive frame with an internal flex scroll region', () => {
