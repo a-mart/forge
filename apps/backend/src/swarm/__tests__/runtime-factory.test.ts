@@ -1798,6 +1798,161 @@ describe("RuntimeFactory", () => {
     expect(snapshot.snapshots).toEqual([]);
   });
 
+  it("persists one safe Pi initial-model-input capture from the public streamFn seam", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const piSession = createMockPiSession();
+    const appendCustomEntry = vi.fn(() => "initial-input-entry");
+    const sessionManager = {
+      getEntries: () => [],
+      appendCustomEntry,
+    };
+    piSession.sessionManager = sessionManager;
+    sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValue(sessionManager);
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: piSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 42);
+    const telemetrySubscriber = piSession.subscribe.mock.calls[0]?.[0] as ((event: unknown) => void) | undefined;
+    telemetrySubscriber?.({ type: "agent_start" });
+    await piSession.agent.streamFn(
+      { provider: "openai-codex", id: "gpt-5.4-mini", api: "openai-codex-responses" },
+      {
+        systemPrompt: "Final prompt from before_agent_start",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "hello", password: "message-level value" },
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+          ],
+        }],
+        tools: [{
+          name: "read",
+          description: "Read a file",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              token: { type: "string", description: "A user-provided token field" },
+            },
+          },
+          execute: () => undefined,
+        }],
+      },
+      {
+        reasoning: "high",
+        maxTokens: 4_096,
+        token: "top-level secret",
+        apiKey: "secret",
+        auth: "secret",
+        accessToken: "secret",
+        "x-api-key": "secret",
+        headers: { authorization: "secret" },
+        env: { TOKEN: "secret" },
+        metadata: { traceId: "trace-1", auth: "secret", token: "nested secret" },
+      },
+    );
+
+    expect(appendCustomEntry).toHaveBeenCalledOnce();
+    expect(appendCustomEntry).toHaveBeenCalledWith("swarm_pi_initial_model_input", {
+      version: 1,
+      runtime: "pi",
+      capturedAt: expect.any(String),
+      fidelity: {
+        capturePoint: "pi_stream_fn",
+        context: "exact_provider_independent",
+        images: "byte_summary",
+        requestMetadata: "safe_projection",
+      },
+      systemPrompt: "Final prompt from before_agent_start",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "hello", password: "message-level value" },
+          { type: "image", mimeType: "image/png", dataBytes: 5 },
+        ],
+      }],
+      tools: [{
+        name: "read",
+        description: "Read a file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            token: { type: "string", description: "A user-provided token field" },
+          },
+        },
+      }],
+      model: {
+        provider: "openai-codex",
+        id: "gpt-5.4-mini",
+        api: "openai-codex-responses",
+      },
+      requestMetadata: {
+        reasoning: "high",
+        maxTokens: 4_096,
+        metadata: { traceId: "trace-1" },
+      },
+    });
+  });
+
+  it("does not append another initial-model-input capture after a Pi runtime is recreated", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const firstSession = createMockPiSession();
+    const recreatedSession = createMockPiSession();
+    const appendCustomEntry = vi.fn(() => "initial-input-entry");
+    const sessionEntries: unknown[] = [];
+    const sessionManager = {
+      getEntries: () => sessionEntries,
+      appendCustomEntry,
+    };
+    firstSession.sessionManager = sessionManager;
+    recreatedSession.sessionManager = sessionManager;
+    sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValue(sessionManager);
+    piCodingAgentMockState.createAgentSession
+      .mockResolvedValueOnce({ session: firstSession, extensionsResult: { extensions: [], errors: [] } })
+      .mockResolvedValueOnce({ session: recreatedSession, extensionsResult: { extensions: [], errors: [] } });
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir);
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 1);
+    sessionEntries.push({
+      type: "custom",
+      customType: "swarm_pi_initial_model_input",
+      data: {
+        version: 1,
+        runtime: "pi",
+        capturedAt: "2026-01-01T00:00:00.000Z",
+        fidelity: {
+          capturePoint: "pi_stream_fn",
+          context: "exact_provider_independent",
+          images: "byte_summary",
+          requestMetadata: "safe_projection",
+        },
+        systemPrompt: "existing first request",
+        messages: [],
+        tools: [],
+        model: { provider: "openai-codex", id: "gpt-5.4-mini" },
+        requestMetadata: {},
+      },
+    });
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 2);
+    const telemetrySubscriber = recreatedSession.subscribe.mock.calls[0]?.[0] as ((event: unknown) => void) | undefined;
+    telemetrySubscriber?.({ type: "agent_start" });
+    await recreatedSession.agent.streamFn(
+      { provider: "openai-codex", id: "gpt-5.4-mini" },
+      { systemPrompt: "new request", messages: [], tools: [] },
+      {},
+    );
+
+    expect(appendCustomEntry).not.toHaveBeenCalled();
+  });
+
   it("injects startup-only recovery context into Pi manager runtime creation without changing the stored base prompt", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });

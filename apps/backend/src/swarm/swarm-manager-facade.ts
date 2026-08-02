@@ -104,7 +104,6 @@ import type { CompactAgentContextOptions } from "./swarm-compaction-coordinator.
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import type { SwarmRuntimeLifecycleCoordinator } from "./swarm-runtime-lifecycle-coordinator.js";
 import type { SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
-import { SwarmManagerDelegationFacade } from "./swarm-manager-delegation-facade.js";
 import type {
   AppendConversationUserMessageOptions,
   AppendConversationUserMessageResult,
@@ -130,6 +129,7 @@ import type {
   SwarmReasoningLevel,
 } from "./types.js";
 import { normalizeOptionalAgentId } from "./swarm-manager-utils.js";
+import { SwarmManagerInitialModelInputFacade } from "./swarm-manager-initial-model-input-facade.js";
 
 export interface CreateManagerInput {
   name: string;
@@ -220,7 +220,7 @@ import type {
  * coordinators above, while this class keeps the manager's compatibility
  * surface explicit without forcing every delegate into the composition root.
  */
-export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
+export abstract class SwarmManagerFacade extends SwarmManagerInitialModelInputFacade {
   protected abstract getFacadeServices(): SwarmManagerFacadeServices;
   flushPendingPersistence(): Promise<void> { return this.services.persistence.flushPendingTurnSeqPersists(); }
   getSessionPlanSnapshot(

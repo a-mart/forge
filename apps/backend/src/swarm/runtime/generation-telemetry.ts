@@ -11,10 +11,18 @@ export interface PiGenerationTelemetryClock {
   monotonicTimeMs(): number;
 }
 
+export interface PiFirstModelRequest {
+  model: unknown;
+  context: unknown;
+  streamOptions: unknown;
+}
+
 export interface PiGenerationTelemetryAdapterOptions {
   session: AgentSession;
   reasoningLevel: string | null;
   onGenerationEvent?: (event: RuntimeGenerationEvent) => void | Promise<void>;
+  /** Local-only, one-shot request capture. It never enters generation telemetry. */
+  onFirstModelRequest?: (request: PiFirstModelRequest) => void | Promise<void>;
   createMeasurementId?: () => string;
   clock?: PiGenerationTelemetryClock;
   /** Public Pi debug probe: cumulative sent Codex WebSocket response.create frames for this session. */
@@ -30,13 +38,15 @@ interface ActivePiGeneration {
 
 /**
  * Adapts Pi's provider hooks and assistant-message lifecycle to Forge's
- * count-only runtime generation contract. It deliberately never retains or
- * forwards a payload, response body, streamed delta, prompt, or tool args.
+ * count-only runtime generation contract. Generation events never retain or
+ * forward payloads; the optional local one-shot observer receives only the
+ * initial stream inputs for session-local capture.
  */
 export class PiGenerationTelemetryAdapter {
   private readonly session: AgentSession;
   private readonly reasoningLevel: string | null;
   private readonly onGenerationEvent: ((event: RuntimeGenerationEvent) => void | Promise<void>) | undefined;
+  private readonly onFirstModelRequest: ((request: PiFirstModelRequest) => void | Promise<void>) | undefined;
   private readonly createMeasurementId: () => string;
   private readonly clock: PiGenerationTelemetryClock;
   private readonly readOpenAICodexWebSocketRequestCount: (() => number | undefined) | undefined;
@@ -45,11 +55,13 @@ export class PiGenerationTelemetryAdapter {
   private originalStreamFn: AgentSession["agent"]["streamFn"] | undefined;
   private instrumentedStreamFn: AgentSession["agent"]["streamFn"] | undefined;
   private installed = false;
+  private firstModelRequestObserved = false;
 
   constructor(options: PiGenerationTelemetryAdapterOptions) {
     this.session = options.session;
     this.reasoningLevel = normalizeOptionalString(options.reasoningLevel);
     this.onGenerationEvent = options.onGenerationEvent;
+    this.onFirstModelRequest = options.onFirstModelRequest;
     this.createMeasurementId = options.createMeasurementId ?? randomUUID;
     this.clock = options.clock ?? {
       wallTimeMs: () => Date.now(),
@@ -74,8 +86,15 @@ export class PiGenerationTelemetryAdapter {
     this.instrumentedStreamFn = async (model, context, options) => {
       await this.enqueue(() => this.beginRequest(model, options));
       try {
-        return await existingStreamFn.call(agent, model, context, options);
+        // Start provider dispatch before the local capture can synchronously
+        // project or persist request content.
+        const providerStream = existingStreamFn.call(agent, model, context, options);
+        this.captureFirstModelRequest(model, context, options);
+        return await providerStream;
       } catch (error) {
+        // A synchronous provider throw is still a first model-call attempt,
+        // but capture only after dispatch has been invoked.
+        this.captureFirstModelRequest(model, context, options);
         await this.enqueue(() => this.completeActive("error"));
         throw error;
       }
@@ -211,6 +230,19 @@ export class PiGenerationTelemetryAdapter {
       agentRetryAttempt: readNonNegativeInteger(this.session.retryAttempt) ?? 0,
       providerAttemptScope,
     });
+  }
+
+  private captureFirstModelRequest(model: unknown, context: unknown, streamOptions: unknown): void {
+    if (this.firstModelRequestObserved) return;
+    this.firstModelRequestObserved = true;
+
+    try {
+      void Promise.resolve(this.onFirstModelRequest?.({ model, context, streamOptions })).catch(() => {
+        // A local viewer capture must never interfere with model dispatch.
+      });
+    } catch {
+      // A synchronous callback failure must not interfere with model dispatch.
+    }
   }
 
   private async markResponseStreamStarted(): Promise<void> {

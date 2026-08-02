@@ -36,6 +36,60 @@ export interface PromptPreviewResponse {
   sections: PromptPreviewSection[]
 }
 
+/** JSON-safe request context retained for the first Pi model call in a session. */
+export type InitialModelInputJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | InitialModelInputJsonValue[]
+  | { [key: string]: InitialModelInputJsonValue }
+
+export interface PiInitialModelInputCaptureV1 {
+  version: 1
+  runtime: 'pi'
+  capturedAt: string
+  fidelity: {
+    capturePoint: 'pi_stream_fn'
+    context: 'exact_provider_independent'
+    images: 'byte_summary'
+    requestMetadata: 'safe_projection'
+  }
+  systemPrompt: string
+  messages: InitialModelInputJsonValue[]
+  tools: InitialModelInputJsonValue[]
+  model: {
+    provider: string
+    id: string
+    api?: string
+  }
+  requestMetadata: { [key: string]: InitialModelInputJsonValue }
+}
+
+export type AgentInitialModelInputState =
+  | {
+      status: 'available'
+      capture: PiInitialModelInputCaptureV1
+    }
+  | {
+      status: 'pending'
+      message: string
+    }
+  | {
+      status: 'unsupported'
+      message: string
+    }
+
+/** Additive response for GET /api/agents/:id/system-prompt. */
+export interface AgentSystemPromptResponse {
+  agentId: string
+  role: 'manager' | 'worker'
+  systemPrompt: string | null
+  model: string | null
+  archetypeId: string | null
+  initialModelInput: AgentInitialModelInputState
+}
+
 export type CortexPromptSurfaceKind = 'registry' | 'file'
 export type CortexPromptSurfaceGroup = 'system' | 'seed' | 'live' | 'scratch'
 export type CortexPromptSurfaceRuntimeEffect =

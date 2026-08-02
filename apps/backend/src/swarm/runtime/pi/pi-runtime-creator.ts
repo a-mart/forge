@@ -19,6 +19,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { PiGenerationTelemetryAdapter } from "../generation-telemetry.js";
+import {
+  createPiInitialModelInputCapture,
+  findPiInitialModelInputCaptureInSessionEntries,
+  PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
+} from "../initial-model-input-capture.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import { resizeImageIfNeeded } from "../image-utils.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
@@ -485,12 +490,36 @@ export class PiRuntimeCreator {
       getLastUserFacingManagerOutputAt: (agentId) =>
         this.deps.callbacks.getLastUserFacingManagerOutputAt?.(agentId),
     };
+    const sessionEntries = (sessionManager as { getEntries?: () => unknown[] }).getEntries?.() ?? [];
+    const hasInitialModelInputCapture = findPiInitialModelInputCaptureInSessionEntries(sessionEntries) !== undefined;
     const generationTelemetry = new PiGenerationTelemetryAdapter({
       session: session as AgentSession,
       reasoningLevel: descriptor.model.thinkingLevel,
       onGenerationEvent: async (event) => {
         await runtimeCallbacks.onGenerationEvent?.(descriptor.agentId, event);
       },
+      ...(hasInitialModelInputCapture
+        ? {}
+        : {
+            onFirstModelRequest: ({ model: requestModel, context, streamOptions }) => {
+              try {
+                sessionManager.appendCustomEntry(
+                  PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
+                  createPiInitialModelInputCapture({
+                    model: requestModel,
+                    context,
+                    streamOptions,
+                    capturedAt: this.deps.now(),
+                  }),
+                );
+              } catch (error) {
+                this.deps.logDebug("initial_model_input:capture:error", {
+                  agentId: descriptor.agentId,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              }
+            },
+          }),
       readOpenAICodexWebSocketRequestCount: () =>
         getOpenAICodexWebSocketDebugStats(session.sessionId)?.requests,
     });

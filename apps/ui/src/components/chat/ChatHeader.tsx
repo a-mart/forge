@@ -406,13 +406,13 @@ export function ChatHeader({
                     size="icon"
                     className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
                     onClick={() => setPromptOpen(true)}
-                    aria-label="View system prompt"
+                    aria-label="View initial model input"
                   >
                     <ScrollText className="size-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  View system prompt
+                  View initial model input
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

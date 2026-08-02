@@ -330,6 +330,35 @@ describe("ConversationTimeline", () => {
     expect(copied).toContain("message-1");
   });
 
+  it("omits initial Pi model-input captures so forks record their own first request", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        JSON.stringify({
+          type: "custom",
+          customType: "swarm_pi_initial_model_input",
+          id: "initial-input",
+          parentId: null,
+          data: { version: 1, runtime: "pi" },
+        }),
+        buildConversationEntry("message-1"),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    await copySessionHistoryForFork({
+      sourceSessionFile,
+      targetSessionFile,
+      omittedCustomTypes: ["swarm_pi_initial_model_input"],
+    });
+
+    expect(readFileSync(targetSessionFile, "utf8")).not.toContain("swarm_pi_initial_model_input");
+  });
+
   it("drops display-only parent Codex cards when copying fork history", async () => {
     const root = await createTempDir("conversation-timeline-");
     const sourceSessionFile = join(root, "source.jsonl");

@@ -1,12 +1,7 @@
+import type { AgentSystemPromptResponse } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
-export interface AgentSystemPromptResponse {
-  agentId: string
-  role: 'manager' | 'worker'
-  systemPrompt: string | null
-  model: string | null
-  archetypeId: string | null
-}
+export type { AgentSystemPromptResponse } from '@forge/protocol'
 
 export async function fetchAgentSystemPrompt(
   wsUrl: string | undefined,

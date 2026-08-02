@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AgentSystemPromptResponse } from "@forge/protocol";
 import {
   applyCorsHeaders,
   readJsonBody,
@@ -246,6 +247,7 @@ async function handleAgentSystemPromptHttpRequest(
   }
 
   const dataDir = swarmManager.getConfig().paths.dataDir;
+  const initialModelInput = swarmManager.getAgentInitialModelInputForRead(descriptor.agentId);
 
   if (descriptor.role === "manager") {
     // resolveAgentSystemPromptForRead runs preflightRepoProjectAgentRuntime
@@ -264,8 +266,9 @@ async function handleAgentSystemPromptHttpRequest(
       role: descriptor.role,
       systemPrompt,
       model: buildAgentModelIdentifier(descriptor),
-      archetypeId: descriptor.archetypeId ?? null
-    });
+      archetypeId: descriptor.archetypeId ?? null,
+      initialModelInput,
+    } satisfies AgentSystemPromptResponse);
     return;
   }
 
@@ -278,8 +281,9 @@ async function handleAgentSystemPromptHttpRequest(
     role: descriptor.role,
     systemPrompt: workerMeta?.systemPrompt ?? null,
     model: workerMeta?.model ?? buildAgentModelIdentifier(descriptor),
-    archetypeId: descriptor.archetypeId ?? null
-  });
+    archetypeId: descriptor.archetypeId ?? null,
+    initialModelInput,
+  } satisfies AgentSystemPromptResponse);
 }
 
 function buildAgentModelIdentifier(agent: {

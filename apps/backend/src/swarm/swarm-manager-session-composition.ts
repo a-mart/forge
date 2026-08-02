@@ -17,6 +17,7 @@ import type { AgentDirectory } from "./agent-directory.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { GENERATION_MEASUREMENT_ENTRY_TYPE } from "../utils/generation-measurement-records.js";
+import { PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE } from "./runtime/initial-model-input-capture.js";
 import { copySessionHistoryForFork } from "./session/conversation-timeline.js";
 import {
   SessionProvisioner,
@@ -144,6 +145,7 @@ export function createSwarmManagerSessionComposition(
           CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
           CURSOR_SDK_USAGE_ENTRY_TYPE,
           GENERATION_MEASUREMENT_ENTRY_TYPE,
+          PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
         ],
       }),
     copyPinnedMessagesForFork: (source, forked) => services.pins.copyPinsForFork(source, forked),

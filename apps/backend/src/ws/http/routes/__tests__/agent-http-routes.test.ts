@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getAvailablePort } from '../../../../test-support/index.js'
@@ -233,8 +233,151 @@ describe('SwarmWebSocketServer', () => {
         systemPrompt: meta?.resolvedSystemPrompt ?? null,
         model: `${managerDescriptor.model.provider}/${managerDescriptor.model.modelId}`,
         archetypeId: managerDescriptor.archetypeId ?? null,
+        initialModelInput: {
+          status: 'pending',
+          message: 'Available after the first model request.',
+        },
       })
       expect(payload.systemPrompt).toContain('You are the manager agent in a multi-agent swarm.')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns the persisted initial Pi model input after capture', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    const managerDescriptor = await bootWithDefaultManager(manager, config)
+    const capture = {
+      version: 1,
+      runtime: 'pi',
+      capturedAt: '2026-01-01T00:00:00.000Z',
+      fidelity: {
+        capturePoint: 'pi_stream_fn',
+        context: 'exact_provider_independent',
+        images: 'byte_summary',
+        requestMetadata: 'safe_projection',
+      },
+      systemPrompt: 'Final first-request prompt',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      tools: [{ name: 'read', parameters: { type: 'object' } }],
+      model: { provider: 'openai-codex', id: 'gpt-5.4', api: 'openai-codex-responses' },
+      requestMetadata: { reasoning: 'high' },
+    }
+    const persistedSession = await readFile(managerDescriptor.sessionFile, 'utf8')
+    await writeFile(managerDescriptor.sessionFile, `${persistedSession.trimEnd()}\n${JSON.stringify({
+      type: 'custom',
+      id: 'initial-model-input-entry',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      customType: 'swarm_pi_initial_model_input',
+      data: capture,
+    })}\n`, 'utf8')
+    // Reopen from the persisted JSONL rather than relying on the live runtime.
+    ;(manager as unknown as { services: { runtime: { runtimes: Map<string, unknown> } } })
+      .services.runtime.runtimes.delete(managerDescriptor.agentId)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/agents/${encodeURIComponent(managerDescriptor.agentId)}/system-prompt`,
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        agentId: managerDescriptor.agentId,
+        initialModelInput: {
+          status: 'available',
+          capture: {
+            version: 1,
+            runtime: 'pi',
+            systemPrompt: 'Final first-request prompt',
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+            tools: [{ name: 'read', parameters: { type: 'object' } }],
+            requestMetadata: { reasoning: 'high' },
+          },
+        },
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns initial model input as unsupported for Cursor SDK runtimes', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    const managerDescriptor = await bootWithDefaultManager(manager, config)
+    Object.assign(manager.runtimeByAgentId.get(managerDescriptor.agentId)!, { runtimeType: 'cursor-sdk' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/agents/${encodeURIComponent(managerDescriptor.agentId)}/system-prompt`,
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        initialModelInput: {
+          status: 'unsupported',
+          message: 'Initial model-input capture is currently available for Pi runtimes only.',
+        },
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns initial model input as unsupported for inactive noncanonical Cursor SDK descriptors', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    const managerDescriptor = await bootWithDefaultManager(manager, config)
+    const managerState = manager as unknown as {
+      descriptors: Map<string, { model: { provider: string }; status: string }>
+      services: { runtime: { runtimes: Map<string, unknown> } }
+    }
+    const inactiveDescriptor = managerState.descriptors.get(managerDescriptor.agentId)
+    expect(inactiveDescriptor).toBeDefined()
+    inactiveDescriptor!.model.provider = ' Cursor-SDK '
+    inactiveDescriptor!.status = 'stopped'
+    managerState.services.runtime.runtimes.delete(managerDescriptor.agentId)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/agents/${encodeURIComponent(managerDescriptor.agentId)}/system-prompt`,
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        initialModelInput: {
+          status: 'unsupported',
+          message: 'Initial model-input capture is currently available for Pi runtimes only.',
+        },
+      })
     } finally {
       await server.stop()
     }
@@ -449,6 +592,10 @@ describe('SwarmWebSocketServer', () => {
         systemPrompt: workerMeta?.systemPrompt ?? null,
         model: workerMeta?.model ?? `${worker.model.provider}/${worker.model.modelId}`,
         archetypeId: worker.archetypeId ?? null,
+        initialModelInput: {
+          status: 'pending',
+          message: 'Available after the first model request.',
+        },
       })
       expect(payload.systemPrompt).toContain('End users see only manager-owned user-visible outputs: final assistant replies, direct-web assistant progress updates, routed `speak_to_user` deliveries, and structured choice UI.')
     } finally {

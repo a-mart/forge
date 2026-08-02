@@ -20,6 +20,7 @@ import {
 } from '../index.js'
 import type {
   AgentDescriptor,
+  AgentSystemPromptResponse,
   ConversationMessageEvent,
   ExternalThreadMessageContext,
   ExternalThreadInfo,
@@ -258,6 +259,33 @@ const agent = {
   sessionFile: '/tmp/session.jsonl',
   profileId: profile.profileId,
 } satisfies AgentDescriptor
+
+const initialModelInputResponse = {
+  agentId: agent.agentId,
+  role: 'manager',
+  systemPrompt: 'Final prompt',
+  model: 'openai-codex/gpt-5.4',
+  archetypeId: null,
+  initialModelInput: {
+    status: 'available',
+    capture: {
+      version: 1,
+      runtime: 'pi',
+      capturedAt: now,
+      fidelity: {
+        capturePoint: 'pi_stream_fn',
+        context: 'exact_provider_independent',
+        images: 'byte_summary',
+        requestMetadata: 'safe_projection',
+      },
+      systemPrompt: 'Final prompt',
+      messages: [],
+      tools: [],
+      model: { provider: 'openai-codex', id: 'gpt-5.4' },
+      requestMetadata: {},
+    },
+  },
+} satisfies AgentSystemPromptResponse
 
 const auditPage = {
   sessionAgentId: agent.agentId,
@@ -949,6 +977,11 @@ describe('protocol root barrel contract', () => {
     } satisfies GenerationThroughputEvent
 
     expect(record.measurementId).toBe(live.measurement.measurementId)
+  })
+
+  it('exports the initial Pi model-input HTTP contract from the root barrel', () => {
+    expect(initialModelInputResponse.initialModelInput.status).toBe('available')
+    expect(initialModelInputResponse.initialModelInput.capture.systemPrompt).toBe('Final prompt')
   })
 
   it('exports session audit protocol contracts from the root barrel', () => {

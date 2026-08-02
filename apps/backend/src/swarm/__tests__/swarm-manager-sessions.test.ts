@@ -1046,6 +1046,29 @@ Never use plain assistant text for user communication.`
     })
   })
 
+  it('does not copy an initial Pi model-input capture when forking a session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const sourceRuntime = manager.runtimeByAgentId.get('manager')!
+    sourceRuntime.appendCustomEntry('swarm_pi_initial_model_input', {
+      version: 1,
+      runtime: 'pi',
+      capturedAt: '2026-01-01T00:00:00.000Z',
+      systemPrompt: 'source-only prompt',
+      messages: [],
+      tools: [],
+      model: { provider: 'openai-codex', id: 'gpt-5.4' },
+      requestMetadata: {},
+    })
+
+    const forked = await manager.forkSession('manager', { label: 'Fresh initial input' })
+
+    await expect(readFile(forked.sessionAgent.sessionFile, 'utf8')).resolves.not.toContain(
+      'swarm_pi_initial_model_input',
+    )
+  })
+
   it('filters copied pinned messages to the partial forked session history', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

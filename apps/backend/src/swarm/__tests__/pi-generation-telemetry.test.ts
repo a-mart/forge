@@ -68,7 +68,10 @@ function assistantMessage(stopReason = "stop") {
 function createAdapter(
   session: ReturnType<typeof createSession>,
   events: RuntimeGenerationEvent[],
-  options: { readCodexRequests?: () => number | undefined } = {},
+  options: {
+    readCodexRequests?: () => number | undefined;
+    onFirstModelRequest?: (request: { model: unknown; context: unknown; streamOptions: unknown }) => void | Promise<void>;
+  } = {},
 ) {
   let wallTimeMs = 1_000;
   let monotonicTimeMs = 10;
@@ -82,6 +85,7 @@ function createAdapter(
       monotonicTimeMs: () => monotonicTimeMs,
     },
     onGenerationEvent: async (event) => events.push(event),
+    onFirstModelRequest: options.onFirstModelRequest,
     readOpenAICodexWebSocketRequestCount: options.readCodexRequests,
   });
 
@@ -235,6 +239,73 @@ describe("Pi generation telemetry adapter", () => {
       .rejects.toThrow("stream dispatch failed");
     expect(failingEvents.map((event) => event.phase)).toEqual(["request_started", "completed"]);
     expect(failingEvents.at(-1)).toMatchObject({ outcome: "error", observedProviderAttemptCount: null });
+  });
+
+  it("captures the exact first Pi stream context once across retries and fails open", async () => {
+    const events: RuntimeGenerationEvent[] = [];
+    const capture = vi.fn();
+    const session = createSession();
+    const { adapter } = createAdapter(session, events, { onFirstModelRequest: capture });
+    adapter.install();
+    session.emit({ type: "agent_start" });
+
+    const firstModel = { provider: "openai-codex", id: "gpt-first", api: "openai-codex-responses" };
+    const firstContext = {
+      systemPrompt: "Final prompt including before_agent_start override",
+      messages: [{ role: "user", content: [{ type: "text", text: "first request" }] }],
+      tools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
+    };
+    const firstOptions = { reasoning: "high", apiKey: "must remain local" };
+    await session.agent.streamFn(firstModel, firstContext, firstOptions);
+    session.emit({ type: "message_end", message: assistantMessage() });
+    await session.agent.streamFn(
+      { provider: "openai-codex", id: "gpt-retry", api: "openai-codex-responses" },
+      { systemPrompt: "retry prompt", messages: [], tools: [] },
+      {},
+    );
+    await drain(adapter);
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledWith({
+      model: firstModel,
+      context: firstContext,
+      streamOptions: firstOptions,
+    });
+
+    const failingEvents: RuntimeGenerationEvent[] = [];
+    const failingSession = createSession();
+    const failing = createAdapter(failingSession, failingEvents, {
+      onFirstModelRequest: () => {
+        throw new Error("capture storage failed");
+      },
+    });
+    failing.adapter.install();
+    failingSession.emit({ type: "agent_start" });
+    await expect(failingSession.agent.streamFn(firstModel, firstContext, firstOptions))
+      .resolves.toBe(STREAM_RESULT);
+    expect(failingEvents[0]).toMatchObject({ phase: "request_started", requestedModelId: "gpt-first" });
+  });
+
+  it("invokes provider dispatch before a synchronous initial-request observer", async () => {
+    const events: RuntimeGenerationEvent[] = [];
+    const ordering: string[] = [];
+    const session = createSession({
+      streamFn: () => {
+        ordering.push("provider-dispatch");
+        return STREAM_RESULT;
+      },
+    });
+    const { adapter } = createAdapter(session, events, {
+      onFirstModelRequest: () => {
+        ordering.push("initial-request-observer");
+      },
+    });
+    adapter.install();
+    session.emit({ type: "agent_start" });
+
+    await expect(session.agent.streamFn({ provider: "x", id: "m" }, {}, {})).resolves.toBe(STREAM_RESULT);
+
+    expect(ordering).toEqual(["provider-dispatch", "initial-request-observer"]);
   });
 
   it("labels Codex WebSocket replay as multiple observed request frames inside one model-call rate span", async () => {

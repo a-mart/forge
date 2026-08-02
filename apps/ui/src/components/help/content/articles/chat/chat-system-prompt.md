@@ -1,4 +1,4 @@
-The system prompt viewer shows you the complete prompt that the agent is actually using at runtime. This is the full context the model sees before your messages.
+The system prompt viewer shows the exact provider-independent input captured for the session's first Pi model request. It is a read-only record of the context Pi handed to the model before provider-specific conversion.
 
 ## How to open it
 
@@ -8,18 +8,19 @@ The viewer is only available in "All" mode because it shows runtime internals.
 
 ## What's included
 
-The system prompt includes more than what you see in the prompt editor in Settings. The full runtime prompt typically contains:
+After the first request, the viewer shows:
 
-- The **base system prompt** (from the archetype or custom prompt template).
-- **Memory context** (profile core memory and session memory).
-- **AGENTS.md** guidance loaded from the working directory.
-- **Loaded skills** and their instructions.
-- Any **custom instructions** like pinned message content.
+- The final **system prompt**, including the base prompt, memory, `AGENTS.md` guidance, knowledge, loaded skills, date, working directory, and any `before_agent_start` override.
+- The **converted messages** and active tool definitions with their schemas.
+- The selected provider and model, safe request metadata, capture timestamp, and fidelity notes.
+- A raw JSON copy of the captured record.
+
+Image bytes are summarized instead of copying base64 payloads. Functions, credentials, headers, environment values, and other authentication fields are omitted.
 
 ## Copy and refresh
 
-Click the **copy** button in the header to copy the full prompt to your clipboard. The prompt is fetched fresh each time you open the dialog, so it reflects the current state.
+Click the **copy** button in the header to copy the raw captured input. The dialog is fetched fresh each time you open it, but this first-request record does not change later in the session.
 
 ## When it's not available
 
-Agents created before system prompt persistence was added won't have a stored prompt. The dialog will show a message explaining this.
+Before a Pi session sends its first model request, the dialog says **Available after the first model request.** Cursor SDK sessions are currently unsupported by this viewer.
