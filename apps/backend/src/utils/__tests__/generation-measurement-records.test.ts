@@ -208,4 +208,39 @@ describe("generation measurement records", () => {
     expect(folded.records).toEqual([complete]);
     expect(folded.diagnostics.conflictCount).toBe(1);
   });
+
+  it("prefers valid request-wall timing over a conflicting output-tail-only terminal copy", () => {
+    const outputTailOnly = record({
+      timing: { ...record().timing, requestWallMs: null, generationDurationMs: 1_500 },
+    });
+    const requestWall = record({
+      timing: { ...record().timing, requestWallMs: 2_000, generationDurationMs: null },
+    });
+
+    const folded = foldGenerationMeasurementRecords([
+      { record: outputTailOnly, sourcePath: "/a.jsonl", byteOffset: 1 },
+      { record: requestWall, sourcePath: "/z.jsonl", byteOffset: 1 },
+    ]);
+
+    const selectedRequestWallMs = folded.records[0]?.timing.requestWallMs;
+    expect(selectedRequestWallMs).toBe(2_000);
+    expect(folded.diagnostics).toEqual({ duplicateCount: 1, conflictCount: 1 });
+  });
+
+  it.each([
+    ["zero", 0],
+    ["negative", -1],
+    ["non-finite", Number.NaN],
+    ["infinite", Number.POSITIVE_INFINITY],
+  ])("does not treat %s request-wall timing as authoritative", (_label, requestWallMs) => {
+    const invalid = record({ timing: { ...record().timing, requestWallMs } });
+    const missing = record({ timing: { ...record().timing, requestWallMs: null } });
+
+    const folded = foldGenerationMeasurementRecords([
+      { record: invalid, sourcePath: "/a.jsonl", byteOffset: 1 },
+      { record: missing, sourcePath: "/z.jsonl", byteOffset: 1 },
+    ]);
+
+    expect(folded.records[0]?.timing.requestWallMs).toBeNull();
+  });
 });

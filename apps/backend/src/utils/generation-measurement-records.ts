@@ -179,6 +179,15 @@ function compareLifecycleSources(
     return candidate.byteOffset - selected.byteOffset;
   }
 
+  // A positive request-wall duration is the authoritative response-throughput
+  // fact. Rank it before diagnostic completeness so a generation-tail-only copy
+  // cannot win merely because generationDurationMs is present.
+  const requestWallCompleteness = Number(hasAuthoritativeRequestWallMs(candidate.record))
+    - Number(hasAuthoritativeRequestWallMs(selected.record));
+  if (requestWallCompleteness !== 0) {
+    return requestWallCompleteness;
+  }
+
   const completeness = terminalCompleteness(candidate.record) - terminalCompleteness(selected.record);
   if (completeness !== 0) {
     return completeness;
@@ -189,6 +198,13 @@ function compareLifecycleSources(
     return pathComparison;
   }
   return candidate.byteOffset - selected.byteOffset;
+}
+
+function hasAuthoritativeRequestWallMs(record: GenerationMeasurementRecordV1): boolean {
+  return record.recordState === "terminal"
+    && typeof record.timing.requestWallMs === "number"
+    && Number.isFinite(record.timing.requestWallMs)
+    && record.timing.requestWallMs > 0;
 }
 
 function terminalCompleteness(record: GenerationMeasurementRecordV1): number {
