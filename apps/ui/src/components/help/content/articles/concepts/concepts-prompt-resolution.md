@@ -12,9 +12,9 @@ Forge checks profile first. If it finds a matching prompt there, it uses it and 
 
 Say the builtin manager prompt works for most of your projects, but one project needs specific instructions about its deployment process. You save a profile-level prompt override for that project's profile. Other profiles keep using the builtin. If you later want to go back to the default, delete the profile override.
 
-## Prompt preview
+## Prompt inspection
 
-Open the system prompt viewer in chat to see the full prompt an agent is actually using. This shows the resolved result — not just the raw template, but the complete context including memory, project guidance, and any loaded skills. Use this when you want to understand exactly what instructions the agent is following.
+Open the **Initial Model Input** viewer from the wide chat header's **All** view to inspect the retained provider-independent context for a session's first Pi model request. It shows that request's resolved prompt, messages, and tools—not a live preview of a later or current prompt. Use it to understand what was sent on that first request; use **Settings > Prompts** to inspect or change prompt sources.
 
 ## Archetypes
 

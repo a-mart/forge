@@ -400,7 +400,7 @@ export const chatArticles: HelpArticle[] = [
   },
   {
     id: 'chat-system-prompt',
-    title: 'System Prompt Viewer',
+    title: 'Initial Model Input Viewer',
     category: 'chat',
     summary: 'How to inspect the initial Pi model input captured for the current session.',
     content: chatSystemPromptContent,

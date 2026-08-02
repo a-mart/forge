@@ -1,26 +1,26 @@
-The system prompt viewer shows the exact provider-independent input captured for the session's first Pi model request. It is a read-only record of the context Pi handed to the model before provider-specific conversion.
+The **Initial Model Input** viewer shows the exact provider-independent context captured for a session's first Pi model-request attempt. It is a read-only first-request record, not a live preview of the agent's current prompt.
 
 ## How to open it
 
-Switch to the **All** channel view using the toggle in the chat header. A scroll icon button appears to the left of the channel toggle. Click it to open the system prompt dialog.
-
-The viewer is only available in "All" mode because it shows runtime internals.
+Switch to the **All** channel view using the toggle in the chat header. In the wide chat header, a scroll icon immediately to the left of that toggle opens the viewer. It is deliberately an **All**-only diagnostic entry point; it is not part of the normal transcript.
 
 ## What's included
 
 After the first request, the viewer shows:
 
-- The final **system prompt**, including the base prompt, memory, `AGENTS.md` guidance, knowledge, loaded skills, date, working directory, and any `before_agent_start` override.
-- The **converted messages** and active tool definitions with their schemas.
-- The selected provider and model, safe request metadata, capture timestamp, and fidelity notes.
+- The final **system prompt** as it existed for that request. Depending on the session, it can include the base prompt, memory, `AGENTS.md` guidance, knowledge, loaded skills, date, working directory, and a `before_agent_start` override.
+- The provider-independent request messages and the tool definitions supplied for that request, including their schemas.
+- The selected provider and model, capture timestamp, fidelity notes, and a safe projection of request metadata.
 - A raw JSON copy of the captured record.
 
-Image bytes are summarized instead of copying base64 payloads. Functions, credentials, headers, environment values, and other authentication fields are omitted.
+Image payloads are summarized by byte count instead of retaining base64 data, and executable functions are not retained. Request metadata omits recognized sensitive fields, but the prompt, messages, and tool definitions are shown as captured rather than being a general-purpose redaction view. Treat the viewer and its copied JSON as sensitive session content.
 
-## Copy and refresh
+## Persistence, copies, and forks
 
-Click the **copy** button in the header to copy the raw captured input. The dialog is fetched fresh each time you open it, but this first-request record does not change later in the session.
+Forge stores one first-request record with the session history. Reopening the dialog, reconnecting, restarting, compacting, or recycling the runtime reads that same record; later requests do not replace it. The copy button copies the complete displayed record to your system clipboard.
+
+Forks deliberately omit the source record. A Pi-backed fork records its own initial input when it makes its first model request.
 
 ## When it's not available
 
-Before a Pi session sends its first model request, the dialog says **Available after the first model request.** Cursor SDK sessions are currently unsupported by this viewer.
+Until a Pi session has a saved first-request record—including sessions created before capture was available—the dialog says **Available after the first model request.** The capture is Pi-only; Cursor SDK sessions are currently unsupported, and other non-Pi runtime paths do not create this record.
