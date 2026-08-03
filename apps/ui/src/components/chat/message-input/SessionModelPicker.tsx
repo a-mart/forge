@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Loader2, Zap } from 'lucide-react'
 import {
   getCatalogModel,
@@ -45,18 +45,20 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadRevisionRef = useRef(0)
+  const overridesCacheRef = useRef(new Map<string, ModelOverridesResponse>())
 
-  useEffect(() => {
-    loadRevisionRef.current += 1
-    setOpen(false)
-    setOverridesData(null)
-    setError(null)
-  }, [config.originId, config.sessionAgentId])
+  const loadModels = useCallback((force = false) => {
+    const cached = overridesCacheRef.current.get(config.originId)
+    if (cached && !force) {
+      setOverridesData(cached)
+      setLoading(false)
+      return
+    }
 
-  const loadModels = () => {
     const revision = ++loadRevisionRef.current
     const apiClient = resolveSessionModelPickerApiClient(config.httpClientRef)
     if (!apiClient) {
+      setLoading(false)
       setError('Model settings are unavailable.')
       return
     }
@@ -65,6 +67,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
     setError(null)
     void fetchModelOverrides(apiClient)
       .then((data) => {
+        overridesCacheRef.current.set(config.originId, data)
         if (loadRevisionRef.current !== revision) return
         setOverridesData(data)
       })
@@ -75,7 +78,15 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
       .finally(() => {
         if (loadRevisionRef.current === revision) setLoading(false)
       })
-  }
+  }, [config.httpClientRef, config.originId])
+
+  useEffect(() => {
+    loadRevisionRef.current += 1
+    setOpen(false)
+    setOverridesData(overridesCacheRef.current.get(config.originId) ?? null)
+    setError(null)
+    loadModels()
+  }, [config.originId, config.sessionAgentId, loadModels])
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -138,10 +149,8 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
     setError(null)
     try {
       await update()
-      setOpen(false)
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError))
-      setOpen(true)
     } finally {
       setSaving(false)
     }
@@ -235,6 +244,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
                       key={row.key}
                       value={row.key}
                       disabled={saving || !!row.unavailableReason}
+                      onSelect={(event) => event.preventDefault()}
                     >
                       <span className="truncate">{row.displayName}</span>
                       {row.unavailableReason && (
@@ -256,7 +266,12 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
           <DropdownMenuSubContent className="w-44">
             <DropdownMenuRadioGroup value={reasoning} onValueChange={selectReasoning}>
               {reasoningLevels.map((level) => (
-                <DropdownMenuRadioItem key={level} value={level} disabled={saving}>
+                <DropdownMenuRadioItem
+                  key={level}
+                  value={level}
+                  disabled={saving}
+                  onSelect={(event) => event.preventDefault()}
+                >
                   {formatReasoningLevel(level, reasoningLevels)}
                 </DropdownMenuRadioItem>
               ))}
@@ -269,10 +284,13 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
             <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={saving}
-              onSelect={() => void runUpdate(() => config.onUpdate(
-                config.sessionAgentId,
-                'inherit',
-              ))}
+              onSelect={(event) => {
+                event.preventDefault()
+                void runUpdate(() => config.onUpdate(
+                  config.sessionAgentId,
+                  'inherit',
+                ))
+              }}
             >
               <span>Use project default</span>
               <span className="ml-auto max-w-24 truncate text-xs text-muted-foreground">
@@ -289,7 +307,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
               variant="destructive"
               onSelect={(event) => {
                 event.preventDefault()
-                loadModels()
+                loadModels(true)
               }}
             >
               Could not load models · Retry

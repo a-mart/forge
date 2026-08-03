@@ -565,7 +565,7 @@ describe('MessageInput', () => {
       expect(document.activeElement).toBe(trigger)
     })
 
-    it('wires Use project default through inherit and restores focus', async () => {
+    it('keeps the picker open after returning to the project default', async () => {
       const onUpdate = vi.fn()
       renderMessageInput({
         sessionModelPicker: {
@@ -588,8 +588,7 @@ describe('MessageInput', () => {
       await flush()
 
       expect(onUpdate).toHaveBeenCalledWith('manager-1', 'inherit')
-      expect(document.body.querySelector('[role="menu"]')).toBeNull()
-      expect(document.activeElement).toBe(trigger)
+      expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
     })
   })
 

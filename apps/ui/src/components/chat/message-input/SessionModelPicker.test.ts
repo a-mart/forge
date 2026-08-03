@@ -54,6 +54,7 @@ afterEach(() => {
 })
 
 const pickerApiClient = { target: { kind: 'builder' } } as unknown as SettingsApiClient
+const pickerHttpClientRef = { current: pickerApiClient }
 
 function makeConfig(
   onUpdate: ReturnType<typeof vi.fn>,
@@ -61,7 +62,7 @@ function makeConfig(
 ): SessionModelPickerConfig {
   return {
     originId: 'local',
-    httpClientRef: { current: pickerApiClient },
+    httpClientRef: pickerHttpClientRef,
     sessionAgentId: 'manager-1',
     sessionLabel: 'Main',
     currentModel: {
@@ -148,7 +149,7 @@ describe('isSessionModelPickerEligible', () => {
 })
 
 describe('SessionModelPicker compact menu', () => {
-  it('loads the catalog into nested model and reasoning menus', async () => {
+  it('preloads the catalog into nested model and reasoning menus', async () => {
     const onUpdate = vi.fn()
     renderPicker(onUpdate)
     await openPicker()
@@ -157,6 +158,23 @@ describe('SessionModelPicker compact menu', () => {
     expect(queryByRole(document.body, 'dialog')).toBeNull()
     expect(getByRole(document.body, 'menuitem', { name: /Model.*GPT-5.5/ })).toBeTruthy()
     expect(getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })).toBeTruthy()
+  })
+
+  it('reuses cached model availability when the picker is reopened', async () => {
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate)
+    await flushAsyncWork()
+
+    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
+
+    await openPicker()
+    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
+
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    await flushAsyncWork()
+    await openPicker()
+
+    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
   })
 
   it('distinguishes Opus 5 xhigh from max while keeping legacy GPT xhigh as Max', async () => {
@@ -226,7 +244,7 @@ describe('SessionModelPicker compact menu', () => {
     )
   })
 
-  it('applies a model with its catalog default reasoning immediately', async () => {
+  it('keeps the picker open while applying a model and then a reasoning level', async () => {
     const onUpdate = vi.fn(async () => {})
     renderPicker(onUpdate)
     await openPicker()
@@ -244,6 +262,26 @@ describe('SessionModelPicker compact menu', () => {
       { provider: 'openai-codex', modelId: 'gpt-5.6-sol' },
       expect.any(String),
     )
+    expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
+
+    rerenderPicker(onUpdate, {
+      currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'xhigh' },
+    })
+    await act(async () => {})
+    await openSubmenu(/Reasoning/)
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'High' }))
+    })
+    await flushAsyncWork()
+
+    expect(onUpdate).toHaveBeenLastCalledWith(
+      'manager-1',
+      'override',
+      { provider: 'openai-codex', modelId: 'gpt-5.6-sol' },
+      'high',
+    )
+    expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
   })
 
   it('returns an overridden session to the project default', async () => {
