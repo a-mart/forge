@@ -723,13 +723,17 @@ dockerSuite(
           visibleOutputs.push({ path: marker, bytes: execution.output });
         }
 
+        const concurrentReleaseName = ".team-concurrent.release";
         const concurrentRelease = join(
           harness.workspacePath,
-          ".team-concurrent.release",
+          concurrentReleaseName,
         );
         const concurrentParticipants = [MANAGER, WORKER_ONE, WORKER_TWO] as const;
-        const concurrentStarted = concurrentParticipants.map((agentId) =>
-          join(harness.workspacePath, `.team-concurrent-${agentId}.started`)
+        const concurrentStartedNames = concurrentParticipants.map(
+          (agentId) => `.team-concurrent-${agentId}.started`,
+        );
+        const concurrentStarted = concurrentStartedNames.map((name) =>
+          join(harness.workspacePath, name)
         );
         const concurrent = concurrentParticipants.map((agentId, index) => {
           const marker = `concurrent-${agentId}`;
@@ -741,8 +745,8 @@ dockerSuite(
               [SHARED_ONE_USE],
               marker,
               {
-                startedPath: concurrentStarted[index]!,
-                releasePath: concurrentRelease,
+                startedPath: concurrentStartedNames[index]!,
+                releasePath: concurrentReleaseName,
               },
             ),
           ).then((execution) => ({ execution, marker }));
@@ -756,13 +760,15 @@ dockerSuite(
           visibleOutputs.push({ path: marker, bytes: execution.output });
         }
 
+        const timeoutSiblingReleaseName = ".team-timeout-sibling.release";
+        const timeoutSiblingStartedName = ".team-timeout-sibling.started";
         const timeoutSiblingRelease = join(
           harness.workspacePath,
-          ".team-timeout-sibling.release",
+          timeoutSiblingReleaseName,
         );
         const timeoutSiblingStarted = join(
           harness.workspacePath,
-          ".team-timeout-sibling.started",
+          timeoutSiblingStartedName,
         );
         const timeoutSibling = executeAndCapture(
           retainedBindings.get(WORKER_TWO)!,
@@ -772,8 +778,8 @@ dockerSuite(
             [SHARED_ONE_USE],
             "worker-two-survived-sibling-timeout",
             {
-              startedPath: timeoutSiblingStarted,
-              releasePath: timeoutSiblingRelease,
+              startedPath: timeoutSiblingStartedName,
+              releasePath: timeoutSiblingReleaseName,
             },
           ),
         );
@@ -839,13 +845,15 @@ dockerSuite(
           SHARED_ONE_USE,
           "one_use",
         );
+        const oneUseReleaseName = ".team-one-use.release";
+        const oneUseStartedName = ".team-one-use.started";
         const oneUseRelease = join(
           harness.workspacePath,
-          ".team-one-use.release",
+          oneUseReleaseName,
         );
         const oneUseStarted = join(
           harness.workspacePath,
-          ".team-one-use.started",
+          oneUseStartedName,
         );
         const consuming = executeAndCapture(
           retainedBindings.get(WORKER_ONE)!,
@@ -858,8 +866,8 @@ dockerSuite(
             [],
             "worker-one-reserved-one-use",
             {
-              startedPath: oneUseStarted,
-              releasePath: oneUseRelease,
+              startedPath: oneUseStartedName,
+              releasePath: oneUseReleaseName,
             },
           ),
         );
