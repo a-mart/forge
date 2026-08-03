@@ -4,7 +4,7 @@ The **Stream Deck** settings page connects a local Elgato Stream Deck plugin to 
 
 Install the Forge Stream Deck plugin, then open **Settings → Stream Deck** in Forge Desktop. Start pairing from the plugin and approve the matching request in Forge. Pairing creates a device-specific local credential; do not approve a code you did not just request on a device you control.
 
-After pairing, the page lists the approved device and its connection status. You can revoke a device at any time. Revocation removes that device's access until it is paired again.
+After pairing, the page lists the approved device. You can revoke a device at any time. Revocation removes that device's access until it is paired again.
 
 ## What the plugin can do
 

@@ -42,15 +42,15 @@ Run the focused catalog and backend tests first, then the repository validation 
 
 ```bash
 pnpm model-catalog:audit
-cd packages/protocol && pnpm exec vitest run src/__tests__/model-catalog.test.ts
-cd apps/backend && pnpm exec vitest run src/swarm/__tests__/model-catalog-projection.test.ts
+(cd packages/protocol && pnpm exec vitest run src/__tests__/model-catalog.test.ts)
+(cd apps/backend && pnpm exec vitest run src/swarm/__tests__/model-catalog-projection.test.ts)
 pnpm quality:changed
 ```
 
 Add or update targeted tests for the model entry, projection/availability behavior, and any explicit fallback or specialist policy you changed. If the protocol package was changed, build it before backend tests that consume its built export:
 
 ```bash
-cd packages/protocol && pnpm build
+(cd packages/protocol && pnpm build)
 ```
 
 Also verify selector behavior with the relevant provider credentials or entitlement state. Catalog availability, provider authentication, and manager/specialist visibility are separate gates.
