@@ -16,7 +16,10 @@ import {
   startFixtureTarget,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
-import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
+import {
+  acquireSecureDockerTestLock,
+  probeLocalLinuxDockerDaemon,
+} from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -41,15 +44,7 @@ import {
 } from "../secure-sessions/redaction/secure-value-guard.js";
 
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
-const daemonProbe = process.platform === "win32"
-  ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
-  : await runCommand("docker", [
-      "version",
-      "--format",
-      "{{.Server.Version}}",
-    ]);
-const dockerAvailable =
-  daemonProbe.exitCode === 0 && daemonProbe.stdout.byteLength > 0;
+const dockerAvailable = await probeLocalLinuxDockerDaemon();
 if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
   throw new Error("Secure Sessions Docker E2E was required but Docker is unavailable");
 }

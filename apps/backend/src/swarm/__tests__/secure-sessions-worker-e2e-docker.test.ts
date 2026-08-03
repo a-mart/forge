@@ -25,7 +25,10 @@ import {
   runCommand,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
-import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
+import {
+  acquireSecureDockerTestLock,
+  probeLocalLinuxDockerDaemon,
+} from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -65,15 +68,7 @@ const SHARED_SECONDARY = "FORGE_DOCKER_E2E_SHARED_SECONDARY";
 const SHARED_ONE_USE = "FORGE_DOCKER_E2E_SHARED_ONE_USE";
 
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
-const daemonProbe = process.platform === "win32"
-  ? { exitCode: -1, stdout: Buffer.alloc(0) }
-  : await runCommand("docker", [
-      "version",
-      "--format",
-      "{{.Server.Version}}",
-    ]);
-const dockerAvailable =
-  daemonProbe.exitCode === 0 && daemonProbe.stdout.byteLength > 0;
+const dockerAvailable = await probeLocalLinuxDockerDaemon();
 if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
   throw new Error(
     "Secure Sessions worker Docker E2E was required but Docker is unavailable",
