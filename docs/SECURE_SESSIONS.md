@@ -257,10 +257,10 @@ secret and its **Every project** policy are not deleted with any one project.
 
 1. Open a local Builder manager whose current runtime is supported.
 2. Select the shield beside **Send** and start Team Secure Mode. Forge prepares the
-   manager's shared sandbox and recycles every eligible current worker onto that
-   execution boundary. If a worker is
-   actively streaming, startup fails instead of changing its execution boundary
-   underneath a command.
+   manager's shared sandbox and recycles eligible idle workers onto that execution
+   boundary. If a worker is actively streaming, Team Secure Mode still starts: Forge
+   defers that worker's runtime recycle, so its in-flight turn remains ordinary and
+   non-secure until its next secure assignment.
 3. Forge applies the project's configured automatic grants once and reports
    any secret it could not activate. Use **Apply now** to apply newly
    configured policies or retry recovered sources without restarting.
