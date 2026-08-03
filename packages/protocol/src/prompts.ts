@@ -66,10 +66,21 @@ export interface PiInitialModelInputCaptureV1 {
   requestMetadata: { [key: string]: InitialModelInputJsonValue }
 }
 
+/** Provider-reported usage associated with the captured first Pi request. */
+export interface InitialModelInputTokenUsage {
+  source: 'provider_reported'
+  inputTokens: number
+  uncachedInputTokens: number
+  cacheReadInputTokens: number
+  cacheWriteInputTokens: number
+}
+
 export type AgentInitialModelInputState =
   | {
       status: 'available'
       capture: PiInitialModelInputCaptureV1
+      /** Absent while the response is incomplete or when its provider did not report usage. */
+      tokenUsage?: InitialModelInputTokenUsage
     }
   | {
       status: 'pending'

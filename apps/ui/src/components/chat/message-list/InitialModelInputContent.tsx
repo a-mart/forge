@@ -1,11 +1,21 @@
 import { Badge } from '@/components/ui/badge'
+import { formatTokenCount } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import {
+  estimateInitialModelInputTokens,
+  estimateJsonTokens,
+  estimateTextTokens,
+  type InitialModelInputTokenEstimates,
+} from './initial-model-input-token-estimates'
 import type { AgentSystemPromptResponse } from './system-prompt-api'
 
-type InitialModelInputCapture = Extract<
+type AvailableInitialModelInput = Extract<
   AgentSystemPromptResponse['initialModelInput'],
   { status: 'available' }
->['capture']
+>
+
+type InitialModelInputCapture = AvailableInitialModelInput['capture']
+type InitialModelInputTokenUsage = NonNullable<AvailableInitialModelInput['tokenUsage']>
 
 export type InitialModelInputViewMode = 'prompt' | 'raw'
 
@@ -24,6 +34,7 @@ interface PromptDisplaySection {
   label: string
   source?: string
   content: string
+  tokenEstimate: number
 }
 
 interface SkillDisplayModel {
@@ -31,6 +42,7 @@ interface SkillDisplayModel {
   name: string
   description?: string
   location: string
+  tokenEstimate: number
 }
 
 interface SkillCatalogModel {
@@ -52,6 +64,7 @@ interface ToolDisplayModel {
   description?: string
   parameters: ToolParameter[]
   schema?: unknown
+  tokenEstimate: number
 }
 
 const SOURCE_STYLES: Record<PromptSourceKind, { accent: string; badge: string }> = {
@@ -90,13 +103,17 @@ const RUNTIME_FOOTER = /(^|\n)(Current date: \d{4}-\d{2}-\d{2}\nCurrent working 
 
 export function InitialModelInputContent({
   capture,
+  tokenUsage,
   rawCapture,
   mode,
 }: {
   capture: InitialModelInputCapture
+  tokenUsage?: InitialModelInputTokenUsage
   rawCapture: string
   mode: InitialModelInputViewMode
 }) {
+  const tokenEstimates = estimateInitialModelInputTokens(capture)
+
   if (mode === 'raw') {
     return (
       <section aria-label="Raw initial model input" className="space-y-3">
@@ -106,6 +123,7 @@ export function InitialModelInputContent({
             Complete persisted capture, including messages and safe request metadata.
           </p>
         </div>
+        <TokenSummary estimates={tokenEstimates} tokenUsage={tokenUsage} />
         <pre className="whitespace-pre-wrap break-all rounded-lg border border-border/60 bg-muted/20 p-4 font-mono text-[12px] leading-relaxed text-foreground/90">
           {rawCapture}
         </pre>
@@ -118,24 +136,33 @@ export function InitialModelInputContent({
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Badge variant="outline" className="font-mono font-medium">
-          {capture.model.provider}/{capture.model.id}
-        </Badge>
-        <span aria-hidden="true">•</span>
-        <span>First Pi request</span>
-        <span aria-hidden="true">•</span>
-        <time dateTime={capture.capturedAt}>{formatCapturedAt(capture.capturedAt)}</time>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline" className="font-mono font-medium">
+            {capture.model.provider}/{capture.model.id}
+          </Badge>
+          <span aria-hidden="true">•</span>
+          <span>First Pi request</span>
+          <span aria-hidden="true">•</span>
+          <time dateTime={capture.capturedAt}>{formatCapturedAt(capture.capturedAt)}</time>
+        </div>
+        <TokenSummary estimates={tokenEstimates} tokenUsage={tokenUsage} />
       </div>
 
       <section aria-labelledby="initial-model-system-prompt" className="space-y-3">
-        <div>
-          <h2 id="initial-model-system-prompt" className="text-sm font-semibold">
-            System prompt
-          </h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Source labels show where each block entered the resolved prompt.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="initial-model-system-prompt" className="text-sm font-semibold">
+              System prompt
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Source labels show where each block entered the resolved prompt.
+            </p>
+          </div>
+          <TokenEstimateBadge
+            value={tokenEstimates.systemPrompt}
+            ariaLabel="System prompt token estimate"
+          />
         </div>
 
         <div className="space-y-3">
@@ -155,9 +182,15 @@ export function InitialModelInputContent({
               Names, descriptions, and top-level input parameters from the first request.
             </p>
           </div>
-          <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
-            {tools.length}
-          </Badge>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              {tools.length}
+            </Badge>
+            <TokenEstimateBadge
+              value={tokenEstimates.tools}
+              ariaLabel="Tools token estimate"
+            />
+          </div>
         </div>
 
         {tools.length > 0 ? (
@@ -173,6 +206,71 @@ export function InitialModelInputContent({
         )}
       </section>
     </div>
+  )
+}
+
+function TokenSummary({
+  estimates,
+  tokenUsage,
+}: {
+  estimates: InitialModelInputTokenEstimates
+  tokenUsage?: InitialModelInputTokenUsage
+}) {
+  const breakdown = [
+    { label: 'Prompt', value: estimates.systemPrompt },
+    { label: 'Messages', value: estimates.messages },
+    { label: 'Tools', value: estimates.tools },
+  ]
+
+  return (
+    <aside
+      aria-label="Initial model input tokens"
+      className="rounded-lg border border-border/60 bg-muted/15 px-3 py-2.5"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1.5">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-xs font-medium text-foreground">
+            {tokenUsage ? 'Provider-reported input' : 'Rough input estimate'}
+          </span>
+          <strong className="font-mono text-sm text-foreground">
+            {tokenUsage ? '' : '~'}{formatTokenCount(tokenUsage?.inputTokens ?? estimates.total)} tokens
+          </strong>
+        </div>
+        <div
+          aria-label="Estimated visible-content breakdown"
+          className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+        >
+          <span>Estimated breakdown</span>
+          <dl className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            {breakdown.map((entry) => (
+              <div key={entry.label} className="flex items-baseline gap-1">
+                <dt>{entry.label}</dt>
+                <dd className="font-mono text-foreground/80">~{formatTokenCount(entry.value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </div>
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/80">
+        {tokenUsage
+          ? 'Total comes from the actual first response and includes cached input. The breakdown approximates captured visible content at four characters per token.'
+          : 'Provider usage is unavailable. This rough estimate uses four characters per token.'}{' '}
+        Estimates exclude provider framing, request metadata, and image tokenization.
+      </p>
+    </aside>
+  )
+}
+
+function TokenEstimateBadge({ value, ariaLabel }: { value: number; ariaLabel: string }) {
+  return (
+    <Badge
+      variant="outline"
+      aria-label={ariaLabel}
+      title="Rough estimate at approximately four characters per token"
+      className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground"
+    >
+      ~{formatTokenCount(value)} tok
+    </Badge>
   )
 }
 
@@ -196,6 +294,10 @@ function PromptSourceBlock({ section }: { section: PromptDisplaySection }) {
             {skillCatalog.skills.length} {skillCatalog.skills.length === 1 ? 'skill' : 'skills'}
           </Badge>
         ) : null}
+        <TokenEstimateBadge
+          value={section.tokenEstimate}
+          ariaLabel={`${section.label} token estimate`}
+        />
       </header>
       {skillCatalog?.hasSkillMarkup ? (
         <SkillCatalog catalog={skillCatalog} />
@@ -215,7 +317,13 @@ function SkillCatalog({ catalog }: { catalog: SkillCatalogModel }) {
         <div className="grid gap-2 xl:grid-cols-2">
           {catalog.skills.map((skill) => (
             <div key={skill.id} className="rounded-md border border-border/50 bg-background/35 p-3">
-              <code className="text-sm font-semibold text-foreground">{skill.name}</code>
+              <div className="flex items-start justify-between gap-2">
+                <code className="min-w-0 break-words text-sm font-semibold text-foreground">{skill.name}</code>
+                <TokenEstimateBadge
+                  value={skill.tokenEstimate}
+                  ariaLabel={`${skill.name} skill token estimate`}
+                />
+              </div>
               {skill.description ? (
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
                   {skill.description}
@@ -252,9 +360,15 @@ function ToolCard({ tool }: { tool: ToolDisplayModel }) {
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{tool.description}</p>
           ) : null}
         </div>
-        <Badge variant="outline" className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground">
-          {tool.parameters.length} {tool.parameters.length === 1 ? 'parameter' : 'parameters'}
-        </Badge>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge variant="outline" className="font-mono text-[10px] font-normal text-muted-foreground">
+            {tool.parameters.length} {tool.parameters.length === 1 ? 'parameter' : 'parameters'}
+          </Badge>
+          <TokenEstimateBadge
+            value={tool.tokenEstimate}
+            ariaLabel={`${tool.name} tool token estimate`}
+          />
+        </div>
       </div>
 
       {tool.parameters.length > 0 ? (
@@ -311,6 +425,7 @@ function derivePromptSections(systemPrompt: string): PromptDisplaySection[] {
       label,
       ...(source ? { source } : {}),
       content: trimmed,
+      tokenEstimate: estimateTextTokens(source ? `${source}\n${trimmed}` : trimmed),
     })
   }
 
@@ -347,7 +462,13 @@ function derivePromptSections(systemPrompt: string): PromptDisplaySection[] {
 
   return sections.length > 0
     ? sections
-    : [{ id: 'system-0', kind: 'system', label: 'System instructions', content: systemPrompt }]
+    : [{
+        id: 'system-0',
+        kind: 'system',
+        label: 'System instructions',
+        content: systemPrompt,
+        tokenEstimate: estimateTextTokens(systemPrompt),
+      }]
 }
 
 function pushGenericPromptText(
@@ -416,6 +537,7 @@ function deriveSkills(content: string): SkillCatalogModel {
       name,
       ...(description ? { description } : {}),
       location,
+      tokenEstimate: estimateTextTokens(match[0]),
     })
   }
 
@@ -465,6 +587,7 @@ function deriveTools(values: InitialModelInputCapture['tools']): ToolDisplayMode
       ...(description ? { description } : {}),
       parameters,
       ...(schema !== undefined ? { schema } : {}),
+      tokenEstimate: estimateJsonTokens(value),
     }
   })
 }

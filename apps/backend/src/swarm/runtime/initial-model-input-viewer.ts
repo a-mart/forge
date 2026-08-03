@@ -5,6 +5,7 @@ import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
 import {
   findPiInitialModelInputCapture,
   findPiInitialModelInputCaptureInSessionEntries,
+  findPiInitialModelInputTokenUsageInSessionEntries,
   PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
 } from "./initial-model-input-capture.js";
 
@@ -28,16 +29,28 @@ export function readInitialModelInputForViewer(
   if (runtime?.runtimeType && runtime.runtimeType !== "pi") return UNSUPPORTED;
 
   try {
+    let sessionEntries: unknown[] = [];
+    try {
+      sessionEntries = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
+        context: "initial-model-input-viewer",
+      })?.getEntries() ?? [];
+    } catch {
+      // A live runtime capture remains usable if persisted usage cannot be read.
+    }
+
     const capture = runtime
       ? findPiInitialModelInputCapture(
           runtime.getCustomEntries(PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE),
-        )
-      : findPiInitialModelInputCaptureInSessionEntries(
-          openSessionManagerWithSizeGuard(descriptor.sessionFile, {
-            context: "initial-model-input-viewer",
-          })?.getEntries() ?? [],
-        );
-    return capture ? { status: "available", capture } : PENDING;
+        ) ?? findPiInitialModelInputCaptureInSessionEntries(sessionEntries)
+      : findPiInitialModelInputCaptureInSessionEntries(sessionEntries);
+    if (!capture) return PENDING;
+
+    const tokenUsage = findPiInitialModelInputTokenUsageInSessionEntries(sessionEntries);
+    return {
+      status: "available",
+      capture,
+      ...(tokenUsage ? { tokenUsage } : {}),
+    };
   } catch {
     // Viewer availability must not affect an active session or model request.
     return PENDING;

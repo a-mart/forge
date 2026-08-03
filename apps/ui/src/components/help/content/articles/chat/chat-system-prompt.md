@@ -12,6 +12,11 @@ The default **Prompt** view keeps the captured request readable:
 - The available-skills catalog is formatted as cards with each skill's name, description, and source location instead of showing its XML markup.
 - Tool definitions appear as cards with their descriptions, required inputs, and top-level parameter types. Each card can reveal its complete schema.
 - The provider, model, and capture time appear as compact context above the prompt.
+- A token summary shows the provider-reported input total from the actual first response when available. It also estimates the visible system prompt, messages, and tools; each prompt source, skill, and tool has its own estimate.
+
+The provider-reported total includes normalized uncached, cache-read, and cache-write input reported for that first request. It requires a completed response with usage data, so failed, incomplete, older, or non-reporting requests fall back to a clearly labeled rough total.
+
+Section counts and fallback totals use Forge's provider-independent approximation of about four characters per token. They cover the captured system prompt, converted messages, and tool definitions but exclude request metadata, provider-specific framing, and image tokenization. They are useful for relative size, not provider-exact accounting.
 
 Use the **Raw JSON** toggle for the complete persisted record, including provider-independent messages and safe request metadata. Image payloads are summarized by byte count instead of retaining base64 data, and executable functions are not retained. Request metadata omits recognized sensitive fields, but the prompt, messages, and tool definitions are shown as captured rather than being a general-purpose redaction view. Treat the viewer and copied content as sensitive session content.
 

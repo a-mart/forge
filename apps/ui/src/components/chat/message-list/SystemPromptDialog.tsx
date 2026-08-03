@@ -80,9 +80,10 @@ export function SystemPromptDialog({
   // Do not render a previous agent's capture during the render before the
   // identity-change effect clears it.
   const currentData = data?.agentId === agentId ? data : null
-  const capture = currentData?.initialModelInput.status === 'available'
-    ? currentData.initialModelInput.capture
+  const availableInitialModelInput = currentData?.initialModelInput.status === 'available'
+    ? currentData.initialModelInput
     : undefined
+  const capture = availableInitialModelInput?.capture
   const rawCapture = capture ? JSON.stringify(capture, null, 2) : undefined
 
   useEffect(() => {
@@ -262,6 +263,7 @@ export function SystemPromptDialog({
               ) : capture ? (
                 <InitialModelInputContent
                   capture={capture}
+                  tokenUsage={availableInitialModelInput?.tokenUsage}
                   rawCapture={rawCapture!}
                   mode={viewMode}
                 />

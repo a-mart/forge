@@ -1,5 +1,6 @@
 import type {
   InitialModelInputJsonValue,
+  InitialModelInputTokenUsage,
   PiInitialModelInputCaptureV1,
 } from "@forge/protocol";
 
@@ -89,6 +90,40 @@ export function findPiInitialModelInputCaptureInSessionEntries(
       ? [custom.data]
       : [];
   }));
+}
+
+/**
+ * Finds provider-reported input usage from the completed first assistant
+ * response after the capture entry. Pi normalizes cached input into separate
+ * components, so the complete request input is their sum.
+ */
+export function findPiInitialModelInputTokenUsageInSessionEntries(
+  entries: readonly unknown[],
+): InitialModelInputTokenUsage | undefined {
+  let foundCapture = false;
+
+  for (const entry of entries) {
+    const record = readRecord(entry);
+    if (!foundCapture) {
+      foundCapture = record?.type === "custom"
+        && record.customType === PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE
+        && isPiInitialModelInputCapture(record.data);
+      continue;
+    }
+
+    if (record?.type !== "message") continue;
+    const message = readRecord(record.message);
+    if (message?.role === "user") {
+      // The captured attempt ended without a persisted response. Never borrow
+      // usage from a later request after restart or recovery.
+      return undefined;
+    }
+    if (message?.role !== "assistant") continue;
+    if (!isCompletedAssistantStopReason(message.stopReason)) return undefined;
+    return createProviderReportedTokenUsage(message.usage);
+  }
+
+  return undefined;
 }
 
 export function isPiInitialModelInputCapture(value: unknown): value is PiInitialModelInputCaptureV1 {
@@ -198,6 +233,47 @@ function countImagePayloadBytes(data: string): number {
   const commaIndex = data.indexOf(",");
   const base64 = data.startsWith("data:") && commaIndex >= 0 ? data.slice(commaIndex + 1) : data;
   return Buffer.byteLength(base64, "base64");
+}
+
+function isCompletedAssistantStopReason(value: unknown): boolean {
+  return value === "stop" || value === "length" || value === "toolUse";
+}
+
+function createProviderReportedTokenUsage(value: unknown): InitialModelInputTokenUsage | undefined {
+  const usage = readRecord(value);
+  if (!usage) return undefined;
+
+  const uncachedInputTokens = readNonNegativeTokenCount(usage.input);
+  const cacheReadInputTokens = readNonNegativeTokenCount(usage.cacheRead);
+  const cacheWriteInputTokens = readNonNegativeTokenCount(usage.cacheWrite);
+  if (
+    uncachedInputTokens === undefined
+    && cacheReadInputTokens === undefined
+    && cacheWriteInputTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const inputTokens = (uncachedInputTokens ?? 0)
+    + (cacheReadInputTokens ?? 0)
+    + (cacheWriteInputTokens ?? 0);
+  // Pi initializes unsupported/error usage to zero. Do not present that as a
+  // verified count for a request that necessarily contains provider framing.
+  if (inputTokens <= 0) return undefined;
+
+  return {
+    source: "provider_reported",
+    inputTokens,
+    uncachedInputTokens: uncachedInputTokens ?? 0,
+    cacheReadInputTokens: cacheReadInputTokens ?? 0,
+    cacheWriteInputTokens: cacheWriteInputTokens ?? 0,
+  };
+}
+
+function readNonNegativeTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

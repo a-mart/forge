@@ -266,14 +266,40 @@ describe('SwarmWebSocketServer', () => {
       requestMetadata: { reasoning: 'high' },
     }
     const persistedSession = await readFile(managerDescriptor.sessionFile, 'utf8')
-    await writeFile(managerDescriptor.sessionFile, `${persistedSession.trimEnd()}\n${JSON.stringify({
+    const captureEntry = {
       type: 'custom',
       id: 'initial-model-input-entry',
       parentId: null,
       timestamp: '2026-01-01T00:00:00.000Z',
       customType: 'swarm_pi_initial_model_input',
       data: capture,
-    })}\n`, 'utf8')
+    }
+    const assistantEntry = {
+      type: 'message',
+      id: 'initial-model-response-entry',
+      parentId: 'initial-model-input-entry',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hello back' }],
+        provider: 'openai-codex',
+        model: 'gpt-5.4',
+        usage: {
+          input: 12,
+          output: 3,
+          cacheRead: 5,
+          cacheWrite: 2,
+          totalTokens: 22,
+        },
+        stopReason: 'stop',
+        timestamp: 1_767_225_601_000,
+      },
+    }
+    await writeFile(
+      managerDescriptor.sessionFile,
+      `${persistedSession.trimEnd()}\n${JSON.stringify(captureEntry)}\n${JSON.stringify(assistantEntry)}\n`,
+      'utf8',
+    )
     // Reopen from the persisted JSONL rather than relying on the live runtime.
     ;(manager as unknown as { services: { runtime: { runtimes: Map<string, unknown> } } })
       .services.runtime.runtimes.delete(managerDescriptor.agentId)
@@ -303,6 +329,13 @@ describe('SwarmWebSocketServer', () => {
             messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
             tools: [{ name: 'read', parameters: { type: 'object' } }],
             requestMetadata: { reasoning: 'high' },
+          },
+          tokenUsage: {
+            source: 'provider_reported',
+            inputTokens: 19,
+            uncachedInputTokens: 12,
+            cacheReadInputTokens: 5,
+            cacheWriteInputTokens: 2,
           },
         },
       })

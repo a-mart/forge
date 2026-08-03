@@ -168,6 +168,13 @@ describe('SystemPromptDialog', () => {
           model: { provider: 'openai-codex', id: 'gpt-5.4', api: 'openai-codex-responses' },
           requestMetadata: { reasoning: 'high', maxTokens: 128000 },
         },
+        tokenUsage: {
+          source: 'provider_reported',
+          inputTokens: 1_234,
+          uncachedInputTokens: 234,
+          cacheReadInputTokens: 1_000,
+          cacheWriteInputTokens: 0,
+        },
       },
     })
 
@@ -175,6 +182,16 @@ describe('SystemPromptDialog', () => {
     await flushFetch()
 
     expect(document.body.textContent).toContain('Initial Model Input')
+    expect(container.querySelector('[aria-label="Initial model input tokens"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="System prompt token estimate"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="System instructions token estimate"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label$="skill token estimate"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="read tool token estimate"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Tools token estimate"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Provider-reported input')
+    expect(document.body.textContent).toContain('1.2k tokens')
+    expect(document.body.textContent).toContain('Estimated breakdown')
+    expect(document.body.textContent).toContain('Total comes from the actual first response')
     expect(document.body.textContent).toContain('System prompt')
     expect(document.body.textContent).toContain('System instructions')
     expect(document.body.textContent).toContain('Project instructions')
@@ -216,6 +233,8 @@ describe('SystemPromptDialog', () => {
 
     expect(document.body.textContent).toContain('One skill entry could not be formatted')
     expect(document.body.textContent).toContain('Open Raw JSON')
+    expect(document.body.textContent).toContain('Rough input estimate')
+    expect(document.body.textContent).toContain('Provider usage is unavailable')
     expect(document.body.textContent).not.toContain('<skill>')
     expect(document.body.textContent).not.toContain('missing-location')
   })
@@ -299,6 +318,7 @@ describe('SystemPromptDialog', () => {
     expect(scrollContainer!.scrollTop).toBe(0)
     expect(container.querySelector('.text-emerald-600')).toBeNull()
     expect(document.body.textContent).toContain('Raw JSON')
+    expect(container.querySelector('[aria-label="Initial model input tokens"]')).not.toBeNull()
     expect(document.body.textContent).toContain('raw-only user message')
     expect(document.body.textContent).toContain('maxTokens')
     expect(document.body.textContent).not.toContain('Tools sent to the model')

@@ -284,6 +284,13 @@ const initialModelInputResponse = {
       model: { provider: 'openai-codex', id: 'gpt-5.4' },
       requestMetadata: {},
     },
+    tokenUsage: {
+      source: 'provider_reported',
+      inputTokens: 1_200,
+      uncachedInputTokens: 200,
+      cacheReadInputTokens: 1_000,
+      cacheWriteInputTokens: 0,
+    },
   },
 } satisfies AgentSystemPromptResponse
 
@@ -988,6 +995,7 @@ describe('protocol root barrel contract', () => {
   it('exports the initial Pi model-input HTTP contract from the root barrel', () => {
     expect(initialModelInputResponse.initialModelInput.status).toBe('available')
     expect(initialModelInputResponse.initialModelInput.capture.systemPrompt).toBe('Final prompt')
+    expect(initialModelInputResponse.initialModelInput.tokenUsage?.inputTokens).toBe(1_200)
   })
 
   it('exports session audit protocol contracts from the root barrel', () => {
