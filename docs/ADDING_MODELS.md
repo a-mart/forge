@@ -1,131 +1,62 @@
-# Adding a new OpenAI Codex model
+# Adding or Updating Models
 
-Forge treats the model catalog as the source of truth. Adding a new Pi-side OpenAI Codex model is not a one-file change. In practice you update the catalog first, then the backend fallbacks that assume a known set of Codex models.
+Forge treats the checked-in model catalog as the source of truth. Adding a model affects shared metadata, runtime resolution, selector eligibility, and sometimes deliberate fallback policy. Do not add a UI-only or provider-local model list.
 
-This guide is the minimal path for adding a new model like GPT-5.5.
+## 1. Define the catalog entry
 
-## 1. Update the catalog in `packages/protocol/src/model-catalog-data.ts`
+Start in [`packages/protocol/src/model-catalog-data.ts`](../packages/protocol/src/model-catalog-data.ts). It contains the checked-in provider, family, and concrete-model records. [`model-catalog-types.ts`](../packages/protocol/src/model-catalog-types.ts) defines the contract, and [`model-catalog.ts`](../packages/protocol/src/model-catalog.ts) is the public export surface.
 
-Start here.
+For an existing provider, add the concrete model record and place it in the correct family. For a new family, define the family default and explicit visibility flags. Record only verified values for:
 
-Add a new family entry and the new model entries under `FORGE_MODEL_CATALOG`.
+- provider and exact model ID;
+- family/default membership and selector visibility;
+- reasoning options and default;
+- context and output limits;
+- input modes and web-search capability; and
+- any intentional divergence from upstream metadata.
 
-For GPT-5.5, the family is:
+Do not invent variants or capabilities. Keep a model unavailable by default when its provider/auth/runtime path is not ready.
 
-```ts
-'pi-5.5': {
-  familyId: 'pi-5.5',
-  displayName: 'GPT-5.5',
-  provider: 'openai-codex',
-  defaultModelId: 'gpt-5.5',
-  defaultReasoningLevel: 'xhigh',
-  visibleInCreateManager: true,
-  visibleInChangeManager: true,
-  visibleInSpawnPreset: true,
-  visibleInSpecialists: true,
-},
-```
+## 2. Audit runtime and policy seams
 
-Then add the model entry:
+A catalog entry makes a model selectable only where its visibility and provider state allow it. Audit these consumers and update only the policies that genuinely need the new model:
 
-```ts
-'gpt-5.5': {
-  modelId: 'gpt-5.5',
-  provider: 'openai-codex',
-  familyId: 'pi-5.5',
-  displayName: 'GPT-5.5',
-  isFamilyDefault: true,
-  supportsReasoning: true,
-  supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-  defaultReasoningLevel: 'xhigh',
-  contextWindow: 272_000,
-  maxOutputTokens: 128_000,
-  inputModes: ['text', 'image'],
-  webSearchCapability: 'none',
-  enabledByDefault: true,
-  piUpstreamId: 'gpt-5.5',
-  intentionalDivergenceNotes: null,
-},
-```
+- [`apps/backend/src/swarm/catalog/`](../apps/backend/src/swarm/catalog/) for catalog merging, projection, request behavior, and local overrides;
+- [`apps/backend/src/swarm/swarm-manager-utils.ts`](../apps/backend/src/swarm/swarm-manager-utils.ts) for the synthetic Pi bridge and OpenAI Codex capacity fallback chain;
+- [`apps/backend/src/swarm/project-agent-coordinator.ts`](../apps/backend/src/swarm/project-agent-coordinator.ts) for the bounded project-agent-analysis candidate policy; and
+- [`apps/backend/src/swarm/agents/specialists/`](../apps/backend/src/swarm/agents/specialists/) and delegation presets for explicit model/fallback choices.
 
-A few practical notes:
+Do not retune all specialists simply because a stronger model exists. A roster specialist is an explicit execution policy; change its primary, availability fallback, or escalation route only when the product decision calls for it. Preserve existing persisted descriptors and compatibility aliases unless the migration explicitly replaces them.
 
-- The family entry controls UI visibility and defaults. That is what makes the model family show up in create/change manager flows, spawn presets, and specialist selection.
-- The model entries define the actual spec shape: context window, max output tokens, supported reasoning levels, input modes, and `piUpstreamId`.
-- Only add extra variants when they are real upstream models that Pi or Forge should expose. Do not invent `-mini` or other suffix variants unless they are actually valid.
-- Mirror an existing same-provider model when you are unsure about shape or defaults. For GPT-5.5, GPT-5.4 is the closest template.
-- Keep the catalog entry consistent with the rest of the provider family. If the upstream model is a new top-tier Codex option, the default reasoning level usually stays `xhigh`.
+## 3. Handle models that Pi has not shipped yet
 
-## 2. Update project-agent analysis fallbacks in `apps/backend/src/swarm/swarm-manager.ts`
+Pi-backed models normally resolve through Pi's registry. If Forge must support a checked-in model before Pi does, add a narrow synthetic blueprint entry in `SYNTHETIC_PI_MODEL_BLUEPRINTS` in `swarm-manager-utils.ts`, based on a verified compatible Pi model. The exact runtime resolver overlays Forge's catalog metadata on that blueprint.
 
-Project-agent analysis has a hard-coded candidate list and a hard-coded error message.
+This is a temporary compatibility seam, not a second catalog. Remove the synthetic entry once the installed Pi registry supports the exact model, after confirming projection and request behavior still match.
 
-Add the new Codex model to the candidate list in priority order. For GPT-5.5, the list should now include both GPT-5.4 and GPT-5.5, with GPT-5.5 after GPT-5.4.
+Native providers such as Cursor SDK do not use a Pi synthetic bridge. Their records must instead match the provider runtime's verified model IDs and supported parameters.
 
-Also update the fallback error text so it matches the new tried chain. Otherwise failures will report stale model names.
+## 4. Validate the complete path
 
-## 3. Update Codex capacity fallback ordering in `apps/backend/src/swarm/swarm-manager-utils.ts`
-
-Add the new model to `OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN`.
-
-That chain drives the capacity fallback path for OpenAI Codex models. If you add a model to the catalog but forget this chain, fallback logic can stop at the wrong model or skip the new one entirely.
-
-## 4. Update specialist preset routing in `apps/backend/src/swarm/agents/specialists/specialist-registry.ts`
-
-If the new model is the new top-tier Codex option, update the `complexCodingPreset` family reference.
-
-The current guidance points complex coding work at `pi-5.5` when it exists, with a fallback to the string literal. When the next top-tier family arrives, move that reference to the new family so specialist routing stays current.
-
-## Runtime bridge for models not yet in Pi upstream
-
-Pi has its own built-in model registry, and Forge normally resolves models through that registry first.
-
-If the new model is not in Pi upstream yet, Forge still has a synthetic resolution bridge in the backend runtime path. Runtime construction flows through the runtime provider dispatch facade and provider-specific creators under `apps/backend/src/swarm/runtime/{claude,cursor-sdk,pi}/`. The relevant helper is `resolveExactModel()` in `apps/backend/src/swarm/swarm-manager-utils.ts`, and the Pi runtime creation path uses it when a runtime needs an exact Pi model.
-
-The bridge works by:
-
-- looking up a known blueprint model in Pi, such as GPT-5.4 for GPT-5.5
-- copying the blueprint model object
-- replacing the id, name, reasoning flag, input modes, context window, and max tokens with the Forge catalog values
-
-This unblocks runtime use before Pi ships native support. Once upstream adds the model, clean up the synthetic bridge and let the native Pi registry resolve it directly.
-
-## What does not need to change
-
-Do not add or edit specialist `.md` files just to expose the model. Specialist configs are catalog-driven, so the new family becomes available automatically once the catalog is updated.
-
-Do not touch UI code for model selectors. The selectors read from the catalog.
-
-
-Do not widen protocol types for `familyId`. `packages/protocol/src/model-catalog-types.ts` already uses `string`, not a union.
-
-## Validation checklist
-
-Run the standard checks after the change:
+Run the focused catalog and backend tests first, then the repository validation appropriate to the change:
 
 ```bash
-pnpm lint
-pnpm exec knip
-pnpm test
-cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
-cd apps/ui && pnpm exec tsc --noEmit
+pnpm model-catalog:audit
+(cd packages/protocol && pnpm exec vitest run src/__tests__/model-catalog.test.ts)
+(cd apps/backend && pnpm exec vitest run src/swarm/__tests__/model-catalog-projection.test.ts)
+pnpm quality:changed
 ```
 
-If the protocol package changed, rebuild it too:
+Add or update targeted tests for the model entry, projection/availability behavior, and any explicit fallback or specialist policy you changed. If the protocol package was changed, build it before backend tests that consume its built export:
 
 ```bash
-cd packages/protocol && pnpm build
+(cd packages/protocol && pnpm build)
 ```
 
-Backend tests resolve the built `dist` export, so skipping the protocol build can make the test run look broken even when the source change is correct.
+Also verify selector behavior with the relevant provider credentials or entitlement state. Catalog availability, provider authentication, and manager/specialist visibility are separate gates.
 
-## Test coverage to update
+## Related references
 
-These are the test files that usually need an update when a new model is added:
-
-- `packages/protocol/src/__tests__/model-catalog.test.ts`
-- `apps/backend/src/swarm/__tests__/swarm-manager-utils.test.ts`
-- `apps/backend/src/swarm/__tests__/model-presets.test.ts`
-- any snapshot or registry tests that enumerate the full model list
-
-If a test asserts the exact set or order of model ids, add the new model there as well. Those tests are usually the first place a missed catalog entry shows up.
+- [Model Catalog](MODEL_CATALOG.md) — catalog architecture, override semantics, and audit output
+- [Specialists](SPECIALISTS.md) — delegation presets, roster specialists, and fallback policy
+- [Quality](QUALITY.md) — supported validation tiers

@@ -8,6 +8,7 @@ import settingsEditorContent from './articles/settings/settings-editor.md?raw'
 import settingsExtensionsContent from './articles/settings/settings-extensions.md?raw'
 import settingsExternalChromeContent from './articles/settings/settings-external-chrome.md?raw'
 import settingsGeneralContent from './articles/settings/settings-general.md?raw'
+import settingsGitMonitoringContent from './articles/settings/settings-git-monitoring.md?raw'
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
@@ -16,6 +17,7 @@ import settingsSecretsContent from './articles/settings/settings-secrets.md?raw'
 import settingsSkillsContent from './articles/settings/settings-skills.md?raw'
 import settingsSlashCommandsContent from './articles/settings/settings-slash-commands.md?raw'
 import settingsSpecialistsContent from './articles/settings/settings-specialists.md?raw'
+import settingsStreamDeckContent from './articles/settings/settings-stream-deck.md?raw'
 import settingsThemeContent from './articles/settings/settings-theme.md?raw'
 
 export const settingsArticles: HelpArticle[] = [
@@ -223,6 +225,44 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['settings-general'],
     contextKeys: ['settings.notifications'],
+  },
+  {
+    id: 'settings-git-monitoring',
+    title: 'Git Monitoring',
+    category: 'settings',
+    summary: 'Notice incoming Git remote updates for eligible local Builder projects.',
+    content: settingsGitMonitoringContent,
+    keywords: [
+      'git monitoring',
+      'remote updates',
+      'incoming commits',
+      'default branch',
+      'refresh',
+      'dismiss',
+      'local project',
+      'source control',
+    ],
+    relatedIds: ['chat-source-control', 'settings-general'],
+    contextKeys: ['settings.git-monitoring'],
+  },
+  {
+    id: 'settings-stream-deck',
+    title: 'Stream Deck',
+    category: 'settings',
+    summary: 'Pair and manage the optional local Forge Desktop Stream Deck plugin.',
+    content: settingsStreamDeckContent,
+    keywords: [
+      'stream deck',
+      'elgato',
+      'plugin',
+      'pair',
+      'device',
+      'shortcut',
+      'revoke',
+      'desktop',
+    ],
+    relatedIds: ['settings-cli-access', 'settings-general'],
+    contextKeys: ['settings.stream-deck'],
   },
   {
     id: 'settings-skills',

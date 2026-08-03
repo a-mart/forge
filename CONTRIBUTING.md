@@ -11,7 +11,7 @@ Thanks for your interest in contributing! We welcome bug fixes, docs improvement
 
 ```bash
 git clone https://github.com/a-mart/forge.git
-cd middleman
+cd forge
 pnpm install
 cp .env.example .env
 pnpm dev
@@ -67,6 +67,6 @@ pnpm dlx shadcn@latest add <component-name>
 
 ## Extensions
 
-Forge supports Pi extensions for custom tools, event interception, and packages. See [docs/PI_EXTENSIONS.md](docs/PI_EXTENSIONS.md) for how to write extensions. The internal architecture is documented in [apps/backend/src/swarm/EXTENSIONS.md](apps/backend/src/swarm/EXTENSIONS.md).
+Forge supports Forge and Pi extensions for custom tools, event interception, and packages. See [Forge extensions](docs/FORGE_EXTENSIONS.md) and [Pi extensions](docs/PI_EXTENSIONS.md) for authoring and discovery guidance. The relevant runtime boundaries are documented in [`apps/backend/src/swarm/AGENTS.md`](apps/backend/src/swarm/AGENTS.md).
 
 Thanks for helping improve Forge!

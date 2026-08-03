@@ -27,6 +27,7 @@ The optional Chrome adapter has no Electron view or recording authority. Its coo
 - **Renderer** — `.stage/ui/`, copied from `apps/ui/.output/public/`; `_shell.html` is promoted to `index.html` for packaged startup
 - **Forge resources** — `.stage/forge-resources/`, containing built-in skills, archetypes, operational prompts, specialists, static assets, and related runtime resources
 - **CLI runtime** — `.stage/cli/cli.js`, copied from `packages/cli/dist/cli.js` and packaged as `resources/cli/cli.js` for the desktop CLI shim
+- **Stream Deck plugin installer** — `.stage/stream-deck/com.forge.command-center.streamDeckPlugin`, built, validated, and packaged from `apps/stream-deck/` for the optional local Command Center installation flow
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
 - **Embedded browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
@@ -194,16 +195,17 @@ The packaging pipeline:
 
 1. Clears `apps/electron/release/` so stale installers, blockmaps, and unpacked directories do not leak into the next validation/upload pass
 2. Clears `apps/ui/.output/` so the packaged renderer always starts from a fresh UI build output
-3. Builds `@forge/protocol`, `@forge/backend`, `@forge/ui`, and the Electron main process
+3. Builds `@forge/protocol`, `@forge/backend`, `@forge/ui`, `@forge/stream-deck`, and the Electron main process; it validates and packages the Stream Deck plugin installer before staging
 4. Stages backend runtime assets into `apps/electron/.stage/backend/`
 5. Stages renderer assets into `apps/electron/.stage/ui/`, then validates that every asset referenced by the staged `index.html` actually exists in the staged `assets/` directory before packaging continues
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
-8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-9. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 25.6.1; macOS release mode signs and signer-verifies the relay before calculating its hash, while Windows release mode emits explicit unsigned metadata protected by the exact manifest hash; explicit validation mode remains non-publishable
-10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, exercising `better-sqlite3`, `sqlite3`, `node-pty`, `sharp`, and `koffi` with Electron-as-Node and ensuring they do not silently fall back to repo-level `node_modules`
-11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-12. Runs `electron-builder --publish never`; Windows packaging disables all identity discovery and restores the manifest-hashed host after extra-resource processing, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform-specific release contract before installers are produced
+8. Stages the optional Stream Deck plugin installer into `apps/electron/.stage/stream-deck/`
+9. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
+10. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 25.6.1; macOS release mode signs and signer-verifies the relay before calculating its hash, while Windows release mode emits explicit unsigned metadata protected by the exact manifest hash; explicit validation mode remains non-publishable
+11. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, exercising `better-sqlite3`, `sqlite3`, `node-pty`, `sharp`, and `koffi` with Electron-as-Node and ensuring they do not silently fall back to repo-level `node_modules`
+12. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
+13. Runs `electron-builder --publish never`; Windows packaging disables all identity discovery and restores the manifest-hashed host after extra-resource processing, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform-specific release contract before installers are produced
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 

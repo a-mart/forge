@@ -42,9 +42,9 @@ provider locator.
 Team Secure Mode is currently available for a supported local Pi-backed Builder
 manager and eligible local Forge Pi workers in the same project. Unsupported worker
 runtimes fail closed before secure work is dispatched; Forge does not silently run
-that assignment without the secure boundary. Cursor SDK, Cursor ACP,
-Remote Projects, Collaboration channels, Codex plugin/external-thread workers, and
-ordinary integrated terminals are not Secure Sessions execution paths.
+that assignment without the secure boundary. Cursor SDK, Remote Projects,
+Collaboration channels, Codex plugin/external-thread workers, and ordinary integrated
+terminals are not Secure Sessions execution paths.
 
 Managers mark secret-dependent delegation with
 `spawn_agent(..., requiresSecureRuntime=true)`. Forge selects a compatible configured
@@ -121,13 +121,14 @@ HTTPS browser encrypts the value to a one-use Electron key before the Builder ba
 relays it, so the backend receives only public-key material and ciphertext. Electron
 then seals the value with operating-system secure storage.
 
-Forge also supports a paired browser opened over plain HTTP when it is being used on a
-known, trusted private network such as a personal VPN. The UI calls this **Trusted
-network mode**. In that mode the bounded value reaches the Builder backend only long
-enough to be sent directly to the paired Electron vault for sealing. It never enters
-chat, model prompts, tools, session history, or catalog metadata. This is deliberately
-less transport protection than HTTPS and is not appropriate for a public or untrusted
-network.
+Forge also supports a paired browser opened over plain HTTP when a user or operator
+has established that it is on a trusted private network, such as a personal VPN. The UI
+calls this **Trusted network mode**. That trust is a user/operator assertion; Forge
+cannot verify that a network is private or trustworthy. In this mode the bounded value
+reaches the Builder backend only long enough to be sent directly to the paired Electron
+vault for sealing. It never enters chat, model prompts, tools, session history, or
+catalog metadata. This is deliberately less transport protection than HTTPS and is not
+appropriate for a public or untrusted network.
 
 Browser pairing starts in the remote UI and produces a six-digit verification code.
 Forge Desktop lists that pending request under **Settings → Secrets → Paired
@@ -334,7 +335,11 @@ falling back to plaintext or host execution.
 Secure Sessions make the following concrete promises for supported paths:
 
 - model-originated input contains aliases and destinations, never secret material;
-- public HTTP and WebSocket contracts contain metadata only;
+- public agent/tool, event, and standard HTTP/WebSocket contracts contain metadata only.
+  The paired **Trusted network mode** HTTP private-entry handoff is the narrow
+  exception: it carries a bounded value through the backend to Electron for immediate
+  operating-system sealing and excludes it from normal events, chat, model prompts,
+  tools, history, and catalog metadata;
 - Docker CLI arguments, image configuration, and container inspect metadata do not
   contain the value;
 - values enter the guest executor in a private binary frame on stdin, after the
@@ -403,8 +408,8 @@ control, secure-secret write, and private-entry write scope. The Desktop capabil
 not persisted, logged, included in agent runtime state, or given to the browser.
 Browser tokens are stored only as hashes, carried in HttpOnly SameSite cookies, and are
 rejected for Desktop-only pairing administration. On HTTPS, that cookie is marked
-`Secure`; the explicit trusted-network HTTP path instead relies on the user's private
-network.
+`Secure`; the explicit trusted-network HTTP path instead relies on a private-network
+trust assertion made by the user or operator, which Forge cannot verify.
 
 Remote private entry on HTTPS uses a process-lifetime P-256 Electron key and a
 two-minute, context-bound, one-use challenge. The browser derives an ephemeral shared

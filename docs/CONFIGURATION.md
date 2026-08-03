@@ -12,7 +12,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | `FORGE_PORT` | `47187` (dev) / `47287` (prod) | Backend HTTP + WebSocket port. |
 | `FORGE_DATA_DIR` | `~/.forge` (macOS/Linux) or `%LOCALAPPDATA%\forge` (Windows) | Data directory for all persistent state. |
 | `FORGE_DEBUG` | `false` | Enable debug logging. Also enables extension tool-call logging, which surfaces tool invocations from Pi extensions in the backend logs. |
-| `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
+| `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. It sends a random install identifier, coarse environment/provider/model metadata, and aggregate usage and feature-adoption counts; never prompts, messages, files, or secrets. |
 | `FORGE_CORTEX_ENABLED` | `true` | Enable or disable the entire Cortex subsystem. This is separate from the default-off Knowledge v2 mode switch. |
 | `FORGE_RUNTIME_TARGET` | `builder` | Runtime surface to boot. Supported values: `builder` and `collaboration-server`. `builder` starts the local Builder backend; `collaboration-server` starts the deployable collaboration runtime used by the public Docker/self-host path. |
 
@@ -62,8 +62,9 @@ effective Docker endpoint must be a local `unix://` socket on macOS/Linux or Doc
 Desktop's exact local named pipe on Windows; remote Docker contexts and transports
 are rejected rather than treated as a deployment target.
 
-The feature is local-Builder-only and fail-closed. It does not inherit values from
-`shared/config/secrets.json` or silently fall back to host execution. A saved source
+The feature is local-Builder-only and fail-closed: Remote Projects and Collaboration
+sessions do not inherit its vault, paired-browser connection, Team Secure Mode, or execution
+path. It does not inherit values from `shared/config/secrets.json` or silently fall back to host execution. A saved source
 becomes available to a manager session only through an explicit lease or a configured
 project default. Unsupported workers do not receive secure assignments through a
 non-secure runtime. The Settings readiness panel reports fixed codes only and supports

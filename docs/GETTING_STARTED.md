@@ -60,7 +60,7 @@ Remote Projects lets this Builder open projects that remain on another Forge col
 4. Turn on **Remote projects** for the connection. A newly added connection is opted in automatically only when its successful Test response advertised Remote Projects support; an existing connection's preference is not silently changed.
 5. Return to Builder. Select a nested remote session row to make that server active. The blue, globe-marked project header only expands or collapses its session list; nested session rows use status dots.
 
-The **Remote projects** switch is a browser-local display/connection preference, not an access control. The collaboration server must separately enable its Remote Projects policy. Remote paths, Files operations, Git and `gh` commands, terminals, agents, and session data run or remain on that server—there is no local clone or sync. **New Project** uses the remote server directory browser (or a manually entered server path) under `FORGE_CWD_ALLOWLIST_ROOTS`, never the viewing machine's native folder picker. When remote terminal access is disabled, existing terminal descriptors or read visibility may remain, but subsequent member terminal lifecycle mutations and new ticket issuance are denied; an already attached terminal socket is not terminated. Members should be trusted instance operators: Remote Projects provides broad Builder read/write access to exposed projects and has no per-project ACL.
+The **Remote projects** switch is a browser-local display/connection preference, not an access control. The collaboration server must separately enable its Remote Projects policy. Remote paths, Files operations, Git and `gh` commands, terminals, agents, and session data run or remain on that server—there is no local clone or sync. Secure Sessions, the local vault, paired-browser secret entry, and Team Secure Mode remain on the local Builder and are not available to Remote Projects. **New Project** uses the remote server directory browser (or a manually entered server path) under `FORGE_CWD_ALLOWLIST_ROOTS`, never the viewing machine's native folder picker. When remote terminal access is disabled, existing terminal descriptors or read visibility may remain, but subsequent member terminal lifecycle mutations and new ticket issuance are denied; an already attached terminal socket is not terminated. Members should be trusted instance operators: Remote Projects provides broad Builder read/write access to exposed projects and has no per-project ACL.
 
 In remote chat, author chips identify messages from other users. The viewer indicator is a snapshot of authenticated people subscribed to that session; it is not typing presence, an edit lock, or proof that someone is actively reading.
 
@@ -552,9 +552,9 @@ Forge also watches active **manager** turns for prolonged silence. A watchdog ev
 
 The notices do not include an inline recycle action. If the manager remains stuck, use **Three-dot menu → Stop All**, then send the request again to begin a fresh turn/runtime. Waiting may also let a pending recycle run once the runtime becomes idle.
 
-A backend restart does not automatically resume interrupted work. When recovery information is available, Builder shows a banner below the chat header with interrupted session and worker counts. **Resume all** makes a best-effort attempt from the last persisted state by prompting interrupted managers/workers and redelivering pending worker-report text where available. **Dismiss** only hides that recovery snapshot. Neither action is persisted as a durable recovery decision, and the banner does not currently provide a per-item error breakdown.
+A backend restart does not automatically resume interrupted work. When recovery information is available, Builder shows a banner below the chat header with interrupted session and worker counts. **Resume all** makes a best-effort, one-time attempt from the last persisted recovery record by prompting interrupted managers/workers and redelivering pending worker-report text where available. **Dismiss** records that choice and hides the snapshot without sending a continuation; interrupted work-graph nodes remain blocked for deliberate manager review/retry. The banner intentionally does not provide a per-item error breakdown.
 
-Mid-generation output cannot be reconstructed, and the internal recovery ledger is fail-open and rotating rather than an exact crash-safe record. Before resuming work that may repeat side effects—publishing, deployments, payments, or destructive commands—inspect the current external state and tell the manager what already completed.
+Mid-generation output cannot be reconstructed, and recovery is not an exact crash-safe transaction log. Before resuming work that may repeat side effects—publishing, deployments, payments, or destructive commands—inspect the current external state and tell the manager what already completed.
 
 ### Manual Stop Controls
 
@@ -571,16 +571,13 @@ You'll rarely need these. The automated safeguards handle most failure cases.
 
 ### Notifications
 
-Go to **Settings → Notifications** for per-session notification controls. Recommended setup:
+Go to **Settings → Notifications** to set a global sound toggle and defaults for managers, then customize an individual manager only when needed. Cortex always has separate settings.
 
-- **Project sessions:** Turn on "All Done" notifications. This fires when your session agent completes and all workers are finished. Clean "your work is ready" signal.
-- **Cortex:** Keep notifications off if you do not want messages from scheduled consolidation or direct Cortex activity.
+- **Project sessions:** Turn on **All done** for a clean completion signal. After an ordinary unread notification, Forge plays it only when the manager is idle and no workers are still streaming; if work is active first, it can play unread and recheck at idle.
+- **Question:** Use the dedicated question sound for structured choices. It takes priority over unread; disabling it falls back to unread.
+- **Cortex:** Configure it separately if you want sounds for scheduled consolidation or direct Cortex activity.
 
-The "Unread" notification fires whenever the session agent sends you a message. Can be useful but gets noisy if your manager is running many workers (each worker completion triggers a message).
-
-You can upload custom notification sounds if you want to distinguish between sessions by ear.
-
-> A global notification setting that applies to all sessions (except Cortex) is planned.
+The **Mute CLI-originated notifications** setting suppresses audio—but not unread badges—for CLI-created sessions and replies to CLI-originated messages. You can upload MP3, WAV, or OGG sounds up to 2 MB and use them in defaults or per-manager overrides.
 
 ### Skills
 

@@ -28,8 +28,10 @@ scope and, when appropriate, select projects under **Automatically grant in**. I
 Desktop, the private bridge encrypts the value directly. A paired HTTPS browser
 encrypts it to a one-use Desktop key before the Builder backend relays it. Electron
 then seals it with the operating-system-backed secure storage service. A paired browser
-on a known trusted VPN can instead use **Trusted network mode** over HTTP. It carries
-the value only to the paired Electron vault for immediate sealing and never into chat,
+can instead use **Trusted network mode** over HTTP only when a user or operator has
+established that the network, such as a personal VPN, is trusted and private. Forge
+cannot verify that assertion. The HTTP handoff carries the value through the Builder
+backend only to the paired Electron vault for immediate sealing; it never enters chat,
 agent tools, prompts, or saved secret metadata. HTTPS remains the stronger option;
 never use HTTP mode on a public or untrusted network. Forge never displays the value
 again.
@@ -38,10 +40,10 @@ To use private entry from the same running Builder in another browser, choose
 **Pair this browser**, compare the six-digit code, and approve it under
 **Settings → Secrets → Paired browsers** in Forge Desktop. Pairing is per browser,
 persists across restarts, and can be revoked from Desktop. It does not expose the
-Desktop master capability. Remote browser entry uses HTTPS by default and can use the
-explicit trusted-network HTTP path when the connection is your known private VPN.
-Remote Projects and Collaboration remain separate hosts and do not inherit the local
-Desktop vault.
+Desktop master capability. Remote browser entry uses HTTPS by default and can use the explicit
+trusted-network HTTP path only when a user or operator has established that the
+connection is private and trusted. Remote Projects and Collaboration remain separate
+hosts and do not inherit the local Desktop vault.
 
 ## Connect Bitwarden
 
@@ -149,9 +151,9 @@ destination-constrained network proxy.
 
 Secure Sessions currently require a Pi-backed local Builder runtime and the pinned
 Forge Docker runner image. Supported local Forge Pi workers can participate with
-the manager session's authority. Cursor SDK, Cursor ACP, Remote Projects,
-Collaboration, Codex plugin/external-thread workers, and the integrated terminal are
-not secure-session execution paths. Secure Bash is non-interactive pipe execution
+the manager session's authority. Cursor SDK, Remote Projects, Collaboration, Codex
+plugin/external-thread workers, and the integrated terminal are not secure-session
+execution paths. Secure Bash is non-interactive pipe execution
 rather than a PTY. SSH passwords work through the `SSH_ASKPASS` binding.
 Non-interactive commands that only require TTY descriptors can use the runner's
 `script` helper; live terminal input and resize remain unsupported.

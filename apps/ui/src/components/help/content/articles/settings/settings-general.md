@@ -34,7 +34,7 @@ Cached token counts come from the provider. OpenAI does not report specific miss
 
 ## Telemetry
 
-Anonymous telemetry is enabled by default and sends only aggregate counts such as sessions, models, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
+Anonymous telemetry is enabled by default. It sends a random install identifier and report identifier; coarse environment metadata such as app and runtime versions, platform, architecture, Desktop status, and language; aggregate usage and feature-adoption counts; configured and used provider names; and the most-used catalog model ID. It does not send prompts or messages, code, file contents or paths, repository names, credentials, or secrets.
 
 To opt out, set `FORGE_TELEMETRY=false` in your environment. There is no telemetry setting in the UI.
 

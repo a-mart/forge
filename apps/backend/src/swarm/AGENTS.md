@@ -55,7 +55,9 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `swarm-manager-runtime-composition.ts` - explicit three-phase runtime composition root for controller/health/fallback, planning/compaction, and turn/lifecycle/trust/session/boot completion; preserves the constructor's late-bound callback order.
 - `swarm-specialist-fallback-manager.ts` - specialist fallback selection, replay, and handoff recovery.
 - `swarm-worker-health-service.ts` - worker stall detection and transient runtime-error grace handling.
-- `planning/session-plan-coordinator.ts` - live plan state, persistence, usage accounting, summary projection, and runtime context.
+- `planning/session-plan-coordinator.ts` - live checklist/work-graph plan state, persistence, usage accounting, summary projection, and runtime context.
+- `remote-update-awareness/` - local Builder Git remote-update observation, scheduling, SQLite-backed settings/state, and bounded incoming-change tracking.
+- `stream-deck-access-service.ts` - local Stream Deck pairing, revocable device-token authentication, and scoped device-access persistence.
 - `capture-cascade-coordinator.ts` - Cortex capture cadence, watermarks, judge decisions, and temporary capture-fork lifecycle.
 - `knowledge-memory-coordinator.ts` - application-level knowledge, Cortex, capture, session-memory, session-meta boot, and compaction-settings policy; composes the focused state owners without reimplementing them.
 - `swarm-manager-utils.ts` - shared helpers, normalizers, formatters, and invariant-preserving utility code.

@@ -24,3 +24,4 @@ Keep parsing and execution separated so the handler layer stays thin and the per
 - Route code should not reach directly into `swarm/` internals.
 - Use `SwarmManager` as the boundary when websocket or HTTP work needs swarm behavior.
 - Shared helpers belong in `ws/http/shared/` or the relevant command/service module, not in route handlers.
+- Builder-only adapters such as local Git Monitoring and Stream Deck pairing belong behind focused HTTP services/routes. Do not compose them for Collaboration or Remote Projects.

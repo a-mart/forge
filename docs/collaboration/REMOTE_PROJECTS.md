@@ -175,6 +175,7 @@ These surfaces remain local even while a remote project is selected:
 - sidebar provider-usage data
 - the unified sidebar-order API and persistence
 - Forge Desktop's Automatic Browser Host, embedded views/partitions, optional Chrome relay/authority, and Browser workspace
+- Secure Sessions, local vault/paired-browser secret entry, and Team Secure Mode
 
 Do not infer support from a mounted backend route. Remote Projects is an explicitly allowlisted subset of Builder behavior. Collaboration channels have a different protocol and feature boundary.
 

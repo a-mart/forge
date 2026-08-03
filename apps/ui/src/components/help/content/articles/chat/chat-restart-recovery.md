@@ -8,9 +8,9 @@ These notices do not provide an inline runtime recycle action. If the manager re
 
 ## Recovery after a backend restart
 
-Forge does not automatically resume interrupted work after a backend restart. When restart recovery information is available, Builder shows a banner below the chat header with counts of interrupted sessions and workers.
+Forge does not automatically resume interrupted work after a backend restart. When recovery information is available, Builder shows a banner below the chat header with interrupted session and worker counts.
 
-- **Resume all** makes a best-effort attempt from the last persisted state. It prompts interrupted managers and workers and redelivers pending worker-report text where available.
-- **Dismiss** hides the current recovery banner. It does not resume or cancel work.
+- **Resume all** makes a best-effort, one-time attempt from the last persisted recovery record. It prompts interrupted managers and workers and redelivers pending worker-report text where available.
+- **Dismiss** records that you chose not to resume this recovery snapshot and hides the banner. It does not send a continuation prompt. Interrupted work-graph nodes are left blocked so the manager can review and retry them deliberately.
 
-Resume does not reconstruct output that was still being generated when the backend stopped, and it does not guarantee that every prior action was recorded. Before resuming work that could have external or repeated side effects—such as publishing, payments, deployments, or destructive commands—inspect the current state and tell the manager what has already completed. Recovery errors are not currently presented as a per-item breakdown in the banner.
+Resume cannot reconstruct output that was still being generated when the backend stopped, and recovery is not a transaction log. Before resuming work that could repeat external effects—publishing, payments, deployments, or destructive commands—inspect the external state and tell the manager what already completed. The banner intentionally does not present a per-item error breakdown.
