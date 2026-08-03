@@ -1,3 +1,8 @@
+import {
+  BROWSER_HOST_PROTOCOL_VERSION,
+  BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+  BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+} from "@forge/protocol";
 import type {
   BrowserClientCommand,
   BrowserServerEvent,
@@ -44,12 +49,24 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
           hydrateSessionsForReplacement: options.hydrateHostSessions,
         });
       } catch {
-        sendFailure(
-          options,
-          command,
-          "REGISTRATION_FAILED",
-          "Automatic Browser Host registration failed. Desktop update required if protocol v2 is unavailable.",
-        );
+        const versions = command.registration.capabilities.protocolVersions;
+        if (!versions || versions.minimum > BROWSER_HOST_PROTOCOL_VERSION || versions.maximum < BROWSER_HOST_PROTOCOL_VERSION) {
+          sendFailure(
+            options,
+            command,
+            BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+            `Automatic Browser Host supports protocol v${versions?.minimum ?? "unknown"}–v${versions?.maximum ?? "unknown"}, but Forge requires protocol v${BROWSER_HOST_PROTOCOL_VERSION}. Update Forge Desktop to continue.`,
+          );
+        } else {
+          // A wake/reconnect can briefly leave the old host connection pending.
+          // This is retried by the renderer; it is not evidence of an outdated Desktop.
+          sendFailure(
+            options,
+            command,
+            BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+            "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
+          );
+        }
         return true;
       }
       await sendCritical(options, { type: "browser_host_connected", requestId: command.requestId, host });
@@ -313,9 +330,11 @@ function sendFailure(
   suffix: string,
   message: string,
 ): void {
+  const normalizedSuffix = suffix.toUpperCase().replaceAll("-", "_");
+  const commandPrefix = `${command.type.toUpperCase()}_`;
   options.send(options.socket, {
     type: "error",
-    code: `${command.type.toUpperCase()}_${suffix.toUpperCase().replaceAll("-", "_")}`,
+    code: normalizedSuffix.startsWith(commandPrefix) ? normalizedSuffix : `${commandPrefix}${normalizedSuffix}`,
     message,
     requestId: command.requestId,
   });

@@ -25,6 +25,9 @@ export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[
 export const BROWSER_TARGET_AFFINITIES = ['managed-electron', 'external-chrome'] as const
 export type BrowserTargetAffinity = (typeof BROWSER_TARGET_AFFINITIES)[number]
 export const BROWSER_HOST_PROTOCOL_VERSION = 2
+/** Request-scoped registration failures which clients must handle without emitting chat events. */
+export const BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR = 'BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE'
+export const BROWSER_HOST_REGISTER_TRANSIENT_ERROR = 'BROWSER_HOST_REGISTER_TRANSIENT'
 
 export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
   'status',

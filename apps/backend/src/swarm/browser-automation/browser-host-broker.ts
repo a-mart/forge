@@ -154,6 +154,21 @@ export class BrowserHostBroker {
     return !!host && host.connectionId === connectionId && host.registration.hostId === hostId && host.generation === hostGeneration;
   }
 
+  /** A retry on the same socket must not create a second host generation. */
+  isCurrentRegistration(connectionId: string, registration: BrowserHostRegistration): boolean {
+    const host = this.host;
+    return !!host && host.connectionId === connectionId
+      && host.registration.hostId === registration.hostId
+      && host.registration.clientInstanceId === registration.clientInstanceId;
+  }
+
+  /** Reconnect continuity is limited to the same renderer-owned host identity. */
+  isSameHostIdentity(registration: BrowserHostRegistration): boolean {
+    const host = this.host;
+    return !!host && host.registration.hostId === registration.hostId
+      && host.registration.clientInstanceId === registration.clientInstanceId;
+  }
+
   getConnectionSnapshot(): BrowserHostConnectionSnapshot {
     const host = this.host;
     return host ? {

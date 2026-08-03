@@ -2,6 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+  BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+} from "@forge/protocol";
 import type { BrowserAutomationRequest, BrowserHostRegistration, BrowserTabSnapshot, ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { BrowserAutomationService } from "../../swarm/browser-automation/browser-automation-service.js";
@@ -63,6 +67,26 @@ describe("browser websocket protocol v2", () => {
     const selected = registration(); (selected.capabilities as any).unexpectedSelector = "external-chrome";
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: "browser_host_register", requestId: "selected", registration: selected }))))
       .toEqual({ ok: false, error: "registration.capabilities contains an unsupported field" });
+  });
+
+  it("reports only an actual v2 range mismatch as an actionable Desktop update", async () => {
+    const parsedFuture = parseClientCommand(Buffer.from(JSON.stringify({ type: "browser_host_register", requestId: "future", registration: registration(3) })));
+    expect(parsedFuture).toMatchObject({ ok: true, command: { registration: { capabilities: { protocolVersions: { minimum: 3, maximum: 3 } } } } });
+
+    const incompatible = await harness();
+    await handleBrowserCommand({ ...incompatible.common, command: { type: "browser_host_register", requestId: "incompatible", registration: registration(1) } });
+    expect(incompatible.sent).toContainEqual(expect.objectContaining({
+      type: "error", code: BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+      message: expect.stringContaining("supports protocol v1–v1"),
+    }));
+
+    const transient = await harness();
+    vi.spyOn(transient.service, "registerHostWithLifecycleRelease").mockRejectedValueOnce(new Error("wake transport unavailable"));
+    await handleBrowserCommand({ ...transient.common, command: { type: "browser_host_register", requestId: "transient", registration: registration() } });
+    expect(transient.sent).toContainEqual(expect.objectContaining({
+      type: "error", code: BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+      message: "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
+    }));
   });
 
   it("registers one host, hydrates the same v2 projection, and routes a tabless open", async () => {
