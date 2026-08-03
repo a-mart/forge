@@ -1,2 +1,3 @@
 apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner text eol=lf
 apps/backend/src/swarm/secure-sessions/execution/forge-env-askpass text eol=lf
+scripts/secure-sessions-e2e/target-entrypoint.sh text eol=lf
