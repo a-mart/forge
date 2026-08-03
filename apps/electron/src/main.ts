@@ -926,7 +926,12 @@ if (!hasSingleInstanceLock) {
       },
     })
     sleepBlockerService.initialize()
-    await loadRenderer(mainWindow)
+    try {
+      await loadRenderer(mainWindow)
+    } catch (error) {
+      if (!mainRendererRecovery.acceptsSupersededLoadError(error)) throw error
+      lifecycleLog.record('electron_initial_renderer_load_superseded')
+    }
 
     // Show "What's New" dialog if the app was just updated (non-blocking)
     showWhatsNewIfUpdated(mainWindow).catch((error) => {

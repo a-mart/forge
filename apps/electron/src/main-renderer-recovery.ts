@@ -21,7 +21,16 @@ export type MainRendererRecoveryEvent =
 
 export type MainRendererRecoveryController = {
   markReady(sender: WebContents): boolean
+  acceptsSupersededLoadError(error: unknown): boolean
   dispose(): void
+}
+
+function isAbortedNavigationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const navigationError = error as Error & { code?: unknown; errno?: unknown }
+  return navigationError.code === 'ERR_ABORTED'
+    || navigationError.errno === ERR_ABORTED
+    || error.message.includes('ERR_ABORTED')
 }
 
 /**
@@ -139,6 +148,9 @@ export function installMainRendererRecovery(options: {
       clearRecoveryTimer()
       options.onEvent?.({ type: 'ready', recovered })
       return true
+    },
+    acceptsSupersededLoadError(error) {
+      return recoveryInFlight && isAbortedNavigationError(error)
     },
     dispose() {
       if (disposed) return
