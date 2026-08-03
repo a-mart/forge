@@ -569,6 +569,16 @@ workflow, so both commands use the same Electron-owned backend on port `47287`.
 The Electron window continues to use its loopback backend bootstrap while the
 remote browser derives the backend hostname from the address it opened and
 connects on port `47287`. The development UI is available on port `47188`.
+
+A normal installed Forge Desktop app exposes the same browser route while it
+runs: `http://<station-address>:47188`. Its packaged UI binds on `FORGE_HOST`
+(or `0.0.0.0` when unset), keeps the Electron window on `app://` with its
+loopback preload bootstrap, and sends browser clients only the Electron-owned
+backend port (default `47287`, including a `FORGE_PORT` override). The browser
+route has no Electron preload bridge or forwarded Desktop/browser capabilities.
+Keep it on loopback or a known trusted network, or put an authentication-enforcing
+proxy in front of it before broader exposure.
+
 Remote secure-browser pairing supports HTTPS and, for a known trusted private network
 such as a personal VPN, the explicit **Trusted network mode** shown in the browser UI.
 HTTPS keeps the browser-encrypted private-entry path. The HTTP mode sends a bounded

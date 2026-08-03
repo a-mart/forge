@@ -38,6 +38,24 @@ describe('resolveBackendWsUrlFromLocation', () => {
     ).toBe('ws://localhost:3000')
   })
 
+  it('uses packaged remote runtime configuration with the browser hostname', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '10.128.4.7', port: '47188' },
+        { runtimePort: 49_287, envUrl: 'ws://127.0.0.1:47287', envPort: '47287', webBaseMode: 'auto' },
+      ),
+    ).toBe('ws://10.128.4.7:49287')
+  })
+
+  it('preserves Electron preload bootstrap over packaged remote configuration', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '10.128.4.7', port: '47188' },
+        { electronWsUrl: 'ws://127.0.0.1:47287', runtimePort: 49_287, webBaseMode: 'auto' },
+      ),
+    ).toBe('ws://127.0.0.1:47287')
+  })
+
   it('envUrl takes priority over port heuristic (electron dev browser access)', () => {
     // When VITE_FORGE_WS_URL is set (e.g. during dev:electron), the env var
     // should override the port-based heuristic so browser access at 47188
