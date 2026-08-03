@@ -2,6 +2,7 @@ import {
   BROWSER_HOST_PROTOCOL_VERSION,
   BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
   BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+  isBrowserHostProtocolCompatible,
 } from "@forge/protocol";
 import type {
   BrowserClientCommand,
@@ -33,6 +34,18 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
   const { command, browserAutomationService: service, socket, connectionId } = options;
   switch (command.type) {
     case "browser_host_register": {
+      const versions = command.registration.capabilities.protocolVersions;
+      // This must happen before service-level dedupe or replacement work. A
+      // permanent mismatch belongs to this request, not the retry path.
+      if (!isBrowserHostProtocolCompatible(versions)) {
+        sendFailure(
+          options,
+          command,
+          BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+          `Automatic Browser Host supports protocol v${versions?.minimum ?? "unknown"}–v${versions?.maximum ?? "unknown"}, but Forge requires protocol v${BROWSER_HOST_PROTOCOL_VERSION}. Update Forge Desktop to continue.`,
+        );
+        return true;
+      }
       let host;
       try {
         host = await service.registerHostWithLifecycleRelease({
@@ -49,24 +62,14 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
           hydrateSessionsForReplacement: options.hydrateHostSessions,
         });
       } catch {
-        const versions = command.registration.capabilities.protocolVersions;
-        if (!versions || versions.minimum > BROWSER_HOST_PROTOCOL_VERSION || versions.maximum < BROWSER_HOST_PROTOCOL_VERSION) {
-          sendFailure(
-            options,
-            command,
-            BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
-            `Automatic Browser Host supports protocol v${versions?.minimum ?? "unknown"}–v${versions?.maximum ?? "unknown"}, but Forge requires protocol v${BROWSER_HOST_PROTOCOL_VERSION}. Update Forge Desktop to continue.`,
-          );
-        } else {
-          // A wake/reconnect can briefly leave the old host connection pending.
-          // This is retried by the renderer; it is not evidence of an outdated Desktop.
-          sendFailure(
-            options,
-            command,
-            BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
-            "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
-          );
-        }
+        // A wake/reconnect can briefly leave the old host connection pending.
+        // This is retried by the renderer; it is not evidence of an outdated Desktop.
+        sendFailure(
+          options,
+          command,
+          BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+          "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
+        );
         return true;
       }
       await sendCritical(options, { type: "browser_host_connected", requestId: command.requestId, host });

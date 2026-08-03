@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
   BROWSER_AUTOMATION_MAX_TIMEOUT_MS,
-  BROWSER_HOST_PROTOCOL_VERSION,
+  isBrowserHostProtocolCompatible,
   type BrowserAutomationErrorCode,
   type BrowserAutomationFailure,
   type BrowserAutomationOperation,
@@ -118,10 +118,7 @@ export class BrowserHostBroker {
   }
 
   register(options: BrowserHostBrokerRegistration): BrowserHostConnectionSnapshot {
-    const versions = options.registration.capabilities.protocolVersions;
-    if (!versions || versions.minimum > BROWSER_HOST_PROTOCOL_VERSION || versions.maximum < BROWSER_HOST_PROTOCOL_VERSION) {
-      throw brokerError("extension-update-required", "Desktop update required: browser host protocol v2 is required.", false);
-    }
+    this.assertRegistrationProtocolCompatibility(options.registration);
     if (this.host) this.rejectPendingForGeneration(this.host.generation, "stale-host-generation", "Browser host was superseded by a newer registration.");
     this.generation += 1;
     this.host = {
@@ -131,6 +128,13 @@ export class BrowserHostBroker {
       focused: false,
     };
     return this.getConnectionSnapshot();
+  }
+
+  /** Guard service-level dedupe paths before they inspect or replace a host. */
+  assertRegistrationProtocolCompatibility(registration: BrowserHostRegistration): void {
+    if (!isBrowserHostProtocolCompatible(registration.capabilities.protocolVersions)) {
+      throw brokerError("extension-update-required", "Desktop update required: browser host protocol v2 is required.", false);
+    }
   }
 
   unregister(connectionId: string, hostId?: string, hostGeneration?: number): boolean {

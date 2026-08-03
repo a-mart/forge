@@ -69,6 +69,30 @@ describe("Automatic Browser Host service", () => {
     expect(lifecycle).not.toHaveBeenCalled();
   });
 
+  it("rejects an incompatible same-socket registration before dedupe preserves the current generation", async () => {
+    const instance = await service();
+    const current: BrowserHostRegistration = {
+      hostId: "automatic-desktop", clientInstanceId: "desktop", registeredAt: "2026-07-27T00:00:00.000Z",
+      capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: ["status"], maxResponseBytes: 1_000_000 },
+    };
+    instance.registerHost({ connectionId: "desktop-socket", registration: current, sendRequest: () => undefined });
+    const before = instance.broker.getConnectionSnapshot();
+    const hydrateSessionsForReplacement = vi.fn(async () => []);
+    const incompatible = {
+      ...current,
+      capabilities: { ...current.capabilities, protocolVersions: { minimum: 1, maximum: 1 } },
+    };
+
+    await expect(instance.registerHostWithLifecycleRelease({
+      connectionId: "desktop-socket", registration: incompatible, sendRequest: () => undefined,
+      hydrateSessionsForReplacement,
+    })).rejects.toThrow("Desktop update required");
+
+    expect(hydrateSessionsForReplacement).not.toHaveBeenCalled();
+    expect(instance.broker.getConnectionSnapshot()).toEqual(before);
+    expect(instance.broker.isCurrentConnection("desktop-socket", current.hostId, 1)).toBe(true);
+  });
+
   it("deduplicates same-connection registration and prevents stale replacement cleanup from committing", async () => {
     const instance = await service();
     const original: BrowserHostRegistration = {

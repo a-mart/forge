@@ -21,6 +21,7 @@ import {
   type BrowserHostRegistration,
   type BrowserSessionSnapshot,
   isBrowserAutomationOperation,
+  isBrowserHostProtocolCompatible,
   parseBrowserAutomationInput,
   resolveBrowserViewportPreset,
 } from '../browser-automation.js'
@@ -71,6 +72,10 @@ describe('browser automation operation contract', () => {
 
   it('exposes protocol v2 and rejects caller-selected hosts and tunneled lifecycle fields', () => {
     expect(BROWSER_HOST_PROTOCOL_VERSION).toBe(2)
+    expect(isBrowserHostProtocolCompatible({ minimum: 1, maximum: 2 })).toBe(true)
+    expect(isBrowserHostProtocolCompatible({ minimum: 2, maximum: 3 })).toBe(true)
+    expect(isBrowserHostProtocolCompatible({ minimum: 1, maximum: 1 })).toBe(false)
+    expect(isBrowserHostProtocolCompatible({ minimum: 3, maximum: 3 })).toBe(false)
     expect(BROWSER_TARGET_AFFINITIES).toEqual(['managed-electron', 'external-chrome'])
     expect(parseBrowserAutomationInput('status', {})).toEqual({})
   })

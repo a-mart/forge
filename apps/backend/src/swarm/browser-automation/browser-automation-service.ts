@@ -89,6 +89,7 @@ export class BrowserAutomationService {
   }
 
   registerHost(options: Parameters<BrowserHostBroker["register"]>[0]): BrowserHostConnectionSnapshot {
+    this.broker.assertRegistrationProtocolCompatibility(options.registration);
     this.invalidateHostRegistrationAttempt();
     return this.commitHostRegistration(options);
   }
@@ -96,6 +97,9 @@ export class BrowserAutomationService {
   async registerHostWithLifecycleRelease(options: Parameters<BrowserHostBroker["register"]>[0] & {
     hydrateSessionsForReplacement?: () => Promise<BrowserSessionSnapshot[]>;
   }): Promise<BrowserHostConnectionSnapshot> {
+    // This boundary is reached by tests and internal callers too, so reject a
+    // mismatched range before same-socket dedupe or replacement cleanup.
+    this.broker.assertRegistrationProtocolCompatibility(options.registration);
     // A late duplicate command from one WebSocket must share the one ongoing
     // attempt. It must not manufacture another generation after its original
     // request timed out in the renderer.
