@@ -26,6 +26,17 @@ export const BROWSER_TARGET_AFFINITIES = ['managed-electron', 'external-chrome']
 export type BrowserTargetAffinity = (typeof BROWSER_TARGET_AFFINITIES)[number]
 export const BROWSER_HOST_PROTOCOL_VERSION = 2
 
+/** Whether a host's declared range can negotiate Forge's current browser protocol. */
+export function isBrowserHostProtocolCompatible(protocolVersions: { minimum: number; maximum: number } | undefined): boolean {
+  return !!protocolVersions
+    && protocolVersions.minimum <= BROWSER_HOST_PROTOCOL_VERSION
+    && protocolVersions.maximum >= BROWSER_HOST_PROTOCOL_VERSION
+}
+
+/** Request-scoped registration failures which clients must handle without emitting chat events. */
+export const BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR = 'BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE'
+export const BROWSER_HOST_REGISTER_TRANSIENT_ERROR = 'BROWSER_HOST_REGISTER_TRANSIENT'
+
 export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
   'status',
   'open',

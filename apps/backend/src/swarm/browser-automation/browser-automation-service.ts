@@ -11,6 +11,7 @@ import {
   type BrowserAutomationResponse,
   type BrowserAutomationResultByOperation,
   type BrowserHostConnectionSnapshot,
+  type BrowserHostRegistration,
   type BrowserHostLifecycleReason,
   type BrowserHostLifecycleResponse,
   type BrowserHostSessionStateReport,
@@ -69,6 +70,14 @@ export class BrowserAutomationService {
   private readonly sessionInFlight = new Map<string, Set<Promise<unknown>>>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private hostRegistrationChain: Promise<void> = Promise.resolve();
+  /** Only the newest registration may commit after asynchronous replacement cleanup. */
+  private nextHostRegistrationAttempt = 0;
+  private activeHostRegistration: {
+    attempt: number;
+    connectionId: string;
+    registration: BrowserHostRegistration;
+    promise: Promise<BrowserHostConnectionSnapshot>;
+  } | null = null;
 
   constructor(options: BrowserAutomationServiceOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -80,33 +89,87 @@ export class BrowserAutomationService {
   }
 
   registerHost(options: Parameters<BrowserHostBroker["register"]>[0]): BrowserHostConnectionSnapshot {
-    const host = this.broker.register(options);
-    this.onHostChanged(host);
-    return host;
+    this.broker.assertRegistrationProtocolCompatibility(options.registration);
+    this.invalidateHostRegistrationAttempt();
+    return this.commitHostRegistration(options);
   }
 
   async registerHostWithLifecycleRelease(options: Parameters<BrowserHostBroker["register"]>[0] & {
     hydrateSessionsForReplacement?: () => Promise<BrowserSessionSnapshot[]>;
   }): Promise<BrowserHostConnectionSnapshot> {
-    let result!: BrowserHostConnectionSnapshot;
-    const previous = this.hostRegistrationChain;
-    const next = previous.catch(() => undefined).then(async () => {
-      await options.hydrateSessionsForReplacement?.();
-      if (this.broker.getConnectionSnapshot().connected) {
-        for (const snapshot of this.getLoadedSessionSnapshots()) {
-          await this.releaseSessionForLifecycle(snapshot.profileId, snapshot.sessionAgentId, "host-replaced");
+    // This boundary is reached by tests and internal callers too, so reject a
+    // mismatched range before same-socket dedupe or replacement cleanup.
+    this.broker.assertRegistrationProtocolCompatibility(options.registration);
+    // A late duplicate command from one WebSocket must share the one ongoing
+    // attempt. It must not manufacture another generation after its original
+    // request timed out in the renderer.
+    const active = this.activeHostRegistration;
+    if (active && active.connectionId === options.connectionId
+      && sameHostRegistration(active.registration, options.registration)) {
+      return active.promise;
+    }
+    if (this.broker.isCurrentRegistration(options.connectionId, options.registration)) {
+      return this.broker.getConnectionSnapshot();
+    }
+
+    const attempt = ++this.nextHostRegistrationAttempt;
+    const isCurrentAttempt = () => this.activeHostRegistration?.attempt === attempt;
+    const ensureCurrentAttempt = () => {
+      if (!isCurrentAttempt()) throw new Error("Browser host registration was superseded.");
+    };
+    const commit = () => {
+      ensureCurrentAttempt();
+      return this.commitHostRegistration(options);
+    };
+
+    // A reconnect from the same renderer preserves the host's private state.
+    // Do not wait for an unreachable pre-sleep socket to acknowledge a
+    // host-replaced lifecycle request; the new connection gets a new generation
+    // and rehydrates/reconciles normally.
+    const current = this.broker.getConnectionSnapshot();
+    const run = !current.connected || this.broker.isSameHostIdentity(options.registration)
+      ? Promise.resolve().then(commit)
+      : this.hostRegistrationChain.catch(() => undefined).then(async () => {
+        ensureCurrentAttempt();
+        await options.hydrateSessionsForReplacement?.();
+        ensureCurrentAttempt();
+        if (this.broker.getConnectionSnapshot().connected) {
+          for (const snapshot of this.getLoadedSessionSnapshots()) {
+            ensureCurrentAttempt();
+            await this.releaseSessionForLifecycle(snapshot.profileId, snapshot.sessionAgentId, "host-replaced");
+            ensureCurrentAttempt();
+          }
         }
-      }
-      result = this.registerHost(options);
-    });
-    this.hostRegistrationChain = next;
-    try { await next; return result; } finally { if (this.hostRegistrationChain === next) this.hostRegistrationChain = Promise.resolve(); }
+        return commit();
+      });
+
+    this.activeHostRegistration = { attempt, connectionId: options.connectionId, registration: options.registration, promise: run };
+    // Keep replacement cleanup serialized, while allowing a continuity
+    // reconnect to supersede an older cleanup without waiting for it.
+    this.hostRegistrationChain = run.then(() => undefined, () => undefined);
+    try {
+      return await run;
+    } finally {
+      if (this.activeHostRegistration?.attempt === attempt) this.activeHostRegistration = null;
+    }
   }
 
   unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number): boolean {
+    if (this.activeHostRegistration?.connectionId === connectionId) this.invalidateHostRegistrationAttempt();
     const removed = this.broker.unregister(connectionId, hostId, hostGeneration);
     if (removed) this.onHostChanged(this.broker.getConnectionSnapshot());
     return removed;
+  }
+
+  private commitHostRegistration(options: Parameters<BrowserHostBroker["register"]>[0]): BrowserHostConnectionSnapshot {
+    const host = this.broker.register(options);
+    this.onHostChanged(host);
+    return host;
+  }
+
+  private invalidateHostRegistrationAttempt(): void {
+    this.nextHostRegistrationAttempt += 1;
+    this.activeHostRegistration = null;
   }
 
   setHostFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean): boolean {
@@ -491,6 +554,12 @@ export class BrowserAutomationService {
   private bumpGeneration(key: string): void { this.sessionGenerations.set(key, this.getGeneration(key) + 1); }
   private isMutable(key: string, generation: number): boolean { return this.getGeneration(key) === generation && !this.sessionTombs.has(key); }
   private assertMutable(key: string, generation: number): void { if (!this.isMutable(key, generation)) throw new Error("Browser session is unavailable."); }
+}
+
+function sameHostRegistration(left: BrowserHostRegistration, right: BrowserHostRegistration): boolean {
+  // registeredAt changes on every renderer retry; the renderer-owned identity is
+  // the stable boundary for deduplicating one connection's registration work.
+  return left.hostId === right.hostId && left.clientInstanceId === right.clientInstanceId;
 }
 
 function normalizeHostTab(tab: BrowserTabSnapshot, snapshot: BrowserSessionSnapshot): BrowserTabSnapshot | undefined {

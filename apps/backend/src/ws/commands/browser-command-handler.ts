@@ -1,3 +1,9 @@
+import {
+  BROWSER_HOST_PROTOCOL_VERSION,
+  BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+  BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+  isBrowserHostProtocolCompatible,
+} from "@forge/protocol";
 import type {
   BrowserClientCommand,
   BrowserServerEvent,
@@ -28,6 +34,18 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
   const { command, browserAutomationService: service, socket, connectionId } = options;
   switch (command.type) {
     case "browser_host_register": {
+      const versions = command.registration.capabilities.protocolVersions;
+      // This must happen before service-level dedupe or replacement work. A
+      // permanent mismatch belongs to this request, not the retry path.
+      if (!isBrowserHostProtocolCompatible(versions)) {
+        sendFailure(
+          options,
+          command,
+          BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+          `Automatic Browser Host supports protocol v${versions?.minimum ?? "unknown"}–v${versions?.maximum ?? "unknown"}, but Forge requires protocol v${BROWSER_HOST_PROTOCOL_VERSION}. Update Forge Desktop to continue.`,
+        );
+        return true;
+      }
       let host;
       try {
         host = await service.registerHostWithLifecycleRelease({
@@ -44,11 +62,13 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
           hydrateSessionsForReplacement: options.hydrateHostSessions,
         });
       } catch {
+        // A wake/reconnect can briefly leave the old host connection pending.
+        // This is retried by the renderer; it is not evidence of an outdated Desktop.
         sendFailure(
           options,
           command,
-          "REGISTRATION_FAILED",
-          "Automatic Browser Host registration failed. Desktop update required if protocol v2 is unavailable.",
+          BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+          "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
         );
         return true;
       }
@@ -313,9 +333,11 @@ function sendFailure(
   suffix: string,
   message: string,
 ): void {
+  const normalizedSuffix = suffix.toUpperCase().replaceAll("-", "_");
+  const commandPrefix = `${command.type.toUpperCase()}_`;
   options.send(options.socket, {
     type: "error",
-    code: `${command.type.toUpperCase()}_${suffix.toUpperCase().replaceAll("-", "_")}`,
+    code: normalizedSuffix.startsWith(commandPrefix) ? normalizedSuffix : `${commandPrefix}${normalizedSuffix}`,
     message,
     requestId: command.requestId,
   });

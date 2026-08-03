@@ -1,3 +1,4 @@
+import { BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR } from '@forge/protocol'
 import type { CodexElicitationDecision, CodexElicitationPersistScope, ManagerPosture, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import {
@@ -86,7 +87,8 @@ import {
 } from './ws-client/runtime-types'
 
 const BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS = 2_000
-const BROWSER_HANDSHAKE_RETRY_MS = 500
+const BROWSER_HANDSHAKE_RETRY_INITIAL_MS = 1_000
+const BROWSER_HANDSHAKE_RETRY_MAX_MS = 30_000
 export const CONVERSATION_BOOTSTRAP_WATCHDOG_MS = 30_000
 const GENERATION_TERMINAL_SETTLE_MS = 5_000
 const MAX_DEFERRED_WORKER_THROUGHPUT_EVENTS = 64
@@ -249,8 +251,12 @@ export class ManagerWsClient {
   private readonly sessionWorkerCache: SessionWorkerCache
   private browserHostRegistration: BrowserHostRegistration | null = null
   private browserHandshakeTimer: ReturnType<typeof setTimeout> | null = null
+  /** Invalidates timers and completions from an older socket or host registration. */
   private browserHandshakeEpoch = 0
   private browserHandshakeInFlight = false
+  private browserHandshakeFailures = 0
+  /** A negotiated v2 mismatch is actionable but must not retry forever. */
+  private browserHandshakeProtocolError: string | null = null
   private readonly browserHydrationChunks = new Map<string, { chunkCount: number; chunks: Array<Uint8Array | undefined> }>()
   private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
   private browserLifecycleRequestHandler: ((request: BrowserHostLifecycleRequest) => Promise<BrowserHostLifecycleResponse>) | null = null
@@ -374,6 +380,7 @@ export class ManagerWsClient {
     handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
     handleLifecycle?: (request: BrowserHostLifecycleRequest) => Promise<BrowserHostLifecycleResponse>,
   ): () => void {
+    this.clearBrowserHandshakeProtocolError()
     this.browserHostRegistration = registration
     this.browserAutomationRequestHandler = handleRequest
     this.browserLifecycleRequestHandler = handleLifecycle ?? null
@@ -390,12 +397,8 @@ export class ManagerWsClient {
 
   private restartBrowserHandshake(): void {
     this.stopBrowserHandshake()
-    if (!this.browserHostRegistration || !isSocketOpen(this.socket)) return
-    const epoch = this.browserHandshakeEpoch
-    this.browserHandshakeTimer = setTimeout(() => {
-      this.browserHandshakeTimer = null
-      void this.runBrowserHandshake(epoch)
-    }, 0)
+    if (!this.browserHostRegistration || !isSocketOpen(this.socket) || this.browserHandshakeProtocolError) return
+    this.scheduleBrowserHandshake(this.browserHandshakeEpoch, 0)
   }
 
   private stopBrowserHandshake(): void {
@@ -403,13 +406,24 @@ export class ManagerWsClient {
     if (this.browserHandshakeTimer) clearTimeout(this.browserHandshakeTimer)
     this.browserHandshakeTimer = null
     this.browserHandshakeInFlight = false
+    this.browserHandshakeFailures = 0
     this.browserHydrationChunks.clear()
+  }
+
+  private scheduleBrowserHandshake(epoch: number, delayMs: number): void {
+    if (epoch !== this.browserHandshakeEpoch || this.browserHandshakeTimer || this.browserHandshakeProtocolError) return
+    this.browserHandshakeTimer = setTimeout(() => {
+      this.browserHandshakeTimer = null
+      void this.runBrowserHandshake(epoch)
+    }, delayMs)
   }
 
   private async runBrowserHandshake(epoch: number): Promise<void> {
     const registration = this.browserHostRegistration
-    if (epoch !== this.browserHandshakeEpoch || !registration || !isSocketOpen(this.socket) || this.browserHandshakeInFlight) return
+    if (epoch !== this.browserHandshakeEpoch || !registration || !isSocketOpen(this.socket)
+      || this.browserHandshakeInFlight || this.browserHandshakeProtocolError) return
     this.browserHandshakeInFlight = true
+    let completed = false
     try {
       let host = this.state.browserHost
       if (host.hostId !== registration.hostId || host.hostGeneration === null) {
@@ -426,20 +440,42 @@ export class ManagerWsClient {
         (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!),
         { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
       )
+      completed = true
     } catch {
-      // Registration and hydration are independently retried on the same live
-      // transport. A saturated socket therefore cannot strand the host until
-      // the next reconnect.
+      // A transient registration or hydration failure is retried with capped
+      // exponential backoff. The epoch and in-flight gate make the retry both
+      // connection-scoped and single-flight.
     } finally {
       if (epoch !== this.browserHandshakeEpoch) return
       this.browserHandshakeInFlight = false
-      if (!this.state.browserHostHydrated && this.browserHostRegistration === registration && isSocketOpen(this.socket)) {
-        this.browserHandshakeTimer = setTimeout(() => {
-          this.browserHandshakeTimer = null
-          void this.runBrowserHandshake(epoch)
-        }, BROWSER_HANDSHAKE_RETRY_MS)
+      if (completed) {
+        this.browserHandshakeFailures = 0
+        return
+      }
+      if (!this.state.browserHostHydrated && this.browserHostRegistration === registration
+        && isSocketOpen(this.socket) && !this.browserHandshakeProtocolError) {
+        const delay = Math.min(
+          BROWSER_HANDSHAKE_RETRY_INITIAL_MS * 2 ** this.browserHandshakeFailures,
+          BROWSER_HANDSHAKE_RETRY_MAX_MS,
+        )
+        this.browserHandshakeFailures += 1
+        this.scheduleBrowserHandshake(epoch, delay)
       }
     }
+  }
+
+  private handleBrowserRegistrationError(error: { code: string; message: string }): void {
+    if (error.code !== BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR) return
+    this.browserHandshakeProtocolError = error.message
+    // Keep the one actionable incompatibility visible in the banner without
+    // appending it to whatever conversation happens to be selected.
+    this.updateState({ lastError: error.message })
+  }
+
+  private clearBrowserHandshakeProtocolError(): void {
+    const previous = this.browserHandshakeProtocolError
+    this.browserHandshakeProtocolError = null
+    if (previous && this.state.lastError === previous) this.updateState({ lastError: null })
   }
 
   private acceptBrowserHydrationChunk(
@@ -1488,7 +1524,7 @@ export class ManagerWsClient {
       },
       conversationPresentation: null,
       ...clearGenerationThroughputState(),
-      lastError: null,
+      lastError: this.browserHandshakeProtocolError,
     })
 
     // Fetch failures accumulated against the old socket don't predict anything
@@ -1635,6 +1671,7 @@ export class ManagerWsClient {
       handleLifecycleRequest: this.browserLifecycleRequestHandler,
       sendHostResponse: (response) => this.send(buildBrowserHostResponseCommand(response)),
       sendLifecycleResponse: (response) => this.send(buildBrowserHostLifecycleResponseCommand(response)),
+      handleRegistrationError: (error) => this.handleBrowserRegistrationError(error),
     })) {
       return
     }

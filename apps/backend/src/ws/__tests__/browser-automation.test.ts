@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BrowserAutomationRequest, BrowserHostRegistration, BrowserTabSnapshot, ServerEvent } from "@forge/protocol";
+import {
+  BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+  BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+} from "@forge/protocol";
+import type { BrowserAutomationRequest, BrowserHostRegistration, BrowserSessionSnapshot, BrowserTabSnapshot, ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { BrowserAutomationService } from "../../swarm/browser-automation/browser-automation-service.js";
 import { BUILDER_COMMAND_ACCESS } from "../builder-command-access.js";
@@ -63,6 +67,98 @@ describe("browser websocket protocol v2", () => {
     const selected = registration(); (selected.capabilities as any).unexpectedSelector = "external-chrome";
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: "browser_host_register", requestId: "selected", registration: selected }))))
       .toEqual({ ok: false, error: "registration.capabilities contains an unsupported field" });
+  });
+
+  it("reports only an actual v2 range mismatch as an actionable Desktop update", async () => {
+    const parsedFuture = parseClientCommand(Buffer.from(JSON.stringify({ type: "browser_host_register", requestId: "future", registration: registration(3) })));
+    expect(parsedFuture).toMatchObject({ ok: true, command: { registration: { capabilities: { protocolVersions: { minimum: 3, maximum: 3 } } } } });
+
+    const incompatible = await harness();
+    await handleBrowserCommand({ ...incompatible.common, command: { type: "browser_host_register", requestId: "incompatible", registration: registration(1) } });
+    expect(incompatible.sent).toContainEqual(expect.objectContaining({
+      type: "error", code: BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+      message: expect.stringContaining("supports protocol v1–v1"),
+    }));
+
+    const transient = await harness();
+    vi.spyOn(transient.service, "registerHostWithLifecycleRelease").mockRejectedValueOnce(new Error("wake transport unavailable"));
+    await handleBrowserCommand({ ...transient.common, command: { type: "browser_host_register", requestId: "transient", registration: registration() } });
+    expect(transient.sent).toContainEqual(expect.objectContaining({
+      type: "error", code: BROWSER_HOST_REGISTER_TRANSIENT_ERROR,
+      message: "Automatic Browser Host registration is temporarily unavailable. Retrying automatically.",
+    }));
+  });
+
+  it("rejects a same-socket v1 retry without advancing the current v2 generation", async () => {
+    const { service, sent, common } = await harness();
+    await handleBrowserCommand({ ...common, command: { type: "browser_host_register", requestId: "current-v2", registration: registration() } });
+    const before = service.broker.getConnectionSnapshot();
+    sent.length = 0;
+    const registerHost = vi.spyOn(service, "registerHostWithLifecycleRelease");
+
+    await expect(handleBrowserCommand({
+      ...common,
+      command: { type: "browser_host_register", requestId: "same-socket-v1", registration: registration(1) },
+    })).resolves.toBe(true);
+
+    expect(registerHost).not.toHaveBeenCalled();
+    expect(service.broker.getConnectionSnapshot()).toEqual(before);
+    expect(service.broker.isCurrentConnection("desktop-connection", "automatic-desktop", 1)).toBe(true);
+    expect(sent).toEqual([{
+      type: "error",
+      code: BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+      message: "Automatic Browser Host supports protocol v1–v1, but Forge requires protocol v2. Update Forge Desktop to continue.",
+      requestId: "same-socket-v1",
+    }]);
+  });
+
+  it("rejects a v1 replacement before blocking hydration or lifecycle cleanup", async () => {
+    const { service, sent, common } = await harness();
+    const lifecycle = vi.fn();
+    service.registerHost({
+      connectionId: "current-connection", registration: registration(), sendRequest: () => undefined,
+      sendLifecycleRequest: lifecycle,
+    });
+    const hydrateHostSessions = vi.fn(() => new Promise<BrowserSessionSnapshot[]>(() => undefined));
+
+    await expect(handleBrowserCommand({
+      ...common,
+      connectionId: "replacement-connection",
+      hydrateHostSessions,
+      command: {
+        type: "browser_host_register", requestId: "incompatible-replacement",
+        registration: { ...registration(1), hostId: "replacement-desktop", clientInstanceId: "replacement-renderer" },
+      },
+    })).resolves.toBe(true);
+
+    expect(hydrateHostSessions).not.toHaveBeenCalled();
+    expect(lifecycle).not.toHaveBeenCalled();
+    expect(service.broker.isCurrentConnection("current-connection", "automatic-desktop", 1)).toBe(true);
+    expect(sent).toEqual([{
+      type: "error",
+      code: BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+      message: "Automatic Browser Host supports protocol v1–v1, but Forge requires protocol v2. Update Forge Desktop to continue.",
+      requestId: "incompatible-replacement",
+    }]);
+  });
+
+  it("rejects a v3-only range immediately and reports its actual range", async () => {
+    const { service, sent, common } = await harness();
+    const registerHost = vi.spyOn(service, "registerHostWithLifecycleRelease");
+
+    await expect(handleBrowserCommand({
+      ...common,
+      command: { type: "browser_host_register", requestId: "future-only", registration: registration(3) },
+    })).resolves.toBe(true);
+
+    expect(registerHost).not.toHaveBeenCalled();
+    expect(service.broker.getConnectionSnapshot()).toMatchObject({ connected: false, hostGeneration: null });
+    expect(sent).toEqual([{
+      type: "error",
+      code: BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR,
+      message: "Automatic Browser Host supports protocol v3–v3, but Forge requires protocol v2. Update Forge Desktop to continue.",
+      requestId: "future-only",
+    }]);
   });
 
   it("registers one host, hydrates the same v2 projection, and routes a tabless open", async () => {

@@ -21,10 +21,20 @@ export interface BrowserEventContext {
   handleLifecycleRequest: ((request: BrowserHostLifecycleRequest) => Promise<BrowserHostLifecycleResponse>) | null
   sendHostResponse: (response: BrowserAutomationResponse) => void
   sendLifecycleResponse: (response: BrowserHostLifecycleResponse) => void
+  handleRegistrationError: (error: { code: string; message: string }) => void
 }
 
 export function handleBrowserEvent(event: ServerEvent, context: BrowserEventContext): boolean {
   switch (event.type) {
+    case 'error': {
+      if (!event.code.startsWith('BROWSER_HOST_REGISTER_')) return false
+      // Registration failures belong to the local Desktop host, never to the
+      // selected conversation. Ignore stale responses from an old transport.
+      if (context.requestTracker.getPendingRequestType(event.requestId) !== 'browser_host_register') return true
+      context.handleRegistrationError(event)
+      context.requestTracker.reject('browser_host_register', event.requestId!, new Error(`${event.code}: ${event.message}`))
+      return true
+    }
     case 'browser_host_connected': {
       if (event.requestId && context.requestTracker.getPendingRequestType(event.requestId) !== 'browser_host_register') return true
       const registration = context.registration

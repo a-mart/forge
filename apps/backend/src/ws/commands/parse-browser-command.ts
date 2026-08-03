@@ -1,6 +1,5 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
-  BROWSER_HOST_PROTOCOL_VERSION,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
@@ -169,8 +168,10 @@ function parseCapabilities(value: unknown): BrowserHostCapabilities {
 
 function parseProtocolVersions(value: unknown): { minimum: number; maximum: number } {
   const versions = record(value, "registration.capabilities.protocolVersions");
-  const minimum = integer(versions.minimum, "registration.capabilities.protocolVersions.minimum", 1, BROWSER_HOST_PROTOCOL_VERSION);
-  const maximum = integer(versions.maximum, "registration.capabilities.protocolVersions.maximum", minimum, BROWSER_HOST_PROTOCOL_VERSION);
+  // Accept a bounded future range so registration can report a truthful
+  // incompatibility instead of treating a newer Desktop as malformed input.
+  const minimum = integer(versions.minimum, "registration.capabilities.protocolVersions.minimum", 1, Number.MAX_SAFE_INTEGER);
+  const maximum = integer(versions.maximum, "registration.capabilities.protocolVersions.maximum", minimum, Number.MAX_SAFE_INTEGER);
   return { minimum, maximum };
 }
 

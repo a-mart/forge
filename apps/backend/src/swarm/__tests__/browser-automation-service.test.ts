@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostLifecycleRequest, BrowserTabSnapshot } from "@forge/protocol";
+import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostLifecycleRequest, BrowserHostRegistration, BrowserTabSnapshot } from "@forge/protocol";
 import { BrowserAutomationService } from "../browser-automation/browser-automation-service.js";
 
 const roots: string[] = [];
@@ -48,6 +48,88 @@ function accept(service: BrowserAutomationService, response: BrowserAutomationRe
 }
 
 describe("Automatic Browser Host service", () => {
+  it("re-registers the same renderer immediately after sleep without lifecycle cleanup", async () => {
+    const instance = await service();
+    const lifecycle = vi.fn();
+    const host: BrowserHostRegistration = {
+      hostId: "automatic-desktop", clientInstanceId: "desktop", registeredAt: "2026-07-27T00:00:00.000Z",
+      capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: ["status"], maxResponseBytes: 1_000_000 },
+    };
+    instance.registerHost({ connectionId: "before-sleep", registration: host, sendRequest: () => undefined, sendLifecycleRequest: lifecycle });
+    const hydrateSessionsForReplacement = vi.fn(async () => []);
+
+    const recovered = await instance.registerHostWithLifecycleRelease({
+      connectionId: "after-wake", registration: host, sendRequest: () => undefined, sendLifecycleRequest: lifecycle,
+      hydrateSessionsForReplacement,
+    });
+
+    expect(recovered).toMatchObject({ connected: true, hostId: host.hostId, hostGeneration: 2 });
+    expect(instance.broker.isCurrentConnection("after-wake", host.hostId, 2)).toBe(true);
+    expect(hydrateSessionsForReplacement).not.toHaveBeenCalled();
+    expect(lifecycle).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incompatible same-socket registration before dedupe preserves the current generation", async () => {
+    const instance = await service();
+    const current: BrowserHostRegistration = {
+      hostId: "automatic-desktop", clientInstanceId: "desktop", registeredAt: "2026-07-27T00:00:00.000Z",
+      capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: ["status"], maxResponseBytes: 1_000_000 },
+    };
+    instance.registerHost({ connectionId: "desktop-socket", registration: current, sendRequest: () => undefined });
+    const before = instance.broker.getConnectionSnapshot();
+    const hydrateSessionsForReplacement = vi.fn(async () => []);
+    const incompatible = {
+      ...current,
+      capabilities: { ...current.capabilities, protocolVersions: { minimum: 1, maximum: 1 } },
+    };
+
+    await expect(instance.registerHostWithLifecycleRelease({
+      connectionId: "desktop-socket", registration: incompatible, sendRequest: () => undefined,
+      hydrateSessionsForReplacement,
+    })).rejects.toThrow("Desktop update required");
+
+    expect(hydrateSessionsForReplacement).not.toHaveBeenCalled();
+    expect(instance.broker.getConnectionSnapshot()).toEqual(before);
+    expect(instance.broker.isCurrentConnection("desktop-socket", current.hostId, 1)).toBe(true);
+  });
+
+  it("deduplicates same-connection registration and prevents stale replacement cleanup from committing", async () => {
+    const instance = await service();
+    const original: BrowserHostRegistration = {
+      hostId: "automatic-desktop", clientInstanceId: "desktop", registeredAt: "2026-07-27T00:00:00.000Z",
+      capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: ["status"], maxResponseBytes: 1_000_000 },
+    };
+    instance.registerHost({ connectionId: "old-socket", registration: original, sendRequest: () => undefined });
+    let releaseHydration!: () => void;
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => { markHydrationStarted = resolve; });
+    const staleReplacement = instance.registerHostWithLifecycleRelease({
+      connectionId: "stale-socket",
+      registration: { ...original, hostId: "replacement-host", clientInstanceId: "replacement-renderer" },
+      sendRequest: () => undefined,
+      hydrateSessionsForReplacement: async () => {
+        markHydrationStarted();
+        await new Promise<void>((resolve) => { releaseHydration = resolve; });
+        return [];
+      },
+    });
+    await hydrationStarted;
+
+    const afterWake = instance.registerHostWithLifecycleRelease({
+      connectionId: "resumed-socket", registration: original, sendRequest: () => undefined,
+    });
+    const duplicateAfterWake = instance.registerHostWithLifecycleRelease({
+      connectionId: "resumed-socket", registration: { ...original, registeredAt: "2026-07-27T00:00:01.000Z" }, sendRequest: () => undefined,
+    });
+    await expect(Promise.all([afterWake, duplicateAfterWake])).resolves.toEqual([
+      expect.objectContaining({ hostGeneration: 2 }),
+      expect.objectContaining({ hostGeneration: 2 }),
+    ]);
+    releaseHydration();
+    await expect(staleReplacement).rejects.toThrow("superseded");
+    expect(instance.broker.isCurrentConnection("resumed-socket", original.hostId, 2)).toBe(true);
+  });
+
   it("replaces selectedTab:null -> failed open -> tab-not-found with tabless redispatch and adoption", async () => {
     const instance = await service();
     const requests: BrowserAutomationRequest[] = [];
