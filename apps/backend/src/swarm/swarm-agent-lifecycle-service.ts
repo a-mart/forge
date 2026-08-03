@@ -1703,6 +1703,23 @@ export class SwarmAgentLifecycleService {
     assertForgeRuntimeEligibleDescriptor(descriptor, "get or create runtime");
     this.options.assertRuntimeCreationAllowed(descriptor.agentId);
 
+    if (
+      descriptor.role === "worker"
+      && requirements?.secureRuntimeRequired === true
+      && this.options.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(
+        descriptor.agentId,
+      )
+    ) {
+      // Team Secure Mode may begin while this worker is finishing an ordinary
+      // turn. Apply that deferred runtime boundary before the next assignment
+      // can reuse the worker; the secure requirement below remains fail-closed
+      // if the worker has not actually become idle yet.
+      await this.applyAgentRuntimeRecyclePolicy(
+        descriptor.agentId,
+        "idle_transition",
+      );
+    }
+
     const inFlightCreation = this.getRuntimeCreationPromise(descriptor.agentId);
     if (inFlightCreation) {
       return this.assertRuntimeMeetsCreationRequirements(

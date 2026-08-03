@@ -1531,9 +1531,6 @@ export class SecureSessionsService {
   ): Promise<PublicSecureSessionSnapshot> {
     const manager = this.requireTeamManager(sessionAgentId);
     const workers = this.listEligibleSecureWorkers(manager);
-    if (workers.some((worker) => worker.status === "streaming")) {
-      throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
-    }
     return await this.withAuthorityMutation(async () =>
       await this.withSessionMutation(manager.agentId, async () => {
         const principal = managerPrincipal(manager);
@@ -1546,12 +1543,11 @@ export class SecureSessionsService {
           );
           if (!wasActive) {
             for (const worker of workers) {
-              const recycle = await this.options.applyModeRuntimeRecycle(
-                worker.agentId,
-              );
-              if (recycle === "deferred") {
-                throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
-              }
+              // A worker already executing a turn cannot safely swap runtimes
+              // mid-command. Its deferred recycle is a normal transition: the
+              // current turn remains ordinary, and lifecycle acquisition must
+              // apply the pending boundary before its next secure assignment.
+              await this.options.applyModeRuntimeRecycle(worker.agentId);
             }
           }
           return snapshot;

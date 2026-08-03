@@ -3825,23 +3825,46 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
-  it("rejects team start before mutation when an eligible worker is streaming", async () => {
-    const harness = createHarness();
-    const worker = workerDescriptor(
-      "worker-a",
+  it("starts the manager immediately while a streaming worker defers its secure transition", async () => {
+    const harness = createHarness({
+      recycleDispositionForAgent: (agentId) =>
+        agentId === "worker-streaming" ? "deferred" : "recycled",
+    });
+    const streamingWorker = workerDescriptor(
+      "worker-streaming",
       "manager-a",
       "profile-a",
       "/workspace-a",
       "assignment-1",
     );
-    worker.status = "streaming";
-    harness.descriptors.set("worker-a", worker);
+    streamingWorker.status = "streaming";
+    harness.descriptors.set(streamingWorker.agentId, streamingWorker);
+    const idleWorker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+    );
+    harness.descriptors.set(idleWorker.agentId, idleWorker);
 
     await expect(harness.service.startSecureSession("manager-a"))
-      .rejects.toThrow("SECURE_OPERATION_FAILED");
-    expect(harness.store.listSessionStates()).toEqual([]);
-    expect(harness.execution.ensured).toEqual([]);
-    expect(harness.recycles).toEqual([]);
+      .resolves.toEqual(expect.objectContaining({
+        executionMode: "secure",
+        environmentStatus: "ready",
+      }));
+    expect(harness.store.listSessionStates()).toEqual([
+      expect.objectContaining({
+        sessionAgentId: "manager-a",
+        executionMode: "secure",
+        environmentStatus: "ready",
+      }),
+    ]);
+    expect(harness.execution.ensured).toEqual(["manager-a"]);
+    expect(harness.recycles).toEqual([
+      "manager-a",
+      "worker-streaming",
+      "worker-a",
+    ]);
     await harness.close();
   });
 
@@ -4605,6 +4628,9 @@ function createHarness(options: {
   recoveryFailures?: number;
   recycleThrows?: boolean;
   recycleDisposition?: "recycled" | "deferred" | "none";
+  recycleDispositionForAgent?: (
+    agentId: string,
+  ) => "recycled" | "deferred" | "none";
   rotatedLocalCiphertext?: string;
 } = {}) {
   const database = new Database(":memory:");
@@ -4760,7 +4786,9 @@ function createHarness(options: {
     applyModeRuntimeRecycle: async (agentId) => {
       recycles.push(agentId);
       if (options.recycleThrows) throw new Error("recycle failed");
-      return recycleDisposition ?? "recycled";
+      return options.recycleDispositionForAgent?.(agentId)
+        ?? recycleDisposition
+        ?? "recycled";
     },
     createValueGuard: (values) => {
       if (guardFailures > 0) {

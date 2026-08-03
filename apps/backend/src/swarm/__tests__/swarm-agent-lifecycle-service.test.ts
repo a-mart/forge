@@ -1164,6 +1164,102 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runtimes.get(worker.agentId)).toBe(replacementRuntime);
   });
 
+  it("applies a deferred secure transition before an existing worker accepts its next assignment", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-deferred-secure-transition",
+      status: "idle",
+    });
+    const recycle = vi.fn(async () => {});
+    const ordinaryRuntime = makeRuntimeStub({ descriptor: worker, recycle });
+    const secureRuntime = makeRuntimeStub({ descriptor: worker });
+    const runtimes = new Map([[worker.agentId, ordinaryRuntime]]);
+    const runtimeRecoveryState = new RuntimeRecoveryState();
+    runtimeRecoveryState.setPendingManagerRuntimeRecycle(
+      worker.agentId,
+      "secure_session_mode_change",
+    );
+    const createRuntimeForDescriptor = vi.fn(async (
+      _descriptor: AgentDescriptor,
+      _prompt: string,
+      _token: number | undefined,
+      options: RuntimeCreationOptions | undefined,
+    ) => {
+      expect(options).toMatchObject({ secureRuntimeRequired: true });
+      return secureRuntime;
+    });
+    const prepareWorkerForSecureTeam = vi.fn(async () => true);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        runtimeRecoveryState,
+        createRuntimeForDescriptor,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam,
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+        },
+        isSecureRuntimeBindingUsable: (agentId, runtime) =>
+          agentId === worker.agentId
+          && runtime === secureRuntime
+          && runtimes.get(agentId) === runtime,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).resolves.toBe(secureRuntime);
+
+    expect(recycle).toHaveBeenCalledOnce();
+    expect(prepareWorkerForSecureTeam).toHaveBeenCalledWith(worker.agentId);
+    expect(createRuntimeForDescriptor).toHaveBeenCalledOnce();
+    expect(runtimes.get(worker.agentId)).toBe(secureRuntime);
+    expect(
+      runtimeRecoveryState.hasPendingManagerRuntimeRecycle(worker.agentId),
+    ).toBe(false);
+  });
+
+  it("keeps a deferred worker transition fail-closed until the current turn becomes idle", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-busy-deferred-secure-transition",
+      status: "streaming",
+    });
+    const recycle = vi.fn(async () => {});
+    const ordinaryRuntime = makeRuntimeStub({
+      descriptor: worker,
+      recycle,
+      getStatus: () => "streaming",
+    });
+    const runtimes = new Map([[worker.agentId, ordinaryRuntime]]);
+    const runtimeRecoveryState = new RuntimeRecoveryState();
+    runtimeRecoveryState.setPendingManagerRuntimeRecycle(
+      worker.agentId,
+      "secure_session_mode_change",
+    );
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        runtimeRecoveryState,
+        isSecureRuntimeBindingUsable: () => false,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(recycle).not.toHaveBeenCalled();
+    expect(runtimes.get(worker.agentId)).toBe(ordinaryRuntime);
+    expect(
+      runtimeRecoveryState.hasPendingManagerRuntimeRecycle(worker.agentId),
+    ).toBe(true);
+  });
+
   it("fails closed instead of recycling a busy stale secure runtime", async () => {
     const worker = createWorkerDescriptor("/p", "m1", {
       agentId: "w-busy-stale-secure",

@@ -1064,6 +1064,7 @@ export function BuilderSurface({
     const apiClient = httpClientRef.current
     const client = clientRef.current
     if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return false
+    const transitioningWorkerCount = activeManagerAgent?.activeWorkerCount ?? 0
     try {
       const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
         secureCatalog,
@@ -1080,6 +1081,14 @@ export function BuilderSurface({
         secureSessionSnapshot?.revision,
       )
       applySecureMutationResult(client, snapshot)
+      if (transitioningWorkerCount > 0) {
+        const workerLabel = transitioningWorkerCount === 1 ? 'worker' : 'workers'
+        const possessive = transitioningWorkerCount === 1 ? 'its' : 'their'
+        setState((current) => ({
+          ...current,
+          lastSuccess: `Secure Mode started. ${transitioningWorkerCount} active ${workerLabel} will switch before ${possessive} next assignment.`,
+        }))
+      }
       return toSecureSessionSnapshotView(snapshot)
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
@@ -1088,6 +1097,7 @@ export function BuilderSurface({
   }, [
     activeAgent?.profileId,
     activeAgentId,
+    activeManagerAgent?.activeWorkerCount,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
@@ -1097,6 +1107,7 @@ export function BuilderSurface({
     secureCatalog,
     secureSessionSnapshot?.profileId,
     secureSessionSnapshot?.revision,
+    setState,
   ])
 
   const handleApplySecureProjectDefaults = useCallback(async (
