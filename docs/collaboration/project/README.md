@@ -11,5 +11,6 @@ Use these files to keep collaboration work recoverable across sessions:
 - [open-questions.md](open-questions.md): questions that need user or implementation evidence.
 - [risks.md](risks.md): known delivery, operational, and UX risks.
 - [changelog.md](changelog.md): completed collaboration changes worth preserving.
+- [trusted-pilot-deployment-handoff.md](trusted-pilot-deployment-handoff.md): historical trusted-pilot deployment handoff and its superseded operational context.
 
 Keep entries concise, dated when useful, and linked to implementation docs or commits when available.

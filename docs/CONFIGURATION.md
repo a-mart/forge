@@ -62,8 +62,9 @@ effective Docker endpoint must be a local `unix://` socket on macOS/Linux or Doc
 Desktop's exact local named pipe on Windows; remote Docker contexts and transports
 are rejected rather than treated as a deployment target.
 
-The feature is local-Builder-only and fail-closed. It does not inherit values from
-`shared/config/secrets.json` or silently fall back to host execution. A saved source
+The feature is local-Builder-only and fail-closed: Remote Projects and Collaboration
+sessions do not inherit its vault, paired-browser connection, Team Secure Mode, or execution
+path. It does not inherit values from `shared/config/secrets.json` or silently fall back to host execution. A saved source
 becomes available to a manager session only through an explicit lease or a configured
 project default. Unsupported workers do not receive secure assignments through a
 non-secure runtime. The Settings readiness panel reports fixed codes only and supports

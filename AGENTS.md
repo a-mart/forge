@@ -30,6 +30,7 @@ package manager version.
 - `apps/backend/` — orchestration, persistence, HTTP/WebSocket APIs, integrations, and terminals.
 - `apps/ui/` — TanStack Start/Vite React application.
 - `apps/electron/` — desktop packaging, runtime staging, updates, releases, and the local Automatic Browser Host.
+- `apps/stream-deck/` — optional local Forge Desktop Stream Deck plugin and packaging assets.
 - `apps/chrome-extension/` and `apps/native-messaging-host/` — optional Chrome adapter extension and bounded native relay.
 - `packages/protocol/` — shared wire types, API contracts, and event definitions.
 - `packages/cli/` — first-party Forge CLI.
@@ -50,6 +51,7 @@ package manager version.
 | Project resources | [`docs/PROJECT_RESOURCES.md`](docs/PROJECT_RESOURCES.md) |
 | Forge and Pi extensions | [`docs/FORGE_EXTENSIONS.md`](docs/FORGE_EXTENSIONS.md) and [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 | Electron build and release workflow | [`apps/electron/README.md`](apps/electron/README.md) |
+| Stream Deck plugin setup and validation | [`apps/stream-deck/README.md`](apps/stream-deck/README.md) |
 
 Do not copy changing feature inventories, recent protocol changes, full storage trees, environment
 variable catalogs, or release runbooks back into this file. Link to their maintained source instead.

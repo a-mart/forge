@@ -6,7 +6,7 @@ workers, context, repository activity, navigation, and guarded agent actions.
 
 ## Connect it
 
-Released Forge Desktop builds bundle the direct-distribution installer.
+Released Forge Desktop builds stage the direct-distribution installer; it is installed only when you choose the local Desktop flow.
 
 1. Open **Forge Settings → Stream Deck** and choose **Install / Update**.
 2. Confirm the native plugin installation in Stream Deck. Forge's device-specific layout is
@@ -14,8 +14,8 @@ Released Forge Desktop builds bundle the direct-distribution installer.
 3. Stream Deck displays a six-digit pairing code across the Forge keys.
 4. Approve the matching request in **Forge Settings → Stream Deck**.
 
-Forge gives each device a dedicated, revocable credential scoped to snapshot reads and Stream
-Deck actions. The plaintext credential is delivered to the plugin exactly once and Forge persists
+Forge gives each device a dedicated, revocable credential scoped to local Builder snapshot reads and Stream
+Deck actions. Remote Projects and Collaboration servers are not Stream Deck targets. The plaintext credential is delivered to the plugin exactly once and Forge persists
 only its hash. It cannot authenticate the Forge CLI. Connection URLs remain available as advanced
 property-inspector settings for development and non-default local instances.
 
@@ -38,6 +38,7 @@ state require a 650 ms hold. Delete and clear operations are intentionally not e
 ```bash
 pnpm streamdeck:build
 pnpm streamdeck:validate
+pnpm --filter @forge/stream-deck test
 pnpm --filter @forge/stream-deck run link
 pnpm streamdeck:pack
 ```

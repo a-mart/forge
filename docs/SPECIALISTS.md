@@ -57,7 +57,7 @@ Managers normally synthesize two to four bounded accepted results themselves. Sy
 
 ## How It Works
 
-Each behavior-mode prompt or custom specialist is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes its internal handle (kebab-case). Shipped mode prompts normally omit `modelId` because their model comes from the selected delegation route. A custom specialist is a complete fixed execution template and may include `modelId`, `provider`, reasoning, and fallback to own model selection directly.
+Each built-in task-instruction prompt or custom specialist is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes its internal handle (kebab-case). Shipped task-instruction prompts normally omit `modelId` because their model comes from the selected delegation route. A custom specialist is a complete fixed execution template and may include `modelId`, `provider`, reasoning, and fallback to own model selection directly.
 
 ## File Locations
 
@@ -66,7 +66,7 @@ Each behavior-mode prompt or custom specialist is a **markdown file with YAML fr
 - **Project-specific specialists**: `~/.forge/profiles/<profileId>/specialists/<handle>.md`
 - **Collaboration channel-local specialists**: `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md`
 
-Project specialists shadow global ones with the same filename. Forge seeds the shipped behavior-mode prompts into the global directory on startup. Builder and Collaboration share the same modes where `TargetSpace` allows it; each surface filters the specialist definitions by `TargetSpace`.
+Project specialists shadow global ones with the same filename. Forge seeds the shipped task-instruction prompts into the global directory on startup. Builder and Collaboration share the same modes where `TargetSpace` allows it; each surface filters the specialist definitions by `TargetSpace`.
 
 ## Frontmatter Fields
 
@@ -172,7 +172,7 @@ You are a worker agent in a swarm.
 - Follow the memory skill workflow before editing the memory file, and never store secrets in memory.
 ```
 
-Then add the custom specialist's role and output contract. Forge's shipped behavior-mode prompts are different: their editable markdown is a role delta layered after a small stable Forge worker contract. This keeps SYSTEM-message handling, memory safety, action boundaries, and manager-owned delivery consistent without repeating those rules in every mode file.
+Then add the custom specialist's role and output contract. Forge's shipped task-instruction prompts are different: their editable markdown is a role delta layered after a small stable Forge worker contract. This keeps SYSTEM-message handling, memory safety, action boundaries, and manager-owned delivery consistent without repeating those rules in every mode file.
 
 ## Example
 

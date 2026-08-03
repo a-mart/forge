@@ -13,7 +13,7 @@ Forge fully supports Windows for the backend daemon, dashboard UI, agent orchest
 ```powershell
 git clone https://github.com/a-mart/forge.git
 cd forge
-pnpm i
+pnpm install
 ```
 
 ## Running
@@ -23,10 +23,10 @@ pnpm i
 pnpm dev
 
 # Electron Desktop
-pnpm.cmd dev:electron
+pnpm dev:electron
 
 # Electron Desktop plus trusted-network browser access
-pnpm.cmd dev:electron:remote
+pnpm dev:electron:remote
 # Remote UI: http://<station-address>:47188
 
 # Production daemon

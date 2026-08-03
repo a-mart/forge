@@ -22,7 +22,7 @@ const modelsOverview: HelpArticle = {
     'overview',
   ],
   relatedIds: ['models-providers', 'models-reasoning', 'models-routing'],
-  contextKeys: ['settings.general', 'settings.specialists'],
+  contextKeys: ['settings.general', 'settings.models', 'settings.specialists'],
 }
 
 const modelsProviders: HelpArticle = {
@@ -66,7 +66,7 @@ const modelsProviders: HelpArticle = {
     'Haiku',
   ],
   relatedIds: ['models-overview', 'models-cost', 'models-reasoning', 'settings-auth', 'settings-oauth', 'getting-started-configuration'],
-  contextKeys: ['settings.general', 'settings.auth', 'settings.specialists'],
+  contextKeys: ['settings.general', 'settings.models', 'settings.auth', 'settings.specialists'],
 }
 
 const modelsReasoning: HelpArticle = {
@@ -89,7 +89,7 @@ const modelsReasoning: HelpArticle = {
     'quality',
   ],
   relatedIds: ['models-overview', 'models-cost', 'models-providers'],
-  contextKeys: ['settings.general', 'settings.specialists'],
+  contextKeys: ['settings.general', 'settings.models', 'settings.specialists'],
 }
 
 const modelsRouting: HelpArticle = {
@@ -125,7 +125,7 @@ const modelsRouting: HelpArticle = {
     'fail closed',
   ],
   relatedIds: ['models-overview', 'models-providers', 'concepts-specialists', 'chat-sending'],
-  contextKeys: ['settings.specialists', 'chat.workers', 'chat.main'],
+  contextKeys: ['settings.models', 'settings.specialists', 'chat.workers', 'chat.main'],
 }
 
 const modelsCost: HelpArticle = {
@@ -146,7 +146,7 @@ const modelsCost: HelpArticle = {
     'price',
   ],
   relatedIds: ['models-overview', 'models-reasoning', 'models-routing'],
-  contextKeys: ['settings.general', 'settings.specialists'],
+  contextKeys: ['settings.general', 'settings.models', 'settings.specialists'],
 }
 
 export const modelsArticles: HelpArticle[] = [

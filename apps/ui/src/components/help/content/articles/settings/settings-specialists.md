@@ -49,7 +49,7 @@ Use **New Specialist** in the Instruction library when a durable domain-specific
 4. Write a concise standalone worker prompt with its role and output contract.
 5. Save it.
 
-Builtin mode prompts can be customized per project. Pin a builtin customization to prevent a future Forge update from replacing it. Use **Revert** to remove a project override and return to the inherited definition.
+Builtin task-instruction prompts can be customized per project. Pin a builtin customization to prevent a future Forge update from replacing it. Use **Revert** to remove a project override and return to the inherited definition.
 
 Legacy Architect and system-managed Codex Plugin definitions live in the collapsed **System & Compatibility** section. They are not offered as normal task types, but remain inspectable so existing customizations can be repaired or reverted.
 

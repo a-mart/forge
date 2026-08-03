@@ -2,9 +2,9 @@
 
 Forge keeps its supported model metadata in one checked-in source of truth:
 
-- `packages/protocol/src/model-catalog.ts`
+- `packages/protocol/src/model-catalog-data.ts`
 
-That file defines the catalog in three layers:
+The public `packages/protocol/src/model-catalog.ts` module exports that data and its helpers. `model-catalog-data.ts` defines the catalog in three layers:
 
 - **providers**: runtime/provider behavior
 - **families**: preset groupings like the visible full Codex families `pi-5.6` and `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
@@ -14,7 +14,7 @@ That file defines the catalog in three layers:
 
 When adding or updating supported models:
 
-1. Edit `packages/protocol/src/model-catalog.ts`
+1. Edit `packages/protocol/src/model-catalog-data.ts`
 2. Run the catalog tests
 3. Run the audit script against Pi upstream
 4. Update any intentional divergence notes if needed
@@ -100,7 +100,7 @@ The audit reports:
 
 ### Add a routine model under an existing provider
 
-Usually this is a one-file change in `packages/protocol/src/model-catalog.ts`.
+Usually this is a one-file change in `packages/protocol/src/model-catalog-data.ts`.
 
 Checklist:
 
@@ -121,9 +121,10 @@ This usually requires more than a catalog edit. You may also need to update:
 
 ## Files involved
 
-- Shared catalog: `packages/protocol/src/model-catalog.ts`
-- Backend catalog service: `apps/backend/src/swarm/model-catalog-service.ts`
-- Pi projection generator: `apps/backend/src/swarm/model-catalog-projection.ts`
-- Request behavior adapters: `apps/backend/src/swarm/model-catalog-request-behaviors.ts`
-- Local overrides persistence: `apps/backend/src/swarm/model-overrides.ts`
+- Shared catalog data: `packages/protocol/src/model-catalog-data.ts`
+- Shared catalog types: `packages/protocol/src/model-catalog-types.ts`
+- Backend catalog service: `apps/backend/src/swarm/catalog/model-catalog-service.ts`
+- Pi projection generator: `apps/backend/src/swarm/catalog/model-catalog-projection.ts`
+- Request behavior adapters: `apps/backend/src/swarm/catalog/model-catalog-request-behaviors.ts`
+- Local overrides persistence: `apps/backend/src/swarm/catalog/model-overrides.ts`
 - Audit script: `scripts/model-catalog-audit.mjs`
