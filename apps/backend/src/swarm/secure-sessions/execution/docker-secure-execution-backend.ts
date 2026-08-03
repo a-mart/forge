@@ -30,6 +30,7 @@ import {
 import { DockerCli, type DockerCliOptions } from "./docker-cli.js";
 import {
   DOCKER_GUEST_EXECUTOR_SOURCE,
+  DOCKER_GUEST_TERMINATOR_SOURCE,
   DOCKER_HEARTBEAT_INTERVAL_MS,
   DOCKER_HEARTBEAT_PATH,
   DOCKER_KEEPALIVE_SOURCE,
@@ -65,6 +66,12 @@ const VERSION_LABEL = "com.forge.secure-execution.version";
 const PROTOCOL_VERSION = "2";
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_RUNNER_INSTALL_TIMEOUT_MS = 20 * 60 * 1_000;
+const EXECUTION_TERMINATION_CONTROL_TIMEOUT_MS = 12_000;
+const EXECUTION_TERMINATION_CONFIRM_TIMEOUT_MS = 15_000;
+const GUEST_CLEANUP_FAILURE_MARKER = Buffer.from(
+  "forge-secure-executor:cleanup-failed\n",
+  "utf8",
+);
 const RUNNER_RESOURCE_FILES = [
   "Dockerfile.secure-runner",
   "forge-env-askpass",
@@ -520,7 +527,6 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       throw new SecureExecutionError("TASK_REVOKED");
     }
     if (request.signal?.aborted) {
-      await this.destroyIdentity(identity);
       throw new SecureExecutionError("EXECUTION_ABORTED");
     }
 
@@ -535,7 +541,6 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       throw new SecureExecutionError("TASK_REVOKED");
     }
     if (request.signal?.aborted) {
-      await this.destroyIdentity(identity);
       throw new SecureExecutionError("EXECUTION_ABORTED");
     }
     const execute = async (): Promise<SecureExecutionResult> => {
@@ -543,7 +548,6 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
         throw new SecureExecutionError("TASK_REVOKED");
       }
       if (request.signal?.aborted) {
-        await this.destroyIdentity(identity);
         throw new SecureExecutionError("EXECUTION_ABORTED");
       }
       return await this.executeInTask(identity, request);
@@ -1216,8 +1220,9 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
           ],
           cwd: guestCwd,
         };
+    const executionId = randomBytes(12).toString("hex");
     const frame = encodeSecureExecutionFrame({
-      executionId: randomBytes(12).toString("hex"),
+      executionId,
       command: guestCommand,
       workspacePath: identity.guestWorkspacePath,
       delivery: request.delivery,
@@ -1236,6 +1241,10 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
 
     let fatalError: SecureExecutionError | undefined;
     let destruction: Promise<boolean> | undefined;
+    let recoverableError: SecureExecutionError | undefined;
+    let targetedTermination: Promise<boolean> | undefined;
+    let terminationWatchdog: NodeJS.Timeout | undefined;
+    let childClosed = false;
     const failClosed = (error: SecureExecutionError): void => {
       if (fatalError) {
         return;
@@ -1246,6 +1255,29 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
           child.kill("SIGKILL");
         }
       });
+    };
+    const interruptExecution = (
+      code: "EXECUTION_ABORTED" | "EXECUTION_TIMEOUT",
+      reason: "aborted" | "timeout",
+    ): void => {
+      if (fatalError || recoverableError) return;
+      recoverableError = new SecureExecutionError(code);
+      targetedTermination = this.terminateExecution(
+        identity,
+        executionId,
+        reason,
+      );
+      void targetedTermination.then((terminated) => {
+        if (!terminated && !childClosed) {
+          failClosed(new SecureExecutionError("EXECUTION_FAILED"));
+        }
+      });
+      terminationWatchdog = setTimeout(() => {
+        if (!childClosed) {
+          failClosed(new SecureExecutionError("EXECUTION_FAILED"));
+        }
+      }, EXECUTION_TERMINATION_CONFIRM_TIMEOUT_MS);
+      terminationWatchdog.unref?.();
     };
 
     const collector = new GuardedOutputCollector({
@@ -1271,7 +1303,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     child.stderr.on("data", (chunk: Buffer) => consume("stderr", chunk));
 
     const onAbort = (): void =>
-      failClosed(new SecureExecutionError("EXECUTION_ABORTED"));
+      interruptExecution("EXECUTION_ABORTED", "aborted");
     request.signal?.addEventListener("abort", onAbort, { once: true });
     // Abort can race the docker-exec spawn and listener registration. Recheck
     // immediately after registration so that window cannot produce a
@@ -1282,7 +1314,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     const timeout =
       request.timeoutMs !== undefined && request.timeoutMs > 0
         ? setTimeout(
-            () => failClosed(new SecureExecutionError("EXECUTION_TIMEOUT")),
+            () => interruptExecution("EXECUTION_TIMEOUT", "timeout"),
             request.timeoutMs,
           )
         : undefined;
@@ -1294,6 +1326,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
           resolveOutcome({ exitCode: -1, signal: null });
         });
         child.once("close", (code, signal) => {
+          childClosed = true;
           resolveOutcome({ exitCode: code ?? -1, signal });
         });
       },
@@ -1321,6 +1354,16 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       if (fatalError) {
         throw fatalError;
       }
+      if (guarded.stderr.includes(GUEST_CLEANUP_FAILURE_MARKER)) {
+        await this.destroyIdentity(identity);
+        throw new SecureExecutionError("EXECUTION_FAILED");
+      }
+      if (targetedTermination) {
+        await targetedTermination;
+      }
+      if (recoverableError) {
+        throw recoverableError;
+      }
       if (this.revoked.has(identity.name)) {
         throw new SecureExecutionError("TASK_REVOKED");
       }
@@ -1342,9 +1385,32 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       if (timeout) {
         clearTimeout(timeout);
       }
+      if (terminationWatchdog) {
+        clearTimeout(terminationWatchdog);
+      }
       request.signal?.removeEventListener("abort", onAbort);
       this.untrackExecution(identity.name, child);
     }
+  }
+
+  private async terminateExecution(
+    identity: TaskIdentity,
+    executionId: string,
+    reason: "aborted" | "timeout",
+  ): Promise<boolean> {
+    if (this.revoked.has(identity.name)) return false;
+    const result = await this.cli.run([
+      "exec",
+      "--user",
+      `${this.runAsUser.uid}:${this.runAsUser.gid}`,
+      identity.name,
+      "node",
+      "-e",
+      DOCKER_GUEST_TERMINATOR_SOURCE,
+      executionId,
+      reason,
+    ], 1024, EXECUTION_TERMINATION_CONTROL_TIMEOUT_MS);
+    return result.exitCode === 0;
   }
 
   private trackExecution(

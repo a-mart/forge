@@ -220,6 +220,26 @@ describe('SecureSessionPicker', () => {
     expect(defaults.querySelector('button')).toBeNull()
   })
 
+  it('explains a command-local timeout while keeping Team Secure Mode active', () => {
+    renderPicker(makeConfig({
+      snapshot: {
+        ...makeConfig().snapshot!,
+        lastExecutionIncident: {
+          code: 'EXECUTION_TIMEOUT',
+          agentId: 'worker-a',
+          occurredAt: '2026-07-23T12:01:00.000Z',
+        },
+      },
+    }))
+
+    openPicker(/secure session ready/i)
+
+    expect(document.body.textContent).toContain('A Secure Bash command timed out')
+    expect(document.body.textContent).toContain('Only that command for worker-a was stopped.')
+    expect(document.body.textContent).toContain('other workers stayed active')
+    expect(document.body.textContent).not.toContain('Stop processes and revoke access?')
+  })
+
   it('defaults to session-lifetime access and grants several saved secrets together', async () => {
     const onGrant = vi.fn()
     renderPicker(makeConfig({

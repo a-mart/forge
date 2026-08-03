@@ -73,8 +73,8 @@ export function guardSecureRuntimeError(
 ): Error {
   // SecureExecutionError is constructed only from Forge-owned codes whose
   // messages are fixed and value-free. Preserve that diagnostic even after a
-  // timeout, abort, or backend failure has invalidated the binding; attempting
-  // to guard it through the now-revoked binding would replace the real cause
+  // timeout, abort, or backend failure. Attempting to guard the fixed error
+  // through a binding that may be unavailable would replace the real cause
   // with the misleading generic output-filter failure.
   if (error instanceof SecureExecutionError) {
     const safeError = new SecureExecutionError(error.code);

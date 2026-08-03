@@ -4014,7 +4014,7 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
-  it("fails the shared session closed when any worker execution times out", async () => {
+  it("keeps the shared session ready when one worker execution times out", async () => {
     const harness = createHarness();
     const workerA = workerDescriptor(
       "worker-a",
@@ -4042,23 +4042,46 @@ describe("SecureSessionsService", () => {
       }),
     ).rejects.toMatchObject({
       code: "EXECUTION_TIMEOUT",
-      message: "Secure execution timed out.",
+      message:
+        "Secure execution timed out. Only this command was stopped; the Secure Session remains available.",
     });
 
     expect(await harness.service.getSecureSessionSnapshot("worker-a")).toEqual(
-      expect.objectContaining({ environmentStatus: "failed" }),
+      expect.objectContaining({
+        environmentStatus: "ready",
+        lastExecutionIncident: {
+          code: "EXECUTION_TIMEOUT",
+          agentId: "worker-a",
+          occurredAt: expect.any(String),
+        },
+      }),
     );
     expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
-      expect.objectContaining({ environmentStatus: "failed" }),
+      expect.objectContaining({ environmentStatus: "ready" }),
     );
     expect(await harness.service.getSecureSessionSnapshot("worker-b")).toEqual(
-      expect.objectContaining({ environmentStatus: "failed" }),
+      expect.objectContaining({ environmentStatus: "ready" }),
     );
-    expect(harness.execution.destroyed).toContain("manager-a");
+    expect(harness.execution.destroyed).not.toContain("manager-a");
     expect(harness.execution.destroyed).not.toContain("worker-a::assignment-a");
     expect(harness.execution.destroyed).not.toContain("worker-b::assignment-b");
-    expect(harness.service.getSecureRuntimeBinding(workerA)).toBeUndefined();
-    expect(harness.service.getSecureRuntimeBinding(workerB)).toBeUndefined();
+    expect(harness.service.getSecureRuntimeBinding(workerA)).toBeDefined();
+    await expect(
+      harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+        command: "worker-b-safe-follow-up",
+        cwd: "/workspace-a",
+        onData: () => undefined,
+      }),
+    ).resolves.toEqual({ exitCode: 0 });
+    await expect(
+      harness.service.getSecureRuntimeBinding(
+        harness.descriptors.get("manager-a")!,
+      )!.executeBash({
+        command: "manager-safe-follow-up",
+        cwd: "/workspace-a",
+        onData: () => undefined,
+      }),
+    ).resolves.toEqual({ exitCode: 0 });
     await harness.close();
   });
 

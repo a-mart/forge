@@ -392,6 +392,20 @@ export function SecureSessionPicker({
             </div>
           ) : null}
 
+          {config.snapshot?.lastExecutionIncident ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+              <p className="font-medium text-foreground">
+                {config.snapshot.lastExecutionIncident.code === 'EXECUTION_TIMEOUT'
+                  ? 'A Secure Bash command timed out'
+                  : 'A Secure Bash command was cancelled'}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Only that command for {config.snapshot.lastExecutionIncident.agentId} was stopped.
+                {' '}Team Secure Mode, its leases, and other workers stayed active.
+              </p>
+            </div>
+          ) : null}
+
           {projectDefaults.length > 0 ? (
             <section
               className="space-y-2 rounded-md border border-border/70 bg-muted/35 p-2.5"

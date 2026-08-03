@@ -117,6 +117,21 @@ describe('Secure Sessions API', () => {
     })
   })
 
+  it('maps fixed command-local execution incident metadata', () => {
+    const source = snapshot()
+    source.lastExecutionIncident = {
+      code: 'EXECUTION_TIMEOUT',
+      agentId: 'worker-a',
+      occurredAt: '2026-07-23T12:01:00.000Z',
+    }
+
+    expect(toSecureSessionSnapshotView(source).lastExecutionIncident).toEqual({
+      code: 'EXECUTION_TIMEOUT',
+      agentId: 'worker-a',
+      occurredAt: '2026-07-23T12:01:00.000Z',
+    })
+  })
+
   it('approves SSH trust with secure control and dismisses it through the web-safe route', async () => {
     const fetchMock = vi.fn<SettingsApiClient['fetch']>(async () => new Response(JSON.stringify(snapshot(5)), {
       status: 200,

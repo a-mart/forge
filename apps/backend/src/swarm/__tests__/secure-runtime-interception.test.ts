@@ -221,7 +221,8 @@ describe("Secure Pi runtime interception", () => {
       ),
     ).rejects.toMatchObject({
       code: "EXECUTION_TIMEOUT",
-      message: "Secure execution timed out.",
+      message:
+        "Secure execution timed out. Only this command was stopped; the Secure Session remains available.",
       name: "SecureExecutionError",
     });
   });

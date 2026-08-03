@@ -19,6 +19,7 @@ import type {
   SecureBrowserSealedPrivateEntry,
   SecureSessionReadiness,
   SecureSessionProjectDefaultStatus,
+  SecureSessionExecutionIncident,
   SecureSessionSnapshot as PublicSecureSessionSnapshot,
   SecureSessionSnapshotEvent,
 } from "@forge/protocol";
@@ -170,6 +171,7 @@ interface PreparedSecureBashExecution {
   guard: SecureValueGuard;
   active: ActiveSession;
   authorityDescriptor: AgentDescriptor;
+  callerAgentId: string;
 }
 
 interface PreparedProjectDefault {
@@ -197,6 +199,10 @@ export class SecureSessionsService {
   private readonly cachedLeaseSecrets = new Map<string, HostOnlySecret>();
   private readonly cachedLeaseOwners = new Map<string, string>();
   private readonly outputStates = new Map<string, SecureOutputState>();
+  private readonly executionIncidents = new Map<
+    string,
+    SecureSessionExecutionIncident
+  >();
   private readonly projectDefaultStatuses = new Map<
     string,
     Map<string, SecureSessionProjectDefaultStatus>
@@ -2978,6 +2984,7 @@ export class SecureSessionsService {
     this.cachedLeaseSecrets.clear();
     this.cachedLeaseOwners.clear();
     this.outputStates.clear();
+    this.executionIncidents.clear();
     this.projectDefaultStatuses.clear();
     await store?.close().catch(() => undefined);
     try {
@@ -3102,6 +3109,7 @@ export class SecureSessionsService {
         guard,
         active,
         authorityDescriptor,
+        callerAgentId: descriptor.agentId,
       };
     } catch (error) {
       this.completeReservations(
@@ -3129,6 +3137,7 @@ export class SecureSessionsService {
       guard,
       active,
       authorityDescriptor,
+      callerAgentId,
     } = prepared;
     const sessionAgentId = authorityDescriptor.agentId;
     try {
@@ -3199,7 +3208,20 @@ export class SecureSessionsService {
         reserved,
         request.signal?.aborted ? "cancelled" : "failed",
       );
-      if (
+      const commandLocalInterruption =
+        error instanceof SecureExecutionError
+        && (error.code === "EXECUTION_ABORTED" || error.code === "EXECUTION_TIMEOUT");
+      if (commandLocalInterruption) {
+        this.executionIncidents.set(sessionAgentId, {
+          code: error.code,
+          agentId: callerAgentId,
+          occurredAt: this.now(),
+        });
+        this.scheduleSessionExpiry(store, sessionAgentId);
+        this.options.emitSnapshot(toSnapshotEvent(
+          this.toPublicSnapshot(store, store.getSnapshot(sessionAgentId)),
+        ));
+      } else if (
         !(error instanceof SecureSessionsServiceError && error.code === "SECURE_REQUEST_INVALID")
         && this.activeSessions.get(sessionAgentId) === active
         && !active.closed
@@ -4045,6 +4067,9 @@ export class SecureSessionsService {
       outputState: "clear" as const,
       outputStateCode: null,
     };
+    const lastExecutionIncident = this.executionIncidents.get(
+      snapshot.state.sessionAgentId,
+    );
     return {
       sessionAgentId: snapshot.state.sessionAgentId,
       profileId: snapshot.state.profileId,
@@ -4125,6 +4150,9 @@ export class SecureSessionsService {
             statusCode: "ok",
           };
         }),
+      ...(lastExecutionIncident
+        ? { lastExecutionIncident }
+        : {}),
       updatedAt: snapshot.state.updatedAt,
       ...outputState,
     } as PublicSecureSessionSnapshot;
@@ -4447,6 +4475,7 @@ export class SecureSessionsService {
     if (active) active.closed = true;
     active?.guard?.dispose();
     this.activeSessions.delete(sessionAgentId);
+    this.executionIncidents.delete(sessionAgentId);
     for (const [leaseId, secret] of this.cachedLeaseSecrets) {
       if (this.cachedLeaseOwners.get(leaseId) !== sessionAgentId) continue;
       secret.release();

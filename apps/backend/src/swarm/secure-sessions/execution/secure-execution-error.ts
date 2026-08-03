@@ -16,9 +16,11 @@ export type SecureExecutionErrorCode =
 const SAFE_MESSAGES: Readonly<Record<SecureExecutionErrorCode, string>> = {
   BACKEND_UNAVAILABLE: "The secure execution backend is unavailable.",
   CONTAINER_CONFLICT: "The secure task sandbox failed its security validation.",
-  EXECUTION_ABORTED: "Secure execution was aborted.",
+  EXECUTION_ABORTED:
+    "Secure execution was aborted. Only this command was stopped; the Secure Session remains available.",
   EXECUTION_FAILED: "Secure execution failed.",
-  EXECUTION_TIMEOUT: "Secure execution timed out.",
+  EXECUTION_TIMEOUT:
+    "Secure execution timed out. Only this command was stopped; the Secure Session remains available.",
   GUARD_FAILED: "Secure output filtering failed.",
   IMAGE_UNAVAILABLE: "The secure execution image is unavailable.",
   INVALID_COMMAND: "The secure execution command is invalid.",

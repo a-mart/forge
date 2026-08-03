@@ -386,11 +386,13 @@ async function executeAndCapture(
   binding: SecureRuntimeBinding,
   workspacePath: string,
   command: string,
+  timeoutMs?: number,
 ): Promise<{ exitCode: number | null; output: Buffer }> {
   const chunks: Buffer[] = [];
   const result = await binding.executeBash({
     command,
     cwd: workspacePath,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
     onData: (data) => chunks.push(Buffer.from(data)),
   });
   return {
@@ -758,6 +760,82 @@ dockerSuite(
           assertSafeExactOutput(execution.output, needles, marker, marker);
           visibleOutputs.push({ path: marker, bytes: execution.output });
         }
+
+        const timeoutSiblingRelease = join(
+          harness.workspacePath,
+          ".team-timeout-sibling.release",
+        );
+        const timeoutSiblingStarted = join(
+          harness.workspacePath,
+          ".team-timeout-sibling.started",
+        );
+        const timeoutSibling = executeAndCapture(
+          retainedBindings.get(WORKER_TWO)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            commonExpected,
+            [SHARED_ONE_USE],
+            "worker-two-survived-sibling-timeout",
+            {
+              startedPath: timeoutSiblingStarted,
+              releasePath: timeoutSiblingRelease,
+            },
+          ),
+        );
+        await waitForFiles([timeoutSiblingStarted]);
+        await expect(retainedBindings.get(WORKER_ONE)!.executeBash({
+          command: "sleep 30",
+          cwd: harness.workspacePath,
+          timeoutMs: 150,
+          onData: () => undefined,
+        })).rejects.toMatchObject({ code: "EXECUTION_TIMEOUT" });
+
+        const afterWorkerTimeout =
+          await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(afterWorkerTimeout).toEqual(expect.objectContaining({
+          environmentStatus: "ready",
+          lastExecutionIncident: {
+            code: "EXECUTION_TIMEOUT",
+            agentId: WORKER_ONE,
+            occurredAt: NOW,
+          },
+        }));
+        const sandboxAfterTimeout = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
+        );
+        expect(sandboxAfterTimeout.id).toBe(initialSandbox.id);
+
+        await writeFile(timeoutSiblingRelease, "release", { flag: "wx" });
+        const survivingSibling = await timeoutSibling;
+        assertSafeExactOutput(
+          survivingSibling.output,
+          needles,
+          "worker-two-survived-sibling-timeout",
+          "timeout-sibling",
+        );
+        visibleOutputs.push({
+          path: "timeout-sibling",
+          bytes: survivingSibling.output,
+        });
+        const managerAfterTimeout = await executeAndCapture(
+          retainedBindings.get(MANAGER)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            commonExpected,
+            [SHARED_ONE_USE],
+            "manager-follow-up-after-timeout",
+          ),
+        );
+        assertSafeExactOutput(
+          managerAfterTimeout.output,
+          needles,
+          "manager-follow-up-after-timeout",
+          "timeout-manager-follow-up",
+        );
+        visibleOutputs.push({
+          path: "timeout-manager-follow-up",
+          bytes: managerAfterTimeout.output,
+        });
 
         await grantEnvironmentLease(
           harness,

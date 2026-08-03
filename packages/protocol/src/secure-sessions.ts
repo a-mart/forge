@@ -352,6 +352,21 @@ export interface SecureSessionProjectDefaultStatus {
   statusCode: SecureSessionProjectDefaultStatusCode
 }
 
+export const SECURE_SESSION_EXECUTION_INCIDENT_CODES = [
+  'EXECUTION_ABORTED',
+  'EXECUTION_TIMEOUT',
+] as const
+
+export type SecureSessionExecutionIncidentCode =
+  (typeof SECURE_SESSION_EXECUTION_INCIDENT_CODES)[number]
+
+/** Fixed runtime-only metadata; command text, output, and provider details are excluded. */
+export interface SecureSessionExecutionIncident {
+  code: SecureSessionExecutionIncidentCode
+  agentId: string
+  occurredAt: string
+}
+
 export interface SecureSessionSnapshot {
   /** Manager session that owns the shared sandbox, grants, and requests. */
   sessionAgentId: string
@@ -391,6 +406,8 @@ export interface SecureSessionSnapshot {
    * interpret omission as no configured defaults.
    */
   projectDefaults?: SecureSessionProjectDefaultStatus[]
+  /** Most recent command-local interruption; omission means none in this runtime. */
+  lastExecutionIncident?: SecureSessionExecutionIncident
   updatedAt: string
 }
 

@@ -892,7 +892,7 @@ dockerSuite(
       expect(cleanupCheck.exitCode).toBe(0);
     }, 30_000);
 
-    it("cancellation and timeout fail closed by destroying and revoking the task", async () => {
+    it("cancels or times out only one command in a shared task", async () => {
       const backend = new DockerSecureExecutionBackend({
         scope: uniqueScope("interrupt"),
       });
@@ -913,9 +913,15 @@ dockerSuite(
           code: "EXECUTION_ABORTED",
         }),
       );
-      expect(await dockerContainerExists(firstSandbox.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(firstSandbox.sandboxId)).toBe(true);
 
       const secondSandbox = await backend.ensureTask(secureTask);
+      expect(secondSandbox.sandboxId).toBe(firstSandbox.sandboxId);
+      const sibling = backend.execute({
+        task: secureTask,
+        command: { executable: "sh", args: ["-c", "sleep 0.3; printf sibling-ok"] },
+        guardOutput: passThroughGuard(),
+      });
       await expect(
         backend.execute({
           task: secureTask,
@@ -928,18 +934,18 @@ dockerSuite(
           code: "EXECUTION_TIMEOUT",
         }),
       );
-      expect(await dockerContainerExists(secondSandbox.sandboxId)).toBe(false);
+      await expect(sibling).resolves.toEqual(expect.objectContaining({
+        exitCode: 0,
+        stdout: Buffer.from("sibling-ok"),
+      }));
+      expect(await dockerContainerExists(secondSandbox.sandboxId)).toBe(true);
       await expect(
         backend.execute({
           task: secureTask,
           command: { executable: "true", args: [] },
           guardOutput: passThroughGuard(),
         }),
-      ).rejects.toEqual(
-        expect.objectContaining<Partial<SecureExecutionError>>({
-          code: "TASK_REVOKED",
-        }),
-      );
+      ).resolves.toEqual(expect.objectContaining({ exitCode: 0 }));
     }, 30_000);
 
     it("destroys every concurrent exec when the shared task is revoked", async () => {
@@ -991,6 +997,11 @@ dockerSuite(
         }),
       ]);
       expect(await dockerContainerExists(sandbox.sandboxId)).toBe(false);
+      await expect(backend.execute({
+        task: secureTask,
+        command: { executable: "true", args: [] },
+        guardOutput: passThroughGuard(),
+      })).rejects.toEqual(expect.objectContaining({ code: "TASK_REVOKED" }));
     }, 30_000);
 
     it("closes the abort race at Docker exec spawn", async () => {
@@ -1017,7 +1028,12 @@ dockerSuite(
           code: "EXECUTION_ABORTED",
         }),
       );
-      expect(await dockerContainerExists(sandbox.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(sandbox.sandboxId)).toBe(true);
+      await expect(backend.execute({
+        task: secureTask,
+        command: { executable: "true", args: [] },
+        guardOutput: passThroughGuard(),
+      })).resolves.toEqual(expect.objectContaining({ exitCode: 0 }));
     }, 30_000);
 
     it("waits for hard teardown before returning an output-guard failure", async () => {

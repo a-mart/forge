@@ -674,7 +674,7 @@ dockerSuite(
       expect(markerCheck.exitCode).toBe(0);
     }, 90_000);
 
-    it("destroys secret-bearing sandboxes on cancel, timeout, and background revocation", async () => {
+    it("isolates cancel and timeout while preserving explicit task revocation", async () => {
       const canary = makeCanary();
       const needles = canaryNeedles(canary);
       const temporaryRoot = await mkdtemp(
@@ -714,9 +714,10 @@ dockerSuite(
         code: "EXECUTION_ABORTED",
       } satisfies Partial<SecureExecutionError>);
       abortGuard.dispose();
-      expect(await dockerContainerExists(first.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(first.sandboxId)).toBe(true);
 
       const second = await backend.ensureTask(task);
+      expect(second.sandboxId).toBe(first.sandboxId);
       const timeoutGuard = new SecureValueGuard([canary]);
       await expect(
         backend.execute({
@@ -730,9 +731,10 @@ dockerSuite(
         code: "EXECUTION_TIMEOUT",
       } satisfies Partial<SecureExecutionError>);
       timeoutGuard.dispose();
-      expect(await dockerContainerExists(second.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(second.sandboxId)).toBe(true);
 
       const third = await backend.ensureTask(task);
+      expect(third.sandboxId).toBe(first.sandboxId);
       const background = await executeGuarded(
         backend,
         {

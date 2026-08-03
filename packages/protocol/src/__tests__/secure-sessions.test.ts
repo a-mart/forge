@@ -476,6 +476,11 @@ describe('Secure Sessions protocol', () => {
         state: 'active',
         statusCode: 'ok',
       }],
+      lastExecutionIncident: {
+        code: 'EXECUTION_TIMEOUT',
+        agentId: 'agent-worker',
+        occurredAt: now,
+      },
       updatedAt: now,
     } satisfies SecureSessionSnapshotEvent satisfies ServerEvent
 
@@ -491,6 +496,11 @@ describe('Secure Sessions protocol', () => {
       statusCode: 'ok',
     })])
     expect(snapshot.outputStateCode).toBe('SECURE_OUTPUT_QUARANTINED')
+    expect(snapshot.lastExecutionIncident).toEqual({
+      code: 'EXECUTION_TIMEOUT',
+      agentId: 'agent-worker',
+      occurredAt: now,
+    })
     expect(invalidation).toEqual({ type: 'secure_secret_catalog_changed', revision: 4 })
     expect(JSON.stringify(invalidation)).not.toContain('providers')
     expect(JSON.stringify(invalidation)).not.toContain('secrets')
