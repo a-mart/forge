@@ -3,9 +3,10 @@
  *
  * Resolution priority:
  *   1. window.electronBridge.backendWsUrl  (Electron preload injection)
- *   2. VITE_FORGE_WS_URL / VITE_MIDDLEMAN_WS_URL  (build-time env var)
- *   3. VITE_FORGE_WS_PORT / VITE_MIDDLEMAN_WS_PORT combined with window.location
- *   4. Port-based heuristic from window.location  (web fallback)
+ *   2. window.__forgeRemoteRuntimeConfig (packaged trusted-network UI)
+ *   3. VITE_FORGE_WS_URL / VITE_MIDDLEMAN_WS_URL  (build-time env var)
+ *   4. VITE_FORGE_WS_PORT / VITE_MIDDLEMAN_WS_PORT combined with window.location
+ *   5. Port-based heuristic from window.location  (web fallback)
  */
 
 import '@/lib/electron-bridge' // ensure global Window augmentation is loaded
@@ -23,7 +24,13 @@ interface LocationLike {
   port: string
 }
 
-function parseBackendPort(value: string | undefined): number | undefined {
+function parseBackendPort(value: string | number | undefined): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 1 && value <= 65_535
+      ? value
+      : undefined
+  }
+
   if (!value?.trim()) {
     return undefined
   }
@@ -58,6 +65,7 @@ export function resolveBackendWsUrlFromLocation(
   locationLike: LocationLike,
   options?: {
     electronWsUrl?: string
+    runtimePort?: string | number
     envUrl?: string
     envPort?: string
     webBaseMode?: UiWebBaseMode
@@ -67,13 +75,18 @@ export function resolveBackendWsUrlFromLocation(
     return options.electronWsUrl
   }
 
+  const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:'
+  const hostname = locationLike.hostname
+  const uiPort = resolveLocationPort(locationLike)
+  const runtimePort = parseBackendPort(options?.runtimePort)
+  if (runtimePort !== undefined) {
+    return `${protocol}//${hostname}:${runtimePort}`
+  }
+
   if (options?.envUrl) {
     return options.envUrl
   }
 
-  const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:'
-  const hostname = locationLike.hostname
-  const uiPort = resolveLocationPort(locationLike)
   const backendPort =
     parseBackendPort(options?.envPort) ??
     resolveBackendPort(uiPort, options?.webBaseMode ?? 'auto')
@@ -100,6 +113,7 @@ export function resolveBackendWsUrl(): string {
       window.electronBridge.backendWsUrl.length > 0
         ? window.electronBridge.backendWsUrl
         : undefined,
+    runtimePort: getPackagedRemoteRuntimePort(),
     envUrl:
       (import.meta.env.VITE_FORGE_WS_URL as string | undefined) ??
       (import.meta.env.VITE_MIDDLEMAN_WS_URL as string | undefined),
@@ -108,4 +122,14 @@ export function resolveBackendWsUrl(): string {
       (import.meta.env.VITE_MIDDLEMAN_WS_PORT as string | undefined),
     webBaseMode: getConfiguredUiWebBaseMode(),
   })
+}
+
+function getPackagedRemoteRuntimePort(): string | number | undefined {
+  const runtimeConfig = (window as typeof window & {
+    __forgeRemoteRuntimeConfig?: { backendPort?: unknown }
+  }).__forgeRemoteRuntimeConfig
+  const backendPort = runtimeConfig?.backendPort
+  return typeof backendPort === 'string' || typeof backendPort === 'number'
+    ? backendPort
+    : undefined
 }

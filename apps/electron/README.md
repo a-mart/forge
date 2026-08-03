@@ -320,6 +320,8 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 The Electron app uses port `47287` for the backend by default in packaged mode. You can override this by setting `FORGE_PORT` before launching the app.
 
+Installed Forge Desktop also serves its packaged browser UI on port `47188` while it is running. It binds on `FORGE_HOST` (or `0.0.0.0` when unset), so a trusted-network browser can open `http://<station-address>:47188`. That browser derives its own hostname and receives the Electron-owned runtime backend port, including a `FORGE_PORT` override. It does not receive Electron's preload bridge, Desktop IPC, or local Automatic Browser capability. Keep this Builder surface on loopback or a known trusted network; use an authentication-enforcing proxy before exposing it more broadly.
+
 The root `pnpm dev:electron` workflow also uses backend port `47287`; only its UI remains on the Vite dev port `47188`.
 
 ## Platform Notes

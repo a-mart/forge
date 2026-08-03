@@ -20,6 +20,7 @@ import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 import { createBackendForkOptions } from './backend-fork-options.js'
 import { resolveDevBetterSqlite3Binding } from './dev-native-binding.js'
+import { PackagedRemoteUiServer, resolvePackagedRemoteUiHost, startOptionalPackagedRemoteUi } from './packaged-remote-ui-server.js'
 import type { BrowserAutomationRequest, BrowserTabSnapshot } from '@forge/protocol'
 import { BrowserAutomationManager } from './browser/browser-automation-manager.js'
 import { installBrowserIpc } from './browser/browser-ipc.js'
@@ -163,6 +164,13 @@ class BackendSupervisor {
       this.currentDataDir ?? undefined,
       this.secureControlToken,
     )
+  }
+
+  get currentBackendPort(): number {
+    if (this.currentPort == null) {
+      throw new Error('Backend port requested before backend was ready')
+    }
+    return this.currentPort
   }
 
   get logPath(): string | null {
@@ -525,6 +533,36 @@ const backendSupervisor = new BackendSupervisor((_port, isRestart) => {
 })
 
 let sleepBlockerService: SleepBlockerService | null = null
+let packagedRemoteUiServer: PackagedRemoteUiServer | null = null
+
+async function startPackagedRemoteUiServer(): Promise<void> {
+  if (!app.isPackaged || packagedRemoteUiServer) {
+    return
+  }
+
+  const remoteUiServer = new PackagedRemoteUiServer({
+    rendererDir: resolvePackagedRendererDir(),
+    host: resolvePackagedRemoteUiHost(process.env),
+    getBackendPort: () => backendSupervisor.currentBackendPort,
+  })
+  await remoteUiServer.start()
+  packagedRemoteUiServer = remoteUiServer
+  lifecycleLog.record('packaged_remote_ui_started', {
+    host: resolvePackagedRemoteUiHost(process.env),
+    port: remoteUiServer.address?.port ?? null,
+  })
+}
+
+async function stopPackagedRemoteUiServer(): Promise<void> {
+  const remoteUiServer = packagedRemoteUiServer
+  packagedRemoteUiServer = null
+  if (!remoteUiServer) {
+    return
+  }
+
+  await remoteUiServer.stop()
+  lifecycleLog.record('packaged_remote_ui_stopped')
+}
 
 async function prepareQuitForUpdate(): Promise<void> {
   if (!appIsQuitting) {
@@ -542,6 +580,7 @@ async function prepareQuitForUpdate(): Promise<void> {
     disposeExternalChromeIpc?.()
     disposeExternalChromeIpc = null
     await externalChromeCoordinator?.quiesce('desktop-update')
+    await stopPackagedRemoteUiServer()
     await backendSupervisor.stop()
   }
 }
@@ -764,6 +803,9 @@ if (!hasSingleInstanceLock) {
     try {
       await backendSupervisor.start()
     } catch (error) {
+      await backendSupervisor.stop().catch((stopError) => {
+        console.warn('Failed to stop backend after startup failure', stopError)
+      })
       lifecycleLog.record('electron_backend_start_failed')
       const detail = error instanceof Error ? error.message : String(error)
       const logPath = backendSupervisor.logPath
@@ -778,6 +820,14 @@ if (!hasSingleInstanceLock) {
       app.exit(1)
       return
     }
+
+    await startOptionalPackagedRemoteUi(
+      () => startPackagedRemoteUiServer(),
+      (error) => {
+        lifecycleLog.record('packaged_remote_ui_start_failed', { error: error.message })
+        console.warn('[packaged-remote-ui] Remote browser access is unavailable; local Desktop and backend remain available.', error.message)
+      },
+    )
 
     await secureVaultStartupInitialization
 
@@ -884,6 +934,12 @@ if (!hasSingleInstanceLock) {
     })
   }).catch((error) => {
     lifecycleLog.record('electron_initialization_failed')
+    void stopPackagedRemoteUiServer().catch((stopError) => {
+      console.warn('[packaged-remote-ui] Failed to stop after initialization failure', stopError)
+    })
+    void backendSupervisor.stop().catch((stopError) => {
+      console.warn('Failed to stop backend after initialization failure', stopError)
+    })
     console.error('Electron app failed to initialize', error)
     app.exit(1)
   })
@@ -915,7 +971,7 @@ if (!hasSingleInstanceLock) {
 
     void (externalChromeCoordinator?.quiesce('desktop-quit') ?? Promise.resolve()).catch((error) => {
       console.warn('[external-chrome] Quit quiesce failed', error instanceof Error ? error.message : String(error))
-    }).finally(() => backendSupervisor.stop()).finally(() => {
+    }).finally(() => stopPackagedRemoteUiServer()).finally(() => backendSupervisor.stop()).finally(() => {
       lifecycleLog.record('electron_exit_requested', { code: 0 })
       app.exit(0)
     })
