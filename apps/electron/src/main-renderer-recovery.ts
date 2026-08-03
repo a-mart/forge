@@ -43,6 +43,7 @@ export function installMainRendererRecovery(options: {
   const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
   const recoveryDelayMs = options.recoveryDelayMs ?? DEFAULT_RECOVERY_DELAY_MS
   const maxRecoveryAttempts = options.maxRecoveryAttempts ?? DEFAULT_MAX_RECOVERY_ATTEMPTS
+  const webContents = options.window.webContents
   let disposed = false
   let recoveryAttempts = 0
   let readyTimer: NodeJS.Timeout | null = null
@@ -50,7 +51,7 @@ export function installMainRendererRecovery(options: {
   let recoveryInFlight = false
 
   const canRecover = (): boolean =>
-    !disposed && !options.isClosing() && !options.window.isDestroyed() && !options.window.webContents.isDestroyed()
+    !disposed && !options.isClosing() && !options.window.isDestroyed() && !webContents.isDestroyed()
 
   const clearReadyTimer = (): void => {
     if (!readyTimer) return
@@ -122,16 +123,16 @@ export function installMainRendererRecovery(options: {
     }
   }
 
-  options.window.webContents.on('did-start-navigation', onDidStartNavigation)
-  options.window.webContents.on('render-process-gone', onRenderProcessGone)
-  options.window.webContents.on('did-fail-load', onDidFailLoad)
+  webContents.on('did-start-navigation', onDidStartNavigation)
+  webContents.on('render-process-gone', onRenderProcessGone)
+  webContents.on('did-fail-load', onDidFailLoad)
 
   return {
     markReady(sender) {
       // Require a readiness watchdog armed by a top-level navigation. This prevents
       // a queued signal from the renderer that just exited from cancelling the
       // recovery scheduled for its replacement.
-      if (!canRecover() || !readyTimer || sender !== options.window.webContents) return false
+      if (!canRecover() || !readyTimer || sender !== webContents) return false
       const recovered = recoveryAttempts > 0
       recoveryAttempts = 0
       clearReadyTimer()
@@ -144,9 +145,10 @@ export function installMainRendererRecovery(options: {
       disposed = true
       clearReadyTimer()
       clearRecoveryTimer()
-      options.window.webContents.off('did-start-navigation', onDidStartNavigation)
-      options.window.webContents.off('render-process-gone', onRenderProcessGone)
-      options.window.webContents.off('did-fail-load', onDidFailLoad)
+      if (options.window.isDestroyed() || webContents.isDestroyed()) return
+      webContents.off('did-start-navigation', onDidStartNavigation)
+      webContents.off('render-process-gone', onRenderProcessGone)
+      webContents.off('did-fail-load', onDidFailLoad)
     },
   }
 }

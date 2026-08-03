@@ -7,15 +7,29 @@ import {
 } from '../main-renderer-recovery.js'
 
 function createWindow() {
+  let windowDestroyed = false
+  let webContentsDestroyed = false
   const webContents = new EventEmitter() as EventEmitter & {
     isDestroyed(): boolean
   }
-  webContents.isDestroyed = vi.fn(() => false)
+  webContents.isDestroyed = vi.fn(() => webContentsDestroyed)
+  const getWebContents = vi.fn(() => {
+    if (windowDestroyed) throw new TypeError('Object has been destroyed')
+    return webContents
+  })
   const window = {
-    isDestroyed: vi.fn(() => false),
-    webContents,
+    isDestroyed: vi.fn(() => windowDestroyed),
+    get webContents() {
+      return getWebContents()
+    },
   } as unknown as BrowserWindow
-  return { window, webContents }
+  return {
+    window,
+    webContents,
+    getWebContents,
+    destroyWindow: () => { windowDestroyed = true },
+    destroyWebContents: () => { webContentsDestroyed = true },
+  }
 }
 
 function emitMainFrameNavigation(webContents: EventEmitter): void {
@@ -198,5 +212,54 @@ describe('installMainRendererRecovery', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(loadRenderer).not.toHaveBeenCalled()
     controller.dispose()
+  })
+
+  it('removes recovery listeners while the window and web contents are live', () => {
+    const { window, webContents } = createWindow()
+    const controller = installMainRendererRecovery({
+      window,
+      loadRenderer: async () => undefined,
+      isClosing: () => false,
+    })
+
+    expect(webContents.listenerCount('did-start-navigation')).toBe(1)
+    expect(webContents.listenerCount('render-process-gone')).toBe(1)
+    expect(webContents.listenerCount('did-fail-load')).toBe(1)
+
+    controller.dispose()
+
+    expect(webContents.listenerCount('did-start-navigation')).toBe(0)
+    expect(webContents.listenerCount('render-process-gone')).toBe(0)
+    expect(webContents.listenerCount('did-fail-load')).toBe(0)
+  })
+
+  it('disposes safely after the BrowserWindow native object is destroyed', () => {
+    const { window, getWebContents, destroyWindow } = createWindow()
+    const controller = installMainRendererRecovery({
+      window,
+      loadRenderer: async () => undefined,
+      isClosing: () => false,
+    })
+    const accessesBeforeDestruction = getWebContents.mock.calls.length
+
+    destroyWindow()
+
+    expect(() => controller.dispose()).not.toThrow()
+    expect(getWebContents).toHaveBeenCalledTimes(accessesBeforeDestruction)
+  })
+
+  it('skips listener cleanup when a live BrowserWindow has destroyed web contents', () => {
+    const { window, webContents, destroyWebContents } = createWindow()
+    const off = vi.spyOn(webContents, 'off')
+    const controller = installMainRendererRecovery({
+      window,
+      loadRenderer: async () => undefined,
+      isClosing: () => false,
+    })
+
+    destroyWebContents()
+
+    expect(() => controller.dispose()).not.toThrow()
+    expect(off).not.toHaveBeenCalled()
   })
 })
