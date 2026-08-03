@@ -4143,6 +4143,10 @@ describe('SwarmWebSocketServer', () => {
       })
     }
 
+    const sessionWorkersSnapshotCountBeforeKill = events.filter(
+      (event) => event.type === 'session_workers_snapshot' && event.sessionAgentId === 'manager' && !('requestId' in event),
+    ).length
+
     client.send(JSON.stringify({ type: 'kill_agent', agentId: worker.agentId }))
 
     const statusEvent = await waitForEvent(
@@ -4170,13 +4174,13 @@ describe('SwarmWebSocketServer', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(
-      events.some(
+      events.filter(
         (event) =>
           event.type === 'session_workers_snapshot' &&
           event.sessionAgentId === 'manager' &&
           !('requestId' in event),
       ),
-    ).toBe(false)
+    ).toHaveLength(sessionWorkersSnapshotCountBeforeKill)
 
     const descriptor = manager.listAgents().find((agent) => agent.agentId === worker.agentId)
     expect(descriptor?.status).toBe('terminated')
@@ -4219,6 +4223,10 @@ describe('SwarmWebSocketServer', () => {
     client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
     await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
 
+    const sessionWorkersSnapshotCountBeforeStop = events.filter(
+      (event) => event.type === 'session_workers_snapshot' && event.sessionAgentId === 'manager' && !('requestId' in event),
+    ).length
+
     client.send(JSON.stringify({ type: 'stop_all_agents', managerId: 'manager' }))
 
     const resultEvent = await waitForEvent(
@@ -4249,13 +4257,13 @@ describe('SwarmWebSocketServer', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(
-      events.some(
+      events.filter(
         (event) =>
           event.type === 'session_workers_snapshot' &&
           event.sessionAgentId === 'manager' &&
           !('requestId' in event),
       ),
-    ).toBe(false)
+    ).toHaveLength(sessionWorkersSnapshotCountBeforeStop)
 
     expect(managerRuntime?.stopInFlightCalls).toEqual([
       expect.objectContaining({ abort: true }),

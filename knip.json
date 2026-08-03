@@ -50,6 +50,7 @@
     "apps/backend": {
       "entry": [
         "src/swarm/skills/builtins/**/*.{js,mjs}",
+        "src/stats/generation-throughput/generation-throughput-scan.benchmark.ts",
         "src/**/*.test.ts",
         "src/**/__tests__/**/*.ts"
       ],

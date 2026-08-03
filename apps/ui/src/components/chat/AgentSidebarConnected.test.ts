@@ -11,6 +11,7 @@ import type {
 } from '@forge/protocol'
 import { AgentSidebarConnected } from './AgentSidebarConnected'
 import { HelpProvider } from '@/components/help/HelpProvider'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { LOCAL_ORIGIN_ID, originRegistry } from '@/lib/origin-store'
 import {
   BuilderSidebarOrderApiUnavailableError,
@@ -164,24 +165,28 @@ function renderConnectedSidebar(overrides: {
   flushSync(() => {
     root?.render(
       createElement(
-        HelpProvider,
+        TooltipProvider,
         null,
-        createElement(AgentSidebarConnected, {
-          wsUrl: 'ws://local.test',
-          builderSidebarOrderApi: overrides.builderSidebarOrderApi,
-          selectedAgentId: 'remote-session',
-          activeOriginId: 'remote-a',
-          isSettingsActive: false,
-          onAddManager: vi.fn(),
-          onSelectAgent: vi.fn(),
-          onDeleteAgent: vi.fn(),
-          onDeleteManager: overrides.onDeleteManager ?? vi.fn(),
-          onOpenSettings: vi.fn(),
-          onCreateSession: vi.fn(),
-          onRenameSession: vi.fn(),
-          onForkSession: vi.fn(),
-          onUpdateSessionModel: vi.fn(),
-        }),
+        createElement(
+          HelpProvider,
+          null,
+          createElement(AgentSidebarConnected, {
+            wsUrl: 'ws://local.test',
+            builderSidebarOrderApi: overrides.builderSidebarOrderApi,
+            selectedAgentId: 'remote-session',
+            activeOriginId: 'remote-a',
+            isSettingsActive: false,
+            onAddManager: vi.fn(),
+            onSelectAgent: vi.fn(),
+            onDeleteAgent: vi.fn(),
+            onDeleteManager: overrides.onDeleteManager ?? vi.fn(),
+            onOpenSettings: vi.fn(),
+            onCreateSession: vi.fn(),
+            onRenameSession: vi.fn(),
+            onForkSession: vi.fn(),
+            onUpdateSessionModel: vi.fn(),
+          }),
+        ),
       ),
     )
   })

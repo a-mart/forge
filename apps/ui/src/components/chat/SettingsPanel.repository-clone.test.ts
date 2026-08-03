@@ -32,6 +32,10 @@ vi.mock('@/lib/sidebar-prefs', () => ({
   readSidebarProviderUsagePref: () => true,
   storeSidebarModelIconsPref: vi.fn(),
   storeSidebarProviderUsagePref: vi.fn(),
+  readConversationThroughputDisplayPref: () => false,
+  storeConversationThroughputDisplayPref: vi.fn(),
+  CONVERSATION_THROUGHPUT_DISPLAY_KEY: 'forge-conversation-throughput-display',
+  PREFERENCE_CHANGE_EVENT: 'forge-sidebar-pref-change',
 }))
 
 vi.mock('@/lib/editor-preference', () => ({
