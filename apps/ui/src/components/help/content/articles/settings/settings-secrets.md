@@ -17,9 +17,9 @@ Adding a secret from a project defaults to that project. If a selected-project s
 and an all-projects secret use the same alias, each selected project uses the
 selected-project secret while other projects continue to use the all-projects secret.
 
-Right-click a local project header and choose **Project Secrets** to open this page
-with that project preselected. The shortcut does not switch conversations or clear
-the current draft.
+Right-click a local project header and choose **Project Secrets**, or open
+**Project Settings → Project secrets**, to open this page with that project
+preselected. Neither route switches conversations or clears the current draft.
 
 ## Add a local secret
 

@@ -12,6 +12,7 @@ import settingsGitMonitoringContent from './articles/settings/settings-git-monit
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
+import settingsProjectSettingsContent from './articles/settings/settings-project-settings.md?raw'
 import settingsPromptsContent from './articles/settings/settings-prompts.md?raw'
 import settingsSecretsContent from './articles/settings/settings-secrets.md?raw'
 import settingsSkillsContent from './articles/settings/settings-skills.md?raw'
@@ -244,6 +245,30 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['chat-source-control', 'settings-general'],
     contextKeys: ['settings.git-monitoring'],
+  },
+  {
+    id: 'settings-project-settings',
+    title: 'Project Settings',
+    category: 'settings',
+    summary: 'Manage one local Builder project, its secrets, and its repository .forge resources.',
+    content: settingsProjectSettingsContent,
+    keywords: [
+      'project settings',
+      'project actions',
+      'project name',
+      'rename project',
+      'working directory',
+      'default model',
+      'reasoning level',
+      'project secrets',
+      'repository resources',
+      'repository .forge',
+      'resource trust',
+      'resource override',
+      'project header',
+    ],
+    relatedIds: ['chat-sidebar', 'chat-profiles', 'models-routing', 'settings-secrets', 'settings-skills'],
+    contextKeys: ['settings.project-settings'],
   },
   {
     id: 'settings-stream-deck',

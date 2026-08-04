@@ -6,6 +6,8 @@ For a concise authoring workflow, see the built-in `forge-project-resources` ski
 
 Project resources are resolved from the nearest Git root for the selected session working directory. If no Git root is found, Forge does not ancestor-walk for `.forge/` resources. A profile can optionally override the resolved project-resource directory, but the override target must be an existing directory named exactly `.forge`.
 
+For a local Builder project, open **Project Settings → Repository resources** from the project header to inspect the detected Git root and effective `.forge` directory. The page inventories passive and executable resources, shows executable trust state, and lets you trust, block, reset, or change the project/repository-scoped `.forge` override. Passive resources remain visible when executable resources are blocked. Repository resources are not a top-level Settings tab, and this project-scoped page is unavailable for Cortex and Remote Projects.
+
 ## Layout
 
 ```text
