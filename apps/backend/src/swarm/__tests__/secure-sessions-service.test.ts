@@ -2018,6 +2018,51 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("treats approval as satisfied when an equivalent lease won the race", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "approval-race",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "APPROVAL_RACE" }],
+    });
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-race", {
+      displayAlias: "approval-race",
+      exposures: [{ deliveryKind: "environment", targetName: "APPROVAL_RACE" }],
+      leaseKind: "task",
+      purposeSummary: "Use the credential after another grant path wins",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+    const granted = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: pending.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "APPROVAL_RACE" }],
+      leaseKind: "task",
+    });
+    expect(granted.pendingRequests).toHaveLength(1);
+    expect(granted.leases).toHaveLength(1);
+
+    const resolved = await harness.service.resolveSecureAccessRequest(
+      "manager-a",
+      requestId,
+      {
+        baseRevision: granted.revision,
+        requestId,
+        decision: "approve",
+      },
+    );
+
+    expect(resolved.pendingRequests).toEqual([]);
+    expect(resolved.leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "manual",
+        status: "active",
+      }),
+    ]);
+    await harness.close();
+  });
+
   it("coalesces equivalent pending access requests while retaining distinct requests", async () => {
     const harness = createHarness();
     const first = await harness.service.requestSecureSecretAccess(
@@ -2606,6 +2651,166 @@ describe("SecureSessionsService", () => {
     const other = await harness.service.startSecureSession("manager-b");
     expect(other.leases).toEqual([]);
     expect(other.projectDefaults).toEqual([]);
+    await harness.close();
+  });
+
+  it("satisfies matching pending requests when secure startup attaches project defaults", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "requested-project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "REQUESTED_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const initialStart = await harness.service.startSecureSession("manager-a");
+    await harness.service.stopSecureSession("manager-a", {
+      baseRevision: initialStart.revision,
+      stopProcesses: true,
+    });
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-default", {
+      displayAlias: "requested-project-default",
+      exposures: [{ deliveryKind: "environment", targetName: "REQUESTED_DEFAULT" }],
+      leaseKind: "task",
+      purposeSummary: "Use the configured project credential",
+    });
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .pendingRequests).toHaveLength(1);
+
+    const started = await harness.service.startSecureSession("manager-a");
+
+    expect(started.pendingRequests).toEqual([]);
+    expect(started.leases.filter((lease) => lease.status === "active")).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        leaseKind: "task",
+        grantSource: "project_default",
+        status: "active",
+      }),
+    ]);
+    await expect(harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-default-again",
+      {
+        displayAlias: "requested-project-default",
+        exposures: [{ deliveryKind: "environment", targetName: "REQUESTED_DEFAULT" }],
+        leaseKind: "task",
+        purposeSummary: "Reuse the configured project credential",
+      },
+    )).resolves.toBe("already_granted");
+    await harness.close();
+  });
+
+  it("keeps unrelated requests pending when secure startup attaches project defaults", async () => {
+    const harness = createHarness();
+    const defaultSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "startup-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "STARTUP_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(defaultSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.createLocalSecureSecret({
+      displayAlias: "still-needs-approval",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "NEEDS_APPROVAL" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-unrelated", {
+      displayAlias: "still-needs-approval",
+      exposures: [{ deliveryKind: "environment", targetName: "NEEDS_APPROVAL" }],
+      leaseKind: "task",
+      purposeSummary: "Use a separate project credential",
+    });
+
+    const started = await harness.service.startSecureSession("manager-a");
+
+    expect(started.leases).toEqual([
+      expect.objectContaining({ secretId: defaultSecret.secretId }),
+    ]);
+    expect(started.pendingRequests).toEqual([
+      expect.objectContaining({ displayAlias: "still-needs-approval" }),
+    ]);
+    await harness.close();
+  });
+
+  it("does not fail secure startup when a matching request expired during preparation", async () => {
+    let now = NOW;
+    const harness = createHarness({ now: () => now });
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "expired-startup-request",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "EXPIRED_STARTUP" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-expired", {
+      displayAlias: "expired-startup-request",
+      exposures: [{ deliveryKind: "environment", targetName: "EXPIRED_STARTUP" }],
+      leaseKind: "task",
+      purposeSummary: "Use the project credential if approval remains current",
+    });
+    now = new Date(Date.parse(NOW) + 31 * 60 * 1_000).toISOString();
+
+    const started = await harness.service.startSecureSession("manager-a");
+
+    expect(started.environmentStatus).toBe("ready");
+    expect(started.pendingRequests).toEqual([]);
+    expect(started.leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "project_default",
+        status: "active",
+      }),
+    ]);
+    await harness.close();
+  });
+
+  it("satisfies matching pending requests when defaults are applied to an active session", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "active-project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ACTIVE_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-active-default", {
+      displayAlias: "active-project-default",
+      exposures: [{ deliveryKind: "environment", targetName: "ACTIVE_DEFAULT" }],
+      leaseKind: "task",
+      purposeSummary: "Use a newly configured project credential",
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(pending.revision).toBeGreaterThan(started.revision);
+    expect(pending.pendingRequests).toHaveLength(1);
+
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: pending.revision },
+    );
+
+    expect(applied.pendingRequests).toEqual([]);
+    expect(applied.leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "project_default",
+        status: "active",
+      }),
+    ]);
     await harness.close();
   });
 

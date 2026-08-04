@@ -1714,6 +1714,10 @@ export class SecureSessionsService {
       if (storedSnapshot.leases.some((lease) => lease.state === "active")) {
         await this.ensureGuardForActiveLeases(store, sessionAgentId);
       }
+      storedSnapshot = this.resolveRequestsSatisfiedByActiveLeases(
+        store,
+        storedSnapshot,
+      );
       this.scheduleSessionExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, storedSnapshot);
       if (runtime.changed || preparedProjectDefaults.length > 0 || !bindingWasActive) {
@@ -2296,6 +2300,24 @@ export class SecureSessionsService {
       store.listBindings(secret.secretId),
       request.requestedExposures,
     );
+    const existingLease = findActiveEquivalentLease(
+      store,
+      snapshot,
+      request.displayAlias,
+      request.requestedExposures.map(toPublicBinding),
+      selectedSecretId,
+    );
+    if (existingLease) {
+      const resolved = store.resolveRequest({
+        requestId,
+        state: "approved",
+        selectedSecretId,
+      });
+      this.scheduleSessionExpiry(store, sessionAgentId);
+      const result = this.toPublicSnapshot(store, resolved);
+      this.options.emitSnapshot(toSnapshotEvent(result));
+      return result;
+    }
     assertSessionBindingCompatibility(store, snapshot, bindingIds);
     const material = await this.resolveSecretMaterial(store, secret.secretId);
     const leaseId = this.id();
@@ -2644,23 +2666,11 @@ export class SecureSessionsService {
     );
     if (secret) matchBindingIds(store.listBindings(secret.secretId), input.exposures);
     const current = store.getSnapshot(sessionAgentId);
-    if (current.leases.some((lease) =>
-      lease.state === "active"
-      && (
-        lease.leaseKind !== "one_use"
-        || (lease.remainingUses === 1 && lease.oneUseOperationId === null)
-      )
-      && store.getSecret(lease.secretId)?.displayAlias === displayAlias
-      && sameBindingSets(
-        lease.bindingIds.map((bindingId) => {
-          const binding = store.getBinding(bindingId);
-          if (!binding) {
-            throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
-          }
-          return toPublicBinding(binding);
-        }),
-        input.exposures,
-      )
+    if (findActiveEquivalentLease(
+      store,
+      current,
+      displayAlias,
+      input.exposures,
     )) {
       return "already_granted";
     }
@@ -3456,6 +3466,11 @@ export class SecureSessionsService {
         this.scheduleSessionExpiry(store, sessionAgentId);
       }
 
+      storedSnapshot = this.resolveRequestsSatisfiedByActiveLeases(
+        store,
+        storedSnapshot,
+      );
+
       const snapshot = this.toPublicSnapshot(store, storedSnapshot);
       this.options.emitSnapshot(toSnapshotEvent(snapshot));
       return snapshot;
@@ -3484,6 +3499,43 @@ export class SecureSessionsService {
     const statuses = this.projectDefaultStatuses.get(sessionAgentId) ?? new Map();
     statuses.set(status.secretId, status);
     this.projectDefaultStatuses.set(sessionAgentId, statuses);
+  }
+
+  private resolveRequestsSatisfiedByActiveLeases(
+    store: SecureSessionStore,
+    snapshot: StoredSnapshot,
+  ): StoredSnapshot {
+    const expired = store.expireRequests(
+      this.now(),
+      snapshot.state.sessionAgentId,
+    );
+    let current = expired.at(-1)?.snapshot ?? snapshot;
+    for (const request of current.requests) {
+      const lease = findActiveEquivalentLease(
+        store,
+        current,
+        request.displayAlias,
+        request.requestedExposures.map(toPublicBinding),
+        request.secretId,
+      );
+      if (!lease) continue;
+      try {
+        current = store.resolveRequest({
+          requestId: request.requestId,
+          state: "approved",
+          selectedSecretId: lease.secretId,
+        });
+      } catch (error) {
+        if (!(error instanceof SecureSessionRequestExpiredError)) throw error;
+        const racedExpiration = store.expireRequests(
+          this.now(),
+          snapshot.state.sessionAgentId,
+        );
+        current = racedExpiration.at(-1)?.snapshot
+          ?? store.getSnapshot(snapshot.state.sessionAgentId);
+      }
+    }
+    return current;
   }
 
   private async resolveSecretMaterial(
@@ -5281,6 +5333,34 @@ function sameBindingSets(
   const leftKeys = left.map(bindingKey).sort();
   const rightKeys = right.map(bindingKey).sort();
   return leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function findActiveEquivalentLease(
+  store: SecureSessionStore,
+  snapshot: StoredSnapshot,
+  displayAlias: string,
+  bindings: readonly SecureSecretBinding[],
+  secretId?: string | null,
+): SecureSessionLease | null {
+  return snapshot.leases.find((lease) =>
+    lease.state === "active"
+    && (
+      lease.leaseKind !== "one_use"
+      || (lease.remainingUses === 1 && lease.oneUseOperationId === null)
+    )
+    && (secretId === undefined || secretId === null || lease.secretId === secretId)
+    && store.getSecret(lease.secretId)?.displayAlias === displayAlias
+    && sameBindingSets(
+      lease.bindingIds.map((bindingId) => {
+        const binding = store.getBinding(bindingId);
+        if (!binding) {
+          throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        }
+        return toPublicBinding(binding);
+      }),
+      bindings,
+    )
+  ) ?? null;
 }
 
 function isVisibleTo(secret: SecureSessionSecret, profileId: string): boolean {
