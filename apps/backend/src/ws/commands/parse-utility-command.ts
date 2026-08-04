@@ -1,4 +1,9 @@
 import {
+  SESSION_ATTENTION_MAX_DISMISS_IDS,
+  SESSION_ATTENTION_MAX_ID_LENGTH,
+} from "@forge/protocol";
+
+import {
   fail,
   isApiProxyMethod,
   isSafeMessageCount,
@@ -24,6 +29,44 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
       return fail(`${maybe.type}.requestId must be a string when provided`);
     }
     return ok({ type: maybe.type, requestId });
+  }
+
+  if (maybe.type === "dismiss_session_attention") {
+    // Wire-required: dismissal is a command whose success/failure must be
+    // correlated back to the exact caller, so an anonymous one is rejected.
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (typeof requestId !== "string" || requestId.length === 0) {
+      return fail("dismiss_session_attention.requestId is required");
+    }
+
+    const rawIds = (maybe as { attentionIds?: unknown }).attentionIds;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      return fail("dismiss_session_attention.attentionIds must be a nonempty array");
+    }
+    if (rawIds.length > SESSION_ATTENTION_MAX_DISMISS_IDS) {
+      return fail(
+        `dismiss_session_attention.attentionIds must contain at most ${SESSION_ATTENTION_MAX_DISMISS_IDS} entries`,
+      );
+    }
+
+    // Deduplicate here so the coordinator only ever sees exact, unique targets.
+    const attentionIds: string[] = [];
+    const seen = new Set<string>();
+    for (const candidate of rawIds) {
+      if (typeof candidate !== "string" || candidate.length === 0) {
+        return fail("dismiss_session_attention.attentionIds must contain nonempty strings");
+      }
+      if (candidate.length > SESSION_ATTENTION_MAX_ID_LENGTH) {
+        return fail(
+          `dismiss_session_attention.attentionIds entries must be at most ${SESSION_ATTENTION_MAX_ID_LENGTH} characters`,
+        );
+      }
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      attentionIds.push(candidate);
+    }
+
+    return ok({ type: "dismiss_session_attention", attentionIds, requestId });
   }
 
   if (maybe.type === "subscribe") {

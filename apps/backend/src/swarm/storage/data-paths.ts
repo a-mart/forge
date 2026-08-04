@@ -614,6 +614,11 @@ export function getAgentsStoreFilePath(dataDir: string): string {
   return join(getSwarmDir(dataDir), "agents.json");
 }
 
+/** Global, server-owned attention state for settled Builder sessions. */
+export function getSessionAttentionStorePath(dataDir: string): string {
+  return join(dataDir, "session-attention.json");
+}
+
 // ── Unified memory path resolver ───────────────────────────────────────────────
 
 /**

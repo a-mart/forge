@@ -174,6 +174,7 @@ describe('ws command parser session commands', () => {
       get_project_agent_sharing: { type: 'get_project_agent_sharing', agentId: 'session-a' },
       set_project_agent_sharing: { type: 'set_project_agent_sharing', agentId: 'session-a', targetProfileIds: ['profile-a'] },
       get_project_agent_external_directory: { type: 'get_project_agent_external_directory' },
+      dismiss_session_attention: { type: 'dismiss_session_attention', attentionIds: ['attention-1'] },
     } as const satisfies { [Type in WsRequestContractType]: { type: Type } & Record<string, unknown> }
 
     for (const contract of WS_REQUEST_CONTRACTS) {

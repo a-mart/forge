@@ -54,6 +54,7 @@ import {
   getSessionGoalPath,
   getSessionPlanHistoryPath,
   getSessionPlanPath,
+  getSessionAttentionStorePath,
   getSessionsDir,
   getCommonKnowledgePath,
   getCortexAutoReviewSettingsPath,
@@ -211,6 +212,7 @@ describe("data-paths", () => {
     expect(getUploadsDir(DATA_DIR)).toBe(join(DATA_DIR, "uploads"));
     expect(getSwarmDir(DATA_DIR)).toBe(join(DATA_DIR, "swarm"));
     expect(getAgentsStoreFilePath(DATA_DIR)).toBe(join(DATA_DIR, "swarm", "agents.json"));
+    expect(getSessionAttentionStorePath(DATA_DIR)).toBe(join(DATA_DIR, "session-attention.json"));
   });
 
   it("resolveMemoryFilePath routes root sessions to root-session working memory", () => {
