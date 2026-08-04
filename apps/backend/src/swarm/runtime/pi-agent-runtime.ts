@@ -65,7 +65,11 @@ import {
   consumeForgePiCompactionFailure,
 } from "../compaction/forge-pi-compaction-extension.js";
 import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
-import { hasNoReplySentinelLine } from "./manager-assistant-final-message.js";
+import {
+  extractCleanManagerAssistantFinalMessage,
+  hasNoReplySentinelLine,
+  hasNoReplySentinelLineManagerAssistantFinalMessage,
+} from "./manager-assistant-final-message.js";
 import { PiGenerationTelemetryAdapter } from "./generation-telemetry.js";
 import {
   detectManagerOutputRunaway,
@@ -224,6 +228,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private lastAgentEndWillRetry = false;
   /** True after a run starts until Forge terminal settlement completes (idempotent agent_settled). */
   private awaitingAgentSettlement = false;
+  /**
+   * Pi can settle with a complete final assistant message in session state even
+   * when its ordinary message_end callback was lost during a provider/socket
+   * interruption. Retain the terminal message for the existing agent_settled
+   * boundary; the projector decides whether it was already handled.
+   */
+  private settledAssistantMessage: RuntimeSessionMessage | undefined;
+  private sessionMessageCountAtAgentStart = 0;
   /** Shared one-shot session shutdown/disposal, used by terminate/replacement/recycle races. */
   private sessionShutdownPromise: Promise<void> | undefined;
   /** Prevent abort-generated settlement from relaunching accepted work during Stop/terminate. */
@@ -641,6 +653,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.awaitingAgentSettlement = false;
+    const settledAssistantMessage = this.resolveSettledAssistantMessage();
 
     try {
       await this.openAIAuthBrokerController?.reportSuccess();
@@ -650,7 +663,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (this.callbacks.onSessionEvent) {
       try {
-        await this.callbacks.onSessionEvent(this.descriptor.agentId, { type: "agent_end" });
+        await this.callbacks.onSessionEvent(this.descriptor.agentId, {
+          type: "agent_end",
+          ...(settledAssistantMessage ? { settledAssistantMessage } : {}),
+        });
       } catch (error) {
         this.logRuntimeError("interrupt", error, { stage: "agent_settled_on_session_event_failed" });
       }
@@ -671,6 +687,24 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
     this.lastAgentEndWillRetry = false;
+    this.settledAssistantMessage = undefined;
+  }
+
+  private resolveSettledAssistantMessage(): RuntimeSessionMessage | undefined {
+    if (this.descriptor.role !== "manager") {
+      return undefined;
+    }
+
+    if (this.settledAssistantMessage) {
+      return this.settledAssistantMessage;
+    }
+
+    const messages = this.getSessionAgentMessages();
+    if (messages.length <= this.sessionMessageCountAtAgentStart) {
+      return undefined;
+    }
+
+    return asEligibleSettledAssistantMessage(messages.at(-1));
   }
 
   /** @internal Drain the serialized Pi session event queue (tests). */
@@ -1277,6 +1311,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     // Forge terminal agent_end / idle / onAgentEnd happen once at agent_settled.
     if (event.type === "agent_end") {
       this.lastAgentEndWillRetry = Boolean(event.willRetry);
+      this.settledAssistantMessage =
+        findEligibleSettledAssistantMessage(event.messages) ?? this.settledAssistantMessage;
       if (this.lastAgentEndWillRetry) {
         console.warn(`[swarm][${this.now()}] runtime:agent_end_will_retry`, {
           runtime: "pi",
@@ -1296,7 +1332,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    if (event.type === "agent_start") {
+      this.settledAssistantMessage = undefined;
+      this.sessionMessageCountAtAgentStart = this.getSessionAgentMessages().length;
+    }
+
     const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
+    if (normalizedEvent?.type === "message_end") {
+      this.settledAssistantMessage =
+        asEligibleSettledAssistantMessage(normalizedEvent.message) ?? this.settledAssistantMessage;
+    }
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }
@@ -3448,4 +3493,35 @@ function normalizeRuntimeSessionEvent(event: AgentSessionEvent, session?: AgentS
     default:
       return null;
   }
+}
+
+function findEligibleSettledAssistantMessage(messages: unknown): RuntimeSessionMessage | undefined {
+  if (!Array.isArray(messages)) {
+    return undefined;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = asEligibleSettledAssistantMessage(messages[index]);
+    if (message) {
+      return message;
+    }
+  }
+
+  return undefined;
+}
+
+function asEligibleSettledAssistantMessage(message: unknown): RuntimeSessionMessage | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  const runtimeMessage = message as RuntimeSessionMessage;
+  const syntheticMessageEnd: RuntimeSessionEvent = {
+    type: "message_end",
+    message: runtimeMessage,
+  };
+  return extractCleanManagerAssistantFinalMessage(syntheticMessageEnd) ||
+    hasNoReplySentinelLineManagerAssistantFinalMessage(syntheticMessageEnd)
+    ? runtimeMessage
+    : undefined;
 }

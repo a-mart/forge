@@ -168,6 +168,37 @@ describe("SwarmEventCoordinator", () => {
     }]);
   });
 
+  it("clears manager tool activity only when idle has no pending work", () => {
+    const owner = manager();
+    const { coordinator, emitted } = setup([owner]);
+    coordinator.activateManagerToolActivity(owner.agentId, "turn-1");
+    coordinator.emitManagerToolActivityForToolCall({
+      type: "agent_tool_call",
+      agentId: owner.agentId,
+      actorAgentId: owner.agentId,
+      turnId: "turn-1",
+      timestamp: "2026-07-13T00:00:04.000Z",
+      kind: "tool_execution_start",
+      toolCallId: "manager-tool-id",
+      toolName: "bash",
+      text: "private",
+    });
+    emitted.length = 0;
+
+    coordinator.emitStatus(owner.agentId, "idle", 1);
+    expect(emitted.some(({ name }) => name === "manager_tool_activity")).toBe(false);
+
+    coordinator.emitStatus(owner.agentId, "idle", 0);
+    expect(emitted).toContainEqual({
+      name: "manager_tool_activity",
+      event: expect.objectContaining({
+        type: "manager_tool_activity",
+        sessionAgentId: owner.agentId,
+        toolCount: 0,
+      }),
+    });
+  });
+
   it("publishes the owning session worker snapshot", () => {
     const owner = manager();
     const workerDescriptor = worker("worker-1", owner.agentId);

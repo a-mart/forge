@@ -1,4 +1,4 @@
-import type { ConversationMessageEvent } from "./types.js";
+import type { AgentToolCallEvent, ConversationMessageEvent } from "./types.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -28,8 +28,13 @@ import {
   isAbortLikeErrorMessage,
   normalizeProviderErrorMessage,
 } from "./message-utils.js";
-import type { TurnLedgerSessionTarget } from "./turn-ledger.js";
+import {
+  appendTurnLedgerRecord,
+  replayTurnLedger,
+  type TurnLedgerSessionTarget,
+} from "./turn-ledger.js";
 import { isRuntimeRecoveryActiveForRuntime } from "./runtime/runtime-recovery-state.js";
+import { reconcileInterruptedManagerToolCalls } from "./interrupted-tool-reconciliation.js";
 
 export const PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS = 15_000;
 
@@ -37,6 +42,8 @@ export interface RuntimeLifecycleController {
   readonly runtimes: Map<string, SwarmAgentRuntime>;
   allocateRuntimeToken(agentId: string): number;
   clearRuntimeToken(agentId: string, runtimeToken?: number): void;
+  getRuntimeToken(agentId: string): number | undefined;
+  getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined;
   detachRuntime(agentId: string, runtimeToken?: number): boolean;
   runRuntimeShutdown(
     descriptor: AgentDescriptor,
@@ -104,6 +111,7 @@ export interface RuntimeLifecycleDirectory {
 
 export interface RuntimeLifecycleEvents {
   emitConversationMessage(event: ConversationMessageEvent): void;
+  emitAgentToolCall(event: AgentToolCallEvent): void;
   emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void;
 }
 
@@ -256,6 +264,54 @@ export class SwarmRuntimeLifecycleCoordinator {
 
   clearAgentState(agentId: string): void {
     this.options.turnContext.clearAgentState(agentId);
+  }
+
+  async reconcileStoppedManagerRuntime(input: {
+    agentId: string;
+    turnId?: string;
+  }): Promise<boolean> {
+    const descriptor = this.options.descriptors.get(input.agentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return false;
+    }
+
+    if (
+      this.options.controller.runtimes.has(input.agentId) ||
+      this.options.controller.getRuntimeToken(input.agentId) !== undefined ||
+      this.options.controller.getRuntimeCreationPromise(input.agentId) !== undefined
+    ) {
+      this.options.logDebug("runtime_stop:reconcile_skipped_active_owner", {
+        agentId: input.agentId,
+        turnId: input.turnId,
+      });
+      return false;
+    }
+
+    if (input.turnId) {
+      const target = this.getTurnLedgerSessionTarget(input.agentId);
+      if (target) {
+        const ledger = await replayTurnLedger(target);
+        if (ledger.openTurns.has(input.turnId) && !ledger.terminalTurns.has(input.turnId)) {
+          await appendTurnLedgerRecord(target, {
+            t: "turn_terminal",
+            turnId: input.turnId,
+            outcome: "abandoned",
+            at: this.options.now(),
+          });
+        }
+      }
+      this.managerTurnWatchdog.clearIfTurnMatches(input.agentId, input.turnId);
+    }
+
+    this.options.turnContext.clearAgentState(input.agentId);
+    reconcileInterruptedManagerToolCalls({
+      descriptor,
+      now: this.options.now,
+      emitAgentToolCall: (event) => this.options.events.emitAgentToolCall(event),
+      emitConversationMessage: (event) => this.options.events.emitConversationMessage(event),
+      logDebug: this.options.logDebug,
+    });
+    return true;
   }
 
   runRuntimeShutdown(

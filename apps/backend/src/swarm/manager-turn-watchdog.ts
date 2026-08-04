@@ -191,6 +191,14 @@ export class ManagerTurnWatchdog {
     this.stateByAgentId.delete(agentId);
   }
 
+  clearIfTurnMatches(agentId: string, turnId: string): boolean {
+    if (this.stateByAgentId.get(agentId)?.turnId !== turnId) {
+      return false;
+    }
+    this.stateByAgentId.delete(agentId);
+    return true;
+  }
+
   getState(agentId: string): Readonly<ManagerTurnState> | undefined {
     return this.stateByAgentId.get(agentId);
   }

@@ -147,6 +147,7 @@ function baseLifecycleOptions(
     allocateRuntimeToken: overrides.allocateRuntimeToken ?? vi.fn(() => 1),
     clearRuntimeToken: overrides.clearRuntimeToken ?? vi.fn(),
     getRuntimeToken: overrides.getRuntimeToken ?? vi.fn(() => 1),
+    getActiveTurnId: overrides.getActiveTurnId ?? vi.fn(() => "manager:turn-1"),
     hasSecureRuntimeBinding:
       overrides.hasSecureRuntimeBinding ?? vi.fn(() => false),
     isSecureRuntimeBindingUsable:
@@ -189,6 +190,8 @@ function baseLifecycleOptions(
         return true;
       }),
     clearAgentTurnState: overrides.clearAgentTurnState ?? vi.fn(),
+    reconcileStoppedManagerRuntime:
+      overrides.reconcileStoppedManagerRuntime ?? vi.fn(async () => true),
     detachRuntimeIfMatches:
       overrides.detachRuntimeIfMatches ??
       vi.fn((agentId: string, expectedRuntime: SwarmAgentRuntime) => {
@@ -1702,6 +1705,7 @@ describe("SwarmAgentLifecycleService", () => {
     const markPendingManualManagerStopNotice = vi.fn();
     const allowInvalidatedManualStopMessageEnd = vi.fn();
     const emitImmediateManualManagerStopNotice = vi.fn();
+    const reconcileStoppedManagerRuntime = vi.fn(async () => true);
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
@@ -1710,7 +1714,9 @@ describe("SwarmAgentLifecycleService", () => {
         getWorkersForManager: vi.fn(() => [worker]),
         markPendingManualManagerStopNotice,
         allowInvalidatedManualStopMessageEnd,
-        emitImmediateManualManagerStopNotice
+        emitImmediateManualManagerStopNotice,
+        getActiveTurnId: vi.fn(() => "m-idle-stop-workers:9"),
+        reconcileStoppedManagerRuntime,
       })
     );
 
@@ -1720,6 +1726,10 @@ describe("SwarmAgentLifecycleService", () => {
     expect(allowInvalidatedManualStopMessageEnd).not.toHaveBeenCalled();
     expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
     expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(manager.agentId);
+    expect(reconcileStoppedManagerRuntime).toHaveBeenCalledWith({
+      agentId: manager.agentId,
+      turnId: "m-idle-stop-workers:9",
+    });
   });
 
   it("stopSession surfaces restart guidance when manager shutdown times out", async () => {
@@ -1735,11 +1745,13 @@ describe("SwarmAgentLifecycleService", () => {
       getStatus: () => "streaming",
     });
     const emitImmediateManualManagerStopNotice = vi.fn();
+    const reconcileStoppedManagerRuntime = vi.fn(async () => true);
     const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
       descriptors: new Map([[manager.agentId, manager]]),
       runtimes: new Map([[manager.agentId, managerRuntime]]),
       runRuntimeShutdown: vi.fn(async () => ({ timedOut: true, runtimeToken: 17 })),
       emitImmediateManualManagerStopNotice,
+      reconcileStoppedManagerRuntime,
     }));
 
     await svc.stopSession(manager.agentId);
@@ -1748,6 +1760,7 @@ describe("SwarmAgentLifecycleService", () => {
       manager.agentId,
       MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
     );
+    expect(reconcileStoppedManagerRuntime).not.toHaveBeenCalled();
   });
 
   it("stopAllAgents marks a timed-out worker unusable and surfaces restart guidance", async () => {

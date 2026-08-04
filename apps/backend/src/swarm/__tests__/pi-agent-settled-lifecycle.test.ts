@@ -173,6 +173,60 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(reportSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("carries a retained clean final on the single settlement event when message_end was missed", async () => {
+    const { runtime, onSessionEvent } = makeRuntime();
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "Recovered terminal answer." }],
+      stopReason: "stop",
+    };
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [finalMessage],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: finalMessage,
+    });
+    expect(onSessionEvent.mock.calls.filter(([, event]) => event.type === "agent_end")).toHaveLength(1);
+  });
+
+  it("retains intentional silence but excludes tool-use and error messages from settlement finals", async () => {
+    const noReply = makeRuntime();
+    await (noReply.runtime as any).handleEvent({ type: "agent_start" });
+    await (noReply.runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: "NO_REPLY", stopReason: "stop" }],
+    });
+    await (noReply.runtime as any).handleEvent({ type: "agent_settled" });
+    expect(noReply.onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: { role: "assistant", content: "NO_REPLY", stopReason: "stop" },
+    });
+
+    for (const message of [
+      { role: "assistant", content: [{ type: "toolCall", name: "bash" }], stopReason: "toolUse" },
+      { role: "assistant", content: "provider failed", stopReason: "error" },
+    ]) {
+      const candidate = makeRuntime();
+      await (candidate.runtime as any).handleEvent({ type: "agent_start" });
+      await (candidate.runtime as any).handleEvent({
+        type: "agent_end",
+        willRetry: false,
+        messages: [message],
+      });
+      await (candidate.runtime as any).handleEvent({ type: "agent_settled" });
+      expect(candidate.onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
+    }
+  });
+
   it("queued continuation with willRetry:false still waits for a single settlement", async () => {
     const { runtime, onAgentEnd, onSessionEvent, reportSuccess } = makeRuntime();
 

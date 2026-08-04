@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentDescriptor, AgentToolCallEvent, ConversationEntryEvent } from "../types.js";
 import { ConversationTimeline, CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
-import { reconcileInterruptedToolCallsForBoot } from "../interrupted-tool-reconciliation.js";
+import {
+  reconcileInterruptedManagerToolCalls,
+  reconcileInterruptedToolCallsForBoot,
+} from "../interrupted-tool-reconciliation.js";
 import { shouldPersistConversationEntry } from "../session/history-policy.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
@@ -363,5 +366,34 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
     expect(warning?.type).toBe("conversation_message");
     expect(warning?.type === "conversation_message" ? warning.text : "").toContain("Delivery to manager-large may not have completed");
     expect(warning?.type === "conversation_message" ? warning.text : "").toContain("Leading preview survives");
+  });
+});
+
+describe("reconcileInterruptedManagerToolCalls", () => {
+  it("closes only manager-owned unmatched tools live and is idempotent", async () => {
+    const { manager, append } = await createFixture();
+    append(tool({ actorAgentId: manager.agentId, toolCallId: "manager-open" }));
+    append(tool({ actorAgentId: "worker", toolCallId: "worker-open" }));
+    const emitted: AgentToolCallEvent[] = [];
+    const run = () => reconcileInterruptedManagerToolCalls({
+      descriptor: manager,
+      now: () => NOW,
+      emitAgentToolCall: (event) => {
+        emitted.push(event);
+        append(event);
+      },
+      emitConversationMessage: append,
+    });
+
+    expect(run()).toEqual({ reconciledToolCalls: 1, deliveryWarnings: 0 });
+    expect(run()).toEqual({ reconciledToolCalls: 0, deliveryWarnings: 0 });
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        actorAgentId: manager.agentId,
+        kind: "tool_execution_end",
+        toolCallId: "manager-open",
+        isError: true,
+      }),
+    ]);
   });
 });

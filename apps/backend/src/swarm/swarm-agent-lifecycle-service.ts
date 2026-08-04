@@ -212,6 +212,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   allocateRuntimeToken: (agentId: string) => number;
   clearRuntimeToken: (agentId: string, runtimeToken?: number) => void;
   getRuntimeToken: (agentId: string) => number | undefined;
+  getActiveTurnId: (agentId: string, runtimeToken?: number) => string | undefined;
   isSecureRuntimeBindingUsable(
     agentId: string,
     runtime: SwarmAgentRuntime,
@@ -270,6 +271,10 @@ export interface SwarmAgentLifecycleServiceOptions {
   assertRuntimeCreationAllowed: (agentId: string) => void;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
   clearAgentTurnState: (agentId: string) => void;
+  reconcileStoppedManagerRuntime: (input: {
+    agentId: string;
+    turnId?: string;
+  }) => Promise<boolean>;
   detachRuntimeIfMatches: (
     agentId: string,
     expectedRuntime: SwarmAgentRuntime,
@@ -413,15 +418,17 @@ export class SwarmAgentLifecycleService {
   ): {
     runtime?: SwarmAgentRuntime;
     runtimeToken?: number;
+    turnId?: string;
   } {
     this.options.prepareRuntimeShutdown(agentId);
     const runtime = this.options.runtimes.get(agentId);
     const runtimeToken = this.options.getRuntimeToken(agentId);
+    const turnId = this.options.getActiveTurnId(agentId, runtimeToken);
     if (options?.allowManualStopMessageEnd) {
       this.options.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
     }
     this.options.clearRuntimeToken(agentId);
-    return { runtime, runtimeToken };
+    return { runtime, runtimeToken, turnId };
   }
 
   private async shutdownLatestManagerRuntime(
@@ -1348,6 +1355,13 @@ export class SwarmAgentLifecycleService {
       managerStopped = true;
     }
 
+    if (!managerShutdownTimedOut) {
+      await this.options.reconcileStoppedManagerRuntime({
+        agentId: target.agentId,
+        turnId: invalidatedManagerRuntime.turnId,
+      });
+    }
+
     if (
       !shouldAllowManualStopMessageEnd &&
       !managerShutdownTimedOut &&
@@ -1920,6 +1934,13 @@ export class SwarmAgentLifecycleService {
       invalidatedManagerRuntime,
     );
     this.clearPendingManagerRuntimeRecycle(agentId);
+
+    if (!managerShutdownTimedOut) {
+      await this.options.reconcileStoppedManagerRuntime({
+        agentId,
+        turnId: invalidatedManagerRuntime.turnId,
+      });
+    }
 
     if (managerShutdownTimedOut) {
       unsafeShutdownAgentIds.push(agentId);

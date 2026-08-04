@@ -164,6 +164,8 @@ export class RuntimeEventProjector {
    * emitted once per attempt; consecutive duplicates are collapsed to one.
    */
   private readonly lastEmittedSilentNoticeTextByAgentId = new Map<string, string>();
+  /** Last ordinary clean final, used only to dedupe Pi's settlement fallback. */
+  private readonly lastProjectedCleanFinalByAgentId = new Map<string, string>();
 
   constructor(private readonly deps: RuntimeEventProjectorDeps) {
     this.managerAssistantOutputTracker = new ManagerAssistantOutputTracker({
@@ -199,6 +201,10 @@ export class RuntimeEventProjector {
     target: AssistantOutputTarget,
     options?: { turnId?: string; beginUserVisibleObligation?: boolean },
   ): void {
+    // Every server-owned target activation begins a new output obligation.
+    // The settlement fallback does not reactivate the target, so the marker
+    // remains set between normal message_end and terminal agent_end only.
+    this.lastProjectedCleanFinalByAgentId.delete(agentId);
     // A silence grant belongs only to the callback/output obligation that
     // produced it. Pi can steer a fresh direct-web user message into the same
     // provider run, without another agent_start, so reset the grant when that
@@ -302,6 +308,7 @@ export class RuntimeEventProjector {
     const descriptor = this.deps.descriptors.get(agentId);
     if (descriptor?.role === "manager" && event.type === "agent_start") {
       this.intentionalSilenceManagerAgentIds.delete(agentId);
+      this.lastProjectedCleanFinalByAgentId.delete(agentId);
     }
     if (descriptor?.role === "worker" && !transientTerminatedExpired && isPositiveWorkerRuntimeProgressEvent(event)) {
       this.deps.cancelPendingTransientWorkerTerminatedError(agentId, "runtime_progress");
@@ -407,7 +414,13 @@ export class RuntimeEventProjector {
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
       this.maybeAcceptIntentionalManagerSilence(agentId, descriptor, effectiveEvent);
-      this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent, activeTurnId);
+      this.maybeProjectCleanManagerAssistantFinalMessage(
+        agentId,
+        descriptor,
+        effectiveEvent,
+        activeTurnId,
+        activeAssistantTarget,
+      );
       // Presenting choices IS a visible response: the user sees an
       // interactive prompt even though no assistant text is emitted, so it
       // must suppress the silent-turn notice for this run.
@@ -462,7 +475,7 @@ export class RuntimeEventProjector {
   ): void {
     if (
       descriptor?.role !== "manager" ||
-      !hasNoReplySentinelLineManagerAssistantFinalMessage(effectiveEvent)
+      !hasNoReplySentinelLineManagerAssistantFinalMessage(asManagerFinalMessageEnd(effectiveEvent))
     ) {
       return;
     }
@@ -489,28 +502,36 @@ export class RuntimeEventProjector {
     agentId: string,
     descriptor: AgentDescriptor | undefined,
     effectiveEvent: RuntimeSessionEvent,
-    turnId?: string
+    turnId?: string,
+    activeTarget?: AssistantOutputTarget,
   ): void {
     if (!descriptor || descriptor.role !== "manager") {
       return;
     }
 
-    const finalMessage = extractCleanManagerAssistantFinalMessage(effectiveEvent);
+    const finalMessage = extractCleanManagerAssistantFinalMessage(asManagerFinalMessageEnd(effectiveEvent));
     if (!finalMessage) {
+      return;
+    }
+    const isSettlementFallback = effectiveEvent.type === "agent_end";
+    if (
+      isSettlementFallback &&
+      this.lastProjectedCleanFinalByAgentId.get(agentId) === finalMessage.text
+    ) {
       return;
     }
 
     const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(
       agentId,
       descriptor,
-      this.managerAssistantOutputTracker.getActiveTarget(agentId)
+      activeTarget ?? this.managerAssistantOutputTracker.getActiveTarget(agentId)
     );
     const target = route
       ? route.target
       : this.deps.resolveManagerAssistantFinalOutputTarget(
           agentId,
           descriptor,
-          this.managerAssistantOutputTracker.getActiveTarget(agentId)
+          activeTarget ?? this.managerAssistantOutputTracker.getActiveTarget(agentId)
         );
     const timestamp = this.deps.now();
     const decision = route?.decision;
@@ -523,6 +544,7 @@ export class RuntimeEventProjector {
           ...(turnId ? { turnId } : {}),
         }));
       }
+      this.lastProjectedCleanFinalByAgentId.set(agentId, finalMessage.text);
       return;
     }
 
@@ -550,6 +572,7 @@ export class RuntimeEventProjector {
     } else {
       this.deps.conversationProjector.emitConversationMessage(outputEvent);
     }
+    this.lastProjectedCleanFinalByAgentId.set(agentId, finalMessage.text);
     this.deps.markSessionActivity(agentId, timestamp);
   }
 
@@ -947,6 +970,12 @@ export class RuntimeEventProjector {
       agentId
     });
   }
+}
+
+function asManagerFinalMessageEnd(event: RuntimeSessionEvent): RuntimeSessionEvent {
+  return event.type === "agent_end" && event.settledAssistantMessage
+    ? { type: "message_end", message: event.settledAssistantMessage }
+    : event;
 }
 
 function isIntendedWorkerShutdownStatus(status: AgentDescriptor["status"]): boolean {
