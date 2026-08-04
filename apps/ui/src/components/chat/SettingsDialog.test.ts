@@ -10,6 +10,7 @@ let capturedActiveTab: SettingsTab | undefined
 let capturedContentWidthClassName: string | undefined
 let capturedGeneralProps: Record<string, unknown> | undefined
 let capturedSecretsProps: Record<string, unknown> | undefined
+let capturedProjectSettingsProps: Record<string, unknown> | undefined
 
 vi.mock('@/components/settings/SettingsLayout', () => ({
   SettingsLayout: (props: { activeTab: SettingsTab; onTabChange: (tab: SettingsTab) => void; contentWidthClassName?: string; children: React.ReactNode }) => {
@@ -39,6 +40,13 @@ vi.mock('@/components/settings/SettingsSecrets', () => ({
   },
 }))
 vi.mock('@/components/settings/SettingsModels', () => ({ SettingsModels: () => createElement('div', null, 'Models') }))
+vi.mock('@/components/settings/SettingsProjectResources', () => ({ SettingsProjectResources: () => createElement('div', null, 'Repository resources') }))
+vi.mock('@/components/settings/SettingsProjectSettings', () => ({
+  SettingsProjectSettings: (props: Record<string, unknown>) => {
+    capturedProjectSettingsProps = props
+    return createElement('div', null, 'Project Settings')
+  },
+}))
 vi.mock('@/components/settings/SettingsSkills', () => ({ SettingsSkills: () => createElement('div', null, 'Skills') }))
 vi.mock('@/components/settings/SettingsPrompts', () => ({ SettingsPrompts: () => createElement('div', null, 'Prompts') }))
 vi.mock('@/components/settings/SettingsSpecialists', () => ({ SettingsSpecialists: () => createElement('div', null, 'Specialists') }))
@@ -87,6 +95,7 @@ beforeEach(() => {
   capturedContentWidthClassName = undefined
   capturedGeneralProps = undefined
   capturedSecretsProps = undefined
+  capturedProjectSettingsProps = undefined
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -105,11 +114,13 @@ function makeProps(overrides: {
   repositoryCloneAvailable?: boolean
   contextProfileId?: string
   previewSession?: { agentId: string; profileId: string } | null
+  profiles?: any[]
+  managers?: any[]
 }) {
   return {
     wsUrl: 'ws://localhost:47187',
-    managers: [] as any[],
-    profiles: [] as any[],
+    managers: overrides.managers ?? [],
+    profiles: overrides.profiles ?? [],
     promptChangeKey: 0,
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
@@ -129,6 +140,8 @@ function renderPanel(props: {
   repositoryCloneAvailable?: boolean
   contextProfileId?: string
   previewSession?: { agentId: string; profileId: string } | null
+  profiles?: any[]
+  managers?: any[]
 }) {
   act(() => {
     root = createRoot(container)
@@ -142,6 +155,8 @@ function rerenderPanel(props: {
   repositoryCloneAvailable?: boolean
   contextProfileId?: string
   previewSession?: { agentId: string; profileId: string } | null
+  profiles?: any[]
+  managers?: any[]
 }) {
   act(() => {
     root?.render(createElement(SettingsPanel, makeProps(props)))
@@ -172,6 +187,25 @@ describe('SettingsPanel initialTab', () => {
 
     expect(capturedActiveTab).toBe('secrets')
     expect(capturedSecretsProps?.currentProfileId).toBe('project-beta')
+  })
+
+  it('renders the project settings surface for the route-selected project', () => {
+    renderPanel({
+      initialTab: 'project-settings',
+      contextProfileId: 'project-beta',
+      previewSession: { agentId: 'session-alpha', profileId: 'project-alpha' },
+      profiles: [{
+        profileId: 'project-beta',
+        displayName: 'Project Beta',
+        defaultSessionAgentId: 'session-beta',
+        defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'high' },
+      }],
+      managers: [{ agentId: 'session-beta', profileId: 'project-beta', role: 'manager', cwd: '/project-beta' }],
+    })
+
+    expect(capturedActiveTab).toBe('project-settings')
+    expect((capturedProjectSettingsProps?.profile as { profileId: string }).profileId).toBe('project-beta')
+    expect((capturedProjectSettingsProps?.manager as { agentId: string }).agentId).toBe('session-beta')
   })
 
   it('uses a wider content width for the appearance tab', () => {

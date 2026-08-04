@@ -22,15 +22,18 @@ import { useRepoProjectAgentActivation } from './repo-project-agent-ui-utils'
 interface SettingsProjectResourcesProps {
   managers: AgentDescriptor[]
   previewSession?: { agentId: string; profileId: string } | null
+  /** Explicit project scope takes precedence over the sticky session preview. */
+  projectContext?: { profileId: string; sessionAgentId: string } | null
   apiClient: SettingsApiClient
 }
 
-export function SettingsProjectResources({ managers, previewSession, apiClient }: SettingsProjectResourcesProps) {
+export function SettingsProjectResources({ managers, previewSession, projectContext, apiClient }: SettingsProjectResourcesProps) {
   const context = useMemo(() => {
+    if (projectContext) return projectContext
     if (previewSession) return { profileId: previewSession.profileId, sessionAgentId: previewSession.agentId }
     const manager = managers.find((entry) => entry.role === 'manager')
     return manager ? { profileId: manager.profileId ?? manager.agentId, sessionAgentId: manager.agentId } : null
-  }, [managers, previewSession])
+  }, [managers, previewSession, projectContext])
   const [snapshot, setSnapshot] = useState<ProjectResourcesSnapshotResponse | null>(null)
   const [overridePath, setOverridePath] = useState('')
   const [loading, setLoading] = useState(false)

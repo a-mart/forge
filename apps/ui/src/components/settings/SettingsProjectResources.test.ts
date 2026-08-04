@@ -85,6 +85,29 @@ function renderComponent(snapshotOverrides: Record<string, unknown> = {}) {
 }
 
 describe('SettingsProjectResources', () => {
+  it('uses the explicit project context instead of the sticky session preview', async () => {
+    projectResourcesApiMock.fetchProjectResourcesSnapshot.mockResolvedValue(makeBaseSnapshot({
+      profileId: 'project-beta',
+      sessionAgentId: 'session-beta',
+    }))
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SettingsProjectResources, {
+        managers: [{ agentId: 'session-alpha', profileId: 'project-alpha', role: 'manager' } as never],
+        previewSession: { agentId: 'session-alpha', profileId: 'project-alpha' },
+        projectContext: { profileId: 'project-beta', sessionAgentId: 'session-beta' },
+        apiClient: { fetchJson: vi.fn() } as unknown as SettingsApiClient,
+      }))
+    })
+    await flushPromises()
+
+    expect(projectResourcesApiMock.fetchProjectResourcesSnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      { profileId: 'project-beta', sessionAgentId: 'session-beta' },
+    )
+  })
+
   it('renders degraded repository warnings prominently', async () => {
     projectResourcesApiMock.fetchProjectResourcesSnapshot.mockResolvedValue({
       generatedAt: '2026-05-19T00:00:00.000Z',

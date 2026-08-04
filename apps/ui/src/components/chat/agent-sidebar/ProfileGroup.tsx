@@ -5,16 +5,19 @@ import {
   ChevronDown,
   ChevronUp,
   Edit3,
+  Ellipsis,
   FolderOpen,
   Plus,
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Settings2,
   Terminal,
   Trash2,
 } from 'lucide-react'
 import React from 'react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isCortexProfile } from '@/lib/agent-hierarchy'
 import type { SessionRow } from '@/lib/agent-hierarchy'
@@ -44,6 +47,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   onSelect,
   onDeleteAgent,
   onDeleteManager,
+  onOpenProjectSettings,
   onOpenProjectSecrets,
   onCreateSession,
   onStopSession,
@@ -110,7 +114,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
       {/* Profile header — row click expands/collapses; no dedicated chevron */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
+          <div className="group relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
             <TooltipProvider delayDuration={400}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -150,6 +154,31 @@ export const ProfileGroup = React.memo(function ProfileGroup({
               </Tooltip>
             </TooltipProvider>
 
+            {onOpenProjectSettings && !isCortexProfile(treeRow) ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'mr-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition',
+                      'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100',
+                      'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    )}
+                    aria-label={`Project actions for ${profile.displayName}`}
+                  >
+                    <Ellipsis className="size-3.5" aria-hidden="true" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => onOpenProjectSettings(profile.profileId)}>
+                    <Settings2 className="size-3.5" />
+                    Project Settings
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+
             {/* Inline "new session" button on profile header */}
             {onCreateSession ? (
               <TooltipProvider delayDuration={300}>
@@ -181,6 +210,12 @@ export const ProfileGroup = React.memo(function ProfileGroup({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          {onOpenProjectSettings && !isCortexProfile(treeRow) ? (
+            <ContextMenuItem onClick={() => onOpenProjectSettings(profile.profileId)}>
+              <Settings2 className="mr-2 size-3.5" />
+              Project Settings
+            </ContextMenuItem>
+          ) : null}
           {onCreateSession ? (
             <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
               <Plus className="mr-2 size-3.5" />

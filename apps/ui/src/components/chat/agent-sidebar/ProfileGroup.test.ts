@@ -159,6 +159,33 @@ describe('ProfileGroup project row expand/collapse', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  it('offers project settings from both the context menu and hover/focus ellipsis menu', async () => {
+    const onOpenProjectSettings = vi.fn()
+    const onSelect = vi.fn()
+    renderGroup({ onOpenProjectSettings, onSelect })
+
+    fireEvent.contextMenu(projectHeaderButton())
+    const contextItem = await waitFor(() => getByText(document.body, 'Project Settings'))
+    fireEvent.click(contextItem)
+    expect(onOpenProjectSettings).toHaveBeenCalledWith('project-alpha')
+    expect(onSelect).not.toHaveBeenCalled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    const ellipsis = container.querySelector('[aria-label="Project actions for Project Alpha"]') as HTMLButtonElement
+    expect(ellipsis).toBeTruthy()
+    expect(ellipsis.className).toContain('group-hover:opacity-100')
+    fireEvent.pointerDown(ellipsis, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+    const dropdown = await waitFor(() => {
+      const content = document.body.querySelector('[data-slot="dropdown-menu-content"]')
+      expect(content).toBeTruthy()
+      return content as HTMLElement
+    })
+    fireEvent.click(getByText(dropdown, 'Project Settings'))
+
+    expect(onOpenProjectSettings).toHaveBeenLastCalledWith('project-alpha')
+    expect(onOpenProjectSettings).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps session worker expand controls', () => {
     const onToggleSessionCollapsed = vi.fn()
     renderGroup({ onToggleSessionCollapsed })
