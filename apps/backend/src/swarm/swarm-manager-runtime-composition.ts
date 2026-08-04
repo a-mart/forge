@@ -247,6 +247,8 @@ export interface SwarmManagerRuntimeCompositionOptions {
     previousStatus: AgentStatus;
     nextStatus: AgentStatus;
   }) => Promise<void>;
+  /** Retires session attention when a session becomes ineligible. */
+  reportAttentionSessionRetired: (sessionAgentId: string) => Promise<void>;
   secureSessions: SecureSessionCoordinatorPort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
@@ -867,6 +869,8 @@ export class SwarmManagerRuntimeComposition {
       activeTools: {
         clearSession: (agentId) => { events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)); events.clearManagerToolActivity(agentId); },
       },
+      reportAttentionSessionRetired: (sessionAgentId) =>
+        this.options.reportAttentionSessionRetired(sessionAgentId),
       browser: this.options.browserAutomation,
       secureSessions: this.options.secureSessions,
       events,

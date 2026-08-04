@@ -449,7 +449,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       emitChoiceRequest: (event) => this.eventCoordinator.emitChoiceRequest(event),
       emitAgentsSnapshot: () => {
         this.eventCoordinator.emitAgentsSnapshot();
-      }
+      },
+      // Lazy: the reporter is composed just below, once turnContext exists.
+      reportAttentionAggregateChange: (sessionAgentId) =>
+        this.sessionAttentionReporter?.reportAggregateChange(sessionAgentId),
     });
     const completedRuntime = runtimeComposition.complete(
       {
@@ -621,6 +624,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       reportAttentionStatusTransition: async (input) => {
         await this.sessionAttentionReporter?.reportStatusTransition(input);
       },
+      reportAttentionSessionRetired: async (sessionAgentId) => {
+        await this.sessionAttentionReporter?.reportSessionRetired(sessionAgentId);
+      },
       state: {
         config: this.config,
         descriptors: this.descriptors,
@@ -641,8 +647,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       descriptors: {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
-        deleteDescriptor: (agentId) =>
-          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId),
+        deleteDescriptor: (agentId) => this.deleteDescriptorWithAttention(agentId),
         upsertProfile: (profile) =>
           this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
         deleteProfile: (profileId) =>
@@ -853,6 +858,29 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       now: this.now,
     });
   }
+  /**
+   * Single choke point for descriptor removal so attention cannot go stale.
+   * Removing a streaming worker changes the owning session's aggregate, and
+   * removing the manager itself must retire the session's attention entirely.
+   * The owning session is captured BEFORE deletion because the descriptor is
+   * gone afterwards.
+   */
+  private deleteDescriptorWithAttention(agentId: string): boolean {
+    const descriptor = this.descriptors.get(agentId);
+    const owningSessionAgentId = descriptor?.role === "worker" ? descriptor.managerId : undefined;
+    const removedManager = descriptor?.role === "manager" ? descriptor.agentId : undefined;
+
+    const deleted = this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
+    if (!deleted) return deleted;
+
+    if (removedManager) {
+      void this.sessionAttentionReporter?.reportSessionRetired(removedManager);
+    } else if (owningSessionAgentId) {
+      void this.sessionAttentionReporter?.reportAggregateChange(owningSessionAgentId);
+    }
+    return deleted;
+  }
+
   private createAgentDirectory(): AgentDirectory {
     return new AgentDirectory({
       descriptors: this.descriptors,
@@ -1027,8 +1055,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         descriptorMutations: {
           upsertDescriptor: (descriptor) =>
             this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
-          deleteDescriptor: (agentId) =>
-            this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId),
+          deleteDescriptor: (agentId) => this.deleteDescriptorWithAttention(agentId),
           upsertProfile: (profile) =>
             this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
           deleteProfile: (profileId) =>

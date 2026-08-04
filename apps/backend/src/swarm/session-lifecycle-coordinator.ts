@@ -137,6 +137,8 @@ export interface SessionLifecycleCoordinatorOptions {
   activeTools: {
     clearSession(agentId: string): void;
   };
+  /** Retires session attention when a session becomes ineligible (archive). */
+  reportAttentionSessionRetired?: (sessionAgentId: string) => void | Promise<void>;
   browser: Pick<
     BrowserAutomationService,
     | "cancelSession"
@@ -328,6 +330,9 @@ export class SessionLifecycleCoordinator {
         const result = await this.options.archive.archiveSession(agentId);
         await this.options.browser.archiveSession(descriptor.profileId, agentId);
         this.options.activeTools.clearSession(agentId);
+        // Archiving makes the session ineligible, so retire any attention it
+        // owns rather than leaving a row pointing at an archived room.
+        await this.options.reportAttentionSessionRetired?.(agentId);
         this.options.events.emitAgentsSnapshot();
         return result;
       },
