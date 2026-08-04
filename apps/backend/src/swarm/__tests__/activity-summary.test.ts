@@ -14,9 +14,9 @@ function toolEnd(toolName: string, isError = false) {
 }
 
 describe("buildActivitySummary", () => {
-  it("distinguishes host and secure Bash activity", () => {
+  it("distinguishes explicit secure Bash from replay-compatible Bash activity", () => {
     expect(buildActivitySummary(toolEnd("bash"))?.displaySummary).toBe(
-      "Ran host command",
+      "Ran command",
     );
     expect(buildActivitySummary(toolEnd("secure_bash"))?.displaySummary).toBe(
       "Ran secure command",

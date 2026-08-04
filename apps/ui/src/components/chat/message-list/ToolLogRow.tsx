@@ -33,10 +33,12 @@ type ToolConfig = {
 
 const TOOL_CONFIG: Record<string, ToolConfig> = {
   bash: {
-    label: 'Ran host command',
-    activeLabel: 'Running host command',
-    cancelledLabel: 'Host command cancelled',
-    errorLabel: 'Host command failed',
+    // Keep the generic name neutral for replay compatibility: before
+    // `secure_bash` existed, secure-container calls were persisted as `bash`.
+    label: 'Ran command',
+    activeLabel: 'Running command',
+    cancelledLabel: 'Command cancelled',
+    errorLabel: 'Command failed',
     icon: Terminal,
     getDetail: (input) => {
       const command = pickString(input, ['description', 'command'])

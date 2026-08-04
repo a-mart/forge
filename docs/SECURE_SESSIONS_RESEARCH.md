@@ -10,17 +10,22 @@ repositories, and a privacy-preserving aggregate scan of real Forge sessions.
 ## Executive decision
 
 Forge should own a provider-neutral secret, lease, audit, redaction, and execution
-contract. The first implementation should use one persistent task sandbox beneath
-normal Forge coding tools, with protocol-specific credential brokers added over time.
+contract. The first implementation should expose one persistent task sandbox through
+an explicit `secure_bash` tool alongside normal host coding tools, with
+protocol-specific credential brokers added over time.
 
 This structure preserves the interaction that matters:
 
 ```text
-agent sends normal Bash or file-tool request
+agent sends a secure_bash request
   -> Forge checks a task/timed/one-use lease
   -> trusted host resolves local-vault or Bitwarden material
   -> task execution backend delivers it after the model boundary
   -> Forge filters output before runtime/provider/history/UI consumers
+
+agent sends normal host Bash or file-tool request
+  -> Forge does not inject or consume a lease
+  -> Forge still filters output/results before runtime/provider/history/UI consumers
 ```
 
 It avoids three designs that do not meet the product need:
@@ -109,10 +114,12 @@ Forge should keep these tiers explicit.
 | Model-hidden execution | Yes, in the selected child | Sandbox lifecycle plus pre-observation filtering | General Bash, SSH askpass, databases, files, arbitrary CLIs |
 | Broker-only operation | No | Host proxy/signer performs a constrained operation | Supported HTTP, signing, SSH, cloud, or database profiles |
 
-The current implementation is the second tier. It prevents accidental model/provider
-and durable-history disclosure on supported paths, while containing processes in a
-task-owned environment. It does not claim that malicious code cannot use or transform
-a value it legitimately receives.
+The current `secure_bash` implementation is the second tier. It prevents accidental
+model/provider and durable-history disclosure on supported paths, while containing
+secret-receiving processes in a task-owned environment. Normal `bash` remains on the
+host for ordinary authenticated developer tooling and receives no approved values. It
+does not claim that malicious code cannot use or transform a value it legitimately
+receives, or that an agent with the host user's authority is sandboxed.
 
 Broker-only is stronger but cannot replace general execution. It should be added for
 high-value protocols where a stable operation boundary exists.
@@ -280,8 +287,9 @@ gates are:
    inspect metadata, host logs, temp files, JSONL, WebSocket events, replay,
    extensions, observability, UI state, or provider-spy requests.
 2. Raw and supported encoded reflections are sanitized across every chunk boundary.
-3. Sixteen protected and unprotected commands reuse one task sandbox without repeated
-   secret entry.
+3. Sixteen protected `secure_bash` commands reuse one task sandbox without repeated
+   secret entry, while interleaved normal `bash` commands remain host-side and consume
+   no lease.
 4. Environment, stdin, protected file, askpass, real SSH, HTTP reflection, database
    client shape, cancellation, timeout, background descendants, revoke, and restart
    paths are exercised.

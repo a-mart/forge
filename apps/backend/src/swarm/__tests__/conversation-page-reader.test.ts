@@ -325,7 +325,7 @@ describe("readConversationHistoryPage", () => {
     expect(page.messages).toMatchObject([{
       type: "activity_summary",
       itemId: "tool:manager:tool-1",
-      displaySummary: "Ran host command",
+      displaySummary: "Ran command",
     }]);
     expect(JSON.stringify(page.messages)).not.toContain("SECRET RAW OUTPUT");
   });
@@ -351,7 +351,7 @@ describe("readConversationHistoryPage", () => {
     expect(page.messages).toMatchObject([{
       type: "activity_summary",
       status: "failed",
-      displaySummary: "Host command failed",
+      displaySummary: "Command failed",
       isError: true,
     }]);
   });

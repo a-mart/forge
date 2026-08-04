@@ -48,7 +48,9 @@ function summarizeToolActivity(
     return outcome ? `Secure command ${outcome}` : "Ran secure command";
   }
   if (normalized.includes("exec") || normalized.includes("command") || normalized === "bash" || normalized === "shell") {
-    return outcome ? `Host command ${outcome}` : "Ran host command";
+    // Older Secure Sessions persisted container calls as `bash`, and generic
+    // exec/command tools do not necessarily run on the Builder host.
+    return outcome ? `Command ${outcome}` : "Ran command";
   }
   if (normalized.includes("read") || normalized.includes("view")) return outcome ? `File read ${outcome}` : "Read file";
   if (normalized.includes("search") || normalized.includes("find")) return outcome ? `Search ${outcome}` : "Searched";
