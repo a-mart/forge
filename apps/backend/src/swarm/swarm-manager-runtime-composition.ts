@@ -60,6 +60,7 @@ import { createWorkGraphModelRerouteRecorder, createWorkGraphResultRecorder, Wor
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
+  AgentStatus,
   AgentsStoreFile,
   ConversationAttachment,
   ConversationEntryEvent,
@@ -240,6 +241,12 @@ export interface SwarmManagerRuntimeCompositionOptions {
   };
   toolHost: SwarmToolHost;
   browserAutomation: BrowserAutomationService;
+  /** Reports committed status transitions to the session attention coordinator. */
+  reportAttentionStatusTransition: (input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+  }) => Promise<void>;
   secureSessions: SecureSessionCoordinatorPort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
@@ -485,6 +492,8 @@ export class SwarmManagerRuntimeComposition {
         this.requireServices().knowledge.refreshSessionMetaStatsBySessionId(sessionId, sessionFile),
       refreshSessionMetaStats: (descriptor, sessionFile) =>
         this.requireServices().knowledge.refreshSessionMetaStats(descriptor, sessionFile),
+      reportAttentionStatusTransition: (input) =>
+        this.options.reportAttentionStatusTransition(input),
       maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
         this.requireServices().configuration.maybeRecordModelCapacityBlock(agentId, descriptor, error),
       ...createRuntimeLifecycleControllerHostCallbacks(() => this.requireRuntimeLifecycle()),

@@ -548,8 +548,11 @@ export abstract class SwarmManagerFacade extends SwarmManagerInitialModelInputFa
 
   // Boot, recovery, and read services.
 
-  boot(): Promise<void> {
-    return this.services.boot.boot();
+  async boot(): Promise<void> {
+    await this.services.boot.boot();
+    // After ensureDirectories and inventory load, so restored armed epochs are
+    // reconciled before any producer can report a transition.
+    await this.services.sessionAttention.initialize();
   }
 
   getRestartRecoverySnapshot(): RestartRecoverySnapshot | null {

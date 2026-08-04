@@ -134,6 +134,12 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): Promise<void>;
   refreshSessionMetaStatsBySessionId(sessionAgentId: string, sessionFileOverride?: string): Promise<void>;
   refreshSessionMetaStats(descriptor: AgentDescriptor, sessionFileOverride?: string): Promise<void>;
+  /** Reports a committed status transition to the session attention coordinator. */
+  reportAttentionStatusTransition(input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+  }): Promise<void>;
   maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void;
   consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean;
   stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent;
@@ -757,7 +763,8 @@ export class SwarmRuntimeController {
           this.host.emitStatus(agentId, status, pendingCount, contextUsage),
         logDebug: (message, details) => this.logDebug(message, details),
         handleManagerStatusTransition: (descriptor, status, pendingCount) =>
-          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount)
+          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
+        reportAttentionStatusTransition: (input) => this.host.reportAttentionStatusTransition(input)
       });
     }
 

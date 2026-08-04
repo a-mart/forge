@@ -195,6 +195,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     updateSessionMetaForWorkerDescriptor: vi.fn(),
     refreshSessionMetaStatsBySessionId: vi.fn(),
     refreshSessionMetaStats: vi.fn(),
+    reportAttentionStatusTransition: vi.fn(async () => undefined),
     maybeRecordModelCapacityBlock: vi.fn(),
     consumePendingManualManagerStopNoticeIfApplicable,
     stripManagerAbortErrorFromEvent,

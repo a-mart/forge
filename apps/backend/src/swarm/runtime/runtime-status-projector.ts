@@ -34,6 +34,16 @@ export interface RuntimeStatusProjectorDeps {
     status: AgentStatus,
     pendingCount: number
   ): void | Promise<void>;
+  /**
+   * Reports a committed status transition to the attention coordinator. Called
+   * only after descriptor persistence, and only when the status actually
+   * changed, so a repeated idle projection cannot look like new work.
+   */
+  reportAttentionStatusTransition?(input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+  }): void | Promise<void>;
 }
 
 export interface RuntimeStatusProjectionInput {
@@ -113,6 +123,14 @@ export class RuntimeStatusProjector {
 
     if (shouldPersist) {
       await this.deps.saveStore();
+    }
+
+    if (statusChanged) {
+      await this.deps.reportAttentionStatusTransition?.({
+        agentId,
+        previousStatus,
+        nextStatus,
+      });
     }
 
     this.deps.emitStatus(agentId, status, pendingCount, updatedDescriptor.contextUsage);

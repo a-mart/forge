@@ -55,6 +55,10 @@ import { SwarmSessionMetaService } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService, type SkillMetadata } from "./skill-metadata-service.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
+import { SessionAttentionCoordinator } from "./session/session-attention-coordinator.js";
+import { isSessionAttentionEligible } from "./session/session-attention-eligibility.js";
+import { SessionAttentionReporter } from "./session/session-attention-reporter.js";
+import { SessionAttentionStore } from "./session/session-attention-store.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
 import {
   type ProjectExecutableTrustPlan
@@ -204,6 +208,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   >;
   private readonly lifecycleService: SwarmAgentLifecycleService;
   private readonly choiceService: SwarmChoiceService;
+  private readonly sessionAttentionCoordinator: SessionAttentionCoordinator;
+  private readonly sessionAttentionReporter: SessionAttentionReporter;
   private readonly sessionService: SwarmSessionService;
   private readonly archiveLastUsedHydrator: ArchiveLastUsedHydrator;
   private readonly archiveService: ArchiveService;
@@ -471,6 +477,32 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     );
     this.turnContextCoordinator = completedRuntime.turnContext;
+    // Composed after turnContext/choiceService exist: the reporter reads the
+    // committed aggregate from all three on every producer notification.
+    this.sessionAttentionCoordinator = new SessionAttentionCoordinator({
+      store: new SessionAttentionStore({ dataDir: this.config.paths.dataDir }),
+      isEligible: isSessionAttentionEligible,
+    });
+    this.sessionAttentionReporter = new SessionAttentionReporter({
+      coordinator: this.sessionAttentionCoordinator,
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      getProfile: (profileId) => this.profiles.get(profileId),
+      getActiveWorkerCount: (sessionAgentId) => {
+        let active = 0;
+        for (const descriptor of this.descriptors.values()) {
+          if (descriptor.role === "worker"
+            && descriptor.managerId === sessionAgentId
+            && descriptor.status === "streaming") {
+            active += 1;
+          }
+        }
+        return active;
+      },
+      getPendingChoiceCount: (sessionAgentId) =>
+        this.choiceService.getPendingChoiceIdsForSession(sessionAgentId).length,
+      getPendingTurnContextCount: (sessionAgentId) =>
+        this.turnContextCoordinator.getPendingContextCount(sessionAgentId),
+    });
     this.runtimeLifecycleCoordinator = completedRuntime.runtimeLifecycle;
     this.lifecycleService = completedRuntime.lifecycle;
     this.projectExecutableTrustCoordinator = completedRuntime.projectExecutableTrust;
@@ -492,6 +524,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       messages: this.agentMessageDispatcher,
       userMessages: this.userMessageCoordinator,
       boot: this.bootCoordinator,
+      sessionAttention: this.sessionAttentionCoordinator,
       recovery: this.restartRecoveryCoordinator,
       configuration: this.configurationCoordinator,
       registry: {
@@ -582,6 +615,12 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }
   private createRuntimeComposition(): ReturnType<typeof createSwarmManagerRuntimeComposition> {
     return createSwarmManagerRuntimeComposition({
+      // Composition runs before the reporter field is assigned, so this stays
+      // lazy and no-ops for any transition observed during construction. Such a
+      // transition is pre-boot inventory, which must never arm an epoch anyway.
+      reportAttentionStatusTransition: async (input) => {
+        await this.sessionAttentionReporter?.reportStatusTransition(input);
+      },
       state: {
         config: this.config,
         descriptors: this.descriptors,
