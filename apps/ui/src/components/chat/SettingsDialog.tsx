@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { SettingsLayout } from '@/components/settings/SettingsLayout'
 import type { SettingsTab } from '@/components/settings/settings-target'
 import type { SettingsBackendTarget } from '@/components/settings/settings-target'
@@ -15,6 +15,7 @@ import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
 import { SettingsProjectResources } from '@/components/settings/SettingsProjectResources'
+import { SettingsProjectSettings, type ProjectSettingsActions } from '@/components/settings/SettingsProjectSettings'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsExternalChrome } from '@/components/settings/SettingsExternalChrome'
@@ -47,6 +48,8 @@ interface SettingsPanelProps {
   } | null
   /** Exact project selected by contextual Settings navigation. */
   contextProfileId?: string
+  /** Builder-only handlers used by the project-scoped settings surface. */
+  projectSettingsActions?: ProjectSettingsActions
   /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
   /**
@@ -85,6 +88,7 @@ export function SettingsPanel({
   onBack,
   previewSession,
   contextProfileId,
+  projectSettingsActions,
   target: externalTarget,
   repositoryCloneAvailable,
   initialTab,
@@ -119,22 +123,50 @@ export function SettingsPanel({
   )
 
   const availableTabs = target.availableTabs
-  const targetLabel = target.label
+  const selectedProject = useMemo(
+    () => profiles.find((profile) => profile.profileId === contextProfileId),
+    [contextProfileId, profiles],
+  )
+  const selectedProjectManager = useMemo(() => {
+    if (!contextProfileId) return undefined
+    return managers.find((manager) =>
+      manager.role === 'manager'
+      && (
+        manager.agentId === selectedProject?.defaultSessionAgentId
+        || manager.profileId === contextProfileId
+        || manager.agentId === contextProfileId
+      ),
+    )
+  }, [contextProfileId, managers, selectedProject?.defaultSessionAgentId])
+  // Project settings are available only on the local Builder surface. A route
+  // carries the profile ID so the selected project stays stable even if the
+  // sticky conversation selection belongs to another project.
+  const projectSettingsRouteAvailable = target.kind === 'builder' && Boolean(contextProfileId)
+  const isProjectSettings = activeTab === 'project-settings' && projectSettingsRouteAvailable
+  const layoutAvailableTabs = isProjectSettings ? ['project-settings'] as SettingsTab[] : availableTabs
+  const targetLabel = isProjectSettings
+    ? `Project: ${selectedProject?.displayName ?? contextProfileId}`
+    : target.label
+
+  const isAvailableTab = useCallback((tab: SettingsTab) =>
+    tab === 'project-settings'
+      ? projectSettingsRouteAvailable
+      : availableTabs.includes(tab), [availableTabs, projectSettingsRouteAvailable])
 
   // Sync activeTab when initialTab prop changes while panel is already mounted
   // (e.g. deep-link navigation to Collaboration tab after sign-in recovery).
   useEffect(() => {
-    if (initialTab && availableTabs?.includes(initialTab as SettingsTab)) {
+    if (initialTab && isAvailableTab(initialTab as SettingsTab)) {
       setActiveTab(initialTab as SettingsTab)
     }
-  }, [initialTab, availableTabs])
+  }, [initialTab, isAvailableTab])
 
-  // Reset active tab when it becomes unavailable after target change
+  // Reset active tab when it becomes unavailable after target change.
   useEffect(() => {
-    if (availableTabs && !availableTabs.includes(activeTab)) {
+    if (!isAvailableTab(activeTab)) {
       setActiveTab(availableTabs[0] ?? 'general')
     }
-  }, [availableTabs, activeTab])
+  }, [activeTab, availableTabs, isAvailableTab])
 
   return (
     <SettingsLayout
@@ -143,8 +175,9 @@ export function SettingsPanel({
       onBack={onBack}
       contentWidthClassName={getSettingsContentWidthClassName(activeTab)}
       fillHeight={activeTab === 'skills'}
-      availableTabs={availableTabs}
+      availableTabs={layoutAvailableTabs}
       targetLabel={targetLabel}
+      title={isProjectSettings ? 'Project Settings' : 'Settings'}
     >
       {activeTab === 'general' && (
         <SettingsGeneral
@@ -199,6 +232,20 @@ export function SettingsPanel({
           modelConfigChangeKey={modelConfigChangeKey}
         />
       )}
+      {isProjectSettings && selectedProject ? (
+        <SettingsProjectSettings
+          wsUrl={wsUrl}
+          profile={selectedProject}
+          manager={selectedProjectManager}
+          apiClient={apiClient}
+          actions={projectSettingsActions}
+        />
+      ) : null}
+      {isProjectSettings && !selectedProject ? (
+        <div className="rounded-md border border-border bg-card/40 p-4 text-sm text-muted-foreground">
+          This project is no longer available.
+        </div>
+      ) : null}
       {activeTab === 'project-resources' && (
         <SettingsProjectResources managers={managers} previewSession={previewSession} apiClient={apiClient} />
       )}

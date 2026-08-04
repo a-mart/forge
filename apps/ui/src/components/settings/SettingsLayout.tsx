@@ -15,6 +15,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { id: 'project-settings', label: 'Project Settings', icon: <Settings className="size-4" /> },
   { id: 'general', label: 'General', icon: <Settings className="size-4" /> },
   { id: 'git-monitoring', label: 'Git monitoring', icon: <GitBranch className="size-4" /> },
   { id: 'appearance', label: 'Appearance', icon: <Palette className="size-4" /> },
@@ -46,6 +47,8 @@ interface SettingsLayoutProps {
   availableTabs?: SettingsTab[]
   /** Non-interactive target badge label (e.g. "Builder backend" or "Collab backend"). */
   targetLabel?: string
+  /** Header label. Defaults to the global Settings surface. */
+  title?: string
   /**
    * When true the content area becomes a flex column that fills remaining space
    * without its own scroll. Children are expected to manage their own scrolling.
@@ -54,7 +57,7 @@ interface SettingsLayoutProps {
   fillHeight?: boolean
 }
 
-export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName, availableTabs, targetLabel, fillHeight }: SettingsLayoutProps) {
+export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName, availableTabs, targetLabel, title = 'Settings', fillHeight }: SettingsLayoutProps) {
   const visibleItems = availableTabs
     ? NAV_ITEMS.filter((item) => availableTabs.includes(item.id))
     : NAV_ITEMS
@@ -75,7 +78,7 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children, conte
               <ArrowLeft className="size-4" />
             </Button>
           ) : null}
-          <h1 className="truncate text-sm font-semibold text-foreground">Settings</h1>
+          <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
           {targetLabel ? (
             <Badge variant="outline" className="shrink-0 text-[10px] font-normal text-muted-foreground">
               {targetLabel}

@@ -107,6 +107,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
+  onOpenProjectSettings,
   onOpenProjectSecrets,
   onOpenStats,
   onOpenArchive,
@@ -458,6 +459,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
 
+  const handleOpenProjectSettings = useCallback((profileId: string) => {
+    onOpenProjectSettings?.(profileId)
+    onMobileClose?.()
+  }, [onMobileClose, onOpenProjectSettings])
+
   const handleOpenProjectSecrets = useCallback((profileId: string) => {
     onOpenProjectSecrets?.(profileId)
     onMobileClose?.()
@@ -799,6 +805,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onDeleteAgent={onDeleteAgent}
       onDeleteManager={onDeleteManager}
       onOpenSettings={handleOpenSettings}
+      onOpenProjectSettings={onOpenProjectSettings ? handleOpenProjectSettings : undefined}
       onOpenProjectSecrets={onOpenProjectSecrets ? handleOpenProjectSecrets : undefined}
       onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
       onStopSession={onStopSession}
@@ -841,6 +848,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     collapsedProfileIds, expandedSessionIds, expandedWorkerListSessionIds,
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
+    onOpenProjectSettings, handleOpenProjectSettings,
     onOpenProjectSecrets, handleOpenProjectSecrets,
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
     onArchiveSession, onArchiveProfile,
