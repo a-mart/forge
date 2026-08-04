@@ -109,6 +109,8 @@ export interface AgentSidebarProps {
 export interface WorkerRowProps {
   agent: AgentDescriptor
   liveStatus: AgentLiveStatus
+  /** Rooms rollout styling only; classic preserves the existing row treatment. */
+  roomsV2?: boolean
   isSelected: boolean
   onSelect: () => void
   onDelete?: () => void
@@ -120,6 +122,8 @@ export interface WorkerRowProps {
 export interface SessionRowItemProps {
   session: SessionRow
   statuses: StatusMap
+  /** Rooms rollout styling only; classic preserves the existing row treatment. */
+  roomsV2?: boolean
   unreadCount: number
   selectedAgentId: string | null
   isSettingsActive: boolean
@@ -158,6 +162,8 @@ export interface SessionRowItemProps {
 export interface ProfileGroupProps {
   treeRow: ProfileTreeRow
   statuses: StatusMap
+  /** Rooms rollout styling only; classic preserves the existing row treatment. */
+  roomsV2?: boolean
   unreadCounts: Record<string, number>
   selectedAgentId: string | null
   isSettingsActive: boolean
@@ -214,6 +220,8 @@ export interface ProfileGroupProps {
 
 export interface CortexSectionProps {
   cortexRow: ProfileTreeRow
+  /** Optional shell styling for the desktop rail popover reuse. */
+  className?: string
   statuses: StatusMap
   unreadCounts: Record<string, number>
   selectedAgentId: string | null

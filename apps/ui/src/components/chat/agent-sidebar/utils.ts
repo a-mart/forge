@@ -2,8 +2,10 @@ import type { AgentDescriptor } from '@forge/protocol'
 import type { SessionRow } from '@/lib/agent-hierarchy'
 import type { AgentLiveStatus, StatusMap } from './types'
 
+type SessionActivityAgent = Pick<AgentDescriptor, 'agentId' | 'status' | 'activeWorkerCount'>
+
 export function getAgentLiveStatus(
-  agent: AgentDescriptor,
+  agent: SessionActivityAgent,
   statuses: StatusMap,
 ): AgentLiveStatus {
   const live = statuses[agent.agentId]
@@ -15,6 +17,54 @@ export function getAgentLiveStatus(
 
 export function isSessionCompactionInProgress(agentId: string, statuses: StatusMap): boolean {
   return statuses[agentId]?.contextRecoveryInProgress === true
+}
+
+/**
+ * Rooms activity deliberately means work is in progress, not merely that a
+ * session runtime exists. In particular, idle managers and pending runtime
+ * input do not make a room active.
+ */
+export function isSessionActivelyWorking(
+  session: { sessionAgent: SessionActivityAgent },
+  statuses: StatusMap,
+): boolean {
+  const agent = session.sessionAgent
+  return getAgentLiveStatus(agent, statuses).status === 'streaming'
+    || (agent.activeWorkerCount ?? 0) > 0
+    || isSessionCompactionInProgress(agent.agentId, statuses)
+}
+
+export interface ProjectRoomSummary {
+  activeSessionCount: number
+  unreadCount: number
+  visibleSessionCount: number
+}
+
+/**
+ * Aggregate only sessions that can appear in the project card. Tree rows
+ * already exclude archived sessions, but the explicit archive guard keeps this
+ * helper correct for filtered and test-provided rows too.
+ */
+export function getProjectRoomSummary(
+  sessions: SessionRow[],
+  statuses: StatusMap,
+  unreadCounts: Record<string, number>,
+  options: { hideCliSessions?: boolean; selectedAgentId?: string | null } = {},
+): ProjectRoomSummary {
+  const visibleSessions = sessions.filter((session) => {
+    const agent = session.sessionAgent
+    const selected = agent.agentId === options.selectedAgentId
+      || session.workers.some((worker) => worker.agentId === options.selectedAgentId)
+    return !agent.archivedAt
+      && !agent.agentCreatorResult
+      && !(options.hideCliSessions && agent.cli && !selected)
+  })
+
+  return visibleSessions.reduce<ProjectRoomSummary>((summary, session) => ({
+    activeSessionCount: summary.activeSessionCount + (isSessionActivelyWorking(session, statuses) ? 1 : 0),
+    unreadCount: summary.unreadCount + (unreadCounts[session.sessionAgent.agentId] ?? 0),
+    visibleSessionCount: summary.visibleSessionCount + 1,
+  }), { activeSessionCount: 0, unreadCount: 0, visibleSessionCount: 0 })
 }
 
 export function slugifySessionName(name: string): string {

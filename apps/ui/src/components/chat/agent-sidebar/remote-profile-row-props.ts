@@ -5,6 +5,7 @@ import type { OriginId } from '@/lib/origin-store'
 export interface RemoteProfileRowProps {
   originId: OriginId
   treeRow: ProfileTreeRow
+  roomsV2?: boolean
   selectedAgentId: string | null
   isActiveOrigin: boolean
   instanceName?: string
@@ -21,6 +22,7 @@ export function equalRemoteProfileRowProps(
 ): boolean {
   return previous.originId === next.originId
     && previous.treeRow === next.treeRow
+    && previous.roomsV2 === next.roomsV2
     && previous.selectedAgentId === next.selectedAgentId
     && previous.isActiveOrigin === next.isActiveOrigin
     && previous.instanceName === next.instanceName

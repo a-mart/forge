@@ -28,10 +28,16 @@ vi.mock('@/hooks/use-onboarding-state', () => ({
 }))
 
 vi.mock('@/lib/sidebar-prefs', () => ({
+  readSidebarLayoutPref: () => 'classic',
   readSidebarModelIconsPref: () => true,
   readSidebarProviderUsagePref: () => true,
+  storeSidebarLayoutPref: vi.fn(),
   storeSidebarModelIconsPref: vi.fn(),
   storeSidebarProviderUsagePref: vi.fn(),
+  readConversationThroughputDisplayPref: () => false,
+  storeConversationThroughputDisplayPref: vi.fn(),
+  CONVERSATION_THROUGHPUT_DISPLAY_KEY: 'forge-conversation-throughput-display',
+  PREFERENCE_CHANGE_EVENT: 'forge-sidebar-pref-change',
 }))
 
 vi.mock('@/lib/editor-preference', () => ({

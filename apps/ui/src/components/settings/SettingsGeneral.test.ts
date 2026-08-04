@@ -32,8 +32,10 @@ vi.mock('@/hooks/use-onboarding-state', () => ({
 }))
 
 const sidebarPrefsMock = vi.hoisted(() => ({
+  readSidebarLayoutPref: vi.fn(),
   readSidebarModelIconsPref: vi.fn(),
   readSidebarProviderUsagePref: vi.fn(),
+  storeSidebarLayoutPref: vi.fn(),
   storeSidebarModelIconsPref: vi.fn(),
   storeSidebarProviderUsagePref: vi.fn(),
   readConversationThroughputDisplayPref: vi.fn(),
@@ -41,8 +43,10 @@ const sidebarPrefsMock = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/sidebar-prefs', () => ({
+  readSidebarLayoutPref: () => sidebarPrefsMock.readSidebarLayoutPref(),
   readSidebarModelIconsPref: () => sidebarPrefsMock.readSidebarModelIconsPref(),
   readSidebarProviderUsagePref: () => sidebarPrefsMock.readSidebarProviderUsagePref(),
+  storeSidebarLayoutPref: (v: 'classic' | 'rooms-v2') => sidebarPrefsMock.storeSidebarLayoutPref(v),
   storeSidebarModelIconsPref: (v: boolean) => sidebarPrefsMock.storeSidebarModelIconsPref(v),
   storeSidebarProviderUsagePref: (v: boolean) => sidebarPrefsMock.storeSidebarProviderUsagePref(v),
   readConversationThroughputDisplayPref: () => sidebarPrefsMock.readConversationThroughputDisplayPref(),
@@ -200,6 +204,7 @@ beforeEach(() => {
   document.body.appendChild(container)
 
   editorMock.readStoredEditorPreference.mockReturnValue('vscode')
+  sidebarPrefsMock.readSidebarLayoutPref.mockReturnValue('classic')
   sidebarPrefsMock.readSidebarModelIconsPref.mockReturnValue(true)
   sidebarPrefsMock.readSidebarProviderUsagePref.mockReturnValue(true)
   sidebarPrefsMock.readConversationThroughputDisplayPref.mockReturnValue(false)
@@ -702,6 +707,17 @@ describe('SettingsGeneral', () => {
       await flush()
 
       expect(container.textContent).toContain('Show provider usage')
+    })
+
+    it('persists the Rooms v2 rollout preference from the visible sidebar toggle', async () => {
+      renderGeneral()
+      await flush()
+
+      const toggle = container.querySelector('#sidebar-rooms-v2-toggle') as HTMLButtonElement | null
+      expect(toggle?.getAttribute('aria-checked')).toBe('false')
+      flushSync(() => fireEvent.click(toggle!))
+
+      expect(sidebarPrefsMock.storeSidebarLayoutPref).toHaveBeenCalledWith('rooms-v2')
     })
   })
 

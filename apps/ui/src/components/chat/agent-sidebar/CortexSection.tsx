@@ -18,6 +18,7 @@ import type { CortexSectionProps } from './types'
 
 export function CortexSection({
   cortexRow,
+  className,
   statuses,
   unreadCounts,
   selectedAgentId,
@@ -67,7 +68,7 @@ export function CortexSection({
   const cortexRunning = cortexStatus === 'idle' || cortexStatus === 'streaming'
 
   return (
-    <div className="border-b border-sidebar-border px-2 pb-2">
+    <div className={cn('border-b border-sidebar-border px-2 pb-2', className)}>
       {/* Cortex header */}
       <ContextMenu>
         <ContextMenuTrigger asChild>

@@ -14,6 +14,7 @@ import type {
   ManagerProfile,
 } from '@forge/protocol'
 import type { RemoteSidebarOrigin } from './agent-sidebar/types'
+import { originRegistry } from '@/lib/origin-store'
 
 function manager(
   agentId: string,
@@ -83,6 +84,7 @@ afterEach(() => {
   }
 
   vi.unstubAllGlobals()
+  originRegistry.destroyAll()
   root = null
   container.remove()
 })
@@ -136,12 +138,18 @@ function renderSidebar({
   onArchiveProfile,
   isSettingsActive = false,
   statuses = {},
+  unreadCounts = {},
+  onCreateSession,
   wsUrl,
   remoteOrigins,
   builderSidebarOrder,
   onMoveBuilderProject,
   activeOriginId,
   onSelectRemoteAgent,
+  onRemoteOriginSignIn,
+  collaborationModeSwitch,
+  isMobileOpen,
+  onMobileClose,
 }: {
   agents: AgentDescriptor[]
   profiles?: ManagerProfile[]
@@ -156,12 +164,18 @@ function renderSidebar({
   onArchiveProfile?: (profileId: string) => void
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
+  unreadCounts?: Record<string, number>
+  onCreateSession?: (profileId: string, name?: string) => void
   wsUrl?: string
   remoteOrigins?: RemoteSidebarOrigin[]
   builderSidebarOrder?: BuilderSidebarOrderRef[]
   onMoveBuilderProject?: (active: BuilderSidebarOrderRef, over: BuilderSidebarOrderRef) => void
   activeOriginId?: string
   onSelectRemoteAgent?: (originId: string, agentId: string) => void
+  onRemoteOriginSignIn?: (originId: string) => void
+  collaborationModeSwitch?: { activeSurface: 'builder' | 'collab'; onSelectSurface: (surface: 'builder' | 'collab') => void }
+  isMobileOpen?: boolean
+  onMobileClose?: () => void
 }) {
   // Auto-generate profiles from managers if not explicitly provided
   const resolvedProfiles = profiles ?? agents
@@ -181,7 +195,8 @@ function renderSidebar({
           agents,
           profiles: resolvedProfiles,
           statuses,
-          unreadCounts: {},
+          unreadCounts,
+          collaborationModeSwitch,
           selectedAgentId,
           onAddManager: vi.fn(),
           onSelectAgent,
@@ -192,12 +207,16 @@ function renderSidebar({
           onOpenArchive,
           onArchiveSession,
           onArchiveProfile,
+          onCreateSession,
           isSettingsActive,
+          isMobileOpen,
+          onMobileClose,
           remoteOrigins,
           builderSidebarOrder,
           onMoveBuilderProject,
           activeOriginId,
           onSelectRemoteAgent,
+          onRemoteOriginSignIn,
         }),
       ),
     )
@@ -215,6 +234,317 @@ function getDesktopSidebar(): HTMLElement {
 }
 
 describe('AgentSidebar', () => {
+  it('defaults to Classic and leaves room-card markup out of the project list', () => {
+    const session = sessionManager('classic-session', 'classic-project')
+    renderSidebar({ agents: [session] })
+
+    const sidebar = getDesktopSidebar()
+    expect(sidebar.getAttribute('data-sidebar-layout')).toBe('classic')
+    expect(sidebar.querySelector('[data-room-card]')).toBeNull()
+  })
+
+  it('keeps the Classic search and Project View controls in their established separate rows', () => {
+    renderSidebar({ agents: [sessionManager('classic-command', 'classic-command')] })
+
+    const sidebar = getDesktopSidebar()
+    expect(sidebar.querySelector('[data-testid="sidebar-command-row"]')).toBeNull()
+    expect(sidebar.querySelector('input[placeholder="Search sessions… ⌘K"]')).not.toBeNull()
+    expect(sidebar.querySelector('[aria-label="Project view: All projects"]')).not.toBeNull()
+  })
+
+  it('uses one Rooms Projects command row for search and the Project View chip', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    localStorageMock.setItem('forge-sidebar-rooms-mode', 'projects')
+    renderSidebar({
+      agents: [sessionManager('rooms-command', 'rooms-command')],
+      collaborationModeSwitch: { activeSurface: 'builder', onSelectSurface: vi.fn() },
+    })
+
+    const sidebar = getDesktopSidebar()
+    const commandRow = sidebar.querySelector('[data-testid="sidebar-command-row"]')
+    expect(commandRow).not.toBeNull()
+    expect(commandRow?.querySelector('input[placeholder="Search…"]')).not.toBeNull()
+    expect(commandRow?.querySelector('[aria-label="Project view: All projects"]')).not.toBeNull()
+    expect(sidebar.querySelectorAll('[aria-label="Project view: All projects"]')).toHaveLength(1)
+    expect(sidebar.querySelector('[data-testid="rooms-sidebar-header"] button[aria-label="Add project"]')?.className).toContain('size-7')
+    expect(getByRole(sidebar, 'button', { name: /builder/i })).toBeTruthy()
+    expect(getByRole(sidebar, 'button', { name: /collab/i })).toBeTruthy()
+  })
+
+  it('persists the Rooms Inbox or Projects mode independently from Project Views', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    localStorageMock.setItem('forge-sidebar-project-views', JSON.stringify({
+      version: 1,
+      activeViewId: null,
+      views: [],
+    }))
+    renderSidebar({ agents: [sessionManager('rooms-mode', 'rooms-mode')] })
+
+    const sidebar = getDesktopSidebar()
+    expect(getByRole(sidebar, 'button', { name: 'Inbox' }).getAttribute('aria-pressed')).toBe('true')
+    click(getByRole(sidebar, 'button', { name: 'Projects' }))
+    await flushEffects()
+    expect(localStorageMock.getItem('forge-sidebar-rooms-mode')).toBe('projects')
+
+    flushSync(() => root?.unmount())
+    root = null
+    renderSidebar({ agents: [sessionManager('rooms-mode', 'rooms-mode')] })
+    expect(getByRole(getDesktopSidebar(), 'button', { name: 'Projects' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps Inbox selected when an origin-scoped remote Inbox row is selected', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const onSelectRemoteAgent = vi.fn()
+    const localSession = sessionManager('local-inbox', 'local-inbox')
+    const remoteSession = {
+      ...sessionManager('remote-inbox', 'remote-inbox'),
+      pendingChoiceCount: 1,
+      sessionLabel: 'Remote answer',
+    }
+    const remoteProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'remote-inbox',
+      displayName: 'Remote Project',
+      defaultSessionAgentId: 'remote-inbox',
+    }
+    renderSidebar({
+      agents: [localSession],
+      remoteOrigins: [{
+        originId: 'remote-inbox-origin',
+        connected: true,
+        treeRows: [{
+          profile: remoteProfile,
+          sessions: [{ sessionAgent: remoteSession, workers: [], isDefault: true }],
+        }],
+      }],
+      onSelectRemoteAgent,
+    })
+
+    const sidebar = getDesktopSidebar()
+    click(sidebar.querySelector('[data-inbox-row="remote-inbox-origin::remote-inbox"]') as HTMLElement)
+    expect(onSelectRemoteAgent).toHaveBeenCalledWith('remote-inbox-origin', 'remote-inbox')
+    expect(getByRole(sidebar, 'button', { name: /Inbox/ }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('renders local and remote project room cards in Rooms Projects mode', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    localStorageMock.setItem('forge-sidebar-rooms-mode', 'projects')
+    const localSession = {
+      ...sessionManager('local-session', 'local-project'),
+      activeWorkerCount: 1,
+    }
+    const remoteSession = {
+      ...sessionManager('remote-session', 'remote-project'),
+      activeWorkerCount: 1,
+    }
+    const localProfile = {
+      ...profileFor(localSession),
+      profileId: 'local-project',
+      displayName: 'Local Project',
+      defaultSessionAgentId: 'local-session',
+    }
+    const remoteProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'remote-project',
+      displayName: 'Remote Project',
+      defaultSessionAgentId: 'remote-session',
+    }
+
+    renderSidebar({
+      agents: [localSession],
+      profiles: [localProfile],
+      builderSidebarOrder: [
+        { originId: 'local', profileId: 'local-project' },
+        { originId: 'remote-rooms', profileId: 'remote-project' },
+      ],
+      onMoveBuilderProject: vi.fn(),
+      remoteOrigins: [{
+        originId: 'remote-rooms',
+        connected: true,
+        instanceName: 'Remote Rooms',
+        treeRows: [{
+          profile: remoteProfile,
+          sessions: [{ sessionAgent: remoteSession, workers: [], isDefault: true }],
+        }],
+      }],
+      onSelectRemoteAgent: vi.fn(),
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(sidebar.getAttribute('data-sidebar-layout')).toBe('rooms-v2')
+    expect(sidebar.querySelector('[data-room-card="local"]')).not.toBeNull()
+    expect(sidebar.querySelector('[data-room-card="remote"]')).not.toBeNull()
+    expect(sidebar.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(2)
+    expect(sidebar.querySelector('[aria-label="1 of 1 sessions actively working"]')?.textContent).toBe('1/1')
+  })
+
+  it('renders the real Rooms project tree inline in Inbox without changing modes on project actions', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const onCreateSession = vi.fn()
+    const inlineSession = sessionManager('inline-session', 'inline-project')
+    const inlineProfile = {
+      ...profileFor(inlineSession),
+      profileId: 'inline-project',
+      displayName: 'Inline Project',
+      defaultSessionAgentId: 'inline-session',
+    }
+    renderSidebar({
+      agents: [inlineSession],
+      profiles: [inlineProfile],
+      unreadCounts: { 'inline-session': 3 },
+      onCreateSession,
+    })
+
+    const sidebar = getDesktopSidebar()
+    const projects = sidebar.querySelector('[data-inbox-section="projects"]') as HTMLElement
+    expect(projects).toBeTruthy()
+    expect(projects.querySelector('[data-room-card="local"]')).not.toBeNull()
+    expect(projects.querySelector('[aria-label="3 unread messages in Inline Project"]')?.textContent).toBe('3')
+    expect(projects.querySelector('[aria-label="0 of 1 sessions actively working"]')?.textContent).toBe('0/1')
+
+    const inboxButton = getByRole(sidebar, 'button', { name: /^Inbox/ })
+    const projectsButton = getByRole(sidebar, 'button', { name: 'Projects' })
+    click(getByRole(projects, 'button', { name: 'New session for Inline Project' }))
+    expect(inboxButton.getAttribute('aria-pressed')).toBe('true')
+    expect(projectsButton.getAttribute('aria-pressed')).toBe('false')
+    expect(onCreateSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps session-only and worker-only search matches in the Inbox project tree', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const searchSession = {
+      ...sessionManager('search-session', 'plain-project'),
+      sessionLabel: 'Needle Session',
+    }
+    const searchWorker = {
+      ...worker('search-worker', 'search-session'),
+      displayName: 'Needle Worker',
+    }
+    const profile = {
+      ...profileFor(searchSession),
+      profileId: 'plain-project',
+      displayName: 'Plain Project',
+      defaultSessionAgentId: 'search-session',
+    }
+    renderSidebar({ agents: [searchSession, searchWorker], profiles: [profile] })
+
+    const sidebar = getDesktopSidebar()
+    const projects = sidebar.querySelector('[data-inbox-section="projects"]') as HTMLElement
+    const searchInput = sidebar.querySelector('input[placeholder^="Search"]') as HTMLInputElement
+    fireEvent.change(searchInput, { target: { value: 'Needle Session' } })
+    await waitFor(() => {
+      expect(queryByText(projects, 'Plain Project')).toBeTruthy()
+      expect(queryByText(projects, 'Needle Session')).toBeTruthy()
+    })
+
+    fireEvent.change(searchInput, { target: { value: 'w:Needle Worker' } })
+    await waitFor(() => {
+      // The worker-only match keeps its owning project in the same tree;
+      // the worker itself remains governed by the shared row's expand state.
+      expect(queryByText(projects, 'Plain Project')).toBeTruthy()
+    })
+  })
+
+  it('keeps inactive Project Agent search matches in the Inbox project tree', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        resources: {
+          projectAgents: {
+            exists: true,
+            count: 1,
+            items: [{
+              definitionId: 'docs-definition',
+              handle: 'repo-docs',
+              path: '/repo/.forge/project-agents/docs-definition',
+              status: 'valid',
+              problems: [],
+              displayName: 'Repository Docs Agent',
+              whenToUse: 'Use for handbook maintenance',
+            }],
+          },
+        },
+      }),
+    })))
+    const project = sessionManager('project-main', 'project-a')
+    renderSidebar({
+      agents: [project],
+      profiles: [{
+        ...profileFor(project),
+        profileId: 'project-a',
+        displayName: 'Project A',
+        defaultSessionAgentId: 'project-main',
+      }],
+      wsUrl: 'ws://127.0.0.1:47187',
+    })
+    await flushEffects()
+
+    const sidebar = getDesktopSidebar()
+    const projects = sidebar.querySelector('[data-inbox-section="projects"]') as HTMLElement
+    const searchInput = sidebar.querySelector('input[placeholder^="Search"]') as HTMLInputElement
+    fireEvent.change(searchInput, { target: { value: 'repo-docs' } })
+    await waitFor(() => {
+      expect(queryByText(projects, 'Project A')).toBeTruthy()
+      expect(projects.querySelector('button[aria-label^="Repository Docs Agent"]')).toBeTruthy()
+      expect(queryByText(projects, 'No matches found.')).toBeNull()
+    })
+  })
+
+  it('renders the clear/New Project state when the supplied shared tree has no rows or remote status card', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    renderSidebar({ agents: [], profiles: [] })
+
+    const sidebar = getDesktopSidebar()
+    expect(sidebar.querySelector('[data-testid="rooms-inbox-empty"]')).not.toBeNull()
+    expect(sidebar.querySelector('[data-inbox-section="projects"]')).toBeNull()
+    expect(queryByText(sidebar, 'No active agents.')).toBeNull()
+    expect(getByRole(sidebar, 'button', { name: 'New Project' })).toBeTruthy()
+  })
+
+  it('renders an empty remote origin sign-in card inline in Inbox', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const onRemoteOriginSignIn = vi.fn()
+    const remote = originRegistry.createOrigin({
+      originId: 'remote-empty',
+      wsUrl: 'ws://remote-empty.test',
+      offline: true,
+    })
+    remote.patchMeta({
+      connectionStatus: 'disconnected',
+      authState: 'unauthorized',
+      instanceName: 'Remote Empty',
+    })
+    renderSidebar({
+      agents: [],
+      profiles: [],
+      remoteOrigins: [{ originId: 'remote-empty', connected: false, treeRows: [] }],
+      onRemoteOriginSignIn,
+    })
+
+    const projects = getDesktopSidebar().querySelector('[data-inbox-section="projects"]') as HTMLElement
+    expect(projects.querySelector('[data-testid="remote-origin-section-remote-empty"]')).not.toBeNull()
+    click(getByRole(projects, 'button', { name: 'Sign in' }))
+    expect(onRemoteOriginSignIn).toHaveBeenCalledWith('remote-empty')
+  })
+
+  it('does not mount enabled sortable controls for either responsive Inbox tree', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const first = sessionManager('first-session', 'first-project')
+    const second = sessionManager('second-session', 'second-project')
+    renderSidebar({
+      agents: [first, second],
+      profiles: [
+        { ...profileFor(first), profileId: 'first-project', displayName: 'First Project', defaultSessionAgentId: 'first-session' },
+        { ...profileFor(second), profileId: 'second-project', displayName: 'Second Project', defaultSessionAgentId: 'second-session' },
+      ],
+      onMoveBuilderProject: vi.fn(),
+    })
+
+    expect(container.querySelectorAll('aside')).toHaveLength(2)
+    expect(container.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(0)
+  })
+
   it('opens Archive from the sidebar entry when archived items exist', () => {
     const onOpenArchive = vi.fn()
     const defaultSession = sessionManager('manager-alpha', 'manager-alpha')
@@ -237,6 +567,46 @@ describe('AgentSidebar', () => {
     expect(archiveInner?.className).toContain('pt-1.5')
     click(archiveButton)
 
+    expect(onOpenArchive).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Cortex and Archive in the Rooms mobile overlay', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const onOpenArchive = vi.fn()
+    const cortexRoot = {
+      ...sessionManager('cortex-root', 'cortex-project'),
+      archetypeId: 'cortex',
+      displayName: 'Cortex',
+      sessionLabel: 'Main',
+    }
+    const cortexReview = {
+      ...sessionManager('cortex-review', 'cortex-project'),
+      archetypeId: 'cortex',
+      displayName: 'Cortex',
+      sessionLabel: 'Review Run',
+    }
+    const project = sessionManager('archived-project', 'archived-project')
+    const archived = {
+      ...sessionManager('archived-project--old', 'archived-project'),
+      archivedAt: '2026-01-02T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [cortexRoot, cortexReview, project, archived],
+      profiles: [
+        { ...profileFor(cortexRoot), profileId: 'cortex-project', defaultSessionAgentId: 'cortex-root' },
+        profileFor(project),
+      ],
+      isMobileOpen: true,
+      onMobileClose: vi.fn(),
+      onOpenArchive,
+    })
+
+    const mobileSidebar = container.querySelectorAll('aside')[1] as HTMLElement
+    expect(mobileSidebar).toBeTruthy()
+    expect(queryByText(mobileSidebar, 'Cortex')).toBeTruthy()
+    expect(queryByText(mobileSidebar, 'Review Run')).toBeTruthy()
+    click(getByRole(mobileSidebar, 'button', { name: 'Archive' }))
     expect(onOpenArchive).toHaveBeenCalledTimes(1)
   })
 

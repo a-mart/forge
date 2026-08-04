@@ -18,8 +18,10 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
+  readSidebarLayoutPref,
   readSidebarModelIconsPref,
   readSidebarProviderUsagePref,
+  storeSidebarLayoutPref,
   storeSidebarModelIconsPref,
   storeSidebarProviderUsagePref,
 } from '@/lib/sidebar-prefs'
@@ -222,6 +224,7 @@ export function SettingsGeneral({
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
   const [sidebarProviderUsage, setSidebarProviderUsage] = useState(() => readSidebarProviderUsagePref())
+  const [sidebarLayout, setSidebarLayout] = useState(() => readSidebarLayoutPref())
   const [showConversationThroughput, setShowConversationThroughput] = useConversationThroughputDisplayPreference()
   const [editorPreference, setEditorPreference] = useState<EditorPreference>(() =>
     readStoredEditorPreference(),
@@ -1265,6 +1268,21 @@ export function SettingsGeneral({
               onCheckedChange={(checked) => {
                 setSidebarProviderUsage(checked)
                 storeSidebarProviderUsagePref(checked)
+              }}
+            />
+          </SettingsWithCTA>
+
+          <SettingsWithCTA
+            label="Use Rooms v2 project cards"
+            description="Try the updated project cards. Classic remains available as a rollback option."
+          >
+            <Switch
+              id="sidebar-rooms-v2-toggle"
+              checked={sidebarLayout === 'rooms-v2'}
+              onCheckedChange={(checked) => {
+                const next = checked ? 'rooms-v2' : 'classic'
+                setSidebarLayout(next)
+                storeSidebarLayoutPref(next)
               }}
             />
           </SettingsWithCTA>

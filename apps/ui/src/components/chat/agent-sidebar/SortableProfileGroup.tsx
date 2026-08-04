@@ -12,6 +12,8 @@ interface SortableProfileGroupProps {
    * and status props must always be refreshed from their render closure.
    */
   memoDependencies?: readonly unknown[]
+  /** Keeps the sortable wrapper visually neutral in Classic mode. */
+  roomsV2?: boolean
   children: (
     dragHandleRef: (element: HTMLElement | null) => void,
     dragHandleListeners: DraggableSyntheticListeners,
@@ -21,6 +23,7 @@ interface SortableProfileGroupProps {
 
 export const SortableProfileGroup = memo(function SortableProfileGroup({
   sortableId,
+  roomsV2 = false,
   children,
 }: SortableProfileGroupProps) {
   const {
@@ -40,7 +43,7 @@ export const SortableProfileGroup = memo(function SortableProfileGroup({
   }
 
   return (
-    <li ref={setNodeRef} style={style}>
+    <li ref={setNodeRef} style={style} className={roomsV2 ? 'sidebar-room-sortable' : undefined}>
       {children(setActivatorNodeRef, listeners, attributes)}
     </li>
   )
@@ -49,6 +52,7 @@ export const SortableProfileGroup = memo(function SortableProfileGroup({
   const nextDependencies = next.memoDependencies
   if (!previousDependencies || !nextDependencies) return false
   return previous.sortableId === next.sortableId
+    && previous.roomsV2 === next.roomsV2
     && previousDependencies.length === nextDependencies.length
     && previousDependencies.every((value, index) => Object.is(value, nextDependencies[index]))
 })

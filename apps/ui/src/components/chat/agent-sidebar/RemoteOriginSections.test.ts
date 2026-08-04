@@ -143,6 +143,66 @@ describe('remote row/status rendering without nested DnD', () => {
     expect(onSelectAgent).toHaveBeenCalledWith('remote:test', 'normal-1')
   })
 
+  it('renders a blue-tinted Rooms remote card with its active/visible session counter', () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteProfileRow, {
+        originId: 'remote:rooms',
+        treeRow: makeRow(
+          makeProfile({ displayName: 'Remote Rooms' }),
+          [makeSession(makeAgent({ activeWorkerCount: 2, sessionLabel: 'Active Remote' }))],
+        ),
+        roomsV2: true,
+        selectedAgentId: null,
+        isActiveOrigin: false,
+        instanceName: 'Remote Forge',
+        onSelectAgent: vi.fn(),
+      }))
+    })
+
+    expect(container.querySelector('[data-room-card="remote"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 of 1 sessions actively working"]')?.textContent).toBe('1/1')
+    expect(container.querySelector('.sidebar-room-remote-card')).not.toBeNull()
+  })
+
+  it('keeps the classic remote status glyph while workers are active or context is recovering', () => {
+    const cases: Array<Record<string, unknown>> = [
+      { activeWorkerCount: 2 },
+      { contextRecoveryInProgress: true },
+    ]
+
+    for (const overrides of cases) {
+      const caseContainer = document.createElement('div')
+      document.body.appendChild(caseContainer)
+      const caseRoot = createRoot(caseContainer)
+      flushSync(() => {
+        caseRoot.render(createElement(RemoteProfileRow, {
+          originId: 'remote:classic',
+          treeRow: makeRow(
+            makeProfile({ displayName: 'Remote Classic' }),
+            [makeSession(makeAgent({ sessionLabel: 'Busy Remote', ...overrides }))],
+          ),
+          selectedAgentId: null,
+          isActiveOrigin: false,
+          instanceName: 'Remote Forge',
+          onSelectAgent: vi.fn(),
+        }))
+      })
+
+      // Classic must keep rendering exactly one status indicator per session row,
+      // and must never render Rooms-only activity badges.
+      const sessionRow = Array.from(caseContainer.querySelectorAll('button'))
+        .find((candidate) => candidate.textContent?.includes('Busy Remote'))
+      expect(sessionRow).toBeDefined()
+      expect(sessionRow?.querySelector('[aria-label]')).not.toBeNull()
+      expect(caseContainer.querySelector('.sidebar-room-glow')).toBeNull()
+      expect(caseContainer.querySelector('[data-room-card]')).toBeNull()
+
+      flushSync(() => caseRoot.unmount())
+      caseContainer.remove()
+    }
+  })
+
   it('puts keyboard/pointer DnD semantics on the actual, instance-identified activator', () => {
     const pointerDown = vi.fn()
     const keyDown = vi.fn()
