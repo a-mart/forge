@@ -62,6 +62,11 @@ function createBinding(
 ): SecureRuntimeBinding {
   return {
     executeBash: vi.fn(async () => ({ exitCode: 0 })),
+    createOutputGuard: vi.fn(() => ({
+      write: (data: Uint8Array) => Buffer.from(data),
+      close: async () => Buffer.alloc(0),
+      dispose: vi.fn(),
+    })),
     guardValue: <T>(value: T) => guardUnknown(value) as T,
     ...overrides,
   };
@@ -102,19 +107,27 @@ describe("Secure runtime provider boundary", () => {
 });
 
 describe("Secure Pi runtime interception", () => {
-  it("registers the complete same-name coding tool set and delegates Bash", async () => {
+  it("keeps host Bash available and adds an explicit secure Linux Bash", async () => {
+    const executeHostBash = vi.fn(async (_command, _cwd, execution) => {
+      execution.onData(Buffer.from("host output\n"));
+      return { exitCode: 0 };
+    });
     const executeBash = vi.fn(async (request) => {
-      request.onData(Buffer.from("guarded output\n"));
+      request.onData(Buffer.from("secure output\n"));
       return { exitCode: 0 };
     });
     const binding = createBinding({ executeBash });
     const tools = createSecurePiCodingTools({
       cwd: "/tmp/forge-secure-runtime-test",
       binding,
+      hostBashOperations: { exec: executeHostBash },
+      hostCommandPrefix: "source ~/.forge-shell",
+      platform: "win32",
     });
 
     expect(tools.map((tool) => tool.name)).toEqual([
       "bash",
+      "secure_bash",
       "read",
       "edit",
       "write",
@@ -123,25 +136,131 @@ describe("Secure Pi runtime interception", () => {
       "ls",
     ]);
 
-    const bash = tools.find((tool) => tool.name === "bash");
-    const updates: unknown[] = [];
-    const result = await bash!.execute(
-      "call-1",
-      { command: "echo $FORGE_SECRET", timeout: 2 },
+    const hostBash = tools.find((tool) => tool.name === "bash")!;
+    const secureBash = tools.find((tool) => tool.name === "secure_bash")!;
+    expect(hostBash.label).toBe("Host Bash · Windows");
+    expect(hostBash.description).toContain("Git Bash");
+    expect(hostBash.description).toContain("GitHub CLI");
+    expect(secureBash.label).toBe("Secure Bash · Linux container");
+    expect(secureBash.description).toContain("approved Secure Sessions value");
+
+    const hostUpdates: unknown[] = [];
+    const hostResult = await hostBash.execute(
+      "host-call",
+      { command: "gh pr create", timeout: 2 },
       undefined,
-      (update) => updates.push(update),
+      (update) => hostUpdates.push(update),
       {} as never,
     );
+    expect(executeHostBash).toHaveBeenCalledWith(
+      "source ~/.forge-shell\ngh pr create",
+      "/tmp/forge-secure-runtime-test",
+      expect.objectContaining({
+        timeout: 2,
+        onData: expect.any(Function),
+      }),
+    );
+    expect(executeBash).not.toHaveBeenCalled();
+    expect(JSON.stringify({ result: hostResult, updates: hostUpdates })).toContain(
+      "host output",
+    );
 
+    const secureUpdates: unknown[] = [];
+    const secureResult = await secureBash.execute(
+      "secure-call",
+      { command: "ssh target true", timeout: 2 },
+      undefined,
+      (update) => secureUpdates.push(update),
+      {} as never,
+    );
     expect(executeBash).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: "echo $FORGE_SECRET",
+        command: "ssh target true",
         cwd: "/tmp/forge-secure-runtime-test",
         timeoutMs: 2_000,
         onData: expect.any(Function),
       }),
     );
-    expect(JSON.stringify({ result, updates })).toContain("guarded output");
+    expect(JSON.stringify({ result: secureResult, updates: secureUpdates })).toContain(
+      "secure output",
+    );
+  });
+
+  it("guards host Bash output across chunk boundaries before Pi accumulates it", async () => {
+    const pending: Buffer[] = [];
+    const binding = createBinding({
+      createOutputGuard: vi.fn(() => ({
+        write(data: Uint8Array) {
+          pending.push(Buffer.from(data));
+          return Buffer.alloc(0);
+        },
+        async close() {
+          return Buffer.from(
+            Buffer.concat(pending).toString("utf8").replaceAll(SECRET, "[guarded]"),
+          );
+        },
+        dispose: vi.fn(),
+      })),
+    });
+    const tools = createSecurePiCodingTools({
+      cwd: "/tmp/forge-secure-runtime-test",
+      binding,
+      hostBashOperations: {
+        exec: vi.fn(async (_command, _cwd, execution) => {
+          execution.onData(Buffer.from("before:secure-can"));
+          execution.onData(Buffer.from("ary-value:after"));
+          return { exitCode: 0 };
+        }),
+      },
+    });
+    const updates: unknown[] = [];
+
+    const result = await tools.find((tool) => tool.name === "bash")!.execute(
+      "host-guard-call",
+      { command: "ordinary-command" },
+      undefined,
+      (update) => updates.push(update),
+      {} as never,
+    );
+
+    const serialized = JSON.stringify({ result, updates });
+    expect(serialized).not.toContain(SECRET);
+    expect(serialized).toContain("before:[guarded]:after");
+  });
+
+  it("aborts host Bash and fails closed when its stream guard fails", async () => {
+    const dispose = vi.fn();
+    const binding = createBinding({
+      createOutputGuard: vi.fn(() => ({
+        write() {
+          throw new Error("unsafe guard detail");
+        },
+        close: async () => Buffer.alloc(0),
+        dispose,
+      })),
+    });
+    const observedAbort = vi.fn();
+    const tools = createSecurePiCodingTools({
+      cwd: "/tmp/forge-secure-runtime-test",
+      binding,
+      hostBashOperations: {
+        exec: vi.fn(async (_command, _cwd, execution) => {
+          execution.onData(Buffer.from("unsafe output"));
+          observedAbort(execution.signal?.aborted);
+          return { exitCode: null };
+        }),
+      },
+    });
+
+    await expect(tools.find((tool) => tool.name === "bash")!.execute(
+      "host-guard-failure",
+      { command: "ordinary-command" },
+      undefined,
+      undefined,
+      {} as never,
+    )).rejects.toThrow(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+    expect(observedAbort).toHaveBeenCalledWith(true);
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("guards tool updates, final results, and thrown errors", async () => {
@@ -209,7 +328,7 @@ describe("Secure Pi runtime interception", () => {
     const bash = createSecurePiCodingTools({
       cwd: "/tmp/forge-secure-runtime-test",
       binding,
-    }).find((tool) => tool.name === "bash")!;
+    }).find((tool) => tool.name === "secure_bash")!;
 
     await expect(
       bash.execute(

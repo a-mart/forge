@@ -374,7 +374,7 @@ describe('MessageList paged activity', () => {
       },
     ])
 
-    expect(container.textContent).toContain('Command failed: pnpm test')
+    expect(container.textContent).toContain('Host command failed: pnpm test')
   })
 
   it('lets richer live tool detail replace a summary that arrived first', () => {
@@ -414,7 +414,7 @@ describe('MessageList paged activity', () => {
       },
     ])
 
-    expect(container.textContent).toContain('Ran command: pnpm test')
+    expect(container.textContent).toContain('Ran host command: pnpm test')
     expect(container.textContent).not.toContain('Completed provider activity')
   })
 

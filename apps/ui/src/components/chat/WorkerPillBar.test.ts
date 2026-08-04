@@ -162,7 +162,7 @@ describe('WorkerPillBar quick look', () => {
     }
     render([replayedSummary, liveStart])
 
-    expect(document.body.textContent).toContain('Running command')
+    expect(document.body.textContent).toContain('Running host command')
     expect(document.body.textContent).toContain('pnpm test')
   })
 

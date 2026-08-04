@@ -37,7 +37,7 @@ describe("projectConversationEntryForBuilderWire", () => {
     expect(end).toMatchObject({
       type: "activity_summary",
       itemId: "tool:manager:call-1",
-      displaySummary: "Ran command",
+      displaySummary: "Ran host command",
     });
     expect(JSON.stringify(end)).not.toContain("/repo");
   });

@@ -391,7 +391,7 @@ describe('sendSubscriptionBootstrap', () => {
       kind: 'tool_execution_end',
       toolName: 'bash',
       toolCallId: 'tool-1',
-      text: 'Ran command',
+      text: 'Ran host command',
     })
     expect(JSON.stringify(historyEvent)).not.toContain(rawToolPayload)
   })

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -42,6 +43,8 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   settingsManagerCreate: vi.fn(),
   settingsManagerFromStorage: vi.fn(),
   settingsManagerApplyOverrides: vi.fn(),
+  settingsManagerGetShellCommandPrefix: vi.fn(),
+  settingsManagerGetShellPath: vi.fn(),
 }));
 
 const cursorMcpMockState = vi.hoisted(() => ({
@@ -98,6 +101,8 @@ vi.mock("@earendil-works/pi-coding-agent", async () => {
         piCodingAgentMockState.settingsManagerFromStorage(...args)
         return {
           applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+          getShellCommandPrefix: () => piCodingAgentMockState.settingsManagerGetShellCommandPrefix(),
+          getShellPath: () => piCodingAgentMockState.settingsManagerGetShellPath(),
         }
       },
     },
@@ -438,6 +443,10 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.settingsManagerCreate.mockReset();
     piCodingAgentMockState.settingsManagerFromStorage.mockReset();
     piCodingAgentMockState.settingsManagerApplyOverrides.mockReset();
+    piCodingAgentMockState.settingsManagerGetShellCommandPrefix.mockReset();
+    piCodingAgentMockState.settingsManagerGetShellCommandPrefix.mockReturnValue(undefined);
+    piCodingAgentMockState.settingsManagerGetShellPath.mockReset();
+    piCodingAgentMockState.settingsManagerGetShellPath.mockReturnValue(undefined);
     delete process.env.FORGE_OPENAI_CODEX_TRANSPORT;
     cursorMcpMockState.createMcpBridge.mockReset();
     cursorMcpMockState.createMcpBridge.mockResolvedValue({
@@ -677,7 +686,7 @@ describe("RuntimeFactory", () => {
     expect(existingTransform).toHaveBeenCalledWith(messages, signal);
   });
 
-  it("replaces Pi native coding tools and file-backed extensions for Secure Sessions", async () => {
+  it("keeps host Bash and adds secure Bash while replacing unsafe built-ins and extensions", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     setupPiModel();
     const piSession = createMockPiSession();
@@ -687,6 +696,11 @@ describe("RuntimeFactory", () => {
     });
     const secureRuntimeBinding = {
       executeBash: vi.fn(async () => ({ exitCode: 0 })),
+      createOutputGuard: vi.fn(() => ({
+        write: (data: Uint8Array) => Buffer.from(data),
+        close: async () => Buffer.alloc(0),
+        dispose: vi.fn(),
+      })),
       guardValue: <T>(value: T) => value,
       debugSerializationCanary: "binding-must-not-be-serialized",
     } satisfies SecureRuntimeBinding & { debugSerializationCanary: string };
@@ -715,10 +729,10 @@ describe("RuntimeFactory", () => {
     };
     expect(sessionOptions.noTools).toBe("builtin");
     expect(sessionOptions.tools).toEqual(
-      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+      expect.arrayContaining(["bash", "secure_bash", "read", "edit", "write", "grep", "find", "ls"]),
     );
     expect(sessionOptions.customTools?.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+      expect.arrayContaining(["bash", "secure_bash", "read", "edit", "write", "grep", "find", "ls"]),
     );
 
     const loaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
@@ -730,8 +744,10 @@ describe("RuntimeFactory", () => {
     expect(loaderOptions.additionalExtensionPaths).toEqual([]);
     expect(loaderOptions.extensionFactories).toEqual(expect.any(Array));
     expect(piSession.setActiveToolsByName).toHaveBeenCalledWith(
-      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+      expect.arrayContaining(["bash", "secure_bash", "read", "edit", "write", "grep", "find", "ls"]),
     );
+    expect(piCodingAgentMockState.settingsManagerGetShellCommandPrefix).toHaveBeenCalledOnce();
+    expect(piCodingAgentMockState.settingsManagerGetShellPath).toHaveBeenCalledOnce();
     expect(JSON.stringify(logDebug.mock.calls)).not.toContain(
       secureRuntimeBinding.debugSerializationCanary,
     );

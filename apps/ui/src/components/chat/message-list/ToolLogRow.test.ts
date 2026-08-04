@@ -135,10 +135,29 @@ describe('ToolLogRow actor metadata rendering', () => {
     })
 
     // Should still render the tool message but no actor chip
-    expect(container.textContent).toContain('Ran command')
+    expect(container.textContent).toContain('Ran host command')
     // No chip with border class should be present for actor
     const chips = container.querySelectorAll('span.mr-1\\.5')
     expect(chips.length).toBe(0)
+  })
+
+  it('distinguishes secure container commands from host commands', () => {
+    const entry = makeToolEntry({
+      toolName: 'secure_bash',
+      inputPayload: '{"command":"ssh deployment true"}',
+    })
+
+    act(() => {
+      root.render(
+        createElement(ToolLogRow, {
+          type: 'tool_execution',
+          entry,
+        }),
+      )
+    })
+
+    expect(container.textContent).toContain('Ran secure command')
+    expect(container.textContent).toContain('ssh deployment true')
   })
 
   it('shows secondaryLabel in expanded footer', () => {

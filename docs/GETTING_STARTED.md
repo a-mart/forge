@@ -177,12 +177,15 @@ eligible local Forge Pi worker uses that same authority while working for the ma
 A secret marked **Automatically available in this project** is evaluated once for the
 session. Use **Apply now** to apply or retry configured defaults without restarting.
 
-Each agent keeps using ordinary Bash. One task or timed grant can support many commands
-from the manager or its workers. You can revoke one shared grant or stop Team Secure
-Mode to revoke the whole session. Worker lifecycle changes do not create or destroy
-secret authority. Unsupported worker runtimes fail closed. Team processes can write
-the same selected workspace, so use separate Git worktrees for high-risk or
-concurrently writing agents.
+Each agent keeps normal host `bash` for repository work, Git, GitHub CLI, and native
+tools. Team Secure Mode adds `secure_bash`, a Linux-container command tool used only
+when an approved value or Forge-managed SSH trust is needed. On Windows, normal
+`bash` is normally Git Bash while `secure_bash` remains Linux. One task or timed grant
+can support many secure commands from the manager or its workers. You can revoke one
+shared grant or stop Team Secure Mode to revoke the whole session. Worker lifecycle
+changes do not create or destroy secret authority. Unsupported worker runtimes fail
+closed. Team processes can write the same selected workspace, so use separate Git
+worktrees for high-risk or concurrently writing agents.
 The agent can also propose an alias that does not exist. Its request contains only the
 alias, purpose, delivery, and lease. **Add secret and approve** collects the value
 privately in Forge Desktop and saves it to the current project by default; **Use for

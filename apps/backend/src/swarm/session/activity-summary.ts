@@ -44,8 +44,11 @@ function summarizeToolActivity(
   if (normalized.includes("apply_patch") || normalized.includes("edit") || normalized.includes("write_file")) {
     return outcome ? `File edit ${outcome}` : "Edited files";
   }
+  if (normalized === "secure_bash") {
+    return outcome ? `Secure command ${outcome}` : "Ran secure command";
+  }
   if (normalized.includes("exec") || normalized.includes("command") || normalized === "bash" || normalized === "shell") {
-    return outcome ? `Command ${outcome}` : "Ran command";
+    return outcome ? `Host command ${outcome}` : "Ran host command";
   }
   if (normalized.includes("read") || normalized.includes("view")) return outcome ? `File read ${outcome}` : "Read file";
   if (normalized.includes("search") || normalized.includes("find")) return outcome ? `Search ${outcome}` : "Searched";

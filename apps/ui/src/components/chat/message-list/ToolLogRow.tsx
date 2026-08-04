@@ -33,10 +33,21 @@ type ToolConfig = {
 
 const TOOL_CONFIG: Record<string, ToolConfig> = {
   bash: {
-    label: 'Ran command',
-    activeLabel: 'Running command',
-    cancelledLabel: 'Command cancelled',
-    errorLabel: 'Command failed',
+    label: 'Ran host command',
+    activeLabel: 'Running host command',
+    cancelledLabel: 'Host command cancelled',
+    errorLabel: 'Host command failed',
+    icon: Terminal,
+    getDetail: (input) => {
+      const command = pickString(input, ['description', 'command'])
+      return command ? truncate(command, 72) : null
+    },
+  },
+  secure_bash: {
+    label: 'Ran secure command',
+    activeLabel: 'Running secure command',
+    cancelledLabel: 'Secure command cancelled',
+    errorLabel: 'Secure command failed',
     icon: Terminal,
     getDetail: (input) => {
       const command = pickString(input, ['description', 'command'])

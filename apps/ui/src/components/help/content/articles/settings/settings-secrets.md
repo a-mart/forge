@@ -99,14 +99,15 @@ Open the shield beside **Send** in a supported local Builder session:
 1. Start Team Secure Mode.
 2. Grant an alias and its bindings to the manager session.
 3. Choose task, timed, or one-use access.
-4. Let the agent keep using ordinary Bash across repeated commands.
+4. Let the agent use normal host `bash` for ordinary work and `secure_bash` only for
+   commands that need a granted value or Forge-managed SSH trust.
 5. Revoke one shared grant or stop Team Secure Mode to revoke the session.
 
 Agent requests appear as private approval cards, not transcript messages. A request
 belongs to the manager session; a worker identity is recorded only to show who asked.
-A one-use grant means the session's next Secure Bash command and is consumed even if
+A one-use grant means the session's next `secure_bash` command and is consumed even if
 the command does not reference the binding. Task and timed grants are injected into
-every Secure Bash command from the manager or an eligible worker while active,
+every `secure_bash` command from the manager or an eligible worker while active,
 including child and background processes.
 
 Eligible local Forge Pi workers remain available for delegation. Forge prepares each
@@ -133,18 +134,22 @@ agent can then request that saved alias normally.
 ## Know the boundary
 
 Secure Sessions keep raw values out of model prompts, model-originated tool arguments,
-Forge public events, history, and normal command output. Forge routes Pi's Bash tool
-through a manager-session-owned Docker container and filters its output before it can
-become model context. If protected output is found, Forge redacts it and marks the
-shared session. The team can continue with task or timed grants still active, or you
-can stop Team Secure Mode. File tools remain host-side and their structured
-results pass through the active exact-value guard; the integrated terminal is not a
-Secure Session path.
+Forge public events, history, and normal command output. Forge keeps Pi's `bash` tool
+on the host and adds a separate `secure_bash` tool backed by the manager-session-owned
+Linux container. Only `secure_bash` receives approved values or Forge-managed SSH
+trust. Output from both tools is filtered before Pi can accumulate or persist it. If
+protected output is found, Forge redacts it and marks the shared session. The team can
+continue with task or timed grants still active, or you can stop Team Secure Mode.
+File tools remain host-side and their structured results pass through the active
+exact-value guard; the integrated terminal is not a Secure Session path.
 
 Software that receives a raw value can still intentionally transform it, send it over
 the network, or write it to the selected workspace. Redaction catches common accidental
 reflection; it is not protection from malicious code that is authorized to receive
-the value. Team processes share the same container and selected workspace, so
+the value. Normal `bash` also retains the host user's ordinary PATH, credentials, and
+developer-tool authority, which may include Docker control. This is intended for
+trusted local agents and developers, not for isolating a malicious agent that controls
+the same host account. Team processes share the same container and selected workspace, so
 concurrent file and process changes can race. Use separate Git worktrees for high-risk
 or concurrently writing agents. The first release also has no
 destination-constrained network proxy.
@@ -157,6 +162,10 @@ execution paths. Secure Bash is non-interactive pipe execution
 rather than a PTY. SSH passwords work through the `SSH_ASKPASS` binding.
 Non-interactive commands that only require TTY descriptors can use the runner's
 `script` helper; live terminal input and resize remain unsupported.
+
+On Windows, normal `bash` is normally Git Bash and keeps access to Windows-integrated
+tools such as authenticated Git and GitHub CLI. `secure_bash` is Linux inside Docker
+Desktop, with the workspace mapped to `/workspace`; prefer relative paths there.
 
 ## Check readiness and recover a copied data directory
 

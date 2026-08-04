@@ -479,7 +479,7 @@ function statusTool(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefin
     name: "secure_session_status",
     label: "Secure Session Status",
     description:
-      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Use each exposure's exact targetName; do not guess an alias-derived environment name. For SSH with an environment delivery, set FORGE_ASKPASS_ENV to that exact targetName and SSH_ASKPASS=/usr/local/bin/forge-env-askpass with DISPLAY=forge-secure and SSH_ASKPASS_REQUIRE=force. Check only fixed success/presence outcomes—never print, measure, hash, encode, or otherwise derive information from a value. Secret values and provider locators are never returned.",
+      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Approved values are available only to secure_bash, never normal host bash. Use each exposure's exact targetName; do not guess an alias-derived environment name. For SSH in secure_bash with an environment delivery, set FORGE_ASKPASS_ENV to that exact targetName and SSH_ASKPASS=/usr/local/bin/forge-env-askpass with DISPLAY=forge-secure and SSH_ASKPASS_REQUIRE=force. Check only fixed success/presence outcomes—never print, measure, hash, encode, or otherwise derive information from a value. Secret values and provider locators are never returned.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_toolCallId, params) {
       if (!isRecord(params) || Object.keys(params).length > 0) {
@@ -556,7 +556,7 @@ function requestSshHostTrustTool(
     name: "request_ssh_host_trust",
     label: "Request SSH Host Trust",
     description:
-      "Propose a project SSH host profile after observing its public host key. Supply the connection alias, endpoint, username, public host-key algorithm/blob, and a bounded purpose. The user can trust it once; future Secure Bash commands can use ordinary `ssh <alias>` with strict host-key checking. Never disable host-key checking.",
+      "Propose a project SSH host profile after observing its public host key. Supply the connection alias, endpoint, username, public host-key algorithm/blob, and a bounded purpose. The user can trust it once; future secure_bash calls can use ordinary `ssh <alias>` with strict host-key checking. Normal host bash does not receive this trust profile. Never disable host-key checking.",
     parameters: requestSshHostTrustSchema,
     async execute(toolCallId, params) {
       let input: RequestSecureSshHostTrustRequest;

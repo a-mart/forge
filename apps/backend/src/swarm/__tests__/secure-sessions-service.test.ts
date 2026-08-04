@@ -3856,6 +3856,97 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("guards host Bash output before accumulation without consuming its lease", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+      leaseKind: "one_use",
+    });
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const executedBefore = harness.execution.executed.length;
+    const guard = binding.createOutputGuard();
+
+    const first = guard.write(Buffer.from(`before:${ALPHA.slice(0, 7)}`));
+    const second = guard.write(Buffer.from(`${ALPHA.slice(7)}:after`));
+    const tail = await guard.close();
+
+    const guardedOutput = Buffer.concat([first, second, tail]).toString("utf8");
+    expect(guardedOutput).not.toContain(ALPHA);
+    expect(guardedOutput).toContain(SECURE_OUTPUT_QUARANTINE);
+    expect(harness.execution.executed).toHaveLength(executedBefore);
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({
+        environmentStatus: "ready",
+        outputState: "quarantined",
+        outputStateCode: "SECURE_OUTPUT_QUARANTINED",
+        leases: [expect.objectContaining({
+          status: "active",
+          remainingUses: 1,
+        })],
+      }),
+    );
+    await harness.close();
+  });
+
+  it("passes host Bash output through when the secure session has no grants", async () => {
+    const harness = createHarness();
+    await harness.service.startSecureSession("manager-a");
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const guard = binding.createOutputGuard();
+
+    expect(guard.write(Buffer.from("ordinary host output"))).toEqual(
+      Buffer.from("ordinary host output"),
+    );
+    expect(await guard.close()).toEqual(Buffer.alloc(0));
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({ outputState: "clear" }),
+    );
+    await harness.close();
+  });
+
+  it("invalidates an in-flight host output guard when grants change", async () => {
+    const harness = createHarness();
+    await harness.service.startSecureSession("manager-a");
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const hostGuard = binding.createOutputGuard();
+    expect(hostGuard.write(Buffer.from("safe-before-grant"))).toEqual(
+      Buffer.from("safe-before-grant"),
+    );
+
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    const beforeGrant = await harness.service.getSecureSessionSnapshot("manager-a");
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: beforeGrant.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+      leaseKind: "task",
+    });
+
+    expect(() => hostGuard.write(Buffer.from("after-grant"))).toThrow(
+      "SECURE_OPERATION_FAILED",
+    );
+    await expect(hostGuard.close()).rejects.toThrow("SECURE_OPERATION_FAILED");
+    await harness.close();
+  });
+
   it("does not treat the public redaction marker as proof that a secret matched", async () => {
     const harness = createHarness();
     const secret = await harness.service.createLocalSecureSecret({
