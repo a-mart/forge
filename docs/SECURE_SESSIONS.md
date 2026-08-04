@@ -158,8 +158,9 @@ all-projects secret. Scope controls where an alias can be selected; it does not 
 any task access.
 
 For a direct route from the Builder sidebar, right-click a local project header and
-choose **Project Secrets**. Forge opens **Settings → Secrets** with that project
-preselected, without changing the active conversation or its draft.
+choose **Project Secrets**. You can also open **Project Settings → Project secrets**.
+Either route opens **Settings → Secrets** with that project preselected, without
+changing the active conversation or its draft.
 
 ### Local vault
 

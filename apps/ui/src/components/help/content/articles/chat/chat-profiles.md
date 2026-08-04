@@ -17,13 +17,17 @@ By default, sessions use the profile's default model. You can override the model
 
 Remote profiles remain authoritative on their Forge server. Their project headers appear with blue styling and a globe marker when the connection's Remote Projects preference and server policy are enabled; nested session rows use status dots. Header actions are limited to **Change Working Directory**, which opens the server directory browser. Local rename, archive, delete, fork, and model actions remain absent. A remote connection may instead show connecting, sign-in-required, unreachable, server-disabled, update-required, or empty status until its projects can be selected.
 
+## Project Settings
+
+For a local Builder project, right-click its header and choose **Project Settings**, or use the header's hover/focus **…** menu. The page stays scoped to that project even if another conversation is selected. It groups project name, working directory, default model and reasoning, Project secrets, and Repository resources `.forge` controls. It is unavailable for Cortex and Remote Projects.
+
 ## Rename a profile
 
-Right-click the profile header in the sidebar and choose **Rename**. This only changes the display name. The profile ID and data directory stay the same.
+Use **Project Settings → Project name → Rename**, or the existing **Rename** header shortcut. This only changes the display name. The profile ID and data directory stay the same.
 
 ## Change default model
 
-Right-click the profile and choose **Change Default Model** to update the default model preset and reasoning level. Sessions still using the project default are updated automatically. Sessions with a model override are not affected. Changes take effect on the next message or session resume.
+Use **Project Settings → Default model → Change**, or the existing **Change Default Model** header shortcut, to update the default model and supported reasoning level. Sessions still using the project default are updated automatically. Sessions with a model override are not affected. Changes take effect on the next message or session resume.
 
 ## Reorder profiles
 
