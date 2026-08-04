@@ -107,6 +107,10 @@ import type {
 import type { SessionPlanSnapshotEvent } from './plans.js'
 import type { SessionGoalSnapshotEvent } from './goals.js'
 import type {
+  SessionAttentionSnapshotEvent,
+  SessionAttentionUpdateEvent,
+} from './session-attention.js'
+import type {
   TerminalClosedEvent,
   TerminalCreatedEvent,
   TerminalsSnapshotEvent,
@@ -147,6 +151,7 @@ export * from './agent-events.js'
 export * from './cli.js'
 export * from './manager-events.js'
 export * from './repository-project.js'
+export * from './session-attention.js'
 export * from './session-events.js'
 export * from './project-agent-events.js'
 export * from './profile-events.js'
@@ -205,6 +210,8 @@ export type ServerEvent =
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent
+  | SessionAttentionSnapshotEvent
+  | SessionAttentionUpdateEvent
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent

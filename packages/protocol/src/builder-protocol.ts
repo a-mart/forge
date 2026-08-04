@@ -28,4 +28,6 @@ export interface BuilderInstanceCapabilities {
    * Absent/false on older servers — UI should hide "+ New folder".
    */
   createDirectory?: boolean
+  /** Server-owned session attention is available for Builder origins. */
+  sessionAttention?: true
 }

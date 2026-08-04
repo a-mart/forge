@@ -164,6 +164,7 @@ describe('ManagerWsClient', () => {
       'pick_directory',
       'get_session_workers',
       'get_conversation_page',
+      'dismiss_session_attention',
       'rename_profile',
       'archive_profile',
       'restore_profile',

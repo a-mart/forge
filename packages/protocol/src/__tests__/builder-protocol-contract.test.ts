@@ -46,12 +46,14 @@ describe('builder protocol contract', () => {
       instanceName: 'Central Forge',
       forgeVersion: '0.9.0',
       protocolVersion: 1,
-      capabilities: { collab: true, remoteBuild: true },
+      capabilities: { collab: true, remoteBuild: true, sessionAttention: true },
     }
 
     expect(legacyServerStatus.protocolVersion).toBeUndefined()
     expect(legacyServerStatus.capabilities).toBeUndefined()
     expect(waveRServerStatus.capabilities?.remoteBuild).toBe(true)
+    expect(legacyServerStatus.capabilities?.sessionAttention).toBeUndefined()
+    expect(waveRServerStatus.capabilities?.sessionAttention).toBe(true)
     // A client treats a missing protocolVersion as a pre-Wave-R instance —
     // never version-blocked (blocking only applies to versions ABOVE the
     // client ceiling).
