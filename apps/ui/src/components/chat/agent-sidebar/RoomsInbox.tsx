@@ -2,7 +2,7 @@ import type React from 'react'
 import { BellOff, CheckCheck, CircleAlert, Globe, Inbox, Pin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
-import { SidebarRoomAvatar, type SidebarRoomAvatarTone } from './shared'
+import { SidebarRoomAvatar } from './shared'
 import { formatRoomsInboxRelativeTime, presentRoomsInboxReason } from './rooms-inbox-presenter'
 import type {
   RoomsInboxIdentity,
@@ -238,7 +238,6 @@ function InboxSessionRow({
       >
         <SidebarRoomAvatar
           label={session.profileName}
-          tone={inboxAvatarTone(session)}
           toneKey={session.identity.profileId}
         />
         <span className="min-w-0 flex-1">
@@ -270,17 +269,6 @@ function InboxSessionRow({
       ) : null}
     </div>
   )
-}
-
-function inboxAvatarTone(session: RoomsInboxSessionViewModel): SidebarRoomAvatarTone | undefined {
-  switch (session.reason) {
-    case 'awaiting_choice': return 'blue'
-    case 'unread_result': return 'neutral'
-    case 'error': return 'red'
-    case 'compacting': return 'violet'
-    case 'manager_working': return 'amber'
-    default: return undefined
-  }
 }
 
 function InboxStatusPill({ session }: { session: RoomsInboxSessionViewModel }) {

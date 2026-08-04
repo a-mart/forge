@@ -187,9 +187,13 @@ describe('RoomsInbox', () => {
       agentStatus: 'streaming' as const,
       activeWorkerCount: 2,
     }
+    const tintedIdentity = { originId: 'local', profileId: 'project-b', sessionAgentId: '' }
     renderInbox({
       sections: sections({
-        needsYou: [view('choice', 'awaiting_choice'), { ...view('unread', 'unread_result'), unreadCount: 4 }],
+        needsYou: [
+          { ...view('choice', 'awaiting_choice'), identity: { ...tintedIdentity, sessionAgentId: 'choice' } },
+          { ...view('unread', 'unread_result'), identity: { ...tintedIdentity, sessionAgentId: 'unread' }, unreadCount: 4 },
+        ],
         active: [active, view('compact', 'compacting')],
         activeWorkerCount: 2,
         recent: [recent],
@@ -203,7 +207,10 @@ describe('RoomsInbox', () => {
     expect(container.querySelectorAll('.sidebar-room-avatar')).toHaveLength(5)
     expect(container.querySelector('[data-inbox-row="local::choice"] .sidebar-room-status-pill--awaiting')).not.toBeNull()
     expect(container.querySelector('[aria-label="4 unread updates"]')).not.toBeNull()
-    expect(container.querySelector('[data-inbox-row="local::unread"] .sidebar-room-avatar--neutral')).not.toBeNull()
+    // Attention reason belongs in the status pill; avatars keep the same
+    // per-project tint used by Recent and Projects.
+    expect(container.querySelector('[data-inbox-row="local::choice"] .sidebar-room-avatar--violet')).not.toBeNull()
+    expect(container.querySelector('[data-inbox-row="local::unread"] .sidebar-room-avatar--violet')).not.toBeNull()
     expect(container.querySelector('[data-inbox-row="local::unread"] .sidebar-room-inbox-reason--default')).not.toBeNull()
     expect(container.querySelector('[data-inbox-row="local::unread"] .sidebar-room-inbox-reason--unread_result')).toBeNull()
     expect(container.querySelector('[aria-label="2 workers active"]')).not.toBeNull()
