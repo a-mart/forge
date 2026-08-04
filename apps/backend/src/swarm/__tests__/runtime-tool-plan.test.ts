@@ -8,6 +8,7 @@ import {
   createStaticCompactionRuntimeSettingsProvider,
 } from "../compaction-runtime-settings-provider.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
+import { createModelVisibleToolResultBudget } from "../model-visible-tool-result-budget.js";
 import {
   buildBaseRuntimeTools,
   planForgePiToolBridgeFactory,
@@ -304,6 +305,7 @@ describe("runtime Pi extension factory plan", () => {
     await mkdir(rootDir, { recursive: true });
     process.env.FORGE_DEBUG = "true";
     const bridgeFactory = vi.fn((pi: any) => pi.on("forge_bridge", () => undefined));
+    const toolOutputBudget = createModelVisibleToolResultBudget();
     const factories = planPiExtensionFactories({
       descriptor: createManagerDescriptor(rootDir, {
         model: {
@@ -316,6 +318,7 @@ describe("runtime Pi extension factory plan", () => {
       logDebug: vi.fn(),
       getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
       forgePiToolBridgeFactory: bridgeFactory,
+      toolOutputBudgetExtensionFactory: toolOutputBudget.extensionFactory,
     });
     const registeredEvents: string[] = [];
 
@@ -332,6 +335,12 @@ describe("runtime Pi extension factory plan", () => {
       "tool_call",
       "forge_bridge",
       "before_provider_request",
+      "tool_call",
+      "tool_result",
+      "message_end",
+      "context",
+      "turn_end",
+      "session_shutdown",
     ]);
   });
 
@@ -368,6 +377,7 @@ describe("runtime Pi extension factory plan", () => {
         model: { provider: "anthropic", modelId: "claude-opus-4-5" },
         reasoningLevel: "low",
       }),
+      toolOutputBudgetExtensionFactory: createModelVisibleToolResultBudget().extensionFactory,
     });
     const runner = new ExtensionRunner(
       [extensionFromFactory(forgeCompactionFactory!)],

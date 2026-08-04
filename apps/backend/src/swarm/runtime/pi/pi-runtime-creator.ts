@@ -79,6 +79,7 @@ import {
   SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
   type SecureRuntimeBinding,
 } from "../../secure-sessions/runtime/secure-runtime-binding.js";
+import { createModelVisibleToolResultBudget } from "../../model-visible-tool-result-budget.js";
 
 type PiProviderContextMessages = Parameters<
   NonNullable<AgentSession["agent"]["transformContext"]>
@@ -297,6 +298,8 @@ export class PiRuntimeCreator {
     const runtimeCustomTools = secureRuntimeBinding
       ? [...secureCodingTools, ...runtimeSwarmTools]
       : runtimeSwarmTools;
+    const toolOutputBudget = createModelVisibleToolResultBudget();
+    toolOutputBudget.augmentToolDefinitions(runtimeCustomTools);
     const secureAllowedToolNames = isCodexPluginWorkerDescriptor(descriptor)
       ? runtimeSwarmTools.map((tool) => tool.name)
       : runtimeCustomTools.map((tool) => tool.name);
@@ -388,6 +391,7 @@ export class PiRuntimeCreator {
       }),
       compactionFailureScopeKey,
       secureRuntimeBinding,
+      toolOutputBudgetExtensionFactory: toolOutputBudget.extensionFactory,
     });
     const resourcePlan = planPiResourceLoaderOptions({
       descriptor,
@@ -397,12 +401,14 @@ export class PiRuntimeCreator {
       swarmContextFiles,
       extensionFactories,
       trustedProjectPiExtensionPaths: projectExecutableTrustPlan.trustedPiExtensionDirs.filter(pathExistsSync),
-      extensionsOverride: (result) => filterUntrustedProjectPiExtensions({
-        result,
-        descriptor,
-        config: this.deps.config,
-        trustPlan: projectExecutableTrustPlan
-      }),
+      extensionsOverride: (result) => toolOutputBudget.augmentExtensions(
+        filterUntrustedProjectPiExtensions({
+          result,
+          descriptor,
+          config: this.deps.config,
+          trustPlan: projectExecutableTrustPlan
+        })
+      ),
       isCollaborationRuntime: isCollabSession(sessionDescriptor),
       mergeRuntimeContextFiles: this.deps.mergeRuntimeContextFiles
     });
@@ -470,6 +476,10 @@ export class PiRuntimeCreator {
           }
         : {}),
     });
+    // Built-in Pi definitions are created inside createAgentSession. Their schema
+    // objects are shared with the active provider tools, so augment them before
+    // the first prompt can start.
+    toolOutputBudget.augmentSessionTools(session);
     installPiProviderContextImageResize(session, secureRuntimeBinding);
     const runtimeCallbacks: SwarmRuntimeCallbacks = {
       onStatusChange: async (agentId, status, pendingCount, contextUsage) => {

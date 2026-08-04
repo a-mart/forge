@@ -109,6 +109,7 @@ interface PlanPiExtensionFactoriesOptions {
   forgePiToolBridgeFactory?: ExtensionFactory;
   compactionFailureScopeKey?: string;
   secureRuntimeBinding?: SecureRuntimeBinding;
+  toolOutputBudgetExtensionFactory: ExtensionFactory;
 }
 
 export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOptions): ExtensionFactory[] {
@@ -164,6 +165,10 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
       })
     );
   }
+
+  // This must remain last: it is the final model-visible result governor after
+  // every user and Forge extension has had a chance to transform tool output.
+  factories.push(options.toolOutputBudgetExtensionFactory);
 
   return factories;
 }

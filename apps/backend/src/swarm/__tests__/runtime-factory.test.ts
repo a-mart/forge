@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
 import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
+import { createModelVisibleToolResultBudget } from "../model-visible-tool-result-budget.js";
 import { planPiExtensionFactories } from "../runtime/runtime-tool-plan.js";
 
 const piAiMockState = vi.hoisted(() => ({
@@ -376,6 +377,7 @@ function buildExtensionFactories(rootDir: string, descriptor: AgentDescriptor) {
     config: createConfig(rootDir),
     logDebug: () => {},
     getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
+    toolOutputBudgetExtensionFactory: createModelVisibleToolResultBudget().extensionFactory,
   });
 }
 

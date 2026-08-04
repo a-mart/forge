@@ -30,11 +30,15 @@ describe("buildForgePiToolBridgeExtensionFactory", () => {
     const event = {
       toolName: "bash",
       toolCallId: "tool-0",
-      input: { command: "echo original", extra: true },
+      input: { command: "echo original", extra: true, max_output_tokens: 20_000 },
     };
 
     await expect(toolCallHandler?.(event)).resolves.toBeUndefined();
-    expect(event.input).toEqual({ command: "echo rewritten", cwd: "/tmp/project" });
+    expect(event.input).toEqual({
+      command: "echo rewritten",
+      cwd: "/tmp/project",
+      max_output_tokens: 20_000,
+    });
   });
 
   it("passes block reasons through for Pi-native tools", async () => {
