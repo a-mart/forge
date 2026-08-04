@@ -6,6 +6,7 @@ import type {
   SecureSecretScope,
   SecureSessionProjectDefaultState,
   SecureSessionProjectDefaultStatusCode,
+  SecureSessionExecutionIncidentCode,
   SecureSshTrustedHostSummary,
   SecureSshTrustRequestSummary,
 } from '@forge/protocol'
@@ -88,6 +89,11 @@ export interface SecureSessionSnapshotView {
   trustedSshHosts?: SecureSshTrustedHostSummary[]
   pendingSshTrustRequests?: SecureSshTrustRequestSummary[]
   projectDefaults?: SecureProjectDefaultStatusView[]
+  lastExecutionIncident?: {
+    code: SecureSessionExecutionIncidentCode
+    agentId: string
+    occurredAt: string
+  }
   updatedAt: string
 }
 

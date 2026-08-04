@@ -386,7 +386,11 @@ export class SwarmManagerRuntimeComposition {
       choices: services.choices,
       descriptorMutations: this.options.descriptors,
       directory: services.directory,
-      events: services.eventCoordinator,
+      events: {
+        emitConversationMessage: (event) => services.eventCoordinator.emitConversationMessage(event),
+        emitAgentToolCall: (event) => services.conversation.emitAgentToolCall(event),
+        emitSessionWorkersSnapshot: (sessionAgentId, workers) => services.eventCoordinator.emitSessionWorkersSnapshot(sessionAgentId, workers),
+      },
       now: this.options.state.now,
       logDebug: this.options.events.logDebug,
     });
@@ -708,19 +712,15 @@ export class SwarmManagerRuntimeComposition {
       allocateRuntimeToken: (agentId) => runtimeLifecycle.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, token) => runtimeLifecycle.clearRuntimeToken(agentId, token),
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
-      hasSecureRuntimeBinding: (runtime) =>
-        this.runtimeController.hasSecureRuntimeBinding(runtime),
+      getActiveTurnId: (agentId, token) => runtimeLifecycle.getActiveTurnId(agentId, token),
+      hasSecureRuntimeBinding: (runtime) => this.runtimeController.hasSecureRuntimeBinding(runtime),
       isSecureRuntimeBindingUsable: (agentId, runtime) => this.runtimeController.isSecureRuntimeBindingUsable(agentId, runtime),
       ensureSessionFileParentDirectory: runtimeResources.ensureSessionFileParentDirectory,
-      updateSessionMetaForWorkerDescriptor: (descriptor, prompt) =>
-        services.knowledge.updateSessionMetaForWorkerDescriptor(descriptor, prompt),
-      refreshSessionMetaStatsBySessionId: (agentId) =>
-        services.knowledge.refreshSessionMetaStatsBySessionId(agentId),
+      updateSessionMetaForWorkerDescriptor: (descriptor, prompt) => services.knowledge.updateSessionMetaForWorkerDescriptor(descriptor, prompt),
+      refreshSessionMetaStatsBySessionId: (agentId) => services.knowledge.refreshSessionMetaStatsBySessionId(agentId),
       refreshSessionMetaStats: (descriptor) => services.knowledge.refreshSessionMetaStats(descriptor),
-      captureSessionRuntimePromptMeta: (descriptor, prompt) =>
-        services.knowledge.captureSessionRuntimePromptMeta(descriptor, prompt),
-      prepareManagerRuntimeCreation: (descriptor, prompt) =>
-        this.modelChangeStartupRecovery.prepareManagerRuntimeCreation(descriptor, prompt),
+      captureSessionRuntimePromptMeta: (descriptor, prompt) => services.knowledge.captureSessionRuntimePromptMeta(descriptor, prompt),
+      prepareManagerRuntimeCreation: (descriptor, prompt) => this.modelChangeStartupRecovery.prepareManagerRuntimeCreation(descriptor, prompt),
       appendAppliedModelChangeContinuity: (descriptor, request, runtime) =>
         this.modelChangeStartupRecovery.appendAppliedModelChangeContinuity(descriptor, request, runtime),
       attachRuntime: (agentId, runtime) => this.runtimeController.attachRuntime(agentId, runtime),
@@ -751,6 +751,7 @@ export class SwarmManagerRuntimeComposition {
       assertRuntimeCreationAllowed: (agentId) => this.runtimeController.assertRuntimeCreationAllowed(agentId),
       detachRuntime: (agentId, token) => runtimeLifecycle.detachRuntime(agentId, token),
       clearAgentTurnState: (agentId) => runtimeLifecycle.clearAgentState(agentId),
+      reconcileStoppedManagerRuntime: (input) => runtimeLifecycle.reconcileStoppedManagerRuntime(input),
       detachRuntimeIfMatches: (agentId, runtime, token) =>
         this.runtimeController.detachRuntimeIfMatches(agentId, runtime, token),
       syncPinnedContentForManagerRuntime: async (descriptor, pinOptions) => {

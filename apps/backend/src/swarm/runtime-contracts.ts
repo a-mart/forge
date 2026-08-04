@@ -175,7 +175,7 @@ export interface RuntimeCreationOptions {
 
 export type RuntimeSessionEvent =
   | { type: "agent_start" }
-  | { type: "agent_end" }
+  | { type: "agent_end"; settledAssistantMessage?: RuntimeSessionMessage }
   | { type: "turn_start" }
   | { type: "turn_end"; toolResults: unknown[]; meta?: RuntimeTurnMeta }
   | { type: "message_start"; message: RuntimeSessionMessage }

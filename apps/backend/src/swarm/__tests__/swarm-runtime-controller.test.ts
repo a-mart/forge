@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -280,6 +281,19 @@ function retainedSecureRuntimeBinding(
       if (!active) throw new Error("binding invalidated");
       return { exitCode: 0 };
     },
+    createOutputGuard() {
+      return {
+        write(data: Uint8Array) {
+          if (!active) throw new Error("binding invalidated");
+          return Buffer.from(data);
+        },
+        async close() {
+          if (!active) throw new Error("binding invalidated");
+          return Buffer.alloc(0);
+        },
+        dispose() {},
+      };
+    },
     guardValue<T>(value: T): T {
       if (!active) throw new Error("binding invalidated");
       if (typeof value === "string") return guardMarker as T;
@@ -311,6 +325,11 @@ describe("SwarmRuntimeController", () => {
     host.afterRuntimeEventProjection = afterRuntimeEventProjection;
     host.getSecureRuntimeBinding = () => ({
       executeBash: vi.fn(async () => ({ exitCode: 0 })),
+      createOutputGuard: vi.fn(() => ({
+        write: (data: Uint8Array) => Buffer.from(data),
+        close: async () => Buffer.alloc(0),
+        dispose: vi.fn(),
+      })),
       guardValue: <T>(value: T): T =>
         JSON.parse(JSON.stringify(value).replaceAll(secret, "[guarded]")) as T,
     });
@@ -1560,6 +1579,41 @@ describe("SwarmRuntimeController", () => {
         text: "Context recovered and compacted."
       })
     );
+  });
+
+  it("keeps manager watchdog and output state active for recoverable runtime errors", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage } = createRuntimeControllerHarness(config);
+    const recordManagerTurnWatchdogRuntimeError = vi.fn();
+    host.recordManagerTurnWatchdogRuntimeError = recordManagerTurnWatchdogRuntimeError;
+    const controller = new SwarmRuntimeController(host);
+    const clearManagerAssistantOutputTurn = vi.spyOn(controller, "clearManagerAssistantOutputTurn");
+    const manager = baseDescriptor({
+      agentId: "mgr-recoverable-error",
+      role: "manager",
+      managerId: "mgr-recoverable-error",
+      status: "streaming",
+    });
+    descriptors.set(manager.agentId, manager);
+    const token = controller.allocateRuntimeToken(manager.agentId);
+
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "interrupt",
+      message: "runaway output stopped",
+      details: {
+        preserveActiveTurn: true,
+        userFacingMessage: "Forge stopped a runaway manager response.",
+      },
+    });
+
+    expect(recordManagerTurnWatchdogRuntimeError).not.toHaveBeenCalled();
+    expect(clearManagerAssistantOutputTurn).not.toHaveBeenCalled();
+    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: manager.agentId,
+      role: "system",
+      text: "Forge stopped a runaway manager response.",
+    }));
   });
 
   it("finalizes a normal worker completion during parent recovery instead of dropping it", async () => {

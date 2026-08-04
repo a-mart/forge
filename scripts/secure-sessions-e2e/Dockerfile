@@ -33,5 +33,11 @@ RUN useradd --create-home --shell /bin/sh forge \
 COPY --chmod=0755 target-entrypoint.sh /opt/forge-e2e/target-entrypoint.sh
 COPY http-reflector.mjs /opt/forge-e2e/http-reflector.mjs
 
+# Build contexts inherit checkout line endings on Windows. Normalize the
+# disposable Linux fixture entrypoint and reject an invalid script at build
+# time so the E2E cannot fail later as a misleading SSH/password error.
+RUN sed -i 's/\r$//' /opt/forge-e2e/target-entrypoint.sh \
+  && /bin/sh -n /opt/forge-e2e/target-entrypoint.sh
+
 EXPOSE 22 8080
 ENTRYPOINT ["/opt/forge-e2e/target-entrypoint.sh"]

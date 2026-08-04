@@ -33,10 +33,23 @@ type ToolConfig = {
 
 const TOOL_CONFIG: Record<string, ToolConfig> = {
   bash: {
+    // Keep the generic name neutral for replay compatibility: before
+    // `secure_bash` existed, secure-container calls were persisted as `bash`.
     label: 'Ran command',
     activeLabel: 'Running command',
     cancelledLabel: 'Command cancelled',
     errorLabel: 'Command failed',
+    icon: Terminal,
+    getDetail: (input) => {
+      const command = pickString(input, ['description', 'command'])
+      return command ? truncate(command, 72) : null
+    },
+  },
+  secure_bash: {
+    label: 'Ran secure command',
+    activeLabel: 'Running secure command',
+    cancelledLabel: 'Secure command cancelled',
+    errorLabel: 'Secure command failed',
     icon: Terminal,
     getDetail: (input) => {
       const command = pickString(input, ['description', 'command'])

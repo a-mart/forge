@@ -61,6 +61,7 @@ export interface AgentSidebarProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
+  onOpenProjectSettings?: (profileId: string) => void
   onOpenProjectSecrets?: (profileId: string) => void
   onOpenStats?: () => void
   onOpenArchive?: () => void
@@ -180,6 +181,7 @@ export interface ProfileGroupProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
+  onOpenProjectSettings?: (profileId: string) => void
   onOpenProjectSecrets?: (profileId: string) => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void

@@ -173,6 +173,60 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(reportSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("carries a retained clean final on the single settlement event when message_end was missed", async () => {
+    const { runtime, onSessionEvent } = makeRuntime();
+    const finalMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "Recovered terminal answer." }],
+      stopReason: "stop",
+    };
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [finalMessage],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: finalMessage,
+    });
+    expect(onSessionEvent.mock.calls.filter(([, event]) => event.type === "agent_end")).toHaveLength(1);
+  });
+
+  it("retains intentional silence but excludes tool-use and error messages from settlement finals", async () => {
+    const noReply = makeRuntime();
+    await (noReply.runtime as any).handleEvent({ type: "agent_start" });
+    await (noReply.runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: "NO_REPLY", stopReason: "stop" }],
+    });
+    await (noReply.runtime as any).handleEvent({ type: "agent_settled" });
+    expect(noReply.onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: { role: "assistant", content: "NO_REPLY", stopReason: "stop" },
+    });
+
+    for (const message of [
+      { role: "assistant", content: [{ type: "toolCall", name: "bash" }], stopReason: "toolUse" },
+      { role: "assistant", content: "provider failed", stopReason: "error" },
+    ]) {
+      const candidate = makeRuntime();
+      await (candidate.runtime as any).handleEvent({ type: "agent_start" });
+      await (candidate.runtime as any).handleEvent({
+        type: "agent_end",
+        willRetry: false,
+        messages: [message],
+      });
+      await (candidate.runtime as any).handleEvent({ type: "agent_settled" });
+      expect(candidate.onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
+    }
+  });
+
   it("queued continuation with willRetry:false still waits for a single settlement", async () => {
     const { runtime, onAgentEnd, onSessionEvent, reportSuccess } = makeRuntime();
 
@@ -270,6 +324,95 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onAgentEnd).toHaveBeenCalledTimes(1);
     expect(reportSuccess).toHaveBeenCalledTimes(1);
     expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
+  });
+
+  it("aborts repetitive manager output, prunes it, and retries the active obligation", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+
+    await runtime.sendMessage("continue the active manager obligation");
+    await vi.waitFor(() => expect(session.promptCalls).toEqual(["continue the active manager obligation"]));
+
+    session.state.messages = [
+      { role: "user", content: "continue the active manager obligation" },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+
+    await vi.waitFor(() => expect(session.abortCalls).toBe(1));
+    await vi.waitFor(() => expect(session.promptCalls).toEqual([
+      "continue the active manager obligation",
+      "continue the active manager obligation",
+    ]));
+
+    expect(session.state.messages).toEqual([
+      { role: "user", content: "continue the active manager obligation" },
+    ]);
+    expect(onRuntimeError).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "interrupt",
+        details: expect.objectContaining({
+          stage: "manager_output_runaway",
+          preserveActiveTurn: true,
+        }),
+      }),
+    );
+    expect(onSessionEvent).not.toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({ type: "message_update" }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+  });
+
+  it("aborts a timed-out automatic compaction and retries the active obligation", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError, reportSuccess } = makeRuntime();
+
+    await runtime.sendMessage("continue after automatic compaction");
+    await vi.waitFor(() => expect(session.promptCalls).toEqual(["continue after automatic compaction"]));
+
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    (runtime as any).autoCompactionRecoveryInProgress = true;
+    (runtime as any).contextRecoveryInProgress = true;
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleAutoCompactionTimeout();
+
+    expect(session.abortCalls).toBe(1);
+    await vi.waitFor(() => expect(session.promptCalls).toEqual([
+      "continue after automatic compaction",
+      "continue after automatic compaction",
+    ]));
+    expect(onRuntimeError).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "compaction",
+        details: expect.objectContaining({
+          recoveryStage: "auto_compaction_timeout",
+          compactionRetryPlanned: true,
+          preserveActiveTurn: true,
+        }),
+      }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
   });
 
   it("acknowledges Pi-expanded steer content without replaying it", async () => {

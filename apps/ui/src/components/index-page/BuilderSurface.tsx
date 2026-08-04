@@ -19,6 +19,7 @@ import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
+import type { ProjectSettingsActions } from '@/components/settings/SettingsProjectSettings'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
 import type {
   SecureGrantInput,
@@ -1063,6 +1064,7 @@ export function BuilderSurface({
     const apiClient = httpClientRef.current
     const client = clientRef.current
     if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return false
+    const transitioningWorkerCount = activeManagerAgent?.activeWorkerCount ?? 0
     try {
       const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
         secureCatalog,
@@ -1079,6 +1081,14 @@ export function BuilderSurface({
         secureSessionSnapshot?.revision,
       )
       applySecureMutationResult(client, snapshot)
+      if (transitioningWorkerCount > 0) {
+        const workerLabel = transitioningWorkerCount === 1 ? 'worker' : 'workers'
+        const possessive = transitioningWorkerCount === 1 ? 'its' : 'their'
+        setState((current) => ({
+          ...current,
+          lastSuccess: `Secure Mode started. ${transitioningWorkerCount} active ${workerLabel} will switch before ${possessive} next assignment.`,
+        }))
+      }
       return toSecureSessionSnapshotView(snapshot)
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
@@ -1087,6 +1097,7 @@ export function BuilderSurface({
   }, [
     activeAgent?.profileId,
     activeAgentId,
+    activeManagerAgent?.activeWorkerCount,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
@@ -1096,6 +1107,7 @@ export function BuilderSurface({
     secureCatalog,
     secureSessionSnapshot?.profileId,
     secureSessionSnapshot?.revision,
+    setState,
   ])
 
   const handleApplySecureProjectDefaults = useCallback(async (
@@ -1836,6 +1848,63 @@ export function BuilderSurface({
     }
   }, [activeAgentId, state.agents])
 
+  const handleOpenProjectSettings = useCallback((profileId: string) => {
+    panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
+      navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'project-settings',
+        settingsProfileId: profileId,
+      })
+    })
+  }, [navigateToRoute, panels.fileEditorCoordinator])
+
+  const handleOpenProjectSecrets = useCallback((profileId: string) => {
+    panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
+      navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'secrets',
+        settingsProfileId: profileId,
+      })
+    })
+  }, [navigateToRoute, panels.fileEditorCoordinator])
+
+  const projectSettingsServerDirectoryBrowser = useMemo(() => {
+    if (!directServerDirectoryBrowser || !localClient) return undefined
+    return {
+      client: {
+        listDirectories: (path?: string) => localClient.listDirectories(path),
+        validateDirectory: (path: string) => localClient.validateDirectory(path),
+        createDirectory: directServerDirectoryBrowser.canCreateDirectory
+          ? (parentPath: string, name: string) => localClient.createDirectory(parentPath, name)
+          : undefined,
+      },
+      canCreateDirectory: directServerDirectoryBrowser.canCreateDirectory,
+    }
+  }, [directServerDirectoryBrowser, localClient])
+
+  const projectSettingsActions = useMemo<ProjectSettingsActions>(() => ({
+    onRenameProfile: localSidebarSession.handleRenameProfile,
+    onUpdateManagerModel: localSidebarSession.handleUpdateManagerModel,
+    onUpdateManagerCwd: localSidebarSession.handleUpdateManagerCwd,
+    onBrowseDirectory: directServerDirectoryBrowser
+      ? undefined
+      : localSidebarSession.handleBrowseDirectoryForCwd,
+    onValidateDirectory: localSidebarSession.handleValidateDirectoryForCwd,
+    serverDirectoryBrowser: projectSettingsServerDirectoryBrowser,
+    onOpenProjectSecrets: handleOpenProjectSecrets,
+  }), [
+    directServerDirectoryBrowser,
+    handleOpenProjectSecrets,
+    localSidebarSession.handleBrowseDirectoryForCwd,
+    localSidebarSession.handleRenameProfile,
+    localSidebarSession.handleUpdateManagerCwd,
+    localSidebarSession.handleUpdateManagerModel,
+    localSidebarSession.handleValidateDirectoryForCwd,
+    projectSettingsServerDirectoryBrowser,
+  ])
+
   const showActivityRail = activeView === 'chat'
 
   // Wave R presence: other members viewing the active session (self excluded).
@@ -1924,14 +1993,8 @@ export function BuilderSurface({
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
           navigateToRoute({ view: 'settings', surface: 'builder' })
         })}
-        onOpenProjectSecrets={(profileId) => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
-          navigateToRoute({
-            view: 'settings',
-            surface: 'builder',
-            settingsTab: 'secrets',
-            settingsProfileId: profileId,
-          })
-        })}
+        onOpenProjectSettings={handleOpenProjectSettings}
+        onOpenProjectSecrets={handleOpenProjectSecrets}
         onOpenStats={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'stats' }, () => {
           navigateToRoute({ view: 'stats' })
         })}
@@ -2087,6 +2150,7 @@ export function BuilderSurface({
                 }
                 previewSession={previewSession}
                 contextProfileId={routeState.view === 'settings' ? routeState.settingsProfileId : undefined}
+                projectSettingsActions={projectSettingsActions}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
                 initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
                 initialSkillImportUrl={routeState.view === 'settings' ? routeState.skillImportUrl : undefined}

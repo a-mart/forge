@@ -14,6 +14,46 @@ export interface InterruptedToolReconciliationResult {
   deliveryWarnings: number;
 }
 
+export function reconcileInterruptedManagerToolCalls(options: {
+  descriptor: AgentDescriptor;
+  now: () => string;
+  emitAgentToolCall: (event: AgentToolCallEvent) => void;
+  emitConversationMessage: (event: ConversationMessageEvent) => void;
+  logDebug?: (message: string, details?: unknown) => void;
+}): InterruptedToolReconciliationResult {
+  const persisted = loadPersistedConversationEntries(options.descriptor);
+  if (!persisted) {
+    return { reconciledToolCalls: 0, deliveryWarnings: 0 };
+  }
+
+  const unmatchedStarts = findUnmatchedToolStarts(
+    persisted.entries,
+    new Set([options.descriptor.agentId]),
+  );
+  let reconciledToolCalls = 0;
+  let deliveryWarnings = 0;
+
+  for (const start of unmatchedStarts) {
+    const timestamp = options.now();
+    options.emitAgentToolCall(buildInterruptedToolEnd(start, timestamp));
+    reconciledToolCalls += 1;
+    if (start.toolName === SEND_MESSAGE_TOOL_NAME) {
+      options.emitConversationMessage(buildInterruptedDeliveryWarning(start, timestamp));
+      deliveryWarnings += 1;
+    }
+  }
+
+  if (reconciledToolCalls > 0) {
+    options.logDebug?.("runtime_stop:reconcile_interrupted_manager_tool_calls", {
+      agentId: options.descriptor.agentId,
+      reconciledToolCalls,
+      deliveryWarnings,
+    });
+  }
+
+  return { reconciledToolCalls, deliveryWarnings };
+}
+
 export function reconcileInterruptedToolCallsForBoot(options: {
   descriptors: ReadonlyMap<string, AgentDescriptor>;
   interruptedActorAgentIds: ReadonlySet<string>;

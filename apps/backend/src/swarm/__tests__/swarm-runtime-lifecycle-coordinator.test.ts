@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor } from "../types.js";
@@ -7,6 +10,7 @@ import {
   type RuntimeLifecycleController,
   SwarmRuntimeLifecycleCoordinator,
 } from "../swarm-runtime-lifecycle-coordinator.js";
+import { appendTurnLedgerRecord, replayTurnLedger } from "../turn-ledger.js";
 
 function descriptor(
   overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">,
@@ -48,7 +52,7 @@ function runtime(value: AgentDescriptor): SwarmAgentRuntime {
   };
 }
 
-function createHarness() {
+function createHarness(dataDir = "/tmp/data") {
   const calls: string[] = [];
   const descriptors = new Map<string, AgentDescriptor>();
   const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -58,6 +62,8 @@ function createHarness() {
     createRuntimeForDescriptor: vi.fn(async () => runtime(fallbackDescriptor)),
     allocateRuntimeToken: vi.fn(() => 7),
     clearRuntimeToken: vi.fn(),
+    getRuntimeToken: vi.fn(() => undefined),
+    getRuntimeCreationPromise: vi.fn(() => undefined),
     detachRuntime: vi.fn(() => true),
     runRuntimeShutdown: vi.fn(async () => ({ timedOut: false, runtimeToken: 7 })),
     handleRuntimeStatus: vi.fn(async () => { calls.push("controller:status"); }),
@@ -85,6 +91,8 @@ function createHarness() {
     getActiveTurnId: vi.fn(() => "turn-1"),
     handleRuntimeError: vi.fn(() => { calls.push("turn:error"); }),
     discard: vi.fn(() => { calls.push("turn:discard"); }),
+    clearAgentState: vi.fn(() => { calls.push("turn:clear"); }),
+    hasPendingSupersedingUserInput: vi.fn(() => false),
   };
   const codexScopes = {
     closeWorkerScope: vi.fn(() => { calls.push("codex:close"); }),
@@ -116,10 +124,11 @@ function createHarness() {
   };
   const events = {
     emitConversationMessage: vi.fn(),
+    emitAgentToolCall: vi.fn(),
     emitSessionWorkersSnapshot: vi.fn(),
   };
   const coordinator = new SwarmRuntimeLifecycleCoordinator({
-    dataDir: "/tmp/data",
+    dataDir,
     descriptors,
     controller,
     workerHealth,
@@ -157,6 +166,52 @@ afterEach(() => {
 });
 
 describe("SwarmRuntimeLifecycleCoordinator", () => {
+  it("reconciles an exact stopped manager turn once and skips while a runtime owner exists", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-runtime-stop-reconcile-"));
+    try {
+      const harness = createHarness(dataDir);
+      const manager = descriptor({
+        agentId: "manager",
+        role: "manager",
+        managerId: "manager",
+        profileId: "profile-a",
+        sessionFile: join(dataDir, "manager.jsonl"),
+      });
+      harness.descriptors.set(manager.agentId, manager);
+      const target = harness.coordinator.getTurnLedgerSessionTarget(manager.agentId)!;
+      await appendTurnLedgerRecord(target, {
+        t: "turn_dispatched",
+        turnId: "manager:7",
+        agentId: manager.agentId,
+        role: "manager",
+        kind: "user",
+        at: "2026-07-13T10:00:00.000Z",
+      });
+
+      await expect(harness.coordinator.reconcileStoppedManagerRuntime({
+        agentId: manager.agentId,
+        turnId: "manager:7",
+      })).resolves.toBe(true);
+      await expect(harness.coordinator.reconcileStoppedManagerRuntime({
+        agentId: manager.agentId,
+        turnId: "manager:7",
+      })).resolves.toBe(true);
+
+      const ledger = await replayTurnLedger(target);
+      expect(ledger.records.filter((record) => record.t === "turn_terminal" && record.turnId === "manager:7"))
+        .toHaveLength(1);
+      expect(harness.turnContext.clearAgentState).toHaveBeenCalledTimes(2);
+
+      harness.runtimes.set(manager.agentId, runtime(manager));
+      await expect(harness.coordinator.reconcileStoppedManagerRuntime({
+        agentId: manager.agentId,
+        turnId: "manager:8",
+      })).resolves.toBe(false);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("resolves manager and worker ledger writes to the owning session", () => {
     const { coordinator, descriptors } = createHarness();
     descriptors.set("manager", descriptor({
@@ -218,6 +273,40 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
 
     await coordinator.handleRuntimeError(8, "manager", error);
 
+    expect(calls).toEqual(["turn:error", "controller:error"]);
+  });
+
+  it("preserves active turn context for recoverable compaction and output-guard errors", async () => {
+    const { coordinator, calls } = createHarness();
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "recovery still in progress",
+      details: { recoveryStage: "auto_compaction_timeout" },
+    });
+    expect(calls).toEqual(["controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "runaway output stopped",
+      details: { preserveActiveTurn: true },
+    });
+    expect(calls).toEqual(["controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "recovery exhausted",
+      details: { recoveryStage: "recovery_failed" },
+    });
+    expect(calls).toEqual(["turn:error", "controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "terminal prompt failure with no recovery lifecycle",
+    });
     expect(calls).toEqual(["turn:error", "controller:error"]);
   });
 

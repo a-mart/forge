@@ -2,6 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type { AgentDescriptor } from "./types.js";
+import { TOOL_OUTPUT_TOKEN_PARAMETER } from "./model-visible-tool-result-budget.js";
 
 interface BuildForgePiToolBridgeExtensionFactoryOptions {
   forgeExtensionHost: ForgeExtensionHost;
@@ -128,6 +129,7 @@ function recordExtensionToolHook(
 function replaceToolInput(event: PiToolCallEvent, nextInput: Record<string, unknown>): void {
   const normalizedInput = normalizeToolInput(nextInput);
   const currentInput = event.input;
+  const outputBudget = currentInput?.[TOOL_OUTPUT_TOKEN_PARAMETER];
 
   if (!currentInput || typeof currentInput !== "object" || Array.isArray(currentInput)) {
     (event as PiToolCallEvent & { input: Record<string, unknown> }).input = normalizedInput;
@@ -141,6 +143,15 @@ function replaceToolInput(event: PiToolCallEvent, nextInput: Record<string, unkn
   }
 
   Object.assign(currentInput, normalizedInput);
+  // This field is Forge runtime metadata, not extension-owned tool input. Keep
+  // it across ordinary Forge input rewrites so the final governor still honors
+  // the model's per-call budget request.
+  if (
+    outputBudget !== undefined
+    && !Object.hasOwn(normalizedInput, TOOL_OUTPUT_TOKEN_PARAMETER)
+  ) {
+    currentInput[TOOL_OUTPUT_TOKEN_PARAMETER] = outputBudget;
+  }
 }
 
 function normalizeToolInput(value: unknown): Record<string, unknown> {

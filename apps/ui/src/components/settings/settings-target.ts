@@ -15,6 +15,7 @@ import { resolveCollaborationApiBaseUrl } from '@/lib/collaboration-endpoints'
 export type SettingsBackendKind = 'builder' | 'collab'
 
 export type SettingsTab =
+  | 'project-settings'
   | 'general'
   | 'git-monitoring'
   | 'appearance'

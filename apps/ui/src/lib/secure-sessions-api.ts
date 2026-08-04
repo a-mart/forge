@@ -496,6 +496,9 @@ export function toSecureSessionSnapshotView(
       state: projectDefault.state,
       statusCode: projectDefault.statusCode,
     })),
+    ...(snapshot.lastExecutionIncident
+      ? { lastExecutionIncident: { ...snapshot.lastExecutionIncident } }
+      : {}),
     updatedAt: snapshot.updatedAt,
   }
 }

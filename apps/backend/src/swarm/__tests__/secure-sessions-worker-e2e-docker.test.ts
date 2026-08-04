@@ -25,7 +25,10 @@ import {
   runCommand,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
-import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
+import {
+  acquireSecureDockerTestLock,
+  probeLocalLinuxDockerDaemon,
+} from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -65,15 +68,7 @@ const SHARED_SECONDARY = "FORGE_DOCKER_E2E_SHARED_SECONDARY";
 const SHARED_ONE_USE = "FORGE_DOCKER_E2E_SHARED_ONE_USE";
 
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
-const daemonProbe = process.platform === "win32"
-  ? { exitCode: -1, stdout: Buffer.alloc(0) }
-  : await runCommand("docker", [
-      "version",
-      "--format",
-      "{{.Server.Version}}",
-    ]);
-const dockerAvailable =
-  daemonProbe.exitCode === 0 && daemonProbe.stdout.byteLength > 0;
+const dockerAvailable = await probeLocalLinuxDockerDaemon();
 if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
   throw new Error(
     "Secure Sessions worker Docker E2E was required but Docker is unavailable",
@@ -386,11 +381,13 @@ async function executeAndCapture(
   binding: SecureRuntimeBinding,
   workspacePath: string,
   command: string,
+  timeoutMs?: number,
 ): Promise<{ exitCode: number | null; output: Buffer }> {
   const chunks: Buffer[] = [];
   const result = await binding.executeBash({
     command,
     cwd: workspacePath,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
     onData: (data) => chunks.push(Buffer.from(data)),
   });
   return {
@@ -726,13 +723,17 @@ dockerSuite(
           visibleOutputs.push({ path: marker, bytes: execution.output });
         }
 
+        const concurrentReleaseName = ".team-concurrent.release";
         const concurrentRelease = join(
           harness.workspacePath,
-          ".team-concurrent.release",
+          concurrentReleaseName,
         );
         const concurrentParticipants = [MANAGER, WORKER_ONE, WORKER_TWO] as const;
-        const concurrentStarted = concurrentParticipants.map((agentId) =>
-          join(harness.workspacePath, `.team-concurrent-${agentId}.started`)
+        const concurrentStartedNames = concurrentParticipants.map(
+          (agentId) => `.team-concurrent-${agentId}.started`,
+        );
+        const concurrentStarted = concurrentStartedNames.map((name) =>
+          join(harness.workspacePath, name)
         );
         const concurrent = concurrentParticipants.map((agentId, index) => {
           const marker = `concurrent-${agentId}`;
@@ -744,8 +745,8 @@ dockerSuite(
               [SHARED_ONE_USE],
               marker,
               {
-                startedPath: concurrentStarted[index]!,
-                releasePath: concurrentRelease,
+                startedPath: concurrentStartedNames[index]!,
+                releasePath: concurrentReleaseName,
               },
             ),
           ).then((execution) => ({ execution, marker }));
@@ -759,6 +760,84 @@ dockerSuite(
           visibleOutputs.push({ path: marker, bytes: execution.output });
         }
 
+        const timeoutSiblingReleaseName = ".team-timeout-sibling.release";
+        const timeoutSiblingStartedName = ".team-timeout-sibling.started";
+        const timeoutSiblingRelease = join(
+          harness.workspacePath,
+          timeoutSiblingReleaseName,
+        );
+        const timeoutSiblingStarted = join(
+          harness.workspacePath,
+          timeoutSiblingStartedName,
+        );
+        const timeoutSibling = executeAndCapture(
+          retainedBindings.get(WORKER_TWO)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            commonExpected,
+            [SHARED_ONE_USE],
+            "worker-two-survived-sibling-timeout",
+            {
+              startedPath: timeoutSiblingStartedName,
+              releasePath: timeoutSiblingReleaseName,
+            },
+          ),
+        );
+        await waitForFiles([timeoutSiblingStarted]);
+        await expect(retainedBindings.get(WORKER_ONE)!.executeBash({
+          command: "sleep 30",
+          cwd: harness.workspacePath,
+          timeoutMs: 150,
+          onData: () => undefined,
+        })).rejects.toMatchObject({ code: "EXECUTION_TIMEOUT" });
+
+        const afterWorkerTimeout =
+          await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(afterWorkerTimeout).toEqual(expect.objectContaining({
+          environmentStatus: "ready",
+          lastExecutionIncident: {
+            code: "EXECUTION_TIMEOUT",
+            agentId: WORKER_ONE,
+            occurredAt: NOW,
+          },
+        }));
+        const sandboxAfterTimeout = expectOneManagerSandbox(
+          await listScopeContainers(harness.scopeHash),
+        );
+        expect(sandboxAfterTimeout.id).toBe(initialSandbox.id);
+
+        await writeFile(timeoutSiblingRelease, "release", { flag: "wx" });
+        const survivingSibling = await timeoutSibling;
+        assertSafeExactOutput(
+          survivingSibling.output,
+          needles,
+          "worker-two-survived-sibling-timeout",
+          "timeout-sibling",
+        );
+        visibleOutputs.push({
+          path: "timeout-sibling",
+          bytes: survivingSibling.output,
+        });
+        const managerAfterTimeout = await executeAndCapture(
+          retainedBindings.get(MANAGER)!,
+          harness.workspacePath,
+          verifiedEnvironmentCommand(
+            commonExpected,
+            [SHARED_ONE_USE],
+            "manager-follow-up-after-timeout",
+          ),
+        );
+        assertSafeExactOutput(
+          managerAfterTimeout.output,
+          needles,
+          "manager-follow-up-after-timeout",
+          "timeout-manager-follow-up",
+        );
+        visibleOutputs.push({
+          path: "timeout-manager-follow-up",
+          bytes: managerAfterTimeout.output,
+        });
+
         await grantEnvironmentLease(
           harness,
           WORKER_TWO,
@@ -766,13 +845,15 @@ dockerSuite(
           SHARED_ONE_USE,
           "one_use",
         );
+        const oneUseReleaseName = ".team-one-use.release";
+        const oneUseStartedName = ".team-one-use.started";
         const oneUseRelease = join(
           harness.workspacePath,
-          ".team-one-use.release",
+          oneUseReleaseName,
         );
         const oneUseStarted = join(
           harness.workspacePath,
-          ".team-one-use.started",
+          oneUseStartedName,
         );
         const consuming = executeAndCapture(
           retainedBindings.get(WORKER_ONE)!,
@@ -785,8 +866,8 @@ dockerSuite(
             [],
             "worker-one-reserved-one-use",
             {
-              startedPath: oneUseStarted,
-              releasePath: oneUseRelease,
+              startedPath: oneUseStartedName,
+              releasePath: oneUseReleaseName,
             },
           ),
         );

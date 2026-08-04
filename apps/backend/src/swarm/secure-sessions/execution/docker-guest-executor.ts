@@ -20,10 +20,30 @@ const NSS_WRAPPER_LIBRARY = "/usr/local/lib/forge/libnss_wrapper.so";
 const SSH_KNOWN_HOSTS_PLACEHOLDER = "__FORGE_SECURE_SSH_KNOWN_HOSTS__";
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXECUTION_ID = /^[a-f0-9]{24}$/;
+const CANCELLATION_REASONS = new Set(["aborted", "timeout"]);
 
 function fail(code, exitCode = 125) {
   process.stderr.write("forge-secure-executor:" + code + "\n");
   process.exitCode = exitCode;
+}
+
+function readCancellation(executionRoot) {
+  try {
+    const reason = fs.readFileSync(path.join(executionRoot, "cancel"), "utf8");
+    return CANCELLATION_REASONS.has(reason) ? reason : undefined;
+  } catch (error) {
+    if (error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function terminateProcessGroup(pid, signal) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!error || error.code !== "ESRCH") throw error;
+  }
 }
 
 function validMaterialPath(value) {
@@ -437,6 +457,13 @@ async function main(frame) {
   fs.mkdirSync(tmpDirectory, { recursive: true, mode: 0o700 });
   fs.mkdirSync("/tmp/forge-secure-home", { recursive: true, mode: 0o700 });
 
+  const cancelledBeforeDelivery = readCancellation(executionRoot);
+  if (cancelledBeforeDelivery) {
+    frame.fill(0);
+    fail("execution-" + cancelledBeforeDelivery);
+    return;
+  }
+
   const state = { offset: PREFIX_BYTES + headerByteLength };
   const environment = cleanEnvironment(tmpDirectory);
   for (const descriptor of header.environment) {
@@ -463,12 +490,34 @@ async function main(frame) {
       throw new Error("invalid-frame");
     }
 
+    const cancelledBeforeSpawn = readCancellation(executionRoot);
+    if (cancelledBeforeSpawn) {
+      childStdin.fill(0);
+      frame.fill(0);
+      fail("execution-" + cancelledBeforeSpawn);
+      return;
+    }
+
     const child = spawn(header.command.executable, header.command.args, {
       cwd: header.command.cwd,
       env: environment,
       shell: false,
+      detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
+
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 1) {
+      childStdin.fill(0);
+      throw new Error("invalid-child-pid");
+    }
+    fs.writeFileSync(path.join(executionRoot, "pid"), String(child.pid), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    const cancelledAfterSpawn = readCancellation(executionRoot);
+    if (cancelledAfterSpawn) {
+      terminateProcessGroup(child.pid, "SIGTERM");
+    }
 
     child.stdout.pipe(process.stdout, { end: false });
     child.stderr.pipe(process.stderr, { end: false });
@@ -506,6 +555,13 @@ async function main(frame) {
     child.stdout.destroy();
     child.stderr.destroy();
     frame.fill(0);
+
+    const cancellation = readCancellation(executionRoot);
+    if (cancellation) {
+      terminateProcessGroup(child.pid, "SIGKILL");
+      fail("execution-" + cancellation);
+      return;
+    }
 
     if (outcome.spawnError) {
       fail("command-spawn-failed", outcome.code);
@@ -563,6 +619,90 @@ process.stdin.once("end", async () => {
       }
     }
   }
+});
+`;
+
+/**
+ * Cancels one execution inside the shared task container. The execution id and
+ * fixed reason are non-secret control metadata. The guest executor owns final
+ * material cleanup and reports completion through the original Docker exec.
+ */
+export const DOCKER_GUEST_TERMINATOR_SOURCE = String.raw`
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ROOT = "/run/forge-secure/executions";
+const EXECUTION_ID = /^[a-f0-9]{24}$/;
+const REASONS = new Set(["aborted", "timeout"]);
+const executionId = process.argv[1];
+const reason = process.argv[2];
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function signalGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!error || error.code !== "ESRCH") throw error;
+  }
+}
+
+async function main() {
+  if (!EXECUTION_ID.test(executionId) || !REASONS.has(reason)) {
+    process.exitCode = 2;
+    return;
+  }
+  const executionRoot = path.join(ROOT, executionId);
+  const cancelPath = path.join(executionRoot, "cancel");
+  const pidPath = path.join(executionRoot, "pid");
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (fs.existsSync(executionRoot)) break;
+    await delay(25);
+  }
+  if (!fs.existsSync(executionRoot)) {
+    process.exitCode = 3;
+    return;
+  }
+
+  try {
+    fs.writeFileSync(cancelPath, reason, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (!error || error.code !== "EEXIST") throw error;
+  }
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (!fs.existsSync(executionRoot)) return;
+    if (fs.existsSync(pidPath)) break;
+    await delay(25);
+  }
+  if (!fs.existsSync(executionRoot)) return;
+  if (!fs.existsSync(pidPath)) {
+    process.exitCode = 4;
+    return;
+  }
+
+  const pidText = fs.readFileSync(pidPath, "utf8");
+  if (!/^[1-9][0-9]*$/.test(pidText)) {
+    process.exitCode = 5;
+    return;
+  }
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid) || pid <= 1) {
+    process.exitCode = 5;
+    return;
+  }
+
+  signalGroup(pid, "SIGTERM");
+  await delay(250);
+  signalGroup(pid, "SIGKILL");
+}
+
+main().catch(() => {
+  process.exitCode = 6;
 });
 `;
 

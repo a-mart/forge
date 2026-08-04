@@ -364,8 +364,8 @@ export function SecureSessionPicker({
             </PopoverTitle>
             <PopoverDescription>
               {config.readOnly
-                ? 'This worker uses the manager task’s shared Secure Bash sandbox and session grants.'
-                : 'The manager and its workers share one Secure Bash sandbox and one set of session grants.'}
+                ? 'Normal commands stay on the host. This worker uses the manager task’s shared Linux secure_bash container and session grants only when protected access is needed.'
+                : 'Normal commands stay on the host. The manager and its workers share one Linux secure_bash container and one set of session grants for protected access.'}
             </PopoverDescription>
           </PopoverHeader>
 
@@ -388,6 +388,20 @@ export function SecureSessionPicker({
               <p className="mt-1 text-muted-foreground">
                 {config.outputStateReason
                   ?? 'Forge removed protected material before it reached the agent. The Secure Session remains active.'}
+              </p>
+            </div>
+          ) : null}
+
+          {config.snapshot?.lastExecutionIncident ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+              <p className="font-medium text-foreground">
+                {config.snapshot.lastExecutionIncident.code === 'EXECUTION_TIMEOUT'
+                  ? 'A Secure Bash command timed out'
+                  : 'A Secure Bash command was cancelled'}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Only that command for {config.snapshot.lastExecutionIncident.agentId} was stopped.
+                {' '}Team Secure Mode, its leases, and other workers stayed active.
               </p>
             </div>
           ) : null}

@@ -220,6 +220,26 @@ describe('SecureSessionPicker', () => {
     expect(defaults.querySelector('button')).toBeNull()
   })
 
+  it('explains a command-local timeout while keeping Team Secure Mode active', () => {
+    renderPicker(makeConfig({
+      snapshot: {
+        ...makeConfig().snapshot!,
+        lastExecutionIncident: {
+          code: 'EXECUTION_TIMEOUT',
+          agentId: 'worker-a',
+          occurredAt: '2026-07-23T12:01:00.000Z',
+        },
+      },
+    }))
+
+    openPicker(/secure session ready/i)
+
+    expect(document.body.textContent).toContain('A Secure Bash command timed out')
+    expect(document.body.textContent).toContain('Only that command for worker-a was stopped.')
+    expect(document.body.textContent).toContain('other workers stayed active')
+    expect(document.body.textContent).not.toContain('Stop processes and revoke access?')
+  })
+
   it('defaults to session-lifetime access and grants several saved secrets together', async () => {
     const onGrant = vi.fn()
     renderPicker(makeConfig({
@@ -615,7 +635,7 @@ describe('SecureSessionPicker', () => {
 
     openPicker(/active with 1 active lease/)
     expect(document.body.textContent).toContain(
-      'The manager and its workers share one Secure Bash sandbox and one set of session grants.',
+      'Normal commands stay on the host. The manager and its workers share one Linux secure_bash container and one set of session grants for protected access.',
     )
     expect(document.body.querySelector('[data-secure-team-member]')).toBeNull()
     flushSync(() => {
@@ -663,7 +683,7 @@ describe('SecureSessionPicker', () => {
     openPicker(/active with 1 active lease/)
     expect(document.body.textContent).toContain('Team Secure Status')
     expect(document.body.textContent).toContain(
-      'This worker uses the manager task’s shared Secure Bash sandbox and session grants.',
+      'Normal commands stay on the host. This worker uses the manager task’s shared Linux secure_bash container and session grants only when protected access is needed.',
     )
     const popover = Array.from(
       document.body.querySelectorAll('[data-slot="popover-content"]'),

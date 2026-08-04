@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DockerCli } from "../swarm/secure-sessions/execution/docker-cli.js";
 
 const LOCK_DIRECTORY = join(tmpdir(), "forge-secure-docker-e2e.lock");
 const OWNER_FILE = join(LOCK_DIRECTORY, "owner.json");
@@ -10,6 +11,31 @@ const EMPTY_LOCK_STALE_MS = 30_000;
 
 interface DockerTestLockOwner {
   pid: number;
+}
+
+/**
+ * Use the production Docker endpoint policy for cross-platform E2E discovery.
+ * In particular, Windows Docker Desktop is eligible when its local Linux
+ * engine pipe is available; the test must not skip merely because the host is
+ * Windows.
+ */
+export async function probeLocalLinuxDockerDaemon(): Promise<boolean> {
+  const cli = new DockerCli();
+  if (!(await cli.pinLocalEndpoint())) return false;
+
+  const serverOs = await cli.run([
+    "version",
+    "--format",
+    "{{json .Server.Os}}",
+  ]);
+  if (serverOs.exitCode !== 0 || serverOs.stdout.byteLength === 0) {
+    return false;
+  }
+  try {
+    return JSON.parse(serverOs.stdout.toString("utf8").trim()) === "linux";
+  } catch {
+    return false;
+  }
 }
 
 /**

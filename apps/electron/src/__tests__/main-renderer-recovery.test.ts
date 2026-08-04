@@ -197,6 +197,36 @@ describe('installMainRendererRecovery', () => {
     controller.dispose()
   })
 
+  it('claims only an aborted navigation superseded by its active recovery load', async () => {
+    vi.useFakeTimers()
+    const { window, webContents } = createWindow()
+    let finishRecovery!: () => void
+    const loadRenderer = vi.fn(() => new Promise<void>((resolve) => {
+      finishRecovery = resolve
+    }))
+    const controller = installMainRendererRecovery({
+      window,
+      loadRenderer,
+      isClosing: () => false,
+      recoveryDelayMs: 5,
+    })
+    const aborted = Object.assign(new Error("ERR_ABORTED (-3) loading 'http://127.0.0.1:47188/'"), {
+      code: 'ERR_ABORTED',
+      errno: -3,
+    })
+
+    expect(controller.acceptsSupersededLoadError(aborted)).toBe(false)
+    webContents.emit('render-process-gone')
+    await vi.advanceTimersByTimeAsync(5)
+
+    expect(controller.acceptsSupersededLoadError(aborted)).toBe(true)
+    expect(controller.acceptsSupersededLoadError(new Error('ERR_NAME_NOT_RESOLVED'))).toBe(false)
+    finishRecovery()
+    await Promise.resolve()
+    expect(controller.acceptsSupersededLoadError(aborted)).toBe(false)
+    controller.dispose()
+  })
+
   it('does not recover while the app is closing', async () => {
     vi.useFakeTimers()
     const { window, webContents } = createWindow()

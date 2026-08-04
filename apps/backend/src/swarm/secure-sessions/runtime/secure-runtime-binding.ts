@@ -30,6 +30,18 @@ export interface SecureRuntimeBashExecutionResult {
 }
 
 /**
+ * Stateful output capability for host-side tools that remain available while
+ * Secure Sessions grants are active. The implementation owns the registered
+ * secret material; callers can only submit bytes and receive already-guarded
+ * copies.
+ */
+export interface SecureRuntimeOutputGuard {
+  write(data: Uint8Array): Uint8Array;
+  close(): Promise<Uint8Array>;
+  dispose(): void;
+}
+
+/**
  * Backend-process-only capability for a single Secure Session lease.
  *
  * Implementations must not expose raw secret material through this interface.
@@ -45,6 +57,7 @@ export interface SecureRuntimeBinding {
   executeBash(
     request: SecureRuntimeBashExecutionRequest,
   ): Promise<SecureRuntimeBashExecutionResult>;
+  createOutputGuard(): SecureRuntimeOutputGuard;
   guardValue<T>(value: T): T;
 }
 
@@ -73,8 +86,8 @@ export function guardSecureRuntimeError(
 ): Error {
   // SecureExecutionError is constructed only from Forge-owned codes whose
   // messages are fixed and value-free. Preserve that diagnostic even after a
-  // timeout, abort, or backend failure has invalidated the binding; attempting
-  // to guard it through the now-revoked binding would replace the real cause
+  // timeout, abort, or backend failure. Attempting to guard the fixed error
+  // through a binding that may be unavailable would replace the real cause
   // with the misleading generic output-filter failure.
   if (error instanceof SecureExecutionError) {
     const safeError = new SecureExecutionError(error.code);

@@ -898,6 +898,72 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("recovers a clean final from agent settlement and keeps normal delivery exactly once", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    const message = { role: "assistant" as const, content: "Settlement answer.", stopReason: "stop" };
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:42");
+    projector.activateManagerAssistantOutputTurn(
+      manager.agentId,
+      { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      { turnId: "manager-1:42", beginUserVisibleObligation: true },
+    );
+
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_start" } });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end", settledAssistantMessage: message },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: manager.agentId,
+      turnId: "manager-1:42",
+      role: "assistant",
+      source: "assistant_output",
+      text: "Settlement answer.",
+      sourceContext: { channel: "web" },
+    }));
+
+    projector.activateManagerAssistantOutputTurn(
+      manager.agentId,
+      { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      { turnId: "manager-1:43", beginUserVisibleObligation: true },
+    );
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_start" } });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end", settledAssistantMessage: message },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps settlement finals denied for protected non-web output targets", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "explicit_tool_required",
+      reason: "collaboration_channel",
+    });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "agent_end",
+        settledAssistantMessage: { role: "assistant", content: "Must remain private.", stopReason: "stop" },
+      },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+  });
+
   it("projects manager assistant progress for tool-use text and immediate final text after continued tool work", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });

@@ -16,7 +16,10 @@ import {
   startFixtureTarget,
   uniqueManagedName,
 } from "../../../../../scripts/secure-sessions-e2e/harness.js";
-import { acquireSecureDockerTestLock } from "../../test-support/secure-docker-test-lock.js";
+import {
+  acquireSecureDockerTestLock,
+  probeLocalLinuxDockerDaemon,
+} from "../../test-support/secure-docker-test-lock.js";
 import {
   canaryNeedles,
   scanDirectory,
@@ -41,15 +44,7 @@ import {
 } from "../secure-sessions/redaction/secure-value-guard.js";
 
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
-const daemonProbe = process.platform === "win32"
-  ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
-  : await runCommand("docker", [
-      "version",
-      "--format",
-      "{{.Server.Version}}",
-    ]);
-const dockerAvailable =
-  daemonProbe.exitCode === 0 && daemonProbe.stdout.byteLength > 0;
+const dockerAvailable = await probeLocalLinuxDockerDaemon();
 if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
   throw new Error("Secure Sessions Docker E2E was required but Docker is unavailable");
 }
@@ -674,7 +669,7 @@ dockerSuite(
       expect(markerCheck.exitCode).toBe(0);
     }, 90_000);
 
-    it("destroys secret-bearing sandboxes on cancel, timeout, and background revocation", async () => {
+    it("isolates cancel and timeout while preserving explicit task revocation", async () => {
       const canary = makeCanary();
       const needles = canaryNeedles(canary);
       const temporaryRoot = await mkdtemp(
@@ -714,9 +709,10 @@ dockerSuite(
         code: "EXECUTION_ABORTED",
       } satisfies Partial<SecureExecutionError>);
       abortGuard.dispose();
-      expect(await dockerContainerExists(first.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(first.sandboxId)).toBe(true);
 
       const second = await backend.ensureTask(task);
+      expect(second.sandboxId).toBe(first.sandboxId);
       const timeoutGuard = new SecureValueGuard([canary]);
       await expect(
         backend.execute({
@@ -730,9 +726,10 @@ dockerSuite(
         code: "EXECUTION_TIMEOUT",
       } satisfies Partial<SecureExecutionError>);
       timeoutGuard.dispose();
-      expect(await dockerContainerExists(second.sandboxId)).toBe(false);
+      expect(await dockerContainerExists(second.sandboxId)).toBe(true);
 
       const third = await backend.ensureTask(task);
+      expect(third.sandboxId).toBe(first.sandboxId);
       const background = await executeGuarded(
         backend,
         {

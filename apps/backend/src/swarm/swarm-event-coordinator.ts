@@ -209,7 +209,10 @@ export class SwarmEventCoordinator {
     for (const snapshot of this.options.sessionActiveTools.recordAgentStatus(payload, descriptor)) {
       this.emitSessionActiveToolsSnapshot(snapshot);
     }
-    if (descriptor?.role === "manager" && isNonRunningAgentStatus(status)) {
+    if (
+      descriptor?.role === "manager" &&
+      (isNonRunningAgentStatus(status) || (status === "idle" && pendingCount === 0))
+    ) {
       this.clearManagerToolActivity(descriptor.agentId);
     }
   }

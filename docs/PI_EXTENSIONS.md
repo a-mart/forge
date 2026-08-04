@@ -187,6 +187,22 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+### Tool result budgets
+
+Forge applies one final, provider-neutral budget to every canonical model-visible tool result before it
+is written to conversation history or sent to a model request. The default is 10,000 estimated tokens
+per result. Forge adds an optional `max_output_tokens` integer to every compatible tool schema, so a
+model can request a smaller or larger result for one call; the runtime range is 256 to 50,000.
+
+The field is runtime metadata. Forge removes injected copies before calling the tool, while tools that
+already define `max_output_tokens` continue to receive it. All extension `tool_result`, `message_end`,
+and `context` transformations run before the applicable final budget. Truncated text keeps both the
+beginning and end and includes a receipt with the estimated omitted amount and the effective limit.
+Tool error state and non-model-facing `details` are unchanged.
+
+An extension that deliberately replaces the raw provider payload in `before_provider_request` is
+operating outside the canonical message lifecycle and owns the size of any tool content it inserts.
+
 ### Available Events
 
 | Event | When | Can Modify? |

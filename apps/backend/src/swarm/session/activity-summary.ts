@@ -44,7 +44,12 @@ function summarizeToolActivity(
   if (normalized.includes("apply_patch") || normalized.includes("edit") || normalized.includes("write_file")) {
     return outcome ? `File edit ${outcome}` : "Edited files";
   }
+  if (normalized === "secure_bash") {
+    return outcome ? `Secure command ${outcome}` : "Ran secure command";
+  }
   if (normalized.includes("exec") || normalized.includes("command") || normalized === "bash" || normalized === "shell") {
+    // Older Secure Sessions persisted container calls as `bash`, and generic
+    // exec/command tools do not necessarily run on the Builder host.
     return outcome ? `Command ${outcome}` : "Ran command";
   }
   if (normalized.includes("read") || normalized.includes("view")) return outcome ? `File read ${outcome}` : "Read file";

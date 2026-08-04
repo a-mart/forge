@@ -221,9 +221,6 @@ export function responseTokensPerSecond(record: GenerationMeasurementRecord): nu
   return record.usage.outputTokens! * 1000 / record.timing.requestWallMs!;
 }
 
-/** @deprecated Use responseTokensPerSecond. This alias deliberately has request-wall semantics. */
-export const tokensPerSecond = responseTokensPerSecond;
-
 function nearestRank(values: number[], percentile: number): number | null {
   if (values.length === 0) return null;
   const sorted = values.slice().sort((left, right) => left - right);
