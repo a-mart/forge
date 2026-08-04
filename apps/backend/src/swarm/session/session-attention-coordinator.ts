@@ -288,7 +288,20 @@ export class SessionAttentionCoordinator {
       }
 
       const current = state.sessions[sessionAgentId];
-      if (!current || current.phase !== "working" || !current.awaitingContinuation) {
+      if (!current || current.phase !== "working") {
+        return { value: undefined };
+      }
+
+      // A rollback can remove one accepted turn while another remains queued.
+      // Never clear the epoch fence until the authoritative queue is empty.
+      if (normalizeCount(session.pendingTurnContextCount) > 0) {
+        if (current.awaitingContinuation) return { value: undefined };
+        const latched = cloneSessionAttentionState(state);
+        latched.sessions[sessionAgentId] = { ...current, awaitingContinuation: true };
+        return { value: undefined, state: latched, changes: [] };
+      }
+
+      if (!current.awaitingContinuation) {
         return { value: undefined };
       }
 

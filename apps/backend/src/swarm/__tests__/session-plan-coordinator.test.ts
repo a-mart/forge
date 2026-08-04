@@ -81,6 +81,75 @@ describe('SessionPlanCoordinator', () => {
       })
   })
 
+  it('enriches qualified attention from only current-epoch plan and graph state', async () => {
+    const harness = await createHarness()
+    const completedPlan = await harness.coordinator.update(harness.owner, {
+      plan: [{ step: 'Finish the work', status: 'completed' }],
+    })
+    const planUpdatedAt = completedPlan.result.updatedAt!
+
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt: planUpdatedAt,
+    })).resolves.toBe('plan_completed')
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt: '2100-01-01T00:00:00.000Z',
+    })).resolves.toBeUndefined()
+
+    const waiting = await harness.coordinator.updateWorkGraph(harness.owner, {
+      nodes: [{
+        id: 'decision',
+        title: 'Choose rollout',
+        task: 'Choose the rollout.',
+        kind: 'decision',
+        status: 'waiting',
+      }],
+    })
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt: waiting.snapshot.updatedAt!,
+    })).resolves.toBe('decision_waiting')
+
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      nodes: [{
+        id: 'review',
+        title: 'Review implementation',
+        task: 'Review the implementation.',
+        kind: 'review',
+        status: 'pending',
+      }],
+    })
+    const [claim] = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
+    await harness.coordinator.recordWorkGraphWorkerStarted(
+      harness.owner,
+      'review',
+      claim!.attemptId,
+      'review-worker',
+    )
+    await harness.coordinator.recordWorkGraphWorkerResult(
+      harness.owner,
+      'review-worker',
+      'status: done\nsummary: reviewed',
+    )
+    const review = await harness.coordinator.getSnapshot(harness.owner)
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt: review.updatedAt!,
+    })).resolves.toBe('awaiting_review')
+
+    const graphCompleted = await harness.coordinator.acceptWorkGraphNode(harness.owner, 'review')
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt: graphCompleted.snapshot.updatedAt!,
+    })).resolves.toBe('work_graph_completed')
+  })
+
   it('keeps one durable graph-card identity when saturated history evicts the active anchor', async () => {
     const harness = await createHarness()
     const graphNode = {

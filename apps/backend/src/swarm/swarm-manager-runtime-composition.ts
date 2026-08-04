@@ -249,6 +249,10 @@ export interface SwarmManagerRuntimeCompositionOptions {
   }) => Promise<void>;
   /** Retires session attention when a session becomes ineligible. */
   reportAttentionSessionRetired: (sessionAgentId: string) => Promise<void>;
+  /** Latches an accepted manager turn after it enters the authoritative queue. */
+  reportAttentionPendingTurn: (agentId: string) => Promise<void>;
+  /** Releases a latched turn that ended without provider continuation. */
+  reportAttentionContinuationAbandoned: (agentId: string) => Promise<void>;
   secureSessions: SecureSessionCoordinatorPort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
@@ -645,6 +649,11 @@ export class SwarmManagerRuntimeComposition {
     >({
       descriptors: this.options.state.descriptors,
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      attention: {
+        observePendingQueueChange: (agentId) => this.options.reportAttentionPendingTurn(agentId),
+        releaseContinuationBarrier: (agentId) =>
+          this.options.reportAttentionContinuationAbandoned(agentId),
+      },
       ledger: {
         mintTurnId: (descriptor) => services.sessionMeta.mintTurnIdForDescriptor(descriptor),
         recordTurnDispatched: async (input) => {

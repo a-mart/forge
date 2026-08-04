@@ -485,6 +485,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.sessionAttentionCoordinator = new SessionAttentionCoordinator({
       store: new SessionAttentionStore({ dataDir: this.config.paths.dataDir }),
       isEligible: isSessionAttentionEligible,
+      // Queried only after the coordinator proves an armed quiescence edge.
+      // Plan/graph mutations never arm or evaluate attention themselves.
+      getReason: (input) => this.sessionPlanCoordinator.getAttentionReason(input),
+      log: (message, details) => this.logDebug(message, details),
     });
     this.sessionAttentionReporter = new SessionAttentionReporter({
       coordinator: this.sessionAttentionCoordinator,
@@ -626,6 +630,14 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       reportAttentionSessionRetired: async (sessionAgentId) => {
         await this.sessionAttentionReporter?.reportSessionRetired(sessionAgentId);
+      },
+      reportAttentionPendingTurn: async (agentId) => {
+        if (this.descriptors.get(agentId)?.role !== "manager") return;
+        await this.sessionAttentionReporter?.reportAggregateChange(agentId);
+      },
+      reportAttentionContinuationAbandoned: async (agentId) => {
+        if (this.descriptors.get(agentId)?.role !== "manager") return;
+        await this.sessionAttentionReporter?.reportContinuationAbandoned(agentId);
       },
       state: {
         config: this.config,

@@ -244,6 +244,11 @@ describe("SessionAttentionCoordinator state machine", () => {
       "idle",
       session("idle", { pendingTurnContextCount: 1 }),
     ));
+    // Rolling back one accepted turn cannot clear the fence while another is
+    // still queued.
+    await h.coordinator.releaseContinuationBarrier(session("idle", { pendingTurnContextCount: 1 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
     await h.coordinator.observeAggregateChange(session("idle", { pendingTurnContextCount: 0 }));
     expect(h.coordinator.getSnapshot().attentions).toEqual([]);
 
