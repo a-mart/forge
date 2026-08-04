@@ -18,6 +18,7 @@ import type {
   RuntimeShutdownOptions,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
+import { shouldPreserveActiveTurnForRuntimeError } from "./runtime-error-lifecycle-policy.js";
 import {
   RuntimeCallbackGate,
   type RuntimeCallbackFallbackHandoffReplayHandlers,
@@ -975,8 +976,11 @@ export class SwarmRuntimeController {
       runtimeToken,
       error,
     );
-    this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, guardedError);
-    this.clearManagerAssistantOutputTurn(agentId);
+    const preserveActiveTurn = shouldPreserveActiveTurnForRuntimeError(guardedError);
+    if (!preserveActiveTurn) {
+      this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, guardedError);
+      this.clearManagerAssistantOutputTurn(agentId);
+    }
     this.recordObservabilityRuntimeError(agentId, runtimeToken, guardedError);
 
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error: guardedError });

@@ -221,6 +221,40 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     expect(calls).toEqual(["turn:error", "controller:error"]);
   });
 
+  it("preserves active turn context for recoverable compaction and output-guard errors", async () => {
+    const { coordinator, calls } = createHarness();
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "recovery still in progress",
+      details: { recoveryStage: "auto_compaction_timeout" },
+    });
+    expect(calls).toEqual(["controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "runaway output stopped",
+      details: { preserveActiveTurn: true },
+    });
+    expect(calls).toEqual(["controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "recovery exhausted",
+      details: { recoveryStage: "recovery_failed" },
+    });
+    expect(calls).toEqual(["turn:error", "controller:error"]);
+
+    calls.length = 0;
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "compaction",
+      message: "terminal prompt failure with no recovery lifecycle",
+    });
+    expect(calls).toEqual(["turn:error", "controller:error"]);
+  });
+
   it("persists worker compaction counts and publishes the owning session snapshot", async () => {
     const { coordinator, descriptors, descriptorMutations, directory, events } = createHarness();
     descriptors.set("worker", descriptor({

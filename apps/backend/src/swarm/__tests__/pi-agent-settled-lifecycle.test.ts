@@ -272,6 +272,95 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
   });
 
+  it("aborts repetitive manager output, prunes it, and retries the active obligation", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+
+    await runtime.sendMessage("continue the active manager obligation");
+    await vi.waitFor(() => expect(session.promptCalls).toEqual(["continue the active manager obligation"]));
+
+    session.state.messages = [
+      { role: "user", content: "continue the active manager obligation" },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+
+    await vi.waitFor(() => expect(session.abortCalls).toBe(1));
+    await vi.waitFor(() => expect(session.promptCalls).toEqual([
+      "continue the active manager obligation",
+      "continue the active manager obligation",
+    ]));
+
+    expect(session.state.messages).toEqual([
+      { role: "user", content: "continue the active manager obligation" },
+    ]);
+    expect(onRuntimeError).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "interrupt",
+        details: expect.objectContaining({
+          stage: "manager_output_runaway",
+          preserveActiveTurn: true,
+        }),
+      }),
+    );
+    expect(onSessionEvent).not.toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({ type: "message_update" }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+  });
+
+  it("aborts a timed-out automatic compaction and retries the active obligation", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError, reportSuccess } = makeRuntime();
+
+    await runtime.sendMessage("continue after automatic compaction");
+    await vi.waitFor(() => expect(session.promptCalls).toEqual(["continue after automatic compaction"]));
+
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    (runtime as any).autoCompactionRecoveryInProgress = true;
+    (runtime as any).contextRecoveryInProgress = true;
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleAutoCompactionTimeout();
+
+    expect(session.abortCalls).toBe(1);
+    await vi.waitFor(() => expect(session.promptCalls).toEqual([
+      "continue after automatic compaction",
+      "continue after automatic compaction",
+    ]));
+    expect(onRuntimeError).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "compaction",
+        details: expect.objectContaining({
+          recoveryStage: "auto_compaction_timeout",
+          compactionRetryPlanned: true,
+          preserveActiveTurn: true,
+        }),
+      }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+  });
+
   it("acknowledges Pi-expanded steer content without replaying it", async () => {
     const { runtime, session, onAgentEnd, reportSuccess } = makeRuntime();
     session.steerTransform = (message) => `<expanded-skill>${message}</expanded-skill>`;

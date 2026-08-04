@@ -1581,6 +1581,41 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("keeps manager watchdog and output state active for recoverable runtime errors", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage } = createRuntimeControllerHarness(config);
+    const recordManagerTurnWatchdogRuntimeError = vi.fn();
+    host.recordManagerTurnWatchdogRuntimeError = recordManagerTurnWatchdogRuntimeError;
+    const controller = new SwarmRuntimeController(host);
+    const clearManagerAssistantOutputTurn = vi.spyOn(controller, "clearManagerAssistantOutputTurn");
+    const manager = baseDescriptor({
+      agentId: "mgr-recoverable-error",
+      role: "manager",
+      managerId: "mgr-recoverable-error",
+      status: "streaming",
+    });
+    descriptors.set(manager.agentId, manager);
+    const token = controller.allocateRuntimeToken(manager.agentId);
+
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "interrupt",
+      message: "runaway output stopped",
+      details: {
+        preserveActiveTurn: true,
+        userFacingMessage: "Forge stopped a runaway manager response.",
+      },
+    });
+
+    expect(recordManagerTurnWatchdogRuntimeError).not.toHaveBeenCalled();
+    expect(clearManagerAssistantOutputTurn).not.toHaveBeenCalled();
+    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: manager.agentId,
+      role: "system",
+      text: "Forge stopped a runaway manager response.",
+    }));
+  });
+
   it("finalizes a normal worker completion during parent recovery instead of dropping it", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

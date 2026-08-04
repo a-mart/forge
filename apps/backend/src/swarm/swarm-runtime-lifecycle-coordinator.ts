@@ -17,6 +17,7 @@ import type {
   WorkerStallState,
 } from "./swarm-worker-health-service.js";
 import { ManagerTurnWatchdog } from "./manager-turn-watchdog.js";
+import { shouldPreserveActiveTurnForRuntimeError } from "./runtime-error-lifecycle-policy.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import {
   extractMessageErrorMessage,
@@ -300,7 +301,10 @@ export class SwarmRuntimeLifecycleCoordinator {
     const agentId = typeof runtimeTokenOrAgentId === "number"
       ? agentIdOrError as string
       : runtimeTokenOrAgentId;
-    this.options.turnContext.handleRuntimeError(agentId);
+    const error = typeof runtimeTokenOrAgentId === "number" ? maybeError : agentIdOrError as RuntimeErrorEvent;
+    if (!error || !shouldPreserveActiveTurnForRuntimeError(error)) {
+      this.options.turnContext.handleRuntimeError(agentId);
+    }
     await this.options.controller.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
   }
 

@@ -67,6 +67,10 @@ import {
 import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
 import { hasNoReplySentinelLine } from "./manager-assistant-final-message.js";
 import { PiGenerationTelemetryAdapter } from "./generation-telemetry.js";
+import {
+  detectManagerOutputRunaway,
+  type ManagerOutputRunawayDetection,
+} from "./pi/manager-output-runaway-guard.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -103,6 +107,7 @@ const MAX_HANDOFF_CONTENT_CHARS = 3_000;
 const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
 const POOLED_AUTH_RECONCILE_IDLE_MS = 60_000;
+const MANAGER_OUTPUT_ABORT_TIMEOUT_MS = 15_000;
 
 type PiSessionShutdownReason = "quit" | "reload" | "new" | "resume" | "fork";
 
@@ -223,6 +228,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private sessionShutdownPromise: Promise<void> | undefined;
   /** Prevent abort-generated settlement from relaunching accepted work during Stop/terminate. */
   private lifecycleInterruptionInProgress = false;
+  /** One-shot recovery marker so subsequent provider deltas cannot start duplicate aborts. */
+  private managerOutputRecovery: ManagerOutputRunawayDetection | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -520,6 +527,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.currentTurnReplayMessages = [];
     this.preparedSpecialistFallbackSessionMessages = undefined;
     this.ignoreNextAgentStart = false;
+    this.managerOutputRecovery = undefined;
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
@@ -743,6 +751,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.clearAutoCompactionTimeout();
       this.suppressSessionEventsUntilIdle = null;
       this.awaitingAgentSettlement = false;
+      this.managerOutputRecovery = undefined;
       this.inFlightPrompts.clear();
     }
 
@@ -1283,6 +1292,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    if (this.handleManagerOutputGuardEvent(event)) {
+      return;
+    }
+
     const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
@@ -1360,6 +1373,144 @@ export class AgentRuntime implements SwarmAgentRuntime {
         await this.emitStatus();
       }
     }
+  }
+
+  private handleManagerOutputGuardEvent(event: AgentSessionEvent): boolean {
+    if (this.descriptor.role !== "manager") {
+      return false;
+    }
+
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      return false;
+    }
+
+    if (
+      (event.type !== "message_update" && event.type !== "message_end") ||
+      event.message.role !== "assistant"
+    ) {
+      return false;
+    }
+
+    if (this.managerOutputRecovery) {
+      // The aborting response is intentionally withheld from Forge projection.
+      return true;
+    }
+
+    const text = extractTextFromMessageRecord(event.message);
+    const detection = detectManagerOutputRunaway(text);
+    if (!detection) {
+      return false;
+    }
+
+    this.managerOutputRecovery = detection;
+    this.queueCurrentManagerMessageForRecovery();
+    this.beginContextRecovery();
+    void this.recoverRunawayManagerOutput(detection).catch((error) => {
+      this.logRuntimeError("interrupt", error, {
+        stage: "manager_output_recovery_top_level",
+        reason: detection.reason,
+        observedChars: detection.observedChars,
+      });
+    });
+    return true;
+  }
+
+  private async recoverRunawayManagerOutput(detection: ManagerOutputRunawayDetection): Promise<void> {
+    let abortSettled = false;
+    try {
+      await this.reportRuntimeError({
+        phase: "interrupt",
+        message: "Runaway manager output was stopped",
+        details: {
+          stage: "manager_output_runaway",
+          reason: detection.reason,
+          observedChars: detection.observedChars,
+          preserveActiveTurn: true,
+          userFacingMessage:
+            "Forge stopped a runaway manager response and is retrying the current work.",
+        },
+      });
+
+      try {
+        await this.abortSessionAndWaitForIdle(
+          MANAGER_OUTPUT_ABORT_TIMEOUT_MS,
+          "manager_output_runaway_abort",
+        );
+        abortSettled = true;
+      } catch (error) {
+        this.closeStaleOpenAICodexWebSocketSession("manager_output_runaway_abort_failed");
+        this.logRuntimeError("interrupt", error, {
+          stage: "manager_output_runaway_abort_failed",
+          reason: detection.reason,
+          observedChars: detection.observedChars,
+        });
+        await this.reportRuntimeError({
+          phase: "interrupt",
+          message: "Runaway manager response could not be interrupted cleanly",
+          details: {
+            stage: "manager_output_runaway_abort_failed",
+            reason: detection.reason,
+            observedChars: detection.observedChars,
+            preserveActiveTurn: true,
+            userFacingMessage:
+              "Forge detected a runaway manager response but could not stop it cleanly. Use Stop All once, then retry.",
+          },
+        });
+      }
+
+      try {
+        this.pruneRunawayManagerAssistantMessage();
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, {
+          stage: "manager_output_runaway_prune_failed",
+          reason: detection.reason,
+          observedChars: detection.observedChars,
+        });
+      }
+    } finally {
+      // Never leave the runtime locked in recovery because a cleanup callback
+      // failed. The accepted manager obligation remains queued for settlement.
+      this.managerOutputRecovery = undefined;
+      this.endContextRecovery();
+    }
+
+    if (this.awaitingAgentSettlement && (abortSettled || !this.session.isStreaming)) {
+      await this.finalizeAgentRunSettlement();
+    }
+    await this.flushRecoveryBufferedMessages();
+  }
+
+  private queueCurrentManagerMessageForRecovery(): void {
+    if (this.pendingDeliveries.length > 0) {
+      return;
+    }
+
+    const message = cloneRuntimeUserMessage(this.currentTurnReplayMessages.at(-1));
+    if (!message) {
+      return;
+    }
+
+    this.pendingDeliveries.push({
+      deliveryId: randomUUID(),
+      messageKey: buildRuntimeMessageKey(message),
+      message,
+      mode: "steer",
+    });
+  }
+
+  private pruneRunawayManagerAssistantMessage(): void {
+    const messages = this.getSessionAgentMessages();
+    const trailingMessage = messages.at(-1);
+    if (!trailingMessage || trailingMessage.role !== "assistant") {
+      return;
+    }
+
+    const trailingText = extractTextFromMessageRecord(trailingMessage);
+    if (!detectManagerOutputRunaway(trailingText)) {
+      return;
+    }
+
+    this.replaceSessionAgentMessages(messages.slice(0, -1));
   }
 
   private checkContextBudget(): void {
@@ -2214,20 +2365,40 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.autoCompactionTimeout = undefined;
     this.abortCompactionSafely("auto_compaction_timeout_abort");
-    this.latestAutoCompactionReason = undefined;
-    this.autoCompactionEntryKeysBefore = undefined;
-    this.endAutoCompactionRecovery();
-    this.noteAutoCompactionFailureCooldown();
+    this.queueCurrentManagerMessageForRecovery();
     await this.reportRuntimeError({
       phase: "compaction",
       message: "Automatic compaction timed out",
       details: {
         recoveryStage: "auto_compaction_timeout",
-        compactionRetryPlanned: false,
-        userFacingMessage: "Automatic compaction timed out; recovery was force-cleared.",
+        compactionRetryPlanned: true,
+        preserveActiveTurn: true,
+        userFacingMessage: "Automatic compaction timed out; Forge is retrying the current work.",
         receipt: "auto_compaction_timeout_force_cleared"
       }
     });
+
+    let abortSettled = false;
+    try {
+      await this.abortSessionAndWaitForIdle(
+        CONTEXT_GUARD_ABORT_TIMEOUT_MS,
+        "auto_compaction_timeout_session_abort",
+      );
+      abortSettled = true;
+    } catch (error) {
+      this.closeStaleOpenAICodexWebSocketSession("auto_compaction_timeout_session_abort_failed");
+      this.logRuntimeError("compaction", error, {
+        stage: "auto_compaction_timeout_session_abort_failed",
+      });
+    }
+
+    this.latestAutoCompactionReason = undefined;
+    this.autoCompactionEntryKeysBefore = undefined;
+    this.endAutoCompactionRecovery();
+    this.noteAutoCompactionFailureCooldown();
+    if (this.awaitingAgentSettlement && (abortSettled || !this.session.isStreaming)) {
+      await this.finalizeAgentRunSettlement();
+    }
     await this.flushRecoveryBufferedMessages();
   }
 
@@ -2965,8 +3136,12 @@ function parseDirectUserSourceMetadata(text: string): { channel: string } | unde
   }
 }
 
-function extractTextFromMessageRecord(message: Record<string, any>): string {
-  const content = message.content;
+function extractTextFromMessageRecord(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  const content = (message as { content?: unknown }).content;
   if (typeof content === "string") {
     return content;
   }
