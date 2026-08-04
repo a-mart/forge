@@ -3,8 +3,10 @@
 Secure Sessions let a local Builder task use an approved secret without putting the
 secret value in chat, a model prompt, tool arguments, WebSocket messages, or the
 conversation transcript. The agent continues to call the ordinary Pi Bash and file
-tools. Forge routes Bash through the secure execution plane and resolves approved
-values only after the tool call has reached that local boundary.
+tools for normal host work. While Team Secure Mode is active, Forge adds a separate
+`secure_bash` tool backed by the Linux secure execution plane. Approved values are
+resolved only after a `secure_bash` call has reached that local boundary; normal
+`bash` never receives them.
 
 This feature is designed for the practical middle ground between two unsafe extremes:
 giving the model a password and building a special-purpose tool for every command that
@@ -18,8 +20,10 @@ set, one request queue, and one output-protection state. Eligible local Forge Pi
 workers inherit that authority while executing work for the manager; they never
 create a second secret grant or sandbox. While it is active:
 
-- the manager and all eligible workers run Pi Bash in the same manager-owned
-  container;
+- the manager and all eligible workers can run `secure_bash` in the same
+  manager-owned container;
+- ordinary `bash` remains on the host with its usual PATH, authentication, shell
+  settings, and developer tools; on Windows this is normally Git Bash;
 - idle, newly created, reassigned, and completed workers do not create or retain
   additional containers;
 - the workspace is mounted directly into the container (at the same path on
@@ -28,8 +32,9 @@ create a second secret grant or sandbox. While it is active:
   a protected RAM-backed file, or an askpass helper;
 - a task or timed grant can be reused across many commands from the manager or any
   eligible worker in the session;
-- every Bash output byte is filtered before the Pi tool accumulator, Forge events,
-  persistence, extensions, UI, or the next provider request;
+- output from both `bash` and `secure_bash` is filtered before the Pi tool
+  accumulator, Forge events, persistence, extensions, UI, or the next provider
+  request;
 - host-side file-tool results pass through the same active exact-value guard before
   they can be returned to the runtime;
 - stopping or revoking Team Secure Mode destroys the shared process tree and revokes
@@ -199,7 +204,7 @@ binding does not grant access.
 | Askpass | A generated helper path in a named variable | SSH, Git, and compatible password prompts |
 | SSH agent | Not yet supported | Reserved for a future constrained signing broker |
 
-Examples of normal agent commands after a grant:
+Examples of `secure_bash` commands after a grant:
 
 ```bash
 curl -H "Authorization: Bearer $WORK_API_TOKEN" https://internal.example/api
@@ -209,9 +214,9 @@ python3 scripts/rotate_credential.py "$ROTATION_TOKEN_FILE"
 scp "$DEPLOY_KEY_FILE" server.example:/tmp/deploy-key
 ```
 
-These are ordinary Bash commands. There is no secret interpolation syntax in the
-model-originated command. The value is added only to the selected child inside the
-task container. An `SSH_ASKPASS` binding automatically supplies the non-secret
+There is no secret interpolation syntax in the model-originated command. The value
+is added only to the selected child inside the task container. The same commands run
+through normal `bash` do not receive the value. An `SSH_ASKPASS` binding automatically supplies the non-secret
 `DISPLAY` and `SSH_ASKPASS_REQUIRE=force` settings needed for password authentication
 without a terminal.
 
@@ -272,20 +277,22 @@ secret and its **Every project** policy are not deleted with any one project.
    - **Until Secure Session stops** is the default and remains available until the
      user revokes it or stops the Secure Session.
    - **Timed** remains available for the selected duration, up to 24 hours.
-   - **One use** is atomically consumed by the next Secure Bash command, whether or
+   - **One use** is atomically consumed by the next `secure_bash` command, whether or
      not that command actually references the binding.
-6. Continue working normally. The same task or timed lease is checked on every
-   command from the manager or its eligible workers, so a 16-command workflow does
-   not require 16 prompts.
+6. Continue ordinary repository work, builds, Git, GitHub CLI, and host-integrated
+   tasks with `bash`. Use `secure_bash` only for commands that need an approved value
+   or Forge-managed SSH trust. The same task or timed lease is checked on every
+   `secure_bash` call from the manager or its eligible workers, so a 16-command
+   credentialed workflow does not require 16 prompts.
 7. Revoke one shared lease or stop Team Secure Mode to revoke the manager session and
    destroy its environment.
 
-Every active task or timed grant is injected into every Secure Bash command and is
+Every active task or timed grant is injected into every `secure_bash` command and is
 available to that command's child processes. This broad process scope is what
 preserves ordinary Bash syntax; it is not a semantic promise that the value is used
 only for the action the user had in mind. Grant narrowly and revoke promptly.
 
-Secure Bash calls from one agent are serialized across their complete authorization
+`secure_bash` calls from one agent are serialized across their complete authorization
 and execution boundary. Different eligible workers can execute concurrently in the
 same manager container. Lease reservation, one-use consumption, grant changes, and
 teardown remain serialized under the manager authority, so concurrent workers cannot
@@ -315,7 +322,7 @@ not create worker-owned authority.
 
 Delegation remains available in Team Secure Mode for eligible local Forge Pi workers.
 Before an assignment is delivered, Forge validates the worker runtime, workspace, and
-exact assignment generation, then binds its Secure Bash calls to the manager
+exact assignment generation, then binds its `secure_bash` calls to the manager
 container. Follow-up work and reassignment reuse the same session environment. A
 captured runtime binding becomes invalid when its worker assignment changes, while
 the manager leases and pending requests remain intact. Before later work begins,
@@ -344,6 +351,8 @@ Secure Sessions make the following concrete promises for supported paths:
   contain the value;
 - values enter the guest executor in a private binary frame on stdin, after the
   container has already started;
+- normal host `bash` never receives approved values or consumes one-use grants, and
+  its streamed output is still checked before Pi can accumulate or persist it;
 - output is matched as raw bytes across arbitrary chunk boundaries, including common
   Base64, Base64url, hexadecimal, URL, and JSON encodings;
 - low-entropy values are buffered until command completion; harmless output is
@@ -369,6 +378,15 @@ proxy or network allowlist. Broker-only profiles for HTTP signing, constrained S
 signing, cloud request signing, and database authentication can provide a stronger
 future boundary because the workload receives an operation rather than reusable
 credential bytes.
+
+Normal host `bash` and the secure container deliberately coexist so agents can keep
+using host Git credentials, GitHub CLI, native build tools, and local integrations.
+That also means host `bash` retains the host user's existing authority, which may
+include Docker control. An intentionally adversarial agent or host process with that
+authority can interfere with or inspect local containers; Team Secure Mode does not
+turn an already trusted local agent into an untrusted sandbox. Use it to keep values
+out of prompts, tool arguments, ordinary output, and accidental logs—not as a boundary
+against a malicious agent that controls the same developer account.
 
 This first backend is a conventional Docker container, not a microVM. It protects
 host process and filesystem boundaries better than direct execution, but shares the
@@ -463,13 +481,16 @@ credential-set rebuild destroys it. Per-command RAM files and askpass helpers ar
 removed when the direct command exits, so background jobs that need long-lived access
 should use an inherited environment binding or be launched by a foreground supervisor.
 
-Secure Bash is Linux, even when Forge runs on macOS or Windows. On Windows, Forge uses
+Normal `bash` uses the host shell and environment; on Windows this is normally Git
+Bash, so host paths and authenticated Windows tools continue to behave as they do
+outside Team Secure Mode. `secure_bash` is always Linux. On Windows, Forge uses
 Docker Desktop's Linux-container engine and translates command working directories
 under the host workspace to `/workspace`. Host-native binaries
 and native `node_modules` may be incompatible, local services are not automatically
 the container's `localhost`, and package installation writes into the selected
-workspace. A dedicated worktree is strongly recommended for native dependency
-installs or untrusted work. The integrated terminal and commands that require a real
+workspace. Prefer relative paths in `secure_bash`. Run native dependency installation
+and host-authenticated CLIs through normal `bash`; use a dedicated worktree for
+untrusted or concurrently writing work. The integrated terminal and commands that require a real
 interactive PTY with live input or resize are not intercepted; SSH password flows use
 askpass instead. Non-interactive programs that merely require TTY file descriptors can
 be run under the included `script -qec 'command' /dev/null` helper while their output

@@ -364,8 +364,8 @@ export function SecureSessionPicker({
             </PopoverTitle>
             <PopoverDescription>
               {config.readOnly
-                ? 'This worker uses the manager task’s shared Secure Bash sandbox and session grants.'
-                : 'The manager and its workers share one Secure Bash sandbox and one set of session grants.'}
+                ? 'Normal commands stay on the host. This worker uses the manager task’s shared Linux secure_bash container and session grants only when protected access is needed.'
+                : 'Normal commands stay on the host. The manager and its workers share one Linux secure_bash container and one set of session grants for protected access.'}
             </PopoverDescription>
           </PopoverHeader>
 

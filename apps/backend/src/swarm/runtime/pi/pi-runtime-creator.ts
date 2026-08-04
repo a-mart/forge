@@ -289,20 +289,6 @@ export class PiRuntimeCreator {
           })
         : secureBaseSwarmTools
       : swarmTools;
-    const secureCodingTools = secureRuntimeBinding
-      ? createSecurePiCodingTools({
-          cwd: descriptor.cwd,
-          binding: secureRuntimeBinding,
-        })
-      : [];
-    const runtimeCustomTools = secureRuntimeBinding
-      ? [...secureCodingTools, ...runtimeSwarmTools]
-      : runtimeSwarmTools;
-    const toolOutputBudget = createModelVisibleToolResultBudget();
-    toolOutputBudget.augmentToolDefinitions(runtimeCustomTools);
-    const secureAllowedToolNames = isCodexPluginWorkerDescriptor(descriptor)
-      ? runtimeSwarmTools.map((tool) => tool.name)
-      : runtimeCustomTools.map((tool) => tool.name);
     const thinkingLevel = mapForgeReasoningToPiThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
@@ -372,6 +358,22 @@ export class PiRuntimeCreator {
       projectExecutableTrustPlan.trustedPiSettingsPaths,
       projectExecutableTrustPlan.trusted
     );
+    const secureCodingTools = secureRuntimeBinding
+      ? createSecurePiCodingTools({
+          cwd: descriptor.cwd,
+          binding: secureRuntimeBinding,
+          hostCommandPrefix: settingsManager.getShellCommandPrefix(),
+          hostShellPath: settingsManager.getShellPath(),
+        })
+      : [];
+    const runtimeCustomTools = secureRuntimeBinding
+      ? [...secureCodingTools, ...runtimeSwarmTools]
+      : runtimeSwarmTools;
+    const toolOutputBudget = createModelVisibleToolResultBudget();
+    toolOutputBudget.augmentToolDefinitions(runtimeCustomTools);
+    const secureAllowedToolNames = isCodexPluginWorkerDescriptor(descriptor)
+      ? runtimeSwarmTools.map((tool) => tool.name)
+      : runtimeCustomTools.map((tool) => tool.name);
 
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const extensionFactories = planPiExtensionFactories({

@@ -635,7 +635,7 @@ describe('SecureSessionPicker', () => {
 
     openPicker(/active with 1 active lease/)
     expect(document.body.textContent).toContain(
-      'The manager and its workers share one Secure Bash sandbox and one set of session grants.',
+      'Normal commands stay on the host. The manager and its workers share one Linux secure_bash container and one set of session grants for protected access.',
     )
     expect(document.body.querySelector('[data-secure-team-member]')).toBeNull()
     flushSync(() => {
@@ -683,7 +683,7 @@ describe('SecureSessionPicker', () => {
     openPicker(/active with 1 active lease/)
     expect(document.body.textContent).toContain('Team Secure Status')
     expect(document.body.textContent).toContain(
-      'This worker uses the manager task’s shared Secure Bash sandbox and session grants.',
+      'Normal commands stay on the host. This worker uses the manager task’s shared Linux secure_bash container and session grants only when protected access is needed.',
     )
     const popover = Array.from(
       document.body.querySelectorAll('[data-slot="popover-content"]'),

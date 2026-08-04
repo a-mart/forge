@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import path from "node:path";
 import type {
   AgentDescriptor,
@@ -2934,6 +2935,56 @@ export class SecureSessionsService {
         assertCurrentBinding();
         return this.executeSecureBash(descriptor, request, identity);
       },
+      createOutputGuard: () => {
+        const current = assertCurrentBinding();
+        if (current.guardRequired && !current.guard) {
+          throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        }
+        const capturedGuard = current.guard;
+        const capturedGuardRequired = current.guardRequired;
+        const stream = capturedGuard?.createStream();
+        let closed = false;
+        const assertGuardStillCurrent = () => {
+          const next = assertCurrentBinding();
+          if (
+            next.guard !== capturedGuard
+            || next.guardRequired !== capturedGuardRequired
+          ) {
+            throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+          }
+        };
+        return {
+          write: (data: Uint8Array): Uint8Array => {
+            if (closed) {
+              throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+            }
+            assertGuardStillCurrent();
+            return stream ? stream.write(data) : Buffer.from(data);
+          },
+          close: async (): Promise<Uint8Array> => {
+            if (closed) {
+              throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+            }
+            try {
+              assertGuardStillCurrent();
+              if (!stream) return Buffer.alloc(0);
+              const tail = stream.end();
+              if (stream.didQuarantine()) {
+                await this.recordHostOutputQuarantine(identity);
+              }
+              return tail;
+            } finally {
+              closed = true;
+              stream?.dispose();
+            }
+          },
+          dispose: () => {
+            if (closed) return;
+            closed = true;
+            stream?.dispose();
+          },
+        };
+      },
       guardValue: <T>(value: T): T => {
         const current = assertCurrentBinding();
         if (
@@ -2946,6 +2997,47 @@ export class SecureSessionsService {
         return guarded as T;
       },
     };
+  }
+
+  private async recordHostOutputQuarantine(
+    identity: SecureRuntimeBindingIdentity,
+  ): Promise<void> {
+    const current = this.activeSessions.get(identity.authoritySessionAgentId);
+    if (
+      identity.revoked
+      || !current
+      || current.closed
+      || current.bindingGeneration !== identity.bindingGeneration
+    ) {
+      return;
+    }
+    const previous = this.outputStates.get(identity.authoritySessionAgentId);
+    if (previous?.outputState === "quarantined") return;
+
+    const store = await this.store();
+    const latest = this.activeSessions.get(identity.authoritySessionAgentId);
+    if (
+      identity.revoked
+      || latest !== current
+      || latest?.closed
+      || latest?.bindingGeneration !== identity.bindingGeneration
+    ) {
+      return;
+    }
+    const snapshot = store.getSnapshot(identity.authoritySessionAgentId);
+    if (
+      snapshot.state.executionMode !== "secure"
+      || snapshot.state.environmentStatus !== "ready"
+    ) {
+      return;
+    }
+    this.outputStates.set(identity.authoritySessionAgentId, {
+      outputState: "quarantined",
+      outputStateCode: "SECURE_OUTPUT_QUARANTINED",
+    });
+    this.options.emitSnapshot(toSnapshotEvent(
+      this.toPublicSnapshot(store, snapshot),
+    ));
   }
 
   async closeSecureSessions(): Promise<void> {

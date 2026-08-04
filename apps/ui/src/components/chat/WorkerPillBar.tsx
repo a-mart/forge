@@ -149,7 +149,11 @@ const WorkerPill = memo(function WorkerPill({
   for (let i = workerActivity.length - 1; i >= 0; i--) {
     const act = workerActivity[i]
     if (act.type === 'agent_tool_call' && act.toolName) {
-      latestToolSummary = act.toolName
+      latestToolSummary = act.toolName === 'secure_bash'
+        ? 'Secure command'
+        : act.toolName === 'bash'
+          ? 'Command'
+          : act.toolName
       break
     }
   }

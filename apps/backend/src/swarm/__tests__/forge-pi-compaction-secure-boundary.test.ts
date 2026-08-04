@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,6 +62,11 @@ describe("Forge Pi secure compaction boundary", () => {
       } as never),
       secureRuntimeBinding: {
         executeBash: vi.fn(),
+        createOutputGuard: vi.fn(() => ({
+          write: (data: Uint8Array) => Buffer.from(data),
+          close: async () => Buffer.alloc(0),
+          dispose: vi.fn(),
+        })),
         guardValue: <T>(value: T): T => {
           if (JSON.stringify(value).includes(canary)) {
             return SECURE_OUTPUT_QUARANTINE as T;

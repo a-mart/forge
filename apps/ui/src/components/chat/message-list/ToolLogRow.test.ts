@@ -141,6 +141,25 @@ describe('ToolLogRow actor metadata rendering', () => {
     expect(chips.length).toBe(0)
   })
 
+  it('distinguishes explicit secure container commands from legacy-compatible commands', () => {
+    const entry = makeToolEntry({
+      toolName: 'secure_bash',
+      inputPayload: '{"command":"ssh deployment true"}',
+    })
+
+    act(() => {
+      root.render(
+        createElement(ToolLogRow, {
+          type: 'tool_execution',
+          entry,
+        }),
+      )
+    })
+
+    expect(container.textContent).toContain('Ran secure command')
+    expect(container.textContent).toContain('ssh deployment true')
+  })
+
   it('shows secondaryLabel in expanded footer', () => {
     const entry = makeToolEntry({ actorAgentId: 'worker-1' })
     const actorDisplay = makeActorDisplay({
