@@ -289,6 +289,7 @@ describe("ProjectExecutableTrustCoordinator", () => {
     });
     await coordinator.maybePrompt(manager);
     harness.events.length = 0;
+    harness.suppressSessionAttention.mockClear();
 
     await expect(
       coordinator.applyManagerRuntimeRecyclePolicy(manager.agentId, "idle_transition"),
@@ -300,6 +301,8 @@ describe("ProjectExecutableTrustCoordinator", () => {
       coordinator.applyManagerRuntimeRecyclePolicy(manager.agentId, "idle_transition"),
     ).resolves.toBe("none");
 
+    expect(harness.suppressSessionAttention).toHaveBeenCalledTimes(1);
+    expect(harness.suppressSessionAttention).toHaveBeenCalledWith(manager.agentId);
     expect(harness.events.filter((event) => event === `terminate:${worker.agentId}`)).toHaveLength(1);
     expect(harness.events.filter((event) => event === "save")).toHaveLength(1);
     expect(harness.events.filter((event) => event === "snapshot")).toHaveLength(1);
@@ -415,6 +418,8 @@ describe("ProjectExecutableTrustCoordinator", () => {
     harness.deferredClear.mockClear();
     await coordinator.applyWorkspaceChange("workspace-a");
 
+    expect(harness.suppressSessionAttention).toHaveBeenCalledWith(managerA.agentId);
+    expect(harness.suppressSessionAttention).not.toHaveBeenCalledWith(managerB.agentId);
     expect(harness.events).toContain(`terminate:${workerA.agentId}`);
     expect(harness.events).not.toContain(`terminate:${workerB.agentId}`);
     expect(harness.recovery.hasPendingManagerRuntimeRecycle(managerA.agentId)).toBe(false);
@@ -435,6 +440,7 @@ class CoordinatorHarness {
   readonly recovery = new RecoveryHarness();
   readonly deferredSet = vi.fn();
   readonly deferredClear = vi.fn();
+  readonly suppressSessionAttention = vi.fn(async (_sessionAgentId: string) => undefined);
   readonly choiceRequests: Array<{ agentId: string; questions: ChoiceQuestion[] }> = [];
   readonly runtimes = new Map<string, Pick<SwarmAgentRuntime, "terminate">>();
   readonly runtimeTokens = new Map<string, number>();
@@ -494,6 +500,7 @@ class CoordinatorHarness {
         const failure = this.terminationFailures.get(descriptor.agentId);
         if (failure) throw failure;
       },
+      suppressSessionAttention: this.suppressSessionAttention,
       getRuntime: (agentId) => this.runtimes.get(agentId),
       getRuntimeToken: (agentId) => this.runtimeTokens.get(agentId),
       getRuntimeCreationPromise: (agentId) => this.runtimeCreations.get(agentId),

@@ -201,3 +201,100 @@ describe('WsHandler send guards', () => {
     }
   })
 })
+
+describe('WsHandler session attention dismissal', () => {
+  function createOpenSocket() {
+    return {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
+      send: vi.fn(),
+      terminate: vi.fn(),
+      _socket: { write: vi.fn() },
+    } as any
+  }
+
+  it('accepts an exact dismissal before room subscription and correlates the result', async () => {
+    const dismissSessionAttention = vi.fn(async () => ({
+      revision: 8,
+      changes: [{ sessionAgentId: 'manager-1', attention: null }],
+    }))
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({ runtimeTarget: 'builder', debug: false, paths: { dataDir: '/tmp' } }),
+        dismissSessionAttention,
+      } as any,
+      mobilePushService: {} as any,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+    const socket = createOpenSocket()
+
+    await (handler as any).handleSocketMessage(socket, Buffer.from(JSON.stringify({
+      type: 'dismiss_session_attention',
+      attentionIds: ['attention-1'],
+      requestId: 'dismiss-1',
+    })))
+
+    expect(dismissSessionAttention).toHaveBeenCalledWith(['attention-1'])
+    expect(JSON.parse(socket.send.mock.calls[0]![0])).toEqual({
+      type: 'session_attention_update',
+      revision: 8,
+      changes: [{ sessionAgentId: 'manager-1', attention: null }],
+      requestId: 'dismiss-1',
+    })
+  })
+
+  it('correlates validation errors for an oversized dismissal', async () => {
+    const dismissSessionAttention = vi.fn()
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({ runtimeTarget: 'builder', debug: false, paths: { dataDir: '/tmp' } }),
+        dismissSessionAttention,
+      } as any,
+      mobilePushService: {} as any,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+    const socket = createOpenSocket()
+
+    await (handler as any).handleSocketMessage(socket, Buffer.from(JSON.stringify({
+      type: 'dismiss_session_attention',
+      attentionIds: Array.from({ length: 101 }, (_, index) => `attention-${index}`),
+      requestId: 'dismiss-too-many',
+    })))
+
+    expect(dismissSessionAttention).not.toHaveBeenCalled()
+    expect(JSON.parse(socket.send.mock.calls[0]![0])).toEqual({
+      type: 'error',
+      code: 'INVALID_COMMAND',
+      message: 'dismiss_session_attention.attentionIds must contain at most 100 entries',
+      requestId: 'dismiss-too-many',
+    })
+  })
+
+  it('returns a correlated error when durable dismissal fails', async () => {
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({ runtimeTarget: 'builder', debug: false, paths: { dataDir: '/tmp' } }),
+        dismissSessionAttention: vi.fn(async () => { throw new Error('disk unavailable') }),
+      } as any,
+      mobilePushService: {} as any,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+    const socket = createOpenSocket()
+
+    await (handler as any).handleSocketMessage(socket, Buffer.from(JSON.stringify({
+      type: 'dismiss_session_attention',
+      attentionIds: ['attention-1'],
+      requestId: 'dismiss-2',
+    })))
+
+    expect(JSON.parse(socket.send.mock.calls[0]![0])).toEqual({
+      type: 'error',
+      code: 'SESSION_ATTENTION_DISMISS_FAILED',
+      message: 'disk unavailable',
+      requestId: 'dismiss-2',
+    })
+  })
+})

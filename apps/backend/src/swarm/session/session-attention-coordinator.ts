@@ -26,6 +26,8 @@ export interface SessionAttentionSessionSnapshot {
   activeWorkerCount: number;
   /** Uses SwarmChoiceService's committed pending-choice map. */
   pendingChoiceCount: number;
+  /** Current committed owned-worker error evidence for restart-safe reasons. */
+  hasTerminallyErroredWorker: boolean;
   /**
    * An accepted turn is an observation barrier, not a fourth quiescence term.
    * REQUIRED so a producer cannot silently bypass the barrier by omitting it.
@@ -45,6 +47,8 @@ export interface SessionAttentionStatusObservation extends SessionAttentionSessi
   source: "manager" | "owned_worker";
   previousStatus: AgentStatus;
   nextStatus: AgentStatus;
+  /** Timestamp committed by the descriptor producer, before coordinator queueing. */
+  transitionedAt: string;
 }
 
 export interface SessionAttentionReasonInput {
@@ -82,6 +86,11 @@ interface StateMutation<T> {
   value: T;
   state?: PersistedSessionAttentionState;
   changes?: SessionAttentionChange[];
+}
+
+interface MutationContext {
+  /** True when folding a newer natural fact into an undurable retry target. */
+  coalescingPending: boolean;
 }
 
 interface PendingCommit {
@@ -196,7 +205,7 @@ export class SessionAttentionCoordinator {
           resumed.sessions[sessionAgentId] = record;
           return { value: undefined, state: resumed, changes: [] };
         }
-        return startEpoch(state, observation, this.now());
+        return startEpoch(state, observation, observation.transitionedAt);
       }
 
       if (!current || current.phase !== "working") {
@@ -239,13 +248,32 @@ export class SessionAttentionCoordinator {
    * after their own committed mutation. It cannot arm an epoch.
    */
   async observeAggregateChange(session: SessionAttentionSessionSnapshot): Promise<void> {
-    await this.runNatural(async () => this.applyMutation(async (state) => {
+    await this.runNatural(async () => this.applyMutation(async (state, context) => {
       const sessionAgentId = session.manager.agentId;
       if (!this.sessionIsEligible(session)) {
         return retireFromState(state, sessionAgentId);
       }
 
       const current = state.sessions[sessionAgentId];
+      if (
+        context.coalescingPending
+        && current?.phase === "settled"
+        && !isReadyToSettle(session)
+      ) {
+        // A newer aggregate fact invalidates an undurable settle. Restore the
+        // working epoch directly so the retry never publishes stale attention.
+        const next = cloneSessionAttentionState(state);
+        const restored: PersistedSessionAttentionRecord = {
+          ...current,
+          phase: "working",
+          ...(normalizeCount(session.pendingTurnContextCount) > 0
+            ? { awaitingContinuation: true }
+            : {}),
+        };
+        delete restored.attention;
+        next.sessions[sessionAgentId] = restored;
+        return { value: undefined, state: next, changes: [] };
+      }
       if (!current || current.phase !== "working") {
         return { value: undefined };
       }
@@ -324,6 +352,20 @@ export class SessionAttentionCoordinator {
     }));
   }
 
+  /** Manual stop/recycle entry point: discard only an in-flight epoch. */
+  async suppressWorkingEpoch(sessionAgentId: string): Promise<void> {
+    await this.runNatural(async () => this.applyMutation(async (state, context) => {
+      const current = state.sessions[sessionAgentId];
+      if (
+        !current
+        || (current.phase !== "working" && !context.coalescingPending)
+      ) return { value: undefined };
+      const next = cloneSessionAttentionState(state);
+      delete next.sessions[sessionAgentId];
+      return { value: undefined, state: next, changes: [] };
+    }));
+  }
+
   /** Archive/delete/eligibility-loss lifecycle entry point. Restore stays unarmed. */
   async retireSession(sessionAgentId: string): Promise<void> {
     await this.runNatural(async () => this.applyMutation(async (state) => retireFromState(state, sessionAgentId)));
@@ -382,7 +424,7 @@ export class SessionAttentionCoordinator {
     session: SessionAttentionSessionSnapshot,
     record: PersistedSessionAttentionRecord,
   ): Promise<PersistedSessionAttentionRecord> {
-    const reason = record.hadError
+    const reason = record.hadError || session.hasTerminallyErroredWorker
       ? "work_failed"
       : await this.resolveReason({
         sessionAgentId: session.manager.agentId,
@@ -424,7 +466,10 @@ export class SessionAttentionCoordinator {
   }
 
   private async applyMutation<T>(
-    mutate: (state: PersistedSessionAttentionState) => Promise<StateMutation<T>>,
+    mutate: (
+      state: PersistedSessionAttentionState,
+      context: MutationContext,
+    ) => Promise<StateMutation<T>>,
     // Natural observations may be retried on the next operation because the
     // runtime fact they record is still true. A COMMAND must not: a dismissal
     // that reported failure to one device must never be applied later without
@@ -432,9 +477,37 @@ export class SessionAttentionCoordinator {
     options: { retryOnFailure: boolean } = { retryOnFailure: true },
   ): Promise<T> {
     this.assertInitialized();
-    await this.flushPendingCommit();
 
-    const mutation = await mutate(this.state);
+    // Commands require the exact durable/published state before correlation.
+    // Natural observations may supersede a failed natural target, so fold the
+    // latest committed fact into that target before retrying. This prevents a
+    // failed settle followed by new streaming from briefly publishing stale
+    // settled attention on the retry.
+    if (this.pendingCommit) {
+      if (!options.retryOnFailure) {
+        await this.flushPendingCommit();
+      } else {
+        const pending = this.pendingCommit;
+        const mutation = await mutate(pending.state, { coalescingPending: true });
+        if (!mutation.state) {
+          await this.flushPendingCommit();
+          return mutation.value;
+        }
+
+        const coalesced: PersistedSessionAttentionState = {
+          ...mutation.state,
+          revision: pending.state.revision,
+        };
+        this.pendingCommit = {
+          state: coalesced,
+          changes: diffVisibleAttentions(this.state, coalesced),
+        };
+        await this.flushPendingCommit();
+        return mutation.value;
+      }
+    }
+
+    const mutation = await mutate(this.state, { coalescingPending: false });
     if (!mutation.state) {
       return mutation.value;
     }
@@ -578,6 +651,41 @@ function toAttention(
     reason: attention.reason,
     raisedAt: attention.raisedAt,
   };
+}
+
+function diffVisibleAttentions(
+  previous: PersistedSessionAttentionState,
+  next: PersistedSessionAttentionState,
+): SessionAttentionChange[] {
+  const changes: SessionAttentionChange[] = [];
+  const sessionAgentIds = new Set([
+    ...Object.keys(previous.sessions),
+    ...Object.keys(next.sessions),
+  ]);
+  for (const sessionAgentId of [...sessionAgentIds].sort()) {
+    const previousRecord = previous.sessions[sessionAgentId];
+    const nextRecord = next.sessions[sessionAgentId];
+    const previousAttention = previousRecord
+      ? toAttention(sessionAgentId, previousRecord)
+      : undefined;
+    const nextAttention = nextRecord
+      ? toAttention(sessionAgentId, nextRecord)
+      : undefined;
+    if (sameAttention(previousAttention, nextAttention)) continue;
+    changes.push({ sessionAgentId, attention: nextAttention ?? null });
+  }
+  return changes;
+}
+
+function sameAttention(
+  left: SessionAttention | undefined,
+  right: SessionAttention | undefined,
+): boolean {
+  return left?.attentionId === right?.attentionId
+    && left?.sessionAgentId === right?.sessionAgentId
+    && left?.profileId === right?.profileId
+    && left?.reason === right?.reason
+    && left?.raisedAt === right?.raisedAt;
 }
 
 function pushRemoval(

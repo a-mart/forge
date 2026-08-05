@@ -96,6 +96,9 @@ export function normalizePersistedWorkGraphSnapshot(value: unknown): WorkGraphSn
     return {
       id,
       status: record.status,
+      ...(record.statusUpdatedAt === undefined
+        ? {}
+        : { statusUpdatedAt: normalizeTimestamp(record.statusUpdatedAt, `workGraph.nodes[${index}].statusUpdatedAt`) }),
       attempts,
     } as unknown as WorkGraphNode
   })
@@ -139,7 +142,7 @@ export function normalizePersistedWorkGraphSnapshot(value: unknown): WorkGraphSn
 export function normalizeWorkGraphInput(
   value: unknown,
   current?: WorkGraphSnapshot,
-  options: { enforceRunningNodeImmutability?: boolean } = {},
+  options: { enforceRunningNodeImmutability?: boolean; now?: () => string } = {},
 ): { maxConcurrency: number; nodes: WorkGraphNode[] } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new WorkGraphValidationError('update_work_graph input must be an object.')
@@ -175,6 +178,7 @@ export function normalizeWorkGraphInput(
         : '',
     ),
     options.enforceRunningNodeImmutability !== false,
+    options.now,
   ))
   validateGraph(nodes)
   return { maxConcurrency, nodes }
@@ -197,6 +201,7 @@ export function projectWorkGraphPlan(graph: WorkGraphSnapshot): PlanStep[] {
 export function acceptWorkGraphNode(
   graph: WorkGraphSnapshot,
   nodeId: string,
+  now: () => string = () => new Date().toISOString(),
 ): WorkGraphNodeAcceptance {
   const normalizedNodeId = normalizeRequiredText(
     nodeId,
@@ -223,7 +228,11 @@ export function acceptWorkGraphNode(
   }
   const nodes = graph.nodes.map((currentNode, index) => (
     index === nodeIndex
-      ? { ...currentNode, status: 'completed' as const }
+      ? {
+          ...currentNode,
+          status: 'completed' as const,
+          statusUpdatedAt: now(),
+        }
       : currentNode
   ))
   return {
@@ -301,6 +310,7 @@ export function claimReadyWorkGraphNodes(
     return {
       ...node,
       status: 'running' as const,
+      statusUpdatedAt: now,
       attempts: [...node.attempts, attempt],
     }
   })
@@ -416,15 +426,17 @@ export function recordWorkGraphWorkerResult(
   const attempt = currentAttempt(node)!
   const succeeded = /^status:\s*done(?:\s|$)/i.test(resultText.trim())
   const summary = truncateSummary(resultText)
+  const completedAt = now()
   return {
     nodeId: node.id,
     graph: updateAttempt(graph, node.id, attempt.id, (current, currentRun) => ({
       ...current,
       status: succeeded ? 'awaiting_review' : 'blocked',
+      statusUpdatedAt: completedAt,
       attempts: replaceAttempt(current.attempts, attempt.id, {
         ...currentRun,
         status: succeeded ? 'succeeded' : 'blocked',
-        completedAt: now(),
+        completedAt,
         summary,
       }),
     })),
@@ -549,6 +561,7 @@ function normalizeNode(
   index: number,
   current: WorkGraphNode | undefined,
   enforceRunningNodeImmutability: boolean,
+  now?: () => string,
 ): WorkGraphNode {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new WorkGraphValidationError(`nodes[${index}] must be an object.`)
@@ -647,6 +660,9 @@ function normalizeNode(
     task,
     kind: kind as WorkGraphNodeKind,
     status: status as WorkGraphNodeStatus,
+    ...(current?.status === status
+      ? (current.statusUpdatedAt ? { statusUpdatedAt: current.statusUpdatedAt } : {})
+      : (now ? { statusUpdatedAt: now() } : {})),
     dependsOn,
     ...(acceptanceCriteria ? { acceptanceCriteria } : {}),
     route,

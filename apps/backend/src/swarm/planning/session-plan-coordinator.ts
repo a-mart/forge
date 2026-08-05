@@ -114,7 +114,7 @@ export class SessionPlanCoordinator {
         ...(input.explanation ? { explanation: input.explanation } : {}),
         plan: [],
       }).explanation
-      const workGraph = normalizeWorkGraphInput(input, current.workGraph)
+      const workGraph = normalizeWorkGraphInput(input, current.workGraph, { now: this.options.now })
       const cancelledWorkerIds = findRunningWorkersToCancel(current.workGraph, workGraph)
       const normalizedInput: UpdateWorkGraphInput = {
         ...(explanation ? { explanation } : {}),
@@ -149,7 +149,7 @@ export class SessionPlanCoordinator {
       if (!current.workGraph) {
         throw new Error('The current working plan is not a work graph.')
       }
-      const accepted = acceptWorkGraphNode(current.workGraph, nodeId)
+      const accepted = acceptWorkGraphNode(current.workGraph, nodeId, this.options.now)
       if (accepted.alreadyAccepted) {
         return {
           nodeId,
@@ -403,18 +403,28 @@ export class SessionPlanCoordinator {
 
     const graph = state.workGraph
     if (graph) {
-      if (graph.nodes.some((node) => node.kind === 'decision' && node.status === 'waiting')) {
+      const changedDuringEpoch = (node: WorkGraphSnapshot['nodes'][number]): boolean =>
+        Boolean(node.statusUpdatedAt && timestampAtOrAfter(node.statusUpdatedAt, input.workStartedAt))
+      if (graph.nodes.some((node) => (
+        node.kind === 'decision'
+        && node.status === 'waiting'
+        && changedDuringEpoch(node)
+      ))) {
         return 'decision_waiting'
       }
-      if (graph.nodes.some((node) => node.status === 'awaiting_review')) {
+      if (graph.nodes.some((node) => node.status === 'awaiting_review' && changedDuringEpoch(node))) {
         return 'awaiting_review'
       }
       if (
         graph.nodes.length > 0
         && graph.nodes.every((node) => node.status === 'completed' || node.status === 'cancelled')
+        && graph.nodes.some(changedDuringEpoch)
       ) {
         return 'work_graph_completed'
       }
+      // A graph-backed projection is not a light plan. If no graph status
+      // relevant to this epoch qualifies, fall back to generic settled.
+      return undefined
     }
 
     if (state.plan.length > 0 && state.plan.every((step) => step.status === 'completed')) {

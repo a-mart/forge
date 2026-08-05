@@ -129,7 +129,7 @@ import type {
   SwarmReasoningLevel,
 } from "./types.js";
 import { normalizeOptionalAgentId } from "./swarm-manager-utils.js";
-import { SwarmManagerInitialModelInputFacade } from "./swarm-manager-initial-model-input-facade.js";
+import { SwarmManagerSessionAttentionFacade } from "./swarm-manager-session-attention-facade.js";
 
 export interface CreateManagerInput {
   name: string;
@@ -220,7 +220,7 @@ import type {
  * coordinators above, while this class keeps the manager's compatibility
  * surface explicit without forcing every delegate into the composition root.
  */
-export abstract class SwarmManagerFacade extends SwarmManagerInitialModelInputFacade {
+export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFacade {
   protected abstract getFacadeServices(): SwarmManagerFacadeServices;
   flushPendingPersistence(): Promise<void> { return this.services.persistence.flushPendingTurnSeqPersists(); }
   getSessionPlanSnapshot(
@@ -547,13 +547,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerInitialModelInputFa
   }
 
   // Boot, recovery, and read services.
-
-  async boot(): Promise<void> {
-    await this.services.boot.boot();
-    // After ensureDirectories and inventory load, so restored armed epochs are
-    // reconciled before any producer can report a transition.
-    await this.services.sessionAttention.initialize();
-  }
 
   getRestartRecoverySnapshot(): RestartRecoverySnapshot | null {
     return this.services.recovery.getSnapshot();

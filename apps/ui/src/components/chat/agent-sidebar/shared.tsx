@@ -2,12 +2,12 @@ import { cn } from '@/lib/utils'
 import { inferModelPreset } from '@/lib/model-preset'
 import type { AgentDescriptor } from '@forge/protocol'
 
-export type SidebarRoomAvatarTone = 'amber' | 'blue' | 'green' | 'neutral' | 'red' | 'violet'
+type SidebarRoomAvatarTone = 'amber' | 'blue' | 'green' | 'neutral' | 'red' | 'violet'
 
 const ROOM_AVATAR_TONES: readonly SidebarRoomAvatarTone[] = ['amber', 'blue', 'green', 'violet', 'neutral']
 
 /** Stable, CSS-token-backed project tint without persisting presentation state. */
-export function getSidebarRoomAvatarTone(key: string): SidebarRoomAvatarTone {
+function getSidebarRoomAvatarTone(key: string): SidebarRoomAvatarTone {
   if (!key) return 'neutral'
   let hash = 0
   for (let index = 0; index < key.length; index += 1) {

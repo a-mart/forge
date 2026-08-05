@@ -1,23 +1,25 @@
 import type React from 'react'
-import { useMemo } from 'react'
-import { LOCAL_ORIGIN_ID, useAllOrigins } from '@/lib/origin-store'
+import { useMemo, useRef, useState } from 'react'
+import { SESSION_ATTENTION_MAX_DISMISS_IDS } from '@forge/protocol'
+import { LOCAL_ORIGIN_ID, originRegistry, useAllOrigins } from '@/lib/origin-store'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { RoomsInbox } from './RoomsInbox'
 import { RoomsModeSwitch, type RoomsMode } from './RoomsModeSwitch'
-import { getRoomsInboxAcknowledgementKey, useRoomsInboxAcknowledgements } from './rooms-inbox-ack'
 import {
-  selectRoomsInboxLifecycleAttentionSignals,
   selectRoomsInboxSections,
   type RoomsInboxIdentity,
   type RoomsInboxOriginInput,
   type RoomsInboxProjectInput,
   type RoomsInboxSessionInput,
+  type RoomsInboxSessionViewModel,
 } from './rooms-inbox-selectors'
 
 interface InboxOriginSnapshot {
   connected: boolean
   /** Both inventories must be complete before a missing session can be GCed. */
   inventoryReady: boolean
+  attentionAvailable: boolean
+  attentions: RoomsInboxOriginInput['attentions']
   sessions: RoomsInboxSessionInput[]
   projects: RoomsInboxProjectInput[]
   signature: string
@@ -76,8 +78,17 @@ function selectInboxOriginSnapshot(state: ManagerWsState): InboxOriginSnapshot {
   const inventoryReady = state.connected
     && state.hasReceivedAgentsSnapshot
     && state.hasReceivedProfilesSnapshot
-  const signature = JSON.stringify({ connected: state.connected, inventoryReady, sessions, projects })
-  return { connected: state.connected, inventoryReady, sessions, projects, signature }
+  const attentionAvailable = state.sessionAttentionAvailable
+  const attentions = Object.values(state.sessionAttentions)
+  const signature = JSON.stringify({
+    connected: state.connected,
+    inventoryReady,
+    attentionAvailable,
+    attentions,
+    sessions,
+    projects,
+  })
+  return { connected: state.connected, inventoryReady, attentionAvailable, attentions, sessions, projects, signature }
 }
 
 function equalInboxOriginSnapshot(left: InboxOriginSnapshot, right: InboxOriginSnapshot): boolean {
@@ -122,11 +133,15 @@ export function RoomsInboxLive({
     selectorKey: 'sidebar.rooms-inbox',
     equalityFn: equalInboxOriginSnapshot,
   })
+  const dismissalAttemptRef = useRef(0)
+  const [dismissError, setDismissError] = useState<string | null>(null)
   const origins = useMemo<RoomsInboxOriginInput[]>(() => {
     const liveOrigins = originSnapshots.map(({ originId, value }) => ({
       originId,
       connected: value.connected,
       inventoryReady: value.inventoryReady,
+      attentionAvailable: value.attentionAvailable,
+      attentions: value.attentions,
       sessions: value.sessions.map((session) => ({
         ...session,
         identity: { ...session.identity, originId },
@@ -136,49 +151,11 @@ export function RoomsInboxLive({
     const liveOriginIds = new Set(liveOrigins.map((origin) => origin.originId))
     return [...liveOrigins, ...fallbackOrigins.filter((origin) => !liveOriginIds.has(origin.originId))]
   }, [fallbackOrigins, originSnapshots])
-  // Existence is deliberately broader than display eligibility: hiding CLI
-  // sessions or temporarily disconnecting a remote origin must not discard a
-  // dismissal that should still exist when that room returns.
-  const existingSessionKeys = useMemo(
-    () => new Set(origins.flatMap((origin) => origin.sessions)
-      .filter((session) => !session.archived && !session.agentCreatorResult)
-      .map((session) => getRoomsInboxAcknowledgementKey(
-        session.identity.originId,
-        session.identity.sessionAgentId,
-      ))),
-    [origins],
-  )
-  const inventoryOriginIds = useMemo(
-    () => new Set(origins.map((origin) => origin.originId)),
-    [origins],
-  )
-  const authoritativeOriginIds = useMemo(
-    () => new Set(origins
-      // A disconnected snapshot cannot authoritatively prove a signal cleared
-      // or a session deleted, even if it was ready before its disconnect.
-      .filter((origin) => origin.connected && origin.inventoryReady === true)
-      .map((origin) => origin.originId)),
-    [origins],
-  )
-  // Lifecycle reconciliation must not use the display-filtered signal set:
-  // hiding CLI sessions or searching must not make a still-live dismissal look
-  // resolved and re-raise it later.
-  const attentionSignals = useMemo(
-    () => selectRoomsInboxLifecycleAttentionSignals(origins),
-    [origins],
-  )
-  const { entries: attentionEntries, acknowledge } = useRoomsInboxAcknowledgements({
-    existingSessionKeys,
-    authoritativeOriginIds,
-    inventoryOriginIds,
-    signals: attentionSignals,
-  })
   const sections = useMemo(() => selectRoomsInboxSections(origins, {
     selected,
     searchQuery,
     hideCliSessions,
-    attentionEntries,
-  }), [attentionEntries, hideCliSessions, origins, searchQuery, selected])
+  }), [hideCliSessions, origins, searchQuery, selected])
 
   // The Inbox badge is a global attention claim, so it must ignore the search
   // filter. Filtering it would let an unrelated query report that nothing needs
@@ -186,8 +163,7 @@ export function RoomsInboxLive({
   const needsYouTotal = useMemo(() => selectRoomsInboxSections(origins, {
     selected,
     hideCliSessions,
-    attentionEntries,
-  }).needsYou.length, [attentionEntries, hideCliSessions, origins, selected])
+  }).needsYou.length, [hideCliSessions, origins, selected])
 
   const handleSelectSession = (identity: RoomsInboxIdentity) => {
     if (identity.originId === LOCAL_ORIGIN_ID) {
@@ -195,6 +171,38 @@ export function RoomsInboxLive({
     } else {
       onSelectRemote?.(identity.originId, identity.sessionAgentId)
     }
+  }
+
+  const dismissNeedsYou = (sessions: readonly RoomsInboxSessionViewModel[]) => {
+    const attempt = ++dismissalAttemptRef.current
+    setDismissError(null)
+    const attentionIdsByOrigin = new Map<string, string[]>()
+    for (const session of sessions) {
+      if (!session.attentionId) continue
+      const attentionIds = attentionIdsByOrigin.get(session.identity.originId) ?? []
+      attentionIds.push(session.attentionId)
+      attentionIdsByOrigin.set(session.identity.originId, attentionIds)
+    }
+    const batches = [...attentionIdsByOrigin].flatMap(([originId, attentionIds]) => {
+      const originBatches: Array<{ originId: string; attentionIds: string[] }> = []
+      for (let index = 0; index < attentionIds.length; index += SESSION_ATTENTION_MAX_DISMISS_IDS) {
+        originBatches.push({
+          originId,
+          attentionIds: attentionIds.slice(index, index + SESSION_ATTENTION_MAX_DISMISS_IDS),
+        })
+      }
+      return originBatches
+    })
+    void Promise.allSettled(batches.map(async ({ originId, attentionIds }) => {
+      const store = originRegistry.getOrigin(originId)
+      if (!store) throw new Error(`Origin ${originId} is unavailable.`)
+      return store.getClient().dismissSessionAttention(attentionIds)
+    })).then((results) => {
+      if (attempt !== dismissalAttemptRef.current) return
+      if (results.some((result) => result.status === 'rejected')) {
+        setDismissError('Some Needs You items could not be cleared. Try again.')
+      }
+    })
   }
 
   return (
@@ -208,14 +216,9 @@ export function RoomsInboxLive({
           onSelectSession={handleSelectSession}
           onShowProjects={() => onModeChange('projects')}
           onNewProject={onNewProject}
-          onAcknowledgeNeedsYou={(identity) => acknowledge([getRoomsInboxAcknowledgementKey(
-            identity.originId,
-            identity.sessionAgentId,
-          )])}
-          onClearNeedsYou={(identities) => acknowledge(identities.map((identity) => getRoomsInboxAcknowledgementKey(
-            identity.originId,
-            identity.sessionAgentId,
-          )))}
+          onAcknowledgeNeedsYou={(session) => dismissNeedsYou([session])}
+          onClearNeedsYou={dismissNeedsYou}
+          dismissError={dismissError}
           projectTree={projectTree}
           hasInlineProjectContent={hasInlineProjectContent}
           mutedSessionIds={mutedSessionIds}

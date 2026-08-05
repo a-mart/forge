@@ -260,6 +260,9 @@ async function expectCommandDenied(
     (event) => harness.events.indexOf(event) >= startIndex || !harness.events.includes(event),
   );
   expect(error.code).toBe("COLLABORATION_COMMAND_NOT_ALLOWED");
+  if (typeof command.requestId === "string") {
+    expect(error.requestId).toBe(command.requestId);
+  }
   if (messageIncludes) {
     expect(error.message).toContain(messageIncludes);
   }
@@ -277,7 +280,12 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     expect((before.instanceName as string).length).toBeGreaterThan(0);
     expect(typeof before.forgeVersion).toBe("string");
     expect(before.protocolVersion).toBe(2);
-    expect(before.capabilities).toEqual({ collab: true, remoteBuild: false, createDirectory: true });
+    expect(before.capabilities).toEqual({
+      collab: true,
+      remoteBuild: false,
+      createDirectory: true,
+      sessionAttention: true,
+    });
 
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
     await setRemoteBuildEnabled(baseUrl, adminCookie, true);
@@ -285,7 +293,12 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     const after = await fetch(`${baseUrl}/api/collaboration/status`).then(
       (response) => response.json() as Promise<Record<string, unknown>>,
     );
-    expect(after.capabilities).toEqual({ collab: true, remoteBuild: true, createDirectory: true });
+    expect(after.capabilities).toEqual({
+      collab: true,
+      remoteBuild: true,
+      createDirectory: true,
+      sessionAttention: true,
+    });
 
     // Admin-set instance name flows through the handshake.
     const renameResponse = await fetch(`${baseUrl}/api/settings/remote-build`, {
@@ -352,7 +365,12 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
       (response) => response.json() as Promise<Record<string, unknown>>,
     );
     expect(status.instanceName).toBe("Env Handshake");
-    expect(status.capabilities).toEqual({ collab: true, remoteBuild: true, createDirectory: true });
+    expect(status.capabilities).toEqual({
+      collab: true,
+      remoteBuild: true,
+      createDirectory: true,
+      sessionAttention: true,
+    });
 
     const getResponse = await fetch(`${baseUrl}/api/settings/remote-build`, {
       headers: { cookie: adminCookie },
@@ -552,7 +570,7 @@ describe("remote build WS access matrix", () => {
     await expectCommandDenied(member, { type: "user_message", text: "hello" }, "Remote projects are disabled");
     await expectCommandDenied(
       member,
-      { type: "create_directory", parentPath: "/tmp", name: "nope" },
+      { type: "create_directory", parentPath: "/tmp", name: "nope", requestId: "denied-mkdir-1" },
       "Remote projects are disabled",
     );
 

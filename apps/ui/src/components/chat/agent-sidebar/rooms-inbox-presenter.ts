@@ -7,17 +7,18 @@ export interface RoomsInboxReasonPresentation {
 /** UI-owned copy for typed Inbox reasons; unknown values stay truthful. */
 export function presentRoomsInboxReason(reason: RoomsInboxReason | string): RoomsInboxReasonPresentation {
   switch (reason) {
-    case 'awaiting_choice':
-      return { subtitle: 'awaiting your answer' }
-    case 'error':
+    case 'work_settled':
+      return { subtitle: 'work completed' }
+    case 'plan_completed':
+      return { subtitle: 'plan completed' }
+    case 'work_graph_completed':
+      return { subtitle: 'work completed' }
+    case 'awaiting_review':
+      return { subtitle: 'ready for review' }
+    case 'decision_waiting':
+      return { subtitle: 'decision needed' }
+    case 'work_failed':
       return { subtitle: 'run failed' }
-    // Unread is NOT proof the agent finished. The backend also increments it for
-    // project_agent_input (apps/backend/src/ws/server.ts:226-228) and for manual
-    // mark-unread (apps/backend/src/ws/ws-handler.ts:434). Claim only what is true:
-    // there is unread output here. A true "finished" reason needs the Phase 4
-    // quiescence signal.
-    case 'unread_result':
-      return { subtitle: 'unread update' }
     case 'compacting':
       return { subtitle: 'compacting' }
     case 'manager_working':
@@ -25,13 +26,7 @@ export function presentRoomsInboxReason(reason: RoomsInboxReason | string): Room
     case 'recently_updated':
       return { subtitle: 'recently updated' }
     default:
-      if (reason.includes('choice') || reason.includes('review') || reason.includes('decision')) {
-        return { subtitle: 'needs your attention' }
-      }
-      if (reason.includes('active') || reason.includes('working') || reason.includes('stream')) {
-        return { subtitle: 'manager working' }
-      }
-      return { subtitle: 'recently updated' }
+      return { subtitle: 'needs your attention' }
   }
 }
 

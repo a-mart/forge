@@ -26,14 +26,18 @@ function createHarness(options: {
   );
   const sendMessage = vi.fn(async () => ({}));
   const publishToUser = vi.fn(async () => ({}));
+  const terminateDescriptor = vi.fn(async () => undefined);
+  const saveStore = vi.fn(async () => undefined);
+  const reportAttentionStatusTransition = vi.fn(async () => undefined);
   const serviceOptions: SwarmWorkerHealthServiceOptions = {
     descriptors: options.descriptors ?? new Map(),
     runtimes: options.runtimes ?? new Map<string, SwarmAgentRuntime>(),
     workerResults: { deliverCompletedWorker } as unknown as WorkerResultCoordinator,
     sendMessage,
     publishToUser,
-    terminateDescriptor: vi.fn(async () => undefined),
-    saveStore: vi.fn(async () => undefined),
+    terminateDescriptor,
+    saveStore,
+    reportAttentionStatusTransition,
     emitAgentsSnapshot: vi.fn(),
     isRuntimeInContextRecovery: options.isRuntimeInContextRecovery ?? (() => false),
     isRuntimeRecoveryActive: options.isRuntimeRecoveryActive,
@@ -48,6 +52,9 @@ function createHarness(options: {
     deliverCompletedWorker,
     sendMessage,
     publishToUser,
+    terminateDescriptor,
+    saveStore,
+    reportAttentionStatusTransition,
   };
 }
 
@@ -348,6 +355,43 @@ describe("SwarmWorkerHealthService", () => {
     );
     expect(publishToUser).toHaveBeenCalledTimes(1);
     expect(deliverCompletedWorker).not.toHaveBeenCalled();
+  });
+
+  it("queues an idle manager continuation before reporting the auto-terminated last worker", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-16T12:00:00.000Z"));
+    const managerDescriptor = manager("idle");
+    const workerDescriptor = worker();
+    const descriptors = new Map([
+      [managerDescriptor.agentId, managerDescriptor],
+      [workerDescriptor.agentId, workerDescriptor],
+    ]);
+    const harness = createHarness({ descriptors });
+    harness.terminateDescriptor.mockImplementation(async (descriptor) => {
+      descriptor.status = "stopped";
+    });
+    harness.service.workerStallState.set(workerDescriptor.agentId, {
+      lastProgressAt: Date.now() - 31 * 60 * 1000,
+      nudgeSent: true,
+      nudgeSentAt: Date.now() - 26 * 60 * 1000,
+      lastToolName: null,
+      lastToolInput: null,
+      lastToolOutput: null,
+      lastDetailedReportAt: null,
+    });
+
+    await harness.service.checkForStalledWorkers();
+
+    expect(harness.reportAttentionStatusTransition).toHaveBeenCalledWith({
+      agentId: workerDescriptor.agentId,
+      previousStatus: "streaming",
+      nextStatus: "stopped",
+      transitionedAt: workerDescriptor.updatedAt,
+    });
+    expect(harness.saveStore.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.reportAttentionStatusTransition.mock.invocationCallOrder[0]!);
+    expect(harness.sendMessage.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.reportAttentionStatusTransition.mock.invocationCallOrder[0]!);
   });
 
   it("suppresses stall intervention while either worker or manager recovery is active", async () => {

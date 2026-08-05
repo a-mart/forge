@@ -41,11 +41,12 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
 
     const rawIds = (maybe as { attentionIds?: unknown }).attentionIds;
     if (!Array.isArray(rawIds) || rawIds.length === 0) {
-      return fail("dismiss_session_attention.attentionIds must be a nonempty array");
+      return fail("dismiss_session_attention.attentionIds must be a nonempty array", requestId);
     }
     if (rawIds.length > SESSION_ATTENTION_MAX_DISMISS_IDS) {
       return fail(
         `dismiss_session_attention.attentionIds must contain at most ${SESSION_ATTENTION_MAX_DISMISS_IDS} entries`,
+        requestId,
       );
     }
 
@@ -54,11 +55,12 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     const seen = new Set<string>();
     for (const candidate of rawIds) {
       if (typeof candidate !== "string" || candidate.length === 0) {
-        return fail("dismiss_session_attention.attentionIds must contain nonempty strings");
+        return fail("dismiss_session_attention.attentionIds must contain nonempty strings", requestId);
       }
       if (candidate.length > SESSION_ATTENTION_MAX_ID_LENGTH) {
         return fail(
           `dismiss_session_attention.attentionIds entries must be at most ${SESSION_ATTENTION_MAX_ID_LENGTH} characters`,
+          requestId,
         );
       }
       if (seen.has(candidate)) continue;

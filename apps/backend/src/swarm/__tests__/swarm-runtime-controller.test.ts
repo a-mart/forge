@@ -926,6 +926,42 @@ describe("SwarmRuntimeController", () => {
     expect(saveOrder).toBeLessThan(emitOrder);
   });
 
+  it("routes last-worker idle completion before attention evaluates quiescence", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "w-completed-result",
+      role: "worker",
+      managerId: "m1",
+      status: "streaming",
+      profileId: "p1",
+    });
+    descriptors.set(worker.agentId, worker);
+
+    let resultAccepted = false;
+    vi.mocked(host.handleWorkerStatus).mockImplementation(async () => {
+      resultAccepted = true;
+    });
+    vi.mocked(host.reportAttentionStatusTransition).mockImplementation(async () => {
+      expect(resultAccepted).toBe(true);
+    });
+
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+
+    expect(host.handleWorkerStatus).toHaveBeenCalledOnce();
+    expect(host.reportAttentionStatusTransition).toHaveBeenCalledWith({
+      agentId: worker.agentId,
+      previousStatus: "streaming",
+      nextStatus: "idle",
+      transitionedAt: expect.any(String),
+    });
+    expect(vi.mocked(host.handleWorkerStatus).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(host.reportAttentionStatusTransition).mock.invocationCallOrder[0]!);
+  });
+
   it("manager runtime-status host patch delegates through the descriptor-store live-map adapter without saving", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);

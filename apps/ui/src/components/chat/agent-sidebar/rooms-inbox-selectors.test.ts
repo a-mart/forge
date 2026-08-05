@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { SessionAttention, SessionAttentionReason } from '@forge/protocol'
 import type { RoomsInboxOriginInput, RoomsInboxSessionInput } from './rooms-inbox-selectors'
 import { selectRoomsInboxSections } from './rooms-inbox-selectors'
 
@@ -20,10 +21,30 @@ function session(agentId: string, overrides: Partial<RoomsInboxSessionInput> = {
   }
 }
 
-function origin(sessions: RoomsInboxSessionInput[], originId = 'local'): RoomsInboxOriginInput {
+function attention(
+  sessionAgentId: string,
+  reason: SessionAttentionReason = 'work_settled',
+  raisedAt = '2026-08-03T11:30:00.000Z',
+): SessionAttention {
+  return {
+    attentionId: `attention-${sessionAgentId}`,
+    sessionAgentId,
+    profileId: 'project-a',
+    reason,
+    raisedAt,
+  }
+}
+
+function origin(
+  sessions: RoomsInboxSessionInput[],
+  originId = 'local',
+  attentions: SessionAttention[] = [],
+): RoomsInboxOriginInput {
   return {
     originId,
     connected: true,
+    attentionAvailable: true,
+    attentions,
     sessions,
     projects: [{
       originId,
@@ -38,26 +59,41 @@ function origin(sessions: RoomsInboxSessionInput[], originId = 'local'): RoomsIn
 const ids = (entries: { identity: { sessionAgentId: string } }[]) => entries.map((entry) => entry.identity.sessionAgentId)
 
 describe('selectRoomsInboxSections', () => {
-  it('assigns eager Needs You reasons by choice, error, unread priority without duplicate sessions', () => {
-    const result = selectRoomsInboxSections([origin([
+  it('uses server attention only and never infers Needs You from unread, choices, or errors', () => {
+    const sessions = [
       session('unread', { unreadCount: 3 }),
       session('error', { agentStatus: 'error', unreadCount: 4 }),
       session('choice', { pendingChoiceCount: 2, agentStatus: 'error', unreadCount: 9 }),
+      session('settled'),
       session('working-unread', { unreadCount: 1, activeWorkerCount: 2 }),
-    ])], { now: NOW })
+    ]
+    const result = selectRoomsInboxSections([
+      origin(sessions, 'local', [attention('settled', 'plan_completed')]),
+    ], { now: NOW })
 
-    expect(ids(result.needsYou)).toEqual(['choice', 'error', 'unread'])
-    expect(result.needsYou.map((entry) => entry.reason)).toEqual(['awaiting_choice', 'error', 'unread_result'])
+    expect(ids(result.needsYou)).toEqual(['settled'])
+    expect(result.needsYou[0]).toMatchObject({
+      reason: 'plan_completed',
+      attentionId: 'attention-settled',
+      timestamp: '2026-08-03T11:30:00.000Z',
+    })
     expect(ids(result.active)).toEqual(['working-unread'])
     expect(result.activeWorkerCount).toBe(2)
-    expect(ids(result.recent)).toEqual([])
   })
 
-  it('dedupes the same origin-scoped session before section assignment', () => {
-    const duplicate = session('same', { pendingChoiceCount: 1 })
-    const result = selectRoomsInboxSections([origin([duplicate, { ...duplicate }])], { now: NOW })
+  it('orders server attention by raisedAt and dedupes origin-scoped sessions', () => {
+    const duplicate = session('same')
+    const result = selectRoomsInboxSections([origin(
+      [duplicate, { ...duplicate }, session('older')],
+      'local',
+      [
+        attention('older', 'work_settled', '2026-08-03T10:00:00.000Z'),
+        attention('same', 'awaiting_review', '2026-08-03T11:00:00.000Z'),
+      ],
+    )], { now: NOW })
 
-    expect(ids(result.needsYou)).toEqual(['same'])
+    expect(ids(result.needsYou)).toEqual(['same', 'older'])
+    expect(result.needsYou.map((entry) => entry.reason)).toEqual(['awaiting_review', 'work_settled'])
   })
 
   it('orders Active by selected, compaction, worker count, activity, then stable composite identity and caps at five', () => {
@@ -81,12 +117,15 @@ describe('selectRoomsInboxSections', () => {
     const recent = Array.from({ length: 6 }, (_, index) => session(`recent-${index}`, {
       updatedAt: new Date(NOW.getTime() - index * 3_600_000).toISOString(),
     }))
-    const result = selectRoomsInboxSections([origin([
+    const sessions = [
       ...recent,
-      session('needs', { pendingChoiceCount: 1, updatedAt: '2026-08-03T11:30:00.000Z' }),
+      session('needs', { updatedAt: '2026-08-03T11:30:00.000Z' }),
       session('active', { agentStatus: 'streaming', updatedAt: '2026-08-03T11:20:00.000Z' }),
       session('old', { updatedAt: '2026-07-27T11:59:59.000Z' }),
-    ])], { now: NOW })
+    ]
+    const result = selectRoomsInboxSections([
+      origin(sessions, 'local', [attention('needs')]),
+    ], { now: NOW })
 
     expect(ids(result.recent)).toEqual(['recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4'])
     expect(ids(result.recent)).not.toContain('needs')
@@ -94,12 +133,11 @@ describe('selectRoomsInboxSections', () => {
     expect(ids(result.recent)).not.toContain('old')
   })
 
-  it('preserves remote composite identity, ignores disconnected origins, and caps recently used projects', () => {
+  it('keeps colliding agent IDs origin-scoped and hides attention from disconnected or unsupported origins', () => {
     const remoteSession = session('same-id', {
       identity: { originId: 'remote', profileId: 'project-a', sessionAgentId: 'same-id' },
-      pendingChoiceCount: 1,
     })
-    const localSession = session('same-id', { pendingChoiceCount: 1 })
+    const localSession = session('same-id')
     const projects = Array.from({ length: 6 }, (_, index) => ({
       originId: 'local',
       profileId: `project-${index}`,
@@ -108,13 +146,16 @@ describe('selectRoomsInboxSections', () => {
       updatedAt: `2026-08-03T${String(11 - index).padStart(2, '0')}:00:00.000Z`,
     }))
     const result = selectRoomsInboxSections([
-      { ...origin([localSession]), projects },
-      origin([remoteSession], 'remote'),
-      { ...origin([session('offline', { pendingChoiceCount: 1 })], 'offline'), connected: false },
+      { ...origin([localSession], 'local', [attention('same-id')]), projects },
+      origin([remoteSession], 'remote', [attention('same-id', 'decision_waiting')]),
+      { ...origin([session('offline')], 'offline', [attention('offline')]), connected: false },
+      { ...origin([session('unsupported')], 'unsupported', [attention('unsupported')]), attentionAvailable: false },
     ], { now: NOW })
 
     expect(result.needsYou.map((entry) => entry.identity.originId)).toEqual(['local', 'remote'])
-    expect(result.projectCount).toBe(7)
+    expect(result.projectCount).toBe(8)
     expect(result.projects).toHaveLength(5)
+    expect(ids(result.needsYou)).not.toContain('offline')
+    expect(ids(result.needsYou)).not.toContain('unsupported')
   })
 })

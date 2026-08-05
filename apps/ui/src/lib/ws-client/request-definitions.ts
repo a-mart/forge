@@ -167,6 +167,17 @@ export function buildMarkAllReadCommand(profileId: string): ClientCommand {
   }
 }
 
+export function buildDismissSessionAttentionCommand(
+  attentionIds: string[],
+  requestId: string,
+): ClientCommand {
+  return {
+    type: 'dismiss_session_attention',
+    attentionIds,
+    requestId,
+  }
+}
+
 export function buildUserMessageCommand(input: {
   text: string
   agentId: string

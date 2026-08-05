@@ -100,8 +100,11 @@ export interface SwarmManagerSessionFacadeServices {
 export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeServices {
   secureSessions: SecureSessionsService;
   boot: Pick<SwarmBootCoordinator, "boot">;
-  /** Loaded during boot so attention survives restart before any producer reports. */
-  sessionAttention: Pick<SessionAttentionCoordinator, "initialize">;
+  /** Loaded/reconciled during boot; public facade exposes only read/dismiss. */
+  sessionAttention: Pick<
+    SessionAttentionCoordinator,
+    "initialize" | "getSnapshot" | "dismissAttentionIds"
+  >;
   recovery: Pick<RestartRecoveryCoordinator, "dismiss" | "getSnapshot" | "resume">;
   configuration: SwarmConfigurationCoordinator;
   registry: {

@@ -59,6 +59,7 @@ describe("SessionLifecycleCoordinator", () => {
       "archive",
       "browser.archive:forge:forge--s2",
       "tools:forge--s2",
+      "attention.retire:forge--s2",
       "events.agents",
     ]);
   });
@@ -97,8 +98,10 @@ describe("SessionLifecycleCoordinator", () => {
       "archive.profile",
       "browser.archive:forge:forge",
       "tools:forge",
+      "attention.retire:forge",
       "browser.archive:forge:forge--s2",
       "tools:forge--s2",
+      "attention.retire:forge--s2",
       "terminal.suspend",
       "log:archive:terminal_suspend:error",
       "events.profiles",
@@ -124,6 +127,7 @@ describe("SessionLifecycleCoordinator", () => {
       "browser.cancel:forge--s2",
       "browser.release:delete:forge:forge--s2",
       "sessions.delete",
+      "attention.retire:forge--s2",
       "browser.delete:forge:forge--s2",
       "plans:forge--s2",
       "goals.forget:forge--s2",
@@ -227,6 +231,8 @@ describe("SessionLifecycleCoordinator", () => {
       "browser.release:delete:forge:forge",
       "browser.release:delete:forge:forge--s2",
       "lifecycle.deleteManager",
+      "attention.retire:forge",
+      "attention.retire:forge--s2",
       "browser.delete:forge:forge",
       "goals.forget:forge",
       "extensions.deleted:forge",
@@ -455,6 +461,7 @@ describe("SessionLifecycleCoordinator", () => {
       "browser.release.failed",
       "log:browser:lifecycle_release:delete_failed",
       "sessions.delete",
+      "attention.retire:forge--s2",
       "browser.delete:forge:forge--s2",
       "plans:forge--s2",
       "goals.forget:forge--s2",
@@ -746,6 +753,9 @@ function createHarness(): Harness {
     },
     terminal: {
       getHooks: () => undefined,
+    },
+    reportAttentionSessionRetired: async (sessionAgentId) => {
+      calls.push(`attention.retire:${sessionAgentId}`);
     },
     descriptorMutations: {
       patchDescriptor: vi.fn(async (agentId, patch) => {

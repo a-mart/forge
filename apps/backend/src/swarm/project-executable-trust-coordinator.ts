@@ -69,6 +69,7 @@ export interface ProjectExecutableTrustCoordinatorHost {
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean },
   ): Promise<void>;
+  suppressSessionAttention(sessionAgentId: string): Promise<void>;
   getRuntime(agentId: string): Pick<SwarmAgentRuntime, "terminate"> | undefined;
   getRuntimeToken(agentId: string): number | undefined;
   getRuntimeCreationPromise(agentId: string): Promise<unknown> | undefined;
@@ -474,6 +475,13 @@ export class ProjectExecutableTrustCoordinator {
       (descriptor) => descriptor.role === "worker" && affectedManagerIds.has(descriptor.managerId),
     );
 
+    // Trust propagation intentionally stops/restarts runtimes. Suppress each
+    // current epoch before direct worker termination/manager-idle mutations can
+    // be mistaken for natural quiescence.
+    await Promise.all(
+      affectedManagers.map((manager) => this.options.host.suppressSessionAttention(manager.agentId)),
+    );
+
     const workerResults = await Promise.allSettled(
       affectedWorkers.map((worker) =>
         this.options.host.terminateDescriptor(worker, { abort: true, emitStatus: true })),
@@ -578,6 +586,7 @@ export class ProjectExecutableTrustCoordinator {
       return false;
     }
 
+    await this.options.host.suppressSessionAttention(agentId);
     const results = await Promise.allSettled(
       workers.map((worker) =>
         this.options.host.terminateDescriptor(worker, { abort: true, emitStatus: true })),

@@ -19,10 +19,14 @@ export interface SessionAttentionReporterOptions {
   coordinator: SessionAttentionCoordinator;
   /** Committed descriptor lookup; undefined for unknown/removed agents. */
   getDescriptor: (agentId: string) => AgentDescriptor | undefined;
+  /** Current committed descriptor inventory for restart reconciliation. */
+  getDescriptors: () => Iterable<AgentDescriptor>;
   /** Committed owning profile; undefined keeps the session ineligible. */
   getProfile: (profileId: string) => ManagerProfile | undefined;
   /** Committed streaming-worker count for a session. */
   getActiveWorkerCount: (sessionAgentId: string) => number;
+  /** Current terminally errored owned-worker evidence. */
+  hasTerminallyErroredWorker: (sessionAgentId: string) => boolean;
   /** Committed pending-choice count for a session. */
   getPendingChoiceCount: (sessionAgentId: string) => number;
   /** Committed accepted-turn queue depth for a session. */
@@ -46,6 +50,7 @@ export class SessionAttentionReporter {
     agentId: string;
     previousStatus: AgentStatus;
     nextStatus: AgentStatus;
+    transitionedAt: string;
   }): Promise<void> {
     const descriptor = this.options.getDescriptor(input.agentId);
     if (!descriptor) return;
@@ -60,6 +65,7 @@ export class SessionAttentionReporter {
       source: descriptor.role === "worker" ? "owned_worker" : "manager",
       previousStatus: input.previousStatus,
       nextStatus: input.nextStatus,
+      transitionedAt: input.transitionedAt,
     });
   }
 
@@ -84,8 +90,23 @@ export class SessionAttentionReporter {
   }
 
   /** Archive, delete, or loss of eligibility. Restore seeds unarmed. */
+  async suppressWorkingEpoch(sessionAgentId: string): Promise<void> {
+    await this.options.coordinator.suppressWorkingEpoch(sessionAgentId);
+  }
+
   async reportSessionRetired(sessionAgentId: string): Promise<void> {
     await this.options.coordinator.retireSession(sessionAgentId);
+  }
+
+  /** Full committed inventory used only for restart reconciliation after boot. */
+  listSessionSnapshots(): SessionAttentionSessionSnapshot[] {
+    const sessions: SessionAttentionSessionSnapshot[] = [];
+    for (const descriptor of this.options.getDescriptors()) {
+      if (descriptor.role !== "manager") continue;
+      const session = this.snapshot(descriptor.agentId);
+      if (session) sessions.push(session);
+    }
+    return sessions;
   }
 
   /** Resolves a session's committed aggregate, or undefined if unresolvable. */
@@ -97,6 +118,7 @@ export class SessionAttentionReporter {
       manager,
       profile: manager.profileId ? this.options.getProfile(manager.profileId) : undefined,
       activeWorkerCount: this.options.getActiveWorkerCount(sessionAgentId),
+      hasTerminallyErroredWorker: this.options.hasTerminallyErroredWorker(sessionAgentId),
       pendingChoiceCount: this.options.getPendingChoiceCount(sessionAgentId),
       pendingTurnContextCount: this.options.getPendingTurnContextCount(sessionAgentId),
     };

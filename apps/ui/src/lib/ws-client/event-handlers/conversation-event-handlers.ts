@@ -216,6 +216,7 @@ export function handleConversationEvent(
         connected: true,
         targetAgentId: event.subscribedAgentId,
         subscribedAgentId: event.subscribedAgentId,
+        sessionAttentionAvailable: context.state.sessionAttentionAvailable || event.sessionAttention === true,
         lastError: null,
       })
       return true

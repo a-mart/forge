@@ -66,9 +66,7 @@ function createHarness() {
   const attentionPendingCounts: number[] = [];
   const attentionReleaseCounts: number[] = [];
   let nextTurn = 0;
-  let coordinator!: TurnContextCoordinator<TestGate, TestDelegation, TestRetry>;
-
-  coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
+  const coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
     descriptors,
     attention: {
       observePendingQueueChange: async (agentId) => {

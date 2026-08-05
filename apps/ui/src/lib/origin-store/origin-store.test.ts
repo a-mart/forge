@@ -259,6 +259,48 @@ describe('command facade and HTTP client', () => {
 // ---------------------------------------------------------------------------
 
 describe('requirement 10 — second-origin acceptance', () => {
+  it('keeps colliding session attention and revisions isolated by origin', () => {
+    const local = makeStore(LOCAL_ORIGIN_ID)
+    const remote = makeStore('remote-a')
+    const localSpy = vi.fn()
+    const remoteSpy = vi.fn()
+    local.subscribeSlice('attention', (state) => state.sessionAttentions, localSpy)
+    remote.subscribeSlice('attention', (state) => state.sessionAttentions, remoteSpy)
+
+    for (const [store, prefix] of [[local, 'local'], [remote, 'remote']] as const) {
+      store.ingest({
+        type: 'event',
+        event: {
+          type: 'session_attention_snapshot',
+          revision: 1,
+          attentions: [{
+            attentionId: `${prefix}-attention`,
+            sessionAgentId: 'shared-session',
+            profileId: `${prefix}-profile`,
+            reason: 'work_settled',
+            raisedAt: '2026-08-03T12:00:00.000Z',
+          }],
+        },
+      })
+    }
+
+    expect(local.getSnapshot().sessionAttentions['shared-session']?.attentionId).toBe('local-attention')
+    expect(remote.getSnapshot().sessionAttentions['shared-session']?.attentionId).toBe('remote-attention')
+    localSpy.mockClear()
+    remoteSpy.mockClear()
+    local.ingest({
+      type: 'event',
+      event: {
+        type: 'session_attention_update',
+        revision: 2,
+        changes: [{ sessionAgentId: 'shared-session', attention: null }],
+      },
+    })
+    expect(localSpy).toHaveBeenCalledTimes(1)
+    expect(remoteSpy).not.toHaveBeenCalled()
+    expect(remote.getSnapshot().sessionAttentionRevision).toBe(1)
+  })
+
   it('(a) zero cross-origin notifications, (b) both origins keyed by (originId,id), (c) destroy leaves the other intact', () => {
     const registry = new OriginRegistry()
     try {

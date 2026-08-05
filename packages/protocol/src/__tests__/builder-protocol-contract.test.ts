@@ -97,6 +97,10 @@ describe('builder protocol contract', () => {
       subscriptionId: correlatedSubscribe.subscriptionId,
       servedConversationView: 'web',
     } satisfies ReadyEvent
+    const attentionReady = {
+      ...correlatedReady,
+      sessionAttention: true,
+    } satisfies ReadyEvent
     const history = {
       type: 'conversation_history',
       agentId: 'manager-1',
@@ -124,6 +128,8 @@ describe('builder protocol contract', () => {
 
     expect(legacySubscribe.subscriptionId).toBeUndefined()
     expect(legacyReady.subscriptionId).toBeUndefined()
+    expect(legacyReady.sessionAttention).toBeUndefined()
+    expect(attentionReady.sessionAttention).toBe(true)
     expect([correlatedReady, history, choices]).toEqual(expect.arrayContaining([
       expect.objectContaining({ subscriptionId: 'renderer-1:generation-7', servedConversationView: 'web' }),
     ]))

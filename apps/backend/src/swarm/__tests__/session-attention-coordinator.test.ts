@@ -59,6 +59,7 @@ function session(
     manager: manager(status),
     profile: profile(),
     activeWorkerCount: 0,
+    hasTerminallyErroredWorker: false,
     pendingChoiceCount: 0,
     pendingTurnContextCount: 0,
     ...overrides,
@@ -77,6 +78,7 @@ function statusObservation(
     source,
     previousStatus,
     nextStatus,
+    transitionedAt: snapshot.manager.updatedAt,
   } as const;
 }
 
@@ -299,6 +301,48 @@ describe("SessionAttentionCoordinator state machine", () => {
     expect(h.coordinator.getSnapshot().attentions).toHaveLength(1);
   });
 
+  it("coalesces a failed settle with an accepted continuation before publication", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    h.memory.failNextWrite = true;
+    await settleManager(h);
+    await h.coordinator.observeAggregateChange(session("idle", { pendingTurnContextCount: 1 }));
+
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+    expect(h.changes.flatMap((update) => update.changes)).toEqual([]);
+    await h.coordinator.observeAggregateChange(session("idle"));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.releaseContinuationBarrier(session("idle"));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([
+      expect.objectContaining({ attentionId: "attention-2" }),
+    ]);
+  });
+
+  it("coalesces a failed settle with a newer streaming epoch before publication", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    h.memory.failNextWrite = true;
+    await settleManager(h);
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    // The failed target contains settled attention, but the newer committed
+    // runtime fact supersedes it. Retrying must persist the working epoch
+    // directly, without an intermediate upsert for the stale occurrence.
+    await h.coordinator.observeStatus(statusObservation("idle", "streaming"));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+    expect(h.changes.flatMap((update) => update.changes)).toEqual([]);
+
+    await settleManager(h);
+    expect(h.coordinator.getSnapshot().attentions).toEqual([
+      expect.objectContaining({ attentionId: "attention-2" }),
+    ]);
+  });
+
   it("only arms from an eligible manager or owned-worker streaming transition", async () => {
     const h = createHarness();
     await h.coordinator.initialize();
@@ -347,6 +391,59 @@ describe("SessionAttentionCoordinator state machine", () => {
     await failed.coordinator.observeStatus(statusObservation("streaming", "error", session("error")));
     await failed.coordinator.observeStatus(statusObservation("error", "idle"));
     expect(failed.coordinator.getSnapshot().attentions[0]?.reason).toBe("work_failed");
+
+    // Restart-safe current evidence wins even if the earlier error transition
+    // was persisted on the worker descriptor but missed by the coordinator.
+    const recovered = createHarness({ reason: () => "decision_waiting" });
+    await recovered.coordinator.initialize();
+    await armManager(recovered);
+    await recovered.coordinator.observeStatus(statusObservation(
+      "streaming",
+      "idle",
+      session("idle", { hasTerminallyErroredWorker: true }),
+    ));
+    expect(recovered.coordinator.getSnapshot().attentions[0]?.reason).toBe("work_failed");
+  });
+
+  it("uses the producer's committed transition timestamp as the epoch boundary", async () => {
+    const committedAt = "2026-08-04T11:59:58.000Z";
+    const h = createHarness({ reason: () => "plan_completed" });
+    await h.coordinator.initialize();
+    await h.coordinator.observeStatus({
+      ...statusObservation("idle", "streaming"),
+      transitionedAt: committedAt,
+    });
+    await settleManager(h);
+
+    expect(h.reason).toHaveBeenCalledWith(expect.objectContaining({
+      workStartedAt: committedAt,
+    }));
+  });
+
+  it("manual suppression discards only working epochs and preserves settled attention", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+    await settleManager(h);
+    const settled = h.coordinator.getSnapshot().attentions;
+
+    await h.coordinator.suppressWorkingEpoch("manager-1");
+    expect(h.coordinator.getSnapshot().attentions).toEqual(settled);
+
+    await armManager(h);
+    await h.coordinator.suppressWorkingEpoch("manager-1");
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+    await settleManager(h);
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    const failedSettle = createHarness();
+    await failedSettle.coordinator.initialize();
+    await armManager(failedSettle);
+    failedSettle.memory.failNextWrite = true;
+    await settleManager(failedSettle);
+    await failedSettle.coordinator.suppressWorkingEpoch("manager-1");
+    expect(failedSettle.coordinator.getSnapshot().attentions).toEqual([]);
+    expect(failedSettle.changes.flatMap((update) => update.changes)).toEqual([]);
   });
 
   it("replaces a settled occurrence only after a new streaming epoch and protects stale dismissals", async () => {

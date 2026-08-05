@@ -467,6 +467,7 @@ describe('progressive work graph scenarios', () => {
       'confirmed-worker',
     )
     const persisted = normalizePersistedWorkGraphSnapshot(JSON.parse(JSON.stringify(running)))
+    expect(persisted.nodes[0]?.statusUpdatedAt).toBe(now())
     const recovered = recoverInterruptedWorkGraphDispatches(persisted, now)
     expect(recovered.graph.nodes.find((entry) => entry.id === 'confirmed')?.status).toBe('running')
     expect(recovered.graph.nodes.find((entry) => entry.id === 'interrupted')?.status).toBe('blocked')

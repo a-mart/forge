@@ -68,6 +68,12 @@ export interface SwarmWorkerHealthServiceOptions {
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void>;
   saveStore(): Promise<void>;
+  reportAttentionStatusTransition(input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+    transitionedAt: string;
+  }): Promise<void>;
   emitAgentsSnapshot(): void;
   isRuntimeInContextRecovery(agentId: string): boolean;
   isRuntimeRecoveryActive?(agentId: string): boolean;
@@ -845,6 +851,7 @@ export class SwarmWorkerHealthService {
 
     const managerId = normalizeOptionalAgentId(descriptor.managerId);
     const elapsedText = this.formatDuration(elapsedMs);
+    const previousStatus = descriptor.status;
 
     try {
       await this.options.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
@@ -875,18 +882,32 @@ export class SwarmWorkerHealthService {
       return;
     }
 
+    const reportTransition = async (): Promise<void> => {
+      if (previousStatus === descriptor.status) return;
+      await this.options.reportAttentionStatusTransition({
+        agentId,
+        previousStatus,
+        nextStatus: descriptor.status,
+        transitionedAt: descriptor.updatedAt,
+      });
+    };
+
     if (!managerId) {
+      await reportTransition();
       return;
     }
 
     const managerDescriptor = this.options.descriptors.get(managerId);
     if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
+      await reportTransition();
       return;
     }
 
     const managerMessage = `SYSTEM: 🛑 [STALLED WORKER AUTO-TERMINATED]\nWorker \`${agentId}\` was automatically terminated after ${elapsedText} with no progress.\nThe worker was stuck in a tool execution that never completed.\nYou may need to spawn a replacement worker or handle the incomplete task.`;
 
     try {
+      // Queue the manager continuation before evaluating the last-worker
+      // transition. If delivery fails, the terminal transition can settle.
       await this.options.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
     } catch (error) {
       this.options.logDebug("stall:auto_kill:send_message:error", {
@@ -895,6 +916,8 @@ export class SwarmWorkerHealthService {
         message: error instanceof Error ? error.message : String(error)
       });
     }
+
+    await reportTransition();
 
     try {
       await this.options.publishToUser(

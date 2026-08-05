@@ -181,6 +181,7 @@ export async function sendSubscriptionBootstrap(options: {
     serverTime: new Date().toISOString(),
     subscribedAgentId: targetAgentId,
     ...(supportsGoalControlRequestId ? { goalControlRequestId: true as const } : {}),
+    sessionAttention: true,
     ...subscriptionCorrelation,
   });
 
@@ -248,6 +249,19 @@ export async function sendSubscriptionBootstrap(options: {
     metricFields.profilesSnapshotPayloadBytes = 0;
     metricFields.profilesReturned = 0;
   }
+
+  // All-session Builder state: independent of the selected conversation.
+  // Revisioned live updates that interleave with bootstrap are buffered by the
+  // client and replayed after this authoritative origin snapshot.
+  const attentionProvider = swarmManager as Partial<Pick<SwarmManager, "getSessionAttentionSnapshot">>;
+  const attention = typeof attentionProvider.getSessionAttentionSnapshot === "function"
+    ? attentionProvider.getSessionAttentionSnapshot()
+    : { revision: 0, attentions: [] };
+  await sendMeasured("sessionAttentionSnapshot", {
+    type: "session_attention_snapshot",
+    revision: attention.revision,
+    attentions: attention.attentions,
+  });
 
   if (remoteUpdateAwarenessEvent) {
     await sendMeasured("remoteUpdateAwareness", remoteUpdateAwarenessEvent);

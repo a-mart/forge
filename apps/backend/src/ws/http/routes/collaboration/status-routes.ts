@@ -1,3 +1,4 @@
+import type { BuilderInstanceCapabilities } from "@forge/protocol";
 import type { HttpRoute } from "../../shared/http-route.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 import type { CollaborationSettingsService } from "../../../../collaboration/settings-service.js";
@@ -12,7 +13,7 @@ export function createCollaborationStatusRoutes(options: {
     instanceName: string;
     forgeVersion: string;
     protocolVersion: number;
-    capabilities: { collab: boolean; remoteBuild: boolean; createDirectory?: boolean };
+    capabilities: BuilderInstanceCapabilities;
   };
 }): HttpRoute[] {
   return [

@@ -634,6 +634,29 @@ describe('SwarmWebSocketServer', () => {
     )
     expect(workerEvents.some((event) => event.type === 'session_goal_snapshot')).toBe(false)
 
+    manager.emit('session_attention_update', {
+      type: 'session_attention_update',
+      revision: 2,
+      changes: [{
+        sessionAgentId: 'manager',
+        attention: {
+          attentionId: 'attention-live-1',
+          sessionAgentId: 'manager',
+          profileId: 'manager',
+          reason: 'work_settled',
+          raisedAt: '2026-07-12T00:00:00.000Z',
+        },
+      }],
+    } satisfies ServerEvent)
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'session_attention_update' && event.revision === 2,
+    )
+    await waitForEvent(
+      workerEvents,
+      (event) => event.type === 'session_attention_update' && event.revision === 2,
+    )
+
     const unreadBeforeCache = workerEvents.filter((event) => event.type === 'unread_notification').length
 
     manager.emit(

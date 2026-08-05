@@ -139,6 +139,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     agentId: string;
     previousStatus: AgentStatus;
     nextStatus: AgentStatus;
+    transitionedAt: string;
   }): Promise<void>;
   maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void;
   consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean;
@@ -763,8 +764,7 @@ export class SwarmRuntimeController {
           this.host.emitStatus(agentId, status, pendingCount, contextUsage),
         logDebug: (message, details) => this.logDebug(message, details),
         handleManagerStatusTransition: (descriptor, status, pendingCount) =>
-          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
-        reportAttentionStatusTransition: (input) => this.host.reportAttentionStatusTransition(input)
+          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount)
       });
     }
 
@@ -871,15 +871,32 @@ export class SwarmRuntimeController {
     }
 
     this.host.recordManagerTurnWatchdogStatus?.(agentId, runtimeToken, status, pendingCount);
-    await this.getRuntimeStatusProjector().projectStatus({ agentId, status, pendingCount, contextUsage });
+    const projection = await this.getRuntimeStatusProjector().projectStatus({
+      agentId,
+      status,
+      pendingCount,
+      contextUsage,
+    });
+    // Route the authoritative live-map instance: descriptor-store patches may
+    // return a public clone, while worker-health completion mutates durable
+    // assignment metadata on the live descriptor.
     const descriptor = this.descriptors.get(agentId);
     if (descriptor?.role === "worker") {
+      // Worker-health routing may enqueue the completed result for the idle
+      // manager. Attention must observe that committed accepted-turn queue
+      // BEFORE evaluating the last-worker idle transition, or it can raise a
+      // completion that immediately resumes work.
       await this.host.handleWorkerStatus(
         agentId,
         descriptor as AgentDescriptor & { role: "worker" },
         descriptor.status,
         pendingCount,
       );
+      if (projection.transition) {
+        await this.host.reportAttentionStatusTransition(projection.transition);
+      }
+    } else if (projection.transition) {
+      await this.host.reportAttentionStatusTransition(projection.transition);
     }
   }
 

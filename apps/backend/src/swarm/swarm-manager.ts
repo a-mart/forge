@@ -1,6 +1,5 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { ObservabilityFacade } from "../observability/observability-types.js";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
@@ -33,7 +32,7 @@ import { createSwarmManagerRuntimeComposition } from "./swarm-manager-runtime-co
 import { SessionInteractionCoordinator } from "./session-interaction-coordinator.js";
 import { isWorkGraphWorkerActive } from "./planning/work-graph-restart-recovery.js";
 import { SwarmManagerFacade } from "./swarm-manager-facade.js";
-import type { SwarmManagerFacadeServices } from "./swarm-manager-facade-services.js";
+import type { SwarmManagerFacadeServices, TerminalArchiveHooks } from "./swarm-manager-facade-services.js";
 import { ManagerBootstrapCoordinator } from "./manager-bootstrap-coordinator.js";
 import { ProfileSessionBookkeepingCoordinator } from "./profile-session-bookkeeping-coordinator.js";
 import { ArchiveService } from "./archive/archive-service.js";
@@ -55,10 +54,7 @@ import { SwarmSessionMetaService } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService, type SkillMetadata } from "./skill-metadata-service.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
-import { SessionAttentionCoordinator } from "./session/session-attention-coordinator.js";
-import { isSessionAttentionEligible } from "./session/session-attention-eligibility.js";
-import { SessionAttentionReporter } from "./session/session-attention-reporter.js";
-import { SessionAttentionStore } from "./session/session-attention-store.js";
+import { createLazySessionAttentionRuntimeHooks, SessionAttentionRuntime } from "./session/session-attention-runtime.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
 import {
   type ProjectExecutableTrustPlan
@@ -67,8 +63,6 @@ import { ProjectExecutableTrustCoordinator } from "./project-executable-trust-co
 import {
   SwarmAgentLifecycleService,
   type AgentLifecycleStopSessionOptions,
-  type ExternalThreadStopInterruptCallback,
-  type ExternalThreadTerminateCleanupCallback,
 } from "./swarm-agent-lifecycle-service.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
@@ -108,7 +102,6 @@ import {
   nowIso,
   validateAgentDescriptor
 } from "./swarm-manager-utils.js";
-import type { CodexAppServerService } from "./codex-app-server/codex-app-server-service.js";
 import {
   type CodexMcpToolGateEvaluation,
 } from "./codex-app-server/codex-mcp-tool-gate.js";
@@ -121,7 +114,7 @@ import {
   CodexDirectSidecarCoordinator,
   type CodexDirectSidecarManager,
 } from "./codex-app-server/codex-direct-sidecar-coordinator.js";
-import type { CodexAppServerServiceOptions } from "./codex-app-server/types.js";
+import type { SwarmManagerOptions } from "./swarm-manager-options.js";
 export {
   analyzeLatestCortexCloseoutNeed,
   buildSessionMemoryRuntimeView,
@@ -138,21 +131,6 @@ export type {
 // Keep the orchestration facade above its known internal listener fan-out.
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 export { ChoiceRequestCancelledError } from "./swarm-choice-service.js";
-type SwarmManagerOptions = {
-  now?: () => string;
-  versioningService?: VersioningMutationSink;
-  observability?: ObservabilityFacade;
-  codexAppServerService?: CodexAppServerService;
-  codexAppServerServiceOptions?: CodexAppServerServiceOptions;
-  /** Stop-only seam for preserved sidecars; defaults to CodexAppServerService.interruptTurn(). */
-  interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
-  /** Kill/delete cleanup-only seam. Distinct from stop interrupts; defaults to Codex cleanup. */
-  terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
-  compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
-  knowledgeV2SettingsService?: KnowledgeV2SettingsService;
-  knowledgeService?: KnowledgeService;
-  browserAutomationService?: BrowserAutomationService;
-};
 export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -208,8 +186,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   >;
   private readonly lifecycleService: SwarmAgentLifecycleService;
   private readonly choiceService: SwarmChoiceService;
-  private readonly sessionAttentionCoordinator: SessionAttentionCoordinator;
-  private readonly sessionAttentionReporter: SessionAttentionReporter;
+  private readonly sessionAttention: SessionAttentionRuntime;
   private readonly sessionService: SwarmSessionService;
   private readonly archiveLastUsedHydrator: ArchiveLastUsedHydrator;
   private readonly archiveService: ArchiveService;
@@ -222,10 +199,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   readonly promptRegistry: PromptRegistry;
   private readonly codexDirectSidecarCoordinator: CodexDirectSidecarCoordinator;
   private readonly codexPluginDelegationCoordinator: CodexPluginDelegationCoordinator;
-  private terminalArchiveHooks: {
-    suspendProfileTerminals: (profileId: string) => Promise<unknown>;
-    restoreProfileTerminals: (profileId: string) => Promise<unknown>;
-  } | undefined;
+  private terminalArchiveHooks: TerminalArchiveHooks | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private readonly observabilityCoordinator: SwarmObservabilityCoordinator;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService;
@@ -443,17 +417,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       emitAgentsSnapshot: () => this.eventCoordinator.emitAgentsSnapshot(),
       emitProfilesSnapshot: () => this.eventCoordinator.emitProfilesSnapshot(),
     });
-    this.choiceService = new SwarmChoiceService({
-      now: this.now,
-      getDescriptor: (agentId) => this.descriptors.get(agentId),
-      emitChoiceRequest: (event) => this.eventCoordinator.emitChoiceRequest(event),
-      emitAgentsSnapshot: () => {
-        this.eventCoordinator.emitAgentsSnapshot();
-      },
-      // Lazy: the reporter is composed just below, once turnContext exists.
-      reportAttentionAggregateChange: (sessionAgentId) =>
-        this.sessionAttentionReporter?.reportAggregateChange(sessionAgentId),
-    });
+    this.choiceService = this.createChoiceService();
     const completedRuntime = runtimeComposition.complete(
       {
         conversation: this.conversationProjector,
@@ -480,36 +444,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     );
     this.turnContextCoordinator = completedRuntime.turnContext;
-    // Composed after turnContext/choiceService exist: the reporter reads the
-    // committed aggregate from all three on every producer notification.
-    this.sessionAttentionCoordinator = new SessionAttentionCoordinator({
-      store: new SessionAttentionStore({ dataDir: this.config.paths.dataDir }),
-      isEligible: isSessionAttentionEligible,
-      // Queried only after the coordinator proves an armed quiescence edge.
-      // Plan/graph mutations never arm or evaluate attention themselves.
-      getReason: (input) => this.sessionPlanCoordinator.getAttentionReason(input),
-      log: (message, details) => this.logDebug(message, details),
-    });
-    this.sessionAttentionReporter = new SessionAttentionReporter({
-      coordinator: this.sessionAttentionCoordinator,
-      getDescriptor: (agentId) => this.descriptors.get(agentId),
-      getProfile: (profileId) => this.profiles.get(profileId),
-      getActiveWorkerCount: (sessionAgentId) => {
-        let active = 0;
-        for (const descriptor of this.descriptors.values()) {
-          if (descriptor.role === "worker"
-            && descriptor.managerId === sessionAgentId
-            && descriptor.status === "streaming") {
-            active += 1;
-          }
-        }
-        return active;
-      },
-      getPendingChoiceCount: (sessionAgentId) =>
-        this.choiceService.getPendingChoiceIdsForSession(sessionAgentId).length,
-      getPendingTurnContextCount: (sessionAgentId) =>
-        this.turnContextCoordinator.getPendingContextCount(sessionAgentId),
-    });
+    this.sessionAttention = this.createSessionAttentionRuntime();
     this.runtimeLifecycleCoordinator = completedRuntime.runtimeLifecycle;
     this.lifecycleService = completedRuntime.lifecycle;
     this.projectExecutableTrustCoordinator = completedRuntime.projectExecutableTrust;
@@ -531,7 +466,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       messages: this.agentMessageDispatcher,
       userMessages: this.userMessageCoordinator,
       boot: this.bootCoordinator,
-      sessionAttention: this.sessionAttentionCoordinator,
+      sessionAttention: this.sessionAttention.facade,
       recovery: this.restartRecoveryCoordinator,
       configuration: this.configurationCoordinator,
       registry: {
@@ -570,6 +505,29 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }
   protected getFacadeServices(): SwarmManagerFacadeServices {
     return this.facadeServices;
+  }
+  private createChoiceService(): SwarmChoiceService {
+    return new SwarmChoiceService({
+      now: this.now,
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      emitChoiceRequest: (event) => this.eventCoordinator.emitChoiceRequest(event),
+      emitAgentsSnapshot: () => this.eventCoordinator.emitAgentsSnapshot(),
+      reportAttentionAggregateChange: (agentId) => this.sessionAttention?.reportAggregateChange(agentId),
+    });
+  }
+  private createSessionAttentionRuntime(): SessionAttentionRuntime {
+    return new SessionAttentionRuntime({
+      dataDir: this.config.paths.dataDir,
+      descriptors: this.descriptors,
+      profiles: this.profiles,
+      workers: this.agentDirectory,
+      choices: this.choiceService,
+      turns: this.turnContextCoordinator,
+      plans: this.sessionPlanCoordinator,
+      onChange: ({ revision, changes }) =>
+        this.emit("session_attention_update", { type: "session_attention_update", revision, changes }),
+      log: (message, details) => this.logDebug(message, details),
+    });
   }
   private createSecureSessionsService(foundation: SecureSessionsFoundation): SecureSessionsService {
     return new SecureSessionsService({
@@ -622,23 +580,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }
   private createRuntimeComposition(): ReturnType<typeof createSwarmManagerRuntimeComposition> {
     return createSwarmManagerRuntimeComposition({
-      // Composition runs before the reporter field is assigned, so this stays
-      // lazy and no-ops for any transition observed during construction. Such a
-      // transition is pre-boot inventory, which must never arm an epoch anyway.
-      reportAttentionStatusTransition: async (input) => {
-        await this.sessionAttentionReporter?.reportStatusTransition(input);
-      },
-      reportAttentionSessionRetired: async (sessionAgentId) => {
-        await this.sessionAttentionReporter?.reportSessionRetired(sessionAgentId);
-      },
-      reportAttentionPendingTurn: async (agentId) => {
-        if (this.descriptors.get(agentId)?.role !== "manager") return;
-        await this.sessionAttentionReporter?.reportAggregateChange(agentId);
-      },
-      reportAttentionContinuationAbandoned: async (agentId) => {
-        if (this.descriptors.get(agentId)?.role !== "manager") return;
-        await this.sessionAttentionReporter?.reportContinuationAbandoned(agentId);
-      },
+      attention: createLazySessionAttentionRuntimeHooks(() => this.sessionAttention),
       state: {
         config: this.config,
         descriptors: this.descriptors,
@@ -659,7 +601,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       descriptors: {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
-        deleteDescriptor: (agentId) => this.deleteDescriptorWithAttention(agentId),
+        deleteDescriptor: (agentId) =>
+          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId),
         upsertProfile: (profile) =>
           this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
         deleteProfile: (profileId) =>
@@ -820,6 +763,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         emitAgentToolCall: (event) => this.conversationProjector.emitAgentToolCall(event),
         emitStatus: (agentId, status, pendingCount) =>
           this.eventCoordinator.emitStatus(agentId, status, pendingCount),
+        reportAttentionStatusTransition: (input) => this.sessionAttention.reportStatusTransition(input),
         emitAgentsSnapshot: () => this.eventCoordinator.emitAgentsSnapshot(),
         emitProfilesSnapshot: () => this.eventCoordinator.emitProfilesSnapshot(),
         listWorkersForSession: (agentId) => this.agentDirectory.getWorkersForManager(agentId),
@@ -870,29 +814,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       now: this.now,
     });
   }
-  /**
-   * Single choke point for descriptor removal so attention cannot go stale.
-   * Removing a streaming worker changes the owning session's aggregate, and
-   * removing the manager itself must retire the session's attention entirely.
-   * The owning session is captured BEFORE deletion because the descriptor is
-   * gone afterwards.
-   */
-  private deleteDescriptorWithAttention(agentId: string): boolean {
-    const descriptor = this.descriptors.get(agentId);
-    const owningSessionAgentId = descriptor?.role === "worker" ? descriptor.managerId : undefined;
-    const removedManager = descriptor?.role === "manager" ? descriptor.agentId : undefined;
-
-    const deleted = this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
-    if (!deleted) return deleted;
-
-    if (removedManager) {
-      void this.sessionAttentionReporter?.reportSessionRetired(removedManager);
-    } else if (owningSessionAgentId) {
-      void this.sessionAttentionReporter?.reportAggregateChange(owningSessionAgentId);
-    }
-    return deleted;
-  }
-
   private createAgentDirectory(): AgentDirectory {
     return new AgentDirectory({
       descriptors: this.descriptors,
@@ -1067,7 +988,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         descriptorMutations: {
           upsertDescriptor: (descriptor) =>
             this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
-          deleteDescriptor: (agentId) => this.deleteDescriptorWithAttention(agentId),
+          deleteDescriptor: (agentId) =>
+            this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId),
           upsertProfile: (profile) =>
             this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
           deleteProfile: (profileId) =>

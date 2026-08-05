@@ -1,16 +1,10 @@
-import type { AgentStatus } from '@forge/protocol'
+import type { AgentStatus, SessionAttention, SessionAttentionReason } from '@forge/protocol'
 import { LOCAL_ORIGIN_ID, type OriginId } from '@/lib/origin-store'
 import { isSessionActivelyWorking } from './utils'
 import type { StatusMap } from './types'
-import {
-  getRoomsInboxAcknowledgementKey,
-  type RoomsInboxAcknowledgement,
-  type RoomsInboxAttentionReason,
-  type RoomsInboxAttentionSignal,
-} from './rooms-inbox-ack'
 
 export type RoomsInboxReason =
-  | RoomsInboxAttentionReason
+  | SessionAttentionReason
   | 'compacting'
   | 'manager_working'
   | 'recently_updated'
@@ -57,6 +51,9 @@ export interface RoomsInboxOriginInput {
   connected: boolean
   /** False while this origin is still receiving its agent/profile bootstrap snapshots. */
   inventoryReady?: boolean
+  /** Unsupported origins keep Active/Recent but never synthesize Needs You. */
+  attentionAvailable?: boolean
+  attentions?: readonly SessionAttention[]
   sessions: readonly RoomsInboxSessionInput[]
   projects: readonly RoomsInboxProjectInput[]
 }
@@ -64,7 +61,9 @@ export interface RoomsInboxOriginInput {
 export interface RoomsInboxSessionViewModel extends RoomsInboxSessionInput {
   reason: RoomsInboxReason
   timestamp: string
-  /** Present only for sticky Needs You rows, which are ordered by this value. */
+  /** Exact server occurrence identifier, present only for Needs You rows. */
+  attentionId?: string
+  /** Present only for Needs You rows, which are ordered by this value. */
   raisedAt?: number
 }
 
@@ -87,11 +86,14 @@ export interface SelectRoomsInboxOptions {
   now?: Date | number
   searchQuery?: string
   hideCliSessions?: boolean
-  attentionEntries?: Readonly<Record<string, RoomsInboxAcknowledgement>>
 }
 
 const MAX_SECTION_ITEMS = 5
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+export function getRoomsInboxIdentityKey(originId: string, sessionAgentId: string): string {
+  return `${originId}::${sessionAgentId}`
+}
 
 function timestampMs(value: string | undefined): number {
   if (!value) return 0
@@ -127,31 +129,12 @@ function compareIdentity(left: RoomsInboxSessionInput, right: RoomsInboxSessionI
     || left.identity.profileId.localeCompare(right.identity.profileId)
 }
 
-function attentionSignal(
-  session: RoomsInboxSessionInput,
-  activelyWorking: boolean,
-): Omit<RoomsInboxAttentionSignal, 'key'> | null {
-  // The precedence is intentional: one session has one explicit user-facing
-  // reason even when a completed unread result also has a pending choice.
-  if (session.pendingChoiceCount > 0) {
-    return { reason: 'awaiting_choice', signature: `choice:${session.pendingChoiceCount}` }
-  }
-  if (session.agentStatus === 'error') {
-    return { reason: 'error', signature: `error:${session.updatedAt ?? ''}` }
-  }
-  if (session.unreadCount > 0 && !activelyWorking) {
-    return { reason: 'unread_result', signature: `unread:${session.unreadCount}:${session.updatedAt ?? ''}` }
-  }
-  return null
-}
-
 function compareNeedsYou(
-  left: { session: RoomsInboxSessionInput; reason: RoomsInboxAttentionReason; raisedAt: number },
-  right: { session: RoomsInboxSessionInput; reason: RoomsInboxAttentionReason; raisedAt: number },
+  left: { session: RoomsInboxSessionInput; attention: SessionAttention; raisedAt: number },
+  right: { session: RoomsInboxSessionInput; attention: SessionAttention; raisedAt: number },
 ): number {
   const raisedOrder = right.raisedAt - left.raisedAt
-  if (raisedOrder !== 0) return raisedOrder
-  return compareIdentity(left.session, right.session)
+  return raisedOrder || compareIdentity(left.session, right.session)
 }
 
 function compareActive(
@@ -173,8 +156,7 @@ function compareActive(
 
 function compareRecent(left: RoomsInboxSessionInput, right: RoomsInboxSessionInput): number {
   const timestampOrder = timestampMs(sessionTimestamp(right)) - timestampMs(sessionTimestamp(left))
-  if (timestampOrder !== 0) return timestampOrder
-  return compareIdentity(left, right)
+  return timestampOrder || compareIdentity(left, right)
 }
 
 function matchesSearch(
@@ -199,8 +181,6 @@ function activeStatusMap(session: RoomsInboxSessionInput): StatusMap {
 }
 
 export function isRoomsInboxSessionActive(session: RoomsInboxSessionInput): boolean {
-  // Keep the Inbox definition aligned with room-card counters. This intentionally
-  // excludes idle runtimes and queued prompt counts.
   return isSessionActivelyWorking({
     sessionAgent: {
       agentId: session.identity.sessionAgentId,
@@ -222,7 +202,7 @@ export function getRoomsInboxVisibleSessions(
   const visibleOrigins = origins.filter((origin) => origin.originId === LOCAL_ORIGIN_ID || origin.connected)
   const sessionByIdentity = new Map<string, RoomsInboxSessionInput>()
   for (const session of visibleOrigins.flatMap((origin) => origin.sessions)) {
-    const key = getRoomsInboxAcknowledgementKey(session.identity.originId, session.identity.sessionAgentId)
+    const key = getRoomsInboxIdentityKey(session.identity.originId, session.identity.sessionAgentId)
     if (!sessionByIdentity.has(key)) sessionByIdentity.set(key, session)
   }
   return [...sessionByIdentity.values()]
@@ -230,40 +210,22 @@ export function getRoomsInboxVisibleSessions(
     .filter((session) => !options.hideCliSessions || !session.cli || isSelected(session, options.selected))
 }
 
-function attentionSignalsForSessions(
-  sessions: readonly RoomsInboxSessionInput[],
-): RoomsInboxAttentionSignal[] {
-  return sessions.flatMap((session) => {
-    const signal = attentionSignal(session, isRoomsInboxSessionActive(session))
-    return signal ? [{
-      ...signal,
-      key: getRoomsInboxAcknowledgementKey(session.identity.originId, session.identity.sessionAgentId),
-    }] : []
-  })
-}
-
-/** Eager display attention only; plan snapshots must never enter here. */
-export function selectRoomsInboxAttentionSignals(
-  origins: readonly RoomsInboxOriginInput[],
-  options: Pick<SelectRoomsInboxOptions, 'selected' | 'hideCliSessions'> = {},
-): RoomsInboxAttentionSignal[] {
-  return attentionSignalsForSessions(getRoomsInboxVisibleSessions(origins, options))
+function getVisibleAttentionBySession(origins: readonly RoomsInboxOriginInput[]): Map<string, SessionAttention> {
+  const attentions = new Map<string, SessionAttention>()
+  for (const origin of origins) {
+    if ((origin.originId !== LOCAL_ORIGIN_ID && !origin.connected) || !origin.attentionAvailable) continue
+    for (const attention of origin.attentions ?? []) {
+      if (!attentions.has(getRoomsInboxIdentityKey(origin.originId, attention.sessionAgentId))) {
+        attentions.set(getRoomsInboxIdentityKey(origin.originId, attention.sessionAgentId), attention)
+      }
+    }
+  }
+  return attentions
 }
 
 /**
- * Reconciliation signals deliberately ignore every user-facing display filter.
- * They are the only signals permitted to advance acknowledgement lifecycles.
- */
-export function selectRoomsInboxLifecycleAttentionSignals(
-  origins: readonly RoomsInboxOriginInput[],
-): RoomsInboxAttentionSignal[] {
-  return attentionSignalsForSessions(getRoomsInboxVisibleSessions(origins))
-}
-
-/**
- * Derive all Inbox sections from eager session summaries. No plan snapshot is
- * accepted here: plan state is subscription-scoped and cannot safely describe
- * attention for every sidebar session.
+ * Derive Needs You only from server attention. Active/Recent remain descriptor-derived
+ * and unread/choice/status fields never manufacture or clear an attention occurrence.
  */
 export function selectRoomsInboxSections(
   origins: readonly RoomsInboxOriginInput[],
@@ -272,68 +234,46 @@ export function selectRoomsInboxSections(
   const nowMs = options.now instanceof Date ? options.now.getTime() : options.now ?? Date.now()
   const searchQuery = options.searchQuery ?? ''
   const sessions = getRoomsInboxVisibleSessions(origins, options)
-  const attentionEntries = options.attentionEntries ?? {}
-  const liveSignals = new Map(selectRoomsInboxAttentionSignals(origins, options).map((signal) => [signal.key, signal]))
+  const attentionBySession = getVisibleAttentionBySession(origins)
   const attentionSessionKeys = new Set<string>()
-  const dismissedAttentionSessionKeys = new Set<string>()
-  const needsYouCandidates: { session: RoomsInboxSessionInput; reason: RoomsInboxAttentionReason; raisedAt: number }[] = []
+  const needsYouCandidates: Array<{
+    session: RoomsInboxSessionInput
+    attention: SessionAttention
+    raisedAt: number
+  }> = []
 
   for (const session of sessions) {
-    const key = getRoomsInboxAcknowledgementKey(session.identity.originId, session.identity.sessionAgentId)
-    const liveSignal = liveSignals.get(key)
-    const entry = attentionEntries[key]
-
-    // A current attention signal never falls through to Active/Recent, even
-    // after dismissal. Dismissal means "handled", not "it became recent".
-    if (liveSignal) attentionSessionKeys.add(key)
-
-    if (liveSignal && (!entry || entry.ackedAt === undefined || entry.signature !== liveSignal.signature)) {
-      attentionSessionKeys.add(key)
-      needsYouCandidates.push({
-        session,
-        reason: liveSignal.reason,
-        raisedAt: entry?.raisedAt ?? nowMs,
-      })
-      continue
-    }
-
-    // Once raised, an unacknowledged entry remains visible even if opening the
-    // session immediately clears the underlying unread counter. A dismissed,
-    // now-cleared entry stays out of Recent too: Done must actually hide the
-    // row, not silently move it to another Inbox section.
-    if (!liveSignal && entry) {
-      if (entry.ackedAt !== undefined) {
-        dismissedAttentionSessionKeys.add(key)
-      } else {
-        attentionSessionKeys.add(key)
-        needsYouCandidates.push({
-          session,
-          reason: entry.reason,
-          raisedAt: entry.raisedAt,
-        })
-      }
-    }
+    const key = getRoomsInboxIdentityKey(session.identity.originId, session.identity.sessionAgentId)
+    const attention = attentionBySession.get(key)
+    if (!attention) continue
+    attentionSessionKeys.add(key)
+    needsYouCandidates.push({
+      session,
+      attention,
+      raisedAt: timestampMs(attention.raisedAt),
+    })
   }
 
   const needsYou = needsYouCandidates
     .filter(({ session }) => matchesSearch(session, searchQuery))
     .sort(compareNeedsYou)
-    .map(({ session, reason, raisedAt }) => ({
+    .map(({ session, attention, raisedAt }) => ({
       ...session,
-      reason,
-      timestamp: sessionTimestamp(session),
+      reason: attention.reason,
+      timestamp: attention.raisedAt,
+      attentionId: attention.attentionId,
       raisedAt,
     }))
 
   const activeCandidates = sessions
-    .filter((session) => !attentionSessionKeys.has(getRoomsInboxAcknowledgementKey(
+    .filter((session) => !attentionSessionKeys.has(getRoomsInboxIdentityKey(
       session.identity.originId,
       session.identity.sessionAgentId,
     )))
     .filter((session) => isRoomsInboxSessionActive(session))
     .filter((session) => matchesSearch(session, searchQuery))
     .sort(compareActive(options.selected))
-  const activeIds = new Set(activeCandidates.map((session) => getRoomsInboxAcknowledgementKey(
+  const activeIds = new Set(activeCandidates.map((session) => getRoomsInboxIdentityKey(
     session.identity.originId,
     session.identity.sessionAgentId,
   )))
@@ -345,15 +285,11 @@ export function selectRoomsInboxSections(
   }))
 
   const recent = sessions
-    .filter((session) => !attentionSessionKeys.has(getRoomsInboxAcknowledgementKey(
+    .filter((session) => !attentionSessionKeys.has(getRoomsInboxIdentityKey(
       session.identity.originId,
       session.identity.sessionAgentId,
     )))
-    .filter((session) => !activeIds.has(getRoomsInboxAcknowledgementKey(
-      session.identity.originId,
-      session.identity.sessionAgentId,
-    )))
-    .filter((session) => !dismissedAttentionSessionKeys.has(getRoomsInboxAcknowledgementKey(
+    .filter((session) => !activeIds.has(getRoomsInboxIdentityKey(
       session.identity.originId,
       session.identity.sessionAgentId,
     )))

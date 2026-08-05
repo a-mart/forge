@@ -111,7 +111,7 @@ describe('SessionPlanCoordinator', () => {
     await expect(harness.coordinator.getAttentionReason({
       sessionAgentId: harness.owner.agentId,
       profileId: harness.owner.profileId,
-      workStartedAt: waiting.snapshot.updatedAt!,
+      workStartedAt: waiting.snapshot.workGraph!.nodes[0]!.statusUpdatedAt!,
     })).resolves.toBe('decision_waiting')
 
     await harness.coordinator.updateWorkGraph(harness.owner, {
@@ -139,15 +139,63 @@ describe('SessionPlanCoordinator', () => {
     await expect(harness.coordinator.getAttentionReason({
       sessionAgentId: harness.owner.agentId,
       profileId: harness.owner.profileId,
-      workStartedAt: review.updatedAt!,
+      workStartedAt: review.workGraph!.nodes[0]!.statusUpdatedAt!,
     })).resolves.toBe('awaiting_review')
 
     const graphCompleted = await harness.coordinator.acceptWorkGraphNode(harness.owner, 'review')
     await expect(harness.coordinator.getAttentionReason({
       sessionAgentId: harness.owner.agentId,
       profileId: harness.owner.profileId,
-      workStartedAt: graphCompleted.snapshot.updatedAt!,
+      workStartedAt: graphCompleted.snapshot.workGraph!.nodes[0]!.statusUpdatedAt!,
     })).resolves.toBe('work_graph_completed')
+  })
+
+  it('does not reuse a stale waiting node after an unrelated current-epoch graph update', async () => {
+    let now = '2026-08-04T12:00:00.000Z'
+    const harness = await createHarness(undefined, undefined, () => now)
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      nodes: [
+        {
+          id: 'old-decision',
+          title: 'Old decision',
+          task: 'This was already waiting before work began.',
+          kind: 'decision',
+          status: 'waiting',
+        },
+        {
+          id: 'current-task',
+          title: 'Current task',
+          task: 'Change this during the current epoch.',
+          status: 'pending',
+        },
+      ],
+    })
+
+    const workStartedAt = '2026-08-04T12:00:00.500Z'
+    now = '2026-08-04T12:00:01.000Z'
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      nodes: [
+        {
+          id: 'old-decision',
+          title: 'Old decision',
+          task: 'This was already waiting before work began.',
+          kind: 'decision',
+          status: 'waiting',
+        },
+        {
+          id: 'current-task',
+          title: 'Current task',
+          task: 'Change this during the current epoch.',
+          status: 'cancelled',
+        },
+      ],
+    })
+
+    await expect(harness.coordinator.getAttentionReason({
+      sessionAgentId: harness.owner.agentId,
+      profileId: harness.owner.profileId,
+      workStartedAt,
+    })).resolves.toBeUndefined()
   })
 
   it('keeps one durable graph-card identity when saturated history evicts the active anchor', async () => {
@@ -556,6 +604,7 @@ describe('SessionPlanCoordinator', () => {
 async function createHarness(
   existingDataDir?: string,
   isWorkerActive?: (workerId: string) => boolean,
+  now: () => string = () => new Date().toISOString(),
 ): Promise<{
   coordinator: SessionPlanCoordinator
   dataDir: string
@@ -572,7 +621,7 @@ async function createHarness(
   const logDebug = vi.fn()
   const coordinator = new SessionPlanCoordinator({
     dataDir,
-    now: () => new Date().toISOString(),
+    now,
     getPlanSummaries: () => timelineSummaries,
     emitPlanSummary: (event) => {
       const existingIndex = timelineSummaries.findIndex((current) => current.id === event.id)

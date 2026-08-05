@@ -357,6 +357,13 @@ export class SwarmWebSocketServer {
     this.cliWsHandler.broadcast(event);
   };
 
+  private readonly onSessionAttentionUpdate = (event: ServerEvent): void => {
+    if (event.type !== "session_attention_update") return;
+    // Builder-global origin state: every Builder subscription converges, while
+    // Collaboration-only and CLI sockets remain outside this fanout.
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
   private readonly onSessionGoalSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_goal_snapshot") return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
@@ -785,6 +792,7 @@ export class SwarmWebSocketServer {
                 collab: true,
                 remoteBuild: this.remoteBuildSettingsService.isRemoteBuildEnabled(),
                 createDirectory: true,
+                sessionAttention: true,
               },
             }),
           })
@@ -993,6 +1001,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.on("manager_tool_activity", this.onManagerToolActivity);
     this.swarmManager.on("session_plan_snapshot", this.onSessionPlanSnapshot);
+    this.swarmManager.on("session_attention_update", this.onSessionAttentionUpdate);
     this.swarmManager.on("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
@@ -1074,6 +1083,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.off("manager_tool_activity", this.onManagerToolActivity);
     this.swarmManager.off("session_plan_snapshot", this.onSessionPlanSnapshot);
+    this.swarmManager.off("session_attention_update", this.onSessionAttentionUpdate);
     this.swarmManager.off("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);

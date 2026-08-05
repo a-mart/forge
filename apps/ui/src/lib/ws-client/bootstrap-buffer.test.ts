@@ -154,6 +154,45 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 
+  it('applies a newer attention update after its authoritative snapshot even when the update arrives first', () => {
+    const { buffer, patches, getState } = setup({
+      sessionAttentionRevision: -1,
+      sessionAttentions: {},
+    })
+    buffer.begin('session-b')
+
+    buffer.handleEvent({
+      type: 'session_attention_update',
+      revision: 5,
+      changes: [{
+        sessionAgentId: 'session-c',
+        attention: {
+          attentionId: 'attention-c',
+          sessionAgentId: 'session-c',
+          profileId: 'profile-1',
+          reason: 'awaiting_review',
+          raisedAt: '2026-08-03T12:05:00.000Z',
+        },
+      }],
+    })
+    buffer.handleEvent({
+      type: 'session_attention_snapshot',
+      revision: 4,
+      attentions: [{
+        attentionId: 'attention-b',
+        sessionAgentId: 'session-b',
+        profileId: 'profile-1',
+        reason: 'work_settled',
+        raisedAt: '2026-08-03T12:00:00.000Z',
+      }],
+    })
+    buffer.handleEvent({ type: 'unread_counts_snapshot', counts: {} })
+
+    expect(patches).toHaveLength(1)
+    expect(getState().sessionAttentionRevision).toBe(5)
+    expect(Object.keys(getState().sessionAttentions).sort()).toEqual(['session-b', 'session-c'])
+  })
+
   it('keeps only the newest actionable secure requests during bootstrap replay', () => {
     const { buffer, patches } = setup()
     buffer.begin('session-b')

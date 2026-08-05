@@ -298,8 +298,8 @@ describe('AgentSidebar', () => {
     const localSession = sessionManager('local-inbox', 'local-inbox')
     const remoteSession = {
       ...sessionManager('remote-inbox', 'remote-inbox'),
-      pendingChoiceCount: 1,
       sessionLabel: 'Remote answer',
+      updatedAt: new Date().toISOString(),
     }
     const remoteProfile = {
       ...profileFor(remoteSession),

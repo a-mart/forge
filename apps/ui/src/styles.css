@@ -612,8 +612,9 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sidebar-room-inbox-reason--awaiting_choice { color: var(--sidebar-room-reason-awaiting); }
-.sidebar-room-inbox-reason--error { color: var(--sidebar-room-reason-error); }
+.sidebar-room-inbox-reason--decision_waiting,
+.sidebar-room-inbox-reason--awaiting_review { color: var(--sidebar-room-reason-awaiting); }
+.sidebar-room-inbox-reason--work_failed { color: var(--sidebar-room-reason-error); }
 .sidebar-room-inbox-reason--manager_working { color: var(--sidebar-room-reason-active); }
 .sidebar-room-inbox-reason--compacting { color: var(--sidebar-room-reason-compacting); }
 .sidebar-room-inbox-trailing {

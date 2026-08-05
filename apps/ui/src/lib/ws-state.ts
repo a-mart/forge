@@ -19,6 +19,7 @@ import type {
   StreamDeckNavigationRequestedEvent,
   GenerationThroughputLiveMeasurement,
   ManagerToolActivityEvent,
+  SessionAttention,
 } from '@forge/protocol'
 import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
 import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
@@ -113,6 +114,12 @@ export interface ManagerWsState {
   lastError: string | null
   lastSuccess: string | null
   unreadCounts: Record<string, number>
+  /** True only when this origin advertised authoritative server attention. */
+  sessionAttentionAvailable: boolean
+  /** Origin-local durable revision; -1 until the current connection snapshot. */
+  sessionAttentionRevision: number
+  /** One visible server-owned occurrence per session, scoped to this origin. */
+  sessionAttentions: Record<string, SessionAttention>
   /** Latest local-instance order invalidation; the full preference is refetched over HTTP. */
   builderSidebarOrderRevision: number | null
   /** Wave R presence: connected member identities per session (SPEC §4.7). */
@@ -200,6 +207,9 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     lastError: null,
     lastSuccess: null,
     unreadCounts: {},
+    sessionAttentionAvailable: false,
+    sessionAttentionRevision: -1,
+    sessionAttentions: {},
     builderSidebarOrderRevision: null,
     projectPresence: {},
     terminals: [],

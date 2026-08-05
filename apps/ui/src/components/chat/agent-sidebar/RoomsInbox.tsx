@@ -18,6 +18,7 @@ export function RoomsInbox({
   onNewProject,
   onAcknowledgeNeedsYou,
   onClearNeedsYou,
+  dismissError,
   projectTree,
   hasInlineProjectContent = false,
   mutedSessionIds,
@@ -28,8 +29,9 @@ export function RoomsInbox({
   onSelectSession: (identity: RoomsInboxIdentity) => void
   onShowProjects: () => void
   onNewProject: () => void
-  onAcknowledgeNeedsYou: (identity: RoomsInboxIdentity) => void
-  onClearNeedsYou: (identities: readonly RoomsInboxIdentity[]) => void
+  onAcknowledgeNeedsYou: (session: RoomsInboxSessionViewModel) => void
+  onClearNeedsYou: (sessions: readonly RoomsInboxSessionViewModel[]) => void
+  dismissError?: string | null
   /** The same Rooms v2 project tree rendered in the Projects tab. */
   projectTree?: React.ReactNode
   /** Derived from the shared tree's rows and visible remote status cards. */
@@ -81,7 +83,7 @@ export function RoomsInbox({
           action={(
             <button
               type="button"
-              onClick={() => onClearNeedsYou(sections.needsYou.map((session) => session.identity))}
+              onClick={() => onClearNeedsYou(sections.needsYou)}
               className="sidebar-room-clear-needs-you focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
             >
               <CheckCheck className="size-3" aria-hidden="true" />
@@ -89,13 +91,21 @@ export function RoomsInbox({
             </button>
           )}
         >
+          {dismissError ? (
+            <p
+              role="alert"
+              className="mx-2 mb-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive"
+            >
+              {dismissError}
+            </p>
+          ) : null}
           {sections.needsYou.map((session) => (
             <InboxSessionRow
               key={`${session.identity.originId}::${session.identity.sessionAgentId}`}
               session={session}
               selected={selected}
               onSelectSession={onSelectSession}
-              onAcknowledge={() => onAcknowledgeNeedsYou(session.identity)}
+              onAcknowledge={() => onAcknowledgeNeedsYou(session)}
               showDone
               section="needs-you"
               muted={isMuted(session)}
@@ -216,7 +226,7 @@ function InboxSessionRow({
   const relativeTime = session.reason === 'recently_updated'
     ? formatRoomsInboxRelativeTime(session.timestamp, now)
     : ''
-  const reasonClass = session.reason === 'unread_result' ? 'default' : session.reason
+  const reasonClass = session.reason
 
   return (
     <div
@@ -272,11 +282,9 @@ function InboxSessionRow({
 }
 
 function InboxStatusPill({ session }: { session: RoomsInboxSessionViewModel }) {
-  if (session.reason === 'awaiting_choice') {
-    return <span className="sidebar-room-status-pill sidebar-room-status-pill--awaiting" aria-label="Awaiting your answer">?</span>
-  }
-  if (session.reason === 'unread_result') {
-    return <span className="sidebar-room-unread-badge" aria-label={`${session.unreadCount} unread updates`}>{session.unreadCount > 99 ? '99+' : session.unreadCount}</span>
+  if (session.reason === 'decision_waiting' || session.reason === 'awaiting_review') {
+    const label = session.reason === 'decision_waiting' ? 'Decision needed' : 'Ready for review'
+    return <span className="sidebar-room-status-pill sidebar-room-status-pill--awaiting" aria-label={label}>?</span>
   }
   if (session.reason === 'compacting') {
     return <span className="sidebar-room-status-pill sidebar-room-status-pill--compacting sidebar-room-glow sidebar-room-compaction-glow" aria-label="Compacting context">C</span>
@@ -287,8 +295,11 @@ function InboxStatusPill({ session }: { session: RoomsInboxSessionViewModel }) {
     }
     return <span className="sidebar-room-status-pill sidebar-room-status-pill--streaming sidebar-room-glow" aria-label="Manager streaming" />
   }
-  if (session.reason === 'error') {
+  if (session.reason === 'work_failed') {
     return <span className="sidebar-room-status-pill sidebar-room-status-pill--error" aria-label="Run failed"><CircleAlert className="size-3" aria-hidden="true" /></span>
+  }
+  if (session.attentionId && session.unreadCount > 0) {
+    return <span className="sidebar-room-unread-badge" aria-label={`${session.unreadCount} unread updates`}>{session.unreadCount > 99 ? '99+' : session.unreadCount}</span>
   }
   return null
 }

@@ -77,6 +77,8 @@ export interface WorkGraphNode {
   task: string
   kind: WorkGraphNodeKind
   status: WorkGraphNodeStatus
+  /** Last authoritative status transition; absent on legacy graph nodes. */
+  statusUpdatedAt?: string
   dependsOn: string[]
   acceptanceCriteria?: string
   /** Missing on persisted pre-roster graphs and treated as auto. */
