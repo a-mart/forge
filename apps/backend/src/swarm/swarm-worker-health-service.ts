@@ -846,8 +846,10 @@ export class SwarmWorkerHealthService {
     const managerId = normalizeOptionalAgentId(descriptor.managerId);
     const elapsedText = this.formatDuration(elapsedMs);
 
+    let terminationConfirmed = false;
     try {
       await this.options.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
+      terminationConfirmed = this.options.descriptors.get(agentId)?.status === "terminated";
       await this.options.saveStore();
       this.options.emitAgentsSnapshot();
     } catch (error) {
@@ -857,11 +859,14 @@ export class SwarmWorkerHealthService {
         message: error instanceof Error ? error.message : String(error)
       });
 
+    }
+
+    if (!terminationConfirmed) {
       if (managerId) {
         try {
           await this.options.publishToUser(
             managerId,
-            `⚠️ Failed to auto-terminate stalled worker \`${agentId}\` — manual intervention needed.`,
+            `⚠️ Forge could not confirm stalled worker \`${agentId}\` stopped cleanly. Stop or start this worker again to retry cleanup.`,
             "system"
           );
         } catch (publishError) {

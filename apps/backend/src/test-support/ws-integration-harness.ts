@@ -30,9 +30,9 @@ export class WsServerTestFakeRuntime {
   pendingCount = 0
   terminateCalls = 0
   recycleCalls = 0
-  stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
-  stopInFlightImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
-  terminateImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
+  stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number } | undefined> = []
+  stopInFlightImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number }) => Promise<void>
+  terminateImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number }) => Promise<void>
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor
@@ -65,7 +65,7 @@ export class WsServerTestFakeRuntime {
     }
   }
 
-  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
     this.terminateCalls += 1
     if (this.terminateImpl) {
       await this.terminateImpl(options)
@@ -76,7 +76,7 @@ export class WsServerTestFakeRuntime {
     this.recycleCalls += 1
   }
 
-  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
     this.stopInFlightCalls.push(options)
     if (this.stopInFlightImpl) {
       await this.stopInFlightImpl(options)

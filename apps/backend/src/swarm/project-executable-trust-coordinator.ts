@@ -23,7 +23,6 @@ import type {
 const TRUST_RUNTIME_TERMINATION_OPTIONS: RuntimeShutdownOptions = {
   abort: true,
   shutdownTimeoutMs: 2_000,
-  drainTimeoutMs: 250,
 };
 const TRUST_RUNTIME_TERMINATION_BOUND_MS = 2_250;
 

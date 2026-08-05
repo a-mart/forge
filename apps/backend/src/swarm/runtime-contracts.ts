@@ -286,8 +286,14 @@ export interface SmartCompactOptions {
 export interface RuntimeShutdownOptions {
   abort?: boolean;
   shutdownTimeoutMs?: number;
-  drainTimeoutMs?: number;
 }
+
+export const DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS = 3_000;
+
+export type RuntimeShutdownResult =
+  | { status: "clean"; runtimeToken?: number }
+  | { status: "pending"; runtimeToken?: number }
+  | { status: "failed"; runtimeToken?: number; error: Error };
 
 export interface SetPinnedContentOptions {
   suppressRecycle?: boolean;

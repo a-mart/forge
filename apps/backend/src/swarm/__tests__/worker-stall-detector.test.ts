@@ -625,7 +625,7 @@ describe("worker stall detector", () => {
     expect(managerRuntime.sendCalls).toHaveLength(0);
   });
 
-  it("notifies user when auto-kill terminateDescriptor fails", async () => {
+  it("notifies user and quarantines the worker when auto-kill cannot confirm shutdown", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
@@ -645,13 +645,13 @@ describe("worker stall detector", () => {
     manager.publishedToUserCalls.length = 0;
     await (manager as any).checkForStalledWorkers();
 
-    // Worker should NOT be terminated (terminate threw)
-    expect(manager.getAgent(worker.agentId)?.status).toBe("streaming");
+    // The runtime may still be alive, so it must remain quarantined until Stop/Start retries cleanup.
+    expect(manager.getAgent(worker.agentId)?.status).toBe("stopped");
 
     // User should be notified about the failure
     expect(
       manager.publishedToUserCalls.some(
-        (call) => call.source === "system" && call.text.includes("Failed to auto-terminate")
+        (call) => call.source === "system" && call.text.includes("could not confirm")
       )
     ).toBe(true);
   });

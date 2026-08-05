@@ -26,7 +26,7 @@ describe("SwarmSessionService shutdown safety", () => {
     } as unknown as SwarmSessionServiceOptions);
 
     await expect(service.deleteSession(descriptor.agentId)).rejects.toThrow(
-      /could not safely delete.*worker-delete-timeout.*restart Forge.*No session files were removed/i,
+      /could not safely delete.*worker-delete-timeout.*retry cleanup.*No session files were removed/i,
     );
 
     expect(disposeSession).not.toHaveBeenCalled();

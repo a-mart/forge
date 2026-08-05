@@ -208,7 +208,6 @@ describe("ProjectExecutableTrustCoordinator", () => {
     expect(terminate).toHaveBeenCalledWith({
       abort: true,
       shutdownTimeoutMs: 2_000,
-      drainTimeoutMs: 250,
     });
 
     await vi.advanceTimersByTimeAsync(2_250);

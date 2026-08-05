@@ -30,6 +30,7 @@ class FakeSession {
   private listener: ((event: unknown) => void) | undefined;
   waitForIdleImpl?: () => Promise<void>;
   abortImpl?: () => Promise<void>;
+  disposeImpl?: () => void;
   steerTransform?: (message: string) => string;
 
   async prompt(message: string): Promise<void> {
@@ -65,6 +66,7 @@ class FakeSession {
   }
   dispose(): void {
     this.disposeCalls += 1;
+    this.disposeImpl?.();
   }
   subscribe(listener: (event: unknown) => void): () => void {
     this.listener = listener;
@@ -528,7 +530,9 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     };
 
     await (runtime as any).handleEvent({ type: "agent_start" });
-    await runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 });
+    await expect(runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 })).rejects.toThrow(
+      "abort failed",
+    );
 
     expect((runtime as any).suppressSessionEventsUntilIdle).toEqual(
       expect.objectContaining({ active: true }),
@@ -571,6 +575,26 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.clearQueueCalls).toBe(1);
     expect(session.queuedSteers).toEqual([]);
     expect(runtime.getPendingCount()).toBe(0);
+  });
+
+  it("uses one total shutdown deadline across real Pi abort and wait-for-idle phases", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, session } = makeRuntime();
+      session.abortImpl = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+      session.waitForIdleImpl = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+      const stopping = runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 50 });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(session.waitForIdleCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(20);
+
+      await expect(stopping).resolves.toBeUndefined();
+      expect(session.abortCalls).toBe(1);
+      expect(session.waitForIdleCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restores pending-delivery reconciliation when the final Stop status emit fails", async () => {
@@ -652,7 +676,9 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     };
 
     await (runtime as any).handleEvent({ type: "agent_start" });
-    await runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 });
+    await expect(runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 })).rejects.toThrow(
+      "never settled",
+    );
 
     expect(session.abortCalls).toBe(1);
     expect(session.waitForIdleCalls).toBe(1);
@@ -721,12 +747,12 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.disposeCalls).toBe(1);
   });
 
-  it("still unsubscribes, disposes, clears state, and releases broker when session_shutdown throws", async () => {
+  it("treats session-shutdown hook failure as diagnostic after releasing session ownership", async () => {
     const { runtime, session, release } = makeRuntime();
     session.extensionRunner.hasHandlers.mockReturnValue(true);
     session.extensionRunner.emit.mockRejectedValue(new Error("extension shutdown boom"));
 
-    await expect(runtime.terminate({ abort: false })).rejects.toThrow("extension shutdown boom");
+    await expect(runtime.terminate({ abort: false })).resolves.toBeUndefined();
 
     expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
@@ -736,16 +762,36 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect((runtime as any).inFlightPrompts.size).toBe(0);
   });
 
-  it("completes mandatory cleanup and aggregates when shutdown and broker release both throw", async () => {
+  it("treats extension and broker cleanup failures as diagnostic after mandatory cleanup", async () => {
     const { runtime, session, release } = makeRuntime();
     session.extensionRunner.hasHandlers.mockReturnValue(true);
     session.extensionRunner.emit.mockRejectedValue(new Error("extension shutdown boom"));
     release.mockRejectedValue(new Error("broker release boom"));
 
-    await expect(runtime.terminate({ abort: false })).rejects.toThrow(/mandatory cleanup|extension shutdown boom|broker release boom/);
+    await expect(runtime.terminate({ abort: false })).resolves.toBeUndefined();
 
     expect(session.disposeCalls).toBe(1);
     expect(release).toHaveBeenCalledTimes(1);
     expect((runtime as any).pendingDeliveries).toEqual([]);
+  });
+
+  it("retries mandatory session disposal without repeating completed abort or ancillary cleanup", async () => {
+    const { runtime, session, release } = makeRuntime();
+    session.extensionRunner.hasHandlers.mockReturnValue(true);
+    let failDispose = true;
+    session.disposeImpl = () => {
+      if (failDispose) {
+        failDispose = false;
+        throw new Error("dispose failed");
+      }
+    };
+
+    await expect(runtime.terminate({ abort: true })).rejects.toThrow("dispose failed");
+    await expect(runtime.terminate({ abort: true })).resolves.toBeUndefined();
+
+    expect(session.abortCalls).toBe(1);
+    expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(session.disposeCalls).toBe(2);
   });
 });

@@ -7,7 +7,7 @@ import {
   getWorkersDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
-import type { SwarmAgentRuntime } from "./runtime-contracts.js";
+import type { RuntimeShutdownResult, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 export type ProvisionedSessionDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
@@ -55,7 +55,7 @@ export interface SessionProvisionerOptions {
     descriptor: AgentDescriptor,
     action: "terminate",
     options?: { abort?: boolean }
-  ) => Promise<{ timedOut: boolean; runtimeToken?: number }>;
+  ) => Promise<RuntimeShutdownResult>;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
   clearAgentTurnState: (agentId: string) => void;
   deleteManagerSessionFile: (sessionFile: string) => Promise<void>;
@@ -126,6 +126,7 @@ export class SessionProvisioner {
       if (runtime) {
         const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
         this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+        assertRuntimeShutdownClean(shutdown, descriptor.agentId);
       }
     }
 
@@ -170,11 +171,13 @@ export class SessionProvisioner {
       try {
         const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
         this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+        assertRuntimeShutdownClean(shutdown, descriptor.agentId);
       } catch (error) {
         this.options.logDebug("session:rollback:runtime_error", {
           agentId: descriptor.agentId,
           message: error instanceof Error ? error.message : String(error)
         });
+        return;
       }
     }
 
@@ -190,4 +193,10 @@ export class SessionProvisioner {
       });
     }
   }
+}
+
+function assertRuntimeShutdownClean(result: RuntimeShutdownResult, agentId: string): void {
+  if (result.status === "clean") return;
+  if (result.status === "failed") throw result.error;
+  throw new Error(`Runtime shutdown is still pending: ${agentId}`);
 }

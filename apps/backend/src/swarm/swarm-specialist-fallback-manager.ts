@@ -25,7 +25,6 @@ import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js"
 import { normalizeEffortTier, resolveTierConfig } from "./specialists/specialist-registry.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
-const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 
 interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
@@ -624,7 +623,6 @@ export class SwarmSpecialistFallbackManager {
         await replacementRuntime.terminate({
           abort: true,
           shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-          drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
         });
       } catch (shutdownError) {
         this.options.logDebug("worker:specialist_fallback:replacement_runtime_shutdown_error", {
@@ -650,7 +648,6 @@ export class SwarmSpecialistFallbackManager {
       await runtime.terminate({
         abort: true,
         shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
       });
     } catch (shutdownError) {
       this.options.logDebug("worker:specialist_fallback:suppressed_runtime_shutdown_error", {

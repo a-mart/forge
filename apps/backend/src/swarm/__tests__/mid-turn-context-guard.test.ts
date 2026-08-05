@@ -1461,7 +1461,7 @@ describe("mid-turn context guard", () => {
     (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 999;
 
-    await expect(runtime.stopInFlight({ abort: true })).resolves.toBeUndefined();
+    await expect(runtime.stopInFlight({ abort: true })).rejects.toThrow("abort rejected");
     expect(stopController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
     expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);

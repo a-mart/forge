@@ -333,11 +333,9 @@ export class SwarmManagerRuntimeComposition {
   get runtimes(): Map<string, SwarmAgentRuntime> {
     return this.runtimeController.runtimes;
   }
-
   get runtimeCreationPromisesByAgentId(): Map<string, Promise<SwarmAgentRuntime>> {
     return this.runtimeController.runtimeCreationPromisesByAgentId;
   }
-
   get runtimeTokensByAgentId(): Map<string, number> {
     return this.runtimeController.runtimeTokensByAgentId;
   }
@@ -747,6 +745,8 @@ export class SwarmManagerRuntimeComposition {
         services.choices.cancelAllPendingChoicesForAgent(agentId);
       },
       runRuntimeShutdown: (descriptor, action, shutdownOptions) => runtimeLifecycle.runRuntimeShutdown(descriptor, action, shutdownOptions),
+      recoverRuntimeShutdown: (descriptor) => this.runtimeController.recoverRuntimeShutdown(descriptor),
+      isRuntimeShutdownQuarantined: (agentId) => this.runtimeController.isRuntimeShutdownQuarantined(agentId),
       prepareRuntimeShutdown: (agentId) => this.runtimeController.prepareRuntimeShutdown(agentId),
       assertRuntimeCreationAllowed: (agentId) => this.runtimeController.assertRuntimeCreationAllowed(agentId),
       detachRuntime: (agentId, token) => runtimeLifecycle.detachRuntime(agentId, token),

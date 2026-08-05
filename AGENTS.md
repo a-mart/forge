@@ -14,6 +14,19 @@ not promise constant progress narration.
 Use the Node.js and pnpm versions declared by the repository. `package.json` is authoritative for the
 package manager version.
 
+## Design principle: elegantly simple
+
+- Prefer the smallest coherent change that fixes the root cause and preserves the product invariant.
+  Reuse the existing owner, state, and lifecycle before adding another abstraction.
+- Do not add a coordinator, protocol field, persistence layer, compatibility seam, retry framework, or
+  UI state unless the current design cannot express the required behavior safely.
+- Keep one authoritative policy for each decision. Remove redundant timers, states, and fallback paths
+  instead of synchronizing competing mechanisms.
+- Recovery should be scoped to the failed resource and safe to retry. Do not require an application
+  restart when the owning subsystem can recover in-process without risking user data.
+- New structure must pay for itself immediately by deleting complexity, enforcing a necessary boundary,
+  or making the required behavior materially easier to verify.
+
 ## Workspace and path discipline
 
 - Work in the repository and worktree the user selected. Treat an exact user-provided path literally;

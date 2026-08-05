@@ -89,6 +89,9 @@ Treat the explicit `SwarmManagerFacade` application API as stable. Any signature
 ## Dangerous invariants
 
 - The runtime callback quartet must stay together: `onStatusChange`, `onSessionEvent`, `onAgentEnd`, and `onRuntimeError`.
+- Runtime shutdown must never permit two writers for one session file. Keep the original runtime blocked
+  and retry its cleanup in-process; only allow replacement after cleanup is confirmed. A whole-app restart
+  is a last resort for an unrecoverable process boundary, not routine session recovery.
 - Boot ordering matters. Session/meta hydration, prompt/runtime setup, and lifecycle recovery are intentionally sequenced; do not reorder casually.
 - Specialist fallback replay must preserve buffered callbacks and prepared replay snapshots so the replacement runtime sees the same work stream.
 - The `SwarmManager` file and constructor ESLint budgets are ratchets. Lower them after extractions; do not raise them to land a feature.

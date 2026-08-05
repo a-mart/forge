@@ -253,7 +253,7 @@ export class SwarmSessionService {
 
     if (unsafeShutdownAgentIds.length > 0) {
       throw new Error(
-        `Forge could not safely delete this session because shutdown is incomplete for: ${unsafeShutdownAgentIds.join(", ")}. Restart Forge, then retry the delete. No session files were removed.`,
+        `Forge could not safely delete this session because shutdown is incomplete for: ${unsafeShutdownAgentIds.join(", ")}. Stop or start the affected session or worker to retry cleanup, then retry the delete. No session files were removed.`,
       );
     }
 

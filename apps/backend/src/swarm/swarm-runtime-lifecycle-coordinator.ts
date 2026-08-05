@@ -8,6 +8,7 @@ import type {
   RuntimeErrorEvent,
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
+  RuntimeShutdownResult,
   SwarmAgentRuntime,
 } from "./runtime-contracts.js";
 import type { SwarmRuntimeControllerHost } from "./swarm-runtime-controller.js";
@@ -49,7 +50,7 @@ export interface RuntimeLifecycleController {
     descriptor: AgentDescriptor,
     action: "terminate" | "stopInFlight",
     options?: RuntimeShutdownOptions,
-  ): Promise<{ timedOut: boolean; runtimeToken?: number }>;
+  ): Promise<RuntimeShutdownResult>;
   handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -318,7 +319,7 @@ export class SwarmRuntimeLifecycleCoordinator {
     descriptor: AgentDescriptor,
     action: "terminate" | "stopInFlight",
     options?: RuntimeShutdownOptions,
-  ): Promise<{ timedOut: boolean; runtimeToken?: number }> {
+  ): Promise<RuntimeShutdownResult> {
     return this.options.controller.runRuntimeShutdown(descriptor, action, options);
   }
 

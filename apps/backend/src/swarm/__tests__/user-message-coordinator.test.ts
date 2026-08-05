@@ -385,7 +385,7 @@ describe("UserMessageCoordinator", () => {
   it("rejects quarantined input before appending it to conversation history", async () => {
     const harness = createHarness();
     const quarantineError = new Error(
-      "This session runtime did not stop cleanly. Restart Forge before sending another message.",
+      "This session runtime did not stop cleanly. Stop or start this session again to retry cleanup; new input remains blocked until cleanup succeeds.",
     );
     vi.mocked(harness.options.runtime.withRuntimeAdmission).mockImplementationOnce(async () => {
       throw quarantineError;

@@ -10,13 +10,15 @@ import type { ProjectExecutableTrustPlan } from "./project-executable-trust.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import type { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
 import type { SkillMetadata } from "./skills/skill-metadata-service.js";
-import type {
-  RuntimeCreationOptions,
-  RuntimeErrorEvent,
-  RuntimeGenerationEvent,
-  RuntimeSessionEvent,
-  RuntimeShutdownOptions,
-  SwarmAgentRuntime
+import {
+  DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+  type RuntimeCreationOptions,
+  type RuntimeErrorEvent,
+  type RuntimeGenerationEvent,
+  type RuntimeSessionEvent,
+  type RuntimeShutdownOptions,
+  type RuntimeShutdownResult,
+  type SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import { shouldPreserveActiveTurnForRuntimeError } from "./runtime-error-lifecycle-policy.js";
 import {
@@ -51,7 +53,6 @@ import type {
   ConversationMessageEvent,
   SwarmConfig
 } from "./types.js";
-import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
@@ -66,17 +67,32 @@ import {
   SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
 } from "./secure-sessions/runtime/secure-runtime-binding.js";
 
-const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
-const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
+const RUNTIME_SHUTDOWN_CONFIRMATION_GRACE_MS = 250;
 const RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE =
-  "This session runtime did not stop cleanly. Restart Forge before sending another message to protect the session history.";
+  "This session runtime did not stop cleanly. Stop or start this session again to retry cleanup; new input remains blocked until cleanup succeeds.";
+const RUNTIME_SHUTDOWN_RECOVERY_READY_MESSAGE =
+  "This session runtime cleanup finished. Stop or start this session again to finalize recovery; new input remains blocked until recovery is finalized.";
 const RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE =
   "This session runtime is stopping. Wait for it to finish before sending another message.";
+
+type RuntimeShutdownAttemptResult =
+  | { status: "clean" }
+  | { status: "failed"; error: Error };
 
 interface RuntimeShutdownQuarantine {
   runtime?: SwarmAgentRuntime;
   runtimeToken?: number;
-  phase: "stopping" | "unclean";
+  attempt?: Promise<RuntimeShutdownAttemptResult>;
+  result?: RuntimeShutdownAttemptResult;
+}
+
+function getRuntimeShutdownBlockMessage(
+  quarantine: RuntimeShutdownQuarantine,
+): string {
+  if (!quarantine.result) return RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE;
+  return quarantine.result.status === "clean"
+    ? RUNTIME_SHUTDOWN_RECOVERY_READY_MESSAGE
+    : RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE;
 }
 
 export interface SwarmRuntimeControllerHost extends SwarmToolHost {
@@ -563,22 +579,14 @@ export class SwarmRuntimeController {
   assertRuntimeCreationAllowed(agentId: string): void {
     const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(agentId);
     if (quarantine && !this.runtimeAdmissionContext.getStore()?.has(agentId)) {
-      throw new Error(
-        quarantine.phase === "stopping"
-          ? RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE
-          : RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE,
-      );
+      throw new Error(getRuntimeShutdownBlockMessage(quarantine));
     }
   }
 
   async withRuntimeAdmission<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
     const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(agentId);
     if (quarantine) {
-      throw new Error(
-        quarantine.phase === "stopping"
-          ? RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE
-          : RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE,
-      );
+      throw new Error(getRuntimeShutdownBlockMessage(quarantine));
     }
 
     this.runtimeAdmissionCountsByAgentId.set(
@@ -616,21 +624,31 @@ export class SwarmRuntimeController {
     this.runtimeShutdownQuarantinesByAgentId.set(agentId, {
       runtime: this.runtimes.get(agentId),
       runtimeToken: this.runtimeTokensByAgentId.get(agentId),
-      phase: "stopping",
     });
+  }
+
+  async recoverRuntimeShutdown(descriptor: AgentDescriptor): Promise<boolean> {
+    if (!this.runtimeShutdownQuarantinesByAgentId.has(descriptor.agentId)) {
+      return false;
+    }
+
+    const result = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
+    if (result.status !== "clean") {
+      this.assertRuntimeCreationAllowed(descriptor.agentId);
+    }
+    return true;
   }
 
   async runRuntimeShutdown(
     descriptor: AgentDescriptor,
     action: "terminate" | "stopInFlight",
     options?: RuntimeShutdownOptions
-  ): Promise<{ timedOut: boolean; runtimeToken?: number }> {
-    const timeoutMs = options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS;
+  ): Promise<RuntimeShutdownResult> {
+    const shutdownTimeoutMs = options?.shutdownTimeoutMs ?? DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS;
+    const confirmationTimeoutMs = shutdownTimeoutMs + RUNTIME_SHUTDOWN_CONFIRMATION_GRACE_MS;
     this.prepareRuntimeShutdown(descriptor.agentId);
-    const preparedQuarantine = this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId);
-    if (preparedQuarantine?.phase === "unclean") {
-      throw new Error(RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE);
-    }
+    const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId);
+    if (!quarantine) return { status: "clean" };
 
     // Message admission covers only the bounded append/enqueue/send-acceptance
     // transaction, not the provider turn. Do not detach or start shutdown until
@@ -638,96 +656,86 @@ export class SwarmRuntimeController {
     // a detached runtime and create a second writer for the same session file.
     await this.waitForRuntimeAdmissions(descriptor.agentId);
 
-    const runtime = this.runtimes.get(descriptor.agentId);
-    if (!runtime) {
-      if (preparedQuarantine) {
-        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-      }
-      return { timedOut: false, runtimeToken: undefined };
+    if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) !== quarantine) {
+      return { status: "clean" };
     }
 
-    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
-    const quarantine: RuntimeShutdownQuarantine = preparedQuarantine ?? {
-      runtime,
-      runtimeToken,
-      phase: "stopping",
-    };
+    if (quarantine.result?.status === "clean") {
+      if (quarantine.runtime) {
+        this.detachRuntimeIfMatches(
+          descriptor.agentId,
+          quarantine.runtime,
+          quarantine.runtimeToken,
+        );
+      }
+      this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      return { status: "clean", runtimeToken: quarantine.runtimeToken };
+    }
+
+    if (quarantine.attempt && !quarantine.result) {
+      return { status: "pending", runtimeToken: quarantine.runtimeToken };
+    }
+
+    if (quarantine.result?.status === "failed") {
+      quarantine.attempt = undefined;
+      quarantine.result = undefined;
+    }
+
+    const runtime = this.runtimes.get(descriptor.agentId) ?? quarantine.runtime;
+    if (!runtime) {
+      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      }
+      return { status: "clean" };
+    }
+
+    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId) ?? quarantine.runtimeToken;
     quarantine.runtime = runtime;
     quarantine.runtimeToken = runtimeToken;
-    if (!preparedQuarantine) {
-      this.runtimeShutdownQuarantinesByAgentId.set(descriptor.agentId, quarantine);
-    }
 
-    let operation: Promise<void>;
-    try {
-      operation = action === "terminate"
-        ? runtime.terminate({
-            abort: options?.abort,
-            shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
-            drainTimeoutMs: options?.drainTimeoutMs ?? RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-          })
-        : runtime.stopInFlight({
-            abort: options?.abort,
-            shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
-            drainTimeoutMs: options?.drainTimeoutMs ?? RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-          });
-    } catch (error) {
-      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
-        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-      }
-      throw error;
-    }
-
-    try {
-      await withManagerTimeout(
-        operation,
-        timeoutMs,
-        `${action}:${descriptor.agentId}`
+    const attempt = Promise.resolve()
+      .then(() => action === "terminate"
+        ? runtime.terminate({ abort: options?.abort, shutdownTimeoutMs })
+        : runtime.stopInFlight({ abort: options?.abort, shutdownTimeoutMs }))
+      .then<RuntimeShutdownAttemptResult, RuntimeShutdownAttemptResult>(
+        () => ({ status: "clean" }),
+        (error) => ({ status: "failed", error: toError(error) }),
       );
-      this.detachRuntime(descriptor.agentId, runtimeToken);
-      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
-        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+    quarantine.attempt = attempt;
+    void attempt.then((result) => {
+      if (
+        this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine &&
+        quarantine.attempt === attempt
+      ) {
+        quarantine.result = result;
       }
-      return { timedOut: false, runtimeToken };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const timedOut = /timed out/i.test(message);
-      if (timedOut) {
-        this.logDebug("runtime:shutdown:timeout", {
-          agentId: descriptor.agentId,
-          action,
-          timeoutMs,
-          message,
-        });
-        quarantine.phase = "unclean";
-        this.detachRuntime(descriptor.agentId, runtimeToken);
-        void operation.then(
-          () => {
-            if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) !== quarantine) {
-              return;
-            }
-            this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-            this.logDebug("runtime:shutdown:quarantine_cleared", {
-              agentId: descriptor.agentId,
-              action,
-            });
-          },
-          (lateError) => {
-            this.logDebug("runtime:shutdown:late_completion", {
-              agentId: descriptor.agentId,
-              action,
-              message: lateError instanceof Error ? lateError.message : String(lateError),
-            });
-          },
-        );
-        return { timedOut: true, runtimeToken };
-      }
+    });
 
-      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
-        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-      }
-      throw error;
+    const result = await waitForRuntimeShutdownAttempt(attempt, confirmationTimeoutMs);
+    this.detachRuntimeIfMatches(descriptor.agentId, runtime, runtimeToken);
+
+    if (!result) {
+      this.logDebug("runtime:shutdown:pending", {
+        agentId: descriptor.agentId,
+        action,
+        confirmationTimeoutMs,
+      });
+      return { status: "pending", runtimeToken };
     }
+
+    if (result.status === "failed") {
+      this.logDebug("runtime:shutdown:failed", {
+        agentId: descriptor.agentId,
+        action,
+        message: result.error.message,
+      });
+      return { status: "failed", runtimeToken, error: result.error };
+    }
+
+    if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
+      this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+    }
+    return { status: "clean", runtimeToken };
   }
 
   private waitForRuntimeAdmissions(agentId: string): Promise<void> {
@@ -1210,6 +1218,29 @@ export class SwarmRuntimeController {
       runtimeToken
     );
   }
+}
+
+function waitForRuntimeShutdownAttempt(
+  attempt: Promise<RuntimeShutdownAttemptResult>,
+  timeoutMs: number,
+): Promise<RuntimeShutdownAttemptResult | undefined> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeoutHandle = setTimeout(() => {
+      settled = true;
+      resolve(undefined);
+    }, timeoutMs);
+    void attempt.then((result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      resolve(result);
+    });
+  });
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function secureRuntimeBindingKey(agentId: string, runtimeToken: number): string {

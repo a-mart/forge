@@ -1595,7 +1595,9 @@ describe('AgentRuntime', () => {
       },
     })
 
-    await expect(runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 })).resolves.toBeUndefined()
+    await expect(runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 })).rejects.toThrow(
+      /stop_in_flight_abort timed out/i,
+    )
 
     expect(session.abortCalls).toBe(1)
     expect(runtime.getStatus()).toBe('idle')
