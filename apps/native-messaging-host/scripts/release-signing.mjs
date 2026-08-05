@@ -12,7 +12,7 @@ export const macReleaseEntitlementsPath = path.join(
 )
 
 const execFileAsync = promisify(execFile)
-export const SEA_NODE_VERSION = '25.6.1'
+export const SEA_NODE_VERSION = '26.5.0'
 
 export function externalChromeBuildMode(env = process.env) {
   const mode = env.FORGE_EXTERNAL_CHROME_BUILD_MODE ?? (env.FORGE_EXTERNAL_CHROME_VALIDATION_ONLY === '1' ? 'validation' : 'release')

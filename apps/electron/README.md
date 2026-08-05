@@ -79,7 +79,7 @@ Press Ctrl+C once to stop development. The launcher asks Electron to quit over i
 
 Before Electron launches, the desktop workspace prepares a cached `better-sqlite3` binary for Electron's embedded Node runtime. The cache lives under `apps/electron/.dev-native/` and is separate from the Host-Node binary installed by pnpm, so switching between `pnpm dev` and `pnpm dev:electron` does not rebuild or overwrite shared dependencies. The cache is versioned by the Electron version, platform, architecture, and `better-sqlite3` source fingerprint, and is verified with an Electron-as-Node in-memory database smoke test before use.
 
-The dev command also builds the optional Chrome extension and native-relay bundle, wraps the bundle in an explicit current-Node shebang host, smokes it without registration, and stages the result under `apps/electron/.dev-external-chrome/`. Dev Electron validates and deploys that inventory through the same stable data-directory layout used by packaged releases, so Settings can reveal the unpacked `extension/` folder. This development manifest is opt-in and cannot pass the default release-manifest policy; packaged builds still require the SEA and platform-specific release integrity contract. The shebang host supports macOS and Linux development. On Windows, dev preparation builds and reuses a credential-free validation SEA executable through the native-host packaging path with the repository Node executable when its direct `--build-sea` probe confirms `NODE_SEA_FUSE`; it reports an actionable failure when that capability is absent. This allowance is confined to the unpacked dev resource root and is rejected by packaged/release policy; packaged Windows builds use the release-pinned official Node 25.6.1 and an explicit unsigned manifest protected by strict SHA-256 validation. To build and smoke only these worktree-local resources without launching Electron or changing native registration, run `pnpm --dir apps/electron prepare:dev-external-chrome`.
+The dev command also builds the optional Chrome extension and native-relay bundle, wraps the bundle in an explicit current-Node shebang host, smokes it without registration, and stages the result under `apps/electron/.dev-external-chrome/`. Dev Electron validates and deploys that inventory through the same stable data-directory layout used by packaged releases, so Settings can reveal the unpacked `extension/` folder. This development manifest is opt-in and cannot pass the default release-manifest policy; packaged builds still require the SEA and platform-specific release integrity contract. The shebang host supports macOS and Linux development. On Windows, dev preparation reuses a hash-verified validation SEA when possible; otherwise it builds one through the native-host packaging path with the repository Node executable when its direct `--build-sea` probe confirms `NODE_SEA_FUSE`. If a rebuild is needed and that optional toolchain is unavailable, preparation removes only the stale worktree stage, reports External Chrome as unavailable for that run, and lets Forge Desktop continue with its embedded browser; unrelated build or integrity failures remain fatal. This allowance is confined to the unpacked dev resource root and is rejected by packaged/release policy; packaged Windows builds use the release-pinned official Node 26.5.0 and an explicit unsigned manifest protected by strict SHA-256 validation. To build and smoke only these worktree-local resources without launching Electron or changing native registration, run `pnpm --dir apps/electron prepare:dev-external-chrome`.
 
 Electron 42+ downloads its platform binary on first execution rather than during package postinstall. Materialize it early and assert the exact embedded runtime before native preparation or packaging:
 
@@ -202,7 +202,7 @@ The packaging pipeline:
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages the optional Stream Deck plugin installer into `apps/electron/.stage/stream-deck/`
 9. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-10. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 25.6.1; macOS release mode signs and signer-verifies the relay before calculating its hash, while Windows release mode emits explicit unsigned metadata protected by the exact manifest hash; explicit validation mode remains non-publishable
+10. Builds the optional Chrome adapter shell/payload and current platform/architecture native relay with official Node 26.5.0; macOS release mode signs and signer-verifies the relay before calculating its hash, while Windows release mode emits explicit unsigned metadata protected by the exact manifest hash; explicit validation mode remains non-publishable
 11. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, exercising `better-sqlite3`, `sqlite3`, `node-pty`, `sharp`, and `koffi` with Electron-as-Node and ensuring they do not silently fall back to repo-level `node_modules`
 12. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
 13. Runs `electron-builder --publish never`; Windows packaging disables all identity discovery and restores the manifest-hashed host after extra-resource processing, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform-specific release contract before installers are produced
@@ -244,7 +244,7 @@ Add the macOS signing variables to `.env` before packaging a macOS release build
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
 | `APPLE_TEAM_ID` | Your Apple Developer Team ID |
 | `FORGE_MACOS_SIGNING_IDENTITY` | Exact `Developer ID Application: … (TEAMID)` common name expected on the native host |
-| `FORGE_SEA_NODE` | Absolute path to the official Node 25.6.1 executable (not a vendor build missing `NODE_SEA_FUSE`) |
+| `FORGE_SEA_NODE` | Absolute path to the official Node 26.5.0 executable (not a vendor build missing `NODE_SEA_FUSE`) |
 
 Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The native host is signed first and its observed identity/team must match the two expected values; electron-builder then signs/notarizes the outer app.
 
@@ -252,7 +252,7 @@ Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The 
 
 | Variable | Description |
 |----------|-------------|
-| `FORGE_SEA_NODE` | Official Node 25.6.1 executable installed by `actions/setup-node` |
+| `FORGE_SEA_NODE` | Official Node 26.5.0 executable installed by `actions/setup-node` |
 
 `workflow_dispatch` releases are credential-free on Windows. Packaging blanks `WIN_CSC_*`, `CSC_*`, and the signer subject and sets `CSC_IDENTITY_AUTO_DISCOVERY=false`, so neither electron-builder nor the External Chrome native host can discover or use a signing identity. The Windows release manifest explicitly records an unsigned native host; staging, deployment, and runtime registration require exact SHA-256 agreement and fail closed on drift. `electron/*` pushes retain validation mode. Validation native-host manifests stay explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
 
@@ -281,7 +281,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
    - Do not rely on a tag-first flow
 
 2. **Build and validate macOS locally**
-   - Install the official Node 25.6.1 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
+   - Install the official Node 26.5.0 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
    - This build clears `apps/electron/release/` first; copy/archive older artifacts elsewhere if you need to keep them
    - Confirm the expected macOS assets exist in `apps/electron/release/`
 

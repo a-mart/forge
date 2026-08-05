@@ -41,7 +41,7 @@ The tests cover framing bounds, host boundaries, installed-path discovery, authe
 
 ## SEA and release gates
 
-Validation-mode `package:current` uses the repository Node executable and accepts it only when its direct `--build-sea` invocation succeeds with the required `NODE_SEA_FUSE` capability. Release mode is pinned to the official Node 25.6.1 distribution and additionally requires `FORGE_SEA_NODE` to resolve to that exact executable. A runtime without the required fuse fails rather than producing a host.
+Validation-mode `package:current` uses the repository Node executable and accepts it only when its direct `--build-sea` invocation succeeds with the required `NODE_SEA_FUSE` capability. Release mode is pinned to the official Node 26.5.0 distribution and additionally requires `FORGE_SEA_NODE` to resolve to that exact executable. Explicit native-host packaging without the required fuse fails rather than producing a host; when Forge Desktop development needs to rebuild this optional host, it recognizes that structured toolchain result, leaves External Chrome unavailable, and continues startup.
 
 The release sequence is fail-closed:
 

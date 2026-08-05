@@ -122,6 +122,10 @@ describe('Node engine floor for packaged Electron child', () => {
     expect(pkg.engines?.node).toBe('>=22.19.0')
   })
 
+  it('recommends the SEA-capable Node 26 development runtime', () => {
+    expect(readFileSync(join(repoRoot, '.nvmrc'), 'utf8').trim()).toBe('26.5.0')
+  })
+
   it('requires host Node to satisfy >=22.19.0', () => {
     expect(satisfiesNodeFloor(process.version)).toBe(true)
   })

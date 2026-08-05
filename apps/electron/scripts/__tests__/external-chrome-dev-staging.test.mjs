@@ -183,7 +183,11 @@ describe('External Chrome development resource staging', () => {
 
   it('executes a spaced Windows Node path directly while forcing validation mode', async () => {
     const runCommand = vi.fn().mockResolvedValue(undefined)
-    await packageWindowsDevelopmentHost({ executable: 'C:\\Program Files\\nodejs\\node.exe', runCommand })
+    const removeManifest = vi.fn().mockResolvedValue(undefined)
+    await expect(packageWindowsDevelopmentHost({
+      executable: 'C:\\Program Files\\nodejs\\node.exe', runCommand, removeManifest,
+    })).resolves.toEqual({ status: 'prepared' })
+    expect(removeManifest).toHaveBeenCalledOnce()
     expect(runCommand).toHaveBeenCalledWith(
       'C:\\Program Files\\nodejs\\node.exe',
       [expect.stringMatching(/apps[\\/]native-messaging-host[\\/]scripts[\\/]package-current\.mjs$/u)],
@@ -193,13 +197,66 @@ describe('External Chrome development resource staging', () => {
     )
   })
 
-  it('makes a missing Windows SEA toolchain actionable instead of removing the optional adapter', async () => {
+  it('classifies only a fresh structured SEA capability failure as optional', async () => {
+    const runCommand = vi.fn().mockRejectedValue(new Error('package-current failed (1)'))
+    const readManifest = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      package: '@forge/external-chrome-native-host',
+      sea: { status: 'unsupported-toolchain', reason: 'Node 24.18.0 does not support direct --build-sea' },
+    })
+
+    await expect(packageWindowsDevelopmentHost({
+      runCommand,
+      removeManifest: vi.fn().mockResolvedValue(undefined),
+      readManifest,
+      packageManifestPath: 'synthetic-package-manifest.json',
+    })).resolves.toEqual({
+      status: 'unsupported-toolchain',
+      reason: 'Node 24.18.0 does not support direct --build-sea',
+    })
+  })
+
+  it('does not suppress a failed package command with an untrusted manifest', async () => {
+    const failure = new Error('package-current failed (1)')
+    await expect(packageWindowsDevelopmentHost({
+      runCommand: vi.fn().mockRejectedValue(failure),
+      removeManifest: vi.fn().mockResolvedValue(undefined),
+      readManifest: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        package: '@other/native-host',
+        sea: { status: 'unsupported-toolchain', reason: 'not authoritative for Forge' },
+      }),
+      packageManifestPath: 'synthetic-package-manifest.json',
+    })).rejects.toBe(failure)
+  })
+
+  it('continues Windows development without External Chrome when the SEA toolchain is unavailable', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'forge-external-chrome-dev-windows-failure-'))
     roots.push(root)
+    const outputRoot = path.join(root, 'prepared')
+    await mkdir(outputRoot, { recursive: true })
+    await writeFile(path.join(outputRoot, 'stale-resource'), 'must be removed')
+
     await expect(prepareExternalChromeDevelopmentResources({
-      outputRoot: path.join(root, 'prepared'),
+      outputRoot,
       platform: 'win32',
-      packageWindowsNativeHost: async () => { throw new Error('Node 24.18.0 executable lacks the NODE_SEA_FUSE sentinel required by --build-sea') },
-    })).rejects.toThrow('repository Node executable to support SEA (NODE_SEA_FUSE)')
+      packageWindowsNativeHost: async () => ({
+        status: 'unsupported-toolchain',
+        reason: 'Node 24.18.0 does not support direct --build-sea',
+      }),
+    })).resolves.toEqual({
+      outputRoot,
+      manifest: null,
+      skipped: true,
+      reason: 'Node 24.18.0 does not support direct --build-sea',
+    })
+    await expect(readFile(path.join(outputRoot, 'stale-resource'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps unrelated Windows packaging failures fatal', async () => {
+    await expect(prepareExternalChromeDevelopmentResources({
+      platform: 'win32',
+      packageWindowsNativeHost: async () => { throw new Error('native host bundle smoke failed') },
+    })).rejects.toThrow('External Chrome Windows development packaging failed: native host bundle smoke failed')
   })
 })

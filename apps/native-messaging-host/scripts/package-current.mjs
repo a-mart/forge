@@ -8,6 +8,7 @@ import {
   assertSeaToolchain,
   prepareExecutableForInitialSmoke,
   prepareReleaseExecutable,
+  SEA_NODE_VERSION,
 } from './release-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -101,7 +102,10 @@ export async function packageCurrent() {
       },
     }
     await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
-    throw new Error(`${seaCapability.reason}; use the official Node ${process.versions.node} distribution with SEA support`)
+    throw new Error(
+      `${seaCapability.reason}; validation packaging requires a Node executable with direct --build-sea support, ` +
+      `while release packaging is pinned to official Node ${SEA_NODE_VERSION}`,
+    )
   }
   if (process.platform !== 'win32') await chmod(executablePath, 0o755)
 

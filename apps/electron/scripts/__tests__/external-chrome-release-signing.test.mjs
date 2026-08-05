@@ -59,11 +59,11 @@ describe('External Chrome release signing policy', () => {
 
   it('pins release SEA packaging to the declared official Node executable and version', () => {
     expect(() => assertSeaToolchain({
-      nodeVersion: '25.5.0', execPath: '/official/node',
+      nodeVersion: '25.6.1', execPath: '/official/node',
       env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: '/official/node' },
-    })).toThrow('official Node 25.6.1')
+    })).toThrow('official Node 26.5.0')
     expect(() => assertSeaToolchain({
-      nodeVersion: '25.6.1', execPath: '/other/node',
+      nodeVersion: '26.5.0', execPath: '/other/node',
       env: { FORGE_EXTERNAL_CHROME_BUILD_MODE: 'release', FORGE_SEA_NODE: '/official/node' },
     })).toThrow('must run with FORGE_SEA_NODE')
   })

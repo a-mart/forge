@@ -41,10 +41,10 @@ jobs:
       # Node's direct --build-sea path is pinned separately from Forge's minimum
       # runtime version. actions/setup-node installs the official distribution;
       # vendor builds that omit NODE_SEA_FUSE are not accepted by packaging.
-      - name: Setup official SEA-capable Node.js 25.6.1
+      - name: Setup official SEA-capable Node.js 26.5.0
         uses: actions/setup-node@v4
         with:
-          node-version: 25.6.1
+          node-version: 26.5.0
           cache: pnpm
 
       - name: Pin SEA executable for credential-free Windows packaging
@@ -148,5 +148,4 @@ jobs:
             apps/electron/release/Forge-Setup-${{ steps.electron_version.outputs.version }}.exe.blockmap
             apps/electron/release/latest.yml
           if-no-files-found: error
-
 

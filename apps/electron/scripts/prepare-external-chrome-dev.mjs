@@ -36,14 +36,24 @@ export async function prepareExternalChromeDevelopmentResources({
     })
     if (cached) return cached
 
+    let packageResult
     try {
-      await packageWindowsNativeHost()
+      packageResult = await packageWindowsNativeHost()
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        'External Chrome Windows development requires the repository Node executable to support SEA (NODE_SEA_FUSE). ' +
-        `Select an official SEA-capable Node build for this checkout and rerun prepare:dev-external-chrome. ${detail}`,
-      )
+      throw new Error(`External Chrome Windows development packaging failed: ${detail}`)
+    }
+    if (packageResult?.status === 'unsupported-toolchain') {
+      // External Chrome is optional. Remove only the worktree-local stage so a
+      // stale package cannot be mistaken for this build, then let Desktop start
+      // with the embedded browser and the rest of Forge fully available.
+      await rm(outputRoot, { recursive: true, force: true })
+      return {
+        outputRoot,
+        manifest: null,
+        skipped: true,
+        reason: packageResult.reason,
+      }
     }
 
     const staged = await stageResources({
@@ -191,13 +201,31 @@ async function buildInputs() {
 export async function packageWindowsDevelopmentHost({
   executable = process.execPath,
   runCommand = run,
+  packageManifestPath = path.join(nativeHostRoot, 'dist', 'package-manifest.json'),
+  removeManifest = (target) => rm(target, { force: true }),
+  readManifest = readJson,
 } = {}) {
   // Directly execute node.exe: shell interpolation breaks valid paths such as Program Files.
-  await runCommand(executable, [path.join(nativeHostRoot, 'scripts', 'package-current.mjs')], nativeHostRoot, {
-    ...process.env,
-    // Never source release signing credentials for a dev host, even when a shell inherited them.
-    FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation',
-  }, false)
+  await removeManifest(packageManifestPath)
+  try {
+    await runCommand(executable, [path.join(nativeHostRoot, 'scripts', 'package-current.mjs')], nativeHostRoot, {
+      ...process.env,
+      // Never source release signing credentials for a dev host, even when a shell inherited them.
+      FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation',
+    }, false)
+    return { status: 'prepared' }
+  } catch (error) {
+    const manifest = await readManifest(packageManifestPath).catch(() => null)
+    if (
+      manifest?.schemaVersion === 1 &&
+      manifest.package === nativeHostPackage &&
+      manifest.sea?.status === 'unsupported-toolchain' &&
+      typeof manifest.sea.reason === 'string'
+    ) {
+      return { status: 'unsupported-toolchain', reason: manifest.sea.reason }
+    }
+    throw error
+  }
 }
 
 async function run(command, args, cwd, env = process.env, shell = process.platform === 'win32') {
@@ -271,6 +299,15 @@ function stableJson(value) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   buildInputs().then(() => prepareExternalChromeDevelopmentResources())
-    .then((result) => process.stdout.write(`[external-chrome-dev] prepared ${result.outputRoot}\n`))
+    .then((result) => {
+      if (result.skipped) {
+        process.stderr.write(
+          `[external-chrome-dev] External Chrome unavailable for this development run: ${result.reason}. ` +
+          'Continuing with Forge Desktop and the embedded browser.\n',
+        )
+        return
+      }
+      process.stdout.write(`[external-chrome-dev] prepared ${result.outputRoot}\n`)
+    })
     .catch((error) => { console.error(error); process.exitCode = 1 })
 }
