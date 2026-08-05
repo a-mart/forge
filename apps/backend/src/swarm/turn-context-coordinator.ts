@@ -56,6 +56,7 @@ interface QueuedInboundTurnContext<
   TCodexRetryAuthorization,
 > extends InboundTurnContextInput<TCodexGate, TCodexDelegation, TCodexRetryAuthorization> {
   turnId: string;
+  sequence: number;
   runtimeToken?: number;
   activationEligible: boolean;
 }
@@ -170,6 +171,7 @@ export interface TurnContextCoordinatorOptions<
 
 interface ActiveTurnContext {
   turnId: string;
+  sequence: number;
   runtimeToken?: number;
   parentContext?: ActiveWorkerParentContext;
 }
@@ -199,6 +201,7 @@ export class TurnContextCoordinator<
   private readonly activatedByAgentId = new Set<string>();
   private readonly activeTurnByAgentId = new Map<string, ActiveTurnContext>();
   private readonly activeExternalTurnByAgentId = new Map<string, ActiveExternalProjectAgentTurn>();
+  private nextSequence = 0;
 
   constructor(
     private readonly options: TurnContextCoordinatorOptions<
@@ -244,8 +247,13 @@ export class TurnContextCoordinator<
 
   hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean {
     if (!this.activatedByAgentId.has(agentId)) return false;
+    const active = this.activeTurnByAgentId.get(agentId);
+    const activeSequence = active && active.turnId === activeTurnId ? active.sequence : undefined;
     return Boolean(this.pendingByAgentId.get(agentId)?.some(
-      (context) => context.source === "user_input" && context.turnId !== activeTurnId,
+      (context) =>
+        context.source === "user_input" &&
+        context.turnId !== activeTurnId &&
+        (activeSequence === undefined || context.sequence > activeSequence),
     ));
   }
 
@@ -272,6 +280,7 @@ export class TurnContextCoordinator<
     }
 
     const runtimeToken = this.options.getRuntimeToken(agentId);
+    const sequence = ++this.nextSequence;
     const queuedContext: QueuedInboundTurnContext<
       TCodexGate,
       TCodexDelegation,
@@ -280,6 +289,7 @@ export class TurnContextCoordinator<
       ...context,
       activationEligible: context.activationEligible ?? true,
       turnId: await this.options.ledger.mintTurnId(descriptor),
+      sequence,
       ...(runtimeToken !== undefined ? { runtimeToken } : {}),
     };
 
@@ -435,7 +445,7 @@ export class TurnContextCoordinator<
     }
 
     if (phase === "after_projection" && event.type === "agent_end") {
-      this.consumeActivePendingContext(agentId);
+      this.discardStalePendingContexts(agentId);
       if (descriptor?.role === "manager") {
         this.options.managerToolActivity?.clearManagerTurn(agentId);
       }
@@ -565,6 +575,7 @@ export class TurnContextCoordinator<
     const outputTarget = context.assistantOutputProjectionTarget ?? context.assistantOutputTarget;
     this.activeTurnByAgentId.set(agentId, {
       turnId: context.turnId,
+      sequence: context.sequence,
       ...(context.runtimeToken !== undefined ? { runtimeToken: context.runtimeToken } : {}),
       ...(outputTarget
         ? {
@@ -632,6 +643,21 @@ export class TurnContextCoordinator<
     if (activeTurnId && firstPending?.turnId === activeTurnId) {
       this.dequeueNext(agentId);
     }
+  }
+
+  private discardStalePendingContexts(agentId: string): void {
+    const activeSequence = this.activeTurnByAgentId.get(agentId)?.sequence;
+    const queue = this.pendingByAgentId.get(agentId);
+    if (activeSequence === undefined || !queue) {
+      return;
+    }
+
+    const remaining = queue.filter((context) => context.sequence > activeSequence);
+    if (remaining.length === 0) {
+      this.pendingByAgentId.delete(agentId);
+      return;
+    }
+    this.pendingByAgentId.set(agentId, remaining);
   }
 
   private pendingOutputTargets(agentId: string): AssistantOutputTarget[] {

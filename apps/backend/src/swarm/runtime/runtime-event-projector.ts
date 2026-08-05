@@ -393,15 +393,19 @@ export class RuntimeEventProjector {
     }
     this.maybeEmitWorkerResultConversationMessage(agentId, descriptor, effectiveEvent, activeTurnId);
     const activeAssistantTarget = this.managerAssistantOutputTracker.getActiveTarget(agentId);
+    const hasCleanManagerFinal =
+      descriptor?.role === "manager" &&
+      extractCleanManagerAssistantFinalMessage(asManagerFinalMessageEnd(effectiveEvent)) !== undefined;
     const managerOutputSuperseded =
       descriptor?.role === "manager" &&
+      !hasCleanManagerFinal &&
       this.deps.hasPendingSupersedingUserInput(agentId, activeTurnId);
     if (shouldSurfaceManualStopNotice || isContextRecoveryAbort) {
       this.managerAssistantOutputTracker.clearTurn(agentId);
     } else if (managerOutputSuperseded) {
-      // The runtime has not consumed the newer user steer yet. Do not let the
-      // older turn publish a final, progress update, or silent-turn warning in
-      // the narrow gap before that steer becomes active.
+      // The runtime has not consumed the newer user steer yet. Suppress stale
+      // progress and silent-turn warnings, but never discard a clean final.
+      // A queued steer can follow the final without making real output vanish.
       this.managerAssistantOutputTracker.clearTurn(agentId);
       this.intentionalSilenceManagerAgentIds.delete(agentId);
       this.pendingSilentManagerNotices.delete(agentId);

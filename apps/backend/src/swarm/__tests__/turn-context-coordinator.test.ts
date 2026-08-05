@@ -365,6 +365,72 @@ describe("TurnContextCoordinator", () => {
     ]);
   });
 
+  it("distinguishes stale queued input from a genuinely newer user message", async () => {
+    const harness = createHarness();
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "older stale message",
+      assistantOutputTarget: webTarget,
+    });
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "active message",
+      assistantOutputTarget: webTarget,
+    });
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "active message"),
+    );
+
+    expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe("turn-2");
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+    expect(harness.coordinator.hasPendingSupersedingUserInput("manager-1", "turn-2")).toBe(false);
+
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "newer message",
+      assistantOutputTarget: webTarget,
+    });
+
+    expect(harness.coordinator.hasPendingSupersedingUserInput("manager-1", "turn-2")).toBe(true);
+
+    harness.coordinator.afterRuntimeEventProjection("manager-1", 41, { type: "agent_end" });
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "newer message"),
+    );
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe("turn-3");
+  });
+
+  it("removes unmatched stale input when the active agent run settles", async () => {
+    const harness = createHarness();
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "stale message",
+      assistantOutputTarget: webTarget,
+    });
+    await harness.coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "active message",
+      assistantOutputTarget: webTarget,
+    });
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "active message"),
+    );
+
+    harness.coordinator.afterRuntimeEventProjection("manager-1", 41, { type: "agent_end" });
+
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+  });
+
   it("does not consume a second same-text context on the selected message_end", async () => {
     const harness = createHarness();
     await harness.coordinator.enqueue("manager-1", {

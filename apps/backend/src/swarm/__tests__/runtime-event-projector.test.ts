@@ -318,7 +318,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     );
   });
 
-  it("suppresses output and silent warnings from a manager turn superseded by queued user input", async () => {
+  it("projects a clean final but suppresses silent warnings when newer user input is queued", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({
       agentId: "manager-1",
@@ -344,10 +344,23 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     });
 
     expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalled();
-    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: manager.agentId,
+        turnId: "manager-1:1",
+        role: "assistant",
+        source: "assistant_output",
+        text: "Stale answer from the older turn.",
+      }),
+    );
     expect(deps.logDebug).toHaveBeenCalledWith(
       "manager_output:suppressed_superseded_turn",
-      expect.objectContaining({ agentId: manager.agentId, activeTurnId: "manager-1:1" }),
+      expect.objectContaining({
+        agentId: manager.agentId,
+        activeTurnId: "manager-1:1",
+        eventType: "agent_end",
+      }),
     );
   });
 

@@ -1228,7 +1228,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('keeps the next identical Pi context while suppressing the superseded final', async () => {
+  it('keeps the next identical Pi context while delivering both clean finals', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1270,10 +1270,9 @@ describe('SwarmManager', () => {
     await projectAssistantFinalTextWithSyntheticUserMessageStart(manager, 'manager', 'Second identical turn final', runtimeText)
 
     expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
+      { text: 'First identical turn final', sourceContext: { channel: firstSourceContext.channel } },
       { text: 'Second identical turn final', sourceContext: { channel: secondSourceContext.channel } },
     ])
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text))
-      .not.toContain('First identical turn final')
   })
 
 
