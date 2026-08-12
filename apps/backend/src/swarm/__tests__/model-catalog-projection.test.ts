@@ -22,6 +22,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
           const models: Record<string, Record<string, unknown>> = {
             xai: {
               "grok-4": { api: "openai-responses", contextWindow: 256_000 },
+              "grok-4.6": { api: "openai-responses", contextWindow: 500_000, maxTokens: 500_000 },
             },
             "openai-codex": {
               "gpt-5.6-sol": { contextWindow: 272_000, maxTokens: 128_000 },
@@ -85,6 +86,7 @@ describe("model-catalog-projection", () => {
       "grok-4.20-0309-non-reasoning",
       "grok-4.20-0309-reasoning",
       "grok-4.5",
+      "grok-4.6",
     ]);
     expect(projectedXaiModels.map((model) => model.id)).not.toEqual(expect.arrayContaining([
       "grok-4.3",
@@ -96,6 +98,17 @@ describe("model-catalog-projection", () => {
 
     const upstreamGrok4Fast = getModels("xai").find((model) => model.id === "grok-4-fast");
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
+    expect(projectedXaiModels.find((model) => model.id === "grok-4.6")).toMatchObject({
+      id: "grok-4.6",
+      name: "Grok 4.6",
+      api: "openai-responses",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 500_000,
+      maxTokens: 500_000,
+      cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+      thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+    });
     expect(projection.providers.openrouter).toBeUndefined();
 
     const projectedIds = Object.values(projection.providers).flatMap((provider) => [
@@ -118,6 +131,11 @@ describe("model-catalog-projection", () => {
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");
     expect(registry.find("xai", "grok-4")?.contextWindow).toBe(256_000);
+    expect(registry.find("xai", "grok-4.6")).toMatchObject({
+      api: "openai-responses",
+      contextWindow: 500_000,
+      maxTokens: 500_000,
+    });
     for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
       expect(registry.find("openai-codex", modelId)?.contextWindow).toBe(272_000);
       expect(registry.find("openai-codex", modelId)?.maxTokens).toBe(128_000);

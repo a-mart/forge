@@ -44,7 +44,16 @@ describe("createCatalogRequestBehaviorExtensionFactory", () => {
     });
   });
 
-  it.each(["low", "medium", "high", "xhigh"])("preserves Grok 4.5 reasoning effort %s", (effort) => {
+  it.each([
+    ["grok-4.6", "low"],
+    ["grok-4.6", "medium"],
+    ["grok-4.6", "high"],
+    ["grok-4.6", "xhigh"],
+    ["grok-4.5", "low"],
+    ["grok-4.5", "medium"],
+    ["grok-4.5", "high"],
+    ["grok-4.5", "xhigh"],
+  ])("preserves %s reasoning effort %s", (modelId, effort) => {
     const { beforeProviderRequest } = installExtension(false);
     const payload = {
       input: "hello",
@@ -54,7 +63,7 @@ describe("createCatalogRequestBehaviorExtensionFactory", () => {
 
     expect(beforeProviderRequest?.(
       { payload },
-      { model: { provider: "xai", id: "grok-4.5" } },
+      { model: { provider: "xai", id: modelId } },
     )).toBeUndefined();
   });
 

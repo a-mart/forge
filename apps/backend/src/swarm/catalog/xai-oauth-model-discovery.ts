@@ -7,9 +7,14 @@ import { getForgeXaiOAuthProxyHeaders } from "./xai-oauth-proxy-compat.js";
 export const XAI_OAUTH_MODELS_ENDPOINT = "https://cli-chat-proxy.grok.com/v1/models";
 const MAX_CATALOG_BYTES = 1_000_000;
 const DISCOVERABLE_MODEL_IDS = new Set([
+  "grok-4.6",
   "grok-4.5",
   "grok-build",
   "grok-composer-2.5-fast",
+]);
+const CHECKED_IN_BASELINE_MODEL_IDS = new Set([
+  "grok-4.6",
+  "grok-4.5",
 ]);
 const DYNAMIC_MODEL_IDS = new Set([
   "grok-build",
@@ -41,7 +46,7 @@ export async function refreshXaiOAuthModelDiscovery(
     return [];
   }
 
-  // Mark OAuth active before discovery so Grok 4.5 uses the bounded OAuth fallback
+  // Mark OAuth active before discovery so checked-in Grok models use the bounded OAuth fallback
   // even when refresh or discovery is temporarily unavailable.
   if (!commitDiscoveryState(generation, authFilePath, storedSnapshot, [])) {
     return [];
@@ -159,10 +164,11 @@ function parseCatalogRow(value: unknown): ForgeModelDefinition | undefined {
     return undefined;
   }
 
-  const effectiveContextWindow = modelId === "grok-4.5"
+  const isCheckedInBaseline = CHECKED_IN_BASELINE_MODEL_IDS.has(modelId);
+  const effectiveContextWindow = isCheckedInBaseline
     ? baseline?.contextWindow
     : contextWindow;
-  const effectiveMaxOutputTokens = modelId === "grok-4.5"
+  const effectiveMaxOutputTokens = isCheckedInBaseline
     ? baseline?.maxOutputTokens
     : maxOutputTokens;
   if (!effectiveContextWindow || !effectiveMaxOutputTokens || !reasoning) {
@@ -179,13 +185,13 @@ function parseCatalogRow(value: unknown): ForgeModelDefinition | undefined {
   const discoveredSupportsStructuredOutput = readBoolean(
     row.supports_structured_output ?? row.supportsStructuredOutput ?? capabilities?.structured_output ?? capabilities?.structured_outputs,
   );
-  const inputModes = modelId === "grok-4.5"
+  const inputModes = isCheckedInBaseline
     ? (baseline?.inputModes ?? ["text", "image"])
     : (discoveredInputModes ?? ["text"]);
-  const supportsTools = modelId === "grok-4.5"
+  const supportsTools = isCheckedInBaseline
     ? (baseline?.supportsTools ?? true)
     : (discoveredSupportsTools ?? false);
-  const supportsStructuredOutput = modelId === "grok-4.5"
+  const supportsStructuredOutput = isCheckedInBaseline
     ? (baseline?.supportsStructuredOutput ?? true)
     : (discoveredSupportsStructuredOutput ?? false);
 
@@ -194,7 +200,7 @@ function parseCatalogRow(value: unknown): ForgeModelDefinition | undefined {
     provider: "xai",
     familyId: "pi-grok",
     displayName: readString(row.name) ?? displayNameFor(modelId),
-    isFamilyDefault: modelId === "grok-4.5",
+    isFamilyDefault: modelId === "grok-4.6",
     supportsReasoning: reasoning.levels.some((level) => level !== "none"),
     supportedReasoningLevels: reasoning.levels,
     defaultReasoningLevel: reasoning.defaultLevel,
@@ -204,12 +210,14 @@ function parseCatalogRow(value: unknown): ForgeModelDefinition | undefined {
     outputModes: ["text"],
     supportsTools,
     supportsStructuredOutput,
-    authScope: modelId === "grok-4.5" ? "any" : "oauth",
+    authScope: isCheckedInBaseline ? "any" : "oauth",
     discovered: true,
     webSearchCapability: baseline?.webSearchCapability ?? "native",
     thinkingLevelMap: Object.fromEntries(
       reasoning.levels.map((level) => [level === "none" ? "off" : level, level === "none" ? null : level]),
     ),
+    piCompat: baseline?.piCompat,
+    piCost: baseline?.piCost,
     enabledByDefault: true,
     piUpstreamId: modelId,
     intentionalDivergenceNotes: "Authenticated xAI OAuth discovery metadata; entitlement-gated to the active account.",
@@ -236,9 +244,9 @@ function readReasoning(
 
   const supportsReasoning = readBoolean(row.supports_reasoning ?? row.supportsReasoning ?? reasoning?.supported);
   const normalizedLevels = [...new Set(levels)]
-    .filter((level) => modelId !== "grok-4.5" || level !== "none");
+    .filter((level) => !CHECKED_IN_BASELINE_MODEL_IDS.has(modelId) || level !== "none");
   if (normalizedLevels.length === 0) {
-    if (supportsReasoning === false && modelId !== "grok-4.5") {
+    if (supportsReasoning === false && !CHECKED_IN_BASELINE_MODEL_IDS.has(modelId)) {
       return { levels: ["none"], defaultLevel: "none" };
     }
     return undefined;
@@ -338,6 +346,7 @@ function readBoolean(value: unknown): boolean | undefined {
 }
 
 function displayNameFor(modelId: string): string {
+  if (modelId === "grok-4.6") return "Grok 4.6";
   if (modelId === "grok-build") return "Grok Build";
   if (modelId === "grok-composer-2.5-fast") return "Grok Composer 2.5 Fast";
   return "Grok 4.5";

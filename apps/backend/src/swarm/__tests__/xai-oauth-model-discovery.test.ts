@@ -23,7 +23,13 @@ function discoveryPayload(ids: string[]) {
   return {
     data: ids.map((id, index) => ({
       id,
-      name: id === "grok-build" ? "Grok Build" : id === "grok-composer-2.5-fast" ? "Composer 2.5 Fast" : "Grok 4.5",
+      name: id === "grok-build"
+        ? "Grok Build"
+        : id === "grok-composer-2.5-fast"
+          ? "Composer 2.5 Fast"
+          : id === "grok-4.6"
+            ? "Grok 4.6"
+            : "Grok 4.5",
       limits: {
         context_window: 300_000 + index,
         max_output_tokens: 30_000 + index,
@@ -66,29 +72,37 @@ describe("xAI OAuth model discovery", () => {
     expect(models[1].modelId).not.toBe("composer-2.5");
   });
 
-  it("keeps OAuth Grok 4.5 bounded to fallback levels unless discovery advertises xhigh", () => {
-    modelCatalogService.setXaiOAuthDiscoveredModels([]);
-    expect(modelCatalogService.getModel("grok-4.5", "xai")?.supportedReasoningLevels).toEqual([
-      "low", "medium", "high",
-    ]);
+  it.each(["grok-4.6", "grok-4.5"])(
+    "keeps OAuth %s bounded to fallback levels unless discovery advertises xhigh",
+    (modelId) => {
+      modelCatalogService.setXaiOAuthDiscoveredModels([]);
+      expect(modelCatalogService.getModel(modelId, "xai")?.supportedReasoningLevels).toEqual([
+        "low", "medium", "high",
+      ]);
 
-    modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
-      data: [{
-        id: "grok-4.5",
-        context_window: 999_999,
-        max_output_tokens: 999_999,
-        supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
-      }],
-    }));
-    expect(modelCatalogService.getModel("grok-4.5", "xai")).toMatchObject({
-      contextWindow: 500_000,
-      maxOutputTokens: 500_000,
-      supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
-      defaultReasoningLevel: "high",
-    });
-  });
+      modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
+        data: [{
+          id: modelId,
+          context_window: 999_999,
+          max_output_tokens: 999_999,
+          supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+        }],
+      }));
+      expect(modelCatalogService.getModel(modelId, "xai")).toMatchObject({
+        contextWindow: 500_000,
+        maxOutputTokens: 500_000,
+        supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      });
+      if (modelId === "grok-4.6") {
+        expect(
+          buildPiModelsProjection().providers.xai?.models?.find((model) => model.id === modelId)?.cost,
+        ).toEqual({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
+      }
+    },
+  );
 
-  it("never calls the OAuth proxy for API-key auth and retains API-key Grok 4.5 xhigh support", async () => {
+  it("never calls the OAuth proxy for API-key auth and retains checked-in Grok xhigh support", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-xai-api-key-discovery-"));
     await writeCredential(dataDir, { type: "api_key", key: "not-sent" });
     const fetchImpl = vi.fn<typeof fetch>();
@@ -98,9 +112,11 @@ describe("xAI OAuth model discovery", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(modelCatalogService.getModel("grok-build", "xai")).toBeUndefined();
     expect(modelCatalogService.getModel("grok-composer-2.5-fast", "xai")).toBeUndefined();
-    expect(modelCatalogService.getModel("grok-4.5", "xai")?.supportedReasoningLevels).toEqual([
-      "low", "medium", "high", "xhigh",
-    ]);
+    for (const modelId of ["grok-4.6", "grok-4.5"]) {
+      expect(modelCatalogService.getModel(modelId, "xai")?.supportedReasoningLevels).toEqual([
+        "low", "medium", "high", "xhigh",
+      ]);
+    }
   });
 
   it("uses pinned authenticated discovery metadata and refreshes account entitlements fail-closed", async () => {
@@ -124,9 +140,16 @@ describe("xAI OAuth model discovery", () => {
       contextWindow: 300_000,
       maxOutputTokens: 30_000,
     });
-    expect(modelCatalogService.getModel("grok-4.5", "xai")?.supportedReasoningLevels).toEqual([
-      "low", "medium", "high",
-    ]);
+    for (const modelId of ["grok-4.6", "grok-4.5"]) {
+      expect(modelCatalogService.getModel(modelId, "xai")?.supportedReasoningLevels).toEqual([
+        "low", "medium", "high",
+      ]);
+    }
+    expect(modelCatalogService.getModelPresetInfoList().find((preset) => preset.presetId === "pi-grok")).toMatchObject({
+      modelId: "grok-4.6",
+      defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high"],
+    });
     expect(buildPiModelsProjection().providers.xai?.models?.some((model) => model.id === "grok-build")).toBe(true);
 
     await refreshXaiOAuthModelDiscovery(dataDir, { fetchImpl });

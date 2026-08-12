@@ -41,6 +41,7 @@ const modelsProviders: HelpArticle = {
     'xAI',
     'xAI OAuth',
     'API key',
+    'grok-4.6',
     'grok-4.5',
     'grok-build',
     'grok-composer-2.5-fast',

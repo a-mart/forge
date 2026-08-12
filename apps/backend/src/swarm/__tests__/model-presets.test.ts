@@ -17,6 +17,7 @@ import { mapLegacyClaudeSdkModel } from "../catalog/legacy-claude-sdk-model.js";
 
 describe("model-presets", () => {
   it("infers the xAI provider for Grok model IDs", () => {
+    expect(inferProviderFromModelId("grok-4.6")).toBe("xai");
     expect(inferProviderFromModelId("grok-4")).toBe("xai");
     expect(inferProviderFromModelId("grok-4-fast")).toBe("xai");
     expect(inferProviderFromModelId("grok-3")).toBe("xai");
@@ -39,6 +40,13 @@ describe("model-presets", () => {
   });
 
   it("maps Grok variants back to the pi-grok preset", () => {
+    expect(
+      inferSwarmModelPresetFromDescriptor({
+        provider: "xai",
+        modelId: "grok-4.6",
+      }),
+    ).toBe("pi-grok");
+
     expect(
       inferSwarmModelPresetFromDescriptor({
         provider: "xai",
@@ -101,17 +109,30 @@ describe("model-presets", () => {
   it("includes webSearch capability metadata for the pi-grok preset", () => {
     const grokPreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-grok");
     expect(grokPreset).toMatchObject({
-      modelId: "grok-4.5",
+      modelId: "grok-4.6",
       defaultReasoningLevel: "high",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
       webSearch: true,
     });
     expect(grokPreset?.variants?.map((variant) => variant.modelId)).toEqual([
+      "grok-4.5",
       "grok-4",
       "grok-4-fast",
       "grok-4.20-0309-reasoning",
       "grok-4.20-0309-non-reasoning",
     ]);
+    expect(resolveModelDescriptorFromPreset("pi-grok")).toEqual({
+      provider: "xai",
+      modelId: "grok-4.6",
+      thinkingLevel: "high",
+    });
+    for (const thinkingLevel of ["low", "medium", "high", "xhigh"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "xai",
+        modelId: "grok-4.6",
+        thinkingLevel,
+      })).toBe(thinkingLevel);
+    }
   });
 
   it("does not expose webSearch capability metadata for other presets", () => {

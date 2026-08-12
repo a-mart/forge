@@ -289,8 +289,12 @@ export class ModelCatalogService {
     if (!checkedIn) {
       return undefined;
     }
-    if (this.xaiOAuthActive && checkedIn.provider === "xai" && checkedIn.modelId === "grok-4.5") {
-      return buildXaiOAuthFallbackGrok45(checkedIn);
+    if (
+      this.xaiOAuthActive
+      && checkedIn.provider === "xai"
+      && (checkedIn.modelId === "grok-4.6" || checkedIn.modelId === "grok-4.5")
+    ) {
+      return buildXaiOAuthFallbackGrok(checkedIn);
     }
     return checkedIn;
   }
@@ -393,7 +397,7 @@ function getOverrideKey(model: ForgeModelDefinition): string {
   return model.catalogId ?? model.modelId;
 }
 
-function buildXaiOAuthFallbackGrok45(model: ForgeModelDefinition): ForgeModelDefinition {
+function buildXaiOAuthFallbackGrok(model: ForgeModelDefinition): ForgeModelDefinition {
   return {
     ...model,
     supportedReasoningLevels: ["low", "medium", "high"],
