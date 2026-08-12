@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, queryByRole } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, queryByRole } from '@testing-library/dom'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -223,6 +223,18 @@ describe('SessionModelPicker compact menu', () => {
     } else {
       expect(queryByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeNull()
     }
+  })
+
+  it('shows Grok 4.6 as the native xAI default while retaining Grok 4.5', async () => {
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, {
+      currentModel: { provider: 'xai', modelId: 'grok-4.6', thinkingLevel: 'high' },
+    })
+
+    await openPicker()
+    await openSubmenu(/Model/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Grok 4.6' })).toBeTruthy()
+    expect(getAllByRole(document.body, 'menuitemradio', { name: 'Grok 4.5' }).length).toBeGreaterThan(0)
   })
 
   it('applies a reasoning override immediately', async () => {

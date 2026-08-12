@@ -1341,6 +1341,12 @@ Never use plain assistant text for user communication.`
       model: 'pi-opus',
     })
 
+    const grokManager = await manager.createManager('manager', {
+      name: 'Grok Manager',
+      cwd: config.defaultCwd,
+      model: 'pi-grok',
+    })
+
     const cursorAliasManager = await manager.createManager('manager', {
       name: 'Cursor Alias Manager',
       cwd: config.defaultCwd,
@@ -1360,6 +1366,11 @@ Never use plain assistant text for user communication.`
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-5',
+      thinkingLevel: 'high',
+    })
+    expect(grokManager.model).toEqual({
+      provider: 'xai',
+      modelId: 'grok-4.6',
       thinkingLevel: 'high',
     })
     expect(cursorAliasManager.model).toEqual({
@@ -1392,7 +1403,7 @@ Never use plain assistant text for user communication.`
     vi.unstubAllEnvs()
   })
 
-  it('creates a native xAI manager with exact Grok 4.5 selection when xAI API auth is available', async () => {
+  it('creates a native xAI manager with exact Grok 4.6 selection when xAI API auth is available', async () => {
     vi.stubEnv('XAI_API_KEY', 'xai-test-exact-selection')
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1403,14 +1414,14 @@ Never use plain assistant text for user communication.`
       cwd: config.defaultCwd,
       modelSelection: {
         provider: 'xai',
-        modelId: 'grok-4.5',
+        modelId: 'grok-4.6',
       },
       reasoningLevel: 'xhigh',
     })
 
     expect(created.model).toEqual({
       provider: 'xai',
-      modelId: 'grok-4.5',
+      modelId: 'grok-4.6',
       thinkingLevel: 'xhigh',
     })
     vi.unstubAllEnvs()
@@ -1424,12 +1435,12 @@ Never use plain assistant text for user communication.`
 
     const updated = await manager.updateManagerExactModel('manager', {
       provider: 'xai',
-      modelId: 'grok-4.5',
+      modelId: 'grok-4.6',
     }, 'medium')
 
     expect(updated).toEqual({
       provider: 'xai',
-      modelId: 'grok-4.5',
+      modelId: 'grok-4.6',
       thinkingLevel: 'medium',
     })
     expect(manager.getAgent('manager')?.model).toEqual(updated)

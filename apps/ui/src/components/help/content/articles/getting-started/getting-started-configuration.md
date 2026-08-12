@@ -10,7 +10,7 @@ Open **Settings** (gear icon in the sidebar) and go to **Authentication**. Confi
 
 For xAI browser OAuth, use **Open authorization URL** or **Copy URL**, then paste the full callback URL if the local callback cannot reach Forge. For a remote or headless backend, choose the device path and enter the displayed code at the verification URL. **Cancel** stops the current attempt, while **Clear** only dismisses completed or failed flow state; neither removes saved auth. Use **Remove** to delete the credential stored on that Forge backend.
 
-Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models. Native `grok-4.5` can appear in normal manager create, change, and exact per-session override selectors when xAI auth is configured, as well as specialist and spawn choices. OAuth-only entitlement models such as `grok-build` and `grok-composer-2.5-fast` remain restricted to entitled worker/specialist choices and excluded from normal manager selectors.
+Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models. Native `grok-4.6` is the default and `grok-4.5` remains a variant; both can appear in normal manager create, change, and exact per-session override selectors when xAI auth is configured, as well as specialist and spawn choices. OAuth-only entitlement models such as `grok-build` and `grok-composer-2.5-fast` remain restricted to entitled worker/specialist choices and excluded from normal manager selectors.
 
 ## Choose your model
 

@@ -201,8 +201,9 @@ describe("specialist routes", () => {
       }>;
     };
     const grok = payload.models.find((model) => model.provider === "xai");
-    expect(grok?.modelId).toBe("grok-4.5");
+    expect(grok?.modelId).toBe("grok-4.6");
     expect(grok?.variants?.map((variant) => variant.modelId)).toEqual(expect.arrayContaining([
+      "grok-4.5",
       "grok-build",
       "grok-composer-2.5-fast",
     ]));

@@ -52,12 +52,17 @@ describe('fetchModelPresets', () => {
       json: async () => ({
         models: [{
           presetId: 'pi-grok',
-          displayName: 'Grok 4.5',
+          displayName: 'Grok 4.6',
           provider: 'xai',
-          modelId: 'grok-4.5',
+          modelId: 'grok-4.6',
           defaultReasoningLevel: 'high',
           supportedReasoningLevels: ['low', 'medium', 'high'],
           variants: [{
+            modelId: 'grok-4.5',
+            label: 'Grok 4.5',
+            defaultReasoningLevel: 'high',
+            supportedReasoningLevels: ['low', 'medium', 'high'],
+          }, {
             modelId: 'grok-composer-2.5-fast',
             label: 'Grok Composer 2.5 Fast',
             defaultReasoningLevel: 'high',

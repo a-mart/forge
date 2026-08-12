@@ -100,28 +100,36 @@ describe("manager model selection", () => {
     });
   });
 
-  it("resolves native xAI Grok 4.5 for every API-supported reasoning level", async () => {
-    const dataDir = await makeTempDataDir();
-    await modelCatalogService.loadOverrides(dataDir);
+  it.each(["grok-4.6", "grok-4.5"])(
+    "resolves native xAI %s for every API-supported reasoning level",
+    async (modelId) => {
+      const dataDir = await makeTempDataDir();
+      await modelCatalogService.loadOverrides(dataDir);
 
-    for (const reasoningLevel of ["low", "medium", "high", "xhigh"] as const) {
-      expect(resolveExactManagerModelSelection(
-        { provider: "xai", modelId: "grok-4.5" },
-        { surface: "change", providerAvailability: new Map([["xai", true]]), reasoningLevel },
-      )).toEqual({ provider: "xai", modelId: "grok-4.5", thinkingLevel: reasoningLevel });
-    }
-  });
+      for (const reasoningLevel of ["low", "medium", "high", "xhigh"] as const) {
+        expect(resolveExactManagerModelSelection(
+          { provider: "xai", modelId },
+          { surface: "change", providerAvailability: new Map([["xai", true]]), reasoningLevel },
+        )).toEqual({ provider: "xai", modelId, thinkingLevel: reasoningLevel });
+      }
+    },
+  );
 
   it("uses OAuth-advertised Grok 4.5 reasoning levels while keeping dynamic models worker-only", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
     modelCatalogService.setXaiOAuthDiscoveredModels(parseXaiOAuthModelCatalog({
       data: [
+        { id: "grok-4.6", supported_reasoning_levels: ["low", "medium", "high", "xhigh"], default_reasoning_level: "high" },
         { id: "grok-4.5", supported_reasoning_levels: ["low", "medium"], default_reasoning_level: "medium" },
         { id: "grok-build", context_window: 400_000, max_output_tokens: 40_000, supported_reasoning_levels: ["low", "medium"] },
       ],
     }));
 
+    expect(resolveExactManagerModelSelection(
+      { provider: "xai", modelId: "grok-4.6" },
+      { surface: "create", providerAvailability: new Map([["xai", true]]), reasoningLevel: "xhigh" },
+    )).toEqual({ provider: "xai", modelId: "grok-4.6", thinkingLevel: "xhigh" });
     expect(resolveExactManagerModelSelection(
       { provider: "xai", modelId: "grok-4.5" },
       { surface: "create", providerAvailability: new Map([["xai", true]]), reasoningLevel: "medium" },

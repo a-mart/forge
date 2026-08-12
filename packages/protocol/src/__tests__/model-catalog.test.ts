@@ -84,7 +84,7 @@ const EXPECTED_FAMILIES = {
   },
   'pi-grok': {
     provider: 'xai',
-    defaultModelId: 'grok-4.5',
+    defaultModelId: 'grok-4.6',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -205,6 +205,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'grok-4.6': {
+    provider: 'xai',
+    familyId: 'pi-grok',
+    contextWindow: 500_000,
+    maxOutputTokens: 500_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'grok-4.5': {
     provider: 'xai',
     familyId: 'pi-grok',
@@ -282,7 +290,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(20)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -333,6 +341,22 @@ describe('model-catalog', () => {
       intentionalDivergenceNotes: null,
     })
     expect(getCatalogModel('claude-fable-5')?.supportedReasoningLevels).not.toContain('none')
+    expect(getCatalogModel('grok-4.6')).toMatchObject({
+      isFamilyDefault: true,
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 500_000,
+      maxOutputTokens: 500_000,
+      inputModes: ['text', 'image'],
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+      authScope: 'any',
+      thinkingLevelMap: { off: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+      piCost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+      piUpstreamId: 'grok-4.6',
+    })
+    expect(getCatalogModel('grok-4.5')?.isFamilyDefault).toBe(false)
     expect(getCatalogProvider('xai')?.projectionScope).toBe('approved-provider-models')
     expect(getCatalogProvider('openrouter')).toMatchObject({
       availabilityMode: 'external',
@@ -347,6 +371,7 @@ describe('model-catalog', () => {
   })
 
   it('documents intentional catalog divergences from Pi upstream', () => {
+    expect(getCatalogModel('grok-4.6')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
     for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
       expect(getCatalogModel(modelId)?.intentionalDivergenceNotes).toContain(
@@ -505,7 +530,7 @@ describe('model-catalog', () => {
     expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')
     expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
-    expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.5')
+    expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.6')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('approved-provider-models')
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
     expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
@@ -537,6 +562,8 @@ describe('model-catalog', () => {
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.6-sol')).toBe('openai-codex')
+    expect(inferCatalogProvider('grok-4.6')).toBe('xai')
+    expect(inferCatalogFamily('xai', 'grok-4.6')).toBe('pi-grok')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')

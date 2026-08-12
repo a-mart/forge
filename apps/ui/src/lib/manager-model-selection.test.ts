@@ -73,20 +73,24 @@ describe('buildManagerModelRows provider availability gating', () => {
     }
   })
 
-  it('includes native xAI Grok 4.5 in manager selectors when xAI auth is available', () => {
+  it('includes native xAI Grok 4.6 as the default and preserves Grok 4.5 as a variant', () => {
     const rows = buildManagerModelRows('create', {}, { xai: true })
     const grokRows = rows.filter((row) => row.provider === 'xai')
-    const grok = rows.find((row) => row.key === 'xai::grok-4.5')
+    const grok46 = rows.find((row) => row.key === 'xai::grok-4.6')
+    const grok45 = rows.find((row) => row.key === 'xai::grok-4.5')
 
-    expect(grokRows.length).toBeGreaterThan(0)
-    expect(grok).toMatchObject({
-      provider: 'xai',
-      familyId: 'pi-grok',
-      modelId: 'grok-4.5',
-      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
-      defaultReasoningLevel: 'high',
-    })
-    expect(grok?.unavailableReason).toBeUndefined()
+    expect(grokRows.length).toBeGreaterThan(1)
+    for (const grok of [grok46, grok45]) {
+      expect(grok).toMatchObject({
+        provider: 'xai',
+        familyId: 'pi-grok',
+        supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        defaultReasoningLevel: 'high',
+      })
+      expect(grok?.unavailableReason).toBeUndefined()
+    }
+    expect(grok46).toMatchObject({ modelId: 'grok-4.6', displayName: 'Grok 4.6' })
+    expect(grok45).toMatchObject({ modelId: 'grok-4.5', displayName: 'Grok 4.5' })
     expect(rows.some((row) => row.modelId === 'grok-build' || row.modelId === 'grok-composer-2.5-fast')).toBe(false)
   })
 

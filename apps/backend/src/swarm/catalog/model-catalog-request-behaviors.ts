@@ -46,8 +46,7 @@ export function createCatalogRequestBehaviorExtensionFactory(options: CatalogReq
 
 export function supportsXaiResponsesReasoning(modelId: string): boolean {
   const model = modelCatalogService.getModel(modelId, "xai");
-  return model?.supportsReasoning === true
-    && (model.modelId === "grok-4.5" || model.discovered === true);
+  return model?.supportsReasoning === true && model.thinkingLevelMap !== undefined;
 }
 
 export function stripReasoningFromResponsesPayload(payload: unknown): unknown {

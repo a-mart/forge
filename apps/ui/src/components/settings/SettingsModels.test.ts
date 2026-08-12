@@ -193,7 +193,7 @@ describe('SettingsModels', () => {
   it('uses the same empty state for every model family', async () => {
     await renderSettingsModels({})
     await expandProvider('xAI')
-    await expandModel('Grok 4')
+    await expandModel('Grok 4.6')
 
     expect(getByText(container, 'No custom instructions for this model')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
