@@ -86,6 +86,8 @@ export interface SelectRoomsInboxOptions {
   now?: Date | number
   searchQuery?: string
   hideCliSessions?: boolean
+  /** Local mute preference: hides Needs You only; Active/Recent still list the room. */
+  mutedSessionIds?: ReadonlySet<string>
 }
 
 const MAX_SECTION_ITEMS = 5
@@ -157,6 +159,14 @@ function compareActive(
 function compareRecent(left: RoomsInboxSessionInput, right: RoomsInboxSessionInput): number {
   const timestampOrder = timestampMs(sessionTimestamp(right)) - timestampMs(sessionTimestamp(left))
   return timestampOrder || compareIdentity(left, right)
+}
+
+function isLocallyMuted(
+  session: RoomsInboxSessionInput,
+  mutedSessionIds: ReadonlySet<string> | undefined,
+): boolean {
+  return session.identity.originId === LOCAL_ORIGIN_ID
+    && mutedSessionIds?.has(session.identity.sessionAgentId) === true
 }
 
 function matchesSearch(
@@ -246,6 +256,9 @@ export function selectRoomsInboxSections(
     const key = getRoomsInboxIdentityKey(session.identity.originId, session.identity.sessionAgentId)
     const attention = attentionBySession.get(key)
     if (!attention) continue
+    // Mute is a local display preference. It must not dismiss server attention,
+    // but it also must not claim the user's attention.
+    if (isLocallyMuted(session, options.mutedSessionIds)) continue
     attentionSessionKeys.add(key)
     needsYouCandidates.push({
       session,

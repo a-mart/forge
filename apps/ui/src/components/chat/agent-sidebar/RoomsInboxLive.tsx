@@ -124,7 +124,7 @@ export function RoomsInboxLive({
   projectTree?: React.ReactNode
   /** Whether the shared tree currently renders rows or remote status content. */
   hasInlineProjectContent?: boolean
-  /** Presentation-only mute markers owned by the existing sidebar preference. */
+  /** Local mute preference: hides Needs You rows and the Inbox badge for those rooms. */
   mutedSessionIds?: ReadonlySet<string>
   /** Direct component consumers may not have an origin store yet (tests/bootstrap). */
   fallbackOrigins?: readonly RoomsInboxOriginInput[]
@@ -155,7 +155,8 @@ export function RoomsInboxLive({
     selected,
     searchQuery,
     hideCliSessions,
-  }), [hideCliSessions, origins, searchQuery, selected])
+    mutedSessionIds,
+  }), [hideCliSessions, mutedSessionIds, origins, searchQuery, selected])
 
   // The Inbox badge is a global attention claim, so it must ignore the search
   // filter. Filtering it would let an unrelated query report that nothing needs
@@ -163,7 +164,8 @@ export function RoomsInboxLive({
   const needsYouTotal = useMemo(() => selectRoomsInboxSections(origins, {
     selected,
     hideCliSessions,
-  }).needsYou.length, [hideCliSessions, origins, selected])
+    mutedSessionIds,
+  }).needsYou.length, [hideCliSessions, mutedSessionIds, origins, selected])
 
   const handleSelectSession = (identity: RoomsInboxIdentity) => {
     if (identity.originId === LOCAL_ORIGIN_ID) {

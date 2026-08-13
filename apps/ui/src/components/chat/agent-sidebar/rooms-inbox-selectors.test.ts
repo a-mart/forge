@@ -133,6 +133,29 @@ describe('selectRoomsInboxSections', () => {
     expect(ids(result.recent)).not.toContain('old')
   })
 
+  it('hides locally muted sessions from Needs You without dismissing server attention or remote rooms', () => {
+    const remoteMutedTwin = session('muted-local', {
+      identity: { originId: 'remote', profileId: 'project-a', sessionAgentId: 'muted-local' },
+    })
+    const result = selectRoomsInboxSections([
+      origin([
+        session('muted-local'),
+        session('visible'),
+      ], 'local', [
+        attention('muted-local'),
+        attention('visible', 'awaiting_review'),
+      ]),
+      origin([remoteMutedTwin], 'remote', [attention('muted-local', 'decision_waiting')]),
+    ], {
+      now: NOW,
+      mutedSessionIds: new Set(['muted-local']),
+    })
+
+    expect(result.needsYou.map((entry) => `${entry.identity.originId}::${entry.identity.sessionAgentId}`))
+      .toEqual(['remote::muted-local', 'local::visible'])
+    expect(ids(result.recent)).toContain('muted-local')
+  })
+
   it('keeps colliding agent IDs origin-scoped and hides attention from disconnected or unsupported origins', () => {
     const remoteSession = session('same-id', {
       identity: { originId: 'remote', profileId: 'project-a', sessionAgentId: 'same-id' },
