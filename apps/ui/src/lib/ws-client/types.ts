@@ -12,6 +12,7 @@ import type {
   SessionMemoryMergeResult,
   ConversationEntry,
   ConversationHistoryPageMetadata,
+  SessionAttentionUpdateEvent,
 } from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 
@@ -119,6 +120,7 @@ export type WsRequestResultMap = {
   restore_session: SessionRestoreResult
   delete_session: SessionActionResult
   clear_session: SessionActionResult
+  dismiss_session_attention: SessionAttentionUpdateEvent
   session_goal_control: SessionGoalSnapshot
   rename_session: SessionActionResult
   pin_session: { pinnedAt: string | null }
@@ -198,6 +200,12 @@ export interface ManagerWsAgentEventContext {
 
 export interface ManagerWsSessionEventContext {
   applySessionDeleted: (agentId: string, profileId: string) => void
+  requestTracker: RequestTrackerAdapter
+}
+
+export interface ManagerWsSessionAttentionEventContext {
+  state: ManagerWsState
+  updateState: (patch: Partial<ManagerWsState>) => void
   requestTracker: RequestTrackerAdapter
 }
 

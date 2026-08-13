@@ -119,6 +119,16 @@ describe('sendSubscriptionBootstrap', () => {
         }),
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
+        getSessionAttentionSnapshot: () => ({
+          revision: 7,
+          attentions: [{
+            attentionId: 'attention-1',
+            sessionAgentId: 'manager-1',
+            profileId: 'profile-1',
+            reason: 'work_settled' as const,
+            raisedAt: '2026-08-04T00:00:00.000Z',
+          }],
+        }),
         getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
         getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
       } as any,
@@ -139,6 +149,12 @@ describe('sendSubscriptionBootstrap', () => {
         event.type === 'agents_snapshot',
     )
     expect(snapshot?.agents.map((agent) => agent.agentId)).toEqual(['manager-1', 'worker-1'])
+    expect(sent.find((event) => event.type === 'ready')).toMatchObject({ sessionAttention: true })
+    expect(sent.find((event) => event.type === 'session_attention_snapshot')).toEqual({
+      type: 'session_attention_snapshot',
+      revision: 7,
+      attentions: [expect.objectContaining({ attentionId: 'attention-1' })],
+    })
 
     const correlatedTypes = new Set(['ready', 'conversation_history', 'pending_choices_snapshot'])
     for (const event of sent) {
@@ -689,7 +705,7 @@ describe('sendSubscriptionBootstrap', () => {
       ],
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
-    expect(send).toHaveBeenCalledTimes(9)
+    expect(send).toHaveBeenCalledTimes(10)
     expect(result).toEqual({
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
@@ -977,7 +993,7 @@ describe('sendSubscriptionBootstrap', () => {
       profilesSnapshotBuildMs: 0,
       profilesSnapshotPayloadBytes: 0,
     })
-    expect(send).toHaveBeenCalledTimes(7)
+    expect(send).toHaveBeenCalledTimes(8)
     expect(result).toEqual({
       agentsSnapshotSent: false,
       profilesSnapshotSent: false,
@@ -1082,6 +1098,7 @@ describe('sendSubscriptionBootstrap', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
@@ -1089,7 +1106,7 @@ describe('sendSubscriptionBootstrap', () => {
       'session_goal_snapshot',
       'terminals_snapshot',
     ])
-    expect(sentEvents[4]).toMatchObject({
+    expect(sentEvents[5]).toMatchObject({
       type: 'pending_choices_snapshot',
       agentId: 'manager-1',
       choiceIds: ['choice-1'],
@@ -1101,7 +1118,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
       ],
     })
-    expect(sentEvents[6]).toMatchObject({
+    expect(sentEvents[7]).toMatchObject({
       type: 'session_plan_snapshot',
       sessionAgentId: 'manager-1',
       revision: 7,
@@ -1109,7 +1126,7 @@ describe('sendSubscriptionBootstrap', () => {
       plan: [{ step: 'Preserve graph work', status: 'in_progress' }],
       workGraph: { nodes: [{ id: 'preserve', status: 'running' }] },
     })
-    expect(sentEvents[7]).toMatchObject({
+    expect(sentEvents[8]).toMatchObject({
       type: 'session_goal_snapshot',
       sessionAgentId: 'manager-1',
       revision: 3,
@@ -1170,6 +1187,7 @@ describe('sendSubscriptionBootstrap', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',

@@ -1,4 +1,8 @@
-import type { ServerEvent } from '@forge/protocol'
+import type {
+  ServerEvent,
+  SessionAttentionSnapshotEvent,
+  SessionAttentionUpdateEvent,
+} from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 import type { ManagerWsConversationEventContext } from './types'
 import {
@@ -7,6 +11,10 @@ import {
   handleConversationEvent,
   isSecureSessionSnapshotForTarget,
 } from './event-handlers/conversation-event-handlers'
+import {
+  reduceSessionAttentionSnapshot,
+  reduceSessionAttentionUpdate,
+} from './event-handlers/session-attention-event-handlers'
 
 /** Default inactivity timeout before the buffer auto-flushes (ms). */
 export const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
@@ -41,6 +49,7 @@ export interface BootstrapBufferDeps {
 export class BootstrapBuffer {
   private targetAgentId: string | null = null
   private pendingPatch: Partial<ManagerWsState> = {}
+  private sessionAttentionEvents: Array<SessionAttentionSnapshotEvent | SessionAttentionUpdateEvent> = []
   private timeoutId: ReturnType<typeof setTimeout> | undefined = undefined
   private readonly flushTimeoutMs: number
   private readonly deps: BootstrapBufferDeps
@@ -60,6 +69,7 @@ export class BootstrapBuffer {
     this.clear()
     this.targetAgentId = targetAgentId
     this.pendingPatch = {}
+    this.sessionAttentionEvents = []
   }
 
   /**
@@ -71,6 +81,12 @@ export class BootstrapBuffer {
    */
   handleEvent(event: ServerEvent): boolean {
     if (!this.targetAgentId) return false
+
+    if (event.type === 'session_attention_snapshot' || event.type === 'session_attention_update') {
+      this.sessionAttentionEvents.push(event)
+      this.resetTimeout()
+      return true
+    }
 
     // Coalescible events are buffered.
     if (BOOTSTRAP_COALESCIBLE_EVENT_TYPES.has(event.type)) {
@@ -99,8 +115,39 @@ export class BootstrapBuffer {
     }
 
     const patch = this.pendingPatch
+    const attentionEvents = this.sessionAttentionEvents
     this.targetAgentId = null
     this.pendingPatch = {}
+    this.sessionAttentionEvents = []
+
+    if (attentionEvents.length > 0) {
+      // Live fanout snapshots interleave with the bootstrap snapshot in this
+      // buffer, and drain-awaited sends can reorder arrivals, so authority is
+      // the highest revision rather than the last arrival.
+      const snapshot = attentionEvents
+        .filter((event): event is SessionAttentionSnapshotEvent => event.type === 'session_attention_snapshot')
+        .reduce<SessionAttentionSnapshotEvent | undefined>(
+          (best, event) => (!best || event.revision > best.revision ? event : best),
+          undefined,
+        )
+      let attentionState = snapshot
+        ? reduceSessionAttentionSnapshot(snapshot)
+        : {
+            sessionAttentionRevision: this.deps.getState().sessionAttentionRevision,
+            sessionAttentions: this.deps.getState().sessionAttentions,
+          }
+      const updates = attentionEvents
+        .filter((event): event is SessionAttentionUpdateEvent => (
+          event.type === 'session_attention_update'
+          && (!snapshot || event.revision > snapshot.revision)
+        ))
+        .sort((left, right) => left.revision - right.revision)
+      for (const update of updates) {
+        attentionState = reduceSessionAttentionUpdate(attentionState, update) ?? attentionState
+      }
+      patch.sessionAttentionRevision = attentionState.sessionAttentionRevision
+      patch.sessionAttentions = attentionState.sessionAttentions
+    }
 
     if (Object.keys(patch).length > 0) {
       this.deps.updateState(patch)
@@ -115,6 +162,7 @@ export class BootstrapBuffer {
     }
     this.targetAgentId = null
     this.pendingPatch = {}
+    this.sessionAttentionEvents = []
   }
 
   // ---------------------------------------------------------------------------

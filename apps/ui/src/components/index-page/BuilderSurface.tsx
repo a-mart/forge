@@ -10,7 +10,6 @@ import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
 import { WorkGraphWorkerHighlightProvider } from '@/components/chat/WorkGraphWorkerHighlight'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
-import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
 import { type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
@@ -1975,6 +1974,7 @@ export function BuilderSurface({
       <AgentSidebarConnected
         wsUrl={localWsUrl}
         builderSidebarOrderApi={builderSidebarOrderApi}
+        activityRailItems={showActivityRail ? panels.activityRailItems : undefined}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
         activeOriginId={activeOriginId}
@@ -2031,10 +2031,6 @@ export function BuilderSurface({
         onRequestProjectAgentRecommendations={localSidebarSession.handleRequestProjectAgentRecommendations}
         onCreateAgentCreator={localSidebarSession.handleCreateAgentCreator}
       />
-
-      {showActivityRail ? (
-        <ActivityRail items={panels.activityRailItems} />
-      ) : null}
 
       <div
           className="relative flex min-w-0 flex-1"

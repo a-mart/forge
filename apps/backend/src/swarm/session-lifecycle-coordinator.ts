@@ -137,6 +137,8 @@ export interface SessionLifecycleCoordinatorOptions {
   activeTools: {
     clearSession(agentId: string): void;
   };
+  /** Retires session attention when a session becomes ineligible (archive). */
+  reportAttentionSessionRetired?: (sessionAgentId: string) => void | Promise<void>;
   browser: Pick<
     BrowserAutomationService,
     | "cancelSession"
@@ -328,6 +330,9 @@ export class SessionLifecycleCoordinator {
         const result = await this.options.archive.archiveSession(agentId);
         await this.options.browser.archiveSession(descriptor.profileId, agentId);
         this.options.activeTools.clearSession(agentId);
+        // Archiving makes the session ineligible, so retire any attention it
+        // owns rather than leaving a row pointing at an archived room.
+        await this.options.reportAttentionSessionRetired?.(agentId);
         this.options.events.emitAgentsSnapshot();
         return result;
       },
@@ -381,6 +386,10 @@ export class SessionLifecycleCoordinator {
         for (const session of sessions) {
           await this.options.browser.archiveSession(profileId, session.agentId);
           this.options.activeTools.clearSession(session.agentId);
+          // Profile archive changes eligibility for every contained room. Retire
+          // each durable attention before lifecycle snapshots can expose the
+          // archived profile with stale Needs You rows.
+          await this.options.reportAttentionSessionRetired?.(session.agentId);
         }
         await this.runTerminalHook("archive", profileId);
         this.options.events.emitProfilesSnapshot();
@@ -457,6 +466,7 @@ export class SessionLifecycleCoordinator {
         this.options.browser.cancelSession(agentId);
         await this.releaseBeforeDelete(requiredDescriptor.profileId, agentId);
         const result = await this.options.sessions.deleteSession(agentId);
+        await this.options.reportAttentionSessionRetired?.(agentId);
         await this.cleanupSecureSessionStateAfterCoreDeletion(agentId);
         await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
         this.options.plans.forget(agentId);
@@ -480,6 +490,7 @@ export class SessionLifecycleCoordinator {
     this.options.browser.cancelSession(agentId);
     await this.releaseBeforeDelete(requiredDescriptor.profileId, agentId);
     const result = await this.options.sessions.deleteCollaborationSession(agentId);
+    await this.options.reportAttentionSessionRetired?.(agentId);
     await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
     this.options.activeTools.clearSession(agentId);
     await this.emitExtensionLifecycle("deleted", descriptor);
@@ -608,6 +619,7 @@ export class SessionLifecycleCoordinator {
           targetManagerId,
         );
         for (const session of sessions) {
+          await this.options.reportAttentionSessionRetired?.(session.agentId);
           await this.cleanupSecureSessionStateAfterCoreDeletion(session.agentId);
         }
         try {

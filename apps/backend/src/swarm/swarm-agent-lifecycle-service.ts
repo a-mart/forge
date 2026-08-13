@@ -245,6 +245,8 @@ export interface SwarmAgentLifecycleServiceOptions {
   ) => Promise<void>;
   attachRuntime: (agentId: string, runtime: SwarmAgentRuntime) => void;
   saveStore: () => Promise<void>;
+  /** Manual lifecycle actions suppress the current work epoch before teardown. */
+  suppressSessionAttention: (sessionAgentId: string) => Promise<void>;
   emitStatus: (
     agentId: string,
     status: AgentStatus,
@@ -1142,6 +1144,7 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Only owning manager can kill agent ${targetAgentId}`);
     }
 
+    await this.options.suppressSessionAttention(manager.agentId);
     let cleanupFailure: unknown;
     try {
       await this.terminateDescriptor(target, {
@@ -1189,6 +1192,7 @@ export class SwarmAgentLifecycleService {
         return;
       }
 
+      await this.options.suppressSessionAttention(descriptor.managerId);
       await this.interruptExternalThreadWorker(descriptor, { abort: true, emitStatus: true });
       await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
       await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -1197,6 +1201,7 @@ export class SwarmAgentLifecycleService {
       return;
     }
 
+    await this.options.suppressSessionAttention(descriptor.managerId);
     this.clearWorkerTeardownState(agentId);
     const shutdownIncomplete = await this.shutdownWorkerRuntimeWithSuppressedCallbacks(
       descriptor,
@@ -1304,6 +1309,7 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Only selected manager can stop all agents for ${targetManagerId}`);
     }
 
+    await this.options.suppressSessionAttention(target.agentId);
     const stoppedWorkerIds: string[] = [];
     const workerShutdownIncompleteIds: string[] = [];
     const managerRuntime = this.options.runtimes.get(target.agentId);
@@ -1585,6 +1591,12 @@ export class SwarmAgentLifecycleService {
     const terminatedWorkerIds: string[] = [];
     const workerDescriptors: AgentDescriptor[] = [];
     const terminationFailures: unknown[] = [];
+
+    // Delete/terminate is explicit lifecycle suppression, not a completed work
+    // epoch. Retire before direct status mutations can look quiescent.
+    for (const sessionDescriptor of sessionDescriptors) {
+      await this.options.suppressSessionAttention(sessionDescriptor.agentId);
+    }
 
     for (const sessionDescriptor of sessionDescriptors) {
       for (const workerDescriptor of this.options.getWorkersForManager(sessionDescriptor.agentId)) {
@@ -1938,6 +1950,7 @@ export class SwarmAgentLifecycleService {
     options: AgentLifecycleStopSessionOptions
   ): Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
+    await this.options.suppressSessionAttention(descriptor.agentId);
     const terminatedWorkerIds: string[] = [];
     const terminatedWorkerDescriptors: AgentDescriptor[] = [];
     const unsafeShutdownAgentIds: string[] = [];

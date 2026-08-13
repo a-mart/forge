@@ -164,6 +164,7 @@ describe('ManagerWsClient', () => {
       'pick_directory',
       'get_session_workers',
       'get_conversation_page',
+      'dismiss_session_attention',
       'rename_profile',
       'archive_profile',
       'restore_profile',
@@ -6909,6 +6910,110 @@ describe('ManagerWsClient', () => {
     emitServerEvent(reconnectedSocket, { type: 'generation_throughput', measurement: restoredPi })
     expect(client.getState().generationThroughputByAgentId['worker-1']).toEqual(restoredPi)
 
+    client.destroy()
+  })
+
+  it('hydrates server attention, sends exact-ID dismissal, and resets authority for reconnect bootstrap', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit('open')
+    const subscribe = JSON.parse(socket.sentPayloads[0]!) as { subscriptionId: string }
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: '2026-08-03T12:00:00.000Z',
+      subscribedAgentId: 'manager',
+      subscriptionId: subscribe.subscriptionId,
+      servedConversationView: 'web',
+      sessionAttention: true,
+    })
+    emitServerEvent(socket, {
+      type: 'session_attention_snapshot',
+      revision: 4,
+      attentions: [{
+        attentionId: 'attention-a',
+        sessionAgentId: 'manager',
+        profileId: 'profile-1',
+        reason: 'work_settled',
+        raisedAt: '2026-08-03T12:00:00.000Z',
+      }],
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+    expect(client.getState()).toMatchObject({
+      sessionAttentionAvailable: true,
+      sessionAttentionRevision: 4,
+    })
+    expect(client.getState().sessionAttentions.manager?.attentionId).toBe('attention-a')
+
+    const dismissal = client.dismissSessionAttention(['attention-a'])
+    const command = JSON.parse(socket.sentPayloads.at(-1)!) as {
+      type: string
+      attentionIds: string[]
+      requestId: string
+    }
+    expect(command).toMatchObject({
+      type: 'dismiss_session_attention',
+      attentionIds: ['attention-a'],
+    })
+    emitServerEvent(socket, {
+      type: 'session_attention_update',
+      revision: 5,
+      changes: [{ sessionAgentId: 'manager', attention: null }],
+      requestId: command.requestId,
+    })
+    await expect(dismissal).resolves.toMatchObject({ revision: 5 })
+    expect(client.getState().sessionAttentions).toEqual({})
+
+    socket.close()
+    vi.advanceTimersByTime(1_200)
+    const reconnectedSocket = FakeWebSocket.instances.at(-1)!
+    reconnectedSocket.emit('open')
+    expect(client.getState()).toMatchObject({
+      sessionAttentionAvailable: false,
+      sessionAttentionRevision: -1,
+      sessionAttentions: {},
+    })
+
+    const reconnectSubscribe = JSON.parse(reconnectedSocket.sentPayloads[0]!) as { subscriptionId: string }
+    emitServerEvent(reconnectedSocket, {
+      type: 'ready',
+      serverTime: '2026-08-03T12:05:00.000Z',
+      subscribedAgentId: 'manager',
+      subscriptionId: reconnectSubscribe.subscriptionId,
+      servedConversationView: 'web',
+      sessionAttention: true,
+    })
+    emitServerEvent(reconnectedSocket, {
+      type: 'session_attention_snapshot',
+      revision: 1,
+      attentions: [{
+        attentionId: 'attention-after-restart',
+        sessionAgentId: 'manager',
+        profileId: 'profile-1',
+        reason: 'awaiting_review',
+        raisedAt: '2026-08-03T12:05:00.000Z',
+      }],
+    })
+    emitServerEvent(reconnectedSocket, { type: 'unread_counts_snapshot', counts: {} })
+    expect(client.getState().sessionAttentionRevision).toBe(1)
+    expect(client.getState().sessionAttentions.manager?.attentionId).toBe('attention-after-restart')
+    client.destroy()
+  })
+
+  it('rejects dismissal without sending when the origin lacks the capability', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit('open')
+    const sentBefore = socket.sentPayloads.length
+
+    await expect(client.dismissSessionAttention(['attention-a']))
+      .rejects.toThrow('not supported')
+    expect(socket.sentPayloads).toHaveLength(sentBefore)
     client.destroy()
   })
 

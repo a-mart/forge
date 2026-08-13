@@ -1,4 +1,9 @@
 import {
+  SESSION_ATTENTION_MAX_DISMISS_IDS,
+  SESSION_ATTENTION_MAX_ID_LENGTH,
+} from "@forge/protocol";
+
+import {
   fail,
   isApiProxyMethod,
   isSafeMessageCount,
@@ -12,6 +17,10 @@ import {
 // even maximally JSON-escaped IDs small enough for an explicit response under MAX_WS_EVENT_BYTES.
 export const MAX_API_PROXY_REQUEST_ID_LENGTH = 1024;
 export const MAX_SUBSCRIPTION_ID_LENGTH = 128;
+// Same reflection bound for the correlated dismissal response: an unbounded ID
+// could push an otherwise-applied dismissal's response over MAX_WS_EVENT_BYTES,
+// silently dropping the success the client is awaiting.
+export const MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH = 1024;
 
 export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
   if (maybe.type === "ping") {
@@ -24,6 +33,53 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
       return fail(`${maybe.type}.requestId must be a string when provided`);
     }
     return ok({ type: maybe.type, requestId });
+  }
+
+  if (maybe.type === "dismiss_session_attention") {
+    // Wire-required: dismissal is a command whose success/failure must be
+    // correlated back to the exact caller, so an anonymous one is rejected.
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (typeof requestId !== "string" || requestId.length === 0) {
+      return fail("dismiss_session_attention.requestId is required");
+    }
+    if (requestId.length > MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH) {
+      // Deliberately not echoed: reflecting an oversized ID would recreate the
+      // oversized-event drop this bound exists to prevent.
+      return fail(
+        `dismiss_session_attention.requestId must be at most ${MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH} characters`,
+      );
+    }
+
+    const rawIds = (maybe as { attentionIds?: unknown }).attentionIds;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      return fail("dismiss_session_attention.attentionIds must be a nonempty array", requestId);
+    }
+    if (rawIds.length > SESSION_ATTENTION_MAX_DISMISS_IDS) {
+      return fail(
+        `dismiss_session_attention.attentionIds must contain at most ${SESSION_ATTENTION_MAX_DISMISS_IDS} entries`,
+        requestId,
+      );
+    }
+
+    // Deduplicate here so the coordinator only ever sees exact, unique targets.
+    const attentionIds: string[] = [];
+    const seen = new Set<string>();
+    for (const candidate of rawIds) {
+      if (typeof candidate !== "string" || candidate.length === 0) {
+        return fail("dismiss_session_attention.attentionIds must contain nonempty strings", requestId);
+      }
+      if (candidate.length > SESSION_ATTENTION_MAX_ID_LENGTH) {
+        return fail(
+          `dismiss_session_attention.attentionIds entries must be at most ${SESSION_ATTENTION_MAX_ID_LENGTH} characters`,
+          requestId,
+        );
+      }
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      attentionIds.push(candidate);
+    }
+
+    return ok({ type: "dismiss_session_attention", attentionIds, requestId });
   }
 
   if (maybe.type === "subscribe") {

@@ -46,12 +46,14 @@ describe('builder protocol contract', () => {
       instanceName: 'Central Forge',
       forgeVersion: '0.9.0',
       protocolVersion: 1,
-      capabilities: { collab: true, remoteBuild: true },
+      capabilities: { collab: true, remoteBuild: true, sessionAttention: true },
     }
 
     expect(legacyServerStatus.protocolVersion).toBeUndefined()
     expect(legacyServerStatus.capabilities).toBeUndefined()
     expect(waveRServerStatus.capabilities?.remoteBuild).toBe(true)
+    expect(legacyServerStatus.capabilities?.sessionAttention).toBeUndefined()
+    expect(waveRServerStatus.capabilities?.sessionAttention).toBe(true)
     // A client treats a missing protocolVersion as a pre-Wave-R instance —
     // never version-blocked (blocking only applies to versions ABOVE the
     // client ceiling).
@@ -95,6 +97,10 @@ describe('builder protocol contract', () => {
       subscriptionId: correlatedSubscribe.subscriptionId,
       servedConversationView: 'web',
     } satisfies ReadyEvent
+    const attentionReady = {
+      ...correlatedReady,
+      sessionAttention: true,
+    } satisfies ReadyEvent
     const history = {
       type: 'conversation_history',
       agentId: 'manager-1',
@@ -122,6 +128,8 @@ describe('builder protocol contract', () => {
 
     expect(legacySubscribe.subscriptionId).toBeUndefined()
     expect(legacyReady.subscriptionId).toBeUndefined()
+    expect(legacyReady.sessionAttention).toBeUndefined()
+    expect(attentionReady.sessionAttention).toBe(true)
     expect([correlatedReady, history, choices]).toEqual(expect.arrayContaining([
       expect.objectContaining({ subscriptionId: 'renderer-1:generation-7', servedConversationView: 'web' }),
     ]))

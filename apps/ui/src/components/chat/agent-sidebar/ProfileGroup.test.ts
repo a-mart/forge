@@ -195,4 +195,34 @@ describe('ProfileGroup project row expand/collapse', () => {
     flushSync(() => workerToggle.click())
     expect(onToggleSessionCollapsed).toHaveBeenCalledWith('session-1')
   })
+
+  it('renders a Rooms card with unread and actively-working/visible counters', () => {
+    const treeRow: ProfileTreeRow = {
+      profile: makeProfile(),
+      sessions: [
+        makeSession(makeAgent({ activeWorkerCount: 1 })),
+        makeSession(makeAgent({ agentId: 'session-2', status: 'idle' })),
+        makeSession(makeAgent({ agentId: 'session-3', status: 'idle' })),
+        makeSession(makeAgent({ agentId: 'session-4', status: 'idle' })),
+      ],
+    }
+    renderGroup({
+      treeRow,
+      roomsV2: true,
+      unreadCounts: { 'session-1': 3 },
+      statuses: {
+        'session-1': { status: 'idle', pendingCount: 0 },
+        // Queued runtime input does not make an idle session actively working.
+        'session-2': { status: 'idle', pendingCount: 99 },
+        'session-3': { status: 'streaming', pendingCount: 0 },
+        'session-4': { status: 'idle', pendingCount: 0, contextRecoveryInProgress: true },
+      },
+    })
+
+    expect(container.querySelector('[data-room-card="local"]')).not.toBeNull()
+    expect(container.querySelector('.sidebar-room-project-avatar')?.textContent).toBe('P')
+    expect(container.querySelector('[aria-label="New session for Project Alpha"]')?.classList.contains('sidebar-room-new-session')).toBe(true)
+    expect(container.querySelector('[aria-label="3 of 4 sessions actively working"]')?.textContent).toBe('3/4')
+    expect(container.querySelector('[aria-label="3 unread messages in Project Alpha"]')?.textContent).toBe('3')
+  })
 })

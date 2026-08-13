@@ -2,7 +2,7 @@ import { isChoiceAnswer, type ClientCommand, type ManagerExactModelSelection } f
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
-  | { ok: false; error: string };
+  | { ok: false; error: string; requestId?: string };
 
 export type ClientCommandCandidate = Partial<ClientCommand> & { type?: unknown };
 
@@ -12,8 +12,8 @@ export function ok(command: ClientCommand): ParsedClientCommand {
   return { ok: true, command };
 }
 
-export function fail(error: string): ParsedClientCommand {
-  return { ok: false, error };
+export function fail(error: string, requestId?: string): ParsedClientCommand {
+  return { ok: false, error, ...(requestId ? { requestId } : {}) };
 }
 
 export function isApiProxyMethod(value: unknown): value is "GET" | "POST" | "PUT" | "PATCH" | "DELETE" {

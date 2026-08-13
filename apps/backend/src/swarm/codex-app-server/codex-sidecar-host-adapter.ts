@@ -31,6 +31,12 @@ export interface CodexSidecarHostAdapterDeps {
   emitAgentMessage: (event: AgentMessageEvent) => void;
   emitAgentToolCall: (event: AgentToolCallEvent) => void;
   emitStatus: (agentId: string, status: AgentStatus, pendingCount: number) => void;
+  reportAttentionStatusTransition: (input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+    transitionedAt: string;
+  }) => Promise<void>;
   emitAgentsSnapshot: () => void;
   emitProfilesSnapshot: () => void;
   listWorkersForSession: (sessionAgentId: string) => AgentDescriptor[];
@@ -65,6 +71,7 @@ export function createCodexSidecarHostAdapter(
     emitAgentMessage: deps.emitAgentMessage,
     emitAgentToolCall: deps.emitAgentToolCall,
     emitStatus: deps.emitStatus,
+    reportAttentionStatusTransition: deps.reportAttentionStatusTransition,
     emitAgentsSnapshot: deps.emitAgentsSnapshot,
     emitProfilesSnapshot: deps.emitProfilesSnapshot,
     listWorkersForSession: deps.listWorkersForSession,

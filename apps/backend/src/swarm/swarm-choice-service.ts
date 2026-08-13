@@ -24,6 +24,12 @@ export interface SwarmChoiceServiceOptions {
   getDescriptor: (agentId: string) => AgentDescriptor | undefined;
   emitChoiceRequest: (event: ChoiceRequestEvent) => void;
   emitAgentsSnapshot: () => void;
+  /**
+   * Notifies session attention after the pending-choice map has been mutated.
+   * A pending choice blocks quiescence, so resolving the last one may complete
+   * an otherwise qualified epoch. It never supplies a reason and cannot arm.
+   */
+  reportAttentionAggregateChange?: (sessionAgentId: string) => void | Promise<void>;
 }
 
 export class SwarmChoiceService {
@@ -62,6 +68,8 @@ export class SwarmChoiceService {
       this.options.emitChoiceRequest(this.buildChoiceRequestEvent(pending, "pending"));
       this.pendingChoiceRequests.set(choiceId, pending);
       this.options.emitAgentsSnapshot();
+      // A newly pending choice blocks quiescence for this session.
+      void this.options.reportAttentionAggregateChange?.(sessionAgentId);
     });
 
     return { choiceId, promise };
@@ -84,6 +92,7 @@ export class SwarmChoiceService {
 
     pending.resolve(answers);
     this.options.emitAgentsSnapshot();
+    void this.options.reportAttentionAggregateChange?.(pending.sessionAgentId);
   }
 
   cancelChoiceRequest(choiceId: string, reason: Extract<ChoiceRequestStatus, "cancelled" | "expired">): void {
@@ -102,6 +111,7 @@ export class SwarmChoiceService {
 
     pending.reject(new ChoiceRequestCancelledError(reason));
     this.options.emitAgentsSnapshot();
+    void this.options.reportAttentionAggregateChange?.(pending.sessionAgentId);
   }
 
   cancelAllPendingChoicesForAgent(agentId: string): void {

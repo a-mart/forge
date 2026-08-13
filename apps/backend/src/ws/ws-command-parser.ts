@@ -94,6 +94,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "mark_all_read":
     case "resume_restart_recovery":
     case "dismiss_restart_recovery":
+    case "dismiss_session_attention":
     case "browser_tab_open":
     case "browser_tab_activate":
     case "browser_tab_close":

@@ -216,9 +216,10 @@ interface MiniVerticalGaugeProps {
   weeklyDeltaPercent: number | null
   providerColor: string
   label: string
+  roomsV2?: boolean
 }
 
-function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, providerColor, label }: MiniVerticalGaugeProps) {
+function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, providerColor, label, roomsV2 = false }: MiniVerticalGaugeProps) {
   const wp = typeof weeklyPercent === 'number' ? clamp(weeklyPercent, 0, 100) : 0
   // Weekly bar: use pace deficit status when available, fall back to raw % threshold
   const weeklyWarn = typeof weeklyDeltaPercent === 'number'
@@ -232,7 +233,7 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
           {/* Vertical bar track — fills from bottom */}
           <div
             className={cn('relative overflow-hidden rounded-sm', weeklyWarn ? 'bg-red-400/15' : 'bg-blue-400/15')}
-            style={{ width: VBAR_WIDTH, height: VBAR_HEIGHT }}
+            style={{ width: VBAR_WIDTH, height: roomsV2 ? 15 : VBAR_HEIGHT }}
           >
             <div
               className={cn(
@@ -245,7 +246,7 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
           {/* Provider color indicator dot */}
           <div
             className="rounded-full shrink-0"
-            style={{ width: INDICATOR_WIDTH, height: INDICATOR_HEIGHT, backgroundColor: providerColor }}
+            style={{ width: roomsV2 ? 3 : INDICATOR_WIDTH, height: roomsV2 ? 3 : INDICATOR_HEIGHT, backgroundColor: providerColor }}
           />
         </div>
       </TooltipTrigger>
@@ -259,7 +260,7 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
 
 /* ─── Mini bars trigger (goes in the toolbar) ─── */
 
-export function SidebarUsageRings({ providers, onToggle }: { providers: ProviderUsageStats | null; onToggle: () => void }) {
+export function SidebarUsageRings({ providers, onToggle, roomsV2 = false }: { providers: ProviderUsageStats | null; onToggle: () => void; roomsV2?: boolean }) {
   const rows = buildRows(providers)
   const availableRows = rows.filter((row) => row.usage?.available)
   if (availableRows.length === 0) return null
@@ -279,12 +280,12 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onToggle() }}
-      className="inline-flex items-center rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50"
-      style={{ gap: VBAR_GROUP_GAP }}
+      className={cn('inline-flex items-center rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50', roomsV2 && 'px-1 py-0.5')}
+      style={{ gap: roomsV2 ? 9 : VBAR_GROUP_GAP }}
       aria-label="Provider usage"
     >
       {groups.map((group) => (
-        <span key={group[0].provider} className="inline-flex items-center" style={{ gap: VBAR_INTRA_GAP }}>
+        <span key={group[0].provider} className="inline-flex items-center" style={{ gap: roomsV2 ? 5 : VBAR_INTRA_GAP }}>
           {group.map((row) => {
             const weeklyMetrics = getUsageMetrics(row.usage?.weeklyUsage, Date.now())
             return (
@@ -295,6 +296,7 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
                 weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
                 providerColor={PROVIDER_COLORS[row.provider] ?? '#6b7280'}
                 label={row.label}
+                roomsV2={roomsV2}
               />
             )
           })}

@@ -63,10 +63,19 @@ function createHarness() {
   const codexActivations: Array<CodexTurnActivation<TestGate, TestDelegation, TestRetry>> = [];
   const activeRoots = new Map<string, { rootTurnId: string; parentRootTurnId?: string }>();
   const managerToolActivity: string[] = [];
+  const attentionPendingCounts: number[] = [];
+  const attentionReleaseCounts: number[] = [];
   let nextTurn = 0;
-
   const coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
     descriptors,
+    attention: {
+      observePendingQueueChange: async (agentId) => {
+        attentionPendingCounts.push(coordinator.getPendingContextCount(agentId));
+      },
+      releaseContinuationBarrier: async (agentId) => {
+        attentionReleaseCounts.push(coordinator.getPendingContextCount(agentId));
+      },
+    },
     getRuntimeToken: (agentId) => runtimeTokens.get(agentId),
     ledger: {
       mintTurnId: async () => `turn-${++nextTurn}`,
@@ -159,6 +168,8 @@ function createHarness() {
     cleanFinals,
     codexActivations,
     managerToolActivity,
+    attentionPendingCounts,
+    attentionReleaseCounts,
   };
 }
 
@@ -183,6 +194,7 @@ describe("TurnContextCoordinator", () => {
       initiatedBy: "user-7",
     }]);
     expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+    expect(harness.attentionPendingCounts).toEqual([1]);
     expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe("turn-1");
     expect(harness.coordinator.getActiveTurnId("manager-1", 99)).toBeUndefined();
 
@@ -191,7 +203,28 @@ describe("TurnContextCoordinator", () => {
     handle.rollback();
 
     expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.attentionReleaseCounts).toEqual([0]);
     expect(harness.coordinator.getActiveTurnId("manager-1")).toBeUndefined();
+  });
+
+  it("keeps the accepted-turn barrier latched when provider dequeue precedes streaming", async () => {
+    const harness = createHarness();
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      runtimeMessageText: "[workerResult] result",
+    });
+    expect(harness.attentionPendingCounts).toEqual([1]);
+
+    // The provider accepts/dequeues the result while the descriptor can still
+    // read idle. This is continuation, not abandonment: releasing here would
+    // let an aggregate count-to-zero manufacture a false Needs You row.
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "[workerResult] result"),
+    );
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.attentionReleaseCounts).toEqual([]);
   });
 
   it("records typed worker results distinctly in the durable turn ledger", async () => {
@@ -279,6 +312,10 @@ describe("TurnContextCoordinator", () => {
     const coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
       descriptors: harness.descriptors,
       getRuntimeToken: () => undefined,
+      attention: {
+        observePendingQueueChange: async () => undefined,
+        releaseContinuationBarrier: async () => undefined,
+      },
       ledger: {
         mintTurnId: async () => "turn-fail-open",
         recordTurnDispatched: record,

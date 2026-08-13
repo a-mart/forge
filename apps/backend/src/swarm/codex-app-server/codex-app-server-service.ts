@@ -411,11 +411,22 @@ export class CodexAppServerService {
         source: "user_input",
       });
 
+      const previousStatus = descriptor.status;
+      const transitionedAt = this.host.now();
       descriptor.status = "streaming";
-      descriptor.updatedAt = this.host.now();
+      descriptor.updatedAt = transitionedAt;
       this.host.upsertDescriptor(descriptor);
       this.host.emitStatus(sidecarAgentId, "streaming", 0);
       this.host.emitAgentsSnapshot();
+      await this.host.saveStore();
+      if (previousStatus !== "streaming") {
+        await this.host.reportAttentionStatusTransition({
+          agentId: sidecarAgentId,
+          previousStatus,
+          nextStatus: "streaming",
+          transitionedAt,
+        });
+      }
 
       const client = await this.ensureSharedClient();
       const response = await client.request("turn/start", {
@@ -524,7 +535,7 @@ export class CodexAppServerService {
         }
       }
     } finally {
-      await this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.", "idle", undefined, true);
+      await this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.", "idle", undefined, true, false);
     }
   }
 
@@ -1017,6 +1028,7 @@ export class CodexAppServerService {
     descriptorStatus: "idle" | "error" = "idle",
     parentStatusOverride?: "completed" | "stopped" | "error",
     forcePriorTurnlessInvalidation = false,
+    reportAttention = true,
   ): Promise<void> {
     this.elicitationBroker.cancelForSidecar(sidecarAgentId);
     const descriptor = this.host.getDescriptor(sidecarAgentId);
@@ -1056,12 +1068,25 @@ export class CodexAppServerService {
     }
 
     if (descriptor && isExternalThreadDescriptor(descriptor)) {
+      const previousStatus = descriptor.status;
+      const transitionedAt = this.host.now();
       descriptor.status = descriptorStatus;
-      descriptor.updatedAt = this.host.now();
+      descriptor.updatedAt = transitionedAt;
       this.host.upsertDescriptor(descriptor);
       this.host.emitStatus(sidecarAgentId, descriptorStatus, 0);
       this.host.emitAgentsSnapshot();
-      await this.persistDescriptorUpdate(descriptor, descriptorStatus === "error" ? "turn_error" : "turn_cleared");
+      const persisted = await this.persistDescriptorUpdate(
+        descriptor,
+        descriptorStatus === "error" ? "turn_error" : "turn_cleared",
+      );
+      if (persisted && reportAttention && previousStatus !== descriptorStatus) {
+        await this.host.reportAttentionStatusTransition({
+          agentId: sidecarAgentId,
+          previousStatus,
+          nextStatus: descriptorStatus,
+          transitionedAt,
+        });
+      }
     }
 
     this.operationLock.release({ kind: "sidecar_turn", ownerId: sidecarAgentId });
@@ -1070,15 +1095,17 @@ export class CodexAppServerService {
   private async persistDescriptorUpdate(
     descriptor: AgentDescriptor,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.host.saveStore();
+      return true;
     } catch (error) {
       this.host.logDebug("Failed to persist Codex sidecar descriptor update", {
         sidecarAgentId: descriptor.agentId,
         reason,
         error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 

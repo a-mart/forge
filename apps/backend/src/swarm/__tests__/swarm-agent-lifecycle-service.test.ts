@@ -161,6 +161,7 @@ function baseLifecycleOptions(
       runtimes.set(agentId, runtime);
     }),
     saveStore: overrides.saveStore ?? vi.fn(async () => {}),
+    suppressSessionAttention: overrides.suppressSessionAttention ?? vi.fn(async () => {}),
     emitStatus: overrides.emitStatus ?? vi.fn(),
     emitAgentsSnapshot: overrides.emitAgentsSnapshot ?? vi.fn(),
     emitProfilesSnapshot: overrides.emitProfilesSnapshot ?? vi.fn(),
@@ -2698,6 +2699,9 @@ describe("SwarmAgentLifecycleService", () => {
     const saveStore = vi.fn(async () => {
       order.push("store");
     });
+    const suppressSessionAttention = vi.fn(async () => {
+      order.push("attention");
+    });
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors: new Map([
@@ -2715,15 +2719,18 @@ describe("SwarmAgentLifecycleService", () => {
         },
         runRuntimeShutdown,
         saveStore,
+        suppressSessionAttention,
       }),
     );
 
     await svc.killAgent(manager.agentId, worker.agentId);
 
     expect(order).toEqual([
+      "attention",
       `runtime:${worker.agentId}`,
       "store",
     ]);
+    expect(suppressSessionAttention).toHaveBeenCalledWith(manager.agentId);
     expect(worker.status).toBe("terminated");
   });
 

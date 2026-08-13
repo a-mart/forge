@@ -79,6 +79,7 @@ function createHost(): CodexSidecarHost {
     emitAgentMessage: () => {},
     emitAgentToolCall: () => {},
     emitStatus: () => {},
+    reportAttentionStatusTransition: async () => {},
     emitAgentsSnapshot: () => {},
     emitProfilesSnapshot: () => {},
     listWorkersForSession: () => [],

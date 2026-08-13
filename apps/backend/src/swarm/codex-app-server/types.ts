@@ -35,6 +35,12 @@ export interface CodexSidecarHost {
   emitAgentMessage(event: AgentMessageEvent): void;
   emitAgentToolCall(event: AgentToolCallEvent): void;
   emitStatus(agentId: string, status: AgentStatus, pendingCount: number): void;
+  reportAttentionStatusTransition(input: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+    transitionedAt: string;
+  }): Promise<void>;
   emitAgentsSnapshot(): void;
   emitProfilesSnapshot(): void;
   listWorkersForSession(sessionAgentId: string): AgentDescriptor[];

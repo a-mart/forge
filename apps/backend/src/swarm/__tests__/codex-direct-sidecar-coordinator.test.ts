@@ -237,6 +237,7 @@ class CoordinatorHarness {
     emitAgentMessage: vi.fn(),
     emitAgentToolCall: vi.fn(),
     emitStatus: vi.fn(),
+    reportAttentionStatusTransition: vi.fn(async () => undefined),
     emitAgentsSnapshot: vi.fn(),
     emitProfilesSnapshot: vi.fn(),
     listWorkersForSession: (managerAgentId) =>
@@ -278,6 +279,7 @@ function createNoopAppServerHost(): CodexSidecarHost {
     emitAgentMessage: () => {},
     emitAgentToolCall: () => {},
     emitStatus: () => {},
+    reportAttentionStatusTransition: async () => {},
     emitAgentsSnapshot: () => {},
     emitProfilesSnapshot: () => {},
     listWorkersForSession: () => [],

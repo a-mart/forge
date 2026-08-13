@@ -33,6 +33,7 @@ import {
   buildCreateSessionCommand,
   buildDeleteManagerCommand,
   buildDeleteProjectAgentReferenceCommand,
+  buildDismissSessionAttentionCommand,
   buildForkSessionCommand,
   buildGetProjectAgentConfigCommand,
   buildGetProjectAgentExternalDirectoryCommand,
@@ -161,6 +162,7 @@ import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-h
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
 import { handleGenerationThroughputEvent } from './ws-client/event-handlers/generation-throughput-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
+import { handleSessionAttentionEvent } from './ws-client/event-handlers/session-attention-event-handlers'
 import { handleProjectAgentEvent } from './ws-client/event-handlers/project-agent-event-handlers'
 import { handleConfigEvent } from './ws-client/event-handlers/config-event-handlers'
 import { handleDirectoryEvent } from './ws-client/event-handlers/directory-event-handlers'
@@ -189,6 +191,7 @@ import type {
   ManagerReasoningLevel,
   ServerEvent,
   SecureSessionSnapshot,
+  SessionAttentionUpdateEvent,
   SessionMemoryMergeResult,
 } from '@forge/protocol'
 
@@ -365,6 +368,17 @@ export class ManagerWsClient {
       this.updateState({ unreadCounts: nextUnread })
     }
     this.send(buildMarkAllReadCommand(profileId))
+  }
+
+  dismissSessionAttention(attentionIds: string[]): Promise<SessionAttentionUpdateEvent> {
+    if (!this.state.sessionAttentionAvailable) {
+      return Promise.reject(new Error('Session attention is not supported by this origin.'))
+    }
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest(
+      'dismiss_session_attention',
+      (requestId) => buildDismissSessionAttentionCommand(attentionIds, requestId),
+    )
   }
 
   resumeRestartRecovery(): void {
@@ -1500,6 +1514,9 @@ export class ManagerWsClient {
       secureSecretCatalogRevision: null,
       secureSessionSnapshots: {},
       secureSessionSnapshotLoadingSessionId: this.desiredAgentId,
+      sessionAttentionAvailable: false,
+      sessionAttentionRevision: -1,
+      sessionAttentions: {},
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
       workerMetadataSessionIds: new Set(),
@@ -1655,11 +1672,26 @@ export class ManagerWsClient {
       })
     }
 
+    if (
+      this.bootstrapBuffer.active
+      && event.type === 'session_attention_update'
+      && event.requestId
+    ) {
+      this.requestDispatcher.tracker.resolve('dismiss_session_attention', event.requestId, event)
+    }
+
     if (this.bootstrapBuffer.active) {
       const consumed = this.bootstrapBuffer.handleEvent(event)
       if (consumed) return
     }
 
+    if (handleSessionAttentionEvent(event, {
+      state: this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestTracker: this.requestDispatcher.tracker,
+    })) {
+      return
+    }
 
     if (handleBrowserEvent(event, {
       state: this.state,
@@ -1899,6 +1931,7 @@ export class ManagerWsClient {
         connected: true,
         targetAgentId: eventAgentId,
         subscribedAgentId: eventAgentId,
+        sessionAttentionAvailable: event.sessionAttention === true,
         conversationPresentation: presentation,
         conversationBootstrap: {
           ...current,
@@ -2181,7 +2214,9 @@ export class ManagerWsClient {
       .filter((agent) => agent.agentId === agentId || agent.managerId === agentId)
       .map((agent) => agent.agentId)
     const throughputCleanup = clearGenerationThroughputForAgents(this.state, removedAgentIds)
-    const patch = { ...result.patch, ...throughputCleanup }
+    const sessionAttentions = { ...this.state.sessionAttentions }
+    delete sessionAttentions[agentId]
+    const patch = { ...result.patch, ...throughputCleanup, sessionAttentions }
 
     if (result.subscribeToAgentId) {
       this.beginConversationSubscription({

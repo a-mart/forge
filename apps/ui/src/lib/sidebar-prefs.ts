@@ -2,9 +2,12 @@ const MODEL_ICONS_KEY = 'forge-sidebar-model-icons'
 const PROVIDER_USAGE_KEY = 'forge-sidebar-provider-usage'
 export const HIDE_CLI_SESSIONS_KEY = 'forge-sidebar-hide-cli-sessions'
 export const CONVERSATION_THROUGHPUT_DISPLAY_KEY = 'forge-conversation-throughput-display'
+export const SIDEBAR_LAYOUT_KEY = 'forge-sidebar-layout'
 export const PREFERENCE_CHANGE_EVENT = 'forge-sidebar-pref-change'
 
-function dispatchSidebarPrefChange(key: string, value: boolean): void {
+export type SidebarLayout = 'classic' | 'rooms-v2'
+
+function dispatchSidebarPrefChange(key: string, value: boolean | SidebarLayout): void {
   window.dispatchEvent(new CustomEvent(PREFERENCE_CHANGE_EVENT, { detail: { key, value } }))
 }
 
@@ -58,6 +61,24 @@ export function storeHideCliSessionsPref(hidden: boolean): void {
   } catch {
     // Ignore localStorage write failures
   }
+}
+
+/** Presentation-only rollout seam. Unset installations retain the classic sidebar. */
+export function readSidebarLayoutPref(): SidebarLayout {
+  try {
+    return localStorage.getItem(SIDEBAR_LAYOUT_KEY) === 'rooms-v2' ? 'rooms-v2' : 'classic'
+  } catch {
+    return 'classic'
+  }
+}
+
+export function storeSidebarLayoutPref(layout: SidebarLayout): void {
+  try {
+    localStorage.setItem(SIDEBAR_LAYOUT_KEY, layout)
+  } catch {
+    // Keep the in-memory UI responsive even when browser persistence is unavailable.
+  }
+  dispatchSidebarPrefChange(SIDEBAR_LAYOUT_KEY, layout)
 }
 
 /** Conversation-only presentation preference. Unset installations stay hidden. */

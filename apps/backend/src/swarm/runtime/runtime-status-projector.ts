@@ -43,13 +43,22 @@ export interface RuntimeStatusProjectionInput {
   contextUsage?: AgentContextUsage;
 }
 
+export interface RuntimeStatusProjectionResult {
+  transition?: {
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+    transitionedAt: string;
+  };
+}
+
 export class RuntimeStatusProjector {
   constructor(private readonly deps: RuntimeStatusProjectorDeps) {}
 
-  async projectStatus(input: RuntimeStatusProjectionInput): Promise<void> {
+  async projectStatus(input: RuntimeStatusProjectionInput): Promise<RuntimeStatusProjectionResult> {
     const { agentId, status, pendingCount, contextUsage } = input;
     const descriptor = this.deps.descriptors.get(agentId);
-    if (!descriptor) return;
+    if (!descriptor) return {};
 
     const normalizedContextUsage = normalizeContextUsage(contextUsage);
     const contextUsageChanged = !areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage);
@@ -63,9 +72,10 @@ export class RuntimeStatusProjector {
     const previousStatus = descriptor.status;
     const nextStatus = transitionAgentStatus(previousStatus, status);
     const statusChanged = previousStatus !== nextStatus;
+    const transitionedAt = statusChanged ? this.deps.now() : undefined;
     if (statusChanged) {
       descriptorPatch.status = nextStatus;
-      descriptorPatch.updatedAt = this.deps.now();
+      descriptorPatch.updatedAt = transitionedAt;
       shouldPersist = true;
     }
 
@@ -128,5 +138,9 @@ export class RuntimeStatusProjector {
       // Runtime callbacks may execute inside the runtime's serialized event queue.
       // Deferred replacement is applied before the next runtime use, never here.
     }
+
+    return statusChanged
+      ? { transition: { agentId, previousStatus, nextStatus, transitionedAt: transitionedAt! } }
+      : {};
   }
 }

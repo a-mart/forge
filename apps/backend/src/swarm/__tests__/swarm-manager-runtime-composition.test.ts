@@ -107,6 +107,13 @@ function createOptions(late: ReturnType<typeof vi.fn>): SwarmManagerRuntimeCompo
       observability,
     },
     toolHost: toolHost(),
+    attention: {
+      reportStatusTransition: late,
+      suppressWorkingEpoch: late,
+      retireSession: late,
+      reportPendingTurn: late,
+      reportContinuationAbandoned: late,
+    },
     descriptors: {
       upsertDescriptor: late,
       deleteDescriptor: late,

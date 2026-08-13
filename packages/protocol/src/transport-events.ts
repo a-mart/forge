@@ -12,6 +12,8 @@ export interface ReadyEvent extends SubscriptionCorrelation {
   subscribedAgentId: string
   /** Echoes acceptance of request-correlated session goal controls. */
   goalControlRequestId?: true
+  /** Server-owned session attention is available on this Builder origin. */
+  sessionAttention?: true
 }
 
 export interface ConversationResetEvent {

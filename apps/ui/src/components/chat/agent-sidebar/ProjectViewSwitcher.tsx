@@ -40,6 +40,8 @@ interface ProjectViewSwitcherProps {
     activate?: boolean
   }) => string
   onDeleteView: (viewId: string) => void
+  /** Compact chip for the Rooms command row. */
+  compact?: boolean
 }
 
 interface EditorState {
@@ -53,6 +55,7 @@ export function ProjectViewSwitcher({
   onSelectView,
   onSaveView,
   onDeleteView,
+  compact = false,
 }: ProjectViewSwitcherProps) {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const availableKeys = useMemo(() => new Set(options.map((option) => option.key)), [options])
@@ -60,13 +63,15 @@ export function ProjectViewSwitcher({
 
   return (
     <>
-      <div className="px-2 pb-1">
+      <div className={compact ? 'shrink-0' : 'px-2 pb-1'}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
               className={cn(
-                'flex h-7 w-full items-center gap-2 rounded-md border px-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                compact
+                  ? 'flex h-6 max-w-28 items-center gap-1 rounded-md border px-1.5 text-left text-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60'
+                  : 'flex h-7 w-full items-center gap-2 rounded-md border px-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 activeView
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300'
                   : 'border-sidebar-border bg-sidebar-accent/20 text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
@@ -78,12 +83,14 @@ export function ProjectViewSwitcher({
               ) : (
                 <ListFilter className="size-3.5 shrink-0" aria-hidden="true" />
               )}
-              <span className="min-w-0 flex-1 truncate font-medium">
+              <span className={cn('min-w-0 flex-1 truncate font-medium', compact && 'max-w-20')}>
                 {activeView?.name ?? 'All projects'}
               </span>
-              <span className="shrink-0 text-[10px] opacity-70">
-                {activeView ? activeAvailableCount : options.length}
-              </span>
+              {!compact ? (
+                <span className="shrink-0 text-[10px] opacity-70">
+                  {activeView ? activeAvailableCount : options.length}
+                </span>
+              ) : null}
               <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
             </button>
           </DropdownMenuTrigger>

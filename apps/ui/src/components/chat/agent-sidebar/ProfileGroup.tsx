@@ -3,6 +3,7 @@ import {
   BellOff,
   CheckCheck,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Edit3,
   Ellipsis,
@@ -22,16 +23,18 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { isCortexProfile } from '@/lib/agent-hierarchy'
 import type { SessionRow } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
-import { SidebarModelIcon } from './shared'
+import { SidebarModelIcon, SidebarRoomAvatar } from './shared'
 import { SessionRowItem } from './SessionRowItem'
 import { InactiveRepoProjectAgentRow } from './InactiveRepoProjectAgentRow'
 import { MAX_VISIBLE_SESSIONS } from './constants'
+import { getProjectRoomSummary } from './utils'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { ProfileGroupProps } from './types'
 
 export const ProfileGroup = React.memo(function ProfileGroup({
   treeRow,
   statuses,
+  roomsV2 = false,
   unreadCounts,
   selectedAgentId,
   isSettingsActive,
@@ -88,6 +91,12 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0 || inactiveRepoProjectAgents.length > 0
   const defaultSession = sessions.find((s) => s.isDefault)
+  const roomSummary = roomsV2
+    ? getProjectRoomSummary(sessions, statuses, unreadCounts, {
+        hideCliSessions,
+        selectedAgentId,
+      })
+    : null
 
   // Profile summary for tooltip
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
@@ -110,11 +119,19 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   }
 
   return (
-    <>
-      {/* Profile header — row click expands/collapses; no dedicated chevron */}
+    <div
+      data-room-card={roomsV2 ? 'local' : undefined}
+      className={roomsV2 ? 'sidebar-room-card' : undefined}
+    >
+      {/* Profile header — row click expands/collapses; no dedicated chevron in Classic. */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="group relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
+          {/* `group` is required in both layouts: the project-actions button
+              reveals on group-hover. */}
+          <div className={cn(
+            'group relative flex items-center',
+            roomsV2 ? 'sidebar-room-header' : 'rounded-lg border border-white/[0.04] bg-white/[0.03]',
+          )}>
             <TooltipProvider delayDuration={400}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -127,13 +144,26 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     aria-expanded={!isCollapsed}
                     onClick={() => onToggleProfileCollapsed()}
                     className={cn(
-                      'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-2.5 pr-1.5 text-left transition-colors',
+                      'flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left transition-colors',
+                      roomsV2 ? 'py-1.5 pl-2 pr-1' : 'py-1.5 pl-2.5 pr-1.5',
                       'hover:bg-sidebar-accent/50',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                       dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
                     )}
                     style={dragHandleListeners ? { touchAction: 'none' } : undefined}
                   >
+                    {roomsV2 ? (
+                      isCollapsed
+                        ? <ChevronRight className="size-3 shrink-0 text-[var(--sidebar-room-muted)]" aria-hidden="true" />
+                        : <ChevronDown className="size-3 shrink-0 text-[var(--sidebar-room-muted)]" aria-hidden="true" />
+                    ) : null}
+                    {roomsV2 ? (
+                      <SidebarRoomAvatar
+                        label={profile.displayName}
+                        toneKey={profile.profileId}
+                        className="sidebar-room-project-avatar"
+                      />
+                    ) : null}
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                       {profile.displayName}
                     </span>
@@ -154,6 +184,24 @@ export const ProfileGroup = React.memo(function ProfileGroup({
               </Tooltip>
             </TooltipProvider>
 
+            {roomsV2 && roomSummary?.unreadCount ? (
+              <span
+                className="sidebar-room-unread-badge"
+                aria-label={`${roomSummary.unreadCount} unread message${roomSummary.unreadCount === 1 ? '' : 's'} in ${profile.displayName}`}
+              >
+                {roomSummary.unreadCount > 99 ? '99+' : roomSummary.unreadCount}
+              </span>
+            ) : null}
+            {roomsV2 && roomSummary ? (
+              <span
+                className="sidebar-room-counter"
+                aria-label={`${roomSummary.activeSessionCount} of ${roomSummary.visibleSessionCount} sessions actively working`}
+              >
+                {roomSummary.activeSessionCount}/{roomSummary.visibleSessionCount}
+              </span>
+            ) : null}
+
+            {/* Project actions came from main; it must stay available in Rooms too. */}
             {onOpenProjectSettings && !isCortexProfile(treeRow) ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -191,7 +239,9 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                         onCreateSession(profile.profileId)
                       }}
                       className={cn(
-                        'mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition',
+                        roomsV2
+                          ? 'sidebar-room-new-session'
+                          : 'mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition',
                         'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                       )}
@@ -294,7 +344,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
 
       {/* Sessions list */}
       {!isCollapsed && hasAnySessions ? (
-        <div className="relative mt-1">
+        <div className={roomsV2 ? 'relative mt-0.5' : 'relative mt-1'}>
           {(() => {
             // Build a set of all session agentIds in this profile for existence checks
             const sessionAgentIds = new Set(sessions.map((s) => s.sessionAgent.agentId))
@@ -383,6 +433,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   key={sid}
                   session={session}
                   statuses={statuses}
+                  roomsV2={roomsV2}
                   unreadCount={unreadCounts[sid] ?? 0}
                   selectedAgentId={selectedAgentId}
                   isSettingsActive={isSettingsActive}
@@ -427,7 +478,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
 
             return (
               <>
-                <ul className="space-y-0.5">
+                <ul className={roomsV2 ? 'space-y-px' : 'space-y-0.5'}>
                   {/* Project agents always pinned at top */}
                   {projectAgentSessions.map(renderSession)}
                   {visibleInactiveRepoProjectAgents.map((entry) => (
@@ -481,6 +532,6 @@ export const ProfileGroup = React.memo(function ProfileGroup({
           })()}
         </div>
       ) : null}
-    </>
+    </div>
   )
 })

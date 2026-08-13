@@ -78,6 +78,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   set_project_agent_sharing: "write",
   fork_session: "write",
   clear_session: "write",
+  dismiss_session_attention: "write",
   session_goal_control: "write",
   pin_message: "write",
   clear_all_pins: "write",

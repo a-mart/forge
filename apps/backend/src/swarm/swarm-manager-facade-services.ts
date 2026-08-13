@@ -1,5 +1,6 @@
 import type { AgentMessageDispatcher } from "./agent-message-dispatcher.js";
 import type { AgentDirectory } from "./agent-directory.js";
+import type { SessionAttentionCoordinator } from "./session/session-attention-coordinator.js";
 import type { AssistantOutputRouter } from "./assistant-output-router.js";
 import type { CodexDirectSidecarCoordinator } from "./codex-app-server/codex-direct-sidecar-coordinator.js";
 import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-plugin-delegation-coordinator.js";
@@ -99,6 +100,11 @@ export interface SwarmManagerSessionFacadeServices {
 export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeServices {
   secureSessions: SecureSessionsService;
   boot: Pick<SwarmBootCoordinator, "boot">;
+  /** Loaded/reconciled during boot; public facade exposes only read/dismiss. */
+  sessionAttention: Pick<
+    SessionAttentionCoordinator,
+    "initialize" | "getSnapshot" | "dismissAttentionIds"
+  >;
   recovery: Pick<RestartRecoveryCoordinator, "dismiss" | "getSnapshot" | "resume">;
   configuration: SwarmConfigurationCoordinator;
   registry: {

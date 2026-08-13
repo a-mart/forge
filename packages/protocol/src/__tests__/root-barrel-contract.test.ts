@@ -14,6 +14,9 @@ import {
   isCatalogModelId,
   isConversationMessageSource,
   isUserVisibleAssistantConversationMessage,
+  SESSION_ATTENTION_MAX_DISMISS_IDS,
+  SESSION_ATTENTION_MAX_ID_LENGTH,
+  SESSION_ATTENTION_REASONS,
   SESSION_AUDIT_ENTRY_CATEGORIES,
   WS_REQUEST_CONTRACT_TYPES,
   WS_REQUEST_CONTRACTS,
@@ -40,6 +43,8 @@ import type {
   MessageChannel,
   ResolvedSpecialistDefinition,
   ServerEvent,
+  DismissSessionAttentionCommand,
+  SessionAttention,
   SessionAuditPageResponse,
   TerminalDescriptor,
   TerminalMeta,
@@ -105,6 +110,7 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'get_project_agent_external_directory',
   'fork_session',
   'clear_session',
+  'dismiss_session_attention',
   'session_goal_control',
   'pin_message',
   'clear_all_pins',
@@ -172,6 +178,7 @@ const REQUEST_ID_COMMAND_TYPES = [
   'get_project_agent_external_directory',
   'fork_session',
   'clear_session',
+  'dismiss_session_attention',
   'session_goal_control',
   'merge_session_memory',
   'get_session_workers',
@@ -485,6 +492,17 @@ const serverEventsByLeafModule = [
     requestId: 'request-plan-snapshot',
   },
   {
+    type: 'session_attention_snapshot',
+    revision: 1,
+    attentions: [{ attentionId: 'attention-1', sessionAgentId: agent.agentId, profileId: profile.profileId, reason: 'work_settled', raisedAt: now }],
+  },
+  {
+    type: 'session_attention_update',
+    revision: 2,
+    changes: [{ sessionAgentId: agent.agentId, attention: null }],
+    requestId: 'request-dismiss-attention',
+  },
+  {
     type: 'plan_summary',
     id: 'plan-summary-1',
     agentId: agent.agentId,
@@ -561,6 +579,7 @@ const requestIdCommands = [
   { type: 'get_project_agent_external_directory', requestId: 'request-21c' },
   { type: 'fork_session', sourceAgentId: agent.agentId, requestId: 'request-22' },
   { type: 'clear_session', agentId: agent.agentId, requestId: 'request-23' },
+  { type: 'dismiss_session_attention', attentionIds: ['attention-1'], requestId: 'request-dismiss-attention' },
   { type: 'session_goal_control', agentId: agent.agentId, action: 'pause', requestId: 'request-goal-control' },
   { type: 'merge_session_memory', agentId: agent.agentId, requestId: 'request-24' },
   { type: 'get_session_workers', sessionAgentId: agent.agentId, requestId: 'request-25' },
@@ -618,6 +637,7 @@ describe('protocol root barrel contract', () => {
       'pick_directory',
       'get_session_workers',
       'get_conversation_page',
+      'dismiss_session_attention',
       'rename_profile',
       'archive_profile',
       'restore_profile',
@@ -662,6 +682,7 @@ describe('protocol root barrel contract', () => {
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.commandType === 'create_repository_project' ||
         contract.commandType === 'get_conversation_page' ||
+        contract.commandType === 'dismiss_session_attention' ||
         contract.commandType.startsWith('browser_')
           ? contract.requestId.wire === 'required'
           : contract.requestId.wire === 'optional',
@@ -688,6 +709,13 @@ describe('protocol root barrel contract', () => {
       requestId: { ui: 'required', wire: 'required' },
       successEvents: ['conversation_page'],
       errorCodeFragments: ['get_conversation_page'],
+    })
+    expect(getWsRequestContract('dismiss_session_attention')).toMatchObject({
+      commandType: 'dismiss_session_attention',
+      resultFamily: 'session_attention_update',
+      requestId: { ui: 'required', wire: 'required' },
+      successEvents: ['session_attention_update'],
+      errorCodeFragments: ['dismiss_session_attention'],
     })
     expect(getWsRequestContract('rename_profile')).toMatchObject({
       commandType: 'rename_profile',
@@ -998,6 +1026,26 @@ describe('protocol root barrel contract', () => {
     expect(initialModelInputResponse.initialModelInput.tokenUsage?.inputTokens).toBe(1_200)
   })
 
+  it('exports session-attention contracts from the root barrel', () => {
+    const attention = {
+      attentionId: 'attention-1',
+      sessionAgentId: agent.agentId,
+      profileId: profile.profileId,
+      reason: 'work_settled',
+      raisedAt: now,
+    } satisfies SessionAttention
+    const dismiss = {
+      type: 'dismiss_session_attention',
+      attentionIds: [attention.attentionId],
+      requestId: 'request-dismiss-attention',
+    } satisfies DismissSessionAttentionCommand
+
+    expect(SESSION_ATTENTION_MAX_DISMISS_IDS).toBe(100)
+    expect(SESSION_ATTENTION_MAX_ID_LENGTH).toBe(256)
+    expect(SESSION_ATTENTION_REASONS).toContain(attention.reason)
+    expect(dismiss.attentionIds).toEqual([attention.attentionId])
+  })
+
   it('exports session audit protocol contracts from the root barrel', () => {
     expect(SESSION_AUDIT_ENTRY_CATEGORIES).toContain('malformed')
     expect(auditPage.sourceKind).toBe('canonical_session_jsonl')
@@ -1018,7 +1066,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>(undefined as never).toEqualTypeOf<never>(undefined as never)
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>(undefined as never).toEqualTypeOf<never>(undefined as never)
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(75)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(76)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -1029,7 +1077,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>(undefined as never).toEqualTypeOf<never>(undefined as never)
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>(undefined as never).toEqualTypeOf<never>(undefined as never)
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(56)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(57)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)
@@ -1064,6 +1112,8 @@ describe('protocol root barrel contract', () => {
       'session_project_agent_updated',
       'session_workers_snapshot',
       'session_plan_snapshot',
+      'session_attention_snapshot',
+      'session_attention_update',
       'plan_summary',
       'directories_listed',
       'directory_created',

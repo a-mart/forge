@@ -1,3 +1,4 @@
+import type { BuilderInstanceCapabilities } from "@forge/protocol";
 import type { HttpRoute } from "../shared/http-route.js";
 import type { CollaborationSettingsService } from "../../../collaboration/settings-service.js";
 import type { CollaborationReadinessRequestService } from "../../../collaboration/readiness-service.js";
@@ -32,7 +33,7 @@ export function createCollaborationRoutes(options: {
     instanceName: string;
     forgeVersion: string;
     protocolVersion: number;
-    capabilities: { collab: boolean; remoteBuild: boolean; createDirectory?: boolean };
+    capabilities: BuilderInstanceCapabilities;
   };
 }): HttpRoute[] {
   const getServices = createCollaborationRouteServicesGetter(options);

@@ -5,7 +5,7 @@ import { useHelp } from '@/components/help/help-hooks'
 import { cn } from '@/lib/utils'
 import type { ProviderUsageStats } from '@forge/protocol'
 
-function HelpButton() {
+function HelpButton({ roomsV2 = false }: { roomsV2?: boolean }) {
   const { isDrawerOpen, openDrawer } = useHelp()
 
   return (
@@ -15,7 +15,9 @@ function HelpButton() {
           type="button"
           onClick={() => openDrawer('chat.main')}
           className={cn(
-            'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+            roomsV2
+              ? 'inline-flex size-7 items-center justify-center rounded-[8px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60'
+              : 'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
             isDrawerOpen
               ? 'bg-sidebar-accent text-sidebar-accent-foreground'
               : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
@@ -35,6 +37,8 @@ function HelpButton() {
 interface SidebarFooterProps {
   isSettingsActive: boolean
   isStatsActive: boolean
+  /** Rooms-only footer layout; Classic remains byte-for-byte in its established branch. */
+  roomsV2?: boolean
   showProviderUsage: boolean
   providerUsage: ProviderUsageStats | null
   providerUsageLoading: boolean
@@ -49,6 +53,7 @@ interface SidebarFooterProps {
 export function SidebarFooter({
   isSettingsActive,
   isStatsActive,
+  roomsV2 = false,
   showProviderUsage,
   providerUsage,
   providerUsageLoading,
@@ -59,30 +64,40 @@ export function SidebarFooter({
   onOpenSettings,
   onOpenStats,
 }: SidebarFooterProps) {
+  const usageSplit = roomsV2 ? '52%' : '38%'
+  const controlClass = roomsV2
+    ? 'inline-flex size-7 items-center justify-center rounded-[8px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60'
+    : 'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60'
+
   return (
     <>
       {showProviderUsage ? (
         <SidebarUsagePanel providers={providerUsage} open={usagePanelOpen} onClose={onCloseUsagePanel} loading={providerUsageLoading} onRefresh={onRefetchProviderUsage} />
       ) : null}
 
-      <div className="relative shrink-0 border-t border-sidebar-border">
-        {showProviderUsage ? (
-          <>
-            <div className="absolute inset-y-0 left-0 z-10 flex items-center justify-center" style={{ width: '38%' }}>
-              <SidebarUsageRings providers={providerUsage} onToggle={onToggleUsagePanel} />
-            </div>
-            <div className="absolute top-0 bottom-0 w-px bg-sidebar-border" style={{ left: '38%' }} />
-          </>
-        ) : null}
-        <TooltipProvider delayDuration={200}>
-          <div className="flex items-center px-2 py-1.5" style={showProviderUsage ? { paddingLeft: 'calc(38% + 8px)', justifyContent: 'space-evenly' } : { justifyContent: 'center', gap: '4px' }}>
+      <TooltipProvider delayDuration={200}>
+        <div className="relative shrink-0 border-t border-sidebar-border" data-testid={roomsV2 ? 'rooms-sidebar-footer' : undefined}>
+          {showProviderUsage ? (
+            <>
+              <div className="absolute inset-y-0 left-0 z-10 flex items-center justify-center" style={{ width: usageSplit }}>
+                <SidebarUsageRings providers={providerUsage} onToggle={onToggleUsagePanel} roomsV2={roomsV2} />
+              </div>
+              <div className="absolute top-0 bottom-0 w-px bg-sidebar-border" style={{ left: usageSplit }} />
+            </>
+          ) : null}
+          <div
+            className={cn('flex items-center px-2 py-1.5', roomsV2 && 'py-1')}
+            style={showProviderUsage
+              ? { paddingLeft: `calc(${usageSplit} + 8px)`, justifyContent: 'space-evenly' }
+              : { justifyContent: 'center', gap: '4px' }}
+          >
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={onOpenStats}
                   className={cn(
-                    'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    controlClass,
                     isStatsActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
@@ -101,7 +116,7 @@ export function SidebarFooter({
                   type="button"
                   onClick={onOpenSettings}
                   className={cn(
-                    'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    controlClass,
                     isSettingsActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
@@ -115,10 +130,10 @@ export function SidebarFooter({
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
             </Tooltip>
-            <HelpButton />
+            <HelpButton roomsV2={roomsV2} />
           </div>
-        </TooltipProvider>
-      </div>
+        </div>
+      </TooltipProvider>
     </>
   )
 }

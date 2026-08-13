@@ -428,6 +428,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
@@ -441,6 +442,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     expect(getEventTypes(sentEvents)).toEqual([
       'ready',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
@@ -548,6 +550,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     expect(getEventTypes(sentEvents)).toEqual([
       'ready',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
@@ -1426,6 +1429,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
@@ -1435,6 +1439,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
+      'session_attention_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',

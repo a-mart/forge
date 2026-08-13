@@ -71,31 +71,14 @@ import type {
   SwarmConfig,
 } from "./types.js";
 import type { ResolvedSpecialistDefinitionLike } from "./prompt-resource-coordinator.js";
+import type {
+  RuntimeCompositionAttentionHooks,
+  RuntimeCompositionDescriptorMutations,
+} from "./swarm-manager-runtime-composition-ports.js";
+
+export type { RuntimeCompositionDescriptorMutations } from "./swarm-manager-runtime-composition-ports.js";
 
 type RuntimeHost = SwarmRuntimeControllerHostAdapterOptions;
-export interface RuntimeCompositionDescriptorMutations {
-  upsertDescriptor(descriptor: AgentDescriptor): void;
-  deleteDescriptor(agentId: string): void;
-  upsertProfile(profile: ManagerProfile): void;
-  deleteProfile(profileId: string): void;
-  patchDescriptor(
-    agentId: string,
-    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor),
-  ): Promise<AgentDescriptor>;
-  patchDescriptorFromRuntimeStatus(
-    agentId: string,
-    patch: Partial<AgentDescriptor>,
-  ): Promise<AgentDescriptor | undefined>;
-  transactionPatchDescriptor(
-    agentId: string,
-    patch: (descriptor: AgentDescriptor) => AgentDescriptor,
-    options?: { saveMode?: "rollback" | "best-effort"; onSaveError?: (error: unknown) => void },
-  ): Promise<AgentDescriptor | undefined>;
-  patchDescriptorInLiveMaps(
-    agentId: string,
-    patch: (descriptor: AgentDescriptor) => AgentDescriptor,
-  ): AgentDescriptor | undefined;
-}
 export interface RuntimeCompositionEvents {
   emitConversationMessage: RuntimeHost["emitConversationMessage"];
   markSessionActivity: RuntimeHost["markSessionActivity"];
@@ -240,6 +223,7 @@ export interface SwarmManagerRuntimeCompositionOptions {
   };
   toolHost: SwarmToolHost;
   browserAutomation: BrowserAutomationService;
+  attention: RuntimeCompositionAttentionHooks;
   secureSessions: SecureSessionCoordinatorPort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
@@ -483,6 +467,8 @@ export class SwarmManagerRuntimeComposition {
         this.requireServices().knowledge.refreshSessionMetaStatsBySessionId(sessionId, sessionFile),
       refreshSessionMetaStats: (descriptor, sessionFile) =>
         this.requireServices().knowledge.refreshSessionMetaStats(descriptor, sessionFile),
+      reportAttentionStatusTransition: (input) =>
+        this.options.attention.reportStatusTransition(input),
       maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
         this.requireServices().configuration.maybeRecordModelCapacityBlock(agentId, descriptor, error),
       ...createRuntimeLifecycleControllerHostCallbacks(() => this.requireRuntimeLifecycle()),
@@ -558,6 +544,8 @@ export class SwarmManagerRuntimeComposition {
       publishToUser: messaging.publishToUser,
       terminateDescriptor: messaging.terminateDescriptor,
       saveStore: events.saveStore,
+      reportAttentionStatusTransition: (input) =>
+        this.options.attention.reportStatusTransition(input),
       emitAgentsSnapshot: events.emitAgentsSnapshot,
       isRuntimeInContextRecovery: (agentId) => this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.requireRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
@@ -632,6 +620,11 @@ export class SwarmManagerRuntimeComposition {
     >({
       descriptors: this.options.state.descriptors,
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      attention: {
+        observePendingQueueChange: (agentId) => this.options.attention.reportPendingTurn(agentId),
+        releaseContinuationBarrier: (agentId) =>
+          this.options.attention.reportContinuationAbandoned(agentId),
+      },
       ledger: {
         mintTurnId: (descriptor) => services.sessionMeta.mintTurnIdForDescriptor(descriptor),
         recordTurnDispatched: async (input) => {
@@ -723,6 +716,8 @@ export class SwarmManagerRuntimeComposition {
         this.modelChangeStartupRecovery.appendAppliedModelChangeContinuity(descriptor, request, runtime),
       attachRuntime: (agentId, runtime) => this.runtimeController.attachRuntime(agentId, runtime),
       saveStore: events.saveStore,
+      suppressSessionAttention: (sessionAgentId) =>
+        this.options.attention.suppressWorkingEpoch(sessionAgentId),
       emitStatus: events.emitStatus,
       emitAgentsSnapshot: events.emitAgentsSnapshot,
       emitProfilesSnapshot: events.emitProfilesSnapshot,
@@ -801,6 +796,8 @@ export class SwarmManagerRuntimeComposition {
         applyBaseManagerRuntimeRecyclePolicy: (agentId, reason) =>
           lifecycle.applyAgentRuntimeRecyclePolicy(agentId, reason),
         terminateDescriptor: messaging.terminateDescriptor,
+        suppressSessionAttention: (sessionAgentId) =>
+          this.options.attention.suppressWorkingEpoch(sessionAgentId),
         getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
         getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
         getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
@@ -858,6 +855,8 @@ export class SwarmManagerRuntimeComposition {
       activeTools: {
         clearSession: (agentId) => { events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)); events.clearManagerToolActivity(agentId); },
       },
+      reportAttentionSessionRetired: (sessionAgentId) =>
+        this.options.attention.retireSession(sessionAgentId),
       browser: this.options.browserAutomation,
       secureSessions: this.options.secureSessions,
       events,

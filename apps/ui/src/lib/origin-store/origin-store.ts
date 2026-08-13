@@ -30,6 +30,10 @@ import { ManagerWsClient } from '@/lib/ws-client'
 import type { ConversationSnapshotCache } from '@/lib/ws-client/conversation-snapshot-cache'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { handleConversationEvent } from '@/lib/ws-client/event-handlers/conversation-event-handlers'
+import {
+  reduceSessionAttentionSnapshot,
+  reduceSessionAttentionUpdate,
+} from '@/lib/ws-client/event-handlers/session-attention-event-handlers'
 import { reduceAgentStatus } from '@/lib/ws-client/snapshot-reducers'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
@@ -248,6 +252,17 @@ export class OriginStore {
 
     if (input.event.type === 'agent_status') {
       this.applyState(reduceAgentStatus({ state: this.state, event: input.event }).nextState)
+      return
+    }
+
+    if (input.event.type === 'session_attention_snapshot') {
+      this.applyState({ ...this.state, ...reduceSessionAttentionSnapshot(input.event) })
+      return
+    }
+
+    if (input.event.type === 'session_attention_update') {
+      const patch = reduceSessionAttentionUpdate(this.state, input.event)
+      if (patch) this.applyState({ ...this.state, ...patch })
       return
     }
 

@@ -3,6 +3,7 @@ import {
   normalizePlanSummaryEntries,
   type PlanStep,
   type PlanSummaryEvent,
+  type SessionAttentionReason,
   type SessionPlanSnapshotEvent,
   type WorkGraphSnapshot,
 } from '@forge/protocol'
@@ -113,7 +114,7 @@ export class SessionPlanCoordinator {
         ...(input.explanation ? { explanation: input.explanation } : {}),
         plan: [],
       }).explanation
-      const workGraph = normalizeWorkGraphInput(input, current.workGraph)
+      const workGraph = normalizeWorkGraphInput(input, current.workGraph, { now: this.options.now })
       const cancelledWorkerIds = findRunningWorkersToCancel(current.workGraph, workGraph)
       const normalizedInput: UpdateWorkGraphInput = {
         ...(explanation ? { explanation } : {}),
@@ -148,7 +149,7 @@ export class SessionPlanCoordinator {
       if (!current.workGraph) {
         throw new Error('The current working plan is not a work graph.')
       }
-      const accepted = acceptWorkGraphNode(current.workGraph, nodeId)
+      const accepted = acceptWorkGraphNode(current.workGraph, nodeId, this.options.now)
       if (accepted.alreadyAccepted) {
         return {
           nodeId,
@@ -381,6 +382,57 @@ export class SessionPlanCoordinator {
     return (await this.getState(owner)).plan.some((step) => step.status !== 'completed')
   }
 
+  /**
+   * Read-only reason enrichment for an already-qualified attention settle edge.
+   * Plan state never arms or evaluates attention. Only state updated during the
+   * current work epoch may label it, so a completed plan from an older turn
+   * cannot misclassify unrelated later work.
+   */
+  async getAttentionReason(input: {
+    sessionAgentId: string
+    profileId: string
+    workStartedAt: string
+  }): Promise<SessionAttentionReason | undefined> {
+    const state = await this.getState({
+      agentId: input.sessionAgentId,
+      profileId: input.profileId,
+    })
+    if (!state.updatedAt || !timestampAtOrAfter(state.updatedAt, input.workStartedAt)) {
+      return undefined
+    }
+
+    const graph = state.workGraph
+    if (graph) {
+      const changedDuringEpoch = (node: WorkGraphSnapshot['nodes'][number]): boolean =>
+        Boolean(node.statusUpdatedAt && timestampAtOrAfter(node.statusUpdatedAt, input.workStartedAt))
+      if (graph.nodes.some((node) => (
+        node.kind === 'decision'
+        && node.status === 'waiting'
+        && changedDuringEpoch(node)
+      ))) {
+        return 'decision_waiting'
+      }
+      if (graph.nodes.some((node) => node.status === 'awaiting_review' && changedDuringEpoch(node))) {
+        return 'awaiting_review'
+      }
+      if (
+        graph.nodes.length > 0
+        && graph.nodes.every((node) => node.status === 'completed' || node.status === 'cancelled')
+        && graph.nodes.some(changedDuringEpoch)
+      ) {
+        return 'work_graph_completed'
+      }
+      // A graph-backed projection is not a light plan. If no graph status
+      // relevant to this epoch qualifies, fall back to generic settled.
+      return undefined
+    }
+
+    if (state.plan.length > 0 && state.plan.every((step) => step.status === 'completed')) {
+      return 'plan_completed'
+    }
+    return undefined
+  }
+
   private async getState(owner: SessionPlanOwner): Promise<SessionPlanState> {
     const cached = this.statesByAgentId.get(owner.agentId)
     if (cached) return cached
@@ -573,6 +625,14 @@ function isEmptyState(state: SessionPlanState): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function timestampAtOrAfter(candidate: string, boundary: string): boolean {
+  const candidateTime = Date.parse(candidate)
+  const boundaryTime = Date.parse(boundary)
+  return Number.isFinite(candidateTime)
+    && Number.isFinite(boundaryTime)
+    && candidateTime >= boundaryTime
 }
 
 function reconcilePlanStepIds(

@@ -44,6 +44,7 @@ import type { SessionRowItemProps } from './types'
 const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'session',
   'statuses',
+  'roomsV2',
   'unreadCount',
   'selectedAgentId',
   'isSettingsActive',
@@ -96,6 +97,7 @@ function areSessionRowItemPropsEqual(
 export const SessionRowItem = React.memo(function SessionRowItem({
   session,
   statuses,
+  roomsV2 = false,
   unreadCount,
   selectedAgentId,
   isSettingsActive,
@@ -173,27 +175,33 @@ export const SessionRowItem = React.memo(function SessionRowItem({
 
   const sessionStatusIndicator = showActivityBadges ? (
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      {streamingWorkerCount > 0 ? <SidebarStreamingWorkerBadge count={streamingWorkerCount} /> : null}
-      {compactionInProgress ? <SidebarCompactionBadge /> : null}
+      {streamingWorkerCount > 0 ? <SidebarStreamingWorkerBadge count={streamingWorkerCount} roomsV2={roomsV2} /> : null}
+      {compactionInProgress ? <SidebarCompactionBadge roomsV2={roomsV2} /> : null}
     </span>
   ) : hasPendingChoice ? (
     <span
-      className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-blue-400 bg-transparent"
-      style={{ boxShadow: '0 0 6px rgba(96,165,250,0.5)' }}
+      className={cn(
+        'inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 bg-transparent',
+        roomsV2 ? 'sidebar-room-status-choice sidebar-room-attention' : 'border-blue-400',
+      )}
+      style={roomsV2 ? undefined : { boxShadow: '0 0 6px rgba(96,165,250,0.5)' }}
       aria-label="Awaiting your response"
     >
-      <span className="text-[8px] font-bold leading-none text-blue-400">?</span>
+      <span className={roomsV2 ? 'text-[8px] font-bold leading-none' : 'text-[8px] font-bold leading-none text-blue-400'}>?</span>
     </span>
   ) : managerStreaming ? (
     <span
-      className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
-      style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
+      className={cn(
+        'inline-flex size-3 shrink-0 rounded-full border-2 bg-transparent',
+        roomsV2 ? 'sidebar-room-status-streaming sidebar-room-glow' : 'border-amber-500',
+      )}
+      style={roomsV2 ? undefined : { animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
       aria-label="Manager streaming"
     />
   ) : isAgentCreator ? (
-    <Sparkles className="size-3 shrink-0 text-violet-400" aria-label="Agent Creator" />
+    <Sparkles className={cn('size-3 shrink-0', roomsV2 ? 'sidebar-room-project-agent-icon' : 'text-violet-400')} aria-label="Agent Creator" />
   ) : (
-    <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
+    <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} roomsV2={roomsV2} />
   )
 
   return (
@@ -202,10 +210,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              'relative flex items-center rounded-md transition-colors',
-              isSelected
-                ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
-                : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+              roomsV2 ? 'sidebar-room-row' : 'relative flex items-center rounded-md transition-colors',
+              roomsV2
+                ? isSelected ? 'sidebar-room-row-selected' : undefined
+                : isSelected
+                  ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
+                  : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
             )}
           >
             {/* Expand/collapse toggle (only show if has workers) */}
@@ -216,7 +226,9 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                 aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} session workers`}
                 aria-expanded={!isCollapsed}
                 className={cn(
-                  'absolute left-2 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
+                  roomsV2
+                    ? 'absolute left-1.5 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition'
+                    : 'absolute left-2 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
                   'hover:text-sidebar-foreground',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 )}
@@ -236,14 +248,17 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     type="button"
                     onClick={() => onSelect(sessionAgent.agentId)}
                     className={cn(
-                      'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
+                      'flex min-w-0 flex-1 items-center gap-1.5 text-left',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                      hasWorkers ? 'pl-7' : 'pl-5',
+                      roomsV2 ? 'py-1 pr-1.5 text-xs leading-4' : 'py-1.5 pr-1.5',
+                      hasWorkers
+                        ? roomsV2 ? 'pl-6' : 'pl-7'
+                        : roomsV2 ? 'pl-3' : 'pl-5',
                     )}
                   >
                     {sessionStatusIndicator}
                     <span className="min-w-0 flex-1 truncate">
-                      <span className="block truncate text-sm leading-5">
+                      <span className={cn('block truncate text-sm leading-5', roomsV2 ? 'text-xs leading-4' : undefined)}>
                         {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
                       </span>
                       {creatorLabel ? (
@@ -261,19 +276,23 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     {isProjectAgent ? (
                       isRepoSourcedAgent ? (
                         <span className="inline-flex shrink-0 items-center gap-0.5" aria-label="Repository Project Agent">
-                          <GitBranch className="size-2.5 text-blue-400/70" />
-                          <Zap className="size-3 text-blue-400" />
+                          <GitBranch className={cn('size-2.5', roomsV2 ? 'sidebar-room-project-agent-icon sidebar-room-project-agent-icon--subtle' : 'text-blue-400/70')} />
+                          <Zap className={cn('size-3', roomsV2 ? 'sidebar-room-project-agent-icon' : 'text-blue-400')} />
                         </span>
                       ) : (
-                        <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                        <Zap className={cn('size-3 shrink-0', roomsV2 ? 'sidebar-room-project-agent-icon' : 'text-blue-400 dark:text-blue-400')} aria-label="Project Agent" />
                       )
                     ) : null}
                     {hasPendingChoice ? (
-                      <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
+                      <span className={roomsV2
+                        ? 'sidebar-room-status-pill sidebar-room-status-pill--awaiting'
+                        : 'inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white'}>
                         ?
                       </span>
                     ) : showUnread ? (
-                      <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
+                      <span className={roomsV2
+                        ? 'sidebar-room-unread-badge'
+                        : 'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white'}>
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
                     ) : null}
@@ -477,6 +496,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                         <WorkerRow
                           agent={worker}
                           liveStatus={getAgentLiveStatus(worker, statuses)}
+                          roomsV2={roomsV2}
                           isSelected={workerIsSelected}
                           onSelect={() => onSelect(worker.agentId)}
                           onDelete={() => onDeleteAgent(worker.agentId)}
@@ -493,7 +513,9 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     type="button"
                     onClick={() => onToggleWorkerListExpanded()}
                     className={cn(
-                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                      roomsV2
+                        ? 'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-8 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors'
+                        : 'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
                       'hover:text-muted-foreground hover:bg-sidebar-accent/30',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                     )}

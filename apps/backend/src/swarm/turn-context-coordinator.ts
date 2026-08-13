@@ -151,12 +151,20 @@ export interface TurnContextObservabilityPort {
   ): void;
 }
 
+export interface TurnContextAttentionPort {
+  /** Called after accepted input is durably represented in the pending queue. */
+  observePendingQueueChange(agentId: string): Promise<void>;
+  /** Called when accepted input is removed without a provider continuation. */
+  releaseContinuationBarrier(agentId: string): Promise<void>;
+}
+
 export interface TurnContextCoordinatorOptions<
   TCodexGate,
   TCodexDelegation,
   TCodexRetryAuthorization,
 > {
   descriptors: Map<string, AgentDescriptor>;
+  attention: TurnContextAttentionPort;
   getRuntimeToken(agentId: string): number | undefined;
   ledger: TurnContextLedgerPort;
   output: ManagerOutputTurnPort;
@@ -316,14 +324,21 @@ export class TurnContextCoordinator<
       this.setActiveTurnFromContext(agentId, queuedContext);
     }
 
+    // Await this barrier before returning the handle. The caller may send the
+    // accepted input immediately; latching fire-and-forget would race the
+    // provider's user message_start dequeue and recreate the false raise.
+    await this.options.attention.observePendingQueueChange(agentId);
+
     return {
       turnId: queuedContext.turnId,
       rollback: () => {
         const currentQueue = this.pendingByAgentId.get(agentId);
+        let removed = false;
         if (currentQueue) {
           const index = currentQueue.lastIndexOf(queuedContext);
           if (index >= 0) {
             currentQueue.splice(index, 1);
+            removed = true;
           }
           if (currentQueue.length === 0) {
             this.pendingByAgentId.delete(agentId);
@@ -337,6 +352,9 @@ export class TurnContextCoordinator<
           } else {
             this.activeTurnByAgentId.delete(agentId);
           }
+        }
+        if (removed) {
+          void this.options.attention.releaseContinuationBarrier(agentId);
         }
       },
     };
@@ -366,13 +384,15 @@ export class TurnContextCoordinator<
       this.activatedByAgentId.delete(agentId);
       this.activeTurnByAgentId.delete(agentId);
       this.options.managerToolActivity?.clearManagerTurn(agentId);
+      void this.options.attention.releaseContinuationBarrier(agentId);
     }
     this.options.output.handleRuntimeError(agentId, descriptor);
     this.options.codex.handleRuntimeError(agentId, descriptor);
   }
 
   discard(agentId: string): void {
-    if (this.options.descriptors.get(agentId)?.role === "manager") {
+    const isManager = this.options.descriptors.get(agentId)?.role === "manager";
+    if (isManager) {
       this.options.managerToolActivity?.clearManagerTurn(agentId);
     }
     this.pendingByAgentId.delete(agentId);
@@ -380,6 +400,9 @@ export class TurnContextCoordinator<
     this.activeTurnByAgentId.delete(agentId);
     this.options.output.clearForRuntimeReset(agentId);
     this.options.codex.clearForRuntimeReset(agentId);
+    if (isManager) {
+      void this.options.attention.releaseContinuationBarrier(agentId);
+    }
   }
 
   clearAgentState(agentId: string): void {
@@ -627,6 +650,10 @@ export class TurnContextCoordinator<
     if (queue.length === 0) {
       this.pendingByAgentId.delete(agentId);
     }
+    // dequeueNext is used only when the provider never matched/activated this
+    // accepted input. The message_start path uses dequeueForRuntimeMessage and
+    // deliberately does NOT release before streaming is projected.
+    void this.options.attention.releaseContinuationBarrier(agentId);
     return nextContext;
   }
 

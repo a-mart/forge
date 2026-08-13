@@ -33,7 +33,6 @@ import { cn } from '@/lib/utils'
 import type {
   AgentModelDescriptor,
   AgentModelOrigin,
-  BuilderSidebarOrderRef,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentInfo,
@@ -48,6 +47,9 @@ import { ModeSwitch } from './collab-sidebar/ModeSwitch'
 import { ProfileGroup } from './agent-sidebar/ProfileGroup'
 import { RemoteOriginSections, RemoteProfileRow } from './agent-sidebar/RemoteOriginSections'
 import { CortexSection } from './agent-sidebar/CortexSection'
+import { RoomsInboxLive } from './agent-sidebar/RoomsInboxLive'
+import { RoomsProjectsTree, type RoomsProjectTreeRow } from './agent-sidebar/RoomsProjectsTree'
+import type { RoomsInboxOriginInput } from './agent-sidebar/rooms-inbox-selectors'
 import { SortableProfileGroup } from './agent-sidebar/SortableProfileGroup'
 import {
   CreateSessionDialog,
@@ -64,25 +66,14 @@ import { filterTreeRows, findCliHideNavigationTarget, injectGlowPulseStyle } fro
 import { useProjectViews, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
-import type { AgentSidebarProps, RemoteSidebarOrigin } from './agent-sidebar/types'
+import type { AgentSidebarProps } from './agent-sidebar/types'
 import {
   builderSidebarOrderKey,
   reconcileBuilderSidebarOrder,
   resolveBuilderSidebarDragMove,
 } from '@/lib/builder-sidebar-order'
 
-type MixedProjectRow =
-  | {
-      kind: 'local'
-      ref: BuilderSidebarOrderRef
-      treeRow: ProfileTreeRow
-    }
-  | {
-      kind: 'remote'
-      ref: BuilderSidebarOrderRef
-      treeRow: ProfileTreeRow
-      origin: RemoteSidebarOrigin
-    }
+type MixedProjectRow = RoomsProjectTreeRow
 
 // Inject subtle glow pulse keyframes once
 injectGlowPulseStyle()
@@ -172,7 +163,70 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     showProviderUsage,
     hideCliSessions,
     toggleHideCliSessions,
+    sidebarLayout,
+    roomsMode,
+    setRoomsMode,
   } = useSidebarPrefs()
+  const roomsV2 = sidebarLayout === 'rooms-v2'
+  const showProjectsBody = !roomsV2 || roomsMode === 'projects'
+  const inboxFallbackOrigins = useMemo<RoomsInboxOriginInput[]>(() => {
+    const toOriginInput = (
+      originId: OriginId,
+      isConnected: boolean,
+      rows: ProfileTreeRow[],
+      originStatuses: typeof statuses,
+      originUnreadCounts: Record<string, number>,
+    ): RoomsInboxOriginInput => ({
+      originId,
+      connected: isConnected,
+      // Props are a complete sidebar snapshot; disconnected fallbacks must
+      // wait for their next authoritative connection epoch before session GC.
+      inventoryReady: isConnected,
+      sessions: rows
+        .filter((row) => !isCortexProfile(row) && row.profile.profileType !== 'system')
+        .flatMap((row) => row.sessions.map(({ sessionAgent }) => {
+          const live = originStatuses[sessionAgent.agentId]
+          return {
+            identity: { originId, profileId: row.profile.profileId, sessionAgentId: sessionAgent.agentId },
+            label: sessionAgent.sessionLabel || sessionAgent.displayName || sessionAgent.agentId,
+            profileName: row.profile.displayName,
+            agentStatus: live?.status ?? sessionAgent.status,
+            activeWorkerCount: sessionAgent.activeWorkerCount ?? 0,
+            pendingChoiceCount: sessionAgent.pendingChoiceCount ?? 0,
+            unreadCount: originUnreadCounts[sessionAgent.agentId] ?? 0,
+            contextRecoveryInProgress: live?.contextRecoveryInProgress === true,
+            streamingStartedAt: sessionAgent.streamingStartedAt,
+            updatedAt: sessionAgent.updatedAt,
+            lastUserMessageAt: sessionAgent.lastUserMessageAt,
+            createdAt: sessionAgent.createdAt,
+            cli: Boolean(sessionAgent.cli),
+            archived: Boolean(sessionAgent.archivedAt || row.profile.archivedAt),
+            agentCreatorResult: Boolean(sessionAgent.agentCreatorResult),
+          }
+        })),
+      projects: rows
+        .filter((row) => !isCortexProfile(row) && row.profile.profileType !== 'system')
+        .map((row) => ({
+          originId,
+          profileId: row.profile.profileId,
+          profileName: row.profile.displayName,
+          updatedAt: row.profile.updatedAt,
+          createdAt: row.profile.createdAt,
+          archived: Boolean(row.profile.archivedAt),
+        })),
+    })
+
+    return [
+      toOriginInput(LOCAL_ORIGIN_ID, connected, treeRows, statuses, unreadCounts),
+      ...(remoteOrigins ?? []).map((origin) => toOriginInput(
+        origin.originId,
+        origin.connected,
+        origin.treeRows,
+        {},
+        {},
+      )),
+    ]
+  }, [connected, remoteOrigins, statuses, treeRows, unreadCounts])
   const projectViewOptions = useMemo<SidebarProjectViewOption[]>(() => {
     const localOptions = treeRows
       .filter((row) => !isCortexProfile(row))
@@ -236,6 +290,12 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     searchQuery,
     onRequestSessionWorkers,
   })
+  // Project Views intentionally filter only Projects. Keep Cortex reachable in
+  // the Rooms mobile overlay even while a saved Project View is active.
+  const renderedCortexRow = useMemo(
+    () => roomsV2 ? treeRows.find((row) => isCortexProfile(row)) ?? null : cortexRow,
+    [cortexRow, roomsV2, treeRows],
+  )
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const handleToggleUsagePanel = useCallback(() => setUsagePanelOpen(prev => !prev), [])
   const handleCloseUsagePanel = useCallback(() => setUsagePanelOpen(false), [])
@@ -474,7 +534,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   // before the user continues. With no available session, Settings is the safest
   // existing neutral surface exposed by the stable sidebar contract.
   useEffect(() => {
-    if (!activeView) return
+    if (!activeView || (roomsV2 && roomsMode !== 'projects')) return
     const currentOriginId = activeOriginId ?? LOCAL_ORIGIN_ID
     const currentSelectionIsVisible = Boolean(selectedAgentId) && viewNavigationRows.some((row) => (
       row.originId === currentOriginId
@@ -513,6 +573,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     isSettingsActive,
     isStatsActive,
     onSelectRemoteAgent,
+    roomsMode,
+    roomsV2,
     selectedAgentId,
     viewNavigationRows,
   ])
@@ -789,6 +851,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     <ProfileGroup
       treeRow={treeRow}
       statuses={statuses}
+      roomsV2={roomsV2}
       unreadCounts={unreadCounts}
       selectedAgentId={localSelectedAgentId}
       isSettingsActive={isSettingsActive}
@@ -863,6 +926,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
     hideCliSessions, handleToggleHideCliSessions,
     getEntriesForProfile, selectedInactiveRepoEntryKey, wsUrl, handleSelectInactiveRepoProjectAgent,
+    roomsV2,
   ])
 
   const mixedProjectContent = useCallback((
@@ -879,6 +943,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       <RemoteProfileRow
         originId={row.origin.originId}
         treeRow={row.treeRow}
+        roomsV2={roomsV2}
         selectedAgentId={isActiveOrigin ? selectedAgentId : null}
         isActiveOrigin={isActiveOrigin}
         instanceName={row.origin.instanceName}
@@ -895,60 +960,160 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     handleSelectRemoteAgent,
     profileGroupContent,
     selectedAgentId,
+    roomsV2,
   ])
+
+  // Both modes use the exact same project source and render callbacks. Inbox
+  // deliberately disables DnD: desktop and mobile sidebars remain mounted at
+  // once, so an inline sortable context would duplicate every sortable ID.
+  const renderRoomsProjectTree = (dndEnabled: boolean) => (
+    <RoomsProjectsTree
+      rows={mixedProjectRows}
+      activeView={Boolean(activeView)}
+      isSearchActive={isSearchActive}
+      dndEnabled={dndEnabled}
+      onMoveBuilderProject={onMoveBuilderProject}
+      renderRow={mixedProjectContent}
+      getMemoDependencies={(row) => {
+        if (row.kind !== 'remote') return undefined
+        const remoteIsActive = row.origin.originId === (activeOriginId ?? LOCAL_ORIGIN_ID)
+        return [
+          row,
+          remoteIsActive,
+          remoteIsActive ? selectedAgentId : null,
+          handleSelectRemoteAgent,
+        ]
+      }}
+      emptyState={
+        isSearchActive && mixedProjectRows.length === 0 && !cortexRow ? (
+          <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
+            No matches found.
+          </p>
+        ) : mixedProjectRows.length === 0 && !isSearchActive ? (
+          <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
+            {activeView
+              ? `No projects are currently available in “${activeView.name}”.`
+              : 'No active agents.'}
+          </p>
+        ) : null
+      }
+      remoteOriginSections={(
+        <RemoteOriginSections
+          originIds={isSearchActive ? [] : remoteOriginsWithoutProjects}
+          roomsV2
+          onSignIn={onRemoteOriginSignIn}
+          onRetry={onRemoteOriginRetry}
+        />
+      )}
+    />
+  )
+  const roomsProjectTree = renderRoomsProjectTree(true)
+  const roomsInboxProjectTree = renderRoomsProjectTree(false)
+  // The shared tree element is always composed, including when it only has an
+  // empty-state placeholder. Inbox must instead gate on content the tree can
+  // actually render: rows or its visible remote-origin status cards.
+  const hasRoomsInboxProjectContent = mixedProjectRows.length > 0
+    || (!isSearchActive && remoteOriginsWithoutProjects.length > 0)
 
   const sidebarContent = (
     <aside
       data-tour="sidebar"
+      data-sidebar-layout={sidebarLayout}
       className={cn(
         'flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
         'max-md:w-full md:w-[20rem] md:min-w-[20rem] md:shrink-0',
       )}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-sidebar-border px-2 py-2">
-        {collaborationModeSwitch ? (
-          /* Collab-enabled: mode toggle fills the header row */
-          <ModeSwitch
-            activeSurface={collaborationModeSwitch.activeSurface}
-            onSelectSurface={collaborationModeSwitch.onSelectSurface}
-            className="flex-1"
-          />
-        ) : (
-          /* Default: "New Project" button + status dot */
-          <>
-            <button
-              type="button"
-              onClick={onAddManager}
-              className="flex min-h-[44px] flex-1 items-center gap-2 rounded-md p-2 text-sm transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
-              title="Create project"
-              aria-label="Add project"
-            >
-              <SquarePen aria-hidden="true" className="h-4 w-4" />
-              <span>New Project</span>
-            </button>
-            <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground">
+      {roomsV2 ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-sidebar-border px-3 py-2" data-testid="rooms-sidebar-header">
+          {collaborationModeSwitch ? (
+            <ModeSwitch
+              activeSurface={collaborationModeSwitch.activeSurface}
+              onSelectSurface={collaborationModeSwitch.onSelectSurface}
+              className="flex-1"
+            />
+          ) : (
+            /* No Collab surface: keep the connection indicator Classic shows rather
+               than leaving an empty header band. */
+            <div className="sidebar-room-connection inline-flex flex-1 items-center gap-1.5 font-medium">
               <span
                 className={cn(
-                  'inline-block size-1.5 rounded-full',
-                  connected ? 'bg-emerald-500' : 'bg-amber-500',
+                  'inline-block size-1.5 shrink-0 rounded-full',
+                  connected ? 'sidebar-room-connection-status--connected' : 'sidebar-room-connection-status--reconnecting',
                 )}
+                role="status"
+                aria-label={connected ? 'Connected' : 'Reconnecting'}
                 title={connected ? 'Connected' : 'Reconnecting'}
               />
-              <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
+              <span>{connected ? 'Live' : 'Retrying'}</span>
             </div>
-          </>
-        )}
-        {onMobileClose ? (
+          )}
           <button
             type="button"
-            onClick={onMobileClose}
-            className="inline-flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
-            aria-label="Close sidebar"
+            onClick={onAddManager}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+            title="Create project"
+            aria-label="Add project"
           >
-            <X className="size-5" />
+            <SquarePen aria-hidden="true" className="size-3.5" />
           </button>
-        ) : null}
-      </div>
+          {onMobileClose ? (
+            <button
+              type="button"
+              onClick={onMobileClose}
+              className="inline-flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+              aria-label="Close sidebar"
+            >
+              <X className="size-5" />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-center gap-2 border-b border-sidebar-border px-2 py-2">
+          {collaborationModeSwitch ? (
+            /* Collab-enabled: mode toggle fills the header row */
+            <ModeSwitch
+              activeSurface={collaborationModeSwitch.activeSurface}
+              onSelectSurface={collaborationModeSwitch.onSelectSurface}
+              className="flex-1"
+            />
+          ) : (
+            /* Default: "New Project" button + status dot */
+            <>
+              <button
+                type="button"
+                onClick={onAddManager}
+                className="flex min-h-[44px] flex-1 items-center gap-2 rounded-md p-2 text-sm transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+                title="Create project"
+                aria-label="Add project"
+              >
+                <SquarePen aria-hidden="true" className="h-4 w-4" />
+                <span>New Project</span>
+              </button>
+              <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                <span
+                  className={cn(
+                    'inline-block size-1.5 rounded-full',
+                    connected ? 'bg-emerald-500' : 'bg-amber-500',
+                  )}
+                  title={connected ? 'Connected' : 'Reconnecting'}
+                />
+                <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
+              </div>
+            </>
+          )}
+          {onMobileClose ? (
+            <button
+              type="button"
+              onClick={onMobileClose}
+              className="inline-flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+              aria-label="Close sidebar"
+            >
+              <X className="size-5" />
+            </button>
+          ) : null}
+        </div>
+      )}
 
       <div
         className="flex flex-1 flex-col overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
@@ -958,10 +1123,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         }}
       >
         {/* Pinned Cortex entry — modest inset beneath Builder/Collab switch */}
-        {cortexRow ? (
-          <div className="mt-2">
+        {renderedCortexRow ? (
+          <div className={roomsV2 ? 'mt-2 md:hidden' : 'mt-2'}>
             <CortexSection
-              cortexRow={cortexRow}
+              cortexRow={renderedCortexRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
               selectedAgentId={localSelectedAgentId}
@@ -970,10 +1135,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               collapsedSessionIds={expandedSessionIds}
               visibleSessionLimit={getVisibleSessionLimit('cortex')}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-              onToggleCollapsed={() => toggleProfileCollapsed(cortexRow.profile.profileId)}
+              onToggleCollapsed={() => toggleProfileCollapsed(renderedCortexRow.profile.profileId)}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onShowMoreSessions={() => showMoreSessions(cortexRow.profile.profileId)}
-              onShowLessSessions={() => showLessSessions(cortexRow.profile.profileId)}
+              onShowMoreSessions={() => showMoreSessions(renderedCortexRow.profile.profileId)}
+              onShowLessSessions={() => showLessSessions(renderedCortexRow.profile.profileId)}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
@@ -990,34 +1155,75 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           </div>
         ) : null}
 
-        {/* Search bar below Cortex, above profile sections */}
-        <SidebarSearch
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          searchInputRef={searchInputRef}
-          rightAction={collaborationModeSwitch ? (
-            <button
-              type="button"
-              onClick={onAddManager}
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
-              title="Create project"
-              aria-label="Add project"
-            >
-              <SquarePen aria-hidden="true" className="size-3.5" />
-            </button>
-          ) : undefined}
-        />
+        {/* Rooms owns one mode-aware command row. Classic retains its established rows. */}
+        {roomsV2 ? (
+          <RoomsInboxLive
+            mode={roomsMode}
+            onModeChange={setRoomsMode}
+            selected={selectedAgentId ? {
+              originId: activeOriginId ?? LOCAL_ORIGIN_ID,
+              sessionAgentId: selectedAgentId,
+            } : null}
+            searchQuery={deferredSearchQuery}
+            hideCliSessions={hideCliSessions}
+            onSelectLocal={handleSelectAgent}
+            onSelectRemote={handleSelectRemoteAgent}
+            onNewProject={onAddManager}
+            projectTree={roomsInboxProjectTree}
+            hasInlineProjectContent={hasRoomsInboxProjectContent}
+            mutedSessionIds={mutedAgentsState}
+            fallbackOrigins={inboxFallbackOrigins}
+            commandRow={(
+              <SidebarSearch
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                searchInputRef={searchInputRef}
+                roomsV2
+                commandAction={roomsMode === 'projects' ? (
+                  <ProjectViewSwitcher
+                    options={projectViewOptions}
+                    views={projectViews}
+                    activeView={activeView}
+                    onSelectView={setActiveView}
+                    onSaveView={saveView}
+                    onDeleteView={deleteView}
+                    compact
+                  />
+                ) : undefined}
+              />
+            )}
+          />
+        ) : (
+          <>
+            <SidebarSearch
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              searchInputRef={searchInputRef}
+              roomsV2={false}
+              rightAction={collaborationModeSwitch ? (
+                <button
+                  type="button"
+                  onClick={onAddManager}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+                  title="Create project"
+                  aria-label="Add project"
+                >
+                  <SquarePen aria-hidden="true" className="size-3.5" />
+                </button>
+              ) : undefined}
+            />
+            <ProjectViewSwitcher
+              options={projectViewOptions}
+              views={projectViews}
+              activeView={activeView}
+              onSelectView={setActiveView}
+              onSaveView={saveView}
+              onDeleteView={deleteView}
+            />
+          </>
+        )}
 
-        <ProjectViewSwitcher
-          options={projectViewOptions}
-          views={projectViews}
-          activeView={activeView}
-          onSelectView={setActiveView}
-          onSaveView={saveView}
-          onDeleteView={deleteView}
-        />
-
-        {isSearchActive ? (
+        {showProjectsBody && isSearchActive ? (
           <div className="px-1 pb-1">
             <h2 className="text-xs font-semibold text-muted-foreground">
               {combinedMatchCount} match{combinedMatchCount !== 1 ? 'es' : ''}
@@ -1025,6 +1231,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           </div>
         ) : null}
 
+        {showProjectsBody && !roomsV2 ? (
+          <>
         {isSearchActive && mixedProjectRows.length === 0 && !cortexRow ? (
           <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
             No matches found.
@@ -1052,7 +1260,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
                 onDragEnd={handleDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                  <ul className="mt-2 space-y-1" data-testid="unified-project-list">
+                  <ul className={roomsV2 ? 'mt-2 space-y-2' : 'mt-2 space-y-1'} data-testid="unified-project-list">
                     {mixedProjectRows.map((row) => {
                       const sortableId = builderSidebarOrderKey(row.ref)
                       const remoteIsActive = row.kind === 'remote'
@@ -1070,6 +1278,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
                           key={sortableId}
                           sortableId={sortableId}
                           memoDependencies={remoteMemoDependencies}
+                          roomsV2={roomsV2}
                         >
                           {(dragHandleRef, dragHandleListeners, dragHandleAttributes) => (
                             mixedProjectContent(
@@ -1101,7 +1310,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           }
 
           return (
-            <ul className="mt-2 space-y-1" data-testid="unified-project-list">
+            <ul className={roomsV2 ? 'mt-2 space-y-2' : 'mt-2 space-y-1'} data-testid="unified-project-list">
               {mixedProjectRows.map((row) => (
                 <li key={builderSidebarOrderKey(row.ref)}>
                   {mixedProjectContent(row)}
@@ -1110,16 +1319,21 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             </ul>
           )
         })()}
+          </>
+        ) : null}
 
-        {/* Status-only rows for remote origins without visible projects. */}
-        <RemoteOriginSections
-          originIds={isSearchActive ? [] : remoteOriginsWithoutProjects}
-          onSignIn={onRemoteOriginSignIn}
-          onRetry={onRemoteOriginRetry}
-        />
+        {showProjectsBody && !roomsV2 ? (
+          <RemoteOriginSections
+            originIds={isSearchActive ? [] : remoteOriginsWithoutProjects}
+            onSignIn={onRemoteOriginSignIn}
+            onRetry={onRemoteOriginRetry}
+          />
+        ) : null}
+
+        {showProjectsBody && roomsV2 ? roomsProjectTree : null}
 
         {/* Archive button pinned to the bottom; outer pad creates gap above the divider */}
-        {onOpenArchive && hasArchivedItems && !activeView ? (
+        {onOpenArchive && hasArchivedItems && (!activeView || roomsV2) ? (
           <div className="mt-auto pt-2.5">
             <div className="border-t border-sidebar-border pt-1.5">
               <button
@@ -1144,6 +1358,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       <SidebarFooter
         isSettingsActive={isSettingsActive}
         isStatsActive={isStatsActive}
+        roomsV2={roomsV2}
         showProviderUsage={showProviderUsage}
         providerUsage={providerUsage}
         providerUsageLoading={providerUsageLoading}

@@ -295,6 +295,7 @@ export class WsHandler {
         type: "error",
         code: "INVALID_COMMAND",
         message: parsed.error,
+        requestId: parsed.requestId,
       });
       return;
     }
@@ -321,6 +322,7 @@ export class WsHandler {
         ...(this.subscriptionManager.supportsGoalControlRequestId(socket)
           ? { goalControlRequestId: true as const }
           : {}),
+        sessionAttention: true,
       });
       return;
     }
@@ -361,6 +363,7 @@ export class WsHandler {
         this.send(socket, toCollaborationCommandError(
           "COLLABORATION_COMMAND_NOT_ALLOWED",
           access.message ?? "This command is not permitted for this account.",
+          extractRequestId(command),
         ));
         return;
       }
@@ -460,6 +463,29 @@ export class WsHandler {
           this.unreadTracker.markRead(profileId, agent.agentId);
           this.broadcastUnreadCountUpdate(agent.agentId, 0);
         }
+      }
+      return;
+    }
+
+    // Global origin state does not depend on a selected conversation. Handle
+    // before the subscription requirement so a reconnecting Inbox can dismiss
+    // exact instances without opening a room first.
+    if (command.type === "dismiss_session_attention") {
+      try {
+        const result = await this.swarmManager.dismissSessionAttention(command.attentionIds);
+        this.send(socket, {
+          type: "session_attention_update",
+          revision: result.revision,
+          changes: result.changes,
+          requestId: command.requestId,
+        });
+      } catch (error) {
+        this.send(socket, {
+          type: "error",
+          code: "SESSION_ATTENTION_DISMISS_FAILED",
+          message: error instanceof Error ? error.message : "Failed to dismiss session attention.",
+          requestId: command.requestId,
+        });
       }
       return;
     }
@@ -839,7 +865,11 @@ export class WsHandler {
     // on the wire by later synchronous sends to the same socket — clients
     // correlate by requestId, not delivery order, and the alternative under
     // backpressure was dropping the event entirely.
-    if (hasRequestId(event)) {
+    // `session_attention_snapshot` joins the requestId path deliberately: it is
+    // the only live carrier of sticky Needs You state, and although each
+    // snapshot is self-healing, dropping the last one in a quiet period would
+    // leave a stale row (or a missed raise) visible until the next change.
+    if (hasRequestId(event) || event.type === "session_attention_snapshot") {
       void this.sendWithBackpressure(socket, event);
       return null;
     }

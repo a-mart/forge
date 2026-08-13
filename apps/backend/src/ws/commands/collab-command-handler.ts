@@ -596,10 +596,15 @@ export function isCollaborationClientCommand(command: { type: string }): command
   return command.type.startsWith("collab_");
 }
 
-export function toCollaborationCommandError(code: string, message: string): ErrorEvent {
+export function toCollaborationCommandError(
+  code: string,
+  message: string,
+  requestId?: string,
+): ErrorEvent {
   return {
     type: "error",
     code,
     message,
+    ...(requestId ? { requestId } : {}),
   };
 }

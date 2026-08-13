@@ -21,6 +21,8 @@ import type {
   ManagerProfile,
 } from '@forge/protocol'
 import { AgentSidebar } from './AgentSidebar'
+import { CortexRailItem } from './agent-sidebar/CortexRailItem'
+import { ActivityRail, type ActivityRailItem } from '@/components/index-page/ActivityRail'
 import type {
   AgentSidebarProps,
   RemoteSidebarOrigin,
@@ -32,6 +34,7 @@ import {
   isCortexProfile,
   type ProfileTreeRow,
 } from '@/lib/agent-hierarchy'
+import { useSidebarLayout } from './agent-sidebar/hooks'
 import {
   LOCAL_ORIGIN_ID,
   useAllOrigins,
@@ -66,6 +69,8 @@ export interface AgentSidebarConnectedProps
   extends Omit<AgentSidebarProps, StoreProvidedProps> {
   /** Must be constructed against the local Builder target by BuilderSurface. */
   builderSidebarOrderApi?: BuilderSidebarOrderApi
+  /** Workspace rail is composed here so the Cortex navigator can share local Builder state. */
+  activityRailItems?: ActivityRailItem[]
 }
 
 interface SidebarOriginStructure {
@@ -137,8 +142,11 @@ type ApiAvailability = 'unknown' | 'available' | 'unavailable'
 
 export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   builderSidebarOrderApi,
+  activityRailItems,
   ...rest
 }: AgentSidebarConnectedProps) {
+  const sidebarLayout = useSidebarLayout()
+  const roomsV2 = sidebarLayout === 'rooms-v2'
   const originStructures = useAllOrigins(selectSidebarStructure, {
     selectorKey: 'sidebar.structure',
     equalityFn: equalSidebarStructure,
@@ -182,6 +190,10 @@ export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   const localTreeRows = useMemo(
     () => buildProfileTreeRows(agents, profiles),
     [agents, profiles],
+  )
+  const cortexRow = useMemo(
+    () => localTreeRows.find((row) => isCortexProfile(row)) ?? null,
+    [localTreeRows],
   )
   const remoteOrigins = useMemo<RemoteSidebarOrigin[]>(() => {
     const modelByOrigin = new Map(originTreeModels.map((entry) => [entry.originId, entry]))
@@ -313,20 +325,45 @@ export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   )
 
   return (
-    <AgentSidebar
-      {...rest}
-      connected={connected}
-      agents={agents}
-      profiles={profiles}
-      treeRows={localTreeRows}
-      statuses={statuses}
-      unreadCounts={unreadCounts}
-      terminalScopeId={terminalScopeId}
-      terminalCount={terminalCount}
-      remoteOrigins={remoteOrigins}
-      builderSidebarOrder={effectiveOrder}
-      onMoveBuilderProject={dndAvailable ? handleMoveBuilderProject : undefined}
-    />
+    <>
+      <AgentSidebar
+        {...rest}
+        connected={connected}
+        agents={agents}
+        profiles={profiles}
+        treeRows={localTreeRows}
+        statuses={statuses}
+        unreadCounts={unreadCounts}
+        terminalScopeId={terminalScopeId}
+        terminalCount={terminalCount}
+        remoteOrigins={remoteOrigins}
+        builderSidebarOrder={effectiveOrder}
+        onMoveBuilderProject={dndAvailable ? handleMoveBuilderProject : undefined}
+      />
+      {activityRailItems ? (
+        <ActivityRail
+          items={activityRailItems}
+          roomsV2={roomsV2}
+          cortex={roomsV2 && cortexRow ? (
+            <CortexRailItem
+              cortexRow={cortexRow}
+              statuses={statuses}
+              unreadCounts={unreadCounts}
+              selectedAgentId={rest.selectedAgentId}
+              isSettingsActive={rest.isSettingsActive}
+              onSelect={rest.onSelectAgent}
+              onDeleteAgent={rest.onDeleteAgent}
+              onOpenSettings={rest.onOpenSettings}
+              onStopSession={rest.onStopSession}
+              onResumeSession={rest.onResumeSession}
+              onMarkUnread={rest.onMarkUnread}
+              onMarkAllRead={rest.onMarkAllRead}
+              onRequestSessionWorkers={rest.onRequestSessionWorkers}
+            />
+          ) : undefined}
+        />
+      ) : null}
+    </>
   )
 })
 

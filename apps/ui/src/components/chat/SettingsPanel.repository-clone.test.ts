@@ -28,8 +28,10 @@ vi.mock('@/hooks/use-onboarding-state', () => ({
 }))
 
 vi.mock('@/lib/sidebar-prefs', () => ({
+  readSidebarLayoutPref: () => 'classic',
   readSidebarModelIconsPref: () => true,
   readSidebarProviderUsagePref: () => true,
+  storeSidebarLayoutPref: vi.fn(),
   storeSidebarModelIconsPref: vi.fn(),
   storeSidebarProviderUsagePref: vi.fn(),
   readConversationThroughputDisplayPref: () => false,

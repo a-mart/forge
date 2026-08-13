@@ -26,6 +26,11 @@ export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "agents_snapshot",
   "profiles_snapshot",
   "unread_counts_snapshot",
+  // Origin-global Needs You state. The bootstrap snapshot is the client's only
+  // authoritative baseline for the connection epoch, and live fanout reuses the
+  // same self-contained snapshot type, so dropping one silently strands sticky
+  // attention rows until the next change.
+  "session_attention_snapshot",
 ]);
 
 /**

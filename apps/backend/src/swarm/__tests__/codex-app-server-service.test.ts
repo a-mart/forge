@@ -209,6 +209,7 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
   conversationEntries: ConversationEntryEvent[];
   conversationMessages: ConversationMessageEvent[];
   statusEvents: Array<{ agentId: string; status: AgentStatus; pendingCount: number }>;
+  attentionTransitions: Array<{ agentId: string; previousStatus: AgentStatus; nextStatus: AgentStatus }>;
   threadAuditBySessionFile: Map<string, CodexSidecarPersistedThreadState>;
   threadFallbackBySessionFile: Map<string, CodexSidecarPersistedThreadState>;
 } {
@@ -218,6 +219,12 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
   const conversationLogs: ConversationLogEvent[] = [];
   const agentToolCalls: AgentToolCallEvent[] = [];
   const statusEvents: Array<{ agentId: string; status: AgentStatus; pendingCount: number }> = [];
+  const attentionTransitions: Array<{
+    agentId: string;
+    previousStatus: AgentStatus;
+    nextStatus: AgentStatus;
+    transitionedAt: string;
+  }> = [];
   const threadAuditBySessionFile = new Map<string, CodexSidecarPersistedThreadState>();
   const threadFallbackBySessionFile = new Map<string, CodexSidecarPersistedThreadState>();
 
@@ -245,6 +252,9 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
     },
     emitStatus: (agentId, status, pendingCount) => {
       statusEvents.push({ agentId, status, pendingCount });
+    },
+    reportAttentionStatusTransition: async (input) => {
+      attentionTransitions.push(input);
     },
     emitAgentsSnapshot: vi.fn(),
     emitProfilesSnapshot: vi.fn(),
@@ -287,6 +297,7 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
     conversationLogs,
     agentToolCalls,
     statusEvents,
+    attentionTransitions,
     threadAuditBySessionFile,
     threadFallbackBySessionFile,
   };
@@ -490,8 +501,14 @@ describe("CodexAppServerService", () => {
 
   it("runs a text turn through streaming to assistant message and idle status", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
-    const { host, conversationEntries, conversationMessages, statusEvents, threadAuditBySessionFile } =
-      createFakeHost([manager]);
+    const {
+      host,
+      conversationEntries,
+      conversationMessages,
+      statusEvents,
+      attentionTransitions,
+      threadAuditBySessionFile,
+    } = createFakeHost([manager]);
     const service = createTestService(host, {
       createClient: (handlers) => new FakeCodexAppServerClient(handlers),
     });
@@ -508,6 +525,20 @@ describe("CodexAppServerService", () => {
     );
     expect(statusEvents.some((event) => event.agentId === sidecar.agentId && event.status === "streaming")).toBe(true);
     expect(statusEvents.at(-1)).toMatchObject({ agentId: "mgr-1--codex", status: "idle", pendingCount: 0 });
+    expect(attentionTransitions).toEqual([
+      {
+        agentId: sidecar.agentId,
+        previousStatus: "idle",
+        nextStatus: "streaming",
+        transitionedAt: "2026-05-30T12:00:00.000Z",
+      },
+      {
+        agentId: sidecar.agentId,
+        previousStatus: "streaming",
+        nextStatus: "idle",
+        transitionedAt: "2026-05-30T12:00:00.000Z",
+      },
+    ]);
     expect(threadAuditBySessionFile.get(sidecar.sessionFile)?.threadId).toBe("thread-new");
   });
 
@@ -834,7 +865,7 @@ describe("CodexAppServerService", () => {
 
   it("clears active turn and marks error when turn/start fails", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
-    const { host, descriptors, statusEvents } = createFakeHost([manager]);
+    const { host, descriptors, statusEvents, attentionTransitions } = createFakeHost([manager]);
     const fakeClients: FakeCodexAppServerClient[] = [];
     const service = createTestService(host, {
       createClient: (handlers) => {
@@ -854,6 +885,10 @@ describe("CodexAppServerService", () => {
     expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
     expect(descriptors.get("mgr-1--codex")?.status).toBe("error");
     expect(statusEvents.at(-1)).toMatchObject({ agentId: "mgr-1--codex", status: "error" });
+    expect(attentionTransitions.slice(0, 2)).toEqual([
+      expect.objectContaining({ previousStatus: "idle", nextStatus: "streaming" }),
+      expect.objectContaining({ previousStatus: "streaming", nextStatus: "error" }),
+    ]);
 
     fakeClients[0]!.failMethods.delete("turn/start");
     await service.sendTextTurn("mgr-1--codex", "retry");

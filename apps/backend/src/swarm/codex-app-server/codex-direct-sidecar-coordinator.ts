@@ -83,6 +83,7 @@ export class CodexDirectSidecarCoordinator {
           emitAgentMessage: host.emitAgentMessage,
           emitAgentToolCall: host.emitAgentToolCall,
           emitStatus: host.emitStatus,
+          reportAttentionStatusTransition: host.reportAttentionStatusTransition,
           emitAgentsSnapshot: host.emitAgentsSnapshot,
           emitProfilesSnapshot: host.emitProfilesSnapshot,
           listWorkersForSession: host.listWorkersForSession,
