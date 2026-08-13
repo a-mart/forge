@@ -222,6 +222,92 @@ describe("SwarmSettingsService delegation settings", () => {
     expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(1);
   });
 
+  it("backfills a legacy missing roster during a posture-only update", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      managerPosture: "delegation_first" as const,
+      managerPostureOrigin: "product_default" as const,
+    });
+    const saveStore = vi.fn(async () => undefined);
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      saveStore,
+      applyManagerRuntimeRecyclePolicy,
+    });
+    const { defaultRosterId } = await service.getDelegationRosterSettings();
+
+    await service.updateSessionDelegation(session.agentId, {
+      managerPosture: { mode: "override", value: "hands_on" },
+    });
+
+    expect(session).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "session_override",
+      delegationRosterId: defaultRosterId,
+      delegationRosterOrigin: "global_default",
+    });
+    expect(saveStore).toHaveBeenCalledOnce();
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(
+      session.agentId,
+      "prompt_mode_change",
+    );
+  });
+
+  it("does not recycle when a posture update only backfills the inherited posture", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateSessionDelegation(session.agentId, {
+      managerPosture: { mode: "inherit" },
+    });
+
+    expect(session).toMatchObject({
+      managerPosture: "delegation_first",
+      managerPostureOrigin: "product_default",
+    });
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
+  it("backfills a legacy missing posture during a roster-only update", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const saveStore = vi.fn(async () => undefined);
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      saveStore,
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateSessionDelegation(session.agentId, {
+      delegationRoster: { mode: "override", rosterId: "balanced" },
+    });
+
+    expect(session).toMatchObject({
+      managerPosture: "delegation_first",
+      managerPostureOrigin: "product_default",
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "session_override",
+    });
+    expect(saveStore).toHaveBeenCalledOnce();
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
   it("does not recycle when only the posture inheritance origin changes", async () => {
     const root = await createTempRoot();
     const session = Object.assign(createSession(root, "manager"), {
