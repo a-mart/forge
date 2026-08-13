@@ -17,6 +17,10 @@ import {
 // even maximally JSON-escaped IDs small enough for an explicit response under MAX_WS_EVENT_BYTES.
 export const MAX_API_PROXY_REQUEST_ID_LENGTH = 1024;
 export const MAX_SUBSCRIPTION_ID_LENGTH = 128;
+// Same reflection bound for the correlated dismissal response: an unbounded ID
+// could push an otherwise-applied dismissal's response over MAX_WS_EVENT_BYTES,
+// silently dropping the success the client is awaiting.
+export const MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH = 1024;
 
 export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
   if (maybe.type === "ping") {
@@ -37,6 +41,13 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     const requestId = (maybe as { requestId?: unknown }).requestId;
     if (typeof requestId !== "string" || requestId.length === 0) {
       return fail("dismiss_session_attention.requestId is required");
+    }
+    if (requestId.length > MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH) {
+      // Deliberately not echoed: reflecting an oversized ID would recreate the
+      // oversized-event drop this bound exists to prevent.
+      return fail(
+        `dismiss_session_attention.requestId must be at most ${MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH} characters`,
+      );
     }
 
     const rawIds = (maybe as { attentionIds?: unknown }).attentionIds;

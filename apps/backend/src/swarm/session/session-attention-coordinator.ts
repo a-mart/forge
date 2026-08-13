@@ -77,8 +77,13 @@ export interface SessionAttentionCoordinatorOptions {
   getReason?: (input: SessionAttentionReasonInput) => SessionAttentionReason | undefined | Promise<SessionAttentionReason | undefined>;
   now?: () => string;
   randomId?: () => string;
-  /** Called only after the corresponding store replacement completed. */
-  onChange?: (update: { revision: number; changes: SessionAttentionChange[] }) => void;
+  /**
+   * Called only after the corresponding store replacement completed. Carries
+   * both the batch delta (for correlated responses) and the complete visible
+   * state, so publishers can broadcast self-contained snapshots that heal any
+   * previously dropped delivery.
+   */
+  onChange?: (update: { revision: number; changes: SessionAttentionChange[]; attentions: SessionAttention[] }) => void;
   log?: (message: string, details?: Record<string, unknown>) => void;
 }
 
@@ -109,7 +114,7 @@ export class SessionAttentionCoordinator {
   private readonly getReason: (input: SessionAttentionReasonInput) => SessionAttentionReason | undefined | Promise<SessionAttentionReason | undefined>;
   private readonly now: () => string;
   private readonly randomId: () => string;
-  private readonly onChange: (update: { revision: number; changes: SessionAttentionChange[] }) => void;
+  private readonly onChange: (update: { revision: number; changes: SessionAttentionChange[]; attentions: SessionAttention[] }) => void;
   private readonly log: (message: string, details?: Record<string, unknown>) => void;
 
   private initialized = false;
@@ -410,14 +415,7 @@ export class SessionAttentionCoordinator {
   /** Durable, visible projection only; an undurable pending write is never exposed. */
   getSnapshot(): SessionAttentionCoordinatorSnapshot {
     this.assertInitialized();
-    const attentions = Object.entries(this.state.sessions)
-      .flatMap(([sessionAgentId, record]) => {
-        const attention = toAttention(sessionAgentId, record);
-        return attention ? [attention] : [];
-      })
-      .sort((left, right) => left.sessionAgentId.localeCompare(right.sessionAgentId));
-
-    return { revision: this.state.revision, attentions };
+    return { revision: this.state.revision, attentions: visibleAttentions(this.state) };
   }
 
   private async settledRecord(
@@ -548,7 +546,7 @@ export class SessionAttentionCoordinator {
     this.state = state;
     if (changes.length === 0) return;
     try {
-      this.onChange({ revision: state.revision, changes });
+      this.onChange({ revision: state.revision, changes, attentions: visibleAttentions(state) });
     } catch (error) {
       this.log("session-attention:change_listener_failed", {
         message: errorMessage(error),
@@ -623,6 +621,15 @@ function retireFromState(
   const changes: SessionAttentionChange[] = [];
   pushRemoval(changes, sessionAgentId, current);
   return { value: undefined, state: next, changes };
+}
+
+function visibleAttentions(state: PersistedSessionAttentionState): SessionAttention[] {
+  return Object.entries(state.sessions)
+    .flatMap(([sessionAgentId, record]) => {
+      const attention = toAttention(sessionAgentId, record);
+      return attention ? [attention] : [];
+    })
+    .sort((left, right) => left.sessionAgentId.localeCompare(right.sessionAgentId));
 }
 
 function isReadyToSettle(session: SessionAttentionSessionSnapshot): boolean {

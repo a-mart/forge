@@ -15,7 +15,12 @@ function attentionMap(attentions: readonly SessionAttention[]): Record<string, S
   return next
 }
 
-/** An origin bootstrap snapshot is authoritative for the current connection epoch. */
+/**
+ * A snapshot is complete visible state at its revision: the bootstrap baseline
+ * and every live fanout use this shape, so one dropped delivery is fully healed
+ * by the next. State resets on transport open, so within a connection epoch a
+ * lower-revision snapshot can only be a stale arrival and is skipped.
+ */
 export function reduceSessionAttentionSnapshot(
   event: SessionAttentionSnapshotEvent,
 ): Pick<ManagerWsState, 'sessionAttentionRevision' | 'sessionAttentions'> {
@@ -49,7 +54,9 @@ export function handleSessionAttentionEvent(
   context: ManagerWsSessionAttentionEventContext,
 ): boolean {
   if (event.type === 'session_attention_snapshot') {
-    context.updateState(reduceSessionAttentionSnapshot(event))
+    if (event.revision >= context.state.sessionAttentionRevision) {
+      context.updateState(reduceSessionAttentionSnapshot(event))
+    }
     return true
   }
   if (event.type === 'session_attention_update') {

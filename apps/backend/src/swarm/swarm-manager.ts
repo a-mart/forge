@@ -524,8 +524,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       choices: this.choiceService,
       turns: this.turnContextCoordinator,
       plans: this.sessionPlanCoordinator,
-      onChange: ({ revision, changes }) =>
-        this.emit("session_attention_update", { type: "session_attention_update", revision, changes }),
+      onChange: ({ revision, attentions }) =>
+        this.emit("session_attention_snapshot", { type: "session_attention_snapshot", revision, attentions }),
       log: (message, details) => this.logDebug(message, details),
     });
   }

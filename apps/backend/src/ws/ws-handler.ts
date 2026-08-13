@@ -865,7 +865,11 @@ export class WsHandler {
     // on the wire by later synchronous sends to the same socket — clients
     // correlate by requestId, not delivery order, and the alternative under
     // backpressure was dropping the event entirely.
-    if (hasRequestId(event)) {
+    // `session_attention_snapshot` joins the requestId path deliberately: it is
+    // the only live carrier of sticky Needs You state, and although each
+    // snapshot is self-healing, dropping the last one in a quiet period would
+    // leave a stale row (or a missed raise) visible until the next change.
+    if (hasRequestId(event) || event.type === "session_attention_snapshot") {
       void this.sendWithBackpressure(socket, event);
       return null;
     }

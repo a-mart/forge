@@ -23,7 +23,11 @@ export interface SessionAttention {
   raisedAt: string
 }
 
-/** Authoritative all-session Builder snapshot for one origin. */
+/**
+ * Authoritative all-session Builder snapshot for one origin. Sent at bootstrap
+ * and as the live fanout on every attention change: each event carries complete
+ * visible state at its revision, so a dropped delivery heals on the next one.
+ */
 export interface SessionAttentionSnapshotEvent {
   type: 'session_attention_snapshot'
   revision: number
@@ -36,7 +40,10 @@ export interface SessionAttentionChange {
   attention: SessionAttention | null
 }
 
-/** Batched, revisioned changes so one dismissal can remove multiple sessions atomically. */
+/**
+ * Batched, revisioned changes for the request-correlated dismissal result.
+ * Uncorrelated state fanout uses `SessionAttentionSnapshotEvent` instead.
+ */
 export interface SessionAttentionUpdateEvent {
   type: 'session_attention_update'
   revision: number

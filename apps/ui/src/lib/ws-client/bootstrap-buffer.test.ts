@@ -193,6 +193,44 @@ describe('BootstrapBuffer', () => {
     expect(Object.keys(getState().sessionAttentions).sort()).toEqual(['session-b', 'session-c'])
   })
 
+  it('treats the highest-revision buffered snapshot as authoritative regardless of arrival order', () => {
+    const { buffer, patches, getState } = setup({
+      sessionAttentionRevision: -1,
+      sessionAttentions: {},
+    })
+    buffer.begin('session-b')
+
+    // A live fanout snapshot (rev 6) can overtake the drain-awaited bootstrap
+    // snapshot (rev 4) on the wire; the stale one must not win the flush.
+    buffer.handleEvent({
+      type: 'session_attention_snapshot',
+      revision: 6,
+      attentions: [{
+        attentionId: 'attention-c',
+        sessionAgentId: 'session-c',
+        profileId: 'profile-1',
+        reason: 'awaiting_review',
+        raisedAt: '2026-08-03T12:05:00.000Z',
+      }],
+    })
+    buffer.handleEvent({
+      type: 'session_attention_snapshot',
+      revision: 4,
+      attentions: [{
+        attentionId: 'attention-b',
+        sessionAgentId: 'session-b',
+        profileId: 'profile-1',
+        reason: 'work_settled',
+        raisedAt: '2026-08-03T12:00:00.000Z',
+      }],
+    })
+    buffer.handleEvent({ type: 'unread_counts_snapshot', counts: {} })
+
+    expect(patches).toHaveLength(1)
+    expect(getState().sessionAttentionRevision).toBe(6)
+    expect(Object.keys(getState().sessionAttentions)).toEqual(['session-c'])
+  })
+
   it('keeps only the newest actionable secure requests during bootstrap replay', () => {
     const { buffer, patches } = setup()
     buffer.begin('session-b')

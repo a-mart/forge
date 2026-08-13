@@ -65,6 +65,50 @@ describe('session attention event handling', () => {
     })).toBeNull()
   })
 
+  it('heals a missed removal when a later live snapshot arrives', () => {
+    // Reviewer scenario: revision 12 (removal of session-a) was lost in
+    // transit; the next snapshot carries complete state and must repair it.
+    let state: ManagerWsState = {
+      ...createInitialManagerWsState('session-a'),
+      sessionAttentionRevision: 11,
+      sessionAttentions: { 'session-a': attention('session-a') },
+    }
+    const handled = handleSessionAttentionEvent({
+      type: 'session_attention_snapshot',
+      revision: 13,
+      attentions: [attention('session-b')],
+    }, {
+      state,
+      updateState: (patch) => { state = { ...state, ...patch } },
+      requestTracker: { resolve: vi.fn() } as any,
+    })
+
+    expect(handled).toBe(true)
+    expect(state.sessionAttentionRevision).toBe(13)
+    expect(state.sessionAttentions).toEqual({ 'session-b': attention('session-b') })
+  })
+
+  it('skips a stale lower-revision snapshot within a connection epoch', () => {
+    let state: ManagerWsState = {
+      ...createInitialManagerWsState('session-a'),
+      sessionAttentionRevision: 11,
+      sessionAttentions: { 'session-a': attention('session-a') },
+    }
+    const handled = handleSessionAttentionEvent({
+      type: 'session_attention_snapshot',
+      revision: 10,
+      attentions: [],
+    }, {
+      state,
+      updateState: (patch) => { state = { ...state, ...patch } },
+      requestTracker: { resolve: vi.fn() } as any,
+    })
+
+    expect(handled).toBe(true)
+    expect(state.sessionAttentionRevision).toBe(11)
+    expect(state.sessionAttentions).toEqual({ 'session-a': attention('session-a') })
+  })
+
   it('resolves a correlated dismissal even when its equal revision is already applied', () => {
     let state: ManagerWsState = {
       ...createInitialManagerWsState('session-a'),

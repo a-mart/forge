@@ -72,6 +72,8 @@ describe('sendWsEventWithBackpressure', () => {
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('conversation_history')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('bootstrap_failed')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agents_snapshot')).toBe(true)
+    // Sole carrier of sticky Needs You state at bootstrap and in live fanout.
+    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('session_attention_snapshot')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agent_message')).toBe(false)
   })
 

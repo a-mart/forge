@@ -251,8 +251,8 @@ export async function sendSubscriptionBootstrap(options: {
   }
 
   // All-session Builder state: independent of the selected conversation.
-  // Revisioned live updates that interleave with bootstrap are buffered by the
-  // client and replayed after this authoritative origin snapshot.
+  // Revisioned attention events that interleave with bootstrap are buffered by
+  // the client and reconciled by revision against this baseline snapshot.
   const attentionProvider = swarmManager as Partial<Pick<SwarmManager, "getSessionAttentionSnapshot">>;
   const attention = typeof attentionProvider.getSessionAttentionSnapshot === "function"
     ? attentionProvider.getSessionAttentionSnapshot()

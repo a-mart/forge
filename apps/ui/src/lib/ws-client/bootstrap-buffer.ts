@@ -121,9 +121,15 @@ export class BootstrapBuffer {
     this.sessionAttentionEvents = []
 
     if (attentionEvents.length > 0) {
-      const snapshot = [...attentionEvents].reverse().find(
-        (event): event is SessionAttentionSnapshotEvent => event.type === 'session_attention_snapshot',
-      )
+      // Live fanout snapshots interleave with the bootstrap snapshot in this
+      // buffer, and drain-awaited sends can reorder arrivals, so authority is
+      // the highest revision rather than the last arrival.
+      const snapshot = attentionEvents
+        .filter((event): event is SessionAttentionSnapshotEvent => event.type === 'session_attention_snapshot')
+        .reduce<SessionAttentionSnapshotEvent | undefined>(
+          (best, event) => (!best || event.revision > best.revision ? event : best),
+          undefined,
+        )
       let attentionState = snapshot
         ? reduceSessionAttentionSnapshot(snapshot)
         : {

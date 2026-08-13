@@ -272,6 +272,36 @@ describe('WsHandler session attention dismissal', () => {
     })
   })
 
+  it('rejects an oversized dismissal requestId without echoing it', async () => {
+    const dismissSessionAttention = vi.fn()
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({ runtimeTarget: 'builder', debug: false, paths: { dataDir: '/tmp' } }),
+        dismissSessionAttention,
+      } as any,
+      mobilePushService: {} as any,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+    const socket = createOpenSocket()
+
+    await (handler as any).handleSocketMessage(socket, Buffer.from(JSON.stringify({
+      type: 'dismiss_session_attention',
+      attentionIds: ['attention-1'],
+      requestId: 'r'.repeat(1025),
+    })))
+
+    expect(dismissSessionAttention).not.toHaveBeenCalled()
+    const response = JSON.parse(socket.send.mock.calls[0]![0])
+    expect(response).toEqual({
+      type: 'error',
+      code: 'INVALID_COMMAND',
+      message: 'dismiss_session_attention.requestId must be at most 1024 characters',
+    })
+    // The oversized ID must not be reflected anywhere in the response.
+    expect(JSON.stringify(response)).not.toContain('r'.repeat(64))
+  })
+
   it('returns a correlated error when durable dismissal fails', async () => {
     const handler = new WsHandler({
       swarmManager: {
