@@ -408,7 +408,15 @@ export class SwarmSettingsService {
       throw new Error("Session delegation update requires posture or roster.");
     }
 
-    const rosterSettings = updates.delegationRoster
+    const hasCompletePosture = (
+      session.managerPosture !== undefined
+      && session.managerPostureOrigin !== undefined
+    );
+    const hasCompleteRoster = (
+      session.delegationRosterId !== undefined
+      && session.delegationRosterOrigin !== undefined
+    );
+    const rosterSettings = updates.delegationRoster || !hasCompleteRoster
       ? await resolveDelegationRosterSettings(this.options.config.paths.dataDir)
       : undefined;
     const requestedRosterId = updates.delegationRoster?.mode === "override"
@@ -420,28 +428,49 @@ export class SwarmSettingsService {
     ) {
       throw new Error(`Unknown delegation preset: ${requestedRosterId}`);
     }
+
+    const inheritedPosture = profile.defaultManagerPosture ?? "delegation_first";
+    const inheritedPostureOrigin = profile.defaultManagerPosture
+      ? "project_default" as const
+      : "product_default" as const;
+    const inheritedRosterId = profile.defaultDelegationRosterId ?? rosterSettings?.defaultRosterId;
+    const inheritedRosterOrigin = profile.defaultDelegationRosterId
+      ? "project_default" as const
+      : "global_default" as const;
     const targetPosture = updates.managerPosture?.mode === "override"
       ? updates.managerPosture.value
-      : profile.defaultManagerPosture ?? "delegation_first";
+      : updates.managerPosture
+        ? inheritedPosture
+        : session.managerPosture ?? inheritedPosture;
     const targetPostureOrigin = updates.managerPosture?.mode === "override"
       ? "session_override" as const
-      : profile.defaultManagerPosture
-        ? "project_default" as const
-        : "product_default" as const;
+      : updates.managerPosture || session.managerPosture === undefined
+        ? inheritedPostureOrigin
+        : session.managerPostureOrigin ?? (
+          targetPosture === inheritedPosture
+            ? inheritedPostureOrigin
+            : "session_override" as const
+        );
     const targetRosterId = updates.delegationRoster?.mode === "override"
-      ? requestedRosterId!
-      : profile.defaultDelegationRosterId ?? rosterSettings?.defaultRosterId;
-    const targetRosterOrigin = updates.delegationRoster?.mode === "override"
-      ? "session_override" as const
-      : profile.defaultDelegationRosterId
-        ? "project_default" as const
-        : "global_default" as const;
-    if (updates.delegationRoster && !targetRosterId) {
+      ? requestedRosterId
+      : updates.delegationRoster
+        ? inheritedRosterId
+        : session.delegationRosterId ?? inheritedRosterId;
+    if (!targetRosterId) {
       throw new Error("No default delegation preset is configured.");
     }
+    const targetRosterOrigin = updates.delegationRoster?.mode === "override"
+      ? "session_override" as const
+      : updates.delegationRoster || session.delegationRosterId === undefined
+        ? inheritedRosterOrigin
+        : session.delegationRosterOrigin ?? (
+          targetRosterId === inheritedRosterId
+            ? inheritedRosterOrigin
+            : "session_override" as const
+        );
     const postureChanged = Boolean(
       updates.managerPosture
-      && session.managerPosture !== targetPosture,
+      && (session.managerPosture ?? inheritedPosture) !== targetPosture,
     );
     const previous = {
       managerPosture: session.managerPosture,
@@ -450,13 +479,13 @@ export class SwarmSettingsService {
       delegationRosterOrigin: session.delegationRosterOrigin,
     };
     const patch: Partial<AgentDescriptor> = {
-      ...(updates.managerPosture
+      ...(updates.managerPosture || !hasCompletePosture
         ? {
             managerPosture: targetPosture,
             managerPostureOrigin: targetPostureOrigin,
           }
         : {}),
-      ...(updates.delegationRoster && targetRosterId
+      ...(updates.delegationRoster || !hasCompleteRoster
         ? {
             delegationRosterId: targetRosterId,
             delegationRosterOrigin: targetRosterOrigin,
