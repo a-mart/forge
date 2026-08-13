@@ -1273,8 +1273,8 @@ export function SettingsGeneral({
           </SettingsWithCTA>
 
           <SettingsWithCTA
-            label="Use Rooms v2 project cards"
-            description="Try the updated project cards. Classic remains available as a rollback option."
+            label="Use new project view"
+            description="Try the new project view. Classic remains available as a rollback option."
           >
             <Switch
               id="sidebar-rooms-v2-toggle"
