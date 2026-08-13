@@ -222,7 +222,7 @@ describe('ProfileGroup project row expand/collapse', () => {
     expect(container.querySelector('[data-room-card="local"]')).not.toBeNull()
     expect(container.querySelector('.sidebar-room-project-avatar')?.textContent).toBe('P')
     expect(container.querySelector('[aria-label="New session for Project Alpha"]')?.classList.contains('sidebar-room-new-session')).toBe(true)
-    expect(container.querySelector('[aria-label="3 of 4 sessions actively working"]')?.textContent).toBe('3/4')
+    expect(container.querySelector('[aria-label$="sessions actively working"]')).toBeNull()
     expect(container.querySelector('[aria-label="3 unread messages in Project Alpha"]')?.textContent).toBe('3')
   })
 })

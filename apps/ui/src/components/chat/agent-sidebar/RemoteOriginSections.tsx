@@ -157,15 +157,11 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
       ...session,
       sessionAgent: agentsById.get(session.sessionAgent.agentId) ?? session.sessionAgent,
     }))
-    const summary = getProjectRoomSummary(hydratedSessions, state.statuses, state.unreadCounts)
-    return `${summary.activeSessionCount}:${summary.visibleSessionCount}:${summary.unreadCount}`
+    return getProjectRoomSummary(hydratedSessions, state.statuses, state.unreadCounts).unreadCount
   }, [sessions])
-  const roomSummaryKey = useOriginSlice(originId, selectRoomSummary, {
-    selectorKey: `sidebar.remote-room-summary.${profile.profileId}`,
+  const unreadCount = useOriginSlice(originId, selectRoomSummary, {
+    selectorKey: `sidebar.remote-room-unread.${profile.profileId}`,
   })
-  const [activeSessionCount = 0, visibleSessionCount = 0, unreadCount = 0] = roomSummaryKey
-    .split(':')
-    .map((value) => Number(value))
 
   return (
     <div
@@ -220,14 +216,6 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
           {roomsV2 && unreadCount > 0 ? (
             <span className="sidebar-room-unread-badge" aria-label={`${unreadCount} unread messages in ${profile.displayName}`}>
               {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          ) : null}
-          {roomsV2 ? (
-            <span
-              className="sidebar-room-counter"
-              aria-label={`${activeSessionCount} of ${visibleSessionCount} sessions actively working`}
-            >
-              {activeSessionCount}/{visibleSessionCount}
             </span>
           ) : null}
         </button>

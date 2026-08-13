@@ -192,14 +192,6 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                 {roomSummary.unreadCount > 99 ? '99+' : roomSummary.unreadCount}
               </span>
             ) : null}
-            {roomsV2 && roomSummary ? (
-              <span
-                className="sidebar-room-counter"
-                aria-label={`${roomSummary.activeSessionCount} of ${roomSummary.visibleSessionCount} sessions actively working`}
-              >
-                {roomSummary.activeSessionCount}/{roomSummary.visibleSessionCount}
-              </span>
-            ) : null}
 
             {/* Project actions came from main; it must stay available in Rooms too. */}
             {onOpenProjectSettings && !isCortexProfile(treeRow) ? (

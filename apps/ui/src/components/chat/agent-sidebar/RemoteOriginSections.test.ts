@@ -143,7 +143,7 @@ describe('remote row/status rendering without nested DnD', () => {
     expect(onSelectAgent).toHaveBeenCalledWith('remote:test', 'normal-1')
   })
 
-  it('renders a blue-tinted Rooms remote card with its active/visible session counter', () => {
+  it('renders a blue-tinted Rooms remote card without a session counter', () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(createElement(RemoteProfileRow, {
@@ -161,7 +161,7 @@ describe('remote row/status rendering without nested DnD', () => {
     })
 
     expect(container.querySelector('[data-room-card="remote"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="1 of 1 sessions actively working"]')?.textContent).toBe('1/1')
+    expect(container.querySelector('[aria-label$="sessions actively working"]')).toBeNull()
     expect(container.querySelector('.sidebar-room-remote-card')).not.toBeNull()
   })
 

@@ -375,7 +375,7 @@ describe('AgentSidebar', () => {
     expect(sidebar.querySelector('[data-room-card="local"]')).not.toBeNull()
     expect(sidebar.querySelector('[data-room-card="remote"]')).not.toBeNull()
     expect(sidebar.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(2)
-    expect(sidebar.querySelector('[aria-label="1 of 1 sessions actively working"]')?.textContent).toBe('1/1')
+    expect(sidebar.querySelector('[aria-label$="sessions actively working"]')).toBeNull()
   })
 
   it('renders the real Rooms project tree inline in Inbox without changing modes on project actions', () => {
@@ -400,7 +400,7 @@ describe('AgentSidebar', () => {
     expect(projects).toBeTruthy()
     expect(projects.querySelector('[data-room-card="local"]')).not.toBeNull()
     expect(projects.querySelector('[aria-label="3 unread messages in Inline Project"]')?.textContent).toBe('3')
-    expect(projects.querySelector('[aria-label="0 of 1 sessions actively working"]')?.textContent).toBe('0/1')
+    expect(projects.querySelector('[aria-label$="sessions actively working"]')).toBeNull()
 
     const inboxButton = getByRole(sidebar, 'button', { name: /^Inbox/ })
     const projectsButton = getByRole(sidebar, 'button', { name: 'Projects' })
