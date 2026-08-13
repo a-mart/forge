@@ -183,6 +183,44 @@ describe("browser automation tools", () => {
     expect(result.details).toMatchObject({ ok: true, result: { compaction: { omitted: { consoleEntries: 1 } } } });
   });
 
+  it("omits native snapshot images below the 8px provider minimum and keeps JSON metadata", async () => {
+    const invoke = vi.fn(async () => ({
+      ok: true as const,
+      operation: "snapshot" as const,
+      result: {
+        tabId: "tab-1",
+        url: "https://example.com",
+        title: "Example",
+        loading: false,
+        viewportSetting: { mode: "fill" as const },
+        viewport: { width: 1, height: 1, deviceScaleFactor: 1 },
+        visibleText: "Collapsed",
+        interactiveElements: [],
+        accessibility: { role: "document" },
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+        screenshot: { mimeType: "image/png" as const, data: "U0VDUkVU", width: 1, height: 1 },
+      },
+    }));
+    const tool = byName(buildBrowserAutomationTools(host(invoke), descriptor()), "browser_snapshot");
+    const result = await tool.execute("call-tiny", {}, undefined, undefined, undefined as never) as {
+      content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+      details: unknown;
+    };
+    expect(result.content).toEqual([
+      expect.objectContaining({ type: "text" }),
+      { type: "text", text: "(image omitted: below provider 8px minimum)" },
+    ]);
+    expect(result.content.some((block) => block.type === "image")).toBe(false);
+    expect(result.content[0]?.text).not.toContain("U0VDUkVU");
+    expect(JSON.stringify(result.details)).not.toContain("U0VDUkVU");
+    expect(result.details).toMatchObject({
+      ok: true,
+      result: { screenshot: { mimeType: "image/png", width: 1, height: 1, encodedBytes: 6 } },
+    });
+  });
+
   it("enforces the same eligibility at the manager service boundary", async () => {
     let current = descriptor();
     const invoke = vi.fn(async () => ({ ok: true as const, operation: "status" as const, result: {} as never }));

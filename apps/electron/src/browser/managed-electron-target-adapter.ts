@@ -47,6 +47,8 @@ const ACTION_LIMIT = 200
 const POLL_INTERVAL_MS = 50
 const OPERATION_RECOVERY_TIMEOUT_MS = 250
 const MAX_SCREENSHOT_PNG_BYTES = 5 * 1_024 * 1_024
+/** Providers reject images smaller than 8×8; a 1×1 presentation stub is not a capture viewport. */
+const PROVIDER_MIN_IMAGE_DIMENSION = 8
 
 type UnknownRecord = Record<string, unknown>
 type InputSignal =
@@ -757,6 +759,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       return { url: location.href, title: document.title, loading: document.readyState !== 'complete', visibleText: (document.body?.innerText || '').slice(0, ${BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH}), interactiveElements: elements };
     })()`, true, true)
     const viewport = await this.measureViewport(tab, send)
+    this.assertSnapshotViewport(viewport)
     const scale = Math.min(1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH / viewport.width)
     const [ax, capture] = await Promise.all([
       send('Accessibility.getFullAXTree'),
@@ -979,6 +982,16 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
       height: Math.max(1, Math.round(viewport.height)),
       deviceScaleFactor: Number.isFinite(viewport.deviceScaleFactor) ? viewport.deviceScaleFactor : 1,
     }
+  }
+
+  private assertSnapshotViewport(viewport: BrowserRenderedViewport): void {
+    if (viewport.width >= PROVIDER_MIN_IMAGE_DIMENSION && viewport.height >= PROVIDER_MIN_IMAGE_DIMENSION) return
+    throw new BrowserHostError(
+      'execution-failed',
+      `Browser snapshot viewport ${viewport.width}×${viewport.height} is below the 8px capture minimum`,
+      true,
+      { width: viewport.width, height: viewport.height },
+    )
   }
 
   private async serialize<T>(tab: TabRuntime, action: string, use: (send: SendCommand, cleanup: SendCommand) => Promise<T>, deadline = Number.POSITIVE_INFINITY): Promise<T> {

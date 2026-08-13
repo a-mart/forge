@@ -17,6 +17,10 @@ import {
 } from "@forge/protocol";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor } from "../types.js";
+import {
+  meetsProviderMinImageDimension,
+  PROVIDER_UNDERSIZED_IMAGE_OMISSION,
+} from "../runtime/image-utils.js";
 
 const TOOL_TEXT_MAX_BYTES = 128 * 1_024;
 const tabId = Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Target tab ID. browser_open also accepts a canonical eligibleTabs ID from browser_status." }));
@@ -198,7 +202,11 @@ function formatSuccess(operation: BrowserAutomationOperation, result: unknown) {
   ];
   if (operation === "snapshot") {
     const screenshot = (result as BrowserSnapshotResult).screenshot;
-    content.push({ type: "image", data: screenshot.data, mimeType: screenshot.mimeType });
+    if (meetsProviderMinImageDimension(screenshot.width, screenshot.height)) {
+      content.push({ type: "image", data: screenshot.data, mimeType: screenshot.mimeType });
+    } else {
+      content.push({ type: "text", text: PROVIDER_UNDERSIZED_IMAGE_OMISSION });
+    }
   }
   return { content, details: JSON.parse(boundedText) as unknown };
 }

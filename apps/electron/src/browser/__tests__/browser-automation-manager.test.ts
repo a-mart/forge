@@ -32,6 +32,7 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
   locatorResolvers: Array<(value: unknown) => void> = []
   onMousePressed: ((params: Record<string, unknown>) => void) | null = null
   hangCaptureOnce = false
+  viewport = { width: 800, height: 600, deviceScaleFactor: 2 }
   commands: string[] = []
   attach(): void { this.attached = true }
   detach(): void { this.attached = false }
@@ -60,7 +61,7 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
     }
     const value = (() => {
       if (expression === 'document.readyState') return 'complete'
-      if (expression.includes('window.innerWidth')) return { width: 800, height: 600, deviceScaleFactor: 2 }
+      if (expression.includes('window.innerWidth')) return this.viewport
       if (expression.includes('Boolean(globalThis.__forgePlaywrightInjected)')) return true
       if (expression.includes('interactiveElements')) return {
         url: 'http://127.0.0.1:3000/fixture', title: 'Fixture', loading: false, visibleText: 'Fixture text',
@@ -215,6 +216,21 @@ describe('BrowserAutomationManager', () => {
     expect(snapshot?.ok && snapshot.operation === 'snapshot' ? snapshot.result : null).toMatchObject({
       visibleText: 'Fixture text', viewport: { width: 800, height: 600 }, screenshot: { mimeType: 'image/png', width: 800, height: 600 },
     })
+  })
+
+  it('fails snapshot capture when the measured viewport is below the 8px minimum', async () => {
+    const { manager, webview } = await setup()
+    webview.debugger.viewport = { width: 1, height: 1, deviceScaleFactor: 1 }
+    await expect(manager.execute(request('snapshot', {}))).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'execution-failed',
+        retryable: true,
+        message: 'Browser snapshot viewport 1×1 is below the 8px capture minimum',
+        details: { width: 1, height: 1 },
+      },
+    })
+    expect(webview.debugger.commands).not.toContain('Page.captureScreenshot')
   })
 
   it('projects guest navigation and title metadata without presentation or reselection', async () => {

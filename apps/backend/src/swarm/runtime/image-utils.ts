@@ -2,10 +2,92 @@ import sharp from "sharp";
 
 const DEFAULT_MAX_DIMENSION = 1920;
 
+/** xAI and other providers reject images smaller than 8×8. */
+export const PROVIDER_MIN_IMAGE_DIMENSION = 8;
+
+export const PROVIDER_UNDERSIZED_IMAGE_OMISSION =
+  "(image omitted: below provider 8px minimum)";
+
 interface ResizeResult {
   data: string;
   mimeType: string;
   resized: boolean;
+}
+
+export interface ImageDimensions {
+  width: number;
+  height: number;
+}
+
+export type PreparedProviderImage =
+  | {
+      action: "keep";
+      data: string;
+      mimeType: string;
+      resized: boolean;
+    }
+  | {
+      action: "omit";
+      reason: "below-min-dimension";
+      width: number;
+      height: number;
+    };
+
+export function meetsProviderMinImageDimension(width: number, height: number): boolean {
+  return Number.isFinite(width)
+    && Number.isFinite(height)
+    && width >= PROVIDER_MIN_IMAGE_DIMENSION
+    && height >= PROVIDER_MIN_IMAGE_DIMENSION;
+}
+
+/**
+ * Decode width/height from a base64 image. Returns null when the payload is
+ * unreadable or either axis is missing.
+ */
+export async function readImageDimensions(data: string): Promise<ImageDimensions | null> {
+  try {
+    const metadata = await sharp(Buffer.from(data, "base64")).metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+    return { width, height };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Request-time image policy: drop images below the 8px provider minimum,
+ * downsize images above maxDimension, otherwise pass through.
+ */
+export async function prepareProviderImage(
+  data: string,
+  mimeType: string,
+  maxDimension: number = DEFAULT_MAX_DIMENSION
+): Promise<PreparedProviderImage> {
+  const dimensions = await readImageDimensions(data);
+  if (dimensions && !meetsProviderMinImageDimension(dimensions.width, dimensions.height)) {
+    console.warn(
+      `[image-resize] Omitting ${dimensions.width}×${dimensions.height} image ` +
+        `(below ${PROVIDER_MIN_IMAGE_DIMENSION}px provider minimum)`
+    );
+    return {
+      action: "omit",
+      reason: "below-min-dimension",
+      width: dimensions.width,
+      height: dimensions.height
+    };
+  }
+
+  const resized = await resizeImageIfNeeded(data, mimeType, maxDimension);
+  return {
+    action: "keep",
+    data: resized.data,
+    mimeType: resized.mimeType,
+    resized: resized.resized
+  };
 }
 
 /**

@@ -2,11 +2,12 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const imageUtilsMockState = vi.hoisted(() => ({
-  resizeImageIfNeeded: vi.fn()
+  prepareProviderImage: vi.fn()
 }));
 
 vi.mock("../runtime/image-utils.js", () => ({
-  resizeImageIfNeeded: (...args: unknown[]) => imageUtilsMockState.resizeImageIfNeeded(...args)
+  prepareProviderImage: (...args: unknown[]) => imageUtilsMockState.prepareProviderImage(...args),
+  PROVIDER_UNDERSIZED_IMAGE_OMISSION: "(image omitted: below provider 8px minimum)"
 }));
 
 import {
@@ -22,8 +23,9 @@ function asProviderContextMessages(value: unknown): ProviderContextMessages {
 
 describe("Pi provider context image resize", () => {
   beforeEach(() => {
-    imageUtilsMockState.resizeImageIfNeeded.mockReset();
-    imageUtilsMockState.resizeImageIfNeeded.mockImplementation(async (data: string, mimeType: string) => ({
+    imageUtilsMockState.prepareProviderImage.mockReset();
+    imageUtilsMockState.prepareProviderImage.mockImplementation(async (data: string, mimeType: string) => ({
+      action: "keep",
       data: `resized:${data}`,
       mimeType,
       resized: true
@@ -57,8 +59,8 @@ describe("Pi provider context image resize", () => {
 
     const resized = await resizePiProviderContextImages(messages);
 
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenNthCalledWith(1, "historical-user", "image/png");
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenNthCalledWith(2, "historical-tool", "image/jpeg");
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenNthCalledWith(1, "historical-user", "image/png");
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenNthCalledWith(2, "historical-tool", "image/jpeg");
     expect(resized).toEqual([
       {
         role: "user",
@@ -104,8 +106,8 @@ describe("Pi provider context image resize", () => {
 
     const resized = await resizePiProviderContextImages(messages);
 
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenCalledOnce();
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenCalledWith("extension-image", "IMAGE/WEBP");
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenCalledOnce();
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenCalledWith("extension-image", "IMAGE/WEBP");
     expect((resized[0] as { content: unknown[] }).content).toEqual([
       ...invalidBlocks,
       { type: "image", data: "resized:extension-image", mimeType: "IMAGE/WEBP" }
@@ -133,7 +135,7 @@ describe("Pi provider context image resize", () => {
     const result = await agent.transformContext?.(originalMessages, signal);
 
     expect(existingTransform).toHaveBeenCalledWith(originalMessages, signal);
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenCalledWith("extension-added", "image/png");
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenCalledWith("extension-added", "image/png");
     expect((result?.[1] as { content: Array<{ data: string }> }).content[0]?.data).toBe("resized:extension-added");
     expect(transformedMessages[1]).toEqual({
       role: "custom",
@@ -158,7 +160,7 @@ describe("Pi provider context image resize", () => {
     const result = await agent.transformContext?.(originalMessages);
 
     expect(existingTransform).toHaveBeenCalledWith(originalMessages, undefined);
-    expect(imageUtilsMockState.resizeImageIfNeeded).toHaveBeenCalledWith("original-image", "image/png");
+    expect(imageUtilsMockState.prepareProviderImage).toHaveBeenCalledWith("original-image", "image/png");
     expect((result?.[0] as { content: Array<{ data: string }> }).content[0]?.data).toBe("resized:original-image");
     expect(originalMessages[0]).toEqual({
       role: "user",
@@ -181,11 +183,11 @@ describe("Pi provider context image resize", () => {
         timestamp: 2
       }
     ]);
-    imageUtilsMockState.resizeImageIfNeeded.mockImplementation(async (data: string, mimeType: string) => {
+    imageUtilsMockState.prepareProviderImage.mockImplementation(async (data: string, mimeType: string) => {
       if (data === "rejected-image") {
         throw new Error("unexpected resize rejection");
       }
-      return { data: `resized:${data}`, mimeType, resized: true };
+      return { action: "keep", data: `resized:${data}`, mimeType, resized: true };
     });
     const existingTransform = vi.fn(async () => transformedMessages);
     const agent = { transformContext: existingTransform };
@@ -208,12 +210,12 @@ describe("Pi provider context image resize", () => {
   it("processes provider-context images sequentially in message and block order", async () => {
     let activeResizeCalls = 0;
     let maxActiveResizeCalls = 0;
-    imageUtilsMockState.resizeImageIfNeeded.mockImplementation(async (data: string, mimeType: string) => {
+    imageUtilsMockState.prepareProviderImage.mockImplementation(async (data: string, mimeType: string) => {
       activeResizeCalls += 1;
       maxActiveResizeCalls = Math.max(maxActiveResizeCalls, activeResizeCalls);
       await Promise.resolve();
       activeResizeCalls -= 1;
-      return { data: `resized:${data}`, mimeType, resized: true };
+      return { action: "keep", data: `resized:${data}`, mimeType, resized: true };
     });
     const messages = asProviderContextMessages([
       {
@@ -234,7 +236,7 @@ describe("Pi provider context image resize", () => {
     await resizePiProviderContextImages(messages);
 
     expect(maxActiveResizeCalls).toBe(1);
-    expect(imageUtilsMockState.resizeImageIfNeeded.mock.calls).toEqual([
+    expect(imageUtilsMockState.prepareProviderImage.mock.calls).toEqual([
       ["first", "image/png"],
       ["second", "image/png"],
       ["third", "image/jpeg"]
@@ -242,7 +244,8 @@ describe("Pi provider context image resize", () => {
   });
 
   it("preserves the original array when no image changes", async () => {
-    imageUtilsMockState.resizeImageIfNeeded.mockResolvedValue({
+    imageUtilsMockState.prepareProviderImage.mockResolvedValue({
+      action: "keep",
       data: "already-small",
       mimeType: "image/png",
       resized: false
@@ -259,5 +262,71 @@ describe("Pi provider context image resize", () => {
 
     expect(resized).toBe(messages);
     expect(resized[0]).toBe(messages[0]);
+  });
+
+  it("replaces 1×1 and 2×2 user and tool-result images with an omission note without mutating canonical messages", async () => {
+    imageUtilsMockState.prepareProviderImage.mockImplementation(async (data: string, mimeType: string) => {
+      if (data === "tiny-1x1" || data === "tiny-2x2") {
+        return {
+          action: "omit",
+          reason: "below-min-dimension",
+          width: data === "tiny-1x1" ? 1 : 2,
+          height: data === "tiny-1x1" ? 1 : 2
+        };
+      }
+      return { action: "keep", data, mimeType, resized: false };
+    });
+    const messages = asProviderContextMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "keep me" },
+          { type: "image", data: "tiny-1x1", mimeType: "image/png" }
+        ],
+        timestamp: 1
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "browser_snapshot",
+        content: [{ type: "image", data: "tiny-2x2", mimeType: "image/png", extra: "preserved-metadata" }],
+        isError: false,
+        timestamp: 2
+      },
+      {
+        role: "user",
+        content: [{ type: "image", data: "valid-8x8", mimeType: "image/png" }],
+        timestamp: 3
+      }
+    ]);
+    const canonicalSnapshot = structuredClone(messages);
+
+    const resized = await resizePiProviderContextImages(messages);
+
+    expect(resized).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "keep me" },
+          { type: "text", text: "(image omitted: below provider 8px minimum)" }
+        ],
+        timestamp: 1
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "browser_snapshot",
+        content: [{ type: "text", text: "(image omitted: below provider 8px minimum)" }],
+        isError: false,
+        timestamp: 2
+      },
+      {
+        role: "user",
+        content: [{ type: "image", data: "valid-8x8", mimeType: "image/png" }],
+        timestamp: 3
+      }
+    ]);
+    expect(messages).toEqual(canonicalSnapshot);
+    expect(resized[2]).toBe(messages[2]);
   });
 });

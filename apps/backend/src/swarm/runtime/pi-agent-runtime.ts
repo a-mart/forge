@@ -52,7 +52,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "../types.js";
-import { resizeImageIfNeeded } from "../image-utils.js";
+import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "../image-utils.js";
 import {
   createDefaultCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,
@@ -3267,18 +3267,33 @@ async function prepareRuntimeUserMessageForDispatch(
     return normalized;
   }
 
-  const images = await Promise.all(
-    normalized.images.map(async (image) => {
-      const resized = await resizeImageIfNeeded(image.data, image.mimeType);
-      return {
-        mimeType: resized.mimeType,
-        data: resized.data
-      };
-    })
-  );
+  const images: RuntimeImageAttachment[] = [];
+  let omittedCount = 0;
+  for (const image of normalized.images) {
+    const prepared = await prepareProviderImage(image.data, image.mimeType);
+    if (prepared.action === "omit") {
+      omittedCount += 1;
+      continue;
+    }
+    images.push({
+      mimeType: prepared.mimeType,
+      data: prepared.data
+    });
+  }
+
+  const omissionNote = omittedCount > 0
+    ? (omittedCount === 1
+      ? PROVIDER_UNDERSIZED_IMAGE_OMISSION
+      : `${PROVIDER_UNDERSIZED_IMAGE_OMISSION} (×${omittedCount})`)
+    : "";
+  const text = omissionNote.length === 0
+    ? normalized.text
+    : normalized.text.length > 0
+      ? `${normalized.text}\n${omissionNote}`
+      : omissionNote;
 
   return {
-    text: normalized.text,
+    text,
     images
   };
 }

@@ -25,7 +25,7 @@ import {
   PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
 } from "../initial-model-input-capture.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
-import { resizeImageIfNeeded } from "../image-utils.js";
+import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "../image-utils.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
 import type {
   OpenAIAuthBrokerLeaseHandle,
@@ -142,16 +142,24 @@ export async function resizePiProviderContextImages(
         continue;
       }
 
-      const resized = await resizeImageIfNeeded(block.data, block.mimeType);
-      if (resized.data === block.data && resized.mimeType === block.mimeType) {
+      const prepared = await prepareProviderImage(block.data, block.mimeType);
+      if (prepared.action === "omit") {
+        resizedContent ??= [...content];
+        resizedContent[blockIndex] = {
+          type: "text",
+          text: PROVIDER_UNDERSIZED_IMAGE_OMISSION
+        };
+        continue;
+      }
+      if (prepared.data === block.data && prepared.mimeType === block.mimeType) {
         continue;
       }
 
       resizedContent ??= [...content];
       resizedContent[blockIndex] = {
         ...block,
-        data: resized.data,
-        mimeType: resized.mimeType
+        data: prepared.data,
+        mimeType: prepared.mimeType
       };
     }
 

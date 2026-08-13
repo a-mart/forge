@@ -14,10 +14,12 @@ import {
 } from "../../test-support/compaction-guard-harness.js";
 import type { AgentDescriptor } from "../types.js";
 
-const resizeImageIfNeededMock = vi.hoisted(() =>
+const prepareProviderImageMock = vi.hoisted(() =>
   vi.fn(async (data: string, mimeType: string) => ({
+    action: "keep" as const,
     data,
-    mimeType
+    mimeType,
+    resized: false
   }))
 );
 
@@ -27,7 +29,8 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("../image-utils.js", () => ({
-  resizeImageIfNeeded: (...args: any[]) => resizeImageIfNeededMock(...args)
+  prepareProviderImage: (...args: any[]) => prepareProviderImageMock(...args),
+  PROVIDER_UNDERSIZED_IMAGE_OMISSION: "(image omitted: below provider 8px minimum)"
 }));
 
 class FakeSession {
@@ -218,9 +221,11 @@ const rmMock = vi.mocked(rm);
 describe("mid-turn context guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resizeImageIfNeededMock.mockImplementation(async (data: string, mimeType: string) => ({
+    prepareProviderImageMock.mockImplementation(async (data: string, mimeType: string) => ({
+      action: "keep",
       data,
-      mimeType
+      mimeType,
+      resized: false
     }));
     readFileMock.mockResolvedValue("## Current Task\nKeep going\n");
     rmMock.mockResolvedValue(undefined as any);
@@ -386,9 +391,9 @@ describe("mid-turn context guard", () => {
 
   it("keeps input dispatch visible until asynchronous message preparation finishes", async () => {
     const resizeGate = createDeferred<void>();
-    resizeImageIfNeededMock.mockImplementation(async (data: string, mimeType: string) => {
+    prepareProviderImageMock.mockImplementation(async (data: string, mimeType: string) => {
       await resizeGate.promise;
-      return { data, mimeType };
+      return { action: "keep", data, mimeType, resized: false };
     });
     const { runtime } = createRuntime();
 
@@ -487,9 +492,11 @@ describe("mid-turn context guard", () => {
   it("normalized image steers are consumed before fallback replay snapshots are built", async () => {
     const { runtime, session } = createRuntime();
     session.isStreaming = false;
-    resizeImageIfNeededMock.mockImplementation(async (data: string) => ({
+    prepareProviderImageMock.mockImplementation(async (data: string) => ({
+      action: "keep",
       data: `resized:${data}`,
-      mimeType: "image/png"
+      mimeType: "image/png",
+      resized: true
     }));
 
     const dispatchDeferred = createDeferred<void>();
@@ -533,6 +540,27 @@ describe("mid-turn context guard", () => {
         }
       ]
     });
+  });
+
+  it("omits undersized inbound user images at request time without sending image blocks", async () => {
+    prepareProviderImageMock.mockResolvedValue({
+      action: "omit",
+      reason: "below-min-dimension",
+      width: 1,
+      height: 1,
+    });
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+
+    await runtime.sendMessage({
+      text: "look at this",
+      images: [{ mimeType: "image/png", data: "tiny-1x1" }],
+    });
+    await flushPromptDispatch();
+
+    expect(session.promptCalls).toEqual([
+      "look at this\n(image omitted: below provider 8px minimum)",
+    ]);
   });
 
   it("prepareForSpecialistFallbackReplay replays consumed steers exactly once and prunes the failed turn suffix", async () => {

@@ -11,10 +11,12 @@ import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-run
 import { DEFAULT_COMPACTION_TIMEOUT_MS } from "../compaction-settings-service.js";
 import { rememberForgePiCompactionFailure } from "../compaction/forge-pi-compaction-extension.js";
 
-const resizeImageIfNeededMock = vi.hoisted(() =>
+const prepareProviderImageMock = vi.hoisted(() =>
   vi.fn(async (data: string, mimeType: string) => ({
+    action: "keep" as const,
     data,
     mimeType,
+    resized: false,
   })),
 );
 
@@ -24,7 +26,8 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("../image-utils.js", () => ({
-  resizeImageIfNeeded: (...args: unknown[]) => resizeImageIfNeededMock(...args),
+  prepareProviderImage: (...args: unknown[]) => prepareProviderImageMock(...args),
+  PROVIDER_UNDERSIZED_IMAGE_OMISSION: "(image omitted: below provider 8px minimum)",
 }));
 
 const readFileMock = vi.mocked(readFile);
@@ -33,9 +36,11 @@ const rmMock = vi.mocked(rm);
 describe("compaction stability characterization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resizeImageIfNeededMock.mockImplementation(async (data: string, mimeType: string) => ({
+    prepareProviderImageMock.mockImplementation(async (data: string, mimeType: string) => ({
+      action: "keep",
       data,
       mimeType,
+      resized: false,
     }));
     readFileMock.mockResolvedValue("## Current Task\nKeep going\n");
     rmMock.mockResolvedValue(undefined as never);
