@@ -367,8 +367,10 @@ describe("SwarmWorkerHealthService", () => {
       [workerDescriptor.agentId, workerDescriptor],
     ]);
     const harness = createHarness({ descriptors });
+    // Mirror production auto-kill: the status must land on "terminated" or the
+    // service treats the termination as unconfirmed and skips the continuation.
     harness.terminateDescriptor.mockImplementation(async (descriptor) => {
-      descriptor.status = "stopped";
+      descriptor.status = "terminated";
     });
     harness.service.workerStallState.set(workerDescriptor.agentId, {
       lastProgressAt: Date.now() - 31 * 60 * 1000,
@@ -385,7 +387,7 @@ describe("SwarmWorkerHealthService", () => {
     expect(harness.reportAttentionStatusTransition).toHaveBeenCalledWith({
       agentId: workerDescriptor.agentId,
       previousStatus: "streaming",
-      nextStatus: "stopped",
+      nextStatus: "terminated",
       transitionedAt: workerDescriptor.updatedAt,
     });
     expect(harness.saveStore.mock.invocationCallOrder[0])
