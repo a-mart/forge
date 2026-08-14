@@ -115,6 +115,7 @@ const MEMBER_GIT_WRITE_PATHS = new Set([
   "/api/git/switch-branch",
   "/api/git/create-branch",
   "/api/git/pull-ff-only",
+  "/api/git/push",
 ]);
 const MEMBER_GIT_PULL_REQUEST_MERGE_PATH = /^\/api\/git\/pull-requests\/\d+\/merge$/;
 /** Terminal lifecycle + HMAC ticket issuance (R2, honoring terminalsEnabled). */

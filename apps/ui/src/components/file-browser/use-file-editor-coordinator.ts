@@ -27,7 +27,7 @@ export type FileEditorTransitionAction =
   | { type: 'close-tab'; key: FileEditorSessionKey }
   | { type: 'close-file-browser' }
   | { type: 'open-source-control-inline' }
-  | { type: 'source-control-mutation'; mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only'; agentId: string; worktreeId: string | null }
+  | { type: 'source-control-mutation'; mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push'; agentId: string; worktreeId: string | null }
   | { type: 'select-agent'; nextAgentId: string }
   | { type: 'navigate-route'; nextView: 'chat' | 'settings' | 'stats' | 'archive' }
   | { type: 'open-workspace-panel'; panel: 'artifacts' | 'cortex' | 'source-control' | 'chat' }
@@ -91,7 +91,8 @@ function actionPreservesDirtyDrafts(action: FileEditorTransitionAction): boolean
   return action.type === 'select-file' ||
     action.type === 'open-workspace-panel' ||
     action.type === 'close-file-browser' ||
-    action.type === 'open-source-control-inline'
+    action.type === 'open-source-control-inline' ||
+    (action.type === 'source-control-mutation' && action.mutation === 'push')
 }
 
 export interface FileEditorCoordinatorOptions {

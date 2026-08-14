@@ -203,9 +203,9 @@ export function HistoryView({
   const { width: commitListWidth, isDragging: isCommitListDragging, handleRef: commitListHandleRef } =
     useResizablePanel({
       storageKey: 'forge-diff-history-commits-width',
-      defaultWidth: 260,
-      minWidth: 190,
-      maxWidth: 420,
+      defaultWidth: repoTarget === 'workspace' ? 320 : 260,
+      minWidth: repoTarget === 'workspace' ? 240 : 190,
+      maxWidth: 480,
     })
 
   const { width: fileListWidth, isDragging: isFileListDragging, handleRef: fileListHandleRef } =

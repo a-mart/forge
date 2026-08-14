@@ -17,12 +17,14 @@ const {
   fetchMutationPreflightMock,
   switchGitBranchMock,
   pullGitFfOnlyMock,
+  pushGitUpstreamMock,
   invalidateGitCachesMock,
 } = vi.hoisted(() => ({
   fetchGitOriginMock: vi.fn(),
   fetchMutationPreflightMock: vi.fn(),
   switchGitBranchMock: vi.fn(),
   pullGitFfOnlyMock: vi.fn(),
+  pushGitUpstreamMock: vi.fn(),
   invalidateGitCachesMock: vi.fn(),
 }))
 
@@ -32,6 +34,7 @@ vi.mock('./use-diff-queries', () => ({
   switchGitBranch: switchGitBranchMock,
   createGitBranch: vi.fn(),
   pullGitFfOnly: pullGitFfOnlyMock,
+  pushGitUpstream: pushGitUpstreamMock,
   invalidateGitCaches: invalidateGitCachesMock,
 }))
 
@@ -66,6 +69,7 @@ beforeEach(() => {
   fetchMutationPreflightMock.mockReset()
   switchGitBranchMock.mockReset()
   pullGitFfOnlyMock.mockReset()
+  pushGitUpstreamMock.mockReset()
   invalidateGitCachesMock.mockReset()
   fetchMutationPreflightMock.mockResolvedValue({ issues: [], allowed: true })
   resetSourceControlAutoFetchFreshnessForTests()
@@ -79,11 +83,68 @@ afterEach(() => {
 })
 
 describe('SourceControlBranchActions', () => {
-  it('renders fetch and pull controls for workspace repos', () => {
+  it('renders fetch, sync, and pull controls for workspace repos', () => {
     renderActions({ isDirty: false })
 
     expect(getByText(container, 'Fetch origin')).toBeTruthy()
+    expect(getByText(container, 'Sync Changes')).toBeTruthy()
     expect(getByText(container, 'Pull')).toBeTruthy()
+  })
+
+  it('disables sync when the current branch is not ahead', () => {
+    renderActions({ isDirty: false })
+
+    const syncButton = getByRole(container, 'button', { name: /Sync Changes/i }) as HTMLButtonElement
+    expect(syncButton.disabled).toBe(true)
+  })
+
+  it('opens a confirmation dialog before pushing unpublished commits', async () => {
+    pushGitUpstreamMock.mockResolvedValue({
+      success: true,
+      warnings: [],
+      errors: [],
+    })
+
+    renderActions({
+      isDirty: false,
+      branchData: {
+        ...branchData,
+        branches: [
+          { name: 'main', kind: 'current' as const, headSha: 'abc', ahead: 21, behind: 0 },
+          { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
+        ],
+      },
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: /Sync Changes 21/i }))
+    })
+
+    expect(getByText(document.body, 'Push 21 unpublished commits?')).toBeTruthy()
+    await vi.waitFor(() => {
+      expect(fetchMutationPreflightMock).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        expect.objectContaining({
+          action: 'push',
+          remote: 'origin',
+        }),
+      )
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Push' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(pushGitUpstreamMock).toHaveBeenCalledWith('ws://127.0.0.1:47187', {
+        agentId: 'agent-1',
+        repoTarget: 'workspace',
+        worktreeId: undefined,
+        expectedHead: 'abc123',
+        expectedStatusHash: 'status123',
+        remote: 'origin',
+      })
+    })
   })
 
   it('disables pull when the worktree is dirty', () => {
@@ -398,7 +459,7 @@ function renderActions(options: {
   sourceControlActive?: boolean
   branchData?: typeof branchData
   onRequestMutation?: (
-    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
     target: { agentId: string; worktreeId: string | null },
     run: () => void,
   ) => void

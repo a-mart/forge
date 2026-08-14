@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { GitRepoTarget } from '@forge/protocol'
+import type { GitLogRef, GitRepoTarget } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  CommitGraphOverlay,
+  commitGraphWidth,
+  type CommitGraphRowMetrics,
+} from './CommitGraphColumn'
+import { layoutCommitGraph } from './commit-graph-layout'
 import { CommitMetadataBadges } from './CommitMetadataBadges'
 import { formatCommitSummary } from './formatCommitSummary'
 import type { GitLogEntry } from './use-diff-queries'
@@ -31,7 +37,54 @@ export function CommitList({
   emptyMessage = 'No commits found',
 }: CommitListProps) {
   const listRef = useRef<HTMLDivElement>(null)
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const useEnhancedRendering = repoTarget === 'versioning'
+  const showGraph =
+    repoTarget === 'workspace' && commits.length > 0 && commits.every((commit) => Array.isArray(commit.parents))
+  const graphRows = useMemo(
+    () => (showGraph ? layoutCommitGraph(commits) : []),
+    [commits, showGraph],
+  )
+  const [graphMetrics, setGraphMetrics] = useState<CommitGraphRowMetrics[]>([])
+  const graphLaneCount = Math.max(1, ...graphRows.map((row) => row.laneCount), 1)
+  const graphWidth = showGraph ? commitGraphWidth(graphLaneCount) : 0
+
+  const measureGraphRows = useCallback(() => {
+    const container = listRef.current
+    if (!container || !showGraph) {
+      setGraphMetrics([])
+      return
+    }
+
+    const origin = container.querySelector('[data-commit-graph-origin]')
+    const originTop = (origin instanceof HTMLElement ? origin : container).getBoundingClientRect().top
+    const nextMetrics = Array.from(container.querySelectorAll<HTMLElement>('[data-commit-sha]')).map((option) => {
+      const bounds = option.getBoundingClientRect()
+      return {
+        sha: option.dataset.commitSha ?? '',
+        top: bounds.top - originTop,
+        height: bounds.height,
+      }
+    }).filter((entry) => entry.sha.length > 0)
+    setGraphMetrics(nextMetrics)
+  }, [commits, showGraph])
+
+  useLayoutEffect(() => {
+    measureGraphRows()
+  }, [measureGraphRows, selectedSha])
+
+  useEffect(() => {
+    const container = listRef.current
+    if (!container || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      measureGraphRows()
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [measureGraphRows])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -60,6 +113,30 @@ export function CommitList({
     }
   }, [selectedSha, commits])
 
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current
+    const root = listRef.current
+    if (!sentinel || !hasMore || isLoadingMore) {
+      return
+    }
+
+    if (typeof IntersectionObserver === 'undefined') {
+      onLoadMore()
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore()
+        }
+      },
+      { root, rootMargin: '80px 0px', threshold: 0 },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [commits.length, emptyMessage, hasMore, isLoadingMore, onLoadMore])
+
   if (isLoading) {
     return (
       <div className="flex h-full flex-col p-2">
@@ -80,21 +157,16 @@ export function CommitList({
       <div className="flex h-full flex-col items-center justify-center gap-3 px-3 text-center text-xs text-muted-foreground">
         <span>{emptyMessage}</span>
         {hasMore ? (
-          <button
-            type="button"
-            className="inline-flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
-            onClick={onLoadMore}
-            disabled={isLoadingMore}
-          >
+          <div ref={loadMoreSentinelRef} className="flex items-center justify-center py-2 text-[11px] text-muted-foreground">
             {isLoadingMore ? (
               <>
-                <Loader2 className="size-3 animate-spin" />
-                Loading…
+                <Loader2 className="mr-1.5 size-3 animate-spin" />
+                Loading more history…
               </>
             ) : (
-              'Load more'
+              'Scroll to load more'
             )}
-          </button>
+          </div>
         ) : null}
       </div>
     )
@@ -109,7 +181,12 @@ export function CommitList({
         aria-label="Commit history"
         tabIndex={0}
         onKeyDown={handleKeyDown}
+        onScroll={measureGraphRows}
       >
+        <div className="relative" data-commit-graph-origin="true">
+        {showGraph ? (
+          <CommitGraphOverlay rows={graphRows} metrics={graphMetrics} selectedSha={selectedSha} />
+        ) : null}
         {commits.map((commit) => {
           const isSelected = selectedSha === commit.sha
           const summary = useEnhancedRendering ? formatCommitSummary(commit) : commit.message.split('\n')[0]
@@ -117,48 +194,86 @@ export function CommitList({
           return (
             <button
               key={commit.sha}
+              data-commit-sha={commit.sha}
               role="option"
               aria-selected={isSelected}
               aria-label={`${summary}, by ${commit.author}, ${formatRelativeTime(commit.date)}`}
               className={cn(
-                'flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors',
+                'relative z-[1] flex w-full items-stretch gap-1 rounded px-1.5 py-1 text-left transition-colors',
                 isSelected
                   ? 'bg-accent/80 text-foreground'
                   : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
               )}
               onClick={() => onSelectCommit(commit.sha)}
             >
-              <span className="truncate text-xs font-medium leading-tight text-foreground">{summary}</span>
-              <span className="flex items-center gap-1.5 text-[10px] leading-tight text-muted-foreground">
-                <span className="truncate">{commit.author}</span>
-                <span className="shrink-0 opacity-60">·</span>
-                <span className="shrink-0">{formatRelativeTime(commit.date)}</span>
+              {showGraph ? <span aria-hidden="true" className="shrink-0" style={{ width: graphWidth }} /> : null}
+              <span className="min-w-0 flex-1 flex flex-col gap-0.5 py-0.5">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium leading-tight text-foreground">{summary}</span>
+                  {repoTarget === 'workspace' ? <CommitRefBadges refs={commit.refs} /> : null}
+                </span>
+                <span className="flex items-center gap-1.5 text-[10px] leading-tight text-muted-foreground">
+                  <span className="truncate">{commit.author}</span>
+                  <span className="shrink-0 opacity-60">·</span>
+                  <span className="shrink-0">{formatRelativeTime(commit.date)}</span>
+                </span>
+                {useEnhancedRendering ? <CommitMetadataBadges metadata={commit.metadata} /> : null}
               </span>
-              {useEnhancedRendering ? <CommitMetadataBadges metadata={commit.metadata} /> : null}
             </button>
           )
         })}
 
         {hasMore ? (
-          <button
-            type="button"
-            className="mt-1 flex w-full items-center justify-center gap-1.5 rounded px-2 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
-            onClick={onLoadMore}
-            disabled={isLoadingMore}
-          >
+          <div ref={loadMoreSentinelRef} className="mt-1 flex w-full items-center justify-center py-2 text-[11px] text-muted-foreground">
             {isLoadingMore ? (
               <>
-                <Loader2 className="size-3 animate-spin" />
-                Loading…
+                <Loader2 className="mr-1.5 size-3 animate-spin" />
+                Loading more history…
               </>
             ) : (
-              'Load more'
+              'Scroll to load more'
             )}
-          </button>
+          </div>
         ) : null}
+        </div>
       </div>
     </div>
   )
+}
+
+function CommitRefBadges({ refs }: { refs?: GitLogRef[] }) {
+  if (!refs || refs.length === 0) {
+    return null
+  }
+
+  return (
+    <span className="flex max-w-[46%] shrink-0 flex-wrap justify-end gap-1">
+      {refs.map((ref) => (
+        <span
+          key={`${ref.kind}:${ref.name}`}
+          className={cn(
+            'inline-flex max-w-full items-center truncate rounded-full border px-1.5 py-0 text-[9px] font-medium leading-4',
+            refClassName(ref.kind),
+          )}
+        >
+          {ref.name}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function refClassName(kind: GitLogRef['kind']): string {
+  switch (kind) {
+    case 'current':
+      return 'border-sky-500/40 bg-sky-500/15 text-sky-300'
+    case 'remote':
+      return 'border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-300'
+    case 'tag':
+      return 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+    default:
+      return 'border-border/70 bg-muted/50 text-muted-foreground'
+  }
 }
 
 function scrollItemIntoView(container: HTMLElement | null, index: number) {

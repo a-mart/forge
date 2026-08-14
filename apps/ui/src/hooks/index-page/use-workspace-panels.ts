@@ -548,7 +548,7 @@ export function useWorkspacePanels({
   }, [setIsDiffViewerOpen])
 
   const handleRequestSourceControlMutation = useCallback((
-    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
     target: { agentId: string; worktreeId: string | null },
     run: () => void,
   ) => {

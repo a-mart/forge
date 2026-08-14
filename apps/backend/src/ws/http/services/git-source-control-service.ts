@@ -11,6 +11,8 @@ import type {
   GitPreflightIssue,
   GitPullFfOnlyRequest,
   GitPullResult,
+  GitPushRequest,
+  GitPushResult,
   GitHostedProviderStatus,
   GitPullRequestDetail,
   GitPullRequestListResult,
@@ -336,7 +338,7 @@ export class GitSourceControlService {
     swarmManager: SwarmManager,
     context: GitSourceControlContext,
     options: {
-      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only" | "push";
       targetBranch?: string;
       startPoint?: string;
       remote?: string;
@@ -385,7 +387,7 @@ export class GitSourceControlService {
     const agentEntries = await collectAgentEntries(swarmManager);
     const activeAgents = findActiveAgentsForWorktree(agentEntries, context.cwd);
 
-    if (isDirtyPorcelain(porcelain) && options.action !== "fetch") {
+    if (isDirtyPorcelain(porcelain) && options.action !== "fetch" && options.action !== "push") {
       issues.push({
         code: "dirty_worktree",
         message:
@@ -454,12 +456,15 @@ export class GitSourceControlService {
       issues.push(ignoredOverwriteIssue);
     }
 
-    if (options.action === "pull-ff-only") {
+    if (options.action === "pull-ff-only" || options.action === "push") {
       const upstream = await resolveUpstream(git);
       if (!upstream) {
         issues.push({
           code: "missing_upstream",
-          message: "The current branch has no upstream configured for pull.",
+          message:
+            options.action === "push"
+              ? "The current branch has no upstream configured for push."
+              : "The current branch has no upstream configured for pull.",
           severity: "block"
         });
       } else if (options.remote && upstream.remote !== options.remote) {
@@ -468,6 +473,27 @@ export class GitSourceControlService {
           message: `Current upstream is ${upstream.ref}, not ${options.remote}.`,
           severity: "block"
         });
+      } else if (options.action === "push") {
+        const aheadBehind = await resolveAheadBehind(git, upstream.ref);
+        if (!aheadBehind) {
+          issues.push({
+            code: "upstream_unavailable",
+            message: `Could not compare HEAD with ${upstream.ref}. Fetch origin and try again.`,
+            severity: "block"
+          });
+        } else if (aheadBehind.behind > 0) {
+          issues.push({
+            code: "branch_behind",
+            message: `The current branch is behind ${upstream.ref} by ${aheadBehind.behind} commit${aheadBehind.behind === 1 ? "" : "s"}. Pull first, then push.`,
+            severity: "block"
+          });
+        } else if (aheadBehind.ahead === 0) {
+          issues.push({
+            code: "nothing_to_push",
+            message: `The current branch is already up to date with ${upstream.ref}.`,
+            severity: "block"
+          });
+        }
       }
     }
 
@@ -754,10 +780,251 @@ export class GitSourceControlService {
     };
   }
 
+  async pushUpstream(
+    swarmManager: SwarmManager,
+    context: GitSourceControlContext,
+    request: GitPushRequest
+  ): Promise<GitPushResult> {
+    const remote = request.remote?.trim() || "origin";
+    if (!isValidGitRemoteNameShape(remote)) {
+      throw new Error(`Invalid remote name: ${remote}`);
+    }
+
+    const preflight = await this.validateMutationRequest(swarmManager, context, request, {
+      action: "push",
+      remote
+    });
+    if (!preflight.allowed) {
+      const blocked = this.createBlockedMutationResult(context, preflight, remote);
+      return {
+        ...blocked,
+        remote,
+        upstream: "",
+        pushed: false
+      };
+    }
+
+    const git = new GitCli({ cwd: context.cwd });
+    const upstream = await resolveUpstream(git);
+    if (!upstream) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          issues: [
+            ...preflight.issues,
+            {
+              code: "missing_upstream",
+              message: "The current branch has no upstream configured for push.",
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: "",
+        pushed: false
+      };
+    }
+
+    const fetchResult = await git.run(["fetch", "--", remote], { allowFailure: true, timeoutMs: 120_000 });
+    if (fetchResult.exitCode !== 0) {
+      const failed = this.createFailedMutationResult(
+        context,
+        fetchResult.stderr || fetchResult.stdout,
+        remote
+      );
+      return {
+        ...failed,
+        remote,
+        upstream: upstream.ref,
+        pushed: false
+      };
+    }
+
+    const currentHead = await resolveHeadSha(git);
+    const confirmedHead = request.expectedHead.trim();
+    if (!currentHead || currentHead !== confirmedHead) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          currentBranch: await resolveCurrentBranch(git),
+          currentHead,
+          statusHash: computeStatusHash(await readPorcelainStatus(git)),
+          issues: [
+            ...preflight.issues,
+            {
+              code: "stale_head",
+              message: "Repository HEAD changed since you opened this confirmation. Refresh and try again.",
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: upstream.ref,
+        pushed: false
+      };
+    }
+
+    const postFetchUpstream = await resolveUpstream(git);
+    if (!postFetchUpstream || postFetchUpstream.ref !== upstream.ref || postFetchUpstream.remote !== remote) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          currentBranch: await resolveCurrentBranch(git),
+          currentHead,
+          statusHash: computeStatusHash(await readPorcelainStatus(git)),
+          issues: [
+            ...preflight.issues,
+            {
+              code: "upstream_changed",
+              message: "The current branch upstream changed since you opened this confirmation. Refresh and try again.",
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: postFetchUpstream?.ref ?? upstream.ref,
+        pushed: false
+      };
+    }
+
+    const aheadBehind = await resolveAheadBehind(git, postFetchUpstream.ref);
+    if (!aheadBehind) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          currentBranch: await resolveCurrentBranch(git),
+          currentHead,
+          statusHash: computeStatusHash(await readPorcelainStatus(git)),
+          issues: [
+            ...preflight.issues,
+            {
+              code: "upstream_unavailable",
+              message: `Could not compare HEAD with ${postFetchUpstream.ref}. Fetch origin and try again.`,
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: postFetchUpstream.ref,
+        pushed: false
+      };
+    }
+    if (aheadBehind.behind > 0) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          currentBranch: await resolveCurrentBranch(git),
+          currentHead,
+          statusHash: computeStatusHash(await readPorcelainStatus(git)),
+          issues: [
+            ...preflight.issues,
+            {
+              code: "branch_behind",
+              message: `The current branch is behind ${postFetchUpstream.ref} by ${aheadBehind.behind} commit${aheadBehind.behind === 1 ? "" : "s"}. Pull first, then push.`,
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: postFetchUpstream.ref,
+        pushed: false
+      };
+    }
+    if (aheadBehind.ahead === 0) {
+      const blocked = this.createBlockedMutationResult(
+        context,
+        {
+          ...preflight,
+          allowed: false,
+          currentBranch: await resolveCurrentBranch(git),
+          currentHead,
+          statusHash: computeStatusHash(await readPorcelainStatus(git)),
+          issues: [
+            ...preflight.issues,
+            {
+              code: "nothing_to_push",
+              message: `The current branch is already up to date with ${postFetchUpstream.ref}.`,
+              severity: "block"
+            }
+          ]
+        },
+        remote
+      );
+      return {
+        ...blocked,
+        remote,
+        upstream: postFetchUpstream.ref,
+        pushed: false
+      };
+    }
+
+    const pushResult = await git.run(["push", "--", remote, `${confirmedHead}:${postFetchUpstream.branch}`], {
+      allowFailure: true,
+      timeoutMs: 120_000
+    });
+    if (pushResult.exitCode !== 0) {
+      const failed = this.createFailedMutationResult(
+        context,
+        pushResult.stderr || pushResult.stdout,
+        remote
+      );
+      return {
+        ...failed,
+        remote,
+        upstream: postFetchUpstream.ref,
+        pushed: false
+      };
+    }
+
+    const success = await this.createSuccessfulMutationResult(context, git, {
+      remote,
+      warnings: preflight.issues
+        .filter((issue) => issue.severity === "warn")
+        .map((issue) => issue.message)
+    });
+
+    return {
+      ...success,
+      remote,
+      upstream: postFetchUpstream.ref,
+      pushed: true
+    };
+  }
+
   private async collectIgnoredOverwritePreflightIssue(
     git: GitCli,
     options: {
-      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only" | "push";
       targetBranch?: string;
       startPoint?: string;
       remote?: string;
@@ -799,7 +1066,7 @@ export class GitSourceControlService {
   private async resolveIgnoredOverwriteTarget(
     git: GitCli,
     options: {
-      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only" | "push";
       targetBranch?: string;
       startPoint?: string;
       remote?: string;

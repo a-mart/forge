@@ -2,10 +2,9 @@ The Source Control workspace brings repository review and safe git operations in
 
 ## What it shows
 
-Open **Source Control** from the desktop workspace rail. The workspace includes tabs for:
+Open **Source Control** from the desktop workspace rail. The workspace includes:
 
-- **Changes** for the selected worktree's current file changes and diffs.
-- **History** for commit history and commit diffs.
+- **Changes** and **History** stacked in one sidebar. Collapse either section, or drag the divider to resize them. Selecting a changed file shows the working-tree diff; selecting a commit shows that commit's files and diff.
 - **Worktrees** for a read-only inventory of repository worktrees.
 - **Pull Requests** for GitHub pull requests when the repository remote and `gh` CLI setup are available.
 
@@ -15,7 +14,9 @@ When a Remote Project is selected, the repository and worktrees are on that Forg
 
 ## Branch and remote actions
 
-Source Control can fetch from origin, switch branches, create branches, and pull from upstream. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Opening Source Control preserves Files drafts without prompting. Branch switch/create and fast-forward-only pull guard dirty tabs in the matching worktree with **Save**, **Discard**, or **Cancel**, then use a confirmation flow with an expected-head/status preflight before Forge sends the git command. Read-only Source Control navigation does not trigger the dirty guard.
+Source Control can fetch from origin, switch branches, create branches, pull from upstream, and push unpublished commits. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Opening Source Control preserves Files drafts without prompting. Branch switch/create and fast-forward-only pull guard dirty tabs in the matching worktree with **Save**, **Discard**, or **Cancel**, then use a confirmation flow with an expected-head/status preflight before Forge sends the git command. **Sync Changes** fetches origin, then pushes the current branch to its upstream when it is ahead and not behind. Read-only Source Control navigation does not trigger the dirty guard.
+
+**History** shows commit refs such as `main` and `origin/main` plus a compact connected graph for workspace repositories, so unpublished local commits sit above the last pushed remote tip.
 
 Forge does not provide force push, stash, discard, rebase, branch deletion, or worktree create/remove actions from this workspace.
 

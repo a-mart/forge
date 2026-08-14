@@ -209,6 +209,7 @@ describe("collaboration HTTP auth middleware", () => {
       ["/api/git/switch-branch", "POST"],
       ["/api/git/create-branch", "POST"],
       ["/api/git/pull-ff-only", "POST"],
+      ["/api/git/push", "POST"],
       ["/api/git/pull-requests/42/merge", "POST"],
       ["/api/transcribe", "POST"],
       ["/api/agents/agent-1/compact", "POST"],

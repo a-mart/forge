@@ -16,6 +16,8 @@ type GitLogEntry = {
   author: string
   date: string
   filesChanged: number
+  parents?: string[]
+  refs?: Array<{ name: string; kind: 'local' | 'remote' | 'current' | 'tag' }>
   metadata?: {
     source?: 'agent-edit-tool' | 'reference-doc' | 'prompt-save'
     sources?: Array<'agent-edit-tool' | 'reference-doc' | 'prompt-save'>
@@ -151,7 +153,12 @@ afterEach(() => {
   })
 })
 
-function renderHistoryView(props: { refreshToken?: number; onStatusChange?: (info: HistoryStatusInfo | null) => void }) {
+function renderHistoryView(props: {
+  refreshToken?: number
+  onStatusChange?: (info: HistoryStatusInfo | null) => void
+  repoTarget?: RepoTarget
+  agentId?: string
+}) {
   if (!root) {
     root = createRoot(container)
   }
@@ -160,8 +167,8 @@ function renderHistoryView(props: { refreshToken?: number; onStatusChange?: (inf
     root?.render(
       createElement(HistoryView, {
         wsUrl: 'ws://localhost:47187',
-        agentId: 'cortex--s1',
-        repoTarget: 'versioning',
+        agentId: props.agentId ?? 'cortex--s1',
+        repoTarget: props.repoTarget ?? 'versioning',
         refreshToken: props.refreshToken ?? 0,
         onStatusChange: props.onStatusChange,
         onActivityTabChange: vi.fn(),
@@ -215,6 +222,56 @@ function commitDetail(
 }
 
 describe('HistoryView', () => {
+  it('shows current and remote ref badges in workspace history', async () => {
+    const headCommit = {
+      ...commitEntry('local01', 'Local unpublished commit'),
+      parents: ['origin01'],
+      refs: [{ name: 'main', kind: 'current' as const }],
+    }
+    const originCommit = {
+      ...commitEntry('origin01', 'Last pushed commit'),
+      parents: [],
+      refs: [{ name: 'origin/main', kind: 'remote' as const }],
+    }
+
+    logPages.workspace.set(0, { commits: [headCommit, originCommit], hasMore: false })
+    commitDetails.workspace.set('local01', commitDetail('local01', 'Local unpublished commit', [
+      { path: 'README.md', status: 'modified', additions: 1, deletions: 0 },
+    ]))
+    commitDetails.workspace.set('origin01', commitDetail('origin01', 'Last pushed commit', [
+      { path: 'README.md', status: 'modified', additions: 1, deletions: 0 },
+    ]))
+
+    renderHistoryView({ repoTarget: 'workspace', agentId: 'alpha--s1' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'main')).toBeTruthy()
+    expect(getByText(document.body, 'origin/main')).toBeTruthy()
+    expect(document.body.querySelector('[data-testid="commit-graph"]')).toBeTruthy()
+  })
+
+  it('hides the workspace graph when parent data is missing', async () => {
+    const headCommit = {
+      ...commitEntry('local01', 'Local unpublished commit'),
+      refs: [{ name: 'main', kind: 'current' as const }],
+    }
+    const originCommit = {
+      ...commitEntry('origin01', 'Last pushed commit'),
+      refs: [{ name: 'origin/main', kind: 'remote' as const }],
+    }
+
+    logPages.workspace.set(0, { commits: [headCommit, originCommit], hasMore: false })
+    commitDetails.workspace.set('local01', commitDetail('local01', 'Local unpublished commit', [
+      { path: 'README.md', status: 'modified', additions: 1, deletions: 0 },
+    ]))
+
+    renderHistoryView({ repoTarget: 'workspace', agentId: 'alpha--s1' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'main')).toBeTruthy()
+    expect(document.body.querySelector('[data-testid="commit-graph"]')).toBeNull()
+  })
+
   it('refreshes from page 0 after pagination so newer commits appear again', async () => {
     const olderCommit = commitEntry('older01', 'Older knowledge commit')
     const olderDetail = commitDetail('older01', 'Older knowledge commit', [
@@ -233,8 +290,6 @@ describe('HistoryView', () => {
     renderHistoryView({ refreshToken: 0 })
     await flushEffects()
 
-    click(getByRole(document.body, 'button', { name: 'Load more' }))
-
     await waitFor(() => {
       expect(hookCalls.log.some((call) => call.offset === 50)).toBe(true)
       expect(getByText(document.body, 'Paged history commit')).toBeTruthy()
@@ -252,13 +307,13 @@ describe('HistoryView', () => {
     await flushEffects()
 
     await waitFor(() => {
-      expect(hookCalls.log.at(-1)?.offset).toBe(0)
+      expect(hookCalls.log.some((call) => call.offset === 0)).toBe(true)
       const newestOption = getByText(document.body, 'Newest knowledge commit').closest('[role="option"]')
       expect(newestOption?.getAttribute('aria-selected')).toBe('true')
     })
   })
 
-  it('keeps Load more available when a quick filter has no matches in loaded pages', async () => {
+  it('keeps loading more when a quick filter has no matches in loaded pages', async () => {
     const commonCommit = commitEntry('common01', 'Updated common knowledge', {
       source: 'agent-edit-tool',
       sources: ['agent-edit-tool'],
@@ -289,13 +344,8 @@ describe('HistoryView', () => {
     click(getAllByRole(document.body, 'button', { name: 'Prompt overrides' })[0])
     await flushEffects()
 
-    expect(getByText(document.body, 'No commits match this filter')).toBeTruthy()
-    expect(getByRole(document.body, 'button', { name: 'Load more' })).toBeTruthy()
-
-    click(getByRole(document.body, 'button', { name: 'Load more' }))
-    await flushEffects()
-
     await waitFor(() => {
+      expect(hookCalls.log.some((call) => call.offset === 50)).toBe(true)
       expect(queryByText(document.body, 'No commits match this filter')).toBeNull()
       expect(getByText(document.body, 'Prompt override edited for cortex (session cortex--s2)')).toBeTruthy()
     })

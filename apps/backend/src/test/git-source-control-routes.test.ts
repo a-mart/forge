@@ -14,6 +14,7 @@ import type {
   GitPullRequestListResult,
   GitPullRequestMergeResult,
   GitPullResult,
+  GitPushResult,
   GitWorktreeListResult
 } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
@@ -450,6 +451,104 @@ describe("git-source-control-routes", () => {
     expect(mutation.status).toBe(200);
     expect(mutation.payload.success).toBe(true);
     expect(mutation.payload.remote).toBe("origin");
+  });
+
+  it("pushes unpublished commits to a local bare remote", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnLocal: true });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.pushed).toBe(true);
+    expect(mutation.payload.upstream).toBe("origin/main");
+    expect((await execGitCapture(server.mainDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+      (await execGitCapture(server.mainDir, ["rev-parse", "origin/main"])).stdout.trim()
+    );
+  });
+
+  it("rejects push when the current branch is already up to date", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.pushed).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("already up to date");
+  });
+
+  it("pushes unpublished commits even when the worktree is dirty", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnLocal: true });
+    const dirtyPath = join(server.mainDir, "dirty.txt");
+    await writeFile(dirtyPath, "local dirty work\n", "utf8");
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.pushed).toBe(true);
+    expect(await readFile(dirtyPath, "utf8")).toBe("local dirty work\n");
+  });
+
+  it("rejects push after fetch when origin advanced since the confirmation snapshot", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnLocal: true });
+    const remoteCloneDir = join(server.root, "unfetched-remote-advance");
+    await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
+    await execGit(remoteCloneDir, ["config", "user.name", "Forge Test"]);
+    await execGit(remoteCloneDir, ["config", "user.email", "forge-test@example.com"]);
+    await writeFile(join(remoteCloneDir, "remote-advance.txt"), "remote\n", "utf8");
+    await execGit(remoteCloneDir, ["add", "remote-advance.txt"]);
+    await execGit(remoteCloneDir, ["commit", "-m", "unfetched remote advance"]);
+    await execGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.pushed).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("behind");
+  });
+
+  it("rejects push when the current branch is behind its upstream", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnRemote: true });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.pushed).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("behind");
   });
 
   it("fast-forward pulls from a local bare remote", async () => {
@@ -1396,8 +1495,21 @@ async function postMutation<T>(
   };
 }
 
+async function execGitCapture(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const result = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8"
+  });
+
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr
+  };
+}
+
 async function createRemoteBackedTestServer(options: {
   aheadOnRemote?: boolean;
+  aheadOnLocal?: boolean;
   diverged?: boolean;
 } = {}): Promise<TestServer> {
   const root = await mkdtemp(join(tmpdir(), "git-source-control-remote-"));
@@ -1418,6 +1530,12 @@ async function createRemoteBackedTestServer(options: {
     await execGit(mainDir, ["commit", "-m", "remote advance"]);
     await execGit(mainDir, ["push", "origin", "main"]);
     await execGit(mainDir, ["reset", "--hard", "HEAD^"]);
+  }
+
+  if (options.aheadOnLocal) {
+    await writeFile(join(mainDir, "local-only.txt"), "local\n", "utf8");
+    await execGit(mainDir, ["add", "local-only.txt"]);
+    await execGit(mainDir, ["commit", "-m", "local unpublished commit"]);
   }
 
   if (options.diverged) {

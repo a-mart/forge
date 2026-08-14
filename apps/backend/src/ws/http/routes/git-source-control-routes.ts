@@ -2,6 +2,7 @@ import type {
   GitCreateBranchRequest,
   GitFetchRequest,
   GitPullFfOnlyRequest,
+  GitPushRequest,
   GitPullRequestMergeMethod,
   GitPullRequestMergeRequest,
   GitRepoTarget,
@@ -174,6 +175,12 @@ export function createGitSourceControlRoutes(options: {
       methods: GIT_POST_METHODS,
       parseBody: parsePullFfOnlyRequest,
       execute: async (context, body) => service.pullFfOnly(swarmManager, context, body)
+    }),
+    createMutationRoute(swarmManager, {
+      endpoint: "/api/git/push",
+      methods: GIT_POST_METHODS,
+      parseBody: parsePushRequest,
+      execute: async (context, body) => service.pushUpstream(swarmManager, context, body)
     }),
     {
       methods: GIT_GET_METHODS,
@@ -407,11 +414,11 @@ function createMutationRoute<T extends { agentId: string; repoTarget?: GitRepoTa
   };
 }
 
-type PreflightAction = "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+type PreflightAction = "fetch" | "switch-branch" | "create-branch" | "pull-ff-only" | "push";
 
 function parsePreflightAction(rawValue: string | null): PreflightAction {
   if (rawValue === null || rawValue.trim().length === 0) {
-    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only.");
+    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only, push.");
   }
 
   const action = rawValue.trim();
@@ -419,9 +426,10 @@ function parsePreflightAction(rawValue: string | null): PreflightAction {
     action !== "fetch" &&
     action !== "switch-branch" &&
     action !== "create-branch" &&
-    action !== "pull-ff-only"
+    action !== "pull-ff-only" &&
+    action !== "push"
   ) {
-    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only.");
+    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only, push.");
   }
 
   return action;
@@ -518,6 +526,20 @@ function parseCreateBranchRequest(body: unknown): GitCreateBranchRequest {
 }
 
 function parsePullFfOnlyRequest(body: unknown): GitPullFfOnlyRequest {
+  const base = parseMutationBase(body);
+  const record = body as Record<string, unknown>;
+  const remote =
+    typeof record.remote === "string" && record.remote.trim().length > 0
+      ? record.remote.trim()
+      : undefined;
+
+  return {
+    ...base,
+    remote
+  };
+}
+
+function parsePushRequest(body: unknown): GitPushRequest {
   const base = parseMutationBase(body);
   const record = body as Record<string, unknown>;
   const remote =

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getAllByRole, getByRole, getByText, queryByRole, queryByText, waitFor, within } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, getByTestId, getByText, queryByRole, queryByText, waitFor, within } from '@testing-library/dom'
 import { act, createElement, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -583,7 +583,7 @@ function renderInlineContent(
     initialTab?: 'changes' | 'history' | 'incoming' | 'worktrees' | 'pull-requests'
     navigationRequest?: import('./DiffViewerDialog').DiffViewerNavigationRequest | null
     onRequestSourceControlMutation?: (
-      mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+      mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
       target: { agentId: string; worktreeId: string | null },
       run: () => void,
     ) => void
@@ -756,8 +756,9 @@ function click(element: HTMLElement): void {
   })
 }
 
-function findOptionByText(text: string): HTMLElement {
-  const label = getByText(document.body, text)
+function findOptionByText(text: string, listName?: string): HTMLElement {
+  const root = listName ? getByRole(document.body, 'listbox', { name: listName }) : document.body
+  const label = getByText(root, text)
   const option = label.closest('[role="option"]')
   expect(option).toBeTruthy()
   return option as HTMLElement
@@ -846,7 +847,7 @@ describe('DiffViewerContent', () => {
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Switch to Cortex' }))
     await waitFor(() => {
-      expect(getByRole(document.body, 'button', { name: 'History' }).getAttribute('aria-pressed')).toBe('true')
+      expect(getByRole(document.body, 'button', { name: 'Toggle History section' }).getAttribute('aria-expanded')).toBe('true')
       expect(getByRole(document.body, 'button', { name: 'Cortex Knowledge' }).getAttribute('aria-pressed')).toBe('true')
     })
     expect(queryByRole(document.body, 'heading', { name: 'Incoming' })).toBeNull()
@@ -908,7 +909,7 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('versioning')
     expect(hookCalls.log.at(-1)?.repoTarget).toBe('versioning')
     expect(getByRole(document.body, 'button', { name: 'Cortex Knowledge' }).getAttribute('aria-pressed')).toBe('true')
-    expect(getByRole(document.body, 'button', { name: 'History' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'button', { name: 'Toggle History section' }).getAttribute('aria-expanded')).toBe('true')
     expect(getByText(document.body, 'Updated common knowledge for cortex (session cortex--s1)')).toBeTruthy()
     expect(getByText(document.body, 'Edit tool')).toBeTruthy()
     expect(document.body.textContent).toContain('Profile cortex')
@@ -920,20 +921,23 @@ describe('DiffViewerDialog', () => {
     await flushEffects()
 
     expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
-    expect(queryByRole(document.body, 'listbox', { name: 'Commit history' })).toBeNull()
+    expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
     expect(queryByRole(document.body, 'group', { name: 'Repository target' })).toBeNull()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
-    expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
-    expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Toggle Changes section' }).getAttribute('aria-expanded')).toBe('true')
+    expect(getByTestId(document.body, 'source-control-explorer')).toBeTruthy()
     const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
     expect(sourceControlShortcuts).toBeTruthy()
     expect(within(sourceControlShortcuts).queryByRole('button', { name: 'Changes' })).toBeNull()
     expect(within(sourceControlShortcuts).queryByRole('button', { name: 'History' })).toBeNull()
     expect(within(sourceControlShortcuts).getByRole('button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('false')
     expect(within(sourceControlShortcuts).getByRole('button', { name: 'Pull Requests' }).getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Toggle History section' }))
+    await flushEffects()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Toggle History section' }))
     await flushEffects()
     expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
     expect(hookCalls.worktrees.filter((call) => call.enabled !== false)).toHaveLength(0)
   })
 
@@ -977,7 +981,8 @@ describe('DiffViewerDialog', () => {
 
     renderDialog({ isCortex: false })
     await flushEffects()
-    expect(queryByText(document.body, '2')).toBeNull()
+    const sourceControlShortcutsBefore = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(within(sourceControlShortcutsBefore).queryByText('2')).toBeNull()
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Pull Requests' }))
     await flushEffects()
@@ -1152,7 +1157,8 @@ describe('DiffViewerDialog', () => {
     fireEvent.click(getAllByRole(document.body, 'button', { name: 'Open Source Control' })[1])
     await flushEffects()
 
-    expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'button', { name: 'Toggle Changes section' }).getAttribute('aria-expanded')).toBe('true')
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
     expect(hookCalls.status.at(-1)?.worktreeId).toBe('feature-linked')
   })
 
@@ -1211,8 +1217,8 @@ describe('DiffViewerDialog', () => {
       expect(hookCalls.log.at(-1)?.repoTarget).toBe('workspace')
       expect(hookCalls.commitDetail.at(-1)?.repoTarget).toBe('workspace')
       expect(hookCalls.commitDiff.at(-1)?.repoTarget).toBe('workspace')
-      expect(findOptionByText('Workspace bootstrap').getAttribute('aria-selected')).toBe('true')
-      expect(findOptionByText('alpha.ts').getAttribute('aria-selected')).toBe('true')
+      expect(findOptionByText('Workspace bootstrap', 'Commit history').getAttribute('aria-selected')).toBe('true')
+      expect(findOptionByText('alpha.ts', 'Commit files').getAttribute('aria-selected')).toBe('true')
       expect(queryByRole(document.body, 'button', { name: 'Cortex Knowledge' })?.getAttribute('aria-pressed')).toBe('false')
       expect(getByRole(document.body, 'button', { name: 'Workspace' }).getAttribute('aria-pressed')).toBe('true')
     })
@@ -1230,7 +1236,7 @@ describe('DiffViewerDialog', () => {
     await flushEffects()
     await flushEffects()
 
-    expect(getByRole(document.body, 'button', { name: 'History' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'button', { name: 'Toggle History section' }).getAttribute('aria-expanded')).toBe('true')
     expect(getByRole(document.body, 'button', { name: 'Cortex Knowledge' }).getAttribute('aria-pressed')).toBe('true')
     expect(getAllByRole(document.body, 'button', { name: 'Prompt overrides' })[0]?.getAttribute('aria-pressed')).toBe('true')
     expect(findOptionByText('Prompt override edited for cortex (session cortex--s2)').getAttribute('aria-selected')).toBe('true')
@@ -1242,16 +1248,18 @@ describe('DiffViewerDialog', () => {
     renderDialog({ isCortex: true })
     await flushEffects()
 
-    const promptFilter = getAllByRole(document.body, 'button', { name: 'Prompt overrides' })[0]
+    const history = getByRole(document.body, 'region', { name: 'History' })
+    const promptFilter = getAllByRole(history, 'button', { name: 'Prompt overrides' })[0]
     click(promptFilter)
     await flushEffects()
     await flushEffects()
 
-    expect(getByText(document.body, 'Prompt override edited for cortex (session cortex--s2)')).toBeTruthy()
-    expect(queryByText(document.body, 'Updated common knowledge for cortex (session cortex--s1)')).toBeNull()
-    expect(queryByText(document.body, 'Synced reference docs for cortex')).toBeNull()
-    expect(getByText(document.body, 'review.md')).toBeTruthy()
-    expect(queryByText(document.body, 'common.md')).toBeNull()
-    expect(queryByText(document.body, 'refine.md')).toBeNull()
+    expect(getByText(history, 'Prompt override edited for cortex (session cortex--s2)')).toBeTruthy()
+    expect(queryByText(history, 'Updated common knowledge for cortex (session cortex--s1)')).toBeNull()
+    expect(queryByText(history, 'Synced reference docs for cortex')).toBeNull()
+    expect(findOptionByText('review.md', 'Commit files')).toBeTruthy()
+    const commitFiles = getByRole(document.body, 'listbox', { name: 'Commit files' })
+    expect(within(commitFiles).queryByText('common.md')).toBeNull()
+    expect(within(commitFiles).queryByText('refine.md')).toBeNull()
   })
 })

@@ -5,14 +5,13 @@ import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/u
 import { cn } from '@/lib/utils'
 import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
 import { DiffStatusBar } from './DiffStatusBar'
-import { ChangesView } from './ChangesView'
-import { HistoryView, type HistoryStatusInfo } from './HistoryView'
+import { type HistoryStatusInfo } from './HistoryView'
+import { SourceControlActivityView } from './SourceControlActivityView'
 import { WorktreesView } from './WorktreesView'
 import { PullRequestsTab } from './PullRequestsTab'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
 import { RemoteUpdateAwarenessBanner, RemoteUpdateAwarenessIncoming } from './RemoteUpdateAwarenessIncoming'
-import { RemoteUpdateAwarenessProjectControl } from './RemoteUpdateAwarenessProjectControl'
 import type { RemoteUpdateAwarenessSnapshotChange } from './remote-update-awareness-mutation'
 import {
   useGitBranches,
@@ -36,7 +35,7 @@ export interface DiffViewerNavigationRequest extends DiffViewerInitialState {
 }
 
 type SourceControlMutationGuard = (
-  mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+  mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
   target: { agentId: string; worktreeId: string | null },
   run: () => void,
 ) => void
@@ -269,9 +268,6 @@ export function DiffViewerContent({
         branchActions={
           repoTarget === 'workspace' ? (
             <>
-              {remoteUpdateSnapshot && onRemoteUpdateSnapshotChange ? (
-                <RemoteUpdateAwarenessProjectControl wsUrl={wsUrl} snapshot={remoteUpdateSnapshot} onSnapshotChange={onRemoteUpdateSnapshotChange} />
-              ) : null}
               <SourceControlBranchActions
               wsUrl={wsUrl}
               agentId={agentId}
@@ -320,34 +316,23 @@ export function DiffViewerContent({
               </button>
             </div>
           )
-        ) : activeTab === 'changes' ? (
-          <ChangesView
-            key={changesViewKey}
+        ) : activeTab === 'changes' || activeTab === 'history' ? (
+          <SourceControlActivityView
+            key={`${changesViewKey}:${historyViewKey}`}
             wsUrl={wsUrl}
-            agentId={agentId}
+            agentId={active ? agentId : null}
             repoTarget={repoTarget}
             worktreeId={effectiveWorktreeId}
             status={statusQuery.data}
             isStatusLoading={statusQuery.isLoading}
             statusError={statusQuery.error}
             refreshToken={refreshToken}
-            initialFile={initialFile}
-            initialQuickFilter={initialQuickFilter}
-            onActivityTabChange={setActiveTab}
-          />
-        ) : activeTab === 'history' ? (
-          <HistoryView
-            key={historyViewKey}
-            wsUrl={wsUrl}
-            agentId={active ? agentId : null}
-            repoTarget={repoTarget}
-            worktreeId={effectiveWorktreeId}
-            onStatusChange={setHistoryStatus}
-            refreshToken={refreshToken}
             initialSha={initialSha}
             initialFile={initialFile}
             initialQuickFilter={initialQuickFilter}
-            onActivityTabChange={setActiveTab}
+            focusSection={activeTab}
+            onFocusSectionChange={setActiveTab}
+            onHistoryStatusChange={setHistoryStatus}
           />
         ) : activeTab === 'worktrees' ? (
           <WorktreesView
