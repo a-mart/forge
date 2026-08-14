@@ -2,6 +2,8 @@
 
 Forge Desktop exposes one protocol-v2 **Automatic Browser Host** to normal local Builder managers. The host privately runs each logical tab on either Forge's embedded Electron browser or the optional Chrome adapter. This is not a user- or caller-selected host preference, and neither target kind is a Skill.
 
+Automatic Browser and External Chrome remain supported on Windows, but the Windows experience is beta and has known issues. Hash pinning, signed-package checks, and the rest of the security contract are unchanged.
+
 The separate [`agent-browser` Skill](#agent-browser-skill) keeps its own CLI and browser lifecycle.
 
 ## Automatic target policy

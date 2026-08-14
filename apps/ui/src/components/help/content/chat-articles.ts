@@ -109,6 +109,8 @@ export const chatArticles: HelpArticle[] = [
       'agent-browser',
       'remote projects',
       'collaboration',
+      'Windows',
+      'beta',
     ],
     relatedIds: ['chat-overview', 'settings-external-chrome', 'settings-collaboration', 'settings-skills'],
     contextKeys: ['chat.browser', 'chat.main'],

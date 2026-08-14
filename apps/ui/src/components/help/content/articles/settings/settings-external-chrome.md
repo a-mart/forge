@@ -1,5 +1,7 @@
 **Use Chrome with Forge** is the optional setup and repair page for Forge Desktop's Automatic Browser experience.
 
+On Windows, Automatic Browser and External Chrome remain available as a beta feature with known issues. The same pinned unpacked extension, native-host hash checks, and repair flow still apply.
+
 Forge deploys a pinned unpacked extension and native-messaging host for the active Forge data directory. Complete setup once for every Chrome profile and `FORGE_DATA_DIR` you intend to use:
 
 1. Open `chrome://extensions` in the Chrome profile you want Forge to use.

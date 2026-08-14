@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { externalChromeBuildMode, verifyReleaseSignature } from '../../native-messaging-host/scripts/release-signing.mjs'
+import { desktopCompatibilityFromVersion } from './external-chrome-desktop-compatibility.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const electronDir = path.resolve(scriptDir, '..')
@@ -93,7 +94,7 @@ export async function stageExternalChromeResources({
       ...(developmentHost ? { development: developmentSeaProvenance(nativeManifest) } : {}),
     },
     compatibility: {
-      desktop: { min: '0.22.0', max: '0.22.999' },
+      desktop: desktopCompatibilityFromVersion(electronManifest.version),
       shellAbi: { min: extensionManifest.extension.shellAbi, max: extensionManifest.extension.shellAbi },
     },
   }

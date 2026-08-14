@@ -69,7 +69,7 @@ async function fixture() {
     },
   }))
   const electronManifestPath = path.join(root, 'electron-package.json')
-  await writeFile(electronManifestPath, JSON.stringify({ version: '0.22.0-beta.4' }))
+  await writeFile(electronManifestPath, JSON.stringify({ version: '0.23.0' }))
   return { root, extensionPackageRoot, nativePackageRoot, electronManifestPath }
 }
 
@@ -87,6 +87,7 @@ describe('External Chrome packaged staging', () => {
     expect(first.sha256).toBe(second.sha256)
     expect(firstBytes).toEqual(secondBytes)
     expect(first.manifest.nativeHost).toMatchObject({ platform: process.platform, architecture: process.arch, required: true })
+    expect(first.manifest.compatibility.desktop).toEqual({ min: '0.23.0', max: '0.23.999' })
     const workerPath = path.join(outputRoot, 'payload', first.manifest.extension.payloadDirectory, 'service-worker.js')
     expect(hash(await readFile(workerPath))).toBe(first.manifest.extension.payloadFiles['service-worker.js'])
     execFileSync(process.execPath, [path.resolve(import.meta.dirname, '..', 'external-chrome-package-content-smoke.mjs'), outputRoot], {
@@ -103,10 +104,18 @@ describe('External Chrome packaged staging', () => {
     await writeFile(path.join(outputRoot, 'package-manifest.json'), JSON.stringify(deployableManifest))
     const deployer = new ExternalChromeDeployer({
       dataRoot: path.join(input.root, 'forge-data'), resourcesRoot: outputRoot,
-      desktopVersion: '0.22.5', platform: process.platform, architecture: process.arch,
+      desktopVersion: '0.23.0', platform: process.platform, architecture: process.arch,
     })
     await deployer.deploy()
     expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    await expect(new ExternalChromeDeployer({
+      dataRoot: path.join(input.root, 'forge-data-old'), resourcesRoot: outputRoot,
+      desktopVersion: '0.22.9', platform: process.platform, architecture: process.arch,
+    }).deploy()).rejects.toThrow('incompatible with Desktop 0.22.9')
+    await expect(new ExternalChromeDeployer({
+      dataRoot: path.join(input.root, 'forge-data-next'), resourcesRoot: outputRoot,
+      desktopVersion: '0.24.0', platform: process.platform, architecture: process.arch,
+    }).deploy()).rejects.toThrow('incompatible with Desktop 0.24.0')
     const selector = JSON.parse(await readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8'))
     const deployedWorker = path.join(deployer.paths.extension, 'payloads', selector.payloadDirectory, 'service-worker.js')
     expect(hash(await readFile(deployedWorker))).toBe(selector.payloadFiles['service-worker.js'])

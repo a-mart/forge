@@ -1,5 +1,7 @@
 Forge Desktop presents one **Automatic Browser** experience for local Builder managers. The Automatic Browser is not a Skill and is not forwarded to Remote Projects or Collaboration.
 
+On Windows, Automatic Browser and External Chrome remain available as a beta feature with known issues. Setup, repair, and the hash-pinned native-host trust model are unchanged.
+
 Forge chooses the available local target automatically:
 
 - A Chrome-backed tab stays in Chrome. The Browser rail shows a compact card with **Show in Chrome**.
