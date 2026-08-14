@@ -84,6 +84,8 @@ interface PendingDelivery {
   mode: "steer" | "recovery_buffer";
 }
 
+type ManagerOutputRecoveryDisposition = "retry" | "continue_pending" | "exhausted";
+
 interface PromptDispatchRestoreOptions {
   restoreSessionMessagesOnFailure: unknown[];
   restoreStage?: string;
@@ -113,6 +115,24 @@ const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
 const POOLED_AUTH_RECONCILE_IDLE_MS = 60_000;
 const MANAGER_OUTPUT_ABORT_TIMEOUT_MS = 15_000;
+const MANAGER_OUTPUT_RETRY_DIRECTIVE =
+  "Forge stopped the previous assistant response because it became repetitive. Retry this same obligation once without repeating separators or termination phrases. Continue with necessary tools, or provide one concise progress or final response.";
+
+function managerOutputRecoveryMessage(
+  disposition: ManagerOutputRecoveryDisposition,
+  queuedWorkWillContinue: boolean,
+): string {
+  switch (disposition) {
+    case "retry":
+      return "Forge detected a runaway manager response and is stopping it before retrying the current work once. Any active workers keep running.";
+    case "continue_pending":
+      return "Forge detected a runaway manager response and is stopping it before continuing with queued work. Any active workers keep running.";
+    case "exhausted":
+      return queuedWorkWillContinue
+        ? "Forge detected a repeated runaway manager response and is stopping it without another retry. Forge will continue with queued work, and any active workers keep running."
+        : "Forge detected a repeated runaway manager response and is stopping it without another retry. Any active workers keep running; send a new message to continue.";
+  }
+}
 
 type PiSessionShutdownReason = "quit" | "reload" | "new" | "resume" | "fork";
 
@@ -246,6 +266,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private lifecycleInterruptionInProgress = false;
   /** One-shot recovery marker so subsequent provider deltas cannot start duplicate aborts. */
   private managerOutputRecovery: ManagerOutputRunawayDetection | undefined;
+  /** Sole identity of the queued or active bounded retry for the current manager obligation. */
+  private managerOutputRetryDeliveryId: string | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -433,6 +455,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         };
       }
 
+      this.managerOutputRetryDeliveryId = undefined;
       this.currentTurnReplayMessages = [cloneRuntimeUserMessage(message) ?? message];
       this.dispatchPrompt(message);
 
@@ -554,6 +577,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.preparedSpecialistFallbackSessionMessages = undefined;
     this.ignoreNextAgentStart = false;
     this.managerOutputRecovery = undefined;
+    this.managerOutputRetryDeliveryId = undefined;
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
@@ -657,6 +681,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    // An abort failure keeps the projection guard armed until Pi reaches its
+    // actual settlement boundary. If the provider completed cleanly despite
+    // the failed abort, its retained final fulfills the obligation and the
+    // queued retry must not duplicate that work.
+    if (this.managerOutputRecovery && this.resolveSettledAssistantMessage()) {
+      if (this.managerOutputRetryDeliveryId) {
+        this.removePendingDeliveryById(this.managerOutputRetryDeliveryId);
+      }
+      this.managerOutputRetryDeliveryId = undefined;
+    }
+    this.managerOutputRecovery = undefined;
+
     this.currentTurnReplayMessages = [];
     if (
       this.pendingDeliveries.length > 0 &&
@@ -678,6 +714,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.awaitingAgentSettlement = false;
+    this.managerOutputRetryDeliveryId = undefined;
     const settledAssistantMessage = this.resolveSettledAssistantMessage();
 
     try {
@@ -824,6 +861,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.suppressSessionEventsUntilIdle = null;
       this.awaitingAgentSettlement = false;
       this.managerOutputRecovery = undefined;
+      this.managerOutputRetryDeliveryId = undefined;
       this.inFlightPrompts.clear();
     }
 
@@ -1268,7 +1306,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async flushRecoveryBufferedMessages(): Promise<void> {
-    if (this.status === "terminated" || this.contextRecoveryInProgress) {
+    if (
+      this.status === "terminated" ||
+      this.contextRecoveryInProgress ||
+      (this.managerOutputRecovery !== undefined && this.awaitingAgentSettlement)
+    ) {
       return;
     }
 
@@ -1335,8 +1377,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
     // Forge terminal agent_end / idle / onAgentEnd happen once at agent_settled.
     if (event.type === "agent_end") {
       this.lastAgentEndWillRetry = Boolean(event.willRetry);
-      this.settledAssistantMessage =
-        findEligibleSettledAssistantMessage(event.messages) ?? this.settledAssistantMessage;
+      const settledAssistantMessage = findEligibleSettledAssistantMessage(event.messages);
+      if (
+        this.descriptor.role === "manager" &&
+        settledAssistantMessage &&
+        detectManagerOutputRunaway(extractTextFromMessageRecord(settledAssistantMessage))
+      ) {
+        this.settledAssistantMessage = undefined;
+      } else {
+        this.settledAssistantMessage = settledAssistantMessage ?? this.settledAssistantMessage;
+      }
       if (this.lastAgentEndWillRetry) {
         console.warn(`[swarm][${this.now()}] runtime:agent_end_will_retry`, {
           runtime: "pi",
@@ -1348,7 +1398,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "agent_settled") {
+      const completesRunawayRecovery = this.managerOutputRecovery !== undefined;
       await this.finalizeAgentRunSettlement();
+      if (completesRunawayRecovery) {
+        await this.flushRecoveryBufferedMessages();
+      }
       return;
     }
 
@@ -1437,6 +1491,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
           promotedPendingMessage ??
           (key === undefined ? undefined : this.consumePendingMessage(key));
         if (pendingMessage) {
+          if (pendingMessage.deliveryId !== this.managerOutputRetryDeliveryId) {
+            this.managerOutputRetryDeliveryId = undefined;
+          }
           this.currentTurnReplayMessages.push(cloneRuntimeUserMessage(pendingMessage.message) ?? pendingMessage.message);
         }
         await this.emitStatus();
@@ -1471,10 +1528,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
+    const disposition = this.prepareManagerOutputRecovery();
+    const queuedWorkWillContinue =
+      disposition === "continue_pending" ||
+      (disposition === "exhausted" && this.pendingDeliveries.length > 0);
     this.managerOutputRecovery = detection;
-    this.queueCurrentManagerMessageForRecovery();
+    this.settledAssistantMessage = undefined;
     this.beginContextRecovery();
-    void this.recoverRunawayManagerOutput(detection).catch((error) => {
+    void this.recoverRunawayManagerOutput(
+      detection,
+      disposition,
+      queuedWorkWillContinue,
+    ).catch((error) => {
       this.logRuntimeError("interrupt", error, {
         stage: "manager_output_recovery_top_level",
         reason: detection.reason,
@@ -1484,7 +1549,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return true;
   }
 
-  private async recoverRunawayManagerOutput(detection: ManagerOutputRunawayDetection): Promise<void> {
+  private async recoverRunawayManagerOutput(
+    detection: ManagerOutputRunawayDetection,
+    disposition: ManagerOutputRecoveryDisposition,
+    queuedWorkWillContinue: boolean,
+  ): Promise<void> {
     let abortSettled = false;
     try {
       await this.reportRuntimeError({
@@ -1494,9 +1563,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
           stage: "manager_output_runaway",
           reason: detection.reason,
           observedChars: detection.observedChars,
-          preserveActiveTurn: true,
-          userFacingMessage:
-            "Forge stopped a runaway manager response and is retrying the current work.",
+          retryPlanned: disposition === "retry",
+          queuedWorkWillContinue,
+          runawayRecoveryExhausted: disposition === "exhausted",
+          ...(
+            disposition !== "exhausted" || queuedWorkWillContinue
+              ? { preserveActiveTurn: true }
+              : {}
+          ),
+          userFacingMessage: managerOutputRecoveryMessage(disposition, queuedWorkWillContinue),
         },
       });
 
@@ -1522,7 +1597,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
             observedChars: detection.observedChars,
             preserveActiveTurn: true,
             userFacingMessage:
-              "Forge detected a runaway manager response but could not stop it cleanly. Use Stop All once, then retry.",
+              "Forge detected a runaway manager response but could not stop it cleanly. The manager may still be streaming; wait for it to settle or stop the session before retrying.",
           },
         });
       }
@@ -1538,15 +1613,53 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     } finally {
       // Never leave the runtime locked in recovery because a cleanup callback
-      // failed. The accepted manager obligation remains queued for settlement.
-      this.managerOutputRecovery = undefined;
+      // failed. Settlement either promotes the bounded retry/queued work or
+      // terminalizes an exhausted response without touching worker runtimes.
+      if (abortSettled) {
+        this.managerOutputRecovery = undefined;
+      }
       this.endContextRecovery();
     }
 
-    if (this.awaitingAgentSettlement && (abortSettled || !this.session.isStreaming)) {
+    // A failed abort can race Pi's serialized terminal events: providers may
+    // report not-streaming before agent_end/agent_settled reaches this queue.
+    // Only synthesize settlement after a successful abort; otherwise the real
+    // agent_settled boundary decides whether the natural completion was clean.
+    if (this.awaitingAgentSettlement && abortSettled) {
       await this.finalizeAgentRunSettlement();
     }
     await this.flushRecoveryBufferedMessages();
+  }
+
+  private prepareManagerOutputRecovery(): ManagerOutputRecoveryDisposition {
+    if (this.managerOutputRetryDeliveryId) {
+      this.removePendingDeliveryById(this.managerOutputRetryDeliveryId);
+      this.managerOutputRetryDeliveryId = undefined;
+      return "exhausted";
+    }
+
+    if (this.pendingDeliveries.length > 0) {
+      return "continue_pending";
+    }
+
+    const message = cloneRuntimeUserMessage(this.currentTurnReplayMessages.at(-1));
+    if (!message) {
+      return "exhausted";
+    }
+
+    const retryMessage = {
+      ...message,
+      text: `${message.text}\n\n${MANAGER_OUTPUT_RETRY_DIRECTIVE}`,
+    };
+    const deliveryId = randomUUID();
+    this.pendingDeliveries.push({
+      deliveryId,
+      messageKey: buildRuntimeMessageKey(retryMessage),
+      message: retryMessage,
+      mode: "steer",
+    });
+    this.managerOutputRetryDeliveryId = deliveryId;
+    return "retry";
   }
 
   private queueCurrentManagerMessageForRecovery(): void {
@@ -1559,12 +1672,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    const deliveryId = randomUUID();
     this.pendingDeliveries.push({
-      deliveryId: randomUUID(),
+      deliveryId,
       messageKey: buildRuntimeMessageKey(message),
       message,
       mode: "steer",
     });
+    if (this.managerOutputRetryDeliveryId) {
+      this.managerOutputRetryDeliveryId = deliveryId;
+    }
   }
 
   private pruneRunawayManagerAssistantMessage(): void {
@@ -1920,19 +2037,33 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const phase: RuntimeErrorEvent["phase"] = isLikelyCompactionError(normalized.message)
       ? "compaction"
       : "prompt_dispatch";
+    const managerOutputRetryDispatchFailed =
+      this.managerOutputRetryDeliveryId !== undefined &&
+      this.pendingDeliveries.some(
+        (delivery) => delivery.deliveryId === this.managerOutputRetryDeliveryId,
+      );
     const droppedPendingCount = this.pendingDeliveries.length;
     if (droppedPendingCount > 0) {
       this.pendingDeliveries = [];
       this.promotedPendingDeliveryId = undefined;
       this.session.clearQueue();
     }
+    this.managerOutputRetryDeliveryId = undefined;
     const details = {
       textPreview: previewForLog(message.text),
       imageCount: message.images?.length ?? 0,
       pendingCount: droppedPendingCount,
       droppedPendingCount,
       attempt: dispatchMeta?.attempt,
-      maxAttempts: dispatchMeta?.maxAttempts
+      maxAttempts: dispatchMeta?.maxAttempts,
+      ...(managerOutputRetryDispatchFailed
+        ? {
+            runawayRecoveryExhausted: true,
+            queuedWorkWillContinue: false,
+            userFacingMessage:
+              "Forge stopped the runaway manager response, but its one automatic retry could not start. No further automatic retry will run. Any active workers keep running; send a new message to continue.",
+          }
+        : {}),
     };
 
     this.logRuntimeError(phase, error, details);
@@ -2722,6 +2853,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
     if (this.promotedPendingDeliveryId === deliveryId) {
       this.promotedPendingDeliveryId = undefined;
+    }
+    if (this.managerOutputRetryDeliveryId === deliveryId) {
+      this.managerOutputRetryDeliveryId = undefined;
     }
   }
 

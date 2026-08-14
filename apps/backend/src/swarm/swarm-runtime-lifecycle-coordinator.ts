@@ -68,6 +68,7 @@ export interface RuntimeLifecycleController {
     agentIdOrError: string | RuntimeErrorEvent,
     maybeError?: RuntimeErrorEvent,
   ): Promise<void>;
+  isRuntimeCallbackAccepted(agentId: string, runtimeToken: number): boolean;
   handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void>;
   clearInvalidatedManualStopMessageEndAllowance(agentId: string): void;
 }
@@ -93,6 +94,7 @@ export interface RuntimeLifecyclePlans {
 
 export interface RuntimeLifecycleGoals {
   scheduleContinuation(owner: AgentDescriptor & { role: "manager"; profileId: string }): void;
+  cancelScheduledContinuation(agentId: string): void;
 }
 
 export interface RuntimeLifecycleChoices {
@@ -206,6 +208,8 @@ export function createRuntimeLifecycleControllerHostCallbacks(
 export class SwarmRuntimeLifecycleCoordinator {
   private readonly managerTurnWatchdog: ManagerTurnWatchdog;
   private readonly pendingManualStopNoticeTimers = new Map<string, NodeJS.Timeout>();
+  /** Keep an exhausted goal-backed manager idle until new work explicitly starts. */
+  private readonly goalContinuationSuppressedAfterRunaway = new Set<string>();
 
   constructor(private readonly options: SwarmRuntimeLifecycleCoordinatorOptions) {
     this.managerTurnWatchdog = new ManagerTurnWatchdog({
@@ -257,6 +261,7 @@ export class SwarmRuntimeLifecycleCoordinator {
   detachRuntime(agentId: string, runtimeToken?: number): boolean {
     const detached = this.options.controller.detachRuntime(agentId, runtimeToken);
     if (detached) {
+      this.goalContinuationSuppressedAfterRunaway.delete(agentId);
       this.options.turnContext.discard(agentId);
       this.options.codexScopes.closeWorkerScope(agentId);
     }
@@ -264,6 +269,7 @@ export class SwarmRuntimeLifecycleCoordinator {
   }
 
   clearAgentState(agentId: string): void {
+    this.goalContinuationSuppressedAfterRunaway.delete(agentId);
     this.options.turnContext.clearAgentState(agentId);
   }
 
@@ -305,6 +311,7 @@ export class SwarmRuntimeLifecycleCoordinator {
     }
 
     this.options.turnContext.clearAgentState(input.agentId);
+    this.goalContinuationSuppressedAfterRunaway.delete(input.agentId);
     reconcileInterruptedManagerToolCalls({
       descriptor,
       now: this.options.now,
@@ -334,7 +341,9 @@ export class SwarmRuntimeLifecycleCoordinator {
     const descriptor = this.options.descriptors.get(agentId);
     if (status === "idle" && pendingCount === 0 && descriptor?.status === "idle" && isSessionManager(descriptor)) {
       await this.options.plans.finalizeUsage(descriptor);
-      this.options.goals.scheduleContinuation(descriptor);
+      if (!this.goalContinuationSuppressedAfterRunaway.has(agentId)) {
+        this.options.goals.scheduleContinuation(descriptor);
+      }
     }
   }
 
@@ -343,11 +352,21 @@ export class SwarmRuntimeLifecycleCoordinator {
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent,
   ): Promise<void> {
-    await this.options.controller.handleRuntimeSessionEvent(
+    const accepted = await this.options.controller.handleRuntimeSessionEvent(
       runtimeTokenOrAgentId,
       agentIdOrEvent,
       maybeEvent,
     );
+    const agentId = typeof runtimeTokenOrAgentId === "number"
+      ? agentIdOrEvent as string
+      : runtimeTokenOrAgentId;
+    const event = typeof runtimeTokenOrAgentId === "number"
+      ? maybeEvent
+      : agentIdOrEvent as RuntimeSessionEvent;
+    if (accepted && event?.type === "message_start" && event.message.role === "user") {
+      // A newly accepted user/internal prompt starts a distinct obligation.
+      this.goalContinuationSuppressedAfterRunaway.delete(agentId);
+    }
   }
 
   async handleRuntimeError(
@@ -359,6 +378,20 @@ export class SwarmRuntimeLifecycleCoordinator {
       ? agentIdOrError as string
       : runtimeTokenOrAgentId;
     const error = typeof runtimeTokenOrAgentId === "number" ? maybeError : agentIdOrError as RuntimeErrorEvent;
+    if (
+      typeof runtimeTokenOrAgentId === "number" &&
+      !this.options.controller.isRuntimeCallbackAccepted(agentId, runtimeTokenOrAgentId)
+    ) {
+      await this.options.controller.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
+      return;
+    }
+    if (
+      error?.details?.runawayRecoveryExhausted === true &&
+      error.details.queuedWorkWillContinue !== true
+    ) {
+      this.goalContinuationSuppressedAfterRunaway.add(agentId);
+      this.options.goals.cancelScheduledContinuation(agentId);
+    }
     if (!error || !shouldPreserveActiveTurnForRuntimeError(error)) {
       this.options.turnContext.handleRuntimeError(agentId);
     }

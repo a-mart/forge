@@ -1018,6 +1018,10 @@ export class SwarmRuntimeController {
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error: guardedError });
   }
 
+  isRuntimeCallbackAccepted(agentId: string, runtimeToken: number): boolean {
+    return !this.shouldIgnoreRuntimeCallback(agentId, runtimeToken);
+  }
+
   private guardRuntimeSessionEvent(
     agentId: string,
     runtimeToken: number | undefined,

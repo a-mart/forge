@@ -67,8 +67,12 @@ function createHarness(dataDir = "/tmp/data") {
     detachRuntime: vi.fn(() => true),
     runRuntimeShutdown: vi.fn(async () => ({ status: "clean", runtimeToken: 7 })),
     handleRuntimeStatus: vi.fn(async () => { calls.push("controller:status"); }),
-    handleRuntimeSessionEvent: vi.fn(async () => { calls.push("controller:event"); }),
+    handleRuntimeSessionEvent: vi.fn(async () => {
+      calls.push("controller:event");
+      return true;
+    }),
     handleRuntimeError: vi.fn(async () => { calls.push("controller:error"); }),
+    isRuntimeCallbackAccepted: vi.fn(() => true),
     handleRuntimeAgentEnd: vi.fn(async () => { calls.push("controller:end"); }),
     clearInvalidatedManualStopMessageEndAllowance: vi.fn(),
   };
@@ -103,6 +107,7 @@ function createHarness(dataDir = "/tmp/data") {
   };
   const goals = {
     scheduleContinuation: vi.fn(() => { calls.push("goals:schedule"); }),
+    cancelScheduledContinuation: vi.fn(() => { calls.push("goals:cancel"); }),
   };
   const choices = {
     hasPendingChoicesForSession: vi.fn(() => false),
@@ -308,6 +313,151 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
       message: "terminal prompt failure with no recovery lifecycle",
     });
     expect(calls).toEqual(["turn:error", "controller:error"]);
+  });
+
+  it("preserves queued turn context when retry exhaustion continues newer work", async () => {
+    const { coordinator, calls, turnContext } = createHarness();
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "runaway retry exhausted with queued work",
+      details: {
+        runawayRecoveryExhausted: true,
+        queuedWorkWillContinue: true,
+        preserveActiveTurn: true,
+      },
+    });
+
+    expect(calls).toEqual(["controller:error"]);
+    expect(turnContext.handleRuntimeError).not.toHaveBeenCalled();
+  });
+
+  it("keeps an exhausted goal-backed manager idle until new work starts", async () => {
+    const { coordinator, controller, descriptors, calls, goals } = createHarness();
+    descriptors.set("manager", descriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "profile-a",
+      status: "idle",
+    }));
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "runaway retry exhausted",
+      details: {
+        runawayRecoveryExhausted: true,
+        queuedWorkWillContinue: false,
+      },
+    });
+    expect(calls).toEqual(["goals:cancel", "turn:error", "controller:error"]);
+    expect(goals.cancelScheduledContinuation).toHaveBeenCalledWith("manager");
+
+    calls.length = 0;
+    // Recovery emits streaming status snapshots after the terminal error; they
+    // must not be mistaken for a newly accepted obligation.
+    await coordinator.handleRuntimeStatus(8, "manager", "streaming", 0);
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(calls).toEqual([
+      "controller:status",
+      "controller:status",
+      "plans:finalize",
+      "controller:status",
+      "plans:finalize",
+    ]);
+    expect(goals.scheduleContinuation).not.toHaveBeenCalled();
+
+    calls.length = 0;
+    vi.mocked(controller.handleRuntimeSessionEvent).mockResolvedValueOnce(false);
+    await coordinator.handleRuntimeSessionEvent(7, "manager", {
+      type: "message_start",
+      message: { role: "user", content: "stale user work" },
+    });
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(calls).toEqual([
+      "controller:status",
+      "plans:finalize",
+    ]);
+    expect(goals.scheduleContinuation).not.toHaveBeenCalled();
+
+    calls.length = 0;
+    await coordinator.handleRuntimeSessionEvent(8, "manager", {
+      type: "message_start",
+      message: { role: "user", content: "fresh user work" },
+    });
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(calls).toEqual([
+      "controller:event",
+      "controller:status",
+      "plans:finalize",
+      "goals:schedule",
+    ]);
+    expect(goals.scheduleContinuation).toHaveBeenCalledOnce();
+  });
+
+  it("ignores stale runaway exhaustion before mutating turn or goal lifecycle", async () => {
+    const { coordinator, controller, descriptors, calls, goals, turnContext } = createHarness();
+    descriptors.set("manager", descriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "profile-a",
+      status: "idle",
+    }));
+    vi.mocked(controller.isRuntimeCallbackAccepted).mockReturnValueOnce(false);
+
+    await coordinator.handleRuntimeError(7, "manager", {
+      phase: "interrupt",
+      message: "stale runaway retry exhausted",
+      details: {
+        runawayRecoveryExhausted: true,
+        queuedWorkWillContinue: false,
+      },
+    });
+
+    expect(calls).toEqual(["controller:error"]);
+    expect(goals.cancelScheduledContinuation).not.toHaveBeenCalled();
+    expect(turnContext.handleRuntimeError).not.toHaveBeenCalled();
+
+    calls.length = 0;
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(calls).toEqual([
+      "controller:status",
+      "plans:finalize",
+      "goals:schedule",
+    ]);
+  });
+
+  it("does not let a failed bounded-retry dispatch restart an active goal", async () => {
+    const { coordinator, descriptors, calls, goals } = createHarness();
+    descriptors.set("manager", descriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "profile-a",
+      status: "idle",
+    }));
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "prompt_dispatch",
+      message: "retry dispatch failed",
+      details: {
+        runawayRecoveryExhausted: true,
+        queuedWorkWillContinue: false,
+      },
+    });
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+
+    expect(calls).toEqual([
+      "goals:cancel",
+      "turn:error",
+      "controller:error",
+      "controller:status",
+      "plans:finalize",
+    ]);
+    expect(goals.cancelScheduledContinuation).toHaveBeenCalledWith("manager");
+    expect(goals.scheduleContinuation).not.toHaveBeenCalled();
   });
 
   it("persists worker compaction counts and publishes the owning session snapshot", async () => {

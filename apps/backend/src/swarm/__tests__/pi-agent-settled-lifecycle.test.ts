@@ -30,11 +30,13 @@ class FakeSession {
   private listener: ((event: unknown) => void) | undefined;
   waitForIdleImpl?: () => Promise<void>;
   abortImpl?: () => Promise<void>;
+  promptImpl?: (message: string) => Promise<void>;
   disposeImpl?: () => void;
   steerTransform?: (message: string) => string;
 
   async prompt(message: string): Promise<void> {
     this.promptCalls.push(message);
+    await this.promptImpl?.(message);
   }
   async followUp(): Promise<void> {}
   async steer(message: string): Promise<void> {
@@ -328,7 +330,7 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
   });
 
-  it("aborts repetitive manager output, prunes it, and retries the active obligation", async () => {
+  it("aborts repetitive manager output, prunes it, and retries the active obligation once", async () => {
     const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
     const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
 
@@ -353,10 +355,9 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     });
 
     await vi.waitFor(() => expect(session.abortCalls).toBe(1));
-    await vi.waitFor(() => expect(session.promptCalls).toEqual([
-      "continue the active manager obligation",
-      "continue the active manager obligation",
-    ]));
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(2));
+    expect(session.promptCalls[1]).toContain("continue the active manager obligation");
+    expect(session.promptCalls[1]).toContain("Retry this same obligation once");
 
     expect(session.state.messages).toEqual([
       { role: "user", content: "continue the active manager obligation" },
@@ -368,6 +369,11 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
         details: expect.objectContaining({
           stage: "manager_output_runaway",
           preserveActiveTurn: true,
+          retryPlanned: true,
+          queuedWorkWillContinue: false,
+          runawayRecoveryExhausted: false,
+          userFacingMessage:
+            "Forge detected a runaway manager response and is stopping it before retrying the current work once. Any active workers keep running.",
         }),
       }),
     );
@@ -377,6 +383,416 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     );
     expect(onAgentEnd).not.toHaveBeenCalled();
     expect(reportSuccess).not.toHaveBeenCalled();
+  });
+
+  it("terminalizes a second runaway instead of replaying the same manager obligation forever", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "continue the active manager obligation";
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({
+        type: "agent_end",
+        willRetry: false,
+        messages: session.abortCalls === 2
+          ? [{ role: "assistant", content: triggerText, stopReason: "stop" }]
+          : [],
+      });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(2));
+
+    const retryMessage = session.promptCalls[1];
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "user", content: retryMessage },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: retryMessage },
+    });
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+
+    await vi.waitFor(() => expect(session.abortCalls).toBe(2));
+    await vi.waitFor(() => expect(onAgentEnd).toHaveBeenCalledTimes(1));
+
+    expect(session.promptCalls).toHaveLength(2);
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(session.state.messages).toEqual([
+      { role: "user", content: originalMessage },
+      { role: "user", content: retryMessage },
+    ]);
+    expect(onRuntimeError).toHaveBeenLastCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "interrupt",
+        details: expect.objectContaining({
+          stage: "manager_output_runaway",
+          reason: "repetitive_output",
+          observedChars: triggerText.length,
+          retryPlanned: false,
+          queuedWorkWillContinue: false,
+          runawayRecoveryExhausted: true,
+          userFacingMessage:
+            "Forge detected a repeated runaway manager response and is stopping it without another retry. Any active workers keep running; send a new message to continue.",
+        }),
+      }),
+    );
+    expect(onRuntimeError.mock.calls.at(-1)?.[1].details).not.toHaveProperty("preserveActiveTurn");
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
+    expect(onSessionEvent).not.toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({ settledAssistantMessage: expect.anything() }),
+    );
+    expect(session.disposeCalls).toBe(0);
+    expect(reportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes newer queued work after the bounded runaway retry is exhausted", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "handle the worker result";
+    const newerWorkerResult = "new worker result arrived while the retry was running";
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(2));
+
+    const retryMessage = session.promptCalls[1];
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "user", content: retryMessage },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: retryMessage },
+    });
+    await runtime.sendMessage(newerWorkerResult);
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+
+    await vi.waitFor(() => expect(session.abortCalls).toBe(2));
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(3));
+
+    expect(session.promptCalls[2]).toBe(newerWorkerResult);
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onRuntimeError).toHaveBeenLastCalledWith(
+      "manager",
+      expect.objectContaining({
+        details: expect.objectContaining({
+          runawayRecoveryExhausted: true,
+          queuedWorkWillContinue: true,
+          preserveActiveTurn: true,
+          userFacingMessage:
+            "Forge detected a repeated runaway manager response and is stopping it without another retry. Forge will continue with queued work, and any active workers keep running.",
+        }),
+      }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+
+    const cleanFinal = {
+      role: "assistant",
+      content: [{ type: "text", text: "The newer worker result is complete." }],
+      stopReason: "stop",
+    };
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: newerWorkerResult },
+    });
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [cleanFinal],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onAgentEnd).toHaveBeenCalledOnce();
+    expect(reportSuccess).toHaveBeenCalledOnce();
+    expect(session.disposeCalls).toBe(0);
+  });
+
+  it("continues already queued input instead of replaying the runaway obligation", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "handle the original worker result";
+    const queuedUpdate = "update?";
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await runtime.sendMessage(queuedUpdate);
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: triggerText }] },
+    });
+
+    await vi.waitFor(() => expect(session.promptCalls).toEqual([originalMessage, queuedUpdate]));
+
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onRuntimeError).toHaveBeenLastCalledWith(
+      "manager",
+      expect.objectContaining({
+        details: expect.objectContaining({
+          retryPlanned: false,
+          queuedWorkWillContinue: true,
+          runawayRecoveryExhausted: false,
+          preserveActiveTurn: true,
+          userFacingMessage:
+            "Forge detected a runaway manager response and is stopping it before continuing with queued work. Any active workers keep running.",
+        }),
+      }),
+    );
+    expect(onAgentEnd).not.toHaveBeenCalled();
+    expect(reportSuccess).not.toHaveBeenCalled();
+  });
+
+  it("keeps one queued retry through an abort failure without reopening the retry loop", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "finish the active obligation";
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      throw new Error("abort transport failed");
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    await vi.waitFor(() => expect(session.abortCalls).toBe(1));
+    await vi.waitFor(() => expect(onRuntimeError).toHaveBeenCalledTimes(2));
+    expect(onRuntimeError.mock.calls[0]?.[1].details?.userFacingMessage).toBe(
+      "Forge detected a runaway manager response and is stopping it before retrying the current work once. Any active workers keep running.",
+    );
+    expect(onRuntimeError.mock.calls[1]?.[1].details?.userFacingMessage).toBe(
+      "Forge detected a runaway manager response but could not stop it cleanly. The manager may still be streaming; wait for it to settle or stop the session before retrying.",
+    );
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    expect(session.abortCalls).toBe(1);
+    expect(onRuntimeError).toHaveBeenCalledTimes(2);
+
+    session.isStreaming = false;
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: triggerText, stopReason: "stop" }],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(2));
+
+    const retryMessage = session.promptCalls[1];
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: retryMessage },
+    });
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+
+    await vi.waitFor(() => expect(session.abortCalls).toBe(2));
+    await vi.waitFor(() => expect(onAgentEnd).toHaveBeenCalledOnce());
+    expect(session.promptCalls).toHaveLength(2);
+    expect(onRuntimeError.mock.calls.filter(([, error]) =>
+      error.details?.runawayRecoveryExhausted === true
+    )).toHaveLength(1);
+    expect(session.disposeCalls).toBe(0);
+  });
+
+  it("waits for delayed clean settlement after abort failure instead of duplicating it", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const cleanFinal = {
+      role: "assistant",
+      content: "Completed cleanly before the failed abort could interrupt it.",
+      stopReason: "stop",
+    };
+
+    await runtime.sendMessage("finish the active obligation");
+    session.state.messages = [
+      { role: "user", content: "finish the active obligation" },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      // Some providers clear their streaming flag before Pi serializes the
+      // corresponding agent_end/agent_settled callbacks.
+      session.isStreaming = false;
+      throw new Error("abort transport failed");
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    await vi.waitFor(() => expect(onRuntimeError).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(runtime.isContextRecoveryActive()).toBe(false));
+
+    expect(session.promptCalls).toEqual(["finish the active obligation"]);
+    expect(runtime.getPendingCount()).toBe(1);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+
+    session.state.messages = [
+      { role: "user", content: "finish the active obligation" },
+      cleanFinal,
+    ];
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [cleanFinal],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toEqual(["finish the active obligation"]);
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: cleanFinal,
+    });
+    expect(onAgentEnd).toHaveBeenCalledOnce();
+    expect(session.disposeCalls).toBe(0);
+  });
+
+  it("clears retry identity when retry prompt dispatch fails", async () => {
+    const { runtime, session, onAgentEnd, onRuntimeError } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "finish the active obligation";
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.promptImpl = async (message) => {
+      if (message.includes("Retry this same obligation once")) {
+        throw new Error("retry dispatch failed");
+      }
+    };
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    await vi.waitFor(() => expect(onAgentEnd).toHaveBeenCalledOnce());
+    expect(session.promptCalls).toHaveLength(3);
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onRuntimeError).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        phase: "prompt_dispatch",
+        details: expect.objectContaining({
+          runawayRecoveryExhausted: true,
+          queuedWorkWillContinue: false,
+          userFacingMessage:
+            "Forge stopped the runaway manager response, but its one automatic retry could not start. No further automatic retry will run. Any active workers keep running; send a new message to continue.",
+        }),
+      }),
+    );
+
+    session.promptImpl = undefined;
+    await runtime.sendMessage("fresh user work");
+    session.state.messages = [
+      { role: "user", content: "fresh user work" },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(5));
+    expect(onRuntimeError).toHaveBeenLastCalledWith(
+      "manager",
+      expect.objectContaining({
+        details: expect.objectContaining({
+          retryPlanned: true,
+          runawayRecoveryExhausted: false,
+        }),
+      }),
+    );
   });
 
   it("aborts a timed-out automatic compaction and retries the active obligation", async () => {
