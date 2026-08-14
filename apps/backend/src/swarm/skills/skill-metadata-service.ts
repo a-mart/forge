@@ -14,6 +14,7 @@ const SKILL_FILE_NAME = "SKILL.md";
 export const REQUIRED_SKILL_NAMES = [
   "memory",
   "brave-search",
+  "exa-search",
   "cron-scheduling",
   "agent-browser",
   "image-generation",

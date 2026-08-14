@@ -56,31 +56,31 @@ describe("collaboration skill selection helpers", () => {
 });
 
 describe("collaboration skill roster resolver", () => {
-  it("resolves all mode dynamically and keeps memory always-on", async () => {
+  it("resolves all mode dynamically, includes optional exa-search, and keeps memory always-on", async () => {
     const roster = await resolveCollaborationSkillRoster({
       selectionJson: null,
-      skillMetadataService: fakeSkillMetadataService(["memory", "search", "browser"]),
+      skillMetadataService: fakeSkillMetadataService(["memory", "search", "exa-search", "browser"]),
     });
 
     expect(roster.mode).toBe("all");
     expect(roster.alwaysOnHandles).toEqual(["memory"]);
     expect(roster.savedSelectedOptionalHandles).toEqual([]);
-    expect(roster.resolvedOptionalHandles).toEqual(["search", "browser"]);
+    expect(roster.resolvedOptionalHandles).toEqual(["search", "exa-search", "browser"]);
     expect(roster.missingHandles).toBeUndefined();
-    expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory", "search", "browser"]);
+    expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory", "search", "exa-search", "browser"]);
   });
 
-  it("preserves missing saved handles while resolving only available optional skills", async () => {
+  it("preserves missing saved handles while resolving a custom optional exa-search selection", async () => {
     const roster = await resolveCollaborationSkillRoster({
-      selectionJson: JSON.stringify(["search", "memory", "missing", "search"]),
-      skillMetadataService: fakeSkillMetadataService(["memory", "search", "browser"]),
+      selectionJson: JSON.stringify(["exa-search", "memory", "missing", "exa-search"]),
+      skillMetadataService: fakeSkillMetadataService(["memory", "search", "exa-search", "browser"]),
     });
 
     expect(roster.mode).toBe("custom");
-    expect(roster.savedSelectedOptionalHandles).toEqual(["search", "missing"]);
-    expect(roster.resolvedOptionalHandles).toEqual(["search"]);
+    expect(roster.savedSelectedOptionalHandles).toEqual(["exa-search", "missing"]);
+    expect(roster.resolvedOptionalHandles).toEqual(["exa-search"]);
     expect(roster.missingHandles).toEqual(["missing"]);
-    expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory", "search"]);
+    expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory", "exa-search"]);
   });
 
   it("custom empty still includes memory only", async () => {

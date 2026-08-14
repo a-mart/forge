@@ -10,7 +10,7 @@ Use the **Configuration scope** dropdown to switch between Global and per-profil
 
 When a skill declares required environment variables, they appear in the right detail pane alongside the selected skill. The pane shows:
 
-- **Variable name** — the env var key (e.g. `BRAVE_API_KEY`)
+- **Variable name** — the env var key (e.g. `BRAVE_API_KEY` or `EXA_API_KEY`)
 - **Status** — whether a value is currently saved
 - **Optional** — marked if the skill works without it but gains features with it
 

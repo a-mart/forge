@@ -1594,9 +1594,11 @@ describe('SwarmWebSocketServer', () => {
 
 
 
-  it('manages skill env settings through REST endpoints', async () => {
+  it('manages Brave and Exa skill env settings through REST endpoints', async () => {
     const previousBraveApiKey = process.env.BRAVE_API_KEY
+    const previousExaApiKey = process.env.EXA_API_KEY
     delete process.env.BRAVE_API_KEY
+    delete process.env.EXA_API_KEY
 
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
@@ -1627,6 +1629,13 @@ describe('SwarmWebSocketServer', () => {
       ).toMatchObject({
         isSet: false,
       })
+      expect(
+        initialPayload.variables.find(
+          (entry) => entry.name === 'EXA_API_KEY' && entry.skillName === 'exa-search',
+        ),
+      ).toMatchObject({
+        isSet: false,
+      })
 
       const updateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`, {
         method: 'PUT',
@@ -1636,6 +1645,7 @@ describe('SwarmWebSocketServer', () => {
         body: JSON.stringify({
           values: {
             BRAVE_API_KEY: 'bsal-rest-value',
+            EXA_API_KEY: 'exa-rest-value',
           },
         }),
       })
@@ -1654,10 +1664,21 @@ describe('SwarmWebSocketServer', () => {
         maskedValue: '********',
       })
 
+      expect(
+        updatedPayload.variables.find(
+          (entry) => entry.name === 'EXA_API_KEY' && entry.skillName === 'exa-search',
+        ),
+      ).toMatchObject({
+        isSet: true,
+        maskedValue: '********',
+      })
+
       expect(process.env.BRAVE_API_KEY).toBe('bsal-rest-value')
+      expect(process.env.EXA_API_KEY).toBe('exa-rest-value')
 
       const storedSecrets = JSON.parse(await readFile(config.paths.sharedSecretsFile, 'utf8')) as Record<string, string>
       expect(storedSecrets.BRAVE_API_KEY).toBe('bsal-rest-value')
+      expect(storedSecrets.EXA_API_KEY).toBe('exa-rest-value')
 
       const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env/BRAVE_API_KEY`, {
         method: 'DELETE',
@@ -1665,6 +1686,12 @@ describe('SwarmWebSocketServer', () => {
 
       expect(deleteResponse.status).toBe(200)
       expect(process.env.BRAVE_API_KEY).toBeUndefined()
+
+      const deleteExaResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env/EXA_API_KEY`, {
+        method: 'DELETE',
+      })
+      expect(deleteExaResponse.status).toBe(200)
+      expect(process.env.EXA_API_KEY).toBeUndefined()
 
       const afterDeleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`)
       const afterDeletePayload = (await afterDeleteResponse.json()) as {
@@ -1678,11 +1705,24 @@ describe('SwarmWebSocketServer', () => {
       ).toMatchObject({
         isSet: false,
       })
+      expect(
+        afterDeletePayload.variables.find(
+          (entry) => entry.name === 'EXA_API_KEY' && entry.skillName === 'exa-search',
+        ),
+      ).toMatchObject({
+        isSet: false,
+      })
     } finally {
       if (previousBraveApiKey === undefined) {
         delete process.env.BRAVE_API_KEY
       } else {
         process.env.BRAVE_API_KEY = previousBraveApiKey
+      }
+
+      if (previousExaApiKey === undefined) {
+        delete process.env.EXA_API_KEY
+      } else {
+        process.env.EXA_API_KEY = previousExaApiKey
       }
 
       await server.stop()
