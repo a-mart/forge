@@ -1,0 +1,8 @@
+{
+  "name": "exa-search",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless Exa source search for Forge",
+  "license": "Apache-2.0"
+}

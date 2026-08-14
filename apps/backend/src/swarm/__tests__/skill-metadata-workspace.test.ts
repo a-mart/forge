@@ -32,9 +32,21 @@ function encodeSkillId(payload: Record<string, unknown>): string {
 }
 
 describe("SkillMetadataService workspace skills", () => {
-  it("requires agent-browser and does not require the retired chrome-cdp skill", () => {
+  it("requires shipped built-ins including exa-search and not the retired chrome-cdp skill", () => {
     expect(REQUIRED_SKILL_NAMES).toContain("agent-browser");
+    expect(REQUIRED_SKILL_NAMES).toContain("exa-search");
     expect(REQUIRED_SKILL_NAMES).not.toContain("chrome-cdp");
+  });
+
+  it("exposes a distinct Exa-versus-Brave routing description in built-in metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skill-metadata-routing-"));
+    const service = new SkillMetadataService({ config: createConfig(root) });
+    await service.reloadSkillMetadata();
+
+    const exa = service.getSkillMetadata().find((entry) => entry.directoryName === "exa-search");
+    expect(exa?.description).toBe(
+      "Use Exa for semantic or conceptual web discovery and multi-source research; use brave-search for exact or navigational lookup, country or freshness controls, or direct URL extraction.",
+    );
   });
 
   it("rejects direct workspace skill ID resolution without active workspace context", async () => {

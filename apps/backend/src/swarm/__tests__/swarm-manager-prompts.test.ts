@@ -803,7 +803,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + create-skill + forge-project-resources skills', async () => {
+  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + exa-search + cron-scheduling + agent-browser + image-generation + slash-commands + create-skill + forge-project-resources skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -816,7 +816,7 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(9)
 
     const memorySkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('memory', 'SKILL.md')))
     expect(memorySkillPath).toBeDefined()
@@ -830,6 +830,12 @@ describe('SwarmManager', () => {
     const braveSkill = await readFile(braveSkillPath!, 'utf8')
     expect(braveSkill).toContain('name: brave-search')
     expect(braveSkill).toContain('BRAVE_API_KEY')
+
+    const exaSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('exa-search', 'SKILL.md')))
+    expect(exaSkillPath).toBeDefined()
+    const exaSkill = await readFile(exaSkillPath!, 'utf8')
+    expect(exaSkill).toContain('name: exa-search')
+    expect(exaSkill).toContain('EXA_API_KEY')
 
     const cronSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))
     expect(cronSkillPath).toBeDefined()
@@ -1074,8 +1080,10 @@ describe('SwarmManager', () => {
 
   it('loads skill env requirements and persists secrets to the settings store', async () => {
     const previousBraveApiKey = process.env.BRAVE_API_KEY
+    const previousExaApiKey = process.env.EXA_API_KEY
     const previousGeminiApiKey = process.env.GEMINI_API_KEY
     delete process.env.BRAVE_API_KEY
+    delete process.env.EXA_API_KEY
     delete process.env.GEMINI_API_KEY
 
     try {
@@ -1087,6 +1095,9 @@ describe('SwarmManager', () => {
       const braveRequirement = initial.find(
         (requirement) => requirement.name === 'BRAVE_API_KEY' && requirement.skillName === 'brave-search',
       )
+      const exaRequirement = initial.find(
+        (requirement) => requirement.name === 'EXA_API_KEY' && requirement.skillName === 'exa-search',
+      )
       const geminiRequirement = initial.find(
         (requirement) => requirement.name === 'GEMINI_API_KEY' && requirement.skillName === 'image-generation',
       )
@@ -1097,17 +1108,24 @@ describe('SwarmManager', () => {
         helpUrl: 'https://api-dashboard.search.brave.com/register',
         isSet: false,
       })
+      expect(exaRequirement).toMatchObject({
+        description: 'Exa API key',
+        required: true,
+        helpUrl: 'https://dashboard.exa.ai/api-keys',
+        isSet: false,
+      })
       expect(geminiRequirement).toMatchObject({
         description: 'Google AI Studio / Gemini API key',
         required: true,
         isSet: false,
       })
 
-      await manager.updateSettingsEnv({ BRAVE_API_KEY: 'bsal-test-value' })
+      await manager.updateSettingsEnv({ BRAVE_API_KEY: 'bsal-test-value', EXA_API_KEY: 'exa-test-value' })
 
       const secretsRaw = await readFile(config.paths.sharedSecretsFile, 'utf8')
-      expect(JSON.parse(secretsRaw)).toEqual({ BRAVE_API_KEY: 'bsal-test-value' })
+      expect(JSON.parse(secretsRaw)).toEqual({ BRAVE_API_KEY: 'bsal-test-value', EXA_API_KEY: 'exa-test-value' })
       expect(process.env.BRAVE_API_KEY).toBe('bsal-test-value')
+      expect(process.env.EXA_API_KEY).toBe('exa-test-value')
 
       const afterUpdate = await manager.listSettingsEnv()
       expect(
@@ -1119,7 +1137,17 @@ describe('SwarmManager', () => {
         maskedValue: '********',
       })
 
+      expect(
+        afterUpdate.find(
+          (requirement) => requirement.name === 'EXA_API_KEY' && requirement.skillName === 'exa-search',
+        ),
+      ).toMatchObject({
+        isSet: true,
+        maskedValue: '********',
+      })
+
       await manager.deleteSettingsEnv('BRAVE_API_KEY')
+      await manager.deleteSettingsEnv('EXA_API_KEY')
 
       const afterDelete = await manager.listSettingsEnv()
       expect(
@@ -1129,12 +1157,26 @@ describe('SwarmManager', () => {
       ).toMatchObject({
         isSet: false,
       })
+      expect(
+        afterDelete.find(
+          (requirement) => requirement.name === 'EXA_API_KEY' && requirement.skillName === 'exa-search',
+        ),
+      ).toMatchObject({
+        isSet: false,
+      })
       expect(process.env.BRAVE_API_KEY).toBeUndefined()
+      expect(process.env.EXA_API_KEY).toBeUndefined()
     } finally {
       if (previousBraveApiKey === undefined) {
         delete process.env.BRAVE_API_KEY
       } else {
         process.env.BRAVE_API_KEY = previousBraveApiKey
+      }
+
+      if (previousExaApiKey === undefined) {
+        delete process.env.EXA_API_KEY
+      } else {
+        process.env.EXA_API_KEY = previousExaApiKey
       }
 
       if (previousGeminiApiKey === undefined) {
@@ -1145,26 +1187,26 @@ describe('SwarmManager', () => {
     }
   })
 
-  it('restores existing process env values when deleting a secret override', async () => {
-    const previousBraveApiKey = process.env.BRAVE_API_KEY
-    process.env.BRAVE_API_KEY = 'fallback-value'
+  it('restores an existing Exa process env value when deleting a secret override', async () => {
+    const previousExaApiKey = process.env.EXA_API_KEY
+    process.env.EXA_API_KEY = 'fallback-value'
 
     try {
       const config = await makeTempConfig()
-      await writeFile(config.paths.secretsFile, JSON.stringify({ BRAVE_API_KEY: 'override-value' }, null, 2), 'utf8')
+      await writeFile(config.paths.secretsFile, JSON.stringify({ EXA_API_KEY: 'override-value' }, null, 2), 'utf8')
 
       const manager = new TestSwarmManager(config)
       await manager.boot()
 
-      expect(process.env.BRAVE_API_KEY).toBe('override-value')
+      expect(process.env.EXA_API_KEY).toBe('override-value')
 
-      await manager.deleteSettingsEnv('BRAVE_API_KEY')
-      expect(process.env.BRAVE_API_KEY).toBe('fallback-value')
+      await manager.deleteSettingsEnv('EXA_API_KEY')
+      expect(process.env.EXA_API_KEY).toBe('fallback-value')
     } finally {
-      if (previousBraveApiKey === undefined) {
-        delete process.env.BRAVE_API_KEY
+      if (previousExaApiKey === undefined) {
+        delete process.env.EXA_API_KEY
       } else {
-        process.env.BRAVE_API_KEY = previousBraveApiKey
+        process.env.EXA_API_KEY = previousExaApiKey
       }
     }
   })

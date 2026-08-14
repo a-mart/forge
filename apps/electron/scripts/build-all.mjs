@@ -188,6 +188,8 @@ async function main() {
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
   await assertExists(stagedBuiltinSkillsDir, 'staged built-in skills')
+  await assertExists(path.join(stagedBuiltinSkillsDir, 'exa-search', 'SKILL.md'), 'staged Exa Search skill definition')
+  await assertExists(path.join(stagedBuiltinSkillsDir, 'exa-search', 'search.js'), 'staged Exa Search CLI')
   await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
   await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
   await assertExists(

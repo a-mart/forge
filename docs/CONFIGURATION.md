@@ -30,9 +30,10 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAVE_API_KEY` | — | API key for the [Brave Search](https://brave.com/search/api/) web search skill. |
+| `EXA_API_KEY` | — | API key for the [Exa Search](https://dashboard.exa.ai/api-keys) source-search skill. |
 | `GEMINI_API_KEY` | — | API key for the Google Gemini image generation skill. |
 
-Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
+Skill API keys can also be configured in the dashboard under **Settings → Skills → selected skill → Environment Variables**. `.env` values remain supported as fallback. Settings stores these values in `shared/config/secrets.json` as plaintext at rest; protect the data directory and backups.
 
 ### Browser automation
 
@@ -265,6 +266,7 @@ FORGE_HOST=127.0.0.1
 FORGE_PORT=47187
 # FORGE_DATA_DIR=/custom/path
 # BRAVE_API_KEY=your-brave-key
+# EXA_API_KEY=your-exa-key
 # GEMINI_API_KEY=your-gemini-key
 ```
 

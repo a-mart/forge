@@ -367,12 +367,12 @@ describe("SkillSharingService", () => {
     await expect(lstat(join(staleRoot, "STALE.txt"))).rejects.toThrow();
   });
 
-  it("blocks imports that would shadow required built-in skills", async () => {
+  it.each(["brave-search", "exa-search"])("blocks imports that would shadow required built-in skill %s", async (handle) => {
     const sourceHarness = await createHarness();
-    await createGlobalSkill(sourceHarness.config, "brave-search", {
-      "SKILL.md": "---\nname: Brave Search\n---\n\n# Replacement search\n"
+    await createGlobalSkill(sourceHarness.config, handle, {
+      "SKILL.md": `---\nname: ${handle} replacement\n---\n\n# Replacement search\n`
     });
-    const bundle = await packageGlobalSkill(sourceHarness, "brave-search");
+    const bundle = await packageGlobalSkill(sourceHarness, handle);
 
     const targetHarness = await createHarness();
     const preview = await targetHarness.sharingService.previewImportBundle({
@@ -382,7 +382,7 @@ describe("SkillSharingService", () => {
     expect(preview.conflict).toMatchObject({
       exists: true,
       existingSourceKind: "builtin",
-      existingDirectoryName: "brave-search",
+      existingDirectoryName: handle,
       conflictType: "effective_skill",
       isRequiredBuiltin: true,
       isBlocking: true
