@@ -156,17 +156,13 @@ export function SourceControlBranchActions({
           return
         }
 
-        const visibleIssues = pendingMutation.kind === 'pull'
-          ? preflight.issues.filter((issue) => issue.code !== 'idle_agents_attached')
-          : preflight.issues
-
         setPreflightWarnings(
-          visibleIssues
+          preflight.issues
             .filter((issue) => issue.severity === 'warn')
             .map((issue) => issue.message),
         )
         setPreflightBlockedReasons(
-          visibleIssues
+          preflight.issues
             .filter((issue) => issue.severity === 'block')
             .map((issue) => issue.message),
         )
@@ -381,12 +377,8 @@ export function SourceControlBranchActions({
         return
       }
 
-      const visibleWarnings = pendingMutation.kind === 'pull'
-        ? result.warnings.filter((warning) => !isIdleAttachedSessionWarning(warning))
-        : result.warnings
-
-      if (visibleWarnings.length > 0) {
-        setActionWarning(visibleWarnings.join(' '))
+      if (result.warnings.length > 0) {
+        setActionWarning(result.warnings.join(' '))
       }
 
       setPendingMutation(null)
@@ -414,7 +406,7 @@ export function SourceControlBranchActions({
     if (pendingMutation.kind === 'switch') {
       return {
         title: `Switch to ${pendingMutation.branch}?`,
-        description: `${worktreeCopy} Forge will switch only when the worktree is clean and no active agents block the operation.`,
+        description: `${worktreeCopy} Forge will switch only when the worktree is clean.`,
         confirmLabel: 'Switch branch',
         blockedReasons: uniqueStrings([
           ...(isDirty ? ['The worktree has uncommitted changes.'] : []),
@@ -650,8 +642,4 @@ export function SourceControlBranchActions({
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values))
-}
-
-function isIdleAttachedSessionWarning(message: string): boolean {
-  return /^Idle sessions are attached to this worktree \(.*\)\.$/s.test(message.trim())
 }

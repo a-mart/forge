@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { Fragment } from 'react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -55,9 +54,7 @@ export function GitMutationConfirmDialog({
                 <p className="font-medium">Warnings</p>
                 <ul className="mt-1 list-disc space-y-1 pl-4">
                   {warnings.map((warning) => (
-                    <li className="break-words" key={warning}>
-                      <GitMutationMessage message={warning} />
-                    </li>
+                    <li className="break-words" key={warning}>{warning}</li>
                   ))}
                 </ul>
               </div>
@@ -85,50 +82,4 @@ export function GitMutationConfirmDialog({
       </AlertDialogContent>
     </AlertDialog>
   )
-}
-
-function GitMutationMessage({ message }: { message: string }) {
-  const attachedSessions = summarizeAttachedSessionWarning(message)
-
-  if (!attachedSessions) {
-    return <Fragment>{message}</Fragment>
-  }
-
-  return (
-    <span>
-      {attachedSessions.summary}
-      {attachedSessions.preview.length > 0 ? (
-        <details className="mt-1">
-          <summary className="cursor-pointer text-xs font-medium underline-offset-2 hover:underline">
-            Show affected sessions
-          </summary>
-          <span className="mt-1 block text-xs">
-            {attachedSessions.preview.join(', ')}
-            {attachedSessions.remainingCount > 0 ? `, and ${attachedSessions.remainingCount} more` : ''}
-          </span>
-        </details>
-      ) : null}
-    </span>
-  )
-}
-
-function summarizeAttachedSessionWarning(message: string): { summary: string; preview: string[]; remainingCount: number } | null {
-  const match = /^Idle sessions are attached to this worktree \((.*)\)\.$/s.exec(message.trim())
-  if (!match) {
-    return null
-  }
-
-  const sessions = match[1]
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean)
-  if (sessions.length <= 8) {
-    return null
-  }
-
-  return {
-    summary: `${sessions.length} idle sessions are attached to this worktree.`,
-    preview: sessions.slice(0, 5),
-    remainingCount: Math.max(0, sessions.length - 5),
-  }
 }

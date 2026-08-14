@@ -311,7 +311,7 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.errors.join(" ")).toContain("already checked out");
   });
 
-  it("rejects branch switch when a streaming agent is attached to the worktree", async () => {
+  it("allows branch switch when a streaming agent is attached to the worktree", async () => {
     const server = await createSourceControlTestServer({
       descriptors: [
         createManagerSession("alpha", "alpha--s1"),
@@ -333,9 +333,9 @@ describe("git-source-control-routes", () => {
       expectedStatusHash: branches.statusHash!
     });
 
-    expect(mutation.status).toBe(409);
-    expect(mutation.payload.success).toBe(false);
-    expect(mutation.payload.errors.join(" ")).toContain("Stop active agents");
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.currentBranch).toBe("release/test");
   });
 
   it("rejects stale preflight when expected head no longer matches", async () => {
@@ -766,11 +766,12 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.errors.join(" ")).toContain("versioning");
   });
 
-  it("exposes idle-agent warnings from branch mutation preflight but not pull preflight", async () => {
+  it("does not treat attached agents as a mutation preflight issue", async () => {
     const server = await createSourceControlTestServer({
       descriptors: [
         createManagerSession("alpha", "alpha--s1"),
-        createWorker("alpha-worker", "alpha--s1", { status: "idle" })
+        createWorker("alpha-worker", "alpha--s1", { status: "idle" }),
+        createWorker("alpha-streamer", "alpha--s1", { status: "streaming" })
       ]
     });
 
@@ -781,8 +782,8 @@ describe("git-source-control-routes", () => {
     expect(response.status).toBe(200);
 
     const payload = (await response.json()) as { issues: Array<{ code: string; severity: string }> };
-    expect(payload.issues.some((issue) => issue.code === "idle_agents_attached" && issue.severity === "warn")).toBe(
-      true
+    expect(payload.issues.some((issue) => issue.code === "idle_agents_attached" || issue.code === "streaming_agents")).toBe(
+      false
     );
 
     const pullResponse = await fetch(
@@ -791,7 +792,9 @@ describe("git-source-control-routes", () => {
     expect(pullResponse.status).toBe(200);
 
     const pullPayload = (await pullResponse.json()) as { issues: Array<{ code: string; severity: string }> };
-    expect(pullPayload.issues.some((issue) => issue.code === "idle_agents_attached")).toBe(false);
+    expect(pullPayload.issues.some((issue) => issue.code === "idle_agents_attached" || issue.code === "streaming_agents")).toBe(
+      false
+    );
   });
 
   it("rejects fast-forward pull on a dirty worktree", async () => {

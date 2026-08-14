@@ -31,7 +31,6 @@ import {
   computeStatusHash,
   detectInProgressGitOperation,
   hasUnmergedConflicts,
-  isBlockingAgentStatus,
   isDirtyPorcelain,
   isPathContainedInRoot,
   isValidGitRemoteNameShape,
@@ -335,7 +334,7 @@ export class GitSourceControlService {
   }
 
   async buildMutationPreflight(
-    swarmManager: SwarmManager,
+    _swarmManager: SwarmManager,
     context: GitSourceControlContext,
     options: {
       action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only" | "push";
@@ -384,8 +383,6 @@ export class GitSourceControlService {
     const currentBranch = await resolveCurrentBranch(git);
     const currentHead = await resolveHeadSha(git);
     const statusHash = computeStatusHash(porcelain);
-    const agentEntries = await collectAgentEntries(swarmManager);
-    const activeAgents = findActiveAgentsForWorktree(agentEntries, context.cwd);
 
     if (isDirtyPorcelain(porcelain) && options.action !== "fetch" && options.action !== "push") {
       issues.push({
@@ -414,27 +411,6 @@ export class GitSourceControlService {
           severity: "block"
         });
       }
-    }
-
-    const streamingAgents = activeAgents.filter((agent) => isBlockingAgentStatus(agent.status));
-    if (streamingAgents.length > 0) {
-      issues.push({
-        code: "streaming_agents",
-        message: `Stop active agents in this worktree before continuing (${streamingAgents.map((agent) => agent.displayName).join(", ")}).`,
-        severity: "block"
-      });
-    }
-
-    const idleAgents = activeAgents.filter((agent) => !isBlockingAgentStatus(agent.status));
-    if (
-      idleAgents.length > 0 &&
-      (options.action === "switch-branch" || options.action === "create-branch")
-    ) {
-      issues.push({
-        code: "idle_agents_attached",
-        message: `Idle sessions are attached to this worktree (${idleAgents.map((agent) => agent.displayName).join(", ")}).`,
-        severity: "warn"
-      });
     }
 
     if (options.action === "switch-branch" && options.targetBranch) {

@@ -235,34 +235,6 @@ describe('SourceControlBranchActions', () => {
     )
   })
 
-  it('suppresses idle attached-session warnings from pull preflight', async () => {
-    fetchMutationPreflightMock.mockResolvedValue({
-      allowed: true,
-      issues: [
-        {
-          code: 'idle_agents_attached',
-          message: 'Idle sessions are attached to this worktree (Builder).',
-          severity: 'warn',
-        },
-      ],
-      currentBranch: 'main',
-      currentHead: 'abc123',
-      statusHash: 'status123',
-    })
-
-    renderActions({ isDirty: false })
-
-    flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
-    })
-
-    await vi.waitFor(() => {
-      expect(fetchMutationPreflightMock).toHaveBeenCalled()
-    })
-
-    expect(document.body.textContent ?? '').not.toContain('Idle sessions are attached to this worktree')
-  })
-
   it('shows blocking mutation-preflight issues inside the confirmation dialog', async () => {
     fetchMutationPreflightMock.mockResolvedValue({
       allowed: false,
@@ -371,7 +343,7 @@ describe('SourceControlBranchActions', () => {
   it('does not render auto-fetch backend errors in the header', async () => {
     fetchGitOriginMock.mockResolvedValue({
       success: false,
-      errors: ['Active agents are attached to this worktree.'],
+      errors: ['Failed to fetch origin.'],
       warnings: [],
     })
 
@@ -381,13 +353,13 @@ describe('SourceControlBranchActions', () => {
       expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
     })
 
-    expect(container.textContent ?? '').not.toContain('Active agents are attached to this worktree.')
+    expect(container.textContent ?? '').not.toContain('Failed to fetch origin.')
   })
 
   it('renders manual fetch backend errors in the header', async () => {
     fetchGitOriginMock.mockResolvedValue({
       success: false,
-      errors: ['Active agents are attached to this worktree.'],
+      errors: ['Failed to fetch origin.'],
       warnings: [],
     })
 
@@ -398,7 +370,7 @@ describe('SourceControlBranchActions', () => {
     })
 
     await vi.waitFor(() => {
-      expect(getByText(container, 'Active agents are attached to this worktree.')).toBeTruthy()
+      expect(getByText(container, 'Failed to fetch origin.')).toBeTruthy()
     })
   })
 
@@ -421,7 +393,7 @@ describe('SourceControlBranchActions', () => {
   it('passes worktreeId and expected guards in mutation requests', async () => {
     pullGitFfOnlyMock.mockResolvedValue({
       success: true,
-      warnings: ['Idle sessions are attached to this worktree (Builder).'],
+      warnings: [],
       errors: [],
     })
 

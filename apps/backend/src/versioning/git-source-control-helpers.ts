@@ -444,7 +444,3 @@ export async function collectBranchesCheckedOutInOtherWorktrees(
 
   return checkedOutElsewhere;
 }
-
-export function isBlockingAgentStatus(status: string): boolean {
-  return status === "streaming";
-}
