@@ -752,7 +752,7 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
       lineRawBytes = 0
       lineSourceClassifier = createRetiredSourceClassifier()
 
-      if (item && matchesFilters(item, options.categories, options.types)) {
+      if (item && matchesFilters(item, options.categories, options.types, options.source)) {
         items.push(item)
       }
 
@@ -863,7 +863,7 @@ async function readJsonlPageDescending(
       scannedLines += 1
       scannedBytes += record.nextByteOffset - record.byteOffset
       const item = buildAuditEntry(record, options.source)
-      if (matchesFilters(item, options.categories, options.types)) {
+      if (matchesFilters(item, options.categories, options.types, options.source)) {
         items.push(item)
       }
     }
@@ -1533,7 +1533,13 @@ function matchesFilters(
   item: SessionAuditEntry,
   categories: ReadonlySet<SessionAuditEntryCategory> | undefined,
   types: ReadonlySet<string> | undefined,
+  source: ResolvedAuditSource,
 ): boolean {
+  // Default manager audit lists manager-owned rows only. Mirrored worker tools
+  // stay in session.jsonl for chat/pills and remain available via category or worker source.
+  if (!categories && source.scope === 'session' && item.category === 'worker_tool_call') {
+    return false
+  }
   if (categories && !categories.has(item.category)) {
     return false
   }

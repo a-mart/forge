@@ -96,14 +96,13 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     expect(getByText(document.body, /Complete persisted session audit/)).toBeTruthy()
     expect(getByText(document.body, 'Manager canonical JSONL')).toBeTruthy()
     expect(getAllByText(document.body, /sessions\/manager-1\/session\.jsonl/).length).toBeGreaterThan(0)
     expect(getByText(document.body, /Select any audit row/i)).toBeTruthy()
-    expect(getByText(document.body, 'normal_view_hidden')).toBeTruthy()
     expect(getByRole(document.body, 'listbox', { name: /session audit rows/i })).toBeTruthy()
-    expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy()
+    expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy()
     expect(queryByText(document.body, 'View JSON')).toBeNull()
 
     await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
@@ -215,7 +214,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     await waitFor(() => expect(getByText(document.body, /detail cap/)).toBeTruthy())
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Raw' }))
@@ -235,11 +234,11 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
 
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
   })
 
@@ -278,7 +277,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     await waitFor(() => expect(getByText(document.body, /plain scrollable view/i)).toBeTruthy())
 
     expect(vi.mocked(highlightCode)).not.toHaveBeenCalled()
@@ -301,7 +300,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     const dialog = getByRole(document.body, 'dialog', { name: /session audit log/i }) as HTMLElement
 
     expect(dialog.style.inset).toBe('0')
@@ -417,7 +416,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
     openAuditSourceSelect()
     expect(await waitForOption('Worker: orphan-worker (file only)')).toBeTruthy()
   })
@@ -434,7 +433,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
 
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -446,7 +445,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    expect(queryByRole(document.body, 'option', { name: /Worker tool call/i } )).toBeNull()
+    expect(queryByRole(document.body, 'option', { name: /Conversation message/i } )).toBeNull()
   })
 
   it('clears loaded rows when the active session becomes ineligible', async () => {
@@ -461,7 +460,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
 
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -473,7 +472,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(queryByRole(document.body, 'option', { name: /Worker tool call/i } )).toBeNull())
+    await waitFor(() => expect(queryByRole(document.body, 'option', { name: /Conversation message/i } )).toBeNull())
     expect(getByText(document.body, 'No audit rows found')).toBeTruthy()
   })
 
@@ -534,7 +533,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
 
     const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
     expect(separator.getAttribute('aria-orientation')).toBe('vertical')
@@ -577,7 +576,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
 
     const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
     const splitContainer = separator.parentElement as HTMLElement
@@ -616,7 +615,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Conversation message/i })).toBeTruthy())
 
     const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
     const listPane = separator.parentElement?.firstElementChild as HTMLElement
@@ -714,15 +713,14 @@ function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCurs
         byteOffset: 10,
         nextByteOffset: 220,
         wrapperTimestamp: '2026-06-17T12:00:00.000Z',
-        wrapperType: 'agent_tool_call',
-        category: 'worker_tool_call',
-        actorAgentId: 'worker-1',
-        toolCallId: 'tool-1',
-        renderable: false,
-        hiddenReason: 'normal_view_hidden',
-        title: options.title ?? 'Worker tool call',
-        summary: 'worker-1 called read',
-        preview: '{\n  "title": "Worker tool call"\n}',
+        wrapperType: 'custom',
+        conversationType: 'conversation_message',
+        category: 'conversation_message',
+        actorAgentId: 'manager-1',
+        renderable: true,
+        title: options.title ?? 'Conversation message',
+        summary: 'user: hello',
+        preview: '{\n  "title": "Conversation message"\n}',
         rawPreview: 'tool result raw',
         rawBytes: 210,
       },

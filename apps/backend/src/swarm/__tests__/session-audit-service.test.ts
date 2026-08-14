@@ -192,6 +192,36 @@ describe('SessionAuditService', () => {
     expect(customPage.items[0]).toMatchObject({ category: 'custom', customType: 'other_custom' })
   })
 
+  it('omits mirrored worker tool calls from the default manager audit page', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      sessionHeader(),
+      conversationRow('message', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'hello', timestamp: now, source: 'user_input' }),
+      conversationRow('manager-tool', { type: 'agent_tool_call', agentId: fixture.manager.agentId, actorAgentId: fixture.manager.agentId, timestamp: now, kind: 'tool_execution_start', toolName: 'spawn_agent', text: 'spawn' }),
+      conversationRow('worker-tool', { type: 'agent_tool_call', agentId: fixture.manager.agentId, actorAgentId: 'worker-1', timestamp: now, kind: 'tool_execution_end', toolName: 'bash', text: 'done' }),
+      conversationRow('runtime', { type: 'conversation_log', agentId: fixture.manager.agentId, role: 'assistant', text: 'log', timestamp: now, source: 'runtime_log', kind: 'message_end' }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const defaultPage = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const descending = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 10 })
+    const explicit = await service.getSessionAuditPage(fixture.manager.agentId, { categories: ['worker_tool_call'], limit: 10 })
+
+    expect(defaultPage.items.map((item) => item.category)).toEqual([
+      'session_header',
+      'conversation_message',
+      'manager_tool_call',
+      'runtime_log',
+    ])
+    expect(descending.items.map((item) => item.category)).toEqual([
+      'runtime_log',
+      'manager_tool_call',
+      'conversation_message',
+      'session_header',
+    ])
+    expect(explicit.items).toEqual([expect.objectContaining({ category: 'worker_tool_call', actorAgentId: 'worker-1', toolName: 'bash' })])
+  })
+
   it('classifies native provider assistant tool-call rows as hidden runtime logs without leaking arguments', async () => {
     const fixture = await createFixture()
     await writeSessionLines(fixture.dataDir, fixture.manager, [
