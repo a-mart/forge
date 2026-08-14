@@ -209,7 +209,13 @@ The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository doe
 
 ### Session Sidebar
 
-The left sidebar shows all your sessions across all projects. Click a project header to expand or collapse its nested sessions; the header itself does not select a conversation. Select a session row to switch conversations, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Enabled remote project headers are mixed into this list with blue styling and a globe marker; their nested session rows use status dots. Remote actions are limited: **Change Working Directory** is available on a project header through the server directory browser, while local rename, archive, delete, fork, and model actions are absent. Their connection section can show connecting, sign-in required, unreachable, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. Selecting a remote session targets supported chat/workspace surfaces at that server; selecting a local session switches them back. Dragging local and remote project headers only changes the order saved by the local Builder instance—it does not grant remote access. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived local projects and directly archived sessions; Archive itself remains local when a remote session is selected. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
+The new project view is on by default. Use **Settings → General → Sidebar → Use new project view** to keep it, or turn it off to roll back to Classic. It opens in **Inbox**, with a **Projects** mode that keeps the project/session tree, search prefixes, pins, and drag reorder.
+
+Inbox lists **Needs you**, **Active**, and **Recent**, then an inline Projects tree. **Active** and **Recent** stay bounded (Recent covers the last 7 days). **Needs you** is server-issued work-lifecycle attention: unread badges, pending choices, and error dots do not create it. **Done** and **Clear** dismiss those exact items. Muting a session only hides it from **Needs you** and the Inbox badge; it does not dismiss the attention. Origins that do not support session attention omit **Needs you** instead of inventing items.
+
+In Projects, click a project header to expand or collapse its nested sessions; the header itself does not select a conversation. Select a session row to switch conversations, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Enabled remote project headers are mixed into this list with blue styling and a globe marker; their nested session rows use status dots. Remote actions are limited: **Change Working Directory** is available on a project header through the server directory browser, while local rename, archive, delete, fork, and model actions are absent. Their connection section can show connecting, sign-in required, unreachable, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. Selecting a remote session targets supported chat/workspace surfaces at that server; selecting a local session switches them back. Dragging local and remote project headers only changes the order saved by the local Builder instance—it does not grant remote access. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived local projects and directly archived sessions; Archive itself remains local when a remote session is selected. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
+
+On desktop, Cortex lives in the activity-rail popover. On mobile, and in Classic, it remains a pinned sidebar row.
 
 For a local Builder project, right-click the project header or open its hover/focus **…** menu and choose **Project Settings**. This page remains scoped to that project and lets you rename it, change its working directory, change its default model and reasoning, open its Project secrets, and manage **Project Settings → Repository resources**. Repository resources shows the repo-root `.forge` inventory, executable trust controls, and an existing-`.forge` directory override. The direct Rename, Change Default Model, Change Working Directory, and Project Secrets context-menu shortcuts remain. Cortex and Remote Projects do not have Project Settings.
 
@@ -440,7 +446,7 @@ Feedback signals can trigger a bounded Cortex capture check, which verifies whet
 
 ## 7. Cortex — The Brain
 
-Cortex is Forge's durable learning system. It appears as a pinned Builder sidebar entry and, in Knowledge v2 mode, maintains provenance-bearing entries that managers can search and read on demand.
+Cortex is Forge's durable learning system. On desktop it opens from the activity-rail popover; mobile and Classic keep the pinned sidebar row. In Knowledge v2 mode, it maintains provenance-bearing entries that managers can search and read on demand.
 
 ### Knowledge v2 is an opt-in preview
 
@@ -483,7 +489,7 @@ While Knowledge v2 is ON, Cortex's consolidator reads entries only. It merges du
 
 ### Cortex dashboard
 
-Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has four tabs:
+Open Cortex from the desktop activity-rail popover, or from the pinned sidebar row on mobile and in Classic. The resizable dashboard has four tabs:
 
 - **Index** — View generated global/profile indexes and token-cost meters.
 - **Entries** — Read entry bodies and provenance details; the current dashboard is read-only.
