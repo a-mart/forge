@@ -5,10 +5,9 @@ import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   CommitGraphOverlay,
-  commitGraphWidth,
   type CommitGraphRowMetrics,
 } from './CommitGraphColumn'
-import { layoutCommitGraph } from './commit-graph-layout'
+import { commitGraphWidth, layoutCommitGraph } from './commit-graph-layout'
 import { CommitMetadataBadges } from './CommitMetadataBadges'
 import { formatCommitSummary } from './formatCommitSummary'
 import type { GitLogEntry } from './use-diff-queries'
@@ -67,11 +66,11 @@ export function CommitList({
       }
     }).filter((entry) => entry.sha.length > 0)
     setGraphMetrics(nextMetrics)
-  }, [commits, showGraph])
+  }, [showGraph])
 
   useLayoutEffect(() => {
     measureGraphRows()
-  }, [measureGraphRows, selectedSha])
+  }, [commits, measureGraphRows, selectedSha])
 
   useEffect(() => {
     const container = listRef.current

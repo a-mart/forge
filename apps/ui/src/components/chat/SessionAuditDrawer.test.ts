@@ -5,6 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SessionAuditEntry, SessionAuditPageResponse, SessionAuditWorkerSummary } from '@forge/protocol'
 import { highlightCode } from '@/lib/syntax-highlight'
 import { SessionAuditDrawer } from './SessionAuditDrawer'
 
@@ -688,7 +689,7 @@ async function waitForOption(name: string): Promise<HTMLElement> {
   return waitFor(() => getByRole(document.body, 'option', { name }))
 }
 
-function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCursor?: string; source?: 'session' | 'worker'; workers?: ReturnType<typeof workerSummary>[] } = {}) {
+function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCursor?: string; source?: 'session' | 'worker'; workers?: SessionAuditWorkerSummary[] } = {}): SessionAuditPageResponse {
   const source = options.source ?? 'session'
   const sourceId = source === 'worker' ? 'worker-1' : 'manager-1'
   const sourceKind = source === 'worker' ? 'canonical_worker_jsonl' : 'canonical_session_jsonl'
@@ -723,7 +724,7 @@ function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCurs
         preview: '{\n  "title": "Conversation message"\n}',
         rawPreview: 'tool result raw',
         rawBytes: 210,
-      },
+      } satisfies SessionAuditEntry,
     ],
     page: { startOffset: 0, endOffset: 220, sourceBytes: 220, scannedLines: 3, scannedBytes: 220, returnedItems: 1, scanLimited: false },
     nextCursor: options.nextCursor,
@@ -731,7 +732,7 @@ function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCurs
   }
 }
 
-function workerSummary(options: { workerId: string; displayName?: string; descriptorPresent?: boolean }) {
+function workerSummary(options: { workerId: string; displayName?: string; descriptorPresent?: boolean }): SessionAuditWorkerSummary {
   return {
     workerId: options.workerId,
     displayName: options.displayName,

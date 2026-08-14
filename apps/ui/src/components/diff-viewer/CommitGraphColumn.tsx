@@ -1,8 +1,10 @@
 import { cn } from '@/lib/utils'
-import type { CommitGraphRow } from './commit-graph-layout'
+import {
+  commitGraphLaneX,
+  commitGraphWidth,
+  type CommitGraphRow,
+} from './commit-graph-layout'
 
-export const COMMIT_GRAPH_LANE_WIDTH = 12
-export const COMMIT_GRAPH_PADDING_X = 8
 const DOT_RADIUS = 3.5
 const STROKE_WIDTH = 1.5
 
@@ -30,7 +32,7 @@ interface CommitGraphOverlayProps {
 export function CommitGraphOverlay({ rows, metrics, selectedSha }: CommitGraphOverlayProps) {
   const metricsBySha = new Map(metrics.map((entry) => [entry.sha, entry]))
   const laneCount = Math.max(1, ...rows.map((row) => row.laneCount), 1)
-  const width = Math.max(laneCount * COMMIT_GRAPH_LANE_WIDTH + COMMIT_GRAPH_PADDING_X * 2, 20)
+  const width = commitGraphWidth(laneCount)
   const height = Math.max(
     metrics.reduce((max, entry) => Math.max(max, entry.top + entry.height), 0),
     rows.length * 36,
@@ -127,12 +129,8 @@ export function CommitGraphOverlay({ rows, metrics, selectedSha }: CommitGraphOv
   )
 }
 
-export function commitGraphWidth(laneCount: number): number {
-  return Math.max(laneCount * COMMIT_GRAPH_LANE_WIDTH + COMMIT_GRAPH_PADDING_X * 2, 20)
-}
-
 function laneX(column: number): number {
-  return COMMIT_GRAPH_PADDING_X + column * COMMIT_GRAPH_LANE_WIDTH
+  return commitGraphLaneX(column)
 }
 
 function laneColor(column: number): string {

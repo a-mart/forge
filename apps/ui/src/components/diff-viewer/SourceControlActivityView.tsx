@@ -292,7 +292,6 @@ export function SourceControlActivityView({
       <div className="shrink-0 border-r border-border/60" style={{ width: sidebarWidth }}>
         <SourceControlExplorer
           changesCount={visibleWorkingSummary.filesChanged}
-          defaultFocus={focusSection}
           focusSection={focusSection}
           onSectionFocus={onFocusSectionChange}
           changes={

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getAllByRole, getByRole, getByText, queryByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByText, queryByText, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'

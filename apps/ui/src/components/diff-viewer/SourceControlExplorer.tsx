@@ -8,7 +8,6 @@ const HISTORY_COLLAPSED_KEY = 'forge-source-control-history-collapsed'
 
 interface SourceControlExplorerProps {
   changesCount?: number
-  defaultFocus?: 'changes' | 'history'
   focusSection?: 'changes' | 'history'
   onSectionFocus?: (section: 'changes' | 'history') => void
   changes: ReactNode
@@ -17,7 +16,6 @@ interface SourceControlExplorerProps {
 
 export function SourceControlExplorer({
   changesCount,
-  defaultFocus = 'changes',
   focusSection,
   onSectionFocus,
   changes,
