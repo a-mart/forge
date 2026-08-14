@@ -49,6 +49,13 @@ export interface GitCommitMetadata {
   paths: string[]
 }
 
+export type GitLogRefKind = 'local' | 'remote' | 'current' | 'tag'
+
+export interface GitLogRef {
+  name: string
+  kind: GitLogRefKind
+}
+
 export interface GitLogEntry {
   sha: string
   shortSha: string
@@ -56,6 +63,8 @@ export interface GitLogEntry {
   author: string
   date: string
   filesChanged: number
+  parents?: string[]
+  refs?: GitLogRef[]
   metadata?: GitCommitMetadata | null
 }
 
@@ -191,6 +200,10 @@ export interface GitPullFfOnlyRequest extends GitMutationRequestBase {
   remote?: string
 }
 
+export interface GitPushRequest extends GitMutationRequestBase {
+  remote?: string
+}
+
 export type GitPreflightIssueSeverity = 'block' | 'warn'
 
 export interface GitPreflightIssue {
@@ -226,6 +239,12 @@ export interface GitPullResult extends GitMutationResult {
   remote: string
   upstream: string
   fastForward: boolean
+}
+
+export interface GitPushResult extends GitMutationResult {
+  remote: string
+  upstream: string
+  pushed: boolean
 }
 
 export type GitHostedProviderKind = 'github' | 'none'

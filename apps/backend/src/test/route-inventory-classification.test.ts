@@ -123,6 +123,7 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/switch-branch", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/create-branch", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/pull-ff-only", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/git/push", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/provider/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42", expect: { GET: "member" }, killSwitched: true },

@@ -483,6 +483,15 @@ describe('useFileEditorCoordinator', () => {
     })
     expect(linkedRun).not.toHaveBeenCalled()
     expect(captured.current?.dialogOpen).toBe(true)
+
+    const pushRun = vi.fn()
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition(
+        { type: 'source-control-mutation', mutation: 'push', agentId: 'agent-1', worktreeId: 'linked-1' },
+        pushRun,
+      )
+    })
+    expect(pushRun).toHaveBeenCalledTimes(1)
   })
 
   it('ignores duplicate writable registrations for the same key and preserves the first guard', () => {

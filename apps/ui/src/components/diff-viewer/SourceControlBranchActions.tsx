@@ -1,5 +1,5 @@
 import type { GitBranchSummary } from '@forge/protocol'
-import { ArrowDown, ChevronDown, GitBranch, Plus, RefreshCw } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, GitBranch, Plus, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,7 @@ import {
   fetchMutationPreflight,
   invalidateGitCaches,
   pullGitFfOnly,
+  pushGitUpstream,
   switchGitBranch,
   type GitBranchesQueryResult,
 } from './use-diff-queries'
@@ -27,6 +28,7 @@ type PendingMutation =
   | { kind: 'switch'; branch: string }
   | { kind: 'create'; branch: string; startPoint?: string }
   | { kind: 'pull' }
+  | { kind: 'push' }
 
 interface SourceControlBranchActionsProps {
   wsUrl: string
@@ -39,7 +41,7 @@ interface SourceControlBranchActionsProps {
   sourceControlActive?: boolean
   onMutationComplete: () => void
   onRequestMutation?: (
-    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
     target: { agentId: string; worktreeId: string | null },
     run: () => void,
   ) => void
@@ -104,6 +106,20 @@ export function SourceControlBranchActions({
     return reasons
   }, [aheadBehind.behind, branchData?.remotes, isDirty])
 
+  const pushBlockedReasons = useMemo(() => {
+    const reasons: string[] = []
+    if (aheadBehind.ahead === 0) {
+      reasons.push('The current branch has no unpublished commits.')
+    }
+    if (aheadBehind.behind > 0) {
+      reasons.push('The current branch is behind its upstream. Pull first, then push.')
+    }
+    if (!branchData?.remotes.includes('origin')) {
+      reasons.push('No origin remote is configured.')
+    }
+    return reasons
+  }, [aheadBehind.ahead, aheadBehind.behind, branchData?.remotes])
+
   useEffect(() => {
     if (!pendingMutation || !agentId) {
       setPreflightWarnings([])
@@ -116,7 +132,9 @@ export function SourceControlBranchActions({
         ? 'switch-branch'
         : pendingMutation.kind === 'create'
           ? 'create-branch'
-          : 'pull-ff-only'
+          : pendingMutation.kind === 'push'
+            ? 'push'
+            : 'pull-ff-only'
 
     let cancelled = false
     void fetchMutationPreflight(wsUrl, {
@@ -131,7 +149,7 @@ export function SourceControlBranchActions({
             ? pendingMutation.branch
             : undefined,
       startPoint: pendingMutation.kind === 'create' ? pendingMutation.startPoint : undefined,
-      remote: pendingMutation.kind === 'pull' ? 'origin' : undefined,
+      remote: pendingMutation.kind === 'pull' || pendingMutation.kind === 'push' ? 'origin' : undefined,
     })
       .then((preflight) => {
         if (cancelled) {
@@ -269,7 +287,7 @@ export function SourceControlBranchActions({
   }, [agentId, autoFetchKey, branchData, handleFetch, repoTarget, sourceControlActive])
 
   const requestMutationGuard = useCallback((
-    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
     run: () => void,
   ) => {
     if (!agentId) return
@@ -333,6 +351,7 @@ export function SourceControlBranchActions({
         | Awaited<ReturnType<typeof switchGitBranch>>
         | Awaited<ReturnType<typeof createGitBranch>>
         | Awaited<ReturnType<typeof pullGitFfOnly>>
+        | Awaited<ReturnType<typeof pushGitUpstream>>
 
       if (pendingMutation.kind === 'switch') {
         result = await switchGitBranch(wsUrl, {
@@ -344,6 +363,11 @@ export function SourceControlBranchActions({
           ...baseRequest,
           branch: pendingMutation.branch,
           startPoint: pendingMutation.startPoint,
+        })
+      } else if (pendingMutation.kind === 'push') {
+        result = await pushGitUpstream(wsUrl, {
+          ...baseRequest,
+          remote: 'origin',
         })
       } else {
         result = await pullGitFfOnly(wsUrl, {
@@ -420,6 +444,20 @@ export function SourceControlBranchActions({
       }
     }
 
+    if (pendingMutation.kind === 'push') {
+      return {
+        title: `Push ${aheadBehind.ahead} unpublished commit${aheadBehind.ahead === 1 ? '' : 's'}?`,
+        description: `${worktreeCopy} Forge will fetch origin, then push the current branch to its upstream. Force push is never used.`,
+        confirmLabel: 'Push',
+        blockedReasons: uniqueStrings([
+          ...pushBlockedReasons,
+          ...preflightBlockedReasons,
+          ...(actionError ? [actionError] : []),
+        ]),
+        warnings: preflightWarnings,
+      }
+    }
+
     return {
       title: 'Pull?',
       description: `${worktreeCopy} Forge will fetch origin and pull only when it can update cleanly. Merge commits and autostash are never used.`,
@@ -433,12 +471,14 @@ export function SourceControlBranchActions({
     }
   }, [
     actionError,
+    aheadBehind.ahead,
     branchData,
     isDirty,
     pendingMutation,
     preflightBlockedReasons,
     preflightWarnings,
     pullBlockedReasons,
+    pushBlockedReasons,
     selectedWorktreePath,
   ])
 
@@ -540,6 +580,24 @@ export function SourceControlBranchActions({
         >
           <RefreshCw className={cn('mr-1 size-3.5', fetchState === 'loading' && 'animate-spin')} />
           Fetch origin
+        </Button>
+
+        <Button
+          variant={aheadBehind.ahead > 0 ? 'default' : 'outline'}
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => {
+            requestMutationGuard('push', () => {
+              setActionError(null)
+              setActionWarning(null)
+              setPendingMutation({ kind: 'push' })
+            })
+          }}
+          disabled={pushBlockedReasons.length > 0}
+          title={pushBlockedReasons[0] ?? `Push ${aheadBehind.ahead} unpublished commit${aheadBehind.ahead === 1 ? '' : 's'} to origin`}
+        >
+          <ArrowUp className="mr-1 size-3.5" />
+          {aheadBehind.ahead > 0 ? `Sync Changes ${aheadBehind.ahead}↑` : 'Sync Changes'}
         </Button>
 
         <Button

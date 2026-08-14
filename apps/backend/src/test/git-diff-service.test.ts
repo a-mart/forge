@@ -25,6 +25,8 @@ describe("GitDiffService", () => {
       sha: repo.headSha,
       message: "memory(alpha): merge session alpha--s1",
       filesChanged: 1,
+      parents: [repo.initialSha],
+      refs: [{ name: "main", kind: "current" }],
       metadata: {
         reason: "manual",
         source: "profile-memory-merge",
@@ -38,6 +40,48 @@ describe("GitDiffService", () => {
         paths: ["profiles/alpha/memory-renamed.md"]
       }
     });
+    expect(result.commits[1]).toMatchObject({
+      sha: repo.initialSha,
+      message: "initial knowledge",
+      parents: []
+    });
+    expect(result.commits[1]?.refs).toBeUndefined();
+  });
+
+  it("getLog decorates local and remote refs on the matching commits", async () => {
+    const repo = await createStructuredHistoryRepo();
+    await execGit(repo.cwd, ["branch", "-M", "main"]);
+    const bareDir = join(repo.cwd, "origin.git");
+    await execGit(repo.cwd, ["init", "--bare", bareDir]);
+    await execGit(repo.cwd, ["remote", "add", "origin", bareDir]);
+    await execGit(repo.cwd, ["push", "-u", "origin", "main"]);
+    await writeFile(join(repo.cwd, "profiles", "alpha", "memory-renamed.md"), "# Memory\n\n- local ahead\n", "utf8");
+    await execGit(repo.cwd, ["add", "profiles/alpha/memory-renamed.md"]);
+    await execGit(repo.cwd, ["commit", "-m", "local unpublished commit"], new Date().toISOString());
+    const headSha = (await execGit(repo.cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    const originSha = (await execGit(repo.cwd, ["rev-parse", "origin/main"])).stdout.trim();
+    const service = new GitDiffService();
+
+    const result = await service.getLog(repo.cwd, 10, 0);
+
+    expect(result.commits[0]).toMatchObject({
+      sha: headSha,
+      refs: [{ name: "main", kind: "current" }]
+    });
+    expect(result.commits.find((commit) => commit.sha === originSha)?.refs).toEqual([
+      { name: "origin/main", kind: "remote" }
+    ]);
+  });
+
+  it("getLog peels annotated tags onto the tagged commit", async () => {
+    const repo = await createStructuredHistoryRepo();
+    await execGit(repo.cwd, ["tag", "-a", "v1.0.0", repo.initialSha, "-m", "annotated release"]);
+    const service = new GitDiffService();
+
+    const result = await service.getLog(repo.cwd, 10, 0);
+    const initial = result.commits.find((commit) => commit.sha === repo.initialSha);
+
+    expect(initial?.refs).toEqual([{ name: "v1.0.0", kind: "tag" }]);
   });
 
   it("getCommitDetail merges numstat for renamed files and attaches metadata", async () => {
@@ -210,6 +254,7 @@ async function createStructuredHistoryRepo(): Promise<{ cwd: string; headSha: st
     ["commit", "-m", "initial knowledge"],
     "2026-03-23T10:00:00.000Z"
   );
+  await execGit(cwd, ["branch", "-M", "main"]);
 
   const initialSha = (await execGit(cwd, ["rev-parse", "HEAD"])).stdout.trim();
 

@@ -9,6 +9,7 @@ import type {
   GitFileSectionProvenanceResult,
   GitFileStatus,
   GitLogEntry,
+  GitLogRef,
   GitLogResult,
   GitRepoKind,
   GitStatusResult
@@ -183,9 +184,10 @@ export class GitDiffService {
     const boundedOffset = Math.max(offset, 0);
     const commits = await this.readGitLogEntries(cwd, boundedLimit + 1, boundedOffset);
     const hasMore = commits.length > boundedLimit;
+    const page = commits.slice(0, boundedLimit);
 
     return {
-      commits: commits.slice(0, boundedLimit),
+      commits: await this.attachLogDecorations(cwd, page),
       hasMore
     };
   }
@@ -217,9 +219,11 @@ export class GitDiffService {
       this.fileHistoryStatsCache.set(statsCacheKey, stats);
     }
 
+    const page = await this.attachFilesChangedCounts(cwd, selectedBaseCommits.slice(0, boundedLimit));
+
     return {
       file: normalized.gitPath,
-      commits: await this.attachFilesChangedCounts(cwd, selectedBaseCommits.slice(0, boundedLimit)),
+      commits: await this.attachLogDecorations(cwd, page),
       stats,
       hasMore: selectedBaseCommits.length > boundedLimit
     };
@@ -405,7 +409,7 @@ export class GitDiffService {
     options?: ReadGitLogEntriesOptions
   ): Promise<GitLogEntry[]> {
     const git = this.createGit(cwd);
-    const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
+    const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%P${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
     const args = ["log", `--format=${format}`];
 
     if (follow && file) {
@@ -427,11 +431,12 @@ export class GitDiffService {
     const result = await git.run(args);
     const records = parseGitFormatRecords(result.stdout);
     const parsedBase = records.map((record) => {
-      const [sha, shortSha, author, date, message = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
+      const [sha, shortSha, parentsRaw, author, date, message = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
       const body = bodyParts.join(FIELD_SEPARATOR);
       return {
         sha: sha ?? "",
         shortSha: shortSha ?? "",
+        parents: parseParentShas(parentsRaw),
         author: author ?? "",
         date: date ?? "",
         message: message.trim(),
@@ -447,6 +452,72 @@ export class GitDiffService {
     }
 
     return this.attachFilesChangedCounts(cwd, parsedBase);
+  }
+
+  private async attachLogDecorations(cwd: string, entries: GitLogEntry[]): Promise<GitLogEntry[]> {
+    if (entries.length === 0) {
+      return entries;
+    }
+
+    const refsBySha = await this.collectLogRefsBySha(cwd);
+    return entries.map((entry) => {
+      const refs = refsBySha.get(entry.sha);
+      return refs && refs.length > 0 ? { ...entry, refs } : entry;
+    });
+  }
+
+  private async collectLogRefsBySha(cwd: string): Promise<Map<string, GitLogRef[]>> {
+    const git = this.createGit(cwd);
+    const [refResult, headResult, branchResult] = await Promise.all([
+      git.run(
+        [
+          "for-each-ref",
+          "--format=%(objectname)%00%(*objectname)%00%(refname)%00%(HEAD)",
+          "refs/heads",
+          "refs/remotes",
+          "refs/tags"
+        ],
+        { allowFailure: true }
+      ),
+      git.run(["rev-parse", "HEAD"], { allowFailure: true }),
+      git.run(["rev-parse", "--abbrev-ref", "HEAD"], { allowFailure: true })
+    ]);
+
+    const refsBySha = new Map<string, GitLogRef[]>();
+    if (refResult.exitCode === 0) {
+      for (const line of refResult.stdout.split("\n")) {
+        if (line.trim().length === 0) {
+          continue;
+        }
+
+        const [objectName, peeledObjectName, refname, headMarker] = line.split("\0");
+        const parsed = parseLogRef(refname, headMarker === "*");
+        const sha = peeledObjectName || objectName;
+        if (!sha || !parsed) {
+          continue;
+        }
+
+        const existing = refsBySha.get(sha) ?? [];
+        existing.push(parsed);
+        refsBySha.set(sha, existing);
+      }
+    }
+
+    const headSha = headResult.exitCode === 0 ? headResult.stdout.trim() : "";
+    const currentBranch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : "";
+    if (headSha && (currentBranch.length === 0 || currentBranch === "HEAD")) {
+      const existing = refsBySha.get(headSha) ?? [];
+      if (!existing.some((ref) => ref.kind === "current")) {
+        existing.unshift({ name: "HEAD", kind: "current" });
+        refsBySha.set(headSha, existing);
+      }
+    }
+
+    for (const [sha, refs] of refsBySha) {
+      refsBySha.set(sha, sortLogRefs(refs));
+    }
+
+    return refsBySha;
   }
 
   private attachFilesChangedCounts(
@@ -897,4 +968,63 @@ function isBinaryBuffer(content: Buffer): boolean {
 
 function isBinaryString(content: string): boolean {
   return content.slice(0, BINARY_SNIFF_BYTES).includes("\u0000");
+}
+
+function parseParentShas(rawParents: string | undefined): string[] {
+  if (!rawParents) {
+    return [];
+  }
+
+  return rawParents
+    .split(/\s+/)
+    .map((sha) => sha.trim())
+    .filter((sha) => sha.length > 0);
+}
+
+function parseLogRef(refname: string | undefined, isHead: boolean): GitLogRef | null {
+  if (!refname) {
+    return null;
+  }
+
+  if (refname.startsWith("refs/heads/")) {
+    const name = refname.slice("refs/heads/".length);
+    if (!name) {
+      return null;
+    }
+    return { name, kind: isHead ? "current" : "local" };
+  }
+
+  if (refname.startsWith("refs/remotes/")) {
+    const name = refname.slice("refs/remotes/".length);
+    if (!name || name.endsWith("/HEAD")) {
+      return null;
+    }
+    return { name, kind: "remote" };
+  }
+
+  if (refname.startsWith("refs/tags/")) {
+    const name = refname.slice("refs/tags/".length);
+    if (!name) {
+      return null;
+    }
+    return { name, kind: "tag" };
+  }
+
+  return null;
+}
+
+function sortLogRefs(refs: GitLogRef[]): GitLogRef[] {
+  const rank: Record<GitLogRef["kind"], number> = {
+    current: 0,
+    local: 1,
+    remote: 2,
+    tag: 3
+  };
+
+  return [...refs].sort((left, right) => {
+    if (left.kind !== right.kind) {
+      return rank[left.kind] - rank[right.kind];
+    }
+    return left.name.localeCompare(right.name);
+  });
 }

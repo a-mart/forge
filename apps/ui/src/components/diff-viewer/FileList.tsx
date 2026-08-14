@@ -22,6 +22,7 @@ interface FileListProps {
   repoTarget: GitRepoTarget
   quickFilter: KnowledgeQuickFilterId
   onQuickFilterChange: (filter: KnowledgeQuickFilterId) => void
+  listLabel?: string
 }
 
 export function FileList({
@@ -33,6 +34,7 @@ export function FileList({
   repoTarget,
   quickFilter,
   onQuickFilterChange,
+  listLabel = 'Changed files',
 }: FileListProps) {
   const [filter, setFilter] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Partial<Record<KnowledgeSurfaceId, boolean>>>({})
@@ -113,7 +115,7 @@ export function FileList({
         ) : null}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-1" role="listbox" aria-label="Changed files">
+      <div className="flex-1 overflow-y-auto p-1" role="listbox" aria-label={listLabel}>
         {filteredFiles.length === 0 ? (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">
             {filter || (isKnowledgeMode && quickFilter !== 'all') ? 'No matching files' : 'No changed files'}

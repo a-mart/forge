@@ -9,6 +9,8 @@ import type {
   GitMutationPreflight,
   GitMutationResult,
   GitPullFfOnlyRequest,
+  GitPushRequest,
+  GitPushResult,
   GitPullRequestDetail,
   GitPullRequestListResult,
   GitPullRequestMergeRequest,
@@ -508,7 +510,7 @@ export async function fetchMutationPreflight(
     agentId: string
     repoTarget: GitRepoTarget
     worktreeId?: string
-    action: 'fetch' | 'switch-branch' | 'create-branch' | 'pull-ff-only'
+    action: 'fetch' | 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push'
     targetBranch?: string
     startPoint?: string
     remote?: string
@@ -550,6 +552,13 @@ export async function pullGitFfOnly(
   request: GitPullFfOnlyRequest,
 ): Promise<GitPullResult> {
   return postGitApi<GitPullResult>(wsUrl, '/api/git/pull-ff-only', request)
+}
+
+export async function pushGitUpstream(
+  wsUrl: string,
+  request: GitPushRequest,
+): Promise<GitPushResult> {
+  return postGitApi<GitPushResult>(wsUrl, '/api/git/push', request)
 }
 
 export async function mergeGitPullRequest(
