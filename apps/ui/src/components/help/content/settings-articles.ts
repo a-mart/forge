@@ -478,6 +478,8 @@ export const settingsArticles: HelpArticle[] = [
       'release reconciliation',
       'timeout',
       'dedicated profile',
+      'Windows',
+      'beta',
     ],
     relatedIds: ['settings-extensions', 'chat-browser'],
     contextKeys: ['settings.external-chrome'],

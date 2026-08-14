@@ -57,7 +57,7 @@ async function developmentInputs(root) {
   const nativeBundlePath = path.join(nativePackageRoot, 'host.cjs')
   await writeFile(nativeBundlePath, 'process.exitCode = 1\n')
   const electronManifestPath = path.join(root, 'electron-package.json')
-  await writeFile(electronManifestPath, JSON.stringify({ version: '0.22.5' }))
+  await writeFile(electronManifestPath, JSON.stringify({ version: '0.23.0' }))
   return {
     extensionPackageRoot, extensionRoot, extensionManifestPath, nativePackageRoot, nativeBundlePath,
     seaConfigPath: path.join(nativePackageRoot, '..', 'sea-config.json'), electronManifestPath, payloadContents,
@@ -116,14 +116,19 @@ describe('External Chrome development resource staging', () => {
     expect(result.manifest.nativeHost.signature).toEqual({
       scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null,
     })
+    expect(result.manifest.compatibility.desktop).toEqual({ min: '0.23.0', max: '0.23.999' })
     expect(JSON.parse(await readFile(path.join(outputRoot, 'package-manifest.json'), 'utf8'))).toEqual(result.manifest)
 
     const dataRoot = path.join(root, 'forge-data')
     await expect(new ExternalChromeDeployer({
-      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.22.5', platform: 'darwin', architecture: 'arm64',
+      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.23.0', platform: 'darwin', architecture: 'arm64',
     }).deploy()).rejects.toThrow('not release-verified')
+    await expect(new ExternalChromeDeployer({
+      dataRoot: path.join(root, 'forge-data-old'), resourcesRoot: outputRoot, desktopVersion: '0.22.9',
+      platform: 'darwin', architecture: 'arm64', allowDevelopmentHost: true,
+    }).deploy()).rejects.toThrow('incompatible with Desktop 0.22.9')
     const deployer = new ExternalChromeDeployer({
-      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.22.5', platform: 'darwin', architecture: 'arm64',
+      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.23.0', platform: 'darwin', architecture: 'arm64',
       allowDevelopmentHost: true,
     })
     await deployer.deploy()
@@ -167,7 +172,7 @@ describe('External Chrome development resource staging', () => {
     })
     expect(await readFile(path.join(outputRoot, 'native-host', 'win32-x64', executable))).toEqual(await readFile(executablePath))
     const deployer = new ExternalChromeDeployer({
-      dataRoot: path.join(root, 'forge-data'), resourcesRoot: outputRoot, desktopVersion: '0.22.5',
+      dataRoot: path.join(root, 'forge-data'), resourcesRoot: outputRoot, desktopVersion: '0.23.0',
       platform: 'win32', architecture: 'x64', allowDevelopmentHost: true,
     })
     await deployer.deploy()
