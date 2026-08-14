@@ -14,9 +14,14 @@ afterEach(() => {
 })
 
 describe('sidebar layout preference', () => {
-  it('defaults to Classic when the rollout preference is unset or invalid', () => {
-    expect(readSidebarLayoutPref()).toBe('classic')
+  it('defaults to the new project view when the rollout preference is unset or invalid', () => {
+    expect(readSidebarLayoutPref()).toBe('rooms-v2')
     localStorage.setItem(SIDEBAR_LAYOUT_KEY, 'unknown')
+    expect(readSidebarLayoutPref()).toBe('rooms-v2')
+  })
+
+  it('honors an explicit Classic rollback preference', () => {
+    localStorage.setItem(SIDEBAR_LAYOUT_KEY, 'classic')
     expect(readSidebarLayoutPref()).toBe('classic')
   })
 

@@ -719,6 +719,15 @@ describe('SettingsGeneral', () => {
 
       expect(sidebarPrefsMock.storeSidebarLayoutPref).toHaveBeenCalledWith('rooms-v2')
     })
+
+    it('renders the new project view toggle on by default', async () => {
+      sidebarPrefsMock.readSidebarLayoutPref.mockReturnValue('rooms-v2')
+      renderGeneral()
+      await flush()
+
+      const toggle = container.querySelector('#sidebar-rooms-v2-toggle') as HTMLButtonElement | null
+      expect(toggle?.getAttribute('aria-checked')).toBe('true')
+    })
   })
 
   /* ---- Terminal shell settings ---- */

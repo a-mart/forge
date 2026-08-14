@@ -234,16 +234,17 @@ function getDesktopSidebar(): HTMLElement {
 }
 
 describe('AgentSidebar', () => {
-  it('defaults to Classic and leaves room-card markup out of the project list', () => {
-    const session = sessionManager('classic-session', 'classic-project')
+  it('defaults to the new project view and renders Rooms project cards', () => {
+    const session = sessionManager('rooms-session', 'rooms-project')
     renderSidebar({ agents: [session] })
 
     const sidebar = getDesktopSidebar()
-    expect(sidebar.getAttribute('data-sidebar-layout')).toBe('classic')
-    expect(sidebar.querySelector('[data-room-card]')).toBeNull()
+    expect(sidebar.getAttribute('data-sidebar-layout')).toBe('rooms-v2')
+    expect(sidebar.querySelector('[data-room-card]')).not.toBeNull()
   })
 
   it('keeps the Classic search and Project View controls in their established separate rows', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     renderSidebar({ agents: [sessionManager('classic-command', 'classic-command')] })
 
     const sidebar = getDesktopSidebar()
@@ -1476,6 +1477,7 @@ describe('AgentSidebar', () => {
   })
 
   it('intermixes local and remote projects by composite identity while keeping local Cortex fixed above them', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const localSession = {
       ...sessionManager('shared-session', 'same-profile'),
       sessionLabel: 'Local Session',
@@ -1549,6 +1551,7 @@ describe('AgentSidebar', () => {
   })
 
   it('applies plain, s:, and w: search consistently across local and remote rows and hides status cards while searching', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const localSession = {
       ...sessionManager('local-session', 'local-project'),
       sessionLabel: 'Needle Local Session',
@@ -1638,6 +1641,7 @@ describe('AgentSidebar', () => {
   })
 
   it('renders delimiter-adversarial local/remote sortable tuples as distinct accessible rows', () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const localSession = sessionManager('local-session', 'nested::profile')
     const remoteSession = sessionManager('remote-session', 'profile')
     const localProfile: ManagerProfile = {
@@ -1750,6 +1754,7 @@ describe('AgentSidebar', () => {
   })
 
   it('restores an active project view, hides every outside project and Cortex, and leaves an outside conversation', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const customerSession = sessionManager('customer-main', 'customer-project')
     const privateSession = sessionManager('private-main', 'private-project')
     const cortexSession = {
@@ -1787,6 +1792,7 @@ describe('AgentSidebar', () => {
   })
 
   it('does not leave Settings to enforce an active project view', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const customerSession = sessionManager('customer-main', 'customer-project')
     const privateSession = sessionManager('private-main', 'private-project')
     const onSelectAgent = vi.fn()
@@ -1818,6 +1824,7 @@ describe('AgentSidebar', () => {
   })
 
   it('creates a named project view and can switch cleanly back to all projects', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const customerSession = sessionManager('customer-main', 'customer-project')
     const privateSession = sessionManager('private-main', 'private-project')
     renderSidebar({
@@ -1872,6 +1879,7 @@ describe('AgentSidebar', () => {
   })
 
   it('edits and deletes the active project view without losing the all-projects fallback', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'classic')
     const customerSession = sessionManager('customer-main', 'customer-project')
     const privateSession = sessionManager('private-main', 'private-project')
     localStorageMock.setItem('forge-sidebar-project-views', JSON.stringify({

@@ -63,12 +63,12 @@ export function storeHideCliSessionsPref(hidden: boolean): void {
   }
 }
 
-/** Presentation-only rollout seam. Unset installations retain the classic sidebar. */
+/** Presentation-only rollout seam. Unset installations use the new project view. */
 export function readSidebarLayoutPref(): SidebarLayout {
   try {
-    return localStorage.getItem(SIDEBAR_LAYOUT_KEY) === 'rooms-v2' ? 'rooms-v2' : 'classic'
+    return localStorage.getItem(SIDEBAR_LAYOUT_KEY) === 'classic' ? 'classic' : 'rooms-v2'
   } catch {
-    return 'classic'
+    return 'rooms-v2'
   }
 }
 
