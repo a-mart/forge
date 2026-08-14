@@ -107,7 +107,12 @@ function renderConnectedSidebar(overrides: {
   onDeleteManager?: (managerId: string) => void
   builderSidebarOrderApi?: BuilderSidebarOrderApi
   withRemoteCollision?: boolean
+  /** Opt into Classic only when the contract is the Classic/unified project list. */
+  classicLayout?: boolean
 } = {}) {
+  if (overrides.classicLayout) {
+    storageValues.set('forge-sidebar-layout', 'classic')
+  }
   const store = originRegistry.createOrigin({
     originId: LOCAL_ORIGIN_ID,
     wsUrl: 'ws://local.test',
@@ -219,6 +224,52 @@ describe('AgentSidebarConnected', () => {
     expect(onDeleteManager).toHaveBeenCalledWith('profile-a')
   })
 
+  it('defaults to the new project view while still reconciling builder sidebar order', async () => {
+    let current: BuilderSidebarOrderState = {
+      version: 1,
+      revision: 2,
+      order: [
+        { originId: 'remote-a', profileId: 'profile-a' },
+        { originId: 'remote-offline', profileId: 'hidden-anchor' },
+      ],
+      updatedAt: '2026-07-09T12:00:00.000Z',
+    }
+    const api: BuilderSidebarOrderApi = {
+      get: vi.fn(async () => current),
+      put: vi.fn(async (request) => {
+        current = {
+          version: 1,
+          revision: current.revision + 1,
+          order: request.order,
+          updatedAt: '2026-07-09T12:00:01.000Z',
+        }
+        return current
+      }),
+    }
+
+    renderConnectedSidebar({
+      builderSidebarOrderApi: api,
+      withRemoteCollision: true,
+    })
+
+    await vi.waitFor(() => expect(api.put).toHaveBeenCalledOnce())
+    expect(api.put).toHaveBeenCalledWith({
+      baseRevision: 2,
+      order: [
+        { originId: 'remote-a', profileId: 'profile-a' },
+        { originId: 'remote-offline', profileId: 'hidden-anchor' },
+        { originId: 'local', profileId: 'profile-a' },
+      ],
+    })
+
+    const sidebar = container.querySelector('aside')
+    expect(sidebar?.getAttribute('data-sidebar-layout')).toBe('rooms-v2')
+    expect(container.querySelector('[data-testid="rooms-inbox"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="rooms-mode-switch"]')).not.toBeNull()
+    expect(container.textContent).toContain('Remote profile-a')
+    expect(container.textContent).toContain('profile-a--main')
+  })
+
   it('reconciles raw-id collisions through the local preference without calling either origin reorder API', async () => {
     let current: BuilderSidebarOrderState = {
       version: 1,
@@ -244,6 +295,7 @@ describe('AgentSidebarConnected', () => {
     const { localStore, remoteStore } = renderConnectedSidebar({
       builderSidebarOrderApi: api,
       withRemoteCollision: true,
+      classicLayout: true,
     })
     const localLegacyReorder = vi.spyOn(localStore.getClient(), 'reorderProfiles')
     const remoteLegacyReorder = vi.spyOn(remoteStore!.getClient(), 'reorderProfiles')
@@ -300,6 +352,7 @@ describe('AgentSidebarConnected', () => {
     const { localStore } = renderConnectedSidebar({
       builderSidebarOrderApi: api,
       withRemoteCollision: true,
+      classicLayout: true,
     })
     await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce())
 
@@ -358,6 +411,7 @@ describe('AgentSidebarConnected', () => {
     const { localStore } = renderConnectedSidebar({
       builderSidebarOrderApi: api,
       withRemoteCollision: true,
+      classicLayout: true,
     })
     await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce())
 
@@ -412,6 +466,7 @@ describe('AgentSidebarConnected', () => {
     const { localStore } = renderConnectedSidebar({
       builderSidebarOrderApi: api,
       withRemoteCollision: true,
+      classicLayout: true,
     })
     await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce())
 
@@ -524,7 +579,7 @@ describe('AgentSidebarConnected', () => {
       get: vi.fn(async () => { throw new BuilderSidebarOrderApiUnavailableError() }),
       put: vi.fn(),
     }
-    renderConnectedSidebar({ builderSidebarOrderApi: api })
+    renderConnectedSidebar({ builderSidebarOrderApi: api, classicLayout: true })
     await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce())
 
     const projectButtons = Array.from(container.querySelectorAll('button')).filter(

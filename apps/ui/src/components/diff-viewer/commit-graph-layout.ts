@@ -19,6 +19,17 @@ export interface CommitGraphRow {
   edges: CommitGraphEdge[]
 }
 
+const COMMIT_GRAPH_LANE_WIDTH = 12
+const COMMIT_GRAPH_PADDING_X = 8
+
+export function commitGraphWidth(laneCount: number): number {
+  return Math.max(laneCount * COMMIT_GRAPH_LANE_WIDTH + COMMIT_GRAPH_PADDING_X * 2, 20)
+}
+
+export function commitGraphLaneX(column: number): number {
+  return COMMIT_GRAPH_PADDING_X + column * COMMIT_GRAPH_LANE_WIDTH
+}
+
 const EMPTY_PARENTS: string[] = []
 
 export function layoutCommitGraph(commits: CommitGraphInput[]): CommitGraphRow[] {
