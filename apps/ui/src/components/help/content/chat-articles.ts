@@ -299,7 +299,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-restart-recovery',
     title: 'Stalls and restart recovery',
     category: 'chat',
-    summary: 'What manager stall notices mean and how to recover interrupted work after a backend restart.',
+    summary: 'What manager stall notices mean, how runaway manager responses recover, and how to resume interrupted work after a backend restart.',
     content: chatRestartRecoveryContent,
     keywords: [
       'stall',
@@ -311,6 +311,9 @@ export const chatArticles: HelpArticle[] = [
       'dismiss',
       'stop all',
       'interrupted',
+      'runaway',
+      'repetitive',
+      'overlong',
     ],
     relatedIds: ['chat-overview', 'chat-workers', 'chat-sessions'],
     contextKeys: ['chat.main'],
