@@ -24,7 +24,7 @@ While a manager is responding, you'll see a green status dot in the header and t
 
 To stop a running response, open the **⋮ menu** in the header and choose **Stop All**. This terminates the manager and any active workers.
 
-If an active manager stops making progress, amber System rows provide approximate escalation notices. After a backend restart, Forge does not auto-resume; when recovery information is available, a banner below the header offers **Resume all** or **Dismiss**. Open the related **Stalls and restart recovery** article for recovery limits and safety guidance.
+If an active manager stops making progress, amber System rows provide approximate escalation notices. If a response becomes repetitive or overlong, Forge stops it, keeps workers running, and explains the recovery in System rows. After a backend restart, Forge does not auto-resume; when recovery information is available, a banner below the header offers **Resume all** or **Dismiss**. Open the related **Stalls and restart recovery** article for stall notices, runaway recovery, and restart safety guidance.
 
 ## Channel views
 

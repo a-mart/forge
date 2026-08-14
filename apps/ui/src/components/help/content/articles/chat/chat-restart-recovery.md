@@ -6,6 +6,12 @@ Amber **System** rows can appear after roughly 30 seconds, 5 minutes, and 10 min
 
 These notices do not provide an inline runtime recycle action. If the manager remains stuck, use **⋮ → Stop All**, then send the request again to start a fresh turn/runtime. In some cases Forge may recycle a pending runtime after it becomes idle, so waiting can also allow recovery.
 
+## Runaway manager responses
+
+If a manager response becomes repetitive or overlong, Forge stops it and withholds that output as a clean final. **System** rows explain the recovery. Forge retries that obligation once, or continues already queued work, then does not keep retrying. Active workers keep running. After an exhausted stop with nothing queued, send a new message to continue.
+
+If automatic interruption cannot finish cleanly, wait for the stream to settle. Use **Stop All** only if you intend to stop the manager and any active workers. For a genuinely stalled manager, **Stop All** remains the right recovery and still terminates both.
+
 ## Recovery after a backend restart
 
 Forge does not automatically resume interrupted work after a backend restart. When recovery information is available, Builder shows a banner below the chat header with interrupted session and worker counts.
