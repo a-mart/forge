@@ -757,16 +757,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return undefined;
     }
 
-    if (this.settledAssistantMessage) {
-      return this.settledAssistantMessage;
-    }
-
     const messages = this.getSessionAgentMessages();
-    if (messages.length <= this.sessionMessageCountAtAgentStart) {
-      return undefined;
+    const sessionStateCandidate = messages.length > this.sessionMessageCountAtAgentStart
+      ? asEligibleSettledAssistantMessage(messages.at(-1))
+      : undefined;
+
+    for (const candidate of [this.settledAssistantMessage, sessionStateCandidate]) {
+      if (!candidate || detectManagerOutputRunaway(extractTextFromMessageRecord(candidate))) {
+        continue;
+      }
+      return candidate;
     }
 
-    return asEligibleSettledAssistantMessage(messages.at(-1));
+    return undefined;
   }
 
   /** @internal Drain the serialized Pi session event queue (tests). */
@@ -1377,16 +1380,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     // Forge terminal agent_end / idle / onAgentEnd happen once at agent_settled.
     if (event.type === "agent_end") {
       this.lastAgentEndWillRetry = Boolean(event.willRetry);
-      const settledAssistantMessage = findEligibleSettledAssistantMessage(event.messages);
-      if (
-        this.descriptor.role === "manager" &&
-        settledAssistantMessage &&
-        detectManagerOutputRunaway(extractTextFromMessageRecord(settledAssistantMessage))
-      ) {
-        this.settledAssistantMessage = undefined;
-      } else {
-        this.settledAssistantMessage = settledAssistantMessage ?? this.settledAssistantMessage;
-      }
+      this.settledAssistantMessage =
+        findEligibleSettledAssistantMessage(event.messages) ?? this.settledAssistantMessage;
       if (this.lastAgentEndWillRetry) {
         console.warn(`[swarm][${this.now()}] runtime:agent_end_will_retry`, {
           runtime: "pi",

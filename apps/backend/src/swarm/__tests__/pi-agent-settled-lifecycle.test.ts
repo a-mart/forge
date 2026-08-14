@@ -330,7 +330,7 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(onSessionEvent).toHaveBeenCalledWith("manager", { type: "agent_end" });
   });
 
-  it("aborts repetitive manager output, prunes it, and retries the active obligation once", async () => {
+  it("rejects a trailing session-state runaway and retries the active obligation exactly once", async () => {
     const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
     const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
 
@@ -339,10 +339,14 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
 
     session.state.messages = [
       { role: "user", content: "continue the active manager obligation" },
-      { role: "assistant", content: [{ type: "text", text: triggerText }] },
     ];
     session.isStreaming = true;
     await (runtime as any).handleEvent({ type: "agent_start" });
+    session.state.messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: triggerText }],
+      stopReason: "stop",
+    });
     session.abortImpl = async () => {
       session.isStreaming = false;
       session.emit({ type: "agent_end", willRetry: false, messages: [] });
@@ -385,7 +389,7 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(reportSuccess).not.toHaveBeenCalled();
   });
 
-  it("terminalizes a second runaway instead of replaying the same manager obligation forever", async () => {
+  it("rejects trailing direct and session-state runaways when the bounded retry is exhausted", async () => {
     const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
     const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
     const originalMessage = "continue the active manager obligation";
@@ -393,10 +397,14 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     await runtime.sendMessage(originalMessage);
     session.state.messages = [
       { role: "user", content: originalMessage },
-      { role: "assistant", content: [{ type: "text", text: triggerText }] },
     ];
     session.isStreaming = true;
     await (runtime as any).handleEvent({ type: "agent_start" });
+    session.state.messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: triggerText }],
+      stopReason: "stop",
+    });
     session.abortImpl = async () => {
       session.isStreaming = false;
       session.emit({
@@ -419,13 +427,17 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     session.state.messages = [
       { role: "user", content: originalMessage },
       { role: "user", content: retryMessage },
-      { role: "assistant", content: [{ type: "text", text: triggerText }] },
     ];
     session.isStreaming = true;
     await (runtime as any).handleEvent({ type: "agent_start" });
     await (runtime as any).handleEvent({
       type: "message_start",
       message: { role: "user", content: retryMessage },
+    });
+    session.state.messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: triggerText }],
+      stopReason: "stop",
     });
     await (runtime as any).handleEvent({
       type: "message_update",
@@ -727,7 +739,7 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.disposeCalls).toBe(0);
   });
 
-  it("accepts a later clean final after a second runaway abort failure without reopening retry", async () => {
+  it("accepts a later clean session-state final after a second runaway abort failure without reopening retry", async () => {
     const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
     const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
     const originalMessage = "continue the active manager obligation";
@@ -740,10 +752,14 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     await runtime.sendMessage(originalMessage);
     session.state.messages = [
       { role: "user", content: originalMessage },
-      { role: "assistant", content: triggerText },
     ];
     session.isStreaming = true;
     await (runtime as any).handleEvent({ type: "agent_start" });
+    session.state.messages.push({
+      role: "assistant",
+      content: triggerText,
+      stopReason: "stop",
+    });
     session.abortImpl = async () => {
       session.isStreaming = false;
       session.emit({ type: "agent_end", willRetry: false, messages: [] });
@@ -760,13 +776,17 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     session.state.messages = [
       { role: "user", content: originalMessage },
       { role: "user", content: retryMessage },
-      { role: "assistant", content: triggerText },
     ];
     session.isStreaming = true;
     await (runtime as any).handleEvent({ type: "agent_start" });
     await (runtime as any).handleEvent({
       type: "message_start",
       message: { role: "user", content: retryMessage },
+    });
+    session.state.messages.push({
+      role: "assistant",
+      content: triggerText,
+      stopReason: "stop",
     });
     session.abortImpl = async () => {
       session.isStreaming = false;
@@ -795,7 +815,7 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     await (runtime as any).handleEvent({
       type: "agent_end",
       willRetry: false,
-      messages: [cleanFinal],
+      messages: [],
     });
     await (runtime as any).handleEvent({ type: "agent_settled" });
 

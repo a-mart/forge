@@ -332,7 +332,7 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     expect(turnContext.handleRuntimeError).not.toHaveBeenCalled();
   });
 
-  it("keeps an exhausted goal-backed manager idle until new work starts", async () => {
+  it("does not schedule a goal after an exhausted runaway settles without a final", async () => {
     const { coordinator, controller, descriptors, calls, goals } = createHarness();
     descriptors.set("manager", descriptor({
       agentId: "manager",
@@ -357,10 +357,12 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     // Recovery emits streaming status snapshots after the terminal error; they
     // must not be mistaken for a newly accepted obligation.
     await coordinator.handleRuntimeStatus(8, "manager", "streaming", 0);
+    await coordinator.handleRuntimeSessionEvent(8, "manager", { type: "agent_end" });
     await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
     await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
     expect(calls).toEqual([
       "controller:status",
+      "controller:event",
       "controller:status",
       "plans:finalize",
       "controller:status",
