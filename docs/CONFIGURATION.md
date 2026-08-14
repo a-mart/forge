@@ -419,6 +419,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │           ├── <workerId>.jsonl
 │           └── cursor-sdk-state/<workerId>/ # Worker Cursor SDK state roots
 ├── swarm/agents.json                      # Global profile/agent registry
+├── session-attention.json                 # Server-owned session attention
 ├── extensions/                            # Global Forge extensions
 ├── agent/
 │   ├── extensions/                        # Global worker Pi extensions

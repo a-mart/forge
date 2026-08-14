@@ -1,4 +1,4 @@
-Cortex is Forge's durable learning system. Its Knowledge v2 architecture stores structured entries, runs bounded capture checks for missed durable facts, and consolidates the entry set so future sessions start with compact context. Cortex appears as a pinned Builder sidebar entry.
+Cortex is Forge's durable learning system. Its Knowledge v2 architecture stores structured entries, runs bounded capture checks for missed durable facts, and consolidates the entry set so future sessions start with compact context. On desktop, Cortex lives in the activity-rail popover. On mobile, and when Classic sidebar is selected, it remains a pinned sidebar row.
 
 Knowledge v2 is an opt-in, default-off preview. It is separate from the whole-subsystem `FORGE_CORTEX_ENABLED` control.
 
@@ -11,7 +11,7 @@ Knowledge v2 is an opt-in, default-off preview. It is separate from the whole-su
 
 ## The Cortex dashboard
 
-Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has four tabs:
+Open Cortex from the desktop activity-rail popover, or from the pinned sidebar row on mobile and in Classic. The resizable dashboard has four tabs:
 
 - **Index** — View generated global/profile indexes and token-cost meters.
 - **Entries** — Read entry bodies and provenance details; the dashboard is read-only.
