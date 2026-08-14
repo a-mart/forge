@@ -727,6 +727,92 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(session.disposeCalls).toBe(0);
   });
 
+  it("accepts a later clean final after a second runaway abort failure without reopening retry", async () => {
+    const { runtime, session, onAgentEnd, onSessionEvent, onRuntimeError, reportSuccess } = makeRuntime();
+    const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);
+    const originalMessage = "continue the active manager obligation";
+    const cleanFinal = {
+      role: "assistant",
+      content: "Completed cleanly after the failed second abort.",
+      stopReason: "stop",
+    };
+
+    await runtime.sendMessage(originalMessage);
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      session.emit({ type: "agent_end", willRetry: false, messages: [] });
+      session.emit({ type: "agent_settled" });
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    await vi.waitFor(() => expect(session.promptCalls).toHaveLength(2));
+
+    const retryMessage = session.promptCalls[1];
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "user", content: retryMessage },
+      { role: "assistant", content: triggerText },
+    ];
+    session.isStreaming = true;
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await (runtime as any).handleEvent({
+      type: "message_start",
+      message: { role: "user", content: retryMessage },
+    });
+    session.abortImpl = async () => {
+      session.isStreaming = false;
+      throw new Error("abort transport failed");
+    };
+
+    await (runtime as any).handleEvent({
+      type: "message_update",
+      message: { role: "assistant", content: triggerText },
+    });
+    await vi.waitFor(() => expect(session.abortCalls).toBe(2));
+    await vi.waitFor(() => expect(onRuntimeError.mock.calls.some(([, error]) =>
+      error.details?.runawayRecoveryExhausted === true
+    )).toBe(true));
+    await vi.waitFor(() => expect(runtime.isContextRecoveryActive()).toBe(false));
+
+    expect(session.promptCalls).toHaveLength(2);
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onAgentEnd).not.toHaveBeenCalled();
+
+    session.state.messages = [
+      { role: "user", content: originalMessage },
+      { role: "user", content: retryMessage },
+      cleanFinal,
+    ];
+    await (runtime as any).handleEvent({
+      type: "agent_end",
+      willRetry: false,
+      messages: [cleanFinal],
+    });
+    await (runtime as any).handleEvent({ type: "agent_settled" });
+
+    expect(session.promptCalls).toHaveLength(2);
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(onSessionEvent).toHaveBeenCalledWith("manager", {
+      type: "agent_end",
+      settledAssistantMessage: cleanFinal,
+    });
+    expect(onAgentEnd).toHaveBeenCalledOnce();
+    expect(reportSuccess).toHaveBeenCalledOnce();
+    expect(session.disposeCalls).toBe(0);
+    expect(onRuntimeError.mock.calls.filter(([, error]) =>
+      error.details?.runawayRecoveryExhausted === true
+    )).toHaveLength(1);
+  });
+
   it("clears retry identity when retry prompt dispatch fails", async () => {
     const { runtime, session, onAgentEnd, onRuntimeError } = makeRuntime();
     const triggerText = "Done.\n---\nStop.\nEnd.\nYield.\n".repeat(700);

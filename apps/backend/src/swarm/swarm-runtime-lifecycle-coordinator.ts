@@ -363,8 +363,16 @@ export class SwarmRuntimeLifecycleCoordinator {
     const event = typeof runtimeTokenOrAgentId === "number"
       ? maybeEvent
       : agentIdOrEvent as RuntimeSessionEvent;
-    if (accepted && event?.type === "message_start" && event.message.role === "user") {
-      // A newly accepted user/internal prompt starts a distinct obligation.
+    if (
+      accepted &&
+      (
+        // A newly accepted user/internal prompt starts a distinct obligation.
+        (event?.type === "message_start" && event.message.role === "user") ||
+        // A later accepted clean final fulfills the exhausted obligation.
+        // Clear suppression so goal continuation can proceed exactly once.
+        (event?.type === "agent_end" && event.settledAssistantMessage !== undefined)
+      )
+    ) {
       this.goalContinuationSuppressedAfterRunaway.delete(agentId);
     }
   }

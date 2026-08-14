@@ -396,6 +396,74 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     expect(goals.scheduleContinuation).toHaveBeenCalledOnce();
   });
 
+  it("resumes goal continuation once after a later accepted clean final following second-runaway abort failure", async () => {
+    const { coordinator, controller, descriptors, runtimes, calls, goals } = createHarness();
+    const manager = descriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "profile-a",
+      status: "idle",
+    });
+    const worker = descriptor({
+      agentId: "worker",
+      role: "worker",
+      managerId: "manager",
+      status: "streaming",
+    });
+    descriptors.set("manager", manager);
+    descriptors.set("worker", worker);
+    runtimes.set("worker", runtime(worker));
+
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "Runaway manager output was stopped",
+      details: {
+        stage: "manager_output_runaway",
+        runawayRecoveryExhausted: true,
+        queuedWorkWillContinue: false,
+      },
+    });
+    await coordinator.handleRuntimeError(8, "manager", {
+      phase: "interrupt",
+      message: "Runaway manager response could not be interrupted cleanly",
+      details: {
+        stage: "manager_output_runaway_abort_failed",
+        preserveActiveTurn: true,
+      },
+    });
+    expect(goals.cancelScheduledContinuation).toHaveBeenCalledWith("manager");
+    expect(controller.runRuntimeShutdown).not.toHaveBeenCalled();
+    expect(controller.detachRuntime).not.toHaveBeenCalled();
+    expect(runtimes.get("worker")?.getStatus()).toBe("streaming");
+
+    calls.length = 0;
+    await coordinator.handleRuntimeStatus(8, "manager", "streaming", 0);
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(goals.scheduleContinuation).not.toHaveBeenCalled();
+
+    calls.length = 0;
+    await coordinator.handleRuntimeSessionEvent(8, "manager", {
+      type: "agent_end",
+      settledAssistantMessage: {
+        role: "assistant",
+        content: "Completed cleanly after the failed second abort.",
+        stopReason: "stop",
+      },
+    });
+    await coordinator.handleRuntimeStatus(8, "manager", "idle", 0);
+    expect(calls).toEqual([
+      "controller:event",
+      "controller:status",
+      "plans:finalize",
+      "goals:schedule",
+    ]);
+    expect(goals.scheduleContinuation).toHaveBeenCalledOnce();
+    expect(goals.scheduleContinuation).toHaveBeenCalledWith(manager);
+    expect(controller.runRuntimeShutdown).not.toHaveBeenCalled();
+    expect(runtimes.get("worker")?.getStatus()).toBe("streaming");
+  });
+
   it("ignores stale runaway exhaustion before mutating turn or goal lifecycle", async () => {
     const { coordinator, controller, descriptors, calls, goals, turnContext } = createHarness();
     descriptors.set("manager", descriptor({
