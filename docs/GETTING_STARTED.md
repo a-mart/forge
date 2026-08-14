@@ -588,7 +588,8 @@ The **Mute CLI-originated notifications** setting suppresses audio—but not unr
 
 Go to **Settings → Skills** to configure optional skill-backed agent capabilities:
 
-- **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
+- **Brave Search** — Paste your Brave API key here. Use Brave for exact or navigational lookup, country or freshness controls, and direct URL or page-content extraction. Agents use it when a task needs that kind of search; they do not search the web on every turn.
+- **Exa Search** — Paste your Exa API key here. Use Exa for semantic or conceptual discovery, unfamiliar topics, and multi-source research. Prefer Exa when the question needs a source landscape rather than a known page or exact phrasing.
 - **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is separate from Forge Desktop's Automatic Browser.
 - **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.

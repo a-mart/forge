@@ -221,7 +221,8 @@ Managers and workers have access to built-in skills. These are separate from For
 
 | Skill | Description | Requires |
 |-------|-------------|----------|
-| Web Search | Search the web via Brave Search API | `BRAVE_API_KEY` |
+| Brave Search | Exact, navigational, freshness, or URL-oriented web search via Brave Search API | `BRAVE_API_KEY` |
+| Exa Search | Semantic, conceptual, or multi-source web discovery via Exa Search API | `EXA_API_KEY` |
 | Image Generation | Generate images with Google Gemini | `GEMINI_API_KEY` |
 | `agent-browser` | Interactive web browsing and extraction through a separate CLI/browser lifecycle | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
 | Cron Scheduling | Persistent scheduled tasks with cron expressions | — |
@@ -303,7 +304,7 @@ The `.env.example` file documents all available options with comments. Key categ
 
 - **Core** — host, port, data directory, debug mode
 - **UI** — WebSocket URL or backend-port override (dev only, production auto-resolves)
-- **Skills** — API keys for Brave Search, Gemini image generation
+- **Skills** — API keys for Brave Search, Exa Search, and Gemini image generation
 - **Skill sharing** — anonymous worker origin and disable flag
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`. Builder web supports both plain Codex sidecar text turns and manager-routed selector turns: the plain `@Codex` / `[@Codex]` path uses the Codex CLI app-server sidecar, while `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager, inject guidance, and delegate to the visible `Codex Plugin` specialist for plugin-scoped Codex tools. The sidecar path remains text-only and excluded from Collaboration; the manager-routed path stays in the normal manager audit trail. Normal scoped tool output is bounded, while full redacted connector exports are written to session artifacts and returned to chat only as path/metadata plus a bounded preview.
 

@@ -1,6 +1,6 @@
 ---
 name: brave-search
-description: Web search and content extraction via Brave Search API. Use for searching documentation, facts, or any web content. Lightweight, no browser required.
+description: Use Brave for exact or navigational lookup, country or freshness controls, or direct URL extraction; use exa-search for semantic or conceptual web discovery and multi-source research. Lightweight, no browser required.
 env:
   - name: BRAVE_API_KEY
     description: Brave Search API key
@@ -10,7 +10,7 @@ env:
 
 # Brave Search
 
-Web search and content extraction using the official Brave Search API. No browser required.
+Exact, navigational, freshness-filtered, and URL-oriented web search plus page-content extraction using the official Brave Search API. No browser required. Use `exa-search` instead for semantic or conceptual discovery and multi-source research.
 
 ## Setup
 
@@ -76,7 +76,9 @@ Content: (if --content flag used)
 
 ## When to Use
 
-- Searching for documentation or API references
-- Looking up facts or current information
-- Fetching content from specific URLs
-- Any task requiring web search without interactive browsing
+**Brave vs. Exa — choose the provider before searching:**
+
+- **Use Brave** for exact or navigational lookup, country or freshness controls, and direct URL or page-content extraction. `content.js` is the direct-URL path.
+- **Use `exa-search`** for semantic or conceptual discovery, unfamiliar topics, multi-source research, source landscapes, and cross-source synthesis.
+- If a task needs both, discover candidates with Exa, then use Brave to verify exact wording, regional or freshness constraints, or page content.
+- Do not search when the answer is already established in the conversation or local repository.
