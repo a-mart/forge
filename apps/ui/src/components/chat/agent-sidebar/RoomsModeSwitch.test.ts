@@ -31,6 +31,7 @@ describe('RoomsModeSwitch', () => {
       onChange,
     })))
 
+    expect(container.querySelector('[data-testid="rooms-mode-switch"]')?.getAttribute('aria-label')).toBe('New project view sidebar mode')
     expect(getByRole(container, 'button', { name: /inbox/i }).getAttribute('aria-pressed')).toBe('true')
     expect(getByRole(container, 'button', { name: /inbox/i }).textContent).toContain('3')
     expect(container.querySelector('[aria-label="3 sessions need you"]')?.classList.contains('sidebar-room-unread-badge')).toBe(true)

@@ -14,7 +14,7 @@ export function RoomsModeSwitch({
   return (
     <div
       className="mt-2 inline-flex w-full rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-0.5"
-      aria-label="Rooms sidebar mode"
+      aria-label="New project view sidebar mode"
       data-testid="rooms-mode-switch"
     >
       <button

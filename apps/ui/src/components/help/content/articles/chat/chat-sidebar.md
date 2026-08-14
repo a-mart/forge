@@ -6,7 +6,7 @@ On desktop, Cortex lives in the activity-rail popover. On mobile, and in Classic
 
 ## Inbox
 
-Inbox is the default Rooms view. It lists:
+Inbox is the default new project view. It lists:
 
 - **Needs you** — server-issued work-lifecycle attention. Unread badges, pending choices, and error dots do not create these items.
 - **Active** — currently working sessions, capped with an **N more** link into Projects.
