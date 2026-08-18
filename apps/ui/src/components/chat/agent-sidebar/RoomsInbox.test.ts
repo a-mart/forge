@@ -196,6 +196,7 @@ describe('RoomsInbox', () => {
       sections: sections({
         needsYou: [
           { ...view('choice', 'decision_waiting'), identity: { ...tintedIdentity, sessionAgentId: 'choice' } },
+          { ...view('review', 'awaiting_review'), identity: { ...tintedIdentity, sessionAgentId: 'review' } },
           { ...view('unread', 'work_settled'), identity: { ...tintedIdentity, sessionAgentId: 'unread' }, unreadCount: 4 },
         ],
         active: [active, view('compact', 'compacting')],
@@ -208,8 +209,10 @@ describe('RoomsInbox', () => {
 
     expect(container.querySelector('[data-inbox-section="needs-you"]')?.classList.contains('sidebar-room-inbox-section--needs-you')).toBe(true)
     expect(container.querySelector('[data-inbox-section="active"] .sidebar-room-active-dot')).not.toBeNull()
-    expect(container.querySelectorAll('.sidebar-room-avatar')).toHaveLength(5)
-    expect(container.querySelector('[data-inbox-row="local::choice"] .sidebar-room-status-pill--awaiting')).not.toBeNull()
+    expect(container.querySelectorAll('.sidebar-room-avatar')).toHaveLength(6)
+    expect(container.querySelector('[data-inbox-row="local::choice"] .sidebar-room-status-pill--awaiting')?.textContent).toBe('?')
+    expect(container.querySelector('[data-inbox-row="local::review"] .sidebar-room-status-pill--review')).not.toBeNull()
+    expect(container.querySelector('[data-inbox-row="local::review"] .sidebar-room-status-pill--awaiting')).toBeNull()
     expect(container.querySelector('[aria-label="4 unread updates"]')).not.toBeNull()
     // Attention reason belongs in the status pill; avatars keep the same
     // per-project tint used by Recent and Projects.

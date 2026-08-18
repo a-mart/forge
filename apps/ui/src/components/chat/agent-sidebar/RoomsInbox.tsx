@@ -282,9 +282,11 @@ function InboxSessionRow({
 }
 
 function InboxStatusPill({ session }: { session: RoomsInboxSessionViewModel }) {
-  if (session.reason === 'decision_waiting' || session.reason === 'awaiting_review') {
-    const label = session.reason === 'decision_waiting' ? 'Decision needed' : 'Ready for review'
-    return <span className="sidebar-room-status-pill sidebar-room-status-pill--awaiting" aria-label={label}>?</span>
+  if (session.reason === 'decision_waiting') {
+    return <span className="sidebar-room-status-pill sidebar-room-status-pill--awaiting" aria-label="Decision needed">?</span>
+  }
+  if (session.reason === 'awaiting_review') {
+    return <span className="sidebar-room-status-pill sidebar-room-status-pill--review" aria-label="Ready for review" />
   }
   if (session.reason === 'compacting') {
     return <span className="sidebar-room-status-pill sidebar-room-status-pill--compacting sidebar-room-glow sidebar-room-compaction-glow" aria-label="Compacting context">C</span>

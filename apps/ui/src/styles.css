@@ -456,6 +456,12 @@ body {
   background: var(--sidebar-room-status-awaiting);
   color: var(--sidebar-room-status-awaiting-foreground);
 }
+.sidebar-room-status-pill--review {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  border-color: var(--sidebar-room-status-awaiting);
+  background: transparent;
+}
 .sidebar-room-status-pill--workers,
 .sidebar-room-status-pill--streaming {
   border-color: var(--sidebar-room-status-active);
