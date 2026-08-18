@@ -366,7 +366,7 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 - **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
 - **Role instructions** — Stored in the `systemPrompt`/`prompt.md` field and layered after Forge's Project Agent base prompt. Use this for the project agent's role, scope, constraints, validation habits, and domain-specific behavior. Required when placing the definition in the repository.
 
-Profile-local promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Repositories can also ship Project Agent definitions under `.forge/project-agents/<definitionId>/` with `config.json`, live `prompt.md`, and optional read-only `reference/*.md`; activating/linking creates a normal session source link, and unlinking preserves session history and repository files. Valid repo-defined Project Agents appear in the sidebar as inactive/repo-defined rows; clicking one opens the Repository Resources activation sheet, and the agent stays unavailable until it is activated/linked. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
+**Local to Forge** definitions alone use `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md`, and per-agent `reference/` documents. Settings keeps those fields and the **Can create sessions** capability editable. **Repository `.forge`** placement writes `.forge/project-agents/<handle>/` and does not create a Forge-data definition sidecar; session and history remain local. Repositories can also ship Project Agent definitions under `.forge/project-agents/<definitionId>/` with `config.json`, live `prompt.md`, and optional read-only `reference/*.md`. Repo-sourced definition fields are read-only in Settings and are edited in the repository files. Activating or linking creates a normal session source link; repository capabilities are chosen at activation or re-link rather than a live Settings toggle. Valid repo-defined Project Agents appear in the sidebar as inactive/repo-defined rows; clicking one opens the Repository Resources activation sheet, and the agent stays unavailable until it is activated or linked. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
 
 **AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and role instructions based on what the session has actually been doing.
 
@@ -384,15 +384,15 @@ Agent Creator sessions cannot be promoted, forked, or created within the Cortex 
 
 **Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other local session agents in the same profile, plus sessions in profiles that have an explicit sharing grant, can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
 
-**Session creation capability:** Some project agents can be given a **Can create sessions** toggle in Settings. When enabled, that project agent can create new manager sessions in the same profile. Those created sessions show a subtle `Created by @handle` attribution in the sidebar, and the creator can keep messaging them through the normal routing path.
+**Session creation capability:** Local agents can keep a live **Can create sessions** toggle in Settings. Repository capabilities are chosen when you activate or re-link, not as a live Settings toggle. When the capability is granted, that project agent can create new manager sessions in the same profile. Those created sessions show a subtle `Created by @handle` attribution in the sidebar, and the creator can keep messaging them through the normal routing path.
 
 **Messaging:** Project Agent exchanges appear inline in both participating Builder conversations. Messages sent by the currently open session are right-aligned in deep blue; replies from the peer session are left-aligned in a lighter sky-blue, with both session names shown. Ordinary worker coordination remains in **All** rather than the normal Web conversation. The project agent wakes up if idle and can respond by sending a message back to the sender. Project Agent sends are text-only; attachments are rejected.
 
 **@mentions:** Type `@` in the chat composer to see autocomplete suggestions for local project agents in the current profile and shared project agents explicitly granted from another profile. Selecting one inserts a mention chip. This is purely UI convenience — the actual routing happens when your session agent interprets your message and decides to use `send_message_to_agent`.
 
-**Sharing:** Project Agent sharing is source-owned. Open the source agent's Project Agent Settings to grant or remove access for target profiles. Shared agents appear in the target profile's external/shared-agent directory and autocomplete only after a grant, and they are labeled separately from local agents. External/shared turns are constrained and do not inherit source-only capabilities from target sessions.
+**Sharing:** Project Agent sharing is source-owned and stays editable in Settings for both local and repository-sourced agents. Open the source agent's Project Agent Settings to grant or remove access for target profiles. Shared agents appear in the target profile's external/shared-agent directory and autocomplete only after a grant, and they are labeled separately from local agents. External/shared turns are constrained and do not inherit source-only capabilities from target sessions.
 
-**Demoting:** Right-click a promoted session and select "Demote from Project Agent" to convert it back to a regular session.
+**Unlinking, deactivating, and demoting:** Local agents use **Demote to Session** in the sidebar and **Demote** in Project Agent Settings. That converts the project agent back to a regular session while preserving the session and conversation history. Repository-sourced agents use **Unlink from Repository Definition** in the sidebar and **Deactivate repository Project Agent** in Settings. Unlinking or deactivation preserves session history and the repository definition files.
 
 ---
 
@@ -755,7 +755,7 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
     │   ├── entries/               # Profile-scoped Knowledge v2 entries
     │   ├── archive/               # Archived profile-scoped entries
     │   └── INDEX.md               # Generated profile Knowledge v2 index
-    ├── project-agents/<handle>/
+    ├── project-agents/<handle>/   # Local-to-Forge definitions only
     │   ├── config.json            # Agent config (handle, whenToUse, agentId, timestamps)
     │   ├── prompt.md              # Project Agent role instructions (editable, layered with Forge's base prompt)
     │   └── reference/             # Per-agent reference documents
