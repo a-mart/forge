@@ -201,9 +201,39 @@ describe("SessionAttentionCoordinator state machine", () => {
       "idle",
       session("idle", { pendingChoiceCount: 1 }),
     ));
-    expect(blocked.coordinator.getSnapshot().attentions).toEqual([]);
+    expect(blocked.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
     await blocked.coordinator.observeAggregateChange(session("idle", { pendingChoiceCount: 0 }));
     expect(blocked.coordinator.getSnapshot().attentions).toHaveLength(1);
+    expect(blocked.coordinator.getSnapshot().attentions[0]?.reason).toBe("work_settled");
+  });
+
+  it("raises decision_waiting while a still-streaming manager is waiting on present_choices", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", { pendingChoiceCount: 1 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
+
+    // Answering the choice while work continues retracts Needs You so Active
+    // can own the still-running session again.
+    await h.coordinator.observeAggregateChange(session("streaming", { pendingChoiceCount: 0 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.observeStatus(statusObservation("streaming", "idle"));
+    expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("work_settled");
   });
 
   it("does not settle when an accepted turn is dequeued before the manager streams", async () => {
@@ -381,6 +411,7 @@ describe("SessionAttentionCoordinator state machine", () => {
       session("idle", { pendingChoiceCount: 1 }),
     ));
     expect(reason).not.toHaveBeenCalled();
+    expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("decision_waiting");
     await h.coordinator.observeAggregateChange(session("idle"));
     expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("plan_completed");
     expect(reason).toHaveBeenCalledTimes(1);

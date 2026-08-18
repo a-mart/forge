@@ -26,6 +26,7 @@ export interface PersistedSessionAttentionRecord {
   epoch: number;
   phase: "working" | "settled";
   workStartedAt: string;
+  /** Working-phase attention is only used for an in-flight present_choices raise. */
   /** A failure observed during this epoch takes precedence over plan enrichment. */
   hadError?: boolean;
   /**
@@ -188,8 +189,9 @@ function parseRecord(value: unknown): PersistedSessionAttentionRecord {
     : requiredBoolean(record.awaitingContinuation, "session attention awaitingContinuation");
 
   if (record.phase === "working") {
-    if (record.attention !== undefined) {
-      throw new Error("Working session attention record cannot contain attention");
+    const attention = record.attention === undefined ? undefined : parseAttention(record.attention);
+    if (attention && attention.reason !== "decision_waiting") {
+      throw new Error("Working session attention can only raise decision_waiting");
     }
     return {
       profileId,
@@ -200,6 +202,7 @@ function parseRecord(value: unknown): PersistedSessionAttentionRecord {
       // Preserved across restart: a continuation barrier must survive a crash,
       // otherwise boot could settle an epoch whose continuation never ran.
       ...(awaitingContinuation ? { awaitingContinuation: true } : {}),
+      ...(attention ? { attention } : {}),
     };
   }
 

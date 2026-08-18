@@ -12,6 +12,7 @@ import type {
 import type { SessionAttentionEligibilityPredicate } from "./session-attention-eligibility.js";
 import {
   cloneSessionAttentionState,
+  type PersistedSessionAttention,
   type PersistedSessionAttentionRecord,
   type PersistedSessionAttentionState,
   SessionAttentionStore,
@@ -166,13 +167,14 @@ export class SessionAttentionCoordinator {
           continue;
         }
 
-        if (record.phase !== "working" || !isReadyToSettle(session)) {
+        if (record.phase !== "working") {
           continue;
         }
 
-        const settled = await this.settledRecord(session, record);
-        next.sessions[sessionAgentId] = settled;
-        changes.push({ sessionAgentId, attention: toAttention(sessionAgentId, settled)! });
+        const progressed = await this.progressWorkingEpoch(session, record);
+        if (!progressed) continue;
+        next.sessions[sessionAgentId] = progressed.record;
+        changes.push(...progressed.changes);
         changed = true;
       }
 
@@ -207,10 +209,25 @@ export class SessionAttentionCoordinator {
           const resumed = cloneSessionAttentionState(state);
           const record = { ...current };
           delete record.awaitingContinuation;
+          const progressed = await this.progressWorkingEpoch(observation, record);
+          if (progressed) {
+            resumed.sessions[sessionAgentId] = progressed.record;
+            return { value: undefined, state: resumed, changes: progressed.changes };
+          }
           resumed.sessions[sessionAgentId] = record;
           return { value: undefined, state: resumed, changes: [] };
         }
-        return startEpoch(state, observation, observation.transitionedAt);
+        const started = startEpoch(state, observation, observation.transitionedAt);
+        const startedRecord = started.state?.sessions[sessionAgentId];
+        if (!started.state || !startedRecord) return started;
+        const progressed = await this.progressWorkingEpoch(observation, startedRecord);
+        if (!progressed) return started;
+        started.state.sessions[sessionAgentId] = progressed.record;
+        return {
+          value: undefined,
+          state: started.state,
+          changes: [...(started.changes ?? []), ...progressed.changes],
+        };
       }
 
       if (!current || current.phase !== "working") {
@@ -234,23 +251,19 @@ export class SessionAttentionCoordinator {
         changed = true;
       }
 
-      if (record.awaitingContinuation || !isReadyToSettle(observation)) {
+      const progressed = await this.progressWorkingEpoch(observation, record);
+      if (!progressed) {
         return changed ? { value: undefined, state: next, changes: [] } : { value: undefined };
       }
-
-      record = await this.settledRecord(observation, record);
-      next.sessions[sessionAgentId] = record;
-      return {
-        value: undefined,
-        state: next,
-        changes: [{ sessionAgentId, attention: toAttention(sessionAgentId, record)! }],
-      };
+      next.sessions[sessionAgentId] = progressed.record;
+      return { value: undefined, state: next, changes: progressed.changes };
     }));
   }
 
   /**
    * Choice, worker-ownership, and accepted-turn-queue producers call this only
-   * after their own committed mutation. It cannot arm an epoch.
+   * after their own committed mutation. It cannot arm an epoch, but a newly
+   * pending choice on an already armed epoch raises decision_waiting immediately.
    */
   async observeAggregateChange(session: SessionAttentionSessionSnapshot): Promise<void> {
     await this.runNatural(async () => this.applyMutation(async (state, context) => {
@@ -292,18 +305,13 @@ export class SessionAttentionCoordinator {
         return { value: undefined, state: latched, changes: [] };
       }
 
-      if (current.awaitingContinuation || !isReadyToSettle(session)) {
+      const progressed = await this.progressWorkingEpoch(session, current);
+      if (!progressed) {
         return { value: undefined };
       }
-
       const next = cloneSessionAttentionState(state);
-      const record = await this.settledRecord(session, next.sessions[sessionAgentId]);
-      next.sessions[sessionAgentId] = record;
-      return {
-        value: undefined,
-        state: next,
-        changes: [{ sessionAgentId, attention: toAttention(sessionAgentId, record)! }],
-      };
+      next.sessions[sessionAgentId] = progressed.record;
+      return { value: undefined, state: next, changes: progressed.changes };
     }));
   }
 
@@ -343,17 +351,12 @@ export class SessionAttentionCoordinator {
       delete record.awaitingContinuation;
       cleared.sessions[sessionAgentId] = record;
 
-      if (!isReadyToSettle(session)) {
+      const progressed = await this.progressWorkingEpoch(session, record);
+      if (!progressed) {
         return { value: undefined, state: cleared, changes: [] };
       }
-
-      const settled = await this.settledRecord(session, record);
-      cleared.sessions[sessionAgentId] = settled;
-      return {
-        value: undefined,
-        state: cleared,
-        changes: [{ sessionAgentId, attention: toAttention(sessionAgentId, settled)! }],
-      };
+      cleared.sessions[sessionAgentId] = progressed.record;
+      return { value: undefined, state: cleared, changes: progressed.changes };
     }));
   }
 
@@ -418,6 +421,51 @@ export class SessionAttentionCoordinator {
     return { revision: this.state.revision, attentions: visibleAttentions(this.state) };
   }
 
+  /**
+   * A pending present_choices is itself a user-attention edge: the manager can
+   * still read streaming because the tool is open, but the turn is waiting.
+   * Raise decision_waiting on an armed epoch, retract it if work continues after
+   * the answer, and only then allow a full quiescence settle.
+   */
+  private async progressWorkingEpoch(
+    session: SessionAttentionSessionSnapshot,
+    record: PersistedSessionAttentionRecord,
+  ): Promise<{ record: PersistedSessionAttentionRecord; changes: SessionAttentionChange[] } | undefined> {
+    if (record.awaitingContinuation) return undefined;
+
+    const sessionAgentId = session.manager.agentId;
+    if (hasPendingChoice(session)) {
+      // Already raised or explicitly dismissed for this epoch. Do not mint a
+      // second instance for the same still-pending choice.
+      if (record.attention) return undefined;
+      const nextRecord: PersistedSessionAttentionRecord = {
+        ...record,
+        attention: this.createAttention("decision_waiting"),
+      };
+      return {
+        record: nextRecord,
+        changes: [{ sessionAgentId, attention: toAttention(sessionAgentId, nextRecord)! }],
+      };
+    }
+
+    if (!isReadyToSettle(session)) {
+      const visible = toAttention(sessionAgentId, record);
+      if (visible?.reason !== "decision_waiting") return undefined;
+      const retracted = { ...record };
+      delete retracted.attention;
+      return {
+        record: retracted,
+        changes: [{ sessionAgentId, attention: null }],
+      };
+    }
+
+    const settled = await this.settledRecord(session, record);
+    return {
+      record: settled,
+      changes: [{ sessionAgentId, attention: toAttention(sessionAgentId, settled)! }],
+    };
+  }
+
   private async settledRecord(
     session: SessionAttentionSessionSnapshot,
     record: PersistedSessionAttentionRecord,
@@ -430,19 +478,23 @@ export class SessionAttentionCoordinator {
         workStartedAt: record.workStartedAt,
         hadError: false,
       });
-    const attentionId = this.randomId();
-    if (!isOpaqueId(attentionId)) {
-      throw new Error("Session attention ID generator returned an invalid ID");
-    }
 
     return {
       ...record,
       phase: "settled",
-      attention: {
-        attentionId,
-        reason,
-        raisedAt: this.now(),
-      },
+      attention: this.createAttention(reason),
+    };
+  }
+
+  private createAttention(reason: SessionAttentionReason): PersistedSessionAttention {
+    const attentionId = this.randomId();
+    if (!isOpaqueId(attentionId)) {
+      throw new Error("Session attention ID generator returned an invalid ID");
+    }
+    return {
+      attentionId,
+      reason,
+      raisedAt: this.now(),
     };
   }
 
@@ -632,10 +684,14 @@ function visibleAttentions(state: PersistedSessionAttentionState): SessionAttent
     .sort((left, right) => left.sessionAgentId.localeCompare(right.sessionAgentId));
 }
 
+function hasPendingChoice(session: SessionAttentionSessionSnapshot): boolean {
+  return normalizeCount(session.pendingChoiceCount) > 0;
+}
+
 function isReadyToSettle(session: SessionAttentionSessionSnapshot): boolean {
   return session.manager.status === "idle"
     && normalizeCount(session.activeWorkerCount) === 0
-    && normalizeCount(session.pendingChoiceCount) === 0
+    && !hasPendingChoice(session)
     && normalizeCount(session.pendingTurnContextCount) === 0;
 }
 

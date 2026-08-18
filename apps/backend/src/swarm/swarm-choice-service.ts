@@ -26,8 +26,9 @@ export interface SwarmChoiceServiceOptions {
   emitAgentsSnapshot: () => void;
   /**
    * Notifies session attention after the pending-choice map has been mutated.
-   * A pending choice blocks quiescence, so resolving the last one may complete
-   * an otherwise qualified epoch. It never supplies a reason and cannot arm.
+   * A newly pending choice raises decision_waiting on an armed epoch even while
+   * the manager still streams. Resolving the last one may retract that raise or
+   * complete an otherwise qualified epoch. It cannot arm.
    */
   reportAttentionAggregateChange?: (sessionAgentId: string) => void | Promise<void>;
 }
