@@ -382,7 +382,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   ├── knowledge/{entries,archive}/       # Profile Knowledge v2 entries/archive
 │   ├── knowledge/INDEX.md                 # Generated profile v2 index
 │   ├── pi/{extensions,skills,prompts,themes}/ # Profile Pi resources
-│   ├── project-agents/<handle>/
+│   ├── project-agents/<handle>/           # Local-to-Forge definitions only
 │   │   ├── config.json
 │   │   ├── prompt.md
 │   │   └── reference/
@@ -495,7 +495,7 @@ On a default macOS/Linux install this becomes:
 
 ### Project Resources
 
-Repositories can provide project-scoped resources from a repo-root `.forge/` directory: project skills, specialists, reference docs, Forge extensions, and Pi extensions/packages. Passive resources are available as text context; executable resources are gated by an explicit trust/block prompt.
+Repositories can provide project-scoped resources from a repo-root `.forge/` directory: project skills, specialists, reference docs, Project Agent definitions under `.forge/project-agents/`, Forge extensions, and Pi extensions/packages. Passive resources are available as text context; executable resources are gated by an explicit trust/block prompt.
 
 See [PROJECT_RESOURCES.md](PROJECT_RESOURCES.md) for the layout, override rules, and security model.
 
