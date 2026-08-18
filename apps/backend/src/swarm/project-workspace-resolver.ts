@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -42,6 +42,7 @@ export interface ProjectPassiveWorkspaceResolution {
   defaultForgeDir?: string;
   effectiveForgeDir?: string;
   effectiveForgeDirRealpath?: string;
+  repoProjectAgentPlacementError?: string;
   source: ProjectWorkspaceSource;
   override?: { path: string; valid: boolean; error?: string };
   trust: ProjectExecutableTrustSnapshot;
@@ -106,10 +107,16 @@ export class ProjectWorkspaceResolver {
     const defaultForgeDir = detectedGitRootRealpath ? join(detectedGitRootRealpath, ".forge") : undefined;
 
     const storedOverride = await this.settingsStore.getOverride(workspaceKey);
-    const override = storedOverride ? await validateOverride(storedOverride.forgeDir) : undefined;
+    const overrideValidation = storedOverride ? await validateOverride(storedOverride.forgeDir) : undefined;
+    const override = overrideValidation?.override;
     const effectiveForgeDir = override?.valid ? override.path : defaultForgeDir;
     const source: ProjectWorkspaceSource = override?.valid ? "override" : defaultForgeDir ? "git-root" : "none";
     const effectiveForgeDirRealpath = effectiveForgeDir ? await tryRealpath(effectiveForgeDir) : undefined;
+    const defaultForgeDirIsSymlink = !override?.valid && defaultForgeDir
+      ? await isSymlink(defaultForgeDir)
+      : false;
+    const repoProjectAgentPlacementError = overrideValidation?.repoProjectAgentPlacementError
+      ?? (defaultForgeDirIsSymlink ? "The repository .forge directory must not be a symlink." : undefined);
     const trust = await this.resolveTrust(effectiveForgeDirRealpath);
     const repoRootResources = effectiveForgeDirRealpath
       ? {
@@ -133,6 +140,7 @@ export class ProjectWorkspaceResolver {
       ...(defaultForgeDir ? { defaultForgeDir } : {}),
       ...(effectiveForgeDir ? { effectiveForgeDir } : {}),
       ...(effectiveForgeDirRealpath ? { effectiveForgeDirRealpath } : {}),
+      ...(repoProjectAgentPlacementError ? { repoProjectAgentPlacementError } : {}),
       source,
       ...(override ? { override } : {}),
       trust,
@@ -186,21 +194,138 @@ export function createWorkspaceKey(profileId: string, workspaceBasisRealpath: st
   return `${profileId}::${normalizeComparablePath(workspaceBasisRealpath)}`;
 }
 
-async function validateOverride(pathValue: string): Promise<{ path: string; valid: boolean; error?: string }> {
+export function getProjectResourceSeedForgeDir(
+  resolution: Pick<
+    ProjectPassiveWorkspaceResolution,
+    "override" | "detectedGitRoot" | "defaultForgeDir" | "effectiveForgeDir" | "effectiveForgeDirRealpath"
+  >
+): string | undefined {
+  if (resolution.override?.valid) {
+    return resolution.effectiveForgeDir ?? resolution.effectiveForgeDirRealpath;
+  }
+  if (!resolution.detectedGitRoot || !resolution.defaultForgeDir) {
+    return undefined;
+  }
+  return resolution.defaultForgeDir;
+}
+
+export function describeUnavailableRepoProjectAgentPlacement(
+  resolution: Pick<
+    ProjectPassiveWorkspaceResolution,
+    "warning" | "source" | "override" | "detectedGitRoot"
+  >
+): string {
+  if (resolution.warning && resolution.source === "none") {
+    return resolution.warning;
+  }
+  if (resolution.override && !resolution.override.valid) {
+    return resolution.override.error ?? "Configured .forge override directory is invalid.";
+  }
+  if (!resolution.detectedGitRoot) {
+    return "Cannot place a Project Agent in the repository because no Git repository root was detected and no valid .forge override is configured.";
+  }
+  return "No repository .forge directory is available for this workspace.";
+}
+
+export function getRepoProjectAgentPlacementForgeDir(
+  resolution: Pick<
+    ProjectPassiveWorkspaceResolution,
+    | "warning"
+    | "source"
+    | "override"
+    | "detectedGitRoot"
+    | "defaultForgeDir"
+    | "effectiveForgeDir"
+    | "effectiveForgeDirRealpath"
+    | "repoProjectAgentPlacementError"
+  >
+): { ok: true; forgeDir: string; containmentRoot?: string } | { ok: false; error: string } {
+  if (resolution.repoProjectAgentPlacementError) {
+    return { ok: false, error: resolution.repoProjectAgentPlacementError };
+  }
+  if (resolution.override && !resolution.override.valid) {
+    return {
+      ok: false,
+      error: resolution.override.error ?? "Configured .forge override directory is invalid.",
+    };
+  }
+  if (resolution.warning && resolution.source === "none") {
+    return { ok: false, error: resolution.warning };
+  }
+  const seedDir = getProjectResourceSeedForgeDir(resolution);
+  if (!seedDir) {
+    return { ok: false, error: describeUnavailableRepoProjectAgentPlacement(resolution) };
+  }
+  if (resolution.override?.valid) {
+    return { ok: true, forgeDir: seedDir };
+  }
+  if (
+    resolution.detectedGitRoot &&
+    resolution.effectiveForgeDirRealpath &&
+    !isPathInside(resolution.effectiveForgeDirRealpath, resolution.detectedGitRoot)
+  ) {
+    return {
+      ok: false,
+      error: "The default .forge directory resolves outside the detected Git repository root.",
+    };
+  }
+  return {
+    ok: true,
+    forgeDir: seedDir,
+    ...(resolution.detectedGitRoot ? { containmentRoot: resolution.detectedGitRoot } : {}),
+  };
+}
+
+async function validateOverride(pathValue: string): Promise<{
+  override: { path: string; valid: boolean; error?: string };
+  repoProjectAgentPlacementError?: string;
+}> {
   const overridePath = resolve(pathValue);
   if (basename(overridePath) !== ".forge") {
-    return { path: overridePath, valid: false, error: "Override directory must be named .forge" };
+    return { override: { path: overridePath, valid: false, error: "Override directory must be named .forge" } };
   }
 
   try {
-    const entry = await stat(overridePath);
-    if (!entry.isDirectory()) {
-      return { path: overridePath, valid: false, error: "Override path is not a directory" };
+    const link = await lstat(overridePath);
+    if (!link.isDirectory() && !link.isSymbolicLink()) {
+      return { override: { path: overridePath, valid: false, error: "Override path is not a directory" } };
     }
-    return { path: await realpath(overridePath), valid: true };
+    const resolvedPath = await realpath(overridePath);
+    const entry = await stat(resolvedPath);
+    if (!entry.isDirectory()) {
+      return { override: { path: overridePath, valid: false, error: "Override path is not a directory" } };
+    }
+    return {
+      override: { path: resolvedPath, valid: true },
+      ...(link.isSymbolicLink()
+        ? { repoProjectAgentPlacementError: "Configured .forge override directory must not be a symlink." }
+        : {}),
+    };
   } catch (error) {
     if (isEnoentError(error)) {
-      return { path: overridePath, valid: false, error: "Override directory does not exist" };
+      return { override: { path: overridePath, valid: false, error: "Override directory does not exist" } };
+    }
+    throw error;
+  }
+}
+
+async function isSymlink(pathValue: string): Promise<boolean> {
+  try {
+    return (await lstat(resolve(pathValue))).isSymbolicLink();
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function tryRealpath(pathValue: string): Promise<string | undefined> {
+  try {
+    return await realpath(resolve(pathValue));
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return undefined;
     }
     throw error;
   }
@@ -365,17 +490,6 @@ async function tryResolveExistingRealpath(pathValue: string): Promise<{ ok: true
       return { ok: false, path: resolve(pathValue), error: "path does not exist" };
     }
     return { ok: false, path: resolve(pathValue), error: error instanceof Error ? error.message : "unknown error" };
-  }
-}
-
-async function tryRealpath(pathValue: string): Promise<string | undefined> {
-  try {
-    return await realpath(resolve(pathValue));
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return undefined;
-    }
-    throw error;
   }
 }
 

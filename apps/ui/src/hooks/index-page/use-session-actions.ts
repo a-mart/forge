@@ -36,7 +36,7 @@ import type {
   ManagerExactModelSelection,
   ManagerPosture,
   ManagerReasoningLevel,
-  ProjectAgentCapability,
+  SessionProjectAgentInput,
 } from '@forge/protocol'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -641,7 +641,7 @@ export function useSessionActions({
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
 
-  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null) => {
+  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: SessionProjectAgentInput | null) => {
     await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
   }, [clientRef])
 

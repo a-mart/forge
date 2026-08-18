@@ -2,7 +2,7 @@ import type { ConversationAttachment } from './attachments.js'
 import type { BrowserClientCommand } from './browser-automation.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
 import type { BuilderTimelineChannelView } from './builder-timeline-visibility.js'
-import type { ProjectAgentCapability } from './agents.js'
+import type { SessionProjectAgentInput } from './agents.js'
 import type { CodexElicitationDecision, CodexElicitationPersistScope } from './codex-elicitation.js'
 import type { SessionGoalControlAction } from './goals.js'
 import type { DismissSessionAttentionCommand } from './session-attention.js'
@@ -135,9 +135,7 @@ export type ClientCommand =
   | {
       type: 'set_session_project_agent'
       agentId: string
-      projectAgent:
-        | { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }
-        | null
+      projectAgent: SessionProjectAgentInput | null
       requestId?: string
     }
   | {

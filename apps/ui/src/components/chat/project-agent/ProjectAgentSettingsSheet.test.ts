@@ -25,6 +25,7 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  vi.unstubAllGlobals()
 })
 
 async function flushEffects(): Promise<void> {
@@ -43,6 +44,8 @@ function renderSheet(overrides: {
   onGetReference?: ProjectAgentSettingsSheetProps['onGetReference']
   onSetReference?: ProjectAgentSettingsSheetProps['onSetReference']
   onDeleteReference?: ProjectAgentSettingsSheetProps['onDeleteReference']
+  wsUrl?: string
+  profileId?: string
 } = {}) {
   const onSave = overrides.onSave ?? vi.fn(async () => {})
   const onDemote = overrides.onDemote ?? vi.fn(async () => {})
@@ -62,6 +65,8 @@ function renderSheet(overrides: {
         agentId: 'agent-1',
         sessionLabel: 'Test Session',
         currentProjectAgent,
+        wsUrl: overrides.wsUrl,
+        profileId: overrides.profileId,
         onSave,
         onDemote,
         onClose,
@@ -781,5 +786,164 @@ describe('ProjectAgentSettingsSheet', () => {
 
     expect(onSave).not.toHaveBeenCalled()
     expect(onSetProjectAgentSharing).toHaveBeenCalledWith('agent-1', ['mobile'])
+  })
+
+  it('defaults promotion placement to local and includes it in the save payload', async () => {
+    const onSave = vi.fn(async () => {})
+    renderSheet({ currentProjectAgent: null, onSave })
+    await flushEffects()
+
+    expect(document.body.textContent).toContain('Local to Forge')
+    expect(document.body.textContent).toContain('Repository .forge')
+    const localOption = document.body.querySelector('[data-testid="project-agent-placement-local"]') as HTMLButtonElement
+    expect(localOption).not.toBeNull()
+    expect(localOption.className).toContain('border-primary')
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    flushSync(() => {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set
+      nativeInputValueSetter?.call(whenToUseField, 'Use for docs')
+      whenToUseField.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const promoteButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Promote',
+    )
+    expect(promoteButton).not.toBeNull()
+    flushSync(() => {
+      promoteButton!.click()
+    })
+    await flushEffects()
+
+    expect(onSave).toHaveBeenCalledWith('agent-1', expect.objectContaining({
+      whenToUse: 'Use for docs',
+      handle: 'test-session',
+      placement: 'local',
+    }))
+  })
+
+  it('requires role instructions and shows destination when repository placement is available', async () => {
+    const snapshot = {
+      generatedAt: '2026-01-01T00:00:00Z',
+      profileId: 'profile-1',
+      sessionAgentId: 'agent-1',
+      cwdRealpath: '/repo',
+      detectedGitRoot: '/repo',
+      defaultForgeDir: '/repo/.forge',
+      effectiveForgeDir: '/repo/.forge',
+      effectiveForgeDirRealpath: '/repo/.forge',
+      source: 'git-root' as const,
+      trust: { state: 'not_applicable' as const },
+      signature: 'sig',
+      scaffold: { canSeed: true, missing: [] },
+      resources: {
+        skills: { exists: false, count: 0, items: [] },
+        specialists: { exists: false, count: 0, items: [] },
+        reference: { exists: false, count: 0, items: [] },
+        forgeExtensions: { exists: false, count: 0, items: [] },
+        piExtensions: { exists: false, count: 0, items: [] },
+        piSettings: { exists: false, count: 0, items: [] },
+        projectAgents: { exists: false, count: 0, items: [] },
+      },
+      executableSurfaces: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => snapshot,
+    })))
+    const onSave = vi.fn(async () => {})
+    renderSheet({
+      currentProjectAgent: null,
+      onSave,
+      wsUrl: 'ws://127.0.0.1:8787',
+      profileId: 'profile-1',
+    })
+    await flushEffects()
+    await flushEffects()
+
+    const repoOption = document.body.querySelector('[data-testid="project-agent-placement-repo"]') as HTMLButtonElement
+    expect(repoOption).not.toBeNull()
+    expect(repoOption.disabled).toBe(false)
+    expect(document.body.textContent).toContain('/repo/.forge/project-agents/test-session')
+    flushSync(() => {
+      repoOption.click()
+    })
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    flushSync(() => {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set
+      nativeInputValueSetter?.call(whenToUseField, 'Use for docs')
+      whenToUseField.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const promoteButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Promote',
+    ) as HTMLButtonElement
+    expect(promoteButton.disabled).toBe(true)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    flushSync(() => {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set
+      nativeInputValueSetter?.call(systemPromptField, 'Maintain the docs.')
+      systemPromptField.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    flushSync(() => {
+      promoteButton.click()
+    })
+    await flushEffects()
+
+    expect(onSave).toHaveBeenCalledWith('agent-1', expect.objectContaining({
+      whenToUse: 'Use for docs',
+      systemPrompt: 'Maintain the docs.',
+      handle: 'test-session',
+      placement: 'repo',
+    }))
+  })
+
+  it('disables repository placement when no Git root or valid override is available', async () => {
+    const snapshot = {
+      generatedAt: '2026-01-01T00:00:00Z',
+      profileId: 'profile-1',
+      sessionAgentId: 'agent-1',
+      cwdRealpath: '/tmp/no-git',
+      source: 'none' as const,
+      warning: 'Session working directory is unavailable: path does not exist',
+      trust: { state: 'not_applicable' as const },
+      signature: 'sig',
+      scaffold: { canSeed: false, missing: [] },
+      resources: {
+        skills: { exists: false, count: 0, items: [] },
+        specialists: { exists: false, count: 0, items: [] },
+        reference: { exists: false, count: 0, items: [] },
+        forgeExtensions: { exists: false, count: 0, items: [] },
+        piExtensions: { exists: false, count: 0, items: [] },
+        piSettings: { exists: false, count: 0, items: [] },
+      },
+      executableSurfaces: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => snapshot,
+    })))
+    renderSheet({
+      currentProjectAgent: null,
+      wsUrl: 'ws://127.0.0.1:8787',
+      profileId: 'profile-1',
+    })
+    await flushEffects()
+    await flushEffects()
+
+    const repoOption = document.body.querySelector('[data-testid="project-agent-placement-repo"]') as HTMLButtonElement
+    expect(repoOption.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Session working directory is unavailable')
   })
 })

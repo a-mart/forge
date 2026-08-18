@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectResourceSettingsStore } from "../project-resource-settings.js";
-import { createWorkspaceKey, ProjectWorkspaceResolver } from "../project-workspace-resolver.js";
+import { createWorkspaceKey, getRepoProjectAgentPlacementForgeDir, ProjectWorkspaceResolver } from "../project-workspace-resolver.js";
 
 const tempDirs: string[] = [];
 
@@ -195,7 +195,7 @@ describe("ProjectWorkspaceResolver", () => {
     expect(result.legacyExecutableSurfaces.find((surface) => surface.kind === "exact-cwd-pi-settings")?.activeToday).toBe(false);
   });
 
-  it("accepts a .forge override symlink to a directory", async () => {
+  it("keeps a .forge override symlink available to project resources but rejects Project Agent placement", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
     const target = join(await makeTempDir("forge-real-override-"), "target");
@@ -211,6 +211,10 @@ describe("ProjectWorkspaceResolver", () => {
 
     expect(result.override).toEqual({ path: await realpath(target), valid: true });
     expect(result.effectiveForgeDirRealpath).toBe(await realpath(target));
+    expect(getRepoProjectAgentPlacementForgeDir(result)).toEqual({
+      ok: false,
+      error: "Configured .forge override directory must not be a symlink.",
+    });
   });
 
   it("changes signature when executable resource metadata changes", async () => {
@@ -430,5 +434,40 @@ describe("ProjectWorkspaceResolver", () => {
     const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
 
     expect(after.signature).not.toBe(before.signature);
+  });
+
+  it("keeps a repo-root .forge symlink available to project resources but rejects Project Agent placement", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    const outside = await makeTempDir("forge-outside-");
+    await symlink(outside, join(root, ".forge"));
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const available = await resolver.resolvePassive({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(available.effectiveForgeDirRealpath).toBe(await realpath(outside));
+    expect(getRepoProjectAgentPlacementForgeDir(available)).toEqual({
+      ok: false,
+      error: "The repository .forge directory must not be a symlink.",
+    });
+  });
+
+  it("describes repository placement destinations from git-root and invalid overrides", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const available = await resolver.resolvePassive({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+    expect(getRepoProjectAgentPlacementForgeDir(available)).toEqual({
+      ok: true,
+      forgeDir: available.defaultForgeDir,
+      containmentRoot: available.detectedGitRoot,
+    });
+
+    const noGit = await makeTempDir("forge-nongit-");
+    const unavailable = await resolver.resolvePassive({ profileId: "profile-a", sessionAgentId: "session-a", cwd: noGit });
+    const unavailablePlacement = getRepoProjectAgentPlacementForgeDir(unavailable);
+    expect(unavailablePlacement.ok).toBe(false);
+    if (!unavailablePlacement.ok) {
+      expect(unavailablePlacement.error).toMatch(/no Git repository root/i);
+    }
   });
 });

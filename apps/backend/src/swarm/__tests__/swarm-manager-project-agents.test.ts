@@ -2047,4 +2047,265 @@ describe('SwarmManager', () => {
     )
     expect(deliveredMessages).toHaveLength(7)
   })
+
+  it('promotes an existing session into a repository definition without a local sidecar and preserves history', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.handleUserMessage('keep this history', { targetAgentId: created.sessionAgent.agentId })
+
+    const result = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      systemPrompt: 'You are the repository docs project agent.',
+      placement: 'repo',
+    })
+
+    expect(result.projectAgent).toMatchObject({
+      handle: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      sourceKind: 'repo',
+    })
+    expect(result.projectAgent).not.toHaveProperty('source')
+    expect(manager.getAgentForInternalUse(created.sessionAgent.agentId)?.projectAgent?.source).toMatchObject({
+      type: 'repo',
+      definitionId: 'docs',
+    })
+    expect(manager.getConversationHistory(created.sessionAgent.agentId).some((entry) => entry.type === 'conversation_message')).toBe(true)
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'config.json'), 'utf8'))).toMatchObject({
+      version: 1,
+      handle: 'docs',
+      whenToUse: 'Maintain repository docs.',
+    })
+    expect(await readFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md'), 'utf8')).toBe(
+      'You are the repository docs project agent.\n',
+    )
+
+    const secondBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toMatchObject({
+      handle: 'docs',
+      sourceKind: 'repo',
+    })
+    expect(secondBoot.getConversationHistory(created.sessionAgent.agentId).some((entry) => entry.type === 'conversation_message')).toBe(true)
+  })
+
+  it('createAndPromoteProjectAgent writes a repository definition and attributes the creator', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Docs',
+      handle: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      systemPrompt: 'You are the repository docs project agent.',
+      placement: 'repo',
+    })
+
+    expect(result.handle).toBe('docs')
+    expect(manager.getAgent(result.agentId)?.projectAgent).toMatchObject({
+      handle: 'docs',
+      creatorSessionId: creator.sessionAgent.agentId,
+      sourceKind: 'repo',
+    })
+    expect(manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult).toMatchObject({
+      createdAgentId: result.agentId,
+      createdHandle: 'docs',
+    })
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md'), 'utf8')).toBe(
+      'You are the repository docs project agent.\n',
+    )
+  })
+
+  it('fails repository placement without a git root and leaves no partial definition or promotion', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createSession('manager', { label: 'Docs' })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        handle: 'docs',
+        whenToUse: 'Maintain repository docs.',
+        systemPrompt: 'You are the repository docs project agent.',
+        placement: 'repo',
+      }),
+    ).rejects.toThrow(/no Git repository root/i)
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+    await expect(stat(join(config.defaultCwd, '.forge', 'project-agents', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rolls back a failed repository create persist and removes the unreferenced definition', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const agentIdsBefore = manager.listAgents().map((agent) => agent.agentId).sort()
+    const descriptorStore = (manager as any).descriptorStore
+    const originalSave = descriptorStore.save.bind(descriptorStore)
+    const persistedSnapshots: Array<{
+      createdAgentId?: string
+      creatorResult?: AgentDescriptor['agentCreatorResult']
+    }> = []
+    const saveSpy = vi.spyOn(descriptorStore, 'save')
+      .mockImplementationOnce(async () => {
+        const created = manager.listAgents().find((agent) => agent.projectAgent?.handle === 'docs')
+        persistedSnapshots.push({
+          createdAgentId: created?.agentId,
+          creatorResult: manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult,
+        })
+        throw new Error('save boom')
+      })
+      .mockImplementationOnce(async (...args: any[]) => {
+        const created = manager.listAgents().find((agent) => agent.projectAgent?.handle === 'docs')
+        persistedSnapshots.push({
+          createdAgentId: created?.agentId,
+          creatorResult: manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult,
+        })
+        await originalSave(...args)
+      })
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Docs',
+        handle: 'docs',
+        whenToUse: 'Maintain repository docs.',
+        systemPrompt: 'You are the repository docs project agent.',
+        placement: 'repo',
+      }),
+    ).rejects.toThrow('save boom')
+
+    expect(saveSpy).toHaveBeenCalledTimes(2)
+    expect(persistedSnapshots[0]).toMatchObject({
+      createdAgentId: expect.any(String),
+      creatorResult: {
+        createdAgentId: persistedSnapshots[0]?.createdAgentId,
+        createdHandle: 'docs',
+      },
+    })
+    expect(persistedSnapshots[1]).toEqual({
+      createdAgentId: undefined,
+      creatorResult: undefined,
+    })
+    expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
+    expect(manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult).toBeUndefined()
+    await expect(stat(join(config.defaultCwd, '.forge'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('retains a valid repository definition when created-session runtime shutdown fails', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    vi.spyOn((manager as any).runtimeLifecycleCoordinator, 'runRuntimeShutdown').mockImplementation(
+      async (descriptor: AgentDescriptor, action: string, options?: unknown) => {
+        if (descriptor.projectAgent?.handle === 'docs' && action === 'terminate') {
+          return { status: 'failed', error: new Error('shutdown boom') }
+        }
+        return (manager as any).runtimeLifecycleCoordinator.constructor.prototype.runRuntimeShutdown.call(
+          (manager as any).runtimeLifecycleCoordinator,
+          descriptor,
+          action,
+          options,
+        )
+      },
+    )
+    const descriptorStore = (manager as any).descriptorStore
+    const originalSave = descriptorStore.save.bind(descriptorStore)
+    const persistedSnapshots: Array<{
+      createdAgentId?: string
+      creatorResult?: AgentDescriptor['agentCreatorResult']
+    }> = []
+    const saveSpy = vi.spyOn(descriptorStore, 'save')
+      .mockImplementationOnce(async () => {
+        const created = manager.listAgents().find((agent) => agent.projectAgent?.handle === 'docs')
+        persistedSnapshots.push({
+          createdAgentId: created?.agentId,
+          creatorResult: manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult,
+        })
+        throw new Error('save boom')
+      })
+      .mockImplementationOnce(async (...args: any[]) => {
+        const created = manager.listAgents().find((agent) => agent.projectAgent?.handle === 'docs')
+        persistedSnapshots.push({
+          createdAgentId: created?.agentId,
+          creatorResult: manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult,
+        })
+        await originalSave(...args)
+      })
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Docs',
+        handle: 'docs',
+        whenToUse: 'Maintain repository docs.',
+        systemPrompt: 'You are the repository docs project agent.',
+        placement: 'repo',
+      }),
+    ).rejects.toThrow('save boom')
+
+    const created = manager.listAgents().find((agent) => agent.projectAgent?.handle === 'docs')
+    expect(saveSpy).toHaveBeenCalledTimes(2)
+    expect(persistedSnapshots).toHaveLength(2)
+    expect(persistedSnapshots[0]).toMatchObject({
+      createdAgentId: created?.agentId,
+      creatorResult: { createdAgentId: created?.agentId, createdHandle: 'docs' },
+    })
+    expect(persistedSnapshots[1]).toMatchObject({
+      createdAgentId: created?.agentId,
+      creatorResult: { createdAgentId: created?.agentId, createdHandle: 'docs' },
+    })
+    expect(created?.projectAgent).toMatchObject({ handle: 'docs', sourceKind: 'repo' })
+    expect(manager.getAgent(creator.sessionAgent.agentId)?.agentCreatorResult).toMatchObject({
+      createdAgentId: created?.agentId,
+      createdHandle: 'docs',
+    })
+    expect(await readFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md'), 'utf8')).toBe(
+      'You are the repository docs project agent.\n',
+    )
+  })
+
+  it('does not overwrite an existing repository definition during promotion', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Existing repo docs.',
+      prompt: 'Keep this prompt',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createSession('manager', { label: 'Docs' })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        handle: 'docs',
+        whenToUse: 'Replacement docs.',
+        systemPrompt: 'Overwrite me.',
+        placement: 'repo',
+      }),
+    ).rejects.toThrow(/already exists/i)
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+    expect(await readFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md'), 'utf8')).toBe(
+      'Keep this prompt',
+    )
+  })
 })

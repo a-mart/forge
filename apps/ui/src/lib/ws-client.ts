@@ -1,5 +1,5 @@
 import { BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR } from '@forge/protocol'
-import type { CodexElicitationDecision, CodexElicitationPersistScope, ManagerPosture, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
+import type { CodexElicitationDecision, CodexElicitationPersistScope, ManagerPosture, SessionGoalControlAction, SessionProjectAgentInput } from '@forge/protocol'
 import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import {
   conversationBootstrapMetrics,
@@ -1203,7 +1203,7 @@ export class ManagerWsClient {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null,
+    projectAgent: SessionProjectAgentInput | null,
   ): Promise<SessionProjectAgentResult> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('set_session_project_agent', (requestId) =>

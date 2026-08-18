@@ -1,4 +1,9 @@
-import { PROJECT_AGENT_CAPABILITIES, type ProjectAgentCapability } from "@forge/protocol";
+import {
+  PROJECT_AGENT_CAPABILITIES,
+  isProjectAgentPlacement,
+  type ProjectAgentCapability,
+  type ProjectAgentPlacement,
+} from "@forge/protocol";
 import { normalizeProjectAgentHandle } from "../../swarm/project-agents.js";
 import {
   fail,
@@ -66,6 +71,13 @@ export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedC
         );
       }
     }
+    if (
+      projectAgent !== null &&
+      (projectAgent as { placement?: unknown }).placement !== undefined &&
+      !isProjectAgentPlacement((projectAgent as { placement?: unknown }).placement)
+    ) {
+      return fail("set_session_project_agent.projectAgent.placement must be \"local\" or \"repo\" when provided");
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return fail("set_session_project_agent.requestId must be a string when provided");
     }
@@ -86,6 +98,9 @@ export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedC
                 : {}),
               ...((projectAgent as { capabilities?: ProjectAgentCapability[] }).capabilities !== undefined
                 ? { capabilities: (projectAgent as { capabilities?: ProjectAgentCapability[] }).capabilities }
+                : {}),
+              ...((projectAgent as { placement?: ProjectAgentPlacement }).placement !== undefined
+                ? { placement: (projectAgent as { placement?: ProjectAgentPlacement }).placement }
                 : {})
             },
       requestId

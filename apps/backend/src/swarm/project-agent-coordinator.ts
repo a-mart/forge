@@ -2,9 +2,11 @@ import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import {
   isRepoProjectAgentSource,
   isSystemProfile,
+  normalizeProjectAgentPlacement,
   type ActivateRepoProjectAgentRequest,
   type ProjectAgentCapability,
   type ProjectAgentExternalDirectoryEntry,
+  type ProjectAgentPlacement,
 } from "@forge/protocol";
 import {
   analyzeSessionForPromotion,
@@ -21,9 +23,15 @@ import { getModel, type Api, type Model } from "./pi/pi-ai-compat.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import {
+  getRepoProjectAgentPlacementForgeDir,
   ProjectWorkspaceResolver,
   type ProjectWorkspaceResolution,
 } from "./project-workspace-resolver.js";
+import {
+  rollbackWrittenRepoProjectAgentDefinition,
+  writeRepoProjectAgentDefinition,
+  type WrittenRepoProjectAgentDefinition,
+} from "./repo-project-agent-definition-writer.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import type { ProjectAgentSharingService } from "./project-agent-sharing-service.js";
 import type { ManagerRuntimeRecycleReason } from "./runtime/runtime-recovery-state.js";
@@ -167,7 +175,7 @@ export class ProjectAgentCoordinator {
     this.analyzeSession = options.analyzeSession ?? analyzeSessionForPromotion;
   }
 
-  createAndPromoteProjectAgent(
+  async createAndPromoteProjectAgent(
     creatorAgentId: string,
     params: {
       sessionName: string;
@@ -175,9 +183,55 @@ export class ProjectAgentCoordinator {
       whenToUse: string;
       systemPrompt: string;
       capabilities?: ProjectAgentCapability[];
+      placement?: ProjectAgentPlacement;
     },
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
-    return this.options.projectAgents.createAndPromoteProjectAgent(creatorAgentId, params);
+    const placement = normalizeProjectAgentPlacement(params.placement);
+    if (placement !== "repo") {
+      return this.options.projectAgents.createAndPromoteProjectAgent(creatorAgentId, params);
+    }
+
+    const creatorDescriptor = this.options.access.getRequiredBuilderSession(
+      creatorAgentId,
+      "create project agents",
+    );
+    this.options.access.assertDescriptorNotEffectivelyArchived(creatorDescriptor);
+    if (creatorDescriptor.sessionPurpose !== "agent_creator") {
+      throw new Error("Only agent_creator sessions can create project agents");
+    }
+
+    const written = await this.writeRepoDefinitionForPlacement({
+      descriptor: creatorDescriptor,
+      handle: params.handle ?? params.sessionName,
+      displayName: params.sessionName,
+      whenToUse: params.whenToUse,
+      capabilities: params.capabilities,
+      prompt: params.systemPrompt,
+    });
+
+    try {
+      const result = await this.activateWrittenRepoDefinition({
+        sourceDescriptor: creatorDescriptor,
+        definition: written.definition,
+        forgeDirRealpath: written.forgeDir,
+        workspaceKey: written.workspaceKey,
+        mode: "create",
+        applyRecommendedModel: false,
+        approvedCapabilities: params.capabilities ?? [],
+        creatorSessionId: creatorAgentId,
+      });
+      return {
+        agentId: result.agentId,
+        handle: result.projectAgent.handle,
+        profileId: result.profileId,
+      };
+    } catch (error) {
+      await this.removeWrittenDefinitionIfUnreferenced(written, {
+        operation: "create",
+        agentId: creatorAgentId,
+      });
+      throw error;
+    }
   }
 
   async activateRepoProjectAgent(
@@ -287,6 +341,7 @@ export class ProjectAgentCoordinator {
           systemPrompt?: string;
           handle?: string;
           capabilities?: ProjectAgentCapability[];
+          placement?: ProjectAgentPlacement;
         }
       | null,
   ): Promise<{
@@ -300,6 +355,42 @@ export class ProjectAgentCoordinator {
     this.options.access.assertDescriptorNotEffectivelyArchived(descriptor);
     this.options.access.assertSessionSupportsProjectAgent(descriptor);
     const previous = descriptor.projectAgent;
+    const placement = projectAgent ? normalizeProjectAgentPlacement(projectAgent.placement) : "local";
+    if (projectAgent && placement === "repo") {
+      if (previous) {
+        throw new Error("Cannot change Project Agent placement after promotion. Demote and re-promote to place the definition in the repository.");
+      }
+      const written = await this.writeRepoDefinitionForPlacement({
+        descriptor,
+        handle: projectAgent.handle ?? descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId,
+        displayName: descriptor.sessionLabel ?? descriptor.displayName,
+        whenToUse: projectAgent.whenToUse,
+        capabilities: projectAgent.capabilities,
+        prompt: projectAgent.systemPrompt ?? "",
+      });
+      try {
+        const activated = await this.activateWrittenRepoDefinition({
+          sourceDescriptor: descriptor,
+          definition: written.definition,
+          forgeDirRealpath: written.forgeDir,
+          workspaceKey: written.workspaceKey,
+          mode: "link",
+          targetAgentId: descriptor.agentId,
+          applyRecommendedModel: false,
+          approvedCapabilities: projectAgent.capabilities ?? [],
+        });
+        return {
+          profileId: activated.profileId,
+          projectAgent: cloneProjectAgentInfoValue(activated.projectAgent) ?? activated.projectAgent,
+        };
+      } catch (error) {
+        await this.removeWrittenDefinitionIfUnreferenced(written, {
+          operation: "link",
+          agentId: descriptor.agentId,
+        });
+        throw error;
+      }
+    }
     const result = await this.options.projectAgents.setSessionProjectAgent(agentId, projectAgent);
     const next = this.options.descriptors.get(agentId)?.projectAgent;
     const promptChanged = previous?.systemPrompt !== next?.systemPrompt;
@@ -575,6 +666,120 @@ export class ProjectAgentCoordinator {
       return this.options.prompt.resolveLiveSystemPrompt(session);
     }
     return this.options.prompt.readPersistedSystemPrompt(session);
+  }
+
+  private async writeRepoDefinitionForPlacement(options: {
+    descriptor: ProjectAgentSessionDescriptor;
+    handle: string;
+    displayName?: string;
+    whenToUse: string;
+    capabilities?: ProjectAgentCapability[];
+    prompt: string;
+  }): Promise<WrittenRepoProjectAgentDefinition & { workspaceKey: string }> {
+    const resolver = this.createWorkspaceResolver();
+    const resolution = await resolver.resolve({
+      profileId: options.descriptor.profileId,
+      sessionAgentId: options.descriptor.agentId,
+      cwd: options.descriptor.cwd,
+    });
+    const placementForgeDir = getRepoProjectAgentPlacementForgeDir(resolution);
+    if (!placementForgeDir.ok) {
+      throw new Error(placementForgeDir.error);
+    }
+    const written = await writeRepoProjectAgentDefinition({
+      forgeDir: placementForgeDir.forgeDir,
+      handle: options.handle,
+      displayName: options.displayName,
+      whenToUse: options.whenToUse,
+      capabilities: options.capabilities,
+      prompt: options.prompt,
+      containmentRoot: placementForgeDir.containmentRoot,
+    });
+    return {
+      ...written,
+      workspaceKey: resolution.workspaceKey,
+    };
+  }
+
+  private hasLiveRepoDefinitionReference(written: {
+    definition: WrittenRepoProjectAgentDefinition["definition"];
+    definitionId: string;
+    forgeDir: string;
+    workspaceKey: string;
+  }): boolean {
+    return Array.from(this.options.descriptors.values()).some((descriptor) => {
+      const source = descriptor.projectAgent?.source;
+      return source?.type === "repo"
+        && source.workspaceKey === written.workspaceKey
+        && source.forgeDirRealpath === written.forgeDir
+        && source.definitionId === written.definitionId
+        && source.signature === written.definition.signature;
+    });
+  }
+
+  private async removeWrittenDefinitionIfUnreferenced(
+    written: WrittenRepoProjectAgentDefinition & { workspaceKey: string },
+    context: { operation: "create" | "link"; agentId: string },
+  ): Promise<void> {
+    if (this.hasLiveRepoDefinitionReference(written)) {
+      return;
+    }
+    try {
+      await rollbackWrittenRepoProjectAgentDefinition(written);
+    } catch (cleanupError) {
+      this.options.logDebug("project_agent:repo_placement:cleanup_error", {
+        operation: context.operation,
+        agentId: context.agentId,
+        definitionId: written.definitionId,
+        message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    }
+  }
+
+  private activateWrittenRepoDefinition(options: {
+    sourceDescriptor: ProjectAgentSessionDescriptor;
+    definition: WrittenRepoProjectAgentDefinition["definition"];
+    forgeDirRealpath: string;
+    workspaceKey: string;
+    mode: "create" | "link";
+    targetAgentId?: string;
+    applyRecommendedModel: boolean;
+    approvedCapabilities?: ProjectAgentCapability[];
+    creatorSessionId?: string;
+  }) {
+    const resolver = this.createWorkspaceResolver();
+    return this.options.projectAgents.activateRepoProjectAgent({
+      profileId: options.sourceDescriptor.profileId,
+      sourceSessionAgentId: options.sourceDescriptor.agentId,
+      mode: options.mode,
+      definition: options.definition,
+      source: {
+        type: "repo",
+        workspaceKey: options.workspaceKey,
+        forgeDirRealpath: options.forgeDirRealpath,
+        definitionId: options.definition.definitionId,
+        activatedAt: this.options.now(),
+        signature: options.definition.signature,
+      },
+      ...(options.targetAgentId ? { targetAgentId: options.targetAgentId } : {}),
+      applyRecommendedModel: options.applyRecommendedModel,
+      approvedCapabilities: options.approvedCapabilities,
+      ...(options.creatorSessionId !== undefined ? { creatorSessionId: options.creatorSessionId } : {}),
+      explicitBindToSourceWorkspace: false,
+      resolveSessionWorkspaceSource: async (descriptor) => {
+        const targetResolution = await resolver.resolve({
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          sessionAgentId: descriptor.agentId,
+          cwd: descriptor.cwd,
+        });
+        return {
+          workspaceKey: targetResolution.workspaceKey,
+          ...(targetResolution.effectiveForgeDirRealpath
+            ? { forgeDirRealpath: targetResolution.effectiveForgeDirRealpath }
+            : {}),
+        };
+      },
+    });
   }
 
   private getMutableProjectAgent(

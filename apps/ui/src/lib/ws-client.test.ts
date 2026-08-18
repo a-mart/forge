@@ -2698,6 +2698,7 @@ describe('ManagerWsClient', () => {
       systemPrompt: 'You are the release notes project agent.',
       handle: 'release-notes',
       capabilities: ['create_session' as const],
+      placement: 'repo' as const,
     }
     const setPromise = client.setSessionProjectAgent(' agent-a ', projectAgent)
     const setPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')

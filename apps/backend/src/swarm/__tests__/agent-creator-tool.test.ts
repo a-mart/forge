@@ -1,3 +1,4 @@
+import { TypeCompiler } from '@sinclair/typebox/compiler'
 import { describe, expect, it, vi } from 'vitest'
 import { buildCreateProjectAgentTool } from '../agent-creator-tool.js'
 import type { SwarmToolHost } from '../swarm-tool-host.js'
@@ -22,6 +23,7 @@ describe('buildCreateProjectAgentTool', () => {
       'handle',
       'whenToUse',
       'systemPrompt',
+      'location',
     ])
     expect((tool.parameters as any).properties.sessionName.minLength).toBe(1)
     expect((tool.parameters as any).properties.handle.minLength).toBe(1)
@@ -30,6 +32,28 @@ describe('buildCreateProjectAgentTool', () => {
     expect((tool.parameters as any).properties.systemPrompt.minLength).toBe(1)
     expect((tool.parameters as any).properties.systemPrompt.description).toContain('Role/system instructions')
     expect((tool.parameters as any).properties.systemPrompt.description).toContain("layered with Forge's Project Agent base prompt")
+    expect((tool.parameters as any).properties.location.anyOf.map((entry: { const: string }) => entry.const)).toEqual([
+      'local',
+      'repo',
+    ])
+    const check = TypeCompiler.Compile(tool.parameters as any)
+    expect(check.Check({
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+    })).toBe(true)
+    expect(check.Check({
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+      location: 'repo',
+    })).toBe(true)
+    expect(check.Check({
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+      location: 'shared',
+    })).toBe(false)
 
     const result = await tool.execute(
       'tool-1',
@@ -38,6 +62,7 @@ describe('buildCreateProjectAgentTool', () => {
         handle: 'releases',
         whenToUse: 'Draft release notes.',
         systemPrompt: 'You are the release notes project agent.',
+        location: 'repo',
       },
       undefined,
       undefined,
@@ -49,6 +74,7 @@ describe('buildCreateProjectAgentTool', () => {
       handle: 'releases',
       whenToUse: 'Draft release notes.',
       systemPrompt: 'You are the release notes project agent.',
+      placement: 'repo',
     })
     expect(result.details).toEqual({
       agentId: 'manager--s2',
@@ -58,6 +84,35 @@ describe('buildCreateProjectAgentTool', () => {
     expect(result.content[0]).toEqual({
       type: 'text',
       text: 'Project agent @release-notes created successfully (agentId: manager--s2).',
+    })
+  })
+
+  it('defaults omitted location to local for direct compatibility', async () => {
+    const host = {
+      createAndPromoteProjectAgent: vi.fn(async () => ({
+        agentId: 'manager--s2',
+        handle: 'release-notes',
+      })),
+    } as unknown as SwarmToolHost
+
+    const tool = buildCreateProjectAgentTool(host, { agentId: 'creator-session' } as AgentDescriptor)
+    await tool.execute(
+      'tool-1',
+      {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      },
+      undefined,
+      undefined,
+      {} as any,
+    )
+
+    expect(host.createAndPromoteProjectAgent).toHaveBeenCalledWith('creator-session', {
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+      placement: 'local',
     })
   })
 

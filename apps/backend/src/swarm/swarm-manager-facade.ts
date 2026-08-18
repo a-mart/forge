@@ -29,6 +29,7 @@ import type {
   SkillImportTarget,
   SkillInventoryEntry,
   SkillShareResponse,
+  SessionProjectAgentInput,
   UpdateOpenAIBrokerSettingsRequest,
 } from "@forge/protocol";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
@@ -139,12 +140,7 @@ export interface CreateManagerInput {
   reasoningLevel?: SwarmReasoningLevel;
 }
 
-export interface SetSessionProjectAgentInput {
-  whenToUse: string;
-  systemPrompt?: string;
-  handle?: string;
-  capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"];
-}
+export type SetSessionProjectAgentInput = SessionProjectAgentInput;
 
 export interface ForkSessionOptions {
   label?: string;

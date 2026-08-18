@@ -790,7 +790,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
 
-  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: import('@forge/protocol').ProjectAgentCapability[] }) => {
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: import('@forge/protocol').SessionProjectAgentInput) => {
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
@@ -1519,6 +1519,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           agentId={projectAgentTarget.agentId}
           sessionLabel={projectAgentTarget.sessionLabel}
           currentProjectAgent={projectAgentTarget.currentProjectAgent}
+          wsUrl={wsUrl}
+          profileId={agents.find((agent) => agent.agentId === projectAgentTarget.agentId)?.profileId ?? projectAgentTarget.agentId}
           onSave={handleSaveProjectAgent}
           onDemote={handleDemoteProjectAgent}
           onClose={() => setProjectAgentTarget(null)}

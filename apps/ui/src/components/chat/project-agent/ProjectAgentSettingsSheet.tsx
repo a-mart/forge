@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   isRepoProjectAgentSource,
   type ProjectAgentConfigSourceSnapshot,
+  type ProjectAgentPlacement,
   type ProjectAgentShareEligibleTarget,
   type ProjectAgentShareGrantInfo,
+  type ProjectResourcesSnapshotResponse,
   type RepoProjectAgentSourceIdentity,
 } from '@forge/protocol'
-import { AlertTriangle, Copy, GitBranch, Loader2, Sparkles } from 'lucide-react'
+import { AlertTriangle, Copy, GitBranch, HardDrive, Loader2, Sparkles } from 'lucide-react'
+import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
+import { fetchProjectResourcesSnapshot } from '@/components/settings/project-resources-api'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
@@ -31,6 +35,8 @@ export function ProjectAgentSettingsSheet({
   agentId,
   sessionLabel,
   currentProjectAgent,
+  wsUrl,
+  profileId,
   onSave,
   onDemote,
   onClose,
@@ -67,6 +73,10 @@ export function ProjectAgentSettingsSheet({
 
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
   const [systemPrompt, setSystemPrompt] = useState('')
+  const [placement, setPlacement] = useState<ProjectAgentPlacement>('local')
+  const [placementSnapshot, setPlacementSnapshot] = useState<ProjectResourcesSnapshotResponse | null>(null)
+  const [placementSnapshotLoading, setPlacementSnapshotLoading] = useState(false)
+  const [placementSnapshotError, setPlacementSnapshotError] = useState<string | null>(null)
   const [referenceDocs, setReferenceDocs] = useState<string[]>([])
   const [expandedReferenceFile, setExpandedReferenceFile] = useState<string | null>(null)
   const [referenceContents, setReferenceContents] = useState<Record<string, string>>({})
@@ -164,6 +174,31 @@ export function ProjectAgentSettingsSheet({
     return () => { cancelled = true }
   }, [agentId, isPromoting, onGetProjectAgentSharing])
 
+  useEffect(() => {
+    if (!isPromoting || !wsUrl || !profileId) {
+      setPlacementSnapshot(null)
+      setPlacementSnapshotError(null)
+      setPlacementSnapshotLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPlacementSnapshotLoading(true)
+    setPlacementSnapshotError(null)
+    const apiClient = createBuilderSettingsApiClient(wsUrl)
+    void fetchProjectResourcesSnapshot(apiClient, { profileId, sessionAgentId: agentId }).then((snapshot) => {
+      if (cancelled) return
+      setPlacementSnapshot(snapshot)
+      setPlacementSnapshotLoading(false)
+    }).catch((err) => {
+      if (cancelled) return
+      setPlacementSnapshot(null)
+      setPlacementSnapshotError(err instanceof Error ? err.message : 'Failed to resolve repository destination.')
+      setPlacementSnapshotLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [agentId, isPromoting, profileId, wsUrl])
+
   // Source diagnostics: use the live snapshot when available, fall back to descriptor identity
   const effectiveSourcePath = sourceSnapshot?.forgeDirRealpath ?? repoSourcePath
   const effectiveDefinitionId = sourceSnapshot?.definitionId ?? repoSource?.definitionId ?? null
@@ -177,8 +212,20 @@ export function ProjectAgentSettingsSheet({
   const trimmedWhenToUse = whenToUse.trim()
   const trimmedSystemPrompt = systemPrompt.trim()
   const sharingAvailable = !isPromoting && !!onGetProjectAgentSharing && !!onSetProjectAgentSharing
+  const repoPlacementAvailability = useMemo(
+    () => describeRepoPlacementAvailability({
+      snapshot: placementSnapshot,
+      snapshotError: placementSnapshotError,
+      loading: placementSnapshotLoading,
+      handle: normalizedHandle,
+    }),
+    [normalizedHandle, placementSnapshot, placementSnapshotError, placementSnapshotLoading],
+  )
   const configCanSave = isPromoting
-    ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
+    ? trimmedWhenToUse.length > 0
+      && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+      && normalizedHandle.length > 0
+      && (placement !== 'repo' || (trimmedSystemPrompt.length > 0 && repoPlacementAvailability.available))
     : !isRepoSourced && trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
   const storedCanCreateSessions = currentProjectAgent?.capabilities?.includes('create_session') ?? false
   const configHasChanges = isPromoting
@@ -403,6 +450,7 @@ export function ProjectAgentSettingsSheet({
           ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
           ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
           capabilities: canCreateSessions ? ['create_session'] : [],
+          ...(isPromoting ? { placement } : {}),
         })
       }
       if (!isPromoting && sharingDirty && onSetProjectAgentSharing) {
@@ -591,6 +639,66 @@ export function ProjectAgentSettingsSheet({
                   </p>
                 ) : null}
               </div>
+            ) : null}
+
+            {isPromoting ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Location</label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    data-testid="project-agent-placement-local"
+                    onClick={() => setPlacement('local')}
+                    className={cn(
+                      'rounded-md border px-3 py-2.5 text-left transition-colors',
+                      placement === 'local'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border/70 hover:border-border',
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <HardDrive className="h-3.5 w-3.5" />
+                      Local to Forge
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Keep this definition in this profile. Default.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="project-agent-placement-repo"
+                    onClick={() => {
+                      if (repoPlacementAvailability.available) setPlacement('repo')
+                    }}
+                    disabled={!repoPlacementAvailability.available}
+                    className={cn(
+                      'rounded-md border px-3 py-2.5 text-left transition-colors',
+                      !repoPlacementAvailability.available && 'cursor-not-allowed opacity-60',
+                      placement === 'repo'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border/70 hover:border-border',
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <GitBranch className="h-3.5 w-3.5" />
+                      Repository .forge
+                    </div>
+                    <p className="mt-1 break-all text-[11px] text-muted-foreground">
+                      {placementSnapshotLoading
+                        ? 'Checking repository destination…'
+                        : repoPlacementAvailability.destinationLabel}
+                    </p>
+                  </button>
+                </div>
+                {placement === 'repo' || !repoPlacementAvailability.available ? (
+                  <p className={cn(
+                    'text-[11px]',
+                    repoPlacementAvailability.available ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400',
+                  )}>
+                    {repoPlacementAvailability.detail}
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <div className="space-y-1">
                 <label className="text-sm font-medium text-foreground">Handle</label>
@@ -653,7 +761,7 @@ export function ProjectAgentSettingsSheet({
 
             <div className="space-y-1.5">
               <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
-                {isRepoSourced ? 'Role Instructions' : (
+                {isRepoSourced || (isPromoting && placement === 'repo') ? 'Role Instructions' : (
                   <>
                     Role Instructions
                     <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
@@ -681,7 +789,9 @@ export function ProjectAgentSettingsSheet({
               <p className="text-[11px] text-muted-foreground">
                 {isRepoSourced
                   ? 'Read live from prompt.md in the repo definition directory as role instructions. Forge adds the Project Agent base prompt automatically.'
-                  : 'Use this for role, scope, constraints, and validation habits. Forge layers it after the Project Agent base prompt automatically.'}
+                  : isPromoting && placement === 'repo'
+                    ? 'Required for repository placement. Forge writes this to prompt.md under .forge/project-agents/<handle>/ and layers it after the Project Agent base prompt.'
+                    : 'Use this for role, scope, constraints, and validation habits. Forge layers it after the Project Agent base prompt automatically.'}
               </p>
             </div>
 
@@ -811,4 +921,60 @@ export function ProjectAgentSettingsSheet({
       />
     </>
   )
+}
+
+function describeRepoPlacementAvailability(options: {
+  snapshot: ProjectResourcesSnapshotResponse | null
+  snapshotError: string | null
+  loading: boolean
+  handle: string
+}): { available: boolean; destinationLabel: string; detail: string } {
+  const { snapshot, snapshotError, loading, handle } = options
+  if (snapshotError) {
+    return {
+      available: false,
+      destinationLabel: 'Repository destination unavailable',
+      detail: snapshotError,
+    }
+  }
+  if (loading || !snapshot) {
+    return {
+      available: false,
+      destinationLabel: loading ? 'Checking repository destination…' : 'No repository destination',
+      detail: loading
+        ? 'Forge is resolving the effective .forge path for this session.'
+        : 'Forge needs a Git root or valid .forge override to write a repository definition.',
+    }
+  }
+  if (snapshot.override && !snapshot.override.valid) {
+    return {
+      available: false,
+      destinationLabel: 'Invalid .forge override',
+      detail: snapshot.override.error ?? 'Configured .forge override directory is invalid.',
+    }
+  }
+  if (snapshot.warning && snapshot.source === 'none') {
+    return {
+      available: false,
+      destinationLabel: 'No repository destination',
+      detail: snapshot.warning,
+    }
+  }
+  const forgeDir = snapshot.effectiveForgeDirRealpath ?? snapshot.effectiveForgeDir ?? snapshot.defaultForgeDir
+  if (!forgeDir) {
+    return {
+      available: false,
+      destinationLabel: 'No Git root or .forge override',
+      detail: 'Cannot place a Project Agent in the repository because no Git repository root was detected and no valid .forge override is configured.',
+    }
+  }
+  const separator = forgeDir.includes('\\') ? '\\' : '/'
+  const destination = `${forgeDir.replace(/[\\/]+$/, '')}${separator}project-agents${separator}${handle || '<handle>'}`
+  return {
+    available: true,
+    destinationLabel: destination,
+    detail: snapshot.resources.projectAgents?.exists
+      ? 'Writes config.json and required prompt.md. Session history stays local.'
+      : 'Forge will create .forge/project-agents if it is missing. Session history stays local.',
+  }
 }

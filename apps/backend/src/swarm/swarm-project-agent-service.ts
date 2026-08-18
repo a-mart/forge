@@ -33,7 +33,11 @@ import {
   readProjectAgentReferenceDoc,
   writeProjectAgentReferenceDoc
 } from "./reference-docs.js";
-import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
+import {
+  SessionProvisioner,
+  type ProvisionedSessionDescriptor,
+  type SessionRollbackDisposition,
+} from "./session-provisioner.js";
 import { cloneProjectAgentInfoValue } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 import type { ParsedRepoProjectAgentDefinition } from "./repo-project-agent-definitions.js";
@@ -259,6 +263,7 @@ export class SwarmProjectAgentService {
     targetAgentId?: string;
     applyRecommendedModel?: boolean;
     approvedCapabilities?: ProjectAgentCapability[];
+    creatorSessionId?: string;
     explicitBindToSourceWorkspace?: boolean;
     resolveSessionWorkspaceSource?: (descriptor: AgentDescriptor & { role: "manager" }) => Promise<{ workspaceKey: string; forgeDirRealpath?: string }>;
   }): Promise<{ profileId: string; agentId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> }> {
@@ -278,6 +283,7 @@ export class SwarmProjectAgentService {
     const projectAgent: NonNullable<AgentDescriptor["projectAgent"]> = {
       handle,
       whenToUse,
+      ...(params.creatorSessionId !== undefined ? { creatorSessionId: params.creatorSessionId } : {}),
       ...(approvedCapabilities.length > 0 ? { capabilities: approvedCapabilities } : {}),
       source: params.source
     };
@@ -300,6 +306,12 @@ export class SwarmProjectAgentService {
       }
 
       let provisioned = false;
+      const creatorDescriptor = params.creatorSessionId
+        ? this.options.getRequiredSessionDescriptor(params.creatorSessionId)
+        : undefined;
+      const previousCreatorResult = creatorDescriptor?.agentCreatorResult
+        ? { ...creatorDescriptor.agentCreatorResult }
+        : undefined;
       try {
         await this.options.provisioner.provisionSession({
           descriptor: sessionDescriptor,
@@ -309,17 +321,46 @@ export class SwarmProjectAgentService {
           }
         });
         provisioned = true;
+        if (creatorDescriptor) {
+          creatorDescriptor.agentCreatorResult = {
+            createdAgentId: sessionDescriptor.agentId,
+            createdHandle: handle,
+            createdAt: this.options.now()
+          };
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
+        }
         await this.options.saveStore();
       } catch (error) {
+        let rollback: SessionRollbackDisposition | undefined;
         if (provisioned) {
-          await this.options.provisioner.rollbackCreatedSession(sessionDescriptor);
-          await this.options.saveStore().catch((rollbackSaveError) => {
+          try {
+            rollback = await this.options.provisioner.rollbackCreatedSession(sessionDescriptor);
+          } catch (rollbackError) {
+            this.options.logDebug("repo_project_agent:create:rollback_cleanup_error", {
+              agentId: sessionDescriptor.agentId,
+              handle,
+              message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+            });
+          }
+        }
+        if (creatorDescriptor && rollback?.status === "removed") {
+          if (previousCreatorResult) {
+            creatorDescriptor.agentCreatorResult = previousCreatorResult;
+          } else {
+            delete creatorDescriptor.agentCreatorResult;
+          }
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
+        }
+        if (provisioned) {
+          try {
+            await this.options.saveStore();
+          } catch (rollbackSaveError) {
             this.options.logDebug("repo_project_agent:create:rollback_save_error", {
               agentId: sessionDescriptor.agentId,
               handle,
               message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
             });
-          });
+          }
         }
         throw error;
       }

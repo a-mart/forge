@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,10 @@ import {
   type ProjectAgentSessionDescriptor,
 } from "../project-agent-coordinator.js";
 import type { RepoProjectAgentSourceResolution } from "../agents/repo-project-agent-source.js";
-import type { ProjectWorkspaceResolution } from "../project-workspace-resolver.js";
+import {
+  ProjectWorkspaceResolver,
+  type ProjectWorkspaceResolution,
+} from "../project-workspace-resolver.js";
 import type { Api, Model } from "../pi/pi-ai-compat.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 
@@ -132,6 +136,179 @@ describe("ProjectAgentCoordinator", () => {
     expect(harness.activateRepoCalls[0]?.definition.prompt).toBe(
       "Maintain repository docs.",
     );
+  });
+
+  it("writes a repository definition then links an existing session for repo placement", async () => {
+    const root = await makeTempDir("forge-project-agent-coordinator-place-");
+    const forgeDir = join(root, ".forge");
+    const harness = new CoordinatorHarness(root);
+    harness.addSession("source", "profile-a", { cwd: root });
+    harness.workspaceResolution = makeWorkspaceResolution({
+      root,
+      profileId: "profile-a",
+      sessionAgentId: "source",
+      definitionsDir: join(forgeDir, "project-agents"),
+      detectedGitRoot: root,
+      defaultForgeDir: forgeDir,
+      effectiveForgeDir: forgeDir,
+      effectiveForgeDirRealpath: forgeDir,
+    });
+    harness.activateRepoImplementation = async (input) => ({
+      profileId: input.profileId,
+      agentId: input.targetAgentId ?? "activated",
+      projectAgent: {
+        handle: input.definition.config.handle,
+        whenToUse: input.definition.config.whenToUse,
+        source: input.source,
+      },
+    });
+    const coordinator = harness.createCoordinator();
+
+    const result = await coordinator.setSessionProjectAgent("source", {
+      handle: "docs",
+      whenToUse: "Use for repository docs",
+      systemPrompt: "Maintain repository docs.",
+      placement: "repo",
+    });
+
+    expect(result.projectAgent).toMatchObject({ handle: "docs" });
+    expect(harness.activateRepoCalls).toHaveLength(1);
+    expect(harness.activateRepoCalls[0]).toMatchObject({
+      mode: "link",
+      targetAgentId: "source",
+      approvedCapabilities: [],
+    });
+    expect(await readFile(join(forgeDir, "project-agents", "docs", "prompt.md"), "utf8")).toBe(
+      "Maintain repository docs.\n",
+    );
+  });
+
+  it("creates a repository-backed agent through activate create semantics", async () => {
+    const root = await makeTempDir("forge-project-agent-coordinator-create-");
+    const forgeDir = join(root, ".forge");
+    const harness = new CoordinatorHarness(root);
+    harness.addSession("creator", "profile-a", {
+      cwd: root,
+      sessionPurpose: "agent_creator",
+    });
+    harness.workspaceResolution = makeWorkspaceResolution({
+      root,
+      profileId: "profile-a",
+      sessionAgentId: "creator",
+      definitionsDir: join(forgeDir, "project-agents"),
+      detectedGitRoot: root,
+      defaultForgeDir: forgeDir,
+      effectiveForgeDir: forgeDir,
+      effectiveForgeDirRealpath: forgeDir,
+    });
+    harness.activateRepoImplementation = async (input) => ({
+      profileId: input.profileId,
+      agentId: "created",
+      projectAgent: {
+        handle: input.definition.config.handle,
+        whenToUse: input.definition.config.whenToUse,
+        creatorSessionId: input.creatorSessionId,
+        source: input.source,
+      },
+    });
+    const coordinator = harness.createCoordinator();
+
+    const result = await coordinator.createAndPromoteProjectAgent("creator", {
+      sessionName: "Docs",
+      handle: "docs",
+      whenToUse: "Use for repository docs",
+      systemPrompt: "Maintain repository docs.",
+      placement: "repo",
+    });
+
+    expect(result).toEqual({
+      agentId: "created",
+      handle: "docs",
+      profileId: "profile-a",
+    });
+    expect(harness.activateRepoCalls[0]).toMatchObject({
+      mode: "create",
+      creatorSessionId: "creator",
+    });
+  });
+
+  it("rejects actual resolver-to-writer handoff through a repo .forge or project-agents symlink", async () => {
+    const root = await makeTempDir("forge-project-agent-coordinator-symlink-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    const realForge = join(root, "real-forge");
+    await mkdir(realForge);
+    await symlink(realForge, join(root, ".forge"));
+    const dataDir = await makeTempDir("forge-project-agent-coordinator-data-");
+    const harness = new CoordinatorHarness(dataDir);
+    harness.addSession("source", "profile-a", { cwd: root });
+    const coordinator = harness.createCoordinator({
+      createWorkspaceResolver: () => new ProjectWorkspaceResolver({ dataDir }),
+    });
+
+    await expect(
+      coordinator.setSessionProjectAgent("source", {
+        handle: "docs",
+        whenToUse: "Use for repository docs",
+        systemPrompt: "Maintain repository docs.",
+        placement: "repo",
+      }),
+    ).rejects.toThrow(/must not be a symlink/i);
+    expect(harness.activateRepoCalls).toHaveLength(0);
+
+    const projectRoot = await makeTempDir("forge-project-agent-coordinator-pa-symlink-");
+    execFileSync("git", ["init"], { cwd: projectRoot, stdio: "ignore" });
+    const forgeDir = join(projectRoot, ".forge");
+    await mkdir(forgeDir);
+    await symlink(
+      await makeTempDir("forge-project-agent-coordinator-pa-target-"),
+      join(forgeDir, "project-agents"),
+    );
+    const paDataDir = await makeTempDir("forge-project-agent-coordinator-pa-data-");
+    const paHarness = new CoordinatorHarness(paDataDir);
+    paHarness.addSession("source", "profile-a", { cwd: projectRoot });
+    const paCoordinator = paHarness.createCoordinator({
+      createWorkspaceResolver: () => new ProjectWorkspaceResolver({ dataDir: paDataDir }),
+    });
+    await expect(
+      paCoordinator.setSessionProjectAgent("source", {
+        handle: "docs",
+        whenToUse: "Use for repository docs",
+        systemPrompt: "Maintain repository docs.",
+        placement: "repo",
+      }),
+    ).rejects.toThrow(/must not be a symlink/i);
+    expect(paHarness.activateRepoCalls).toHaveLength(0);
+  });
+
+  it("does not leave a partial repository definition when activation fails", async () => {
+    const root = await makeTempDir("forge-project-agent-coordinator-rollback-");
+    const forgeDir = join(root, ".forge");
+    const harness = new CoordinatorHarness(root);
+    harness.addSession("source", "profile-a", { cwd: root });
+    harness.workspaceResolution = makeWorkspaceResolution({
+      root,
+      profileId: "profile-a",
+      sessionAgentId: "source",
+      definitionsDir: join(forgeDir, "project-agents"),
+      detectedGitRoot: root,
+      defaultForgeDir: forgeDir,
+      effectiveForgeDir: forgeDir,
+      effectiveForgeDirRealpath: forgeDir,
+    });
+    harness.activateRepoImplementation = async () => {
+      throw new Error("activate boom");
+    };
+    const coordinator = harness.createCoordinator();
+
+    await expect(
+      coordinator.setSessionProjectAgent("source", {
+        handle: "docs",
+        whenToUse: "Use for repository docs",
+        systemPrompt: "Maintain repository docs.",
+        placement: "repo",
+      }),
+    ).rejects.toThrow("activate boom");
+    await expect(stat(forgeDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("runs recommendation analysis with the unpromoted prompt and transcript context", async () => {
@@ -329,7 +506,7 @@ class CoordinatorHarness {
   createCoordinator(
     overrides: Pick<
       ProjectAgentCoordinatorOptions,
-      "resolveAnalysisModel" | "analyzeSession"
+      "resolveAnalysisModel" | "analyzeSession" | "createWorkspaceResolver"
     > = {},
   ): ProjectAgentCoordinator {
     const projectAgents = {
@@ -512,16 +689,24 @@ function makeWorkspaceResolution(options: {
   profileId: string;
   sessionAgentId: string;
   definitionsDir: string;
+  detectedGitRoot?: string;
+  defaultForgeDir?: string;
+  effectiveForgeDir?: string;
+  effectiveForgeDirRealpath?: string;
 }): ProjectWorkspaceResolution {
+  const defaultForgeDir = options.defaultForgeDir ?? options.root;
+  const effectiveForgeDir = options.effectiveForgeDir ?? defaultForgeDir;
+  const effectiveForgeDirRealpath = options.effectiveForgeDirRealpath ?? effectiveForgeDir;
   return {
     profileId: options.profileId,
     sessionAgentId: options.sessionAgentId,
     cwdRealpath: options.root,
     workspaceKey: `workspace-${options.profileId}`,
     source: "git-root",
-    defaultForgeDir: options.root,
-    effectiveForgeDir: options.root,
-    effectiveForgeDirRealpath: options.root,
+    ...(options.detectedGitRoot ? { detectedGitRoot: options.detectedGitRoot } : { detectedGitRoot: options.root }),
+    defaultForgeDir,
+    effectiveForgeDir,
+    effectiveForgeDirRealpath,
     repoRootResources: { projectAgentsDir: options.definitionsDir },
     trust: { state: "trusted", key: options.root },
     legacyExecutableSurfaces: [],

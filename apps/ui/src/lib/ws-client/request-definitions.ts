@@ -18,7 +18,7 @@ import {
   type ManagerModelPreset,
   type ManagerPosture,
   type ManagerReasoningLevel,
-  type ProjectAgentCapability,
+  type SessionProjectAgentInput,
   type SessionModelUpdateMode,
   type SessionGoalControlAction,
 } from '@forge/protocol'
@@ -721,7 +721,7 @@ export function buildForkSessionCommand(
 
 export function buildSetSessionProjectAgentCommand(
   agentId: string,
-  projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null,
+  projectAgent: SessionProjectAgentInput | null,
   requestId: string,
 ): ClientCommand {
   return {

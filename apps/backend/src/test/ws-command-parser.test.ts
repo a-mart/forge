@@ -686,6 +686,35 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses set_session_project_agent with an explicit repo placement', () => {
+    const parsed = parseJsonCommand({
+      type: 'set_session_project_agent',
+      agentId: 'session-a',
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Coordinate release work',
+        systemPrompt: 'You are the release notes project agent.',
+        placement: 'repo',
+      },
+      requestId: 'req-project-agent',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: {
+          handle: 'release-notes',
+          whenToUse: 'Coordinate release work',
+          systemPrompt: 'You are the release notes project agent.',
+          placement: 'repo',
+        },
+        requestId: 'req-project-agent',
+      },
+    })
+  })
+
   it('parses api_proxy commands', () => {
     const parsed = parseJsonCommand({
       type: 'api_proxy',
@@ -1020,6 +1049,10 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: { whenToUse: 'x', handle: 'Release Notes' } },
         message: 'set_session_project_agent.projectAgent.handle must be a normalized non-empty string containing only lowercase letters, numbers, and dashes',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: { whenToUse: 'x', placement: 'shared' } },
+        message: 'set_session_project_agent.projectAgent.placement must be "local" or "repo" when provided',
       },
       {
         payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null, requestId: 42 },

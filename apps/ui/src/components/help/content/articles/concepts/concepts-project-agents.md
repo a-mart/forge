@@ -39,9 +39,9 @@ The chat composer offers autocomplete for project agent handles when you type `@
 
 You can create project agents in two ways:
 
-1. **Manual promotion** — Right-click an existing session and choose "Promote to Project Agent." Fill in the handle, "when to use" description, and optional role instructions. AI Assist can recommend role instructions from the session's conversation history.
+1. **Manual promotion** — Right-click an existing session and choose "Promote to Project Agent." Fill in the handle, location (Local to Forge or Repository `.forge`), "when to use" description, and role instructions. Role instructions are optional locally and required for repository placement. AI Assist can recommend role instructions from the session's conversation history.
 
-2. **Agent Creator wizard** — Right-click a profile header and choose "Create Project Agent." This opens a dedicated Agent Architect session that explores your repository, interviews you about the new agent's role, drafts a configuration proposal, and atomically creates and promotes the agent after you approve.
+2. **Agent Creator wizard** — Right-click a profile header and choose "Create Project Agent." This opens a dedicated Agent Architect session that explores your repository, interviews you about the new agent's role and location, drafts a configuration proposal, and atomically creates and promotes the agent after you approve.
 
 ## Sidebar placement
 

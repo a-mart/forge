@@ -13,7 +13,11 @@ import type {
 } from "@forge/protocol";
 import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
-import { ProjectWorkspaceResolver, type ProjectWorkspaceResolution } from "../../../swarm/project-workspace-resolver.js";
+import {
+  getProjectResourceSeedForgeDir,
+  ProjectWorkspaceResolver,
+  type ProjectWorkspaceResolution
+} from "../../../swarm/project-workspace-resolver.js";
 import { cloneProjectAgentInfoValue } from "../../../swarm/swarm-manager-utils.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../../../swarm/types.js";
@@ -516,13 +520,7 @@ function selectSeedForgeDir(resolution: ProjectWorkspaceResolution): string {
 }
 
 function getSeedForgeDir(resolution: ProjectWorkspaceResolution): string | undefined {
-  if (resolution.override?.valid) {
-    return resolution.effectiveForgeDirRealpath;
-  }
-  if (!resolution.detectedGitRoot || !resolution.defaultForgeDir) {
-    return undefined;
-  }
-  return resolution.effectiveForgeDirRealpath ?? resolution.defaultForgeDir;
+  return getProjectResourceSeedForgeDir(resolution);
 }
 
 async function ensureDirectory(pathValue: string): Promise<void> {

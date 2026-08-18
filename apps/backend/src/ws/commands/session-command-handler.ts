@@ -506,6 +506,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
                 : {}),
               ...(command.projectAgent.capabilities !== undefined
                 ? { capabilities: command.projectAgent.capabilities }
+                : {}),
+              ...(command.projectAgent.placement !== undefined
+                ? { placement: command.projectAgent.placement }
                 : {})
             }
           : null

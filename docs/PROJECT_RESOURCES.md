@@ -31,7 +31,7 @@ Passive resources are available without an executable trust grant:
 - `skills/` for repository skills.
 - `specialists/` for repository specialist definitions.
 - `reference/` for repository reference docs. They are inventoried in prompt assembly and read on demand, not injected as one full blob of context.
-- `project-agents/` for repository Project Agent definitions. Activating a definition creates or links a normal session, then stores only a source link in Forge data. The session/history stay local and are not written back to the repository.
+- `project-agents/` for repository Project Agent definitions. Promoting an existing session or creating a Project Agent through Agent Creator can write a new definition here when you choose **Repository `.forge`**. Activating a definition creates or links a normal session, then stores only a source link in Forge data. The session/history stay local and are not written back to the repository. Forge creates `.forge/project-agents` if it is missing in a Git repo, but it will not overwrite an existing definition.
 
 Repository Project Agent definition layout:
 

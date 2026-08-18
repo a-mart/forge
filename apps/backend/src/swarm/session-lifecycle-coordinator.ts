@@ -39,7 +39,7 @@ import {
   normalizeOptionalAgentId,
   normalizeOptionalModelId,
 } from "./swarm-manager-utils.js";
-import type { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import type { SwarmSessionService } from "./swarm-session-service.js";
 import type {
   AgentDescriptor,
@@ -73,6 +73,7 @@ export interface CreateProjectAgentInput {
   whenToUse: string;
   systemPrompt: string;
   capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"];
+  placement?: import("@forge/protocol").ProjectAgentPlacement;
 }
 
 export interface TerminalArchiveHooks {
@@ -123,7 +124,7 @@ export interface SessionLifecycleCoordinatorOptions {
     "archiveSession" | "restoreSession" | "archiveProfile" | "restoreProfile"
   >;
   archiveHydrator: Pick<ArchiveLastUsedHydrator, "hydrateArchivedRowsIfMissing">;
-  projectAgents: Pick<SwarmProjectAgentService, "createAndPromoteProjectAgent">;
+  projectAgents: Pick<ProjectAgentCoordinator, "createAndPromoteProjectAgent">;
   capture: Pick<CaptureCascadeCoordinator, "run">;
   plans: Pick<SessionPlanCoordinator, "forget">;
   goals: Pick<

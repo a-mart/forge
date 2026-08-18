@@ -6,13 +6,13 @@ import type {
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ManagerProfile,
-  ProjectAgentCapability,
   ProjectAgentConfigSourceSnapshot,
   ProjectAgentInfo,
   ProjectAgentShareEligibleTarget,
   ProjectAgentShareGrantInfo,
   PersistedProjectAgentConfig,
   SessionModelUpdateMode,
+  SessionProjectAgentInput,
 } from '@forge/protocol'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
 import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
@@ -88,7 +88,7 @@ export interface AgentSidebarProps {
   /** Reconciled local-instance authority, including hidden/offline anchors. */
   builderSidebarOrder?: BuilderSidebarOrderRef[]
   onMoveBuilderProject?: (active: BuilderSidebarOrderRef, over: BuilderSidebarOrderRef) => void
-  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null) => Promise<void>
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: SessionProjectAgentInput | null) => Promise<void>
   onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[]; source?: ProjectAgentConfigSourceSnapshot }>
   onGetProjectAgentSharing?: (agentId: string) => Promise<{ agentId: string; grants: ProjectAgentShareGrantInfo[]; eligibleTargets: ProjectAgentShareEligibleTarget[] }>
   onSetProjectAgentSharing?: (agentId: string, targetProfileIds: string[]) => Promise<{ agentId: string; grants: ProjectAgentShareGrantInfo[]; eligibleTargets: ProjectAgentShareEligibleTarget[]; addedTargetProfileIds: string[]; removedTargetProfileIds: string[] }>
@@ -254,7 +254,9 @@ export interface ProjectAgentSettingsSheetProps {
   agentId: string
   sessionLabel: string
   currentProjectAgent: ProjectAgentInfo | null
-  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }) => Promise<void>
+  onSave: (agentId: string, projectAgent: SessionProjectAgentInput) => Promise<void>
+  wsUrl?: string
+  profileId?: string
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
   onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[]; source?: ProjectAgentConfigSourceSnapshot }>

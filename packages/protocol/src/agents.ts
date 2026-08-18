@@ -52,6 +52,28 @@ export type ProjectAgentCapability = (typeof PROJECT_AGENT_CAPABILITIES)[number]
 export const PROJECT_AGENT_SOURCE_TYPES = ['local', 'repo'] as const
 export type ProjectAgentSourceType = (typeof PROJECT_AGENT_SOURCE_TYPES)[number]
 
+/** Input placement for promotion/creation. Omitted values default to local. */
+export const PROJECT_AGENT_PLACEMENTS = ['local', 'repo'] as const
+export type ProjectAgentPlacement = (typeof PROJECT_AGENT_PLACEMENTS)[number]
+
+export interface SessionProjectAgentInput {
+  whenToUse: string
+  systemPrompt?: string
+  handle?: string
+  capabilities?: ProjectAgentCapability[]
+  placement?: ProjectAgentPlacement
+}
+
+export function isProjectAgentPlacement(value: unknown): value is ProjectAgentPlacement {
+  return value === 'local' || value === 'repo'
+}
+
+export function normalizeProjectAgentPlacement(
+  placement: ProjectAgentPlacement | undefined | null,
+): ProjectAgentPlacement {
+  return placement ?? 'local'
+}
+
 export const PROJECT_AGENT_SOURCE_STATUSES = [
   'local',
   'valid',

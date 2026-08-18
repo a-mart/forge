@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ProjectAgentPlacement } from "@forge/protocol";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor } from "../types.js";
 
@@ -11,7 +12,7 @@ export function buildCreateProjectAgentTool(
     name: "create_project_agent",
     label: "Create Project Agent",
     description:
-      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, handle (if customized), whenToUse directive, and role instructions for the systemPrompt field.",
+      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, handle (if customized), location, whenToUse directive, and role instructions for the systemPrompt field.",
     parameters: Type.Object({
       sessionName: Type.String({
         minLength: 1,
@@ -32,7 +33,18 @@ export function buildCreateProjectAgentTool(
           "Role/system instructions for the new project agent, layered with Forge's Project Agent base prompt.",
           "Do not include a full standalone manager prompt unless the role specifically requires stricter domain rules."
         ].join(" ")
-      })
+      }),
+      location: Type.Optional(Type.Union([
+        Type.Literal("local"),
+        Type.Literal("repo")
+      ], {
+        description: [
+          "Where to store the Project Agent definition.",
+          "Use local for Local to Forge (profile-local, default).",
+          "Use repo to write a repository definition under .forge/project-agents/<handle>/.",
+          "Session history always stays local."
+        ].join(" ")
+      }))
     }),
     async execute(_toolCallId, params) {
       if (!host.createAndPromoteProjectAgent) {
@@ -44,8 +56,15 @@ export function buildCreateProjectAgentTool(
         handle?: string;
         whenToUse: string;
         systemPrompt: string;
+        location?: ProjectAgentPlacement;
       };
-      const result = await host.createAndPromoteProjectAgent(creatorDescriptor.agentId, parsed);
+      const result = await host.createAndPromoteProjectAgent(creatorDescriptor.agentId, {
+        sessionName: parsed.sessionName,
+        ...(parsed.handle !== undefined ? { handle: parsed.handle } : {}),
+        whenToUse: parsed.whenToUse,
+        systemPrompt: parsed.systemPrompt,
+        placement: parsed.location ?? "local",
+      });
       host.recordToolSideEffect?.(creatorDescriptor.agentId, {
         toolName: "create_project_agent",
         toolCallId: _toolCallId,

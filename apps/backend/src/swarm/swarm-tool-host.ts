@@ -100,6 +100,7 @@ export interface SwarmToolHost {
       handle?: string;
       whenToUse: string;
       systemPrompt: string;
+      placement?: import("@forge/protocol").ProjectAgentPlacement;
     }
   ): Promise<{ agentId: string; handle: string }>;
   publishToUser(

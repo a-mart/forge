@@ -362,8 +362,9 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 **Promoting a session:** Right-click any session in the sidebar and select "Promote to Project Agent." You'll provide:
 
 - **Handle** — A unique identifier like `@docs` or `@research`. Used for discovery and @mentions in chat.
+- **Location** — **Local to Forge** (default) keeps the definition in this profile. **Repository `.forge`** writes `.forge/project-agents/<handle>/config.json` and a required `prompt.md`. Session history stays local either way. Repository placement needs a Git root or valid `.forge` override.
 - **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
-- **Role instructions** — Stored in the `systemPrompt`/`prompt.md` field and layered after Forge's Project Agent base prompt. Use this for the project agent's role, scope, constraints, validation habits, and domain-specific behavior.
+- **Role instructions** — Stored in the `systemPrompt`/`prompt.md` field and layered after Forge's Project Agent base prompt. Use this for the project agent's role, scope, constraints, validation habits, and domain-specific behavior. Required when placing the definition in the repository.
 
 Profile-local promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Repositories can also ship Project Agent definitions under `.forge/project-agents/<definitionId>/` with `config.json`, live `prompt.md`, and optional read-only `reference/*.md`; activating/linking creates a normal session source link, and unlinking preserves session history and repository files. Valid repo-defined Project Agents appear in the sidebar as inactive/repo-defined rows; clicking one opens the Repository Resources activation sheet, and the agent stays unavailable until it is activated/linked. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
 
@@ -373,7 +374,7 @@ Profile-local promoted agents are stored in dedicated per-handle directories und
 
 1. Spawns a scout worker to explore your repository structure, `AGENTS.md`, git history, and existing project agent role instructions
 2. Runs a focused 2–3 turn interview about the new agent's role, autonomy level, and validation expectations
-3. Drafts a complete proposal including session name, handle, `whenToUse` description (max 280 chars), and role instructions for the `systemPrompt` field
+3. Drafts a complete proposal including session name, handle, location (`local` or `repo`), `whenToUse` description (max 280 chars), and role instructions for the `systemPrompt` field
 4. Waits for your explicit approval before proceeding
 5. Atomically creates and promotes the new session via `create_project_agent`
 

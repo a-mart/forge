@@ -844,7 +844,7 @@ export class SwarmManagerRuntimeComposition {
       lifecycle,
       archive: services.archive,
       archiveHydrator: services.archiveHydrator,
-      projectAgents: services.projectAgentService,
+      projectAgents: services.projectAgents,
       capture: this.captureCascade,
       plans: this.requirePlans(),
       goals: this.requireGoals(),

@@ -10,7 +10,7 @@ The wizard flow:
 
 1. **Repo exploration** — The Agent Architect scans your repository to understand its structure and existing agents.
 2. **Interview** — You're asked 2-3 focused questions about the new agent's role and scope.
-3. **Proposal** — The architect drafts a configuration including handle, "when to use" blurb, and role instructions for the `systemPrompt` field. The resulting agent is stored in a dedicated per-handle directory under `profiles/<profileId>/project-agents/<handle>/`.
+3. **Proposal** — The architect drafts a configuration including handle, location (Local to Forge or Repository `.forge`), "when to use" blurb, and role instructions for the `systemPrompt` field. Local agents are stored in a dedicated per-handle directory under `profiles/<profileId>/project-agents/<handle>/`. Repository placement writes `.forge/project-agents/<handle>/config.json` and required `prompt.md`; session history stays local either way.
 
 Repositories can also define Project Agents under `.forge/project-agents/<definitionId>/`. Valid definitions appear in the sidebar as inactive/repo-defined rows; clicking one opens the Repository Resources activation sheet. Repo-defined agents remain unavailable until they are activated/linked.
 4. **Creation** — After you approve, the agent is atomically created and promoted to a project agent.
@@ -22,8 +22,9 @@ The wizard session shows a violet Sparkles icon in the sidebar. Once the agent i
 Right-click any existing session and choose **Promote to Project Agent**. A settings drawer opens where you fill in:
 
 - **Handle** — A unique identifier like `@releases` or `@docs`. Must be unique within the profile and cannot change after promotion.
+- **Location** — **Local to Forge** (default) or **Repository `.forge`**. Repository placement writes `.forge/project-agents/<handle>/` and needs a Git root or valid `.forge` override. Session history stays local.
 - **When to use** — A description that tells other sessions when to message this agent.
-- **Role instructions** (optional) — Custom instructions tailored to the agent's role, stored in the agent's `prompt.md` file and layered with Forge's Project Agent base prompt.
+- **Role instructions** — Custom instructions tailored to the agent's role, stored in the agent's `prompt.md` file and layered with Forge's Project Agent base prompt. Optional for local placement; required for repository placement.
 - **Reference docs** — Optional markdown documents scoped to this agent and injected into its prompt context. Add them from Project Agent Settings by entering a filename and content, or importing a `.md` / `.txt` file.
 
 Click **Generate recommendations** to have AI suggest both the "when to use" text and role instructions based on the session's conversation history. You can edit the suggestions before saving.
