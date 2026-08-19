@@ -243,10 +243,11 @@ export class ExternalChromeHostCoordinator {
         await this.proveExactLifecycleReleaseUnlocked(this.repairDeployment ? 'deployment-repair' : 'auth-rotation')
         await this.stopRuntime(false)
       }
-      // Staging is immutable and registration repair preserves this data dir's
-      // native-host route. When a crash left no listener, these are connectivity
-      // recovery steps rather than permission to discard the surviving lease.
-      if (this.repairDeployment) await this.repairDeployment()
+      // When a crash left no listener, registration/auth repair may restore the
+      // exact recovery route without discarding the surviving lease. Deployment
+      // activation waits for a subsequent repair that can cross the lifecycle
+      // barrier through that restored listener.
+      if (this.repairDeployment && !offlineCheckpointRecovery) await this.repairDeployment()
       if (rotatesAuth) {
         const rotated = await this.auth.rotate()
         rotated.key.fill(0)
