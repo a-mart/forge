@@ -169,20 +169,41 @@ describe('External Chrome native registration', () => {
     }).verify(executable)).toBe('untrusted')
   })
 
-  it('reports deterministic platform signature states through an injected process facade', async () => {
+  it('trusts a macOS native host after strict code-signature verification', async () => {
     const dataRoot = await root()
     await prepareExecutable(dataRoot, 'darwin')
     const executable = resolveExternalChromeDataPaths(dataRoot, 'darwin').nativeHostExecutable
-    const calls: string[] = []
+    const calls: Array<{ command: string; args: string[] }> = []
     const processFacade: NativeProcessFacade = {
-      run: async (command) => {
-        calls.push(command)
-        return { stdout: '', stderr: '', exitCode: command.endsWith('codesign') ? 0 : 1 }
+      run: async (command, args) => {
+        calls.push({ command, args })
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    }
+    expect(await new PlatformExecutableTrustVerifier('darwin', processFacade).verify(executable)).toBe('trusted')
+    expect(calls).toEqual([{
+      command: '/usr/bin/codesign',
+      args: ['--verify', '--strict', '--verbose=2', executable],
+    }])
+    expect(await new PlatformExecutableTrustVerifier('linux', processFacade).verify(executable)).toBe('unsupported')
+  })
+
+  it('rejects a macOS native host when strict code-signature verification fails', async () => {
+    const dataRoot = await root()
+    await prepareExecutable(dataRoot, 'darwin')
+    const executable = resolveExternalChromeDataPaths(dataRoot, 'darwin').nativeHostExecutable
+    const calls: Array<{ command: string; args: string[] }> = []
+    const processFacade: NativeProcessFacade = {
+      run: async (command, args) => {
+        calls.push({ command, args })
+        return { stdout: '', stderr: 'invalid signature', exitCode: 1 }
       },
     }
     expect(await new PlatformExecutableTrustVerifier('darwin', processFacade).verify(executable)).toBe('untrusted')
-    expect(calls).toEqual(['/usr/bin/codesign', '/usr/sbin/spctl'])
-    expect(await new PlatformExecutableTrustVerifier('linux', processFacade).verify(executable)).toBe('unsupported')
+    expect(calls).toEqual([{
+      command: '/usr/bin/codesign',
+      args: ['--verify', '--strict', '--verbose=2', executable],
+    }])
   })
 
   it('passes Windows registry paths as literal arguments and escapes Authenticode PowerShell paths', async () => {

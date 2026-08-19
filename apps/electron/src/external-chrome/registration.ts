@@ -166,9 +166,7 @@ export class PlatformExecutableTrustVerifier implements ExecutableTrustVerifier 
     if (this.platform === 'linux') return 'unsupported'
     if (this.platform === 'darwin') {
       const codeSign = await this.processFacade.run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', executable])
-      if (codeSign.exitCode !== 0) return 'untrusted'
-      const gatekeeper = await this.processFacade.run('/usr/sbin/spctl', ['--assess', '--type', 'execute', executable])
-      return gatekeeper.exitCode === 0 ? 'trusted' : 'untrusted'
+      return codeSign.exitCode === 0 ? 'trusted' : 'untrusted'
     }
     if (this.platform === 'win32') {
       const escaped = executable.replaceAll("'", "''")
