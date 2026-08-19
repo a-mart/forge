@@ -1087,7 +1087,9 @@ function sameScope(left: SecureSecretScope, right: SecureSecretScope): boolean {
 }
 
 function validAlias(value: string): boolean {
-  return /^[a-z0-9][a-z0-9._/-]{0,127}$/i.test(value.trim())
+  return value.trim().length > 0
+    && value.length <= 256
+    && !value.includes('\0')
 }
 
 function formatDate(value: string): string {

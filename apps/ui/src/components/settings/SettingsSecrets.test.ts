@@ -613,6 +613,41 @@ describe('SettingsSecrets', () => {
     }
   })
 
+  it.each([
+    'RAPA\\cosborne',
+    'cosborne@example.com',
+  ])('saves a local secret with the domain account alias %s', async (alias) => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: alias },
+    })
+    fireEvent.change(getByLabelText(container, 'Private value'), {
+      target: { value: 'private-canary' },
+    })
+
+    const saveButton = getByRole(
+      container,
+      'button',
+      { name: 'Save local secret' },
+    ) as HTMLButtonElement
+    expect(saveButton.disabled).toBe(false)
+    fireEvent.click(saveButton)
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ displayAlias: alias }),
+      )
+    })
+  })
+
   it('clears submitted local material immediately and leaves no secret value in the DOM', async () => {
     let resolveCreate: ((value: typeof SECRET_SUMMARY) => void) | undefined
     secureSecretsApiMock.createLocalSecret.mockImplementation(() => new Promise((resolve) => {
