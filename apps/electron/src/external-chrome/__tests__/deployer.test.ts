@@ -237,6 +237,114 @@ describe('ExternalChromeDeployer', () => {
     expect(await fs.readFile(updating.paths.nativeHostExecutable, 'utf8')).toBe('native-new')
   })
 
+  it('repairs a mismatched deployment by staging and activating without a restart', async () => {
+    const input = await fixture('1.0.0', 'repair-payload', 'linux', 'x64', 'repair-shell', 'repair-native')
+    const deployer = new ExternalChromeDeployer({
+      dataRoot: input.dataRoot, resourcesRoot: input.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    })
+    await deployer.deploy()
+    const selector = JSON.parse(await fs.readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string }
+    await fs.writeFile(path.join(deployer.paths.payloads, selector.payloadDirectory, 'service-worker.js'), 'tampered')
+    expect(await deployer.verifyDeployment()).toEqual({ state: 'mismatch' })
+
+    await expect(new ExternalChromeDeploymentRecovery(deployer).repair()).resolves.toMatchObject({ packageVersion: '1.0.0' })
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready', install: { packageVersion: '1.0.0' } })
+    expect(await deployer.pendingDeployment()).toBeNull()
+  })
+
+  it('keeps a compatible update staged when Repair finds the current deployment ready', async () => {
+    const base = await fixture('1.0.0', 'ready-old', 'linux', 'x64', 'ready-shell-old', 'ready-native-old')
+    await new ExternalChromeDeployer({
+      dataRoot: base.dataRoot, resourcesRoot: base.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    }).deploy()
+    const update = await fixture('1.1.0', 'ready-new', 'linux', 'x64', 'ready-shell-new', 'ready-native-new')
+    const updating = new ExternalChromeDeployer({
+      dataRoot: base.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    })
+
+    await expect(new ExternalChromeDeploymentRecovery(updating).repair()).resolves.toBeNull()
+    expect(await updating.verifyDeployment()).toMatchObject({ state: 'ready', install: { packageVersion: '1.0.0' } })
+    expect(await updating.pendingDeployment()).toMatchObject({ packageVersion: '1.1.0' })
+    expect(JSON.parse(await fs.readFile(path.join(updating.paths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: '1.0.0' })
+    expect(await fs.readFile(updating.paths.nativeHostExecutable, 'utf8')).toBe('ready-native-old')
+  })
+
+  it('activates a staged release at startup only after proving the old deployment is Desktop-incompatible', async () => {
+    const old = await fixture('1.0.0', 'old-payload', 'linux', 'x64', 'old-shell', 'old-native')
+    const installed = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: old.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    })
+    await installed.deploy()
+
+    const update = await fixture('2.0.0', 'new-payload', 'linux', 'x64', 'new-shell', 'new-native')
+    update.manifest.compatibility.desktop = { min: '0.23.0', max: '0.23.999' }
+    await fs.writeFile(path.join(update.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(update.manifest)}\n`)
+    const upgrading = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.23.1', platform: 'linux', architecture: 'x64',
+    })
+
+    expect(await upgrading.verifyDeploymentForStartup()).toMatchObject({
+      state: 'desktop-incompatible', install: { packageVersion: '1.0.0' },
+    })
+    expect(await upgrading.verifyDeployment()).toEqual({ state: 'mismatch' })
+    await expect(new ExternalChromeDeploymentRecovery(upgrading).deployAtStartup({ development: false }))
+      .resolves.toMatchObject({ packageVersion: '2.0.0' })
+    expect(await upgrading.verifyDeployment()).toMatchObject({ state: 'ready', install: { packageVersion: '2.0.0' } })
+    expect(await fs.readFile(upgrading.paths.nativeHostExecutable, 'utf8')).toBe('new-native')
+    expect(await upgrading.canRollback()).toBe(false)
+  })
+
+  it('does not auto-activate over a corrupt old deployment even when its metadata is Desktop-incompatible', async () => {
+    const old = await fixture('1.0.0', 'old-payload', 'linux', 'x64', 'old-shell', 'old-native')
+    await new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: old.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    }).deploy()
+    const oldPaths = resolveExternalChromeDataPaths(old.dataRoot, 'linux')
+    const oldSelector = JSON.parse(await fs.readFile(path.join(oldPaths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string }
+    await fs.writeFile(path.join(oldPaths.payloads, oldSelector.payloadDirectory, 'service-worker.js'), 'tampered')
+
+    const update = await fixture('2.0.0', 'new-payload', 'linux', 'x64', 'new-shell', 'new-native')
+    update.manifest.compatibility.desktop = { min: '0.23.0', max: '0.23.999' }
+    await fs.writeFile(path.join(update.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(update.manifest)}\n`)
+    const upgrading = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.23.1', platform: 'linux', architecture: 'x64',
+    })
+
+    expect(await upgrading.verifyDeploymentForStartup()).toEqual({ state: 'mismatch' })
+    await expect(new ExternalChromeDeploymentRecovery(upgrading).deployAtStartup({ development: false })).resolves.toBeNull()
+    expect(await upgrading.pendingDeployment()).toMatchObject({ packageVersion: '2.0.0' })
+    expect(JSON.parse(await fs.readFile(path.join(oldPaths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: '1.0.0' })
+    expect(await fs.readFile(oldPaths.nativeHostExecutable, 'utf8')).toBe('old-native')
+  })
+
+  it('restores a proven incompatible deployment after interrupted activation and safely retries the upgrade', async () => {
+    const old = await fixture('1.0.0', 'old-payload', 'linux', 'x64', 'old-shell', 'old-native')
+    await new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: old.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    }).deploy()
+    const update = await fixture('2.0.0', 'new-payload', 'linux', 'x64', 'new-shell', 'new-native')
+    update.manifest.compatibility.desktop = { min: '0.23.0', max: '0.23.999' }
+    await fs.writeFile(path.join(update.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(update.manifest)}\n`)
+    const crashing = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.23.1', platform: 'linux', architecture: 'x64',
+      afterPhase: (phase) => { if (phase === 'shell-swapped') throw new Error('crash:shell-swapped') },
+    })
+    await expect(new ExternalChromeDeploymentRecovery(crashing).deployAtStartup({ development: false }))
+      .rejects.toThrow('crash:shell-swapped')
+
+    const restarted = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.23.1', platform: 'linux', architecture: 'x64',
+    })
+    await new ExternalChromeDeploymentRecovery(restarted).run()
+    expect(await restarted.verifyDeploymentForStartup()).toMatchObject({
+      state: 'desktop-incompatible', install: { packageVersion: '1.0.0' },
+    })
+    expect(await fs.readFile(restarted.paths.nativeHostExecutable, 'utf8')).toBe('old-native')
+    await expect(new ExternalChromeDeploymentRecovery(restarted).deployAtStartup({ development: false }))
+      .resolves.toMatchObject({ packageVersion: '2.0.0' })
+    expect(await restarted.verifyDeployment()).toMatchObject({ state: 'ready', install: { packageVersion: '2.0.0' } })
+  })
+
   it('rejects concurrent deployment locks', async () => {
     const input = await fixture()
     const paths = resolveExternalChromeDataPaths(path.resolve(input.dataRoot))

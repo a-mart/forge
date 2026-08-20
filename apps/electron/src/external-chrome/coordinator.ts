@@ -47,6 +47,8 @@ const DEFAULT_RENDEZVOUS_TTL_MS = 15_000
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000
 const TAKEOVER_AUTHORIZATION_TTL_MS = 15 * 60_000
 
+type CoordinatorEnableMode = 'normal' | 'takeover' | 'checkpoint-recovery'
+
 export interface ExternalChromeRollbackController {
   canRollback(): Promise<boolean>
   rollback(): Promise<unknown>
@@ -173,12 +175,12 @@ export class ExternalChromeHostCoordinator {
 
   resumeIfEnabled(): Promise<void> {
     return this.serialize(async () => {
-      if (await this.readDesiredEnabled()) await this.enableUnlocked(false)
+      if (await this.readDesiredEnabled()) await this.enableUnlocked('normal')
     })
   }
 
   enable(): Promise<ExternalChromeCoordinatorStatus> {
-    return this.serialize(() => this.enableUnlocked(false))
+    return this.serialize(() => this.enableUnlocked('normal'))
   }
 
   takeover(): Promise<ExternalChromeCoordinatorStatus> {
@@ -211,7 +213,7 @@ export class ExternalChromeHostCoordinator {
       await this.registration.repair()
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
-      const result = await this.enableUnlocked(true)
+      const result = await this.enableUnlocked('takeover')
       await this.clearLifecycleRecoveryUnlocked()
       return result
     })
@@ -238,21 +240,24 @@ export class ExternalChromeHostCoordinator {
       const sameDataDirRecoveryAuthority = authorityBefore.state === 'none' ||
         (authorityBefore.state === 'stale' && authorityOwner?.dataDirHash === this.dataDirHash)
       const offlineCheckpointRecovery = this.endpoint === null && wasEnabled && hasActiveCheckpoints && sameDataDirRecoveryAuthority
+      const cleanupOnlyCheckpointRecovery = offlineCheckpointRecovery &&
+        (await this.deploymentVerifier?.verifyDeployment().catch(() => ({ state: 'mismatch' as const })))?.state !== 'ready'
       const invalidatesRuntime = this.repairDeployment !== undefined || rotatesAuth
       if (invalidatesRuntime && !offlineCheckpointRecovery) {
         await this.proveExactLifecycleReleaseUnlocked(this.repairDeployment ? 'deployment-repair' : 'auth-rotation')
         await this.stopRuntime(false)
       }
-      // Staging is immutable and registration repair preserves this data dir's
-      // native-host route. When a crash left no listener, these are connectivity
-      // recovery steps rather than permission to discard the surviving lease.
-      if (this.repairDeployment) await this.repairDeployment()
+      // When a crash left no listener, registration/auth repair may restore the
+      // exact recovery route without discarding the surviving lease. A mismatched
+      // deployment gets a cleanup-only listener; activation waits for a subsequent
+      // repair that can cross the lifecycle barrier through the restored route.
+      if (this.repairDeployment && !offlineCheckpointRecovery) await this.repairDeployment()
       if (rotatesAuth) {
         const rotated = await this.auth.rotate()
         rotated.key.fill(0)
       }
       await this.registration.repair()
-      if (wasEnabled) await this.enableUnlocked(false)
+      if (wasEnabled) await this.enableUnlocked(cleanupOnlyCheckpointRecovery ? 'checkpoint-recovery' : 'normal')
       if (invalidatesRuntime && !offlineCheckpointRecovery) await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
@@ -273,7 +278,7 @@ export class ExternalChromeHostCoordinator {
         throw error
       }
       this.recoveryOverride = 'rolled-back'
-      if (wasEnabled) await this.enableUnlocked(true)
+      if (wasEnabled) await this.enableUnlocked('takeover')
       await fs.rm(this.recoveryMarkerPath, { force: true })
       this.quiesced = false
       return this.statusUnlocked()
@@ -306,7 +311,7 @@ export class ExternalChromeHostCoordinator {
       await this.stopRuntime(false)
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
-      if (wasEnabled) await this.enableUnlocked(true)
+      if (wasEnabled) await this.enableUnlocked('takeover')
       await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
@@ -357,7 +362,7 @@ export class ExternalChromeHostCoordinator {
     this.quiesced = false
   }
 
-  private async enableUnlocked(allowTakeover: boolean): Promise<ExternalChromeCoordinatorStatus> {
+  private async enableUnlocked(mode: CoordinatorEnableMode): Promise<ExternalChromeCoordinatorStatus> {
     if (this.endpoint) {
       // A failed user lifecycle barrier intentionally keeps the authenticated
       // listener alive for exact reconnect/retry, but Enable must not reopen the
@@ -371,10 +376,11 @@ export class ExternalChromeHostCoordinator {
     const crossDataDirOwner = beforeOwner?.dataDirHash !== undefined && beforeOwner.dataDirHash !== this.dataDirHash
     const sameDataDirStaleAuthority = before.state === 'stale' && beforeOwner?.dataDirHash === this.dataDirHash
     const takeoverAuthorization = await this.readTakeoverAuthorization()
+    const allowTakeover = mode === 'takeover'
     if (before.state === 'other-live' || (!allowTakeover && (
       crossDataDirOwner || (before.state === 'stale' && !sameDataDirStaleAuthority) || takeoverAuthorization !== null
     ))) return this.statusUnlocked()
-    if ((await this.inspectSetup()).pathState !== 'ready') {
+    if (mode !== 'checkpoint-recovery' && (await this.inspectSetup()).pathState !== 'ready') {
       throw new Error('External Chrome unpacked extension deployment is missing or invalid')
     }
 
@@ -396,20 +402,29 @@ export class ExternalChromeHostCoordinator {
       // Durable lease authority is loaded before the endpoint can accept native hello.
       // Host registration/replacement and IPC recovery therefore cannot bypass checkpoints.
       await this.relay.ready()
-      const [deployment, pendingDeployment] = await Promise.all([
-        this.deploymentVerifier?.verifyDeployment(),
-        this.deploymentVerifier?.pendingDeployment?.() ?? null,
-      ])
-      const expectedDeployment = pendingDeployment ?? (deployment?.state === 'ready' ? deployment.install : null)
-      this.relay.configureExpectedRuntime(expectedDeployment ? {
-        payloadVersion: expectedDeployment.payloadVersion,
-        sha256: expectedDeployment.payloadSha256,
-        shellAbi: expectedDeployment.shellAbi,
-      } : null, pendingDeployment && this.deploymentVerifier?.activateStaged
-        ? async () => { await this.deploymentVerifier!.activateStaged!() }
-        : undefined)
+      if (mode === 'checkpoint-recovery') {
+        // Cleanup-only recovery trusts no deployment identity and cannot trigger
+        // staged activation. Its sole purpose is exact checkpoint reconciliation.
+        this.relay.configureExpectedRuntime(null)
+      } else {
+        const [deployment, pendingDeployment] = await Promise.all([
+          this.deploymentVerifier?.verifyDeployment(),
+          this.deploymentVerifier?.pendingDeployment?.() ?? null,
+        ])
+        const expectedDeployment = pendingDeployment ?? (deployment?.state === 'ready' ? deployment.install : null)
+        this.relay.configureExpectedRuntime(expectedDeployment ? {
+          payloadVersion: expectedDeployment.payloadVersion,
+          sha256: expectedDeployment.payloadSha256,
+          shellAbi: expectedDeployment.shellAbi,
+        } : null, pendingDeployment && this.deploymentVerifier?.activateStaged
+          ? async () => { await this.deploymentVerifier!.activateStaged!() }
+          : undefined)
+      }
       const epoch = createRendezvousEpoch()
-      this.relay.activate({ epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key })
+      this.relay.activate(
+        { epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key },
+        mode === 'checkpoint-recovery' ? 'checkpoint-recovery' : 'online',
+      )
       const endpoint = await this.endpoints.listen({
         runDirectory: this.runDirectory,
         platform: this.platform,
@@ -421,7 +436,7 @@ export class ExternalChromeHostCoordinator {
       this.keyId = keyRecord.keyId
       await this.publish(expiresAt)
       await this.writeDesiredEnabled(true)
-      this.quiesced = false
+      this.quiesced = mode === 'checkpoint-recovery'
       this.startRefreshTimer()
       return await this.statusUnlocked()
     } catch (error) {

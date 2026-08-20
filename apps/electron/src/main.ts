@@ -844,7 +844,7 @@ if (!hasSingleInstanceLock) {
       ...(externalChromeResources.development ? { allowDevelopmentHost: true } : {}),
       ...(externalChromeDeployer ? {
         rollbackController: externalChromeDeployer,
-        repairDeployment: () => externalChromeDeployer!.stage(),
+        repairDeployment: () => new ExternalChromeDeploymentRecovery(externalChromeDeployer!).repair(),
         deploymentVerifier: externalChromeDeployer,
       } : {}),
     })

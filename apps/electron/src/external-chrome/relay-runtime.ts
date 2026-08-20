@@ -856,10 +856,13 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return 'ready'
   }
 
-  activate(input: { epoch: string; desktopInstanceId: string; keyId: string; secret: Uint8Array }): void {
+  activate(
+    input: { epoch: string; desktopInstanceId: string; keyId: string; secret: Uint8Array },
+    mode: 'online' | 'checkpoint-recovery' = 'online',
+  ): void {
     this.deactivate()
     this.context = { ...input, secret: Buffer.from(input.secret) }
-    this.operationsQuiesced = false
+    this.operationsQuiesced = mode === 'checkpoint-recovery'
   }
 
   deactivate(): void {

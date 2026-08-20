@@ -9,6 +9,7 @@ import { AuthenticatedRelayClient } from '../../../../native-messaging-host/src/
 import { NodeSocketConnector } from '../../../../native-messaging-host/src/transport.js'
 import { ExternalChromeHostCoordinator } from '../coordinator.js'
 import { ExternalChromeDeployer } from '../deployer.js'
+import { ExternalChromeDeploymentRecovery } from '../recovery.js'
 import { ExternalChromeAuthorityStore, PosixCurrentUserAccessController } from '../auth-rendezvous.js'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
 import { NodeExternalChromeEndpointAuthority, type ExternalChromeEndpointAuthority, type ExternalChromeEndpointHandle } from '../endpoint.js'
@@ -453,6 +454,29 @@ describe('ExternalChromeHostCoordinator', () => {
     expect(endpoints.handles[0]?.closed).toBe(true)
   })
 
+  it('repairs a real deployment mismatch and resumes a previously enabled coordinator', async () => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const endpoints = new FakeEndpoints()
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 304, username: 'repair-runtime-tester', uid: 501,
+      instanceId: 'desktop_repair_runtime', access, endpoints, registration, isProcessAlive: () => false,
+      repairDeployment: () => new ExternalChromeDeploymentRecovery(deployer).repair(), deploymentVerifier: deployer,
+    })
+    await coordinator.enable()
+    const selector = JSON.parse(await readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8')) as { payloadDirectory: string }
+    await writeFile(path.join(deployer.paths.payloads, selector.payloadDirectory, 'service-worker.js'), 'tampered')
+    expect(await coordinator.status()).toMatchObject({ state: 'online', setup: { pathState: 'mismatch' } })
+
+    const barrier = vi.spyOn(coordinator.transport(), 'quiesce')
+    await expect(coordinator.repair()).resolves.toMatchObject({ state: 'online', setup: { pathState: 'ready' } })
+    expect(barrier).toHaveBeenCalledWith('deployment-repair', expect.any(Number))
+    expect(endpoints.handles[0]?.closed).toBe(true)
+    expect(endpoints.handles.at(-1)?.closed).toBe(false)
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    await coordinator.disable()
+  })
+
   it('uses offline repair to restore a recovery listener without deleting active checkpoint evidence', async () => {
     const { dataRoot, deployer } = await root()
     const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
@@ -480,19 +504,106 @@ describe('ExternalChromeHostCoordinator', () => {
       state: 'online', authority: 'owned', auth: 'secure', recovery: 'reconnecting',
     })
     expect(barrier).not.toHaveBeenCalled()
-    expect(deploymentRepairs).toBe(1)
+    expect(deploymentRepairs).toBe(0)
     expect(await coordinator.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
       extensionInstanceId: 'instance_offline_repair', leaseId: 'lease-offline-repair', leaseEpoch: 8,
     })])
 
     // Once the listener exists, an explicit retry must cross the normal exact
-    // barrier before any live deployment/auth authority can be changed.
+    // barrier before staging and activating a deployment.
     barrier.mockResolvedValueOnce(undefined)
     await expect(coordinator.repair()).resolves.toMatchObject({ state: 'online' })
     expect(barrier).toHaveBeenCalledWith('deployment-repair', expect.any(Number))
-    expect(deploymentRepairs).toBe(2)
+    expect(deploymentRepairs).toBe(1)
     barrier.mockResolvedValueOnce(undefined)
     await coordinator.disable()
+  })
+
+  it('opens a cleanup-only listener before repairing an offline mismatched deployment with exact checkpoints', async () => {
+    const { dataRoot, deployer } = await root()
+    const deployed = await deployer.verifyDeployment()
+    if (deployed.state !== 'ready') throw new Error('fixture deployment is not ready')
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+    await mkdir(paths.state, { recursive: true })
+    await writeFile(path.join(paths.state, 'enabled.json'), `${JSON.stringify({ schemaVersion: 1, enabled: true })}\n`, { mode: 0o600 })
+    await writeFile(path.join(paths.state, 'leases.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      leases: [{
+        extensionInstanceId: 'instance_offline_mismatch', sessionAgentId: 'session-offline-mismatch', profileId: 'profile-offline-mismatch',
+        leaseId: 'lease-offline-mismatch', leaseEpoch: 9, tabIds: [40],
+        expiresAt: Date.now() + 60_000,
+      }],
+    })}\n`, { mode: 0o600 })
+    const selectorPath = path.join(deployer.paths.extension, 'current.json')
+    const selector = JSON.parse(await readFile(selectorPath, 'utf8')) as { payloadDirectory: string }
+    await writeFile(path.join(deployer.paths.payloads, selector.payloadDirectory, 'service-worker.js'), 'tampered')
+    const selectorBefore = await readFile(selectorPath, 'utf8')
+    const nativeBefore = await readFile(deployer.paths.nativeHostExecutable)
+    expect(await deployer.verifyDeployment()).toEqual({ state: 'mismatch' })
+
+    const endpoints = new TrackingRelayEndpoints()
+    const registration = new FakeRegistration()
+    let deploymentRepairs = 0
+    const coordinator: ExternalChromeHostCoordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 613, username: 'offline-mismatch-user', uid: 613,
+      instanceId: 'desktop_offline_mismatch', access,
+      authority: new ExternalChromeAuthorityStore(
+        dataRoot, 'linux', 'desktop_offline_mismatch', 613, access, () => false, Date.now,
+        path.join(dataRoot, '..', 'offline-mismatch-authority.json'),
+      ),
+      endpoints, registration, isProcessAlive: () => false,
+      repairDeployment: async () => {
+        deploymentRepairs += 1
+        expect(await coordinator.transport().hasActiveLeaseCheckpoints()).toBe(false)
+        await new ExternalChromeDeploymentRecovery(deployer).repair()
+      },
+      deploymentVerifier: deployer, setInterval: noSchedule, clearInterval: noUnschedule,
+    })
+    endpoints.accept = (socket) => coordinator.transport().accept(socket)
+    const barrier = vi.spyOn(coordinator.transport(), 'quiesce')
+    expect(await coordinator.transport().hasActiveLeaseCheckpoints()).toBe(true)
+    expect(await coordinator.status()).toMatchObject({ state: 'offline', authority: 'none' })
+
+    await expect(coordinator.repair()).resolves.toMatchObject({
+      state: 'quiesced', authority: 'owned', setup: { pathState: 'mismatch' },
+    })
+    expect(barrier).not.toHaveBeenCalled()
+    expect(deploymentRepairs).toBe(0)
+    expect(await readFile(selectorPath, 'utf8')).toBe(selectorBefore)
+    expect(await readFile(deployer.paths.nativeHostExecutable)).toEqual(nativeBefore)
+    expect(await coordinator.transport().leaseCheckpoints()).toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_offline_mismatch', leaseId: 'lease-offline-mismatch', leaseEpoch: 9,
+    })])
+    await expect(coordinator.transport().acquireTarget({
+      sessionAgentId: 'session-new', profileId: 'profile-new', operation: 'snapshot', preferredTabId: null,
+      reuseExisting: true, createIfNeeded: true, ownerEpoch: 10,
+    })).resolves.toMatchObject({
+      ok: false,
+      metadata: { phase: 'acquisition', mutationState: 'not-started', fallbackReason: 'runtime-not-ready' },
+    })
+
+    await expect(coordinator.repair()).rejects.toThrow(/could not prove release/u)
+    expect(deploymentRepairs).toBe(0)
+    expect(endpoints.handles[0]?.closed).toBe(false)
+    expect(await deployer.verifyDeployment()).toEqual({ state: 'mismatch' })
+
+    const reconnected = await connectToCoordinator(dataRoot)
+    await sendCoordinatorRuntimeHello(
+      reconnected, 'instance_offline_mismatch', deployed.install.payloadVersion, deployed.install.payloadSha256,
+    )
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const runtimeLoop = lifecycleExtensionLoop(reconnected, requests, 'instance_offline_mismatch')
+    await expect(coordinator.transport().leaseCheckpoints()).resolves.toEqual([])
+
+    await expect(coordinator.repair()).resolves.toMatchObject({
+      state: 'online', setup: { pathState: 'ready' },
+    })
+    expect(deploymentRepairs).toBe(1)
+    expect(requests.map((request) => request.method)).toEqual(expect.arrayContaining([
+      'forge.browser.release', 'forge.browser.acknowledgeRelease', 'forge.runtime.prepareUpdate',
+    ]))
+    expect(await deployer.verifyDeployment()).toMatchObject({ state: 'ready' })
+    await runtimeLoop
   })
 
   it('fails user lifecycle mutations closed before registration, auth, deployment, or authority changes and permits retry', async () => {

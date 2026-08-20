@@ -47,6 +47,10 @@ export type ExternalChromeDeploymentVerification =
   | { state: 'ready'; install: ExternalChromeInstallRecord }
   | { state: 'missing' | 'mismatch' }
 
+export type ExternalChromeStartupDeploymentVerification =
+  | ExternalChromeDeploymentVerification
+  | { state: 'desktop-incompatible'; install: ExternalChromeInstallRecord }
+
 export interface ExternalChromeDeploymentVerifier {
   verifyDeployment(): Promise<ExternalChromeDeploymentVerification>
   pendingDeployment?(): Promise<ExternalChromeInstallRecord | null>
@@ -290,7 +294,7 @@ export class ExternalChromeDeployer {
       const oldSelector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
       const oldInstall = await this.readInstall(this.paths.installState)
       const rollbackInstall = oldSelector && oldInstall && selectorMatchesInstall(oldSelector, oldInstall)
-        && await this.isValidRollbackAt(oldInstall, this.paths.extension)
+        && await this.isValidRecoveryAt(oldInstall, this.paths.extension)
         && await fileHasHash(this.fs, this.paths.nativeHostExecutable, oldInstall.nativeSha256) ? oldInstall : null
       const record = installRecordFromManifest(manifest)
       const rollbackInstallToRetain = rollbackInstall && stableJson(rollbackInstall) !== stableJson(record)
@@ -348,36 +352,38 @@ export class ExternalChromeDeployer {
   }
 
   async verifyDeployment(): Promise<ExternalChromeDeploymentVerification> {
+    const verification = await this.verifyDeploymentForStartup()
+    return verification.state === 'desktop-incompatible' ? { state: 'mismatch' } : verification
+  }
+
+  /**
+   * Startup may replace an old deployment only after its complete installed
+   * inventory is proven and only when Desktop-version compatibility is the
+   * remaining failure. The public setup surface continues to project this as a
+   * generic mismatch.
+   */
+  async verifyDeploymentForStartup(): Promise<ExternalChromeStartupDeploymentVerification> {
     try {
       const selector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
       const install = await this.readInstall(this.paths.installState)
       if (!selector || !install) {
         const extensionExists = await exists(this.fs, this.paths.extension)
         const installExists = await exists(this.fs, this.paths.installState)
-        return { state: extensionExists || installExists ? 'mismatch' : 'missing' }
+        const nativeExists = await exists(this.fs, this.paths.nativeHostExecutable)
+        return { state: extensionExists || installExists || nativeExists ? 'mismatch' : 'missing' }
       }
       if (!selectorMatchesInstall(selector, install)) return { state: 'mismatch' }
-      this.assertInstallCompatible(install)
       await this.assertSafeDeploymentDirectories()
       await this.validateShellAt(this.paths.extension, install.shellFiles, install.shellSha256)
       if (!(await this.isValidPayload(selector))) return { state: 'mismatch' }
-      const manifest = JSON.parse(await this.fs.readFile(this.safeInside(this.paths.extension, 'manifest.json'), 'utf8')) as unknown
-      if (!isExactObject(manifest, ['manifest_version', 'key']) && !isManifestWithKey(manifest)) return { state: 'mismatch' }
-      const key = (manifest as { key?: unknown }).key
-      if (typeof key !== 'string') return { state: 'mismatch' }
-      const publicKeyHash = createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex')
-      const extensionId = extensionIdFromPublicKeyHash(publicKeyHash)
-      if (
-        install.extensionId !== EXTERNAL_CHROME_EXTENSION_ID
-        || install.publicKeySha256 !== EXTERNAL_CHROME_PUBLIC_KEY_SHA256
-        || publicKeyHash !== install.publicKeySha256
-        || extensionId !== install.extensionId
-      ) return { state: 'mismatch' }
+      if (!(await this.hasExpectedExtensionIdentityAt(this.paths.extension, install))) return { state: 'mismatch' }
       const nativeHash = sha256(await this.fs.readFile(this.safeInside(this.paths.nativeHost, path.basename(this.paths.nativeHostExecutable))))
       if (nativeHash !== install.nativeSha256) return { state: 'mismatch' }
+      this.assertInstallNonDesktopCompatible(install)
+      if (!this.isInstallDesktopCompatible(install)) return { state: 'desktop-incompatible', install }
       return { state: 'ready', install }
-    } catch (error) {
-      return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'mismatch' }
+    } catch {
+      return { state: 'mismatch' }
     }
   }
 
@@ -441,7 +447,7 @@ export class ExternalChromeDeployer {
     const activationBackup = await this.readInstall(activationBackupPath)
     if (activationBackup) {
       const backupSelector = selectorFromInstall(activationBackup)
-      if (await exists(this.fs, previousShell) && await this.isValidRollbackAt(activationBackup, previousShell)) {
+      if (await exists(this.fs, previousShell) && await this.isValidRecoveryAt(activationBackup, previousShell)) {
         const interruptedShell = path.join(this.paths.integrationRoot, `extension.interrupted-${randomUUID()}`)
         if (await exists(this.fs, this.paths.extension)) await this.renameWithRetry(this.paths.extension, interruptedShell)
         await this.renameWithRetry(previousShell, this.paths.extension)
@@ -450,7 +456,7 @@ export class ExternalChromeDeployer {
         await this.atomicJson(path.join(this.paths.extension, 'current.json'), backupSelector)
       }
       if (await this.nativeAvailable(activationBackup.nativeSha256)) await this.selectNative(activationBackup.nativeSha256)
-      if (await this.isValidRollbackAt(activationBackup, this.paths.extension) && await fileHasHash(this.fs, this.paths.nativeHostExecutable, activationBackup.nativeSha256)) {
+      if (await this.isValidRecoveryAt(activationBackup, this.paths.extension) && await fileHasHash(this.fs, this.paths.nativeHostExecutable, activationBackup.nativeSha256)) {
         await this.atomicJson(this.paths.installState, activationBackup)
         await this.fs.rm(activationBackupPath, { force: true })
         await this.fs.rm(this.paths.journal, { force: true })
@@ -807,10 +813,33 @@ export class ExternalChromeDeployer {
     }
   }
 
+  private async hasExpectedExtensionIdentityAt(shellRoot: string, install: ExternalChromeInstallRecord): Promise<boolean> {
+    const manifest = JSON.parse(await this.fs.readFile(this.safeInside(shellRoot, 'manifest.json'), 'utf8')) as unknown
+    if (!isExactObject(manifest, ['manifest_version', 'key']) && !isManifestWithKey(manifest)) return false
+    const key = (manifest as { key?: unknown }).key
+    if (typeof key !== 'string') return false
+    const publicKeyHash = createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex')
+    return install.extensionId === EXTERNAL_CHROME_EXTENSION_ID
+      && install.publicKeySha256 === EXTERNAL_CHROME_PUBLIC_KEY_SHA256
+      && publicKeyHash === install.publicKeySha256
+      && extensionIdFromPublicKeyHash(publicKeyHash) === install.extensionId
+  }
+
   private async isValidRollbackAt(install: ExternalChromeInstallRecord, shellRoot: string): Promise<boolean> {
     try {
       this.assertInstallCompatible(install)
       await this.validateShellAt(shellRoot, install.shellFiles, install.shellSha256)
+      return await this.isValidPayloadAt(selectorFromInstall(install), path.join(shellRoot, 'payloads'))
+    } catch {
+      return false
+    }
+  }
+
+  private async isValidRecoveryAt(install: ExternalChromeInstallRecord, shellRoot: string): Promise<boolean> {
+    try {
+      this.assertInstallNonDesktopCompatible(install)
+      await this.validateShellAt(shellRoot, install.shellFiles, install.shellSha256)
+      if (!(await this.hasExpectedExtensionIdentityAt(shellRoot, install))) return false
       return await this.isValidPayloadAt(selectorFromInstall(install), path.join(shellRoot, 'payloads'))
     } catch {
       return false
@@ -992,11 +1021,15 @@ export class ExternalChromeDeployer {
   }
 
   private assertInstallCompatible(install: ExternalChromeInstallRecord): void {
+    this.assertInstallNonDesktopCompatible(install)
+    if (!this.isInstallDesktopCompatible(install)) {
+      throw new Error('External Chrome deployment is incompatible with this Desktop version')
+    }
+  }
+
+  private assertInstallNonDesktopCompatible(install: ExternalChromeInstallRecord): void {
     if (install.platform !== this.platform || install.architecture !== this.architecture) {
       throw new Error('External Chrome deployed native host targets another platform')
-    }
-    if (!versionInRange(this.options.desktopVersion, install.desktopCompatibility.min, install.desktopCompatibility.max)) {
-      throw new Error('External Chrome deployment is incompatible with this Desktop version')
     }
     if (install.shellAbi < install.shellAbiCompatibility.min || install.shellAbi > install.shellAbiCompatibility.max) {
       throw new Error('External Chrome deployed shell ABI is incompatible')
@@ -1004,6 +1037,10 @@ export class ExternalChromeDeployer {
     if (install.nativeProtocolCompatibility.max < EXTERNAL_CHROME_PROTOCOL_MIN_VERSION || install.nativeProtocolCompatibility.min > EXTERNAL_CHROME_PROTOCOL_MAX_VERSION) {
       throw new Error('External Chrome deployed native protocol is incompatible')
     }
+  }
+
+  private isInstallDesktopCompatible(install: ExternalChromeInstallRecord): boolean {
+    return versionInRange(this.options.desktopVersion, install.desktopCompatibility.min, install.desktopCompatibility.max)
   }
 
   private assertCompatible(manifest: ExternalChromePackageManifest): void {
