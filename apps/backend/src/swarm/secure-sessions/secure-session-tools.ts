@@ -479,7 +479,7 @@ function statusTool(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefin
     name: "secure_session_status",
     label: "Secure Session Status",
     description:
-      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Approved values are available only to secure_bash, never normal host bash. Use each exposure's exact targetName; do not guess an alias-derived environment name. For SSH in secure_bash with an environment delivery, set FORGE_ASKPASS_ENV to that exact targetName and SSH_ASKPASS=/usr/local/bin/forge-env-askpass with DISPLAY=forge-secure and SSH_ASKPASS_REQUIRE=force. Check only fixed success/presence outcomes—never print, measure, hash, encode, or otherwise derive information from a value. Secret values and provider locators are never returned.",
+      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Approved values are available only to secure_bash, never normal host bash. Use each exposure's exact targetName; do not guess an alias-derived environment name. For SSH in secure_bash with an environment delivery, set FORGE_ASKPASS_ENV to that exact targetName and SSH_ASKPASS=/usr/local/bin/forge-env-askpass with DISPLAY=forge-secure and SSH_ASKPASS_REQUIRE=force. An ssh_agent exposure instead sets SSH_AUTH_SOCK automatically, so use ordinary ssh, scp, or Git commands without requesting a private-key path. Check only fixed success/presence outcomes—never print, measure, hash, encode, or otherwise derive information from a value. Secret values and provider locators are never returned.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_toolCallId, params) {
       if (!isRecord(params) || Object.keys(params).length > 0) {
@@ -512,7 +512,7 @@ function requestAccessTool(
     name: "request_secret_access",
     label: "Request Secret Access",
     description:
-      "Request user approval to use a secret display alias in this Builder session. First call secure_session_status and use an existing active lease or pending equivalent when one is listed. Forge also checks this atomically and returns already_granted or already_requested instead of creating a duplicate. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
+      "Request user approval to use a secret display alias in this Builder session. First call secure_session_status and use an existing active lease or pending equivalent when one is listed. Forge also checks this atomically and returns already_granted or already_requested instead of creating a duplicate. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Use an ssh_agent exposure for a private SSH key that ordinary ssh, scp, or Git commands should use through SSH_AUTH_SOCK. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
     parameters: requestSecretAccessSchema,
     async execute(toolCallId, params) {
       let input: RequestSecureSecretAccessToolInput;

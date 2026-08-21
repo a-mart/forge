@@ -29,7 +29,7 @@ create a second secret grant or sandbox. While it is active:
 - the workspace is mounted directly into the container (at the same path on
   macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
-  a protected RAM-backed file, or an askpass helper;
+  a protected RAM-backed file, an askpass helper, or an execution-local SSH agent;
 - a task or timed grant can be reused across many commands from the manager or any
   eligible worker in the session;
 - output from both `bash` and `secure_bash` is filtered before the Pi tool
@@ -96,6 +96,23 @@ setsid ssh -o BatchMode=no user@example.internal
 no authority beyond the environment variables already granted to that command.
 An advanced `SSH_ASKPASS` binding remains available for tools that require that
 specific delivery shape.
+
+For a private SSH key, choose the **SSH agent** binding. Every active SSH-agent
+key is loaded through stdin into one agent created for each `secure_bash` command.
+Forge sets `SSH_AUTH_SOCK` automatically, so the agent can use ordinary `ssh`,
+`scp`, SFTP, and SSH-backed Git commands without naming a key file:
+
+```bash
+ssh server.example.internal 'systemctl status app'
+git fetch ssh://git@example.internal/team/repository.git
+```
+
+Private keys are never written to the workspace, a binding file, or Docker
+metadata. The socket and agent are removed when the direct command finishes;
+the next command transparently receives a fresh agent while its lease remains
+active. Multiple active SSH-key aliases share that command-local agent. A key
+that OpenSSH cannot load returns the fixed `ssh-agent-key-rejected` result and
+does not destroy the shared session container.
 
 Agents should report only fixed presence/success outcomes and command results. They
 must not print, count, hash, encode, or otherwise derive metadata from a secret value.
@@ -203,16 +220,17 @@ binding does not grant access.
 | Stdin | The value on the command's standard input | `read`, installers, and password consumers |
 | File | A mode `0400` or `0600` file under `/run/forge-secure/bindings/` | Certificates, config fragments, and clients requiring a path |
 | Askpass | A generated helper path in a named variable | SSH, Git, and compatible password prompts |
-| SSH agent | Not yet supported | Reserved for a future constrained signing broker |
+| SSH agent | `SSH_AUTH_SOCK` for a command-local agent loaded with every active SSH-key grant | SSH, SCP, SFTP, and SSH-backed Git without a private-key file |
 
 Examples of `secure_bash` commands after a grant:
 
 ```bash
 curl -H "Authorization: Bearer $WORK_API_TOKEN" https://internal.example/api
 ssh -o BatchMode=no server.example 'systemctl status app'
+git fetch ssh://git@server.example/team/repository.git
 node scripts/database-maintenance.mjs
 python3 scripts/rotate_credential.py "$ROTATION_TOKEN_FILE"
-scp "$DEPLOY_KEY_FILE" server.example:/tmp/deploy-key
+scp release.tar.gz server.example:/tmp/release.tar.gz
 ```
 
 There is no secret interpolation syntax in the model-originated command. The value
@@ -220,6 +238,11 @@ is added only to the selected child inside the task container. The same commands
 through normal `bash` do not receive the value. An `SSH_ASKPASS` binding automatically supplies the non-secret
 `DISPLAY` and `SSH_ASKPASS_REQUIRE=force` settings needed for password authentication
 without a terminal.
+
+An SSH-agent binding grants signing capability to the selected command and its
+children for that command's lifetime; it does not reveal the private key bytes.
+Detached background processes cannot keep using the agent after the direct
+`secure_bash` command returns.
 
 ## Automatic grants
 

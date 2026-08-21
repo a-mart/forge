@@ -28,6 +28,7 @@ describe("secure execution frame", () => {
     const environmentValue = Buffer.from("environment-canary");
     const fileValue = Buffer.from("file-canary");
     const askpassValue = Buffer.from("askpass-canary");
+    const sshAgentValue = Buffer.from("ssh-agent-private-key-canary");
     const sshConfig = Buffer.from(
       `Host test\n  UserKnownHostsFile ${SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER}\n`,
     );
@@ -57,6 +58,7 @@ describe("secure execution frame", () => {
             value: askpassValue,
           },
         ],
+        sshAgent: [{ value: sshAgentValue }],
         sshTrust: {
           config: sshConfig,
           knownHosts,
@@ -91,6 +93,12 @@ describe("secure execution frame", () => {
         byteLength: askpassValue.byteLength,
       },
     ]);
+    expect(header.sshAgent).toEqual([
+      {
+        index: 0,
+        byteLength: sshAgentValue.byteLength,
+      },
+    ]);
     expect(header.sshTrust).toEqual({
       configByteLength: sshConfig.byteLength,
       knownHostsByteLength: knownHosts.byteLength,
@@ -99,6 +107,7 @@ describe("secure execution frame", () => {
     expect(headerText).not.toContain(fileValue.toString("utf8"));
     expect(headerText).not.toContain(stdinValue.toString("utf8"));
     expect(headerText).not.toContain(askpassValue.toString("utf8"));
+    expect(headerText).not.toContain(sshAgentValue.toString("utf8"));
     expect(headerText).not.toContain(sshConfig.toString("utf8"));
     expect(headerText).not.toContain(knownHosts.toString("utf8"));
 
@@ -146,23 +155,25 @@ describe("secure execution frame", () => {
       }),
     );
 
-    expect(() =>
-      encodeSecureExecutionFrame({
-        ...base,
-        delivery: {
-          environment: [
-            {
-              name: "BASH_ENV",
-              value: Buffer.from("/tmp/untrusted-startup"),
-            },
-          ],
-        },
-      }),
-    ).toThrowError(
-      expect.objectContaining<Partial<SecureExecutionError>>({
-        code: "INVALID_DELIVERY",
-      }),
-    );
+    for (const name of ["BASH_ENV", "SSH_AUTH_SOCK"]) {
+      expect(() =>
+        encodeSecureExecutionFrame({
+          ...base,
+          delivery: {
+            environment: [
+              {
+                name,
+                value: Buffer.from("/tmp/untrusted-startup"),
+              },
+            ],
+          },
+        }),
+      ).toThrowError(
+        expect.objectContaining<Partial<SecureExecutionError>>({
+          code: "INVALID_DELIVERY",
+        }),
+      );
+    }
   });
 
   it("maps the landed public binding contract without weakening file modes", () => {
@@ -195,6 +206,10 @@ describe("secure execution frame", () => {
         binding: { deliveryKind: "stdin" },
         value,
       },
+      {
+        binding: { deliveryKind: "ssh_agent" },
+        value,
+      },
     ]);
 
     expect(delivery).toEqual({
@@ -208,20 +223,8 @@ describe("secure execution frame", () => {
         },
       ],
       askpass: [{ targetName: "SSH_ASKPASS", value }],
+      sshAgent: [{ value }],
       stdin: value,
     });
-
-    expect(() =>
-      createExecutionDeliveryFromBindings([
-        {
-          binding: { deliveryKind: "ssh_agent" },
-          value,
-        },
-      ]),
-    ).toThrowError(
-      expect.objectContaining<Partial<SecureExecutionError>>({
-        code: "INVALID_DELIVERY",
-      }),
-    );
   });
 });

@@ -67,8 +67,11 @@ function takeMaterial(frame, state, byteLength) {
   ) {
     throw new Error("invalid-material");
   }
-  const value = Buffer.from(frame.subarray(state.offset, state.offset + byteLength));
-  state.offset += byteLength;
+  const start = state.offset;
+  const end = start + byteLength;
+  const value = Buffer.from(frame.subarray(start, end));
+  frame.fill(0, start, end);
+  state.offset = end;
   return value;
 }
 
@@ -332,6 +335,162 @@ function materializeAskpass(frame, state, header, executionRoot, environment) {
   });
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function processHasExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function stopSshAgent(agent) {
+  if (!agent || processHasExited(agent)) return;
+  const exited = new Promise((resolve) => agent.once("exit", resolve));
+  agent.kill("SIGTERM");
+  await Promise.race([exited, delay(250)]);
+  if (!processHasExited(agent)) {
+    agent.kill("SIGKILL");
+    await Promise.race([exited, delay(250)]);
+  }
+  if (!processHasExited(agent)) {
+    throw new Error("ssh-agent-cleanup-failed");
+  }
+}
+
+function sshAgentEnvironment(environment, socketPath) {
+  const result = {};
+  for (const name of [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "LD_PRELOAD",
+    "NSS_WRAPPER_PASSWD",
+    "NSS_WRAPPER_GROUP",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    "DISPLAY",
+  ]) {
+    if (environment[name] !== undefined) result[name] = environment[name];
+  }
+  result.SSH_AUTH_SOCK = socketPath;
+  return result;
+}
+
+async function waitForSshAgentSocket(agent, socketPath, spawnState) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (spawnState.failed || processHasExited(agent)) {
+      throw new Error("ssh-agent-start-failed");
+    }
+    try {
+      const socket = fs.lstatSync(socketPath);
+      if (!socket.isSocket() || socket.isSymbolicLink()) {
+        throw new Error("invalid-ssh-agent-socket");
+      }
+      return;
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
+    await delay(10);
+  }
+  throw new Error("ssh-agent-start-timeout");
+}
+
+async function loadSshAgentKey(environment, bytes) {
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn("/usr/bin/ssh-add", ["-"], {
+        env: environment,
+        shell: false,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      let settled = false;
+      let timedOut = false;
+      let killWatchdog;
+      const finish = (loaded) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearTimeout(killWatchdog);
+        if (!loaded && !processHasExited(child)) child.kill("SIGKILL");
+        resolve(loaded);
+      };
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        if (!processHasExited(child)) child.kill("SIGKILL");
+        killWatchdog = setTimeout(() => {
+          if (processHasExited(child)) {
+            finish(false);
+            return;
+          }
+          if (settled) return;
+          settled = true;
+          reject(new Error("ssh-agent-cleanup-failed"));
+        }, 250);
+      }, 5_000);
+      child.once("error", () => finish(false));
+      child.once("close", (code) => finish(!timedOut && code === 0));
+      child.stdin.on("error", () => {});
+      child.stdin.end(bytes, () => bytes.fill(0));
+    });
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+async function materializeSshAgent(
+  frame,
+  state,
+  header,
+  executionRoot,
+  environment,
+) {
+  if (header.sshAgent.length === 0) return undefined;
+  for (const [index, descriptor] of header.sshAgent.entries()) {
+    if (
+      !descriptor ||
+      descriptor.index !== index ||
+      !Number.isSafeInteger(descriptor.byteLength) ||
+      descriptor.byteLength <= 0
+    ) {
+      throw new Error("invalid-ssh-agent");
+    }
+  }
+
+  const agentRoot = path.join(executionRoot, "ssh-agent");
+  const socketPath = path.join(agentRoot, "agent.sock");
+  fs.mkdirSync(agentRoot, { mode: 0o700 });
+  const agentEnvironment = sshAgentEnvironment(environment, socketPath);
+  const spawnState = { failed: false };
+  const agent = spawn("/usr/bin/ssh-agent", ["-D", "-a", socketPath], {
+    env: agentEnvironment,
+    shell: false,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  agent.once("error", () => {
+    spawnState.failed = true;
+  });
+
+  try {
+    await waitForSshAgentSocket(agent, socketPath, spawnState);
+    for (const descriptor of header.sshAgent) {
+      const bytes = takeMaterial(frame, state, descriptor.byteLength);
+      if (!(await loadSshAgentKey(agentEnvironment, bytes))) {
+        throw new Error("ssh-agent-key-rejected");
+      }
+    }
+    environment.SSH_AUTH_SOCK = socketPath;
+    return agent;
+  } catch (error) {
+    await stopSshAgent(agent);
+    fs.rmSync(agentRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function materializeSshTrust(frame, state, header, executionRoot, environment) {
   if (header.sshTrust === null) {
     return;
@@ -447,6 +606,7 @@ async function main(frame) {
     !Array.isArray(header.environment) ||
     !Array.isArray(header.ramFiles) ||
     !Array.isArray(header.askpass) ||
+    !Array.isArray(header.sshAgent) ||
     !Object.prototype.hasOwnProperty.call(header, "sshTrust")
   ) {
     throw new Error("invalid-header");
@@ -479,11 +639,19 @@ async function main(frame) {
   }
 
   const createdFiles = [];
+  let sshAgent;
   try {
     materializeFiles(frame, state, header, environment, createdFiles);
     materializeAskpass(frame, state, header, executionRoot, environment);
     materializeSshTrust(frame, state, header, executionRoot, environment);
     ensureExecutionIdentity(executionRoot, environment);
+    sshAgent = await materializeSshAgent(
+      frame,
+      state,
+      header,
+      executionRoot,
+      environment,
+    );
     const childStdin = takeMaterial(frame, state, header.stdinByteLength);
     if (state.offset !== frame.byteLength) {
       childStdin.fill(0);
@@ -569,6 +737,7 @@ async function main(frame) {
     }
     process.exitCode = outcome.code;
   } finally {
+    await stopSshAgent(sshAgent);
     cleanupMaterializedFiles(createdFiles);
   }
 }
@@ -599,9 +768,15 @@ process.stdin.once("end", async () => {
       }
     }
     await main(frame);
-  } catch {
+  } catch (error) {
     frame.fill(0);
-    fail("invalid-request");
+    if (error && error.message === "ssh-agent-cleanup-failed") {
+      fail("cleanup-failed");
+    } else if (error && error.message === "ssh-agent-key-rejected") {
+      fail("ssh-agent-key-rejected", 126);
+    } else {
+      fail("invalid-request");
+    }
   } finally {
     if (executionRoot) {
       try {

@@ -65,9 +65,9 @@ export function createSecurePiCodingTools(options: {
   secureBash.name = "secure_bash";
   secureBash.label = "Secure Bash · Linux container";
   secureBash.description =
-    "Execute Bash inside Forge's Linux secure container. Use only when the command needs an approved Secure Sessions value or Secure Sessions SSH trust. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
+    "Execute Bash inside Forge's Linux secure container. Use only when the command needs an approved Secure Sessions value, SSH-agent key, or Secure Sessions SSH trust. SSH-agent grants set SSH_AUTH_SOCK automatically for ordinary ssh, scp, and Git commands. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
   secureBash.promptSnippet =
-    "Use secure_bash only for commands that need approved secrets or Secure Sessions SSH trust";
+    "Use secure_bash only for commands that need approved secrets, SSH-agent keys, or Secure Sessions SSH trust";
 
   return guardSecureRuntimeTools(
     [

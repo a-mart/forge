@@ -108,6 +108,86 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("accepts an agent-proposed SSH key and delivers it through SSH_AUTH_SOCK", async () => {
+    const harness = createHarness();
+    await harness.service.requestSecureSecretAccess("manager-a", "ssh-tool", {
+      displayAlias: "deployment-key",
+      exposures: [{ deliveryKind: "ssh_agent" }],
+      leaseKind: "task",
+      purposeSummary: "Authenticate an approved SSH connection.",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const approved = await harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "deployment-key",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        leaseKind: "task",
+      },
+    );
+
+    expect(approved.leases).toEqual([
+      expect.objectContaining({
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        status: "active",
+      }),
+    ]);
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    await binding.executeBash({
+      command: "safe-ssh-agent-use",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+    expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([ALPHA]);
+    await harness.close();
+  });
+
+  it("combines multiple automatic SSH keys in one execution-local agent", async () => {
+    const harness = createHarness();
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "ssh-alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "ssh-beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(alpha.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(beta.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    const started = await harness.service.startSecureSession("manager-a");
+    expect(started.leases).toHaveLength(2);
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    await binding.executeBash({
+      command: "safe-multiple-ssh-agent-use",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+    expect(new Set(harness.execution.sshAgentDeliveryValues.at(-1))).toEqual(
+      new Set([ALPHA, BETA]),
+    );
+    await harness.close();
+  });
+
   it("backfills a default delivery for legacy secrets that have no bindings", async () => {
     const harness = createHarness();
     const created = await harness.service.createLocalSecureSecret({
@@ -5162,6 +5242,7 @@ class FakeExecutionBackend implements SecureExecutionBackend {
     config: string;
     knownHosts: string;
   }> = [];
+  readonly sshAgentDeliveryValues: string[][] = [];
   readonly destroyUnconfirmed = new Set<string>();
   private readonly blockedExecutions = new Map<
     string,
@@ -5238,6 +5319,11 @@ class FakeExecutionBackend implements SecureExecutionBackend {
   async execute(request: SecureExecutionRequest) {
     this.executed.push(request.task.taskId);
     this.lastDeliveryValue = request.delivery?.environment?.[0]?.value;
+    this.sshAgentDeliveryValues.push(
+      (request.delivery?.sshAgent ?? []).map(({ value }) =>
+        Buffer.from(value).toString("utf8")
+      ),
+    );
     if (request.delivery?.sshTrust) {
       this.sshTrustDeliveries.push({
         config: Buffer.from(request.delivery.sshTrust.config).toString("utf8"),

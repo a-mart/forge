@@ -22,4 +22,8 @@ describe('SecretBindingsPanel file targets', () => {
       ),
     ).toBe(false)
   })
+
+  it('does not require a target name for execution-owned SSH-agent delivery', () => {
+    expect(isValidBindingTarget('ssh_agent', '')).toBe(true)
+  })
 })

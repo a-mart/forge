@@ -87,10 +87,18 @@ Under **Advanced delivery**, choose how an approved command receives the value:
 - an environment variable;
 - standard input;
 - a protected file under `/run/forge-secure/bindings/`;
-- an askpass helper.
+- an askpass helper;
+- an execution-local SSH agent.
 
-SSH-agent forwarding is reserved but not currently supported. A binding is only a
-template. Task, timed, and one-use access are chosen in the chat shield.
+For a private SSH key, choose **SSH agent**. Forge loads every active SSH-key
+grant into one short-lived agent for each `secure_bash` command and sets
+`SSH_AUTH_SOCK` automatically. The agent can use ordinary `ssh`, `scp`, SFTP,
+or SSH-backed Git commands without a private-key path. No private-key file is
+created. The agent ends when the direct command ends; another command gets a new
+agent while the session lease remains active. If OpenSSH cannot load the saved
+key, the command reports a fixed key-rejected result without stopping the shared
+session container. A binding is only a template. Task, timed, and one-use access
+are chosen in the chat shield.
 
 ## Use the chat shield
 
@@ -100,15 +108,17 @@ Open the shield beside **Send** in a supported local Builder session:
 2. Grant an alias and its bindings to the manager session.
 3. Choose task, timed, or one-use access.
 4. Let the agent use normal host `bash` for ordinary work and `secure_bash` only for
-   commands that need a granted value or Forge-managed SSH trust.
+commands that need a granted value, SSH-agent key, or Forge-managed SSH trust.
 5. Revoke one shared grant or stop Team Secure Mode to revoke the session.
 
 Agent requests appear as private approval cards, not transcript messages. A request
 belongs to the manager session; a worker identity is recorded only to show who asked.
 A one-use grant means the session's next `secure_bash` command and is consumed even if
-the command does not reference the binding. Task and timed grants are injected into
-every `secure_bash` command from the manager or an eligible worker while active,
-including child and background processes.
+the command does not reference the binding. Task and timed grants are delivered to
+every `secure_bash` command from the manager or an eligible worker while active, and
+the direct command's child processes inherit that delivery. An SSH-agent socket is
+intentionally command-local: a detached background process cannot keep using it after
+the direct `secure_bash` command returns.
 
 Eligible local Forge Pi workers remain available for delegation. Forge prepares each
 worker by validating its runtime, workspace, and assignment before delivering secure

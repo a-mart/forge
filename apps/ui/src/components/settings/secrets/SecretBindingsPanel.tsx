@@ -110,7 +110,8 @@ export function SecretBindingsPanel({
           <p className="text-sm text-muted-foreground">
             New secrets receive a generated environment delivery unless you replace it here.
             Most people never need this screen. Use it only when a tool requires a specific
-            askpass, file, stdin, or environment shape. Delivery never grants task access by itself.
+            askpass, file, stdin, SSH-agent, or environment shape. Delivery never grants task
+            access by itself.
           </p>
         </div>
 
@@ -147,7 +148,7 @@ export function SecretBindingsPanel({
                             {DELIVERY_LABELS[binding.deliveryKind]}
                           </p>
                           <p className="truncate font-mono text-xs text-muted-foreground">
-                            {bindingTarget(binding) ?? 'No target name'}
+                            {bindingTarget(binding) ?? automaticBindingTarget(binding)}
                           </p>
                         </div>
                         <Button
@@ -221,20 +222,25 @@ export function SecretBindingsPanel({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="binding-target">
-                {targetLabel(deliveryKind)}
-                {requiresTarget(deliveryKind) ? '' : ' (optional)'}
-              </Label>
-              <Input
-                id="binding-target"
-                value={targetName}
-                onChange={(event) => setTargetName(event.target.value)}
-                placeholder={targetPlaceholder(deliveryKind)}
-                disabled={busyKey !== null}
-                className="font-mono"
-              />
-            </div>
+            {requiresTarget(deliveryKind) ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="binding-target">{targetLabel(deliveryKind)}</Label>
+                <Input
+                  id="binding-target"
+                  value={targetName}
+                  onChange={(event) => setTargetName(event.target.value)}
+                  placeholder={targetPlaceholder(deliveryKind)}
+                  disabled={busyKey !== null}
+                  className="font-mono"
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {deliveryKind === 'ssh_agent'
+                  ? 'Forge sets SSH_AUTH_SOCK automatically for each secure command.'
+                  : 'The value is delivered directly to the secure command’s standard input.'}
+              </p>
+            )}
 
             <Button
               type="submit"
@@ -317,4 +323,10 @@ function bindingTarget(binding: SecureSecretBinding): string | null {
     return binding.targetName
   }
   return null
+}
+
+function automaticBindingTarget(binding: SecureSecretBinding): string {
+  return binding.deliveryKind === 'ssh_agent'
+    ? 'SSH_AUTH_SOCK (automatic)'
+    : 'Command standard input'
 }

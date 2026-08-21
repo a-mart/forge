@@ -21,6 +21,8 @@ export const SECURE_RESERVED_GUEST_ENVIRONMENT_NAMES = [
   "LC_ALL",
   "LOGNAME",
   "PATH",
+  "SSH_AGENT_PID",
+  "SSH_AUTH_SOCK",
   "TMPDIR",
   "USER",
 ] as const;
@@ -44,6 +46,10 @@ interface AskpassDescriptor extends MaterialDescriptor {
   index: number;
 }
 
+interface SshAgentDescriptor extends MaterialDescriptor {
+  index: number;
+}
+
 interface SshTrustDescriptor {
   configByteLength: number;
   knownHostsByteLength: number;
@@ -60,6 +66,7 @@ export interface SecureExecutionFrameHeader {
   environment: EnvironmentDescriptor[];
   ramFiles: RamFileDescriptor[];
   askpass: AskpassDescriptor[];
+  sshAgent: SshAgentDescriptor[];
   sshTrust: SshTrustDescriptor | null;
   stdinByteLength: number;
 }
@@ -214,6 +221,22 @@ function buildSshTrustDescriptor(
   };
 }
 
+function buildSshAgentDescriptors(
+  delivery: SecureExecutionDelivery,
+  material: Buffer[],
+): SshAgentDescriptor[] {
+  const sshAgent = delivery.sshAgent ?? [];
+  if (sshAgent.length > MAX_BINDINGS) {
+    throw new SecureExecutionError("INVALID_DELIVERY");
+  }
+
+  return sshAgent.map((binding, index) => {
+    const value = copyMaterial(binding.value);
+    material.push(value);
+    return { index, byteLength: value.byteLength };
+  });
+}
+
 function zeroBuffers(buffers: readonly Buffer[]): void {
   for (const buffer of buffers) {
     buffer.fill(0);
@@ -253,6 +276,7 @@ export function encodeSecureExecutionFrame(input: {
       environmentNames,
     );
     const sshTrust = buildSshTrustDescriptor(delivery, material);
+    const sshAgent = buildSshAgentDescriptors(delivery, material);
     const stdin = delivery.stdin ? copyMaterial(delivery.stdin) : Buffer.alloc(0);
     material.push(stdin);
 
@@ -275,6 +299,7 @@ export function encodeSecureExecutionFrame(input: {
       environment,
       ramFiles,
       askpass,
+      sshAgent,
       sshTrust,
       stdinByteLength: stdin.byteLength,
     };

@@ -37,6 +37,14 @@ runner build resources to LF before invoking Docker, and the image build
 executes the helper with a disposable canary so an invalid shebang cannot
 produce a nominally compatible image.
 
+An `ssh_agent` delivery uses the OpenSSH client already included in contract
+v6. The host streams each active private key in the binary execution frame;
+the guest loads the keys into one foreground `ssh-agent` through `ssh-add -`,
+sets `SSH_AUTH_SOCK` only for that command, and terminates the agent before the
+executor returns. Private keys are never command arguments, environment values,
+Docker metadata, or guest files. Multiple active key grants share the same
+execution-local agent, while concurrent commands receive independent agents.
+
 The backend requires the effective Docker endpoint to be an approved local
 Unix socket or Docker Desktop Linux named pipe and pins that endpoint into
 every later CLI invocation. Remote contexts, TCP endpoints, SSH endpoints, and

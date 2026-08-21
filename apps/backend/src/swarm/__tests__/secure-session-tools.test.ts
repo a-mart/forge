@@ -240,6 +240,7 @@ describe("secure session agent tools", () => {
     expect(status.description).toContain(
       "SSH_ASKPASS=/usr/local/bin/forge-env-askpass",
     );
+    expect(status.description).toContain("SSH_AUTH_SOCK automatically");
     expect(status.description).toContain("never print, measure, hash, encode");
   });
 
@@ -558,6 +559,36 @@ describe("secure session agent tools", () => {
       status: "requested",
     });
     expect(resultJson(result)).not.toContain("deploy-key");
+  });
+
+  it("lets an agent request an SSH key without inventing a key path", async () => {
+    const requestAccess = vi.fn(async () => "requested" as const);
+    const request = toolByName(
+      buildSwarmTools(
+        host({ requestSecureSecretAccess: requestAccess }),
+        worker(),
+      ),
+      "request_secret_access",
+    );
+    const input = {
+      displayAlias: "deployment-key",
+      purposeSummary: "Authenticate ordinary SSH and Git commands.",
+      leaseKind: "task",
+      exposures: [{ deliveryKind: "ssh_agent" }],
+    };
+
+    const result = await request.execute("request-ssh-key", input);
+
+    expect(requestAccess).toHaveBeenCalledWith(
+      "worker-1",
+      "request-ssh-key",
+      input,
+    );
+    expect(result.details).toEqual({
+      ok: true,
+      status: "requested",
+    });
+    expect(resultJson(result)).not.toContain("deployment-key");
   });
 
   it.each([

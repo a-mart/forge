@@ -143,6 +143,7 @@ describe("Secure Pi runtime interception", () => {
     expect(hostBash.description).toContain("GitHub CLI");
     expect(secureBash.label).toBe("Secure Bash · Linux container");
     expect(secureBash.description).toContain("approved Secure Sessions value");
+    expect(secureBash.description).toContain("SSH_AUTH_SOCK automatically");
 
     const hostUpdates: unknown[] = [];
     const hostResult = await hostBash.execute(

@@ -179,6 +179,29 @@ async function readFixtureHostKey(
   return `${fields[0]} ${fields[1]}`;
 }
 
+async function createFixtureSshKey(targetName: string): Promise<Buffer> {
+  const keyName = `forge-agent-${randomBytes(8).toString("hex")}`;
+  const generated = await runCommand("docker", [
+    "exec",
+    targetName,
+    "sh",
+    "-c",
+    [
+      "set -eu",
+      "install -d -m 700 -o forge -g forge /home/forge/.ssh",
+      `ssh-keygen -q -t ed25519 -N '' -f /tmp/${keyName}`,
+      `cat /tmp/${keyName}.pub >> /home/forge/.ssh/authorized_keys`,
+      "chown forge:forge /home/forge/.ssh/authorized_keys",
+      "chmod 600 /home/forge/.ssh/authorized_keys",
+      `cat /tmp/${keyName}`,
+      `rm -f /tmp/${keyName} /tmp/${keyName}.pub`,
+    ].join(" && "),
+  ]);
+  expect(generated.exitCode).toBe(0);
+  expect(generated.stdout.byteLength).toBeGreaterThan(0);
+  return Buffer.from(generated.stdout);
+}
+
 function sshTrustDelivery(
   alias: string,
   targetIpAddress: string,
@@ -187,6 +210,31 @@ function sshTrustDelivery(
 ): SecureExecutionDelivery {
   return {
     askpass: [{ targetName: "SSH_ASKPASS", value: password }],
+    sshTrust: {
+      config: Buffer.from([
+        `Host ${alias}`,
+        `  HostName ${targetIpAddress}`,
+        "  Port 22",
+        "  User forge",
+        `  HostKeyAlias ${alias}`,
+        `  UserKnownHostsFile ${SECURE_SSH_KNOWN_HOSTS_PATH_PLACEHOLDER}`,
+        "  StrictHostKeyChecking yes",
+        "  CheckHostIP no",
+        "",
+      ].join("\n"), "utf8"),
+      knownHosts: Buffer.from(`${alias} ${hostKey}\n`, "utf8"),
+    },
+  };
+}
+
+function sshAgentDelivery(
+  alias: string,
+  targetIpAddress: string,
+  hostKey: string,
+  keys: readonly Buffer[],
+): SecureExecutionDelivery {
+  return {
+    sshAgent: keys.map((value) => ({ value })),
     sshTrust: {
       config: Buffer.from([
         `Host ${alias}`,
@@ -667,6 +715,174 @@ dockerSuite(
         "/tmp/forge-wrong-key-command-ran",
       ]);
       expect(markerCheck.exitCode).toBe(0);
+    }, 90_000);
+
+    it("loads multiple private keys into one execution-local SSH agent and removes it afterward", async () => {
+      const password = makeCanary();
+      const temporaryRoot = await mkdtemp(
+        join(tmpdir(), "forge-secure-e2e-ssh-agent-"),
+      );
+      const workspacePath = await realpath(temporaryRoot);
+      const targetName = uniqueManagedName("ssh-agent-target");
+      const target = await startFixtureTarget(targetImage, targetName, password);
+      cleanups.push(async () => await removeManagedContainer(targetName));
+      const firstKey = await createFixtureSshKey(targetName);
+      const secondKey = await createFixtureSshKey(targetName);
+      const invocations: string[][] = [];
+      const backend = new DockerSecureExecutionBackend({
+        image: runnerImage,
+        scope: uniqueManagedName("ssh-agent-scope"),
+        onDockerInvocation: ({ args }) => invocations.push([...args]),
+      });
+      const task = makeTask(workspacePath, "ssh-agent");
+      cleanups.push(
+        async () => {
+          password.fill(0);
+          firstKey.fill(0);
+          secondKey.fill(0);
+        },
+        async () => await rm(temporaryRoot, { recursive: true, force: true }),
+        async () => await backend.destroyTask(task),
+      );
+      const hostKey = await readFixtureHostKey(
+        targetName,
+        "/etc/ssh/ssh_host_ed25519_key.pub",
+      );
+      const sandbox = await backend.ensureTask(task);
+      const originalContainerId = await inspectContainerId(sandbox.sandboxId);
+      const guard = new SecureValueGuard([firstKey, secondKey]);
+      const result = await (async () => {
+        try {
+          return await backend.execute({
+            task,
+            command: {
+              executable: "bash",
+              args: [
+                "-lc",
+                [
+                  'test -S "$SSH_AUTH_SOCK"',
+                  'test "$(ssh-add -l 2>/dev/null | wc -l)" -eq 2',
+                  "ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 fixture-server 'printf ssh-agent-ok'",
+                ].join(" && "),
+              ],
+            },
+            delivery: sshAgentDelivery(
+              "fixture-server",
+              target.ipAddress,
+              hostKey,
+              [firstKey, secondKey],
+            ),
+            guardOutput: guard.createOutputGuard(),
+          });
+        } finally {
+          guard.dispose();
+        }
+      })();
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString("utf8")).toBe("ssh-agent-ok");
+
+      const runConcurrent = async (
+        key: Buffer,
+        marker: string,
+      ): Promise<SecureExecutionResult> => {
+        const concurrentGuard = new SecureValueGuard([key]);
+        try {
+          return await backend.execute({
+            task,
+            command: {
+              executable: "bash",
+              args: [
+                "-lc",
+                `sleep 0.1 && ssh -o BatchMode=yes fixture-server 'printf ${marker}'`,
+              ],
+            },
+            delivery: sshAgentDelivery(
+              "fixture-server",
+              target.ipAddress,
+              hostKey,
+              [key],
+            ),
+            guardOutput: concurrentGuard.createOutputGuard(),
+          });
+        } finally {
+          concurrentGuard.dispose();
+        }
+      };
+      const [firstConcurrent, secondConcurrent] = await Promise.all([
+        runConcurrent(firstKey, "concurrent-one"),
+        runConcurrent(secondKey, "concurrent-two"),
+      ]);
+      expect(firstConcurrent.exitCode).toBe(0);
+      expect(firstConcurrent.stdout.toString("utf8")).toBe("concurrent-one");
+      expect(secondConcurrent.exitCode).toBe(0);
+      expect(secondConcurrent.stdout.toString("utf8")).toBe("concurrent-two");
+
+      const invalidKey = Buffer.from("synthetic-invalid-private-key", "utf8");
+      const invalidGuard = new SecureValueGuard([invalidKey]);
+      try {
+        const invalid = await backend.execute({
+          task,
+          command: { executable: "true", args: [] },
+          delivery: { sshAgent: [{ value: invalidKey }] },
+          guardOutput: invalidGuard.createOutputGuard(),
+        });
+        expect(invalid.exitCode).toBe(126);
+        expect(invalid.stderr.toString("utf8")).toBe(
+          "forge-secure-executor:ssh-agent-key-rejected\n",
+        );
+      } finally {
+        invalidGuard.dispose();
+        invalidKey.fill(0);
+      }
+      expect(await inspectContainerId(sandbox.sandboxId)).toBe(
+        originalContainerId,
+      );
+      const afterInvalid = await backend.execute({
+        task,
+        command: { executable: "printf", args: ["after-invalid-ok"] },
+        guardOutput: ({ bytes }) => bytes,
+      });
+      expect(afterInvalid.exitCode).toBe(0);
+      expect(afterInvalid.stdout.toString("utf8")).toBe("after-invalid-ok");
+
+      const cleanupCheck = await runCommand("docker", [
+        "exec",
+        sandbox.sandboxId,
+        "sh",
+        "-c",
+        [
+          "test -z \"$(find /run/forge-secure/executions -type s -print -quit)\"",
+          "! grep -l '^ssh-agent$' /proc/[0-9]*/comm >/dev/null 2>&1",
+        ].join(" && "),
+      ]);
+      expect(cleanupCheck.exitCode).toBe(0);
+
+      const needles = [
+        ...canaryNeedles(firstKey),
+        ...canaryNeedles(secondKey),
+      ];
+      try {
+        const evidenceDirectory = resolve(temporaryRoot, "ssh-agent-evidence");
+        const dockerEvidence = await collectDockerEvidence({
+          sandboxName: sandbox.sandboxId,
+          runnerImage,
+          outputDirectory: evidenceDirectory,
+        });
+        const invocationReport = scanNamedBytes(
+          invocations.map((args, index) => ({
+            path: `docker-invocation-${index}`,
+            bytes: Buffer.from(JSON.stringify(args)),
+          })),
+          needles,
+        );
+        const dockerReport = scanNamedBytes(dockerEvidence, needles);
+        const workspaceReport = await scanDirectory(temporaryRoot, needles);
+        expect(invocationReport.totalMatches).toBe(0);
+        expect(dockerReport.totalMatches).toBe(0);
+        expect(workspaceReport.totalMatches).toBe(0);
+      } finally {
+        for (const needle of needles) needle.fill(0);
+      }
     }, 90_000);
 
     it("isolates cancel and timeout while preserving explicit task revocation", async () => {

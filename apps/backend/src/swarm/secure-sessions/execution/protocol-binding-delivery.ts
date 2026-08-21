@@ -16,8 +16,8 @@ export interface ResolvedSecureSecretBinding {
  * Converts value-free public binding metadata plus host-resolved bytes into
  * the provider-neutral executor delivery shape.
  *
- * SSH-agent bindings require a brokered socket and are deliberately rejected
- * by this raw-material Docker proof instead of silently becoming a file.
+ * SSH-agent bindings remain private key bytes on this host until the binary
+ * execution frame streams them to the guest's execution-local agent.
  */
 export function createExecutionDeliveryFromBindings(
   resolved: readonly ResolvedSecureSecretBinding[],
@@ -34,6 +34,9 @@ export function createExecutionDeliveryFromBindings(
   }> = [];
   const askpass: Array<{
     targetName: string;
+    value: Uint8Array;
+  }> = [];
+  const sshAgent: Array<{
     value: Uint8Array;
   }> = [];
   let stdin: Uint8Array | undefined;
@@ -74,7 +77,8 @@ export function createExecutionDeliveryFromBindings(
         });
         break;
       case "ssh_agent":
-        throw new SecureExecutionError("INVALID_DELIVERY");
+        sshAgent.push({ value: item.value });
+        break;
     }
   }
 
@@ -82,6 +86,7 @@ export function createExecutionDeliveryFromBindings(
     environment,
     ramFiles,
     askpass,
+    sshAgent,
     ...(stdin === undefined ? {} : { stdin }),
   };
 }

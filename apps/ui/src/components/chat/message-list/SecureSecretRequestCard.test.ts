@@ -156,6 +156,28 @@ describe('SecureSecretRequestCard', () => {
     )).toBe(false)
   })
 
+  it('adds and approves an agent-requested SSH key without asking for a key path', () => {
+    const onPrivateFulfill = vi.fn()
+    renderCard({
+      request: {
+        ...request,
+        secretId: undefined,
+        secretAlias: 'production-ssh-key',
+        requestedBindings: [{ kind: 'ssh_agent' }],
+      },
+      secrets: [],
+      onPrivateFulfill,
+    })
+
+    expect(container.textContent).toContain('Binding: SSH agent')
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    expect(getByLabelText(document.body, 'Value for production-ssh-key')).toBeTruthy()
+    expect(document.body.textContent).toContain('Delivery: SSH agent')
+    expect(document.body.textContent).not.toContain('private-key path')
+  })
+
   it('can save an all-project secret and make it automatic only in the current project', () => {
     const onPrivateFulfill = vi.fn()
     renderCard({

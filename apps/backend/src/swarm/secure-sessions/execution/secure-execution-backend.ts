@@ -54,6 +54,14 @@ export interface SecureAskpassDelivery {
   value: Uint8Array;
 }
 
+export interface SecureSshAgentKeyDelivery {
+  /**
+   * A private SSH key loaded into an execution-local agent through stdin. The
+   * key is never materialized as a file or exposed through Docker metadata.
+   */
+  value: Uint8Array;
+}
+
 /**
  * Replaced inside the secure guest with the execution-local known_hosts path.
  * The service can therefore build one deterministic OpenSSH config without
@@ -79,6 +87,11 @@ export interface SecureExecutionDelivery {
   environment?: readonly SecureEnvironmentDelivery[];
   ramFiles?: readonly SecureRamFileDelivery[];
   askpass?: readonly SecureAskpassDelivery[];
+  /**
+   * Keys available through SSH_AUTH_SOCK for this command and its children.
+   * The guest creates and destroys one agent per execution.
+   */
+  sshAgent?: readonly SecureSshAgentKeyDelivery[];
   sshTrust?: SecureSshTrustDelivery;
   /**
    * Explicit secret-bearing stdin for programs whose native interface reads a

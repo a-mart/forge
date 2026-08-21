@@ -27,6 +27,8 @@ RUN apt-get update \
     && for tool in bash cc curl git jq node npm pnpm psql python3 rsync script ssh; do \
       command -v "$tool" >/dev/null || exit 1; \
     done \
+    && test -x /usr/bin/ssh-add \
+    && test -x /usr/bin/ssh-agent \
     && test -x /usr/local/bin/forge-env-askpass \
     && test "$(FORGE_ASKPASS_ENV=FORGE_RUNNER_ASKPASS_CANARY FORGE_RUNNER_ASKPASS_CANARY=forge-runner-ready /usr/local/bin/forge-env-askpass)" = "forge-runner-ready" \
     && test "$(pnpm --version)" = "10.30.1"

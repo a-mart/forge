@@ -3431,9 +3431,10 @@ export class SecureSessionsService {
           continue;
         }
         const bindings = store.listBindings(secret.secretId);
-        const bindingKeys = bindings.map((binding) =>
-          bindingCollisionKey(toPublicBinding(binding))
-        );
+        const bindingKeys = bindings.flatMap((binding) => {
+          const key = bindingCollisionKey(toPublicBinding(binding));
+          return key === null ? [] : [key];
+        });
         if (
           bindings.length === 0
           || new Set(bindingKeys).size !== bindingKeys.length
@@ -5111,7 +5112,7 @@ function normalizeBindings(
   const seen = new Set<string>();
   return bindings.map((binding) => {
     validateBinding(binding);
-    const key = bindingCollisionKey(binding);
+    const key = bindingCollisionKey(binding) ?? bindingKey(binding);
     if (seen.has(key)) throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     seen.add(key);
     return {
@@ -5150,9 +5151,6 @@ function bindingInputToPublicBinding(binding: {
 }
 
 function validateBinding(binding: SecureSecretBinding): void {
-  if (binding.deliveryKind === "ssh_agent") {
-    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
-  }
   if (binding.deliveryKind === "environment" || binding.deliveryKind === "askpass") {
     if (
       !/^[A-Za-z_][A-Za-z0-9_]{0,255}$/.test(binding.targetName)
@@ -5219,7 +5217,7 @@ function matchBindingIds(
   const seen = new Set<string>();
   return requested.map((binding) => {
     validateBinding(binding);
-    const collisionKey = bindingCollisionKey(binding);
+    const collisionKey = bindingCollisionKey(binding) ?? bindingKey(binding);
     if (seen.has(collisionKey)) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -5256,7 +5254,8 @@ function assertSessionBindingCompatibilityForBatch(
     for (const bindingId of lease.bindingIds) {
       const binding = store.getBinding(bindingId);
       if (binding) {
-        activeKeys.add(bindingCollisionKey(toPublicBinding(binding)));
+        const key = bindingCollisionKey(toPublicBinding(binding));
+        if (key !== null) activeKeys.add(key);
       }
     }
   }
@@ -5265,6 +5264,7 @@ function assertSessionBindingCompatibilityForBatch(
       const binding = store.getBinding(bindingId);
       if (!binding) throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       const key = bindingCollisionKey(toPublicBinding(binding));
+      if (key === null) continue;
       if (activeKeys.has(key)) {
         throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       }
@@ -5282,7 +5282,10 @@ function activeBindingCollisionKeys(
     if (lease.state !== "active") continue;
     for (const bindingId of lease.bindingIds) {
       const binding = store.getBinding(bindingId);
-      if (binding) result.add(bindingCollisionKey(toPublicBinding(binding)));
+      if (binding) {
+        const key = bindingCollisionKey(toPublicBinding(binding));
+        if (key !== null) result.add(key);
+      }
     }
   }
   return result;
@@ -5295,9 +5298,16 @@ function assertPublicBindingCompatibility(
 ): void {
   const occupied = activeBindingCollisionKeys(store, snapshot);
   const proposed = new Set<string>();
+  const requestedBindings = new Set<string>();
   for (const binding of requested) {
     validateBinding(binding);
+    const bindingKeyValue = bindingKey(binding);
+    if (requestedBindings.has(bindingKeyValue)) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    requestedBindings.add(bindingKeyValue);
     const key = bindingCollisionKey(binding);
+    if (key === null) continue;
     if (occupied.has(key) || proposed.has(key)) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -5321,13 +5331,21 @@ function assertProjectDefaultBindingCompatibility(
       continue;
     }
     for (const binding of store.listBindings(secret.secretId)) {
-      occupied.add(bindingCollisionKey(toPublicBinding(binding)));
+      const key = bindingCollisionKey(toPublicBinding(binding));
+      if (key !== null) occupied.add(key);
     }
   }
   const proposed = new Set<string>();
+  const proposedBindingsSeen = new Set<string>();
   for (const binding of proposedBindings) {
     validateBinding(binding);
+    const bindingKeyValue = bindingKey(binding);
+    if (proposedBindingsSeen.has(bindingKeyValue)) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    proposedBindingsSeen.add(bindingKeyValue);
     const key = bindingCollisionKey(binding);
+    if (key === null) continue;
     if (occupied.has(key) || proposed.has(key)) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -5396,7 +5414,7 @@ function bindingKey(binding: SecureSecretBinding): string {
   }
 }
 
-function bindingCollisionKey(binding: SecureSecretBinding): string {
+function bindingCollisionKey(binding: SecureSecretBinding): string | null {
   switch (binding.deliveryKind) {
     case "environment":
     case "askpass":
@@ -5404,8 +5422,10 @@ function bindingCollisionKey(binding: SecureSecretBinding): string {
     case "file":
       return `file-path:${binding.targetPath}`;
     case "stdin":
-    case "ssh_agent":
       return binding.deliveryKind;
+    case "ssh_agent":
+      // Multiple private keys intentionally share one execution-local agent.
+      return null;
   }
 }
 
