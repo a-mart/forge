@@ -64,7 +64,7 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
   },
   openrouter: {
     label: 'OpenRouter API key',
-    description: 'Used by user-added OpenRouter models for specialists and workers.',
+    description: 'User-added OpenRouter models remain available to specialists and workers; manager use requires live-verified tool support, the exact model\'s default-off Manager agents opt-in, and OpenRouter credentials.',
     placeholder: 'sk-or-v1-...',
     helpUrl: 'https://openrouter.ai/keys',
   },
