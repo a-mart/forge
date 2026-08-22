@@ -4,10 +4,15 @@ import {
   getCatalogModelKey,
   getCatalogProvider,
   getEffectiveManagerEnabled,
+  getEffectiveOpenRouterManagerEnabled,
+  getOpenRouterManagerDefaultReasoningLevel,
+  getOpenRouterModelOverrideKey,
   isCatalogModelManagerSupported,
+  isRetiredForgeModel,
   type ForgeModelDefinition,
   type ManagerModelSurface,
   type ModelOverrideEntry,
+  type OpenRouterModelEntry,
 } from '@forge/protocol'
 import type { ManagerReasoningLevel } from '@forge/protocol'
 
@@ -34,6 +39,9 @@ export interface ManagerModelProviderGroup {
   rows: ManagerModelSelectRow[]
 }
 
+const OPENROUTER_FAMILY_ID = 'openrouter'
+const GENERIC_REASONING_LEVELS: ManagerReasoningLevel[] = ['none', 'low', 'medium', 'high', 'xhigh']
+
 /** Encode a provider + modelId into a unique select value. */
 export function encodeManagerModelValue(provider: string, modelId: string): string {
   return `${provider}::${modelId}`
@@ -46,15 +54,57 @@ export function decodeManagerModelValue(value: string): { provider: string; mode
   return { provider: value.slice(0, idx), modelId: value.slice(idx + 2) }
 }
 
+function findOpenRouterModelEntry(
+  modelId: string,
+  openRouterModels: readonly OpenRouterModelEntry[],
+): OpenRouterModelEntry | undefined {
+  const normalizedModelId = modelId.trim()
+  if (!normalizedModelId) return undefined
+  return openRouterModels.find((entry) => entry.modelId === normalizedModelId)
+}
+
+function buildOpenRouterManagerRow(
+  entry: OpenRouterModelEntry,
+  overrides: Record<string, ModelOverrideEntry>,
+  providerAvailability: Record<string, boolean>,
+  surface: ManagerModelSurface,
+): ManagerModelSelectRow | undefined {
+  if (isRetiredForgeModel('openrouter', entry.modelId)) return undefined
+  if (!getEffectiveOpenRouterManagerEnabled(entry, overrides[getOpenRouterModelOverrideKey(entry.modelId)], surface)) {
+    return undefined
+  }
+
+  const provider = getCatalogProvider('openrouter')
+  if (!provider) return undefined
+
+  const providerAvailable = providerAvailability.openrouter === true
+
+  return {
+    key: encodeManagerModelValue('openrouter', entry.modelId),
+    provider: 'openrouter',
+    providerDisplayName: provider.displayName,
+    familyId: OPENROUTER_FAMILY_ID,
+    familyDisplayName: provider.displayName,
+    modelId: entry.modelId,
+    displayName: entry.displayName,
+    supportedReasoningLevels: [...entry.supportedReasoningLevels] as ManagerReasoningLevel[],
+    defaultReasoningLevel: getOpenRouterManagerDefaultReasoningLevel(entry) as ManagerReasoningLevel,
+    ...(providerAvailable ? {} : { unavailableReason: 'Provider not configured' }),
+  }
+}
+
 /**
  * Build the full list of exact manager-selectable model rows from the shared catalog,
- * overrides, and provider availability. No server endpoint required.
+ * user-added OpenRouter models from the model-config response, overrides, and provider
+ * availability. No second fetch/cache is required.
  */
 export function buildManagerModelRows(
   surface: ManagerModelSurface,
   overrides: Record<string, ModelOverrideEntry>,
   providerAvailability: Record<string, boolean>,
+  openRouterModels: readonly OpenRouterModelEntry[] = [],
 ): ManagerModelSelectRow[] {
+  const addedOpenRouterModels = openRouterModels ?? []
   const rows: ManagerModelSelectRow[] = []
 
   for (const model of Object.values(FORGE_MODEL_CATALOG.models) as ForgeModelDefinition[]) {
@@ -91,6 +141,13 @@ export function buildManagerModelRows(
     rows.push(row)
   }
 
+  const openRouterRows = addedOpenRouterModels
+    .map((entry) => buildOpenRouterManagerRow(entry, overrides, providerAvailability, surface))
+    .filter((row): row is ManagerModelSelectRow => row !== undefined)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName))
+
+  rows.push(...openRouterRows)
+
   return rows
 }
 
@@ -125,25 +182,34 @@ export function buildCurrentModelFallbackRow(
   provider: string,
   modelId: string,
   thinkingLevel?: string,
+  openRouterModels: readonly OpenRouterModelEntry[] = [],
 ): ManagerModelSelectRow {
+  const addedOpenRouterModels = openRouterModels ?? []
   const providerDef = getCatalogProvider(provider)
   const catalogModel = Object.values(FORGE_MODEL_CATALOG.models).find(
     (m) => m.provider === provider && m.modelId === modelId,
   ) as ForgeModelDefinition | undefined
   const family = catalogModel ? getCatalogFamily(catalogModel.familyId) : undefined
+  const openRouterModel = provider === 'openrouter'
+    ? findOpenRouterModelEntry(modelId, addedOpenRouterModels)
+    : undefined
 
   return {
     key: encodeManagerModelValue(provider, modelId),
     provider,
     providerDisplayName: providerDef?.displayName ?? provider,
-    familyId: catalogModel?.familyId ?? 'unknown',
-    familyDisplayName: family?.displayName ?? 'Other',
+    familyId: catalogModel?.familyId ?? (openRouterModel ? OPENROUTER_FAMILY_ID : 'unknown'),
+    familyDisplayName: family?.displayName ?? (openRouterModel ? (providerDef?.displayName ?? 'OpenRouter') : 'Other'),
     modelId,
-    displayName: catalogModel?.displayName ?? modelId,
+    displayName: catalogModel?.displayName ?? openRouterModel?.displayName ?? modelId,
     supportedReasoningLevels: catalogModel
       ? (catalogModel.supportedReasoningLevels as ManagerReasoningLevel[])
-      : (['none', 'low', 'medium', 'high', 'xhigh'] as ManagerReasoningLevel[]),
-    defaultReasoningLevel: (thinkingLevel as ManagerReasoningLevel) ?? 'high',
+      : openRouterModel
+        ? ([...openRouterModel.supportedReasoningLevels] as ManagerReasoningLevel[])
+        : GENERIC_REASONING_LEVELS,
+    defaultReasoningLevel: openRouterModel
+      ? getOpenRouterManagerDefaultReasoningLevel(openRouterModel) as ManagerReasoningLevel
+      : ((thinkingLevel as ManagerReasoningLevel) ?? 'high'),
     unavailableReason: 'Not available for selection',
   }
 }

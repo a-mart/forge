@@ -1,5 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getCatalogModelKey, type ModelOverrideEntry, type ServerEvent } from "@forge/protocol";
+import {
+  getCatalogModelKey,
+  getOpenRouterModelOverrideKey,
+  parseOpenRouterModelOverrideKey,
+  type ModelOverrideEntry,
+  type OpenRouterModelEntry,
+  type ServerEvent,
+} from "@forge/protocol";
 import { modelCatalogService } from "../../../swarm/model-catalog-service.js";
 import {
   readModelOverrides,
@@ -81,6 +88,7 @@ async function handleModelOverridesRequest(
         providerAvailability: Object.fromEntries(providerAvailability),
         providerCredentials: Object.fromEntries(providerCredentials),
         discoveredModels: modelCatalogService.getModelsForProvider("xai").filter((model) => model.discovered === true),
+        openRouterModels: modelCatalogService.getOpenRouterModels(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -95,8 +103,8 @@ async function handleModelOverridesRequest(
       return;
     }
 
-    const catalogModel = modelCatalogService.getModel(modelId);
-    if (!catalogModel) {
+    const overrideTarget = resolveModelOverrideTarget(modelId);
+    if (!overrideTarget) {
       sendJson(response, 404, { error: `Unknown modelId: ${modelId}` });
       return;
     }
@@ -109,15 +117,20 @@ async function handleModelOverridesRequest(
       }
 
       const patch = body as Record<string, unknown>;
-      const catalogModelKey = getCatalogModelKey(catalogModel);
-      const modelSpecificInstructionSnapshots = captureEffectiveModelSpecificInstructionSnapshots(
-        hasModelSpecificInstructionsPatch(patch) ? [catalogModelKey] : []
-      );
-      const nextOverride = await mergeModelOverridePatch(dataDir, catalogModelKey, patch);
+      const nextOverride = overrideTarget.kind === "openrouter"
+        ? mergeOpenRouterManagerEnabledOverride(
+            (await readModelOverrides(dataDir)).overrides[overrideTarget.key],
+            patch,
+            overrideTarget.model,
+          )
+        : await mergeModelOverridePatch(dataDir, overrideTarget.key, patch);
+      const modelSpecificInstructionSnapshots = overrideTarget.kind === "catalog" && hasModelSpecificInstructionsPatch(patch)
+        ? captureEffectiveModelSpecificInstructionSnapshots([overrideTarget.key])
+        : new Map<string, string | undefined>();
       if (nextOverride) {
-        await setModelOverride(dataDir, catalogModelKey, nextOverride);
+        await setModelOverride(dataDir, overrideTarget.key, nextOverride);
       } else {
-        await resetModelOverride(dataDir, catalogModelKey);
+        await resetModelOverride(dataDir, overrideTarget.key);
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();
@@ -126,8 +139,8 @@ async function handleModelOverridesRequest(
 
       sendJson(response, 200, {
         ok: true,
-        modelId: getCatalogModelKey(catalogModel),
-        override: modelCatalogService.getOverride(getCatalogModelKey(catalogModel)) ?? null,
+        modelId: overrideTarget.key,
+        override: readLoadedOverride(overrideTarget) ?? null,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -143,8 +156,8 @@ async function handleModelOverridesRequest(
         : captureEffectiveModelSpecificInstructionSnapshots(
             modelId
               ? (() => {
-                  const catalogModel = modelCatalogService.getModel(modelId);
-                  return catalogModel ? [getCatalogModelKey(catalogModel)] : [];
+                  const overrideTarget = resolveModelOverrideTarget(modelId);
+                  return overrideTarget ? [overrideTarget.key] : [];
                 })()
               : []
           );
@@ -157,13 +170,13 @@ async function handleModelOverridesRequest(
           return;
         }
 
-        const catalogModel = modelCatalogService.getModel(modelId);
-        if (!catalogModel) {
+        const overrideTarget = resolveModelOverrideTarget(modelId);
+        if (!overrideTarget) {
           sendJson(response, 404, { error: `Unknown modelId: ${modelId}` });
           return;
         }
 
-        await resetModelOverride(dataDir, getCatalogModelKey(catalogModel));
+        await resetModelOverride(dataDir, overrideTarget.key);
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();
@@ -253,6 +266,69 @@ async function mergeModelOverridePatch(
 
 function hasModelSpecificInstructionsPatch(patch: Record<string, unknown>): boolean {
   return Object.prototype.hasOwnProperty.call(patch, "modelSpecificInstructions");
+}
+
+function mergeOpenRouterManagerEnabledOverride(
+  current: ModelOverrideEntry | undefined,
+  patch: Record<string, unknown>,
+  model: OpenRouterModelEntry,
+): ModelOverrideEntry | null {
+  const keys = Object.keys(patch);
+  if (keys.length !== 1 || keys[0] !== "managerEnabled") {
+    throw new Error("OpenRouter model overrides only accept managerEnabled");
+  }
+
+  const managerEnabled = patch.managerEnabled;
+  if (managerEnabled === true && model.supportsTools !== true) {
+    throw new Error(`Model ${model.displayName} is not verified for manager agents`);
+  }
+  if (managerEnabled !== null && typeof managerEnabled !== "boolean") {
+    throw new Error("managerEnabled must be a boolean or null");
+  }
+
+  const next: ModelOverrideEntry = { ...(current ?? {}) };
+  if (managerEnabled === null) {
+    delete next.managerEnabled;
+  } else {
+    next.managerEnabled = managerEnabled;
+  }
+
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+type ModelOverrideTarget =
+  | { key: string; kind: "catalog" }
+  | { key: string; kind: "openrouter"; model: OpenRouterModelEntry };
+
+function resolveModelOverrideTarget(modelId: string): ModelOverrideTarget | undefined {
+  const catalogModel = modelCatalogService.getModel(modelId);
+  if (catalogModel) {
+    return { key: getCatalogModelKey(catalogModel), kind: "catalog" };
+  }
+
+  const openRouterModelId = parseOpenRouterModelOverrideKey(modelId);
+  if (!openRouterModelId) {
+    return undefined;
+  }
+
+  const openRouterModel = modelCatalogService.getOpenRouterModel(openRouterModelId);
+  if (!openRouterModel) {
+    return undefined;
+  }
+
+  return {
+    key: getOpenRouterModelOverrideKey(openRouterModel.modelId),
+    kind: "openrouter",
+    model: openRouterModel,
+  };
+}
+
+function readLoadedOverride(target: ModelOverrideTarget): ModelOverrideEntry | undefined {
+  if (target.kind === "openrouter") {
+    return modelCatalogService.getOverride(target.model.modelId, "openrouter");
+  }
+
+  return modelCatalogService.getOverride(target.key);
 }
 
 function captureEffectiveModelSpecificInstructionSnapshots(modelKeys: string[]): Map<string, string | undefined> {

@@ -28,6 +28,10 @@ A catalog entry makes a model selectable only where its visibility and provider 
 
 Do not retune all specialists simply because a stronger model exists. A roster specialist is an explicit execution policy; change its primary, availability fallback, or escalation route only when the product decision calls for it. Preserve existing persisted descriptors and compatibility aliases unless the migration explicitly replaces them.
 
+### User-added OpenRouter overlays
+
+OpenRouter models added by a user are persisted overlays, not checked-in catalog entries. They are manager-eligible only when live OpenRouter metadata verifies `supportsTools: true`, the per-model manager override is explicitly enabled with the exact `openrouter:<model-id>` key, and an OpenRouter credential is configured. The default is manager-off; no family or preset fallback is created. Legacy rows without verified tool metadata remain non-manager rows. OpenRouter manager eligibility is separate from compaction, and retired OpenRouter IDs fail closed rather than being migrated across providers.
+
 ## 3. Handle models that Pi has not shipped yet
 
 Pi-backed models normally resolve through Pi's registry. If Forge must support a checked-in model before Pi does, add a narrow synthetic blueprint entry in `SYNTHETIC_PI_MODEL_BLUEPRINTS` in `swarm-manager-utils.ts`, based on a verified compatible Pi model. The exact runtime resolver overlays Forge's catalog metadata on that blueprint.

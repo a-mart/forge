@@ -1,12 +1,19 @@
 import {
   getEffectiveManagerEnabled,
+  getEffectiveOpenRouterManagerEnabled,
   getCatalogModel,
+  getOpenRouterManagerDefaultReasoningLevel,
   isCatalogModelManagerSupported,
+  isOpenRouterModelManagerSupported,
   type ManagerExactModelSelection,
   type ManagerModelSurface,
 } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../types.js";
-import { assertSwarmModelIdNotRetired, normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
+import {
+  assertSwarmModelIdNotRetired,
+  clampThinkingLevelToSupportedMetadata,
+  normalizeThinkingLevelForModelDescriptor,
+} from "./model-presets.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
 export function resolveExactManagerModelSelection(
@@ -29,6 +36,10 @@ export function resolveExactManagerModelSelection(
   }
 
   assertSwarmModelIdNotRetired(provider, modelId, "modelSelection.modelId");
+
+  if (provider === "openrouter") {
+    return resolveExactOpenRouterManagerModelSelection(modelId, options);
+  }
 
   const catalogModel = getCatalogModel(modelId, provider);
   if (!catalogModel || catalogModel.provider !== provider) {
@@ -65,6 +76,46 @@ export function resolveExactManagerModelSelection(
   return {
     provider: catalogModel.provider,
     modelId: catalogModel.modelId,
+    thinkingLevel: reasoningLevel,
+  };
+}
+
+function resolveExactOpenRouterManagerModelSelection(
+  modelId: string,
+  options: {
+    surface: ManagerModelSurface;
+    providerAvailability: ReadonlyMap<string, boolean>;
+    reasoningLevel?: SwarmReasoningLevel;
+  },
+): AgentModelDescriptor {
+  const openRouterModel = modelCatalogService.getOpenRouterModel(modelId);
+  if (!openRouterModel) {
+    throw new Error(`Unknown manager model selection: openrouter/${modelId}`);
+  }
+
+  if (!isOpenRouterModelManagerSupported(openRouterModel)) {
+    throw new Error(`Model ${openRouterModel.displayName} is not available for manager ${options.surface}`);
+  }
+
+  const override = modelCatalogService.getOverride(openRouterModel.modelId, "openrouter");
+  if (!getEffectiveOpenRouterManagerEnabled(openRouterModel, override, options.surface)) {
+    throw new Error(`Model ${openRouterModel.displayName} is disabled for manager agents`);
+  }
+
+  if (options.providerAvailability.get("openrouter") !== true) {
+    throw new Error("Provider openrouter is not configured for manager model selection");
+  }
+
+  const defaultReasoningLevel = getOpenRouterManagerDefaultReasoningLevel(openRouterModel);
+  const reasoningLevel = clampThinkingLevelToSupportedMetadata(options.reasoningLevel ?? defaultReasoningLevel, {
+    supportsReasoning: openRouterModel.supportsReasoning,
+    supportedReasoningLevels: openRouterModel.supportedReasoningLevels,
+    defaultReasoningLevel,
+  });
+
+  return {
+    provider: "openrouter",
+    modelId: openRouterModel.modelId,
     thinkingLevel: reasoningLevel,
   };
 }

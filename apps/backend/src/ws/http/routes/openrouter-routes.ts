@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getModels } from "../../../swarm/pi/pi-ai-compat.js";
 import {
+  getOpenRouterModelOverrideKey,
   isRetiredForgeModel,
   type AvailableOpenRouterModel,
   type ForgeInputMode,
@@ -16,6 +17,7 @@ import {
   removeOpenRouterModel,
   writeOpenRouterModels,
 } from "../../../swarm/openrouter-models.js";
+import { readModelOverrides, resetModelOverride, writeModelOverrides } from "../../../swarm/model-overrides.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, decodePathSegment, parseJsonBody, sendJson } from "../../http-utils.js";
@@ -28,6 +30,7 @@ const MODELS_METHODS = "GET, PUT, DELETE, OPTIONS";
 const DEFAULT_REASONING_LEVELS: readonly ForgeReasoningLevel[] = ["none", "low", "medium", "high"];
 const OPENROUTER_LIVE_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_LIVE_MODELS_CACHE_TTL_MS = 60 * 60 * 1000;
+const OPENROUTER_LIVE_MODELS_TIMEOUT_MS = 10_000;
 const TOOL_CAPABLE_UPSTREAM_PROVIDERS = new Set([
   "anthropic",
   "deepseek",
@@ -191,7 +194,8 @@ async function handleOpenRouterModelsRequest(
         return;
       }
 
-      const entry = await buildOpenRouterModelEntryForAddition(modelId, requestedModel);
+      const liveModel = await getLiveOpenRouterModelById(modelId);
+      const entry = await buildOpenRouterModelEntryForAddition(modelId, requestedModel, liveModel);
       if (!entry) {
         sendJson(response, 404, { error: `Unknown OpenRouter modelId: ${modelId}` });
         return;
@@ -227,12 +231,15 @@ async function handleOpenRouterModelsRequest(
         return;
       }
 
+      const previousOverrides = await readModelOverrides(dataDir);
       await mutateOpenRouterModelsWithProjectionReload({
         swarmManager,
         dataDir,
         previousFile: existingModels,
+        previousOverrides,
         mutate: async () => {
           await removeOpenRouterModel(dataDir, modelId);
+          await resetModelOverride(dataDir, getOpenRouterModelOverrideKey(modelId));
         },
       });
       broadcastModelConfigChanged(broadcastEvent);
@@ -252,21 +259,32 @@ async function mutateOpenRouterModelsWithProjectionReload(options: {
   swarmManager: SwarmManager;
   dataDir: string;
   previousFile: OpenRouterModelsFile;
+  previousOverrides?: Awaited<ReturnType<typeof readModelOverrides>>;
   mutate: () => Promise<void>;
 }): Promise<void> {
-  const { swarmManager, dataDir, previousFile, mutate } = options;
-
-  await mutate();
+  const { swarmManager, dataDir, previousFile, previousOverrides, mutate } = options;
 
   try {
-    await swarmManager.reloadOpenRouterModelsAndProjection();
+    await mutate();
+    if (previousOverrides) {
+      await swarmManager.reloadModelCatalogOverridesAndProjection();
+    } else {
+      await swarmManager.reloadOpenRouterModelsAndProjection();
+    }
   } catch (error) {
     await writeOpenRouterModels(dataDir, previousFile);
+    if (previousOverrides) {
+      await writeModelOverrides(dataDir, previousOverrides);
+    }
 
     try {
-      await swarmManager.reloadOpenRouterModelsAndProjection();
+      if (previousOverrides) {
+        await swarmManager.reloadModelCatalogOverridesAndProjection();
+      } else {
+        await swarmManager.reloadOpenRouterModelsAndProjection();
+      }
     } catch {
-      // Best-effort restoration. Preserve the original projection error below.
+      // Best-effort restoration. Preserve the original mutation or projection error below.
     }
 
     throw error;
@@ -276,25 +294,32 @@ async function mutateOpenRouterModelsWithProjectionReload(options: {
 async function buildOpenRouterModelEntryForAddition(
   modelId: string,
   requestedModel: AvailableOpenRouterModel | null,
+  liveModel: AvailableOpenRouterModel | null,
 ): Promise<OpenRouterModelEntry | null> {
   const catalogModel = OPENROUTER_CATALOG_MODEL_BY_ID.get(modelId);
   if (catalogModel) {
-    return buildOpenRouterModelEntryFromCatalogModel(catalogModel);
+    return buildOpenRouterModelEntryFromMetadata({
+      model: mapCatalogModelToAvailableModel(catalogModel),
+      verifiedSupportsTools: liveModel?.supportsTools,
+    });
   }
 
-  const liveModel = requestedModel ?? (await getLiveOpenRouterModelById(modelId));
-  if (!liveModel) {
+  const metadataModel = liveModel ?? requestedModel;
+  if (!metadataModel) {
     return null;
   }
 
-  return buildOpenRouterModelEntryFromAvailableModel(liveModel);
+  return buildOpenRouterModelEntryFromMetadata({
+    model: metadataModel,
+    verifiedSupportsTools: liveModel?.supportsTools,
+  });
 }
 
-function buildOpenRouterModelEntryFromCatalogModel(model: OpenRouterCatalogModel): OpenRouterModelEntry {
-  return buildOpenRouterModelEntryFromAvailableModel(mapCatalogModelToAvailableModel(model));
-}
-
-function buildOpenRouterModelEntryFromAvailableModel(model: AvailableOpenRouterModel): OpenRouterModelEntry {
+function buildOpenRouterModelEntryFromMetadata(options: {
+  model: AvailableOpenRouterModel;
+  verifiedSupportsTools: boolean | undefined;
+}): OpenRouterModelEntry {
+  const { model, verifiedSupportsTools } = options;
   return {
     modelId: model.modelId,
     displayName: model.displayName,
@@ -304,6 +329,7 @@ function buildOpenRouterModelEntryFromAvailableModel(model: AvailableOpenRouterM
     supportedReasoningLevels: model.supportsReasoning ? [...DEFAULT_REASONING_LEVELS] : ["none"],
     inputModes: normalizeInputModes(model.inputModes),
     addedAt: new Date().toISOString(),
+    ...(typeof verifiedSupportsTools === "boolean" ? { supportsTools: verifiedSupportsTools } : {}),
   };
 }
 
@@ -398,7 +424,9 @@ async function fetchLiveOpenRouterModels(): Promise<AvailableOpenRouterModel[]> 
 
   liveOpenRouterModelsRequest = (async () => {
     try {
-      const response = await fetch(OPENROUTER_LIVE_MODELS_URL);
+      const response = await fetch(OPENROUTER_LIVE_MODELS_URL, {
+        signal: AbortSignal.timeout(OPENROUTER_LIVE_MODELS_TIMEOUT_MS),
+      });
       if (!response.ok) {
         throw new Error(`OpenRouter model fetch failed with status ${response.status}`);
       }

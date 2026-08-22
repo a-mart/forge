@@ -4,10 +4,12 @@ import {
   getCatalogModel,
   getCatalogModelsByFamily,
   getCatalogProvider,
+  getOpenRouterModelOverrideKey,
   getSpecialistFamilies,
   inferCatalogFamily,
   inferCatalogProvider,
   isRetiredForgeModel,
+  parseOpenRouterModelOverrideKey,
   type ForgeModelCatalog,
   type ForgeModelDefinition,
   type ForgeProviderDefinition,
@@ -66,7 +68,26 @@ export class ModelCatalogService {
   getOpenRouterModels(): OpenRouterModelEntry[] {
     return Object.values(this.openRouterModels)
       .filter((model) => !isRetiredForgeModel("openrouter", model.modelId))
+      .map((model) => ({ ...model, supportedReasoningLevels: [...model.supportedReasoningLevels], inputModes: [...model.inputModes] }))
       .sort((left, right) => left.modelId.localeCompare(right.modelId));
+  }
+
+  getOpenRouterModel(modelId: string): OpenRouterModelEntry | undefined {
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId || isRetiredForgeModel("openrouter", normalizedModelId)) {
+      return undefined;
+    }
+
+    const entry = this.openRouterModels[normalizedModelId];
+    if (!entry) {
+      return undefined;
+    }
+
+    return {
+      ...entry,
+      supportedReasoningLevels: [...entry.supportedReasoningLevels],
+      inputModes: [...entry.inputModes],
+    };
   }
 
   setXaiOAuthDiscoveredModels(models: readonly ForgeModelDefinition[] | null): void {
@@ -254,12 +275,24 @@ export class ModelCatalogService {
   }
 
   getOverride(modelId: string, provider?: string): ModelOverrideEntry | undefined {
-    const model = this.getModel(modelId, provider);
-    if (!model) {
+    const normalizedModelId = modelId.trim();
+    const normalizedProvider = provider?.trim().toLowerCase();
+    const model = this.getModel(normalizedModelId, normalizedProvider);
+    if (model) {
+      const override = this.overrides[getOverrideKey(model)];
+      return override ? { ...override } : undefined;
+    }
+
+    if (normalizedProvider && normalizedProvider !== "openrouter") {
       return undefined;
     }
 
-    const override = this.overrides[getOverrideKey(model)];
+    const openRouterModel = this.getOpenRouterModel(normalizedModelId);
+    if (!openRouterModel) {
+      return undefined;
+    }
+
+    const override = this.overrides[getOpenRouterModelOverrideKey(openRouterModel.modelId)];
     return override ? { ...override } : undefined;
   }
 
@@ -346,7 +379,14 @@ function normalizeLoadedOverrides(
   overrides: Record<string, ModelOverrideEntry>,
 ): Record<string, ModelOverrideEntry> {
   const normalized = Object.fromEntries(
-    Object.entries(overrides).filter(([key]) => !key.trim().toLowerCase().startsWith("claude-sdk/")),
+    Object.entries(overrides).filter(([key]) => {
+      const trimmed = key.trim().toLowerCase();
+      if (trimmed.startsWith("claude-sdk/")) {
+        return false;
+      }
+      const openRouterModelId = parseOpenRouterModelOverrideKey(key);
+      return !openRouterModelId || !isRetiredForgeModel("openrouter", openRouterModelId);
+    }),
   );
 
   for (const [key, legacyEntry] of Object.entries(overrides)) {

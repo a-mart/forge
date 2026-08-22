@@ -47,6 +47,8 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
   const loadRevisionRef = useRef(0)
   const overridesCacheRef = useRef(new Map<string, ModelOverridesResponse>())
 
+  const lastConfigKeyRef = useRef(config.modelConfigChangeKey)
+
   const loadModels = useCallback((force = false) => {
     const cached = overridesCacheRef.current.get(config.originId)
     if (cached && !force) {
@@ -88,6 +90,14 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
     loadModels()
   }, [config.originId, config.sessionAgentId, loadModels])
 
+  useEffect(() => {
+    if (config.modelConfigChangeKey === undefined) return
+    if (lastConfigKeyRef.current === config.modelConfigChangeKey) return
+    lastConfigKeyRef.current = config.modelConfigChangeKey
+    overridesCacheRef.current.delete(config.originId)
+    loadModels(true)
+  }, [config.modelConfigChangeKey, config.originId, loadModels])
+
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
     if (nextOpen) loadModels()
@@ -101,11 +111,15 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
     () => getCatalogModel(config.currentModel.modelId, config.currentModel.provider),
     [config.currentModel.modelId, config.currentModel.provider],
   )
-  const modelLabel = catalogModel?.displayName ?? config.currentModel.modelId
+  const openRouterModel = useMemo(() => {
+    if (config.currentModel.provider !== 'openrouter') return undefined
+    return overridesData?.openRouterModels?.find((entry) => entry.modelId === config.currentModel.modelId)
+  }, [config.currentModel.modelId, config.currentModel.provider, overridesData?.openRouterModels])
+  const modelLabel = catalogModel?.displayName ?? openRouterModel?.displayName ?? config.currentModel.modelId
   const reasoning = asManagerReasoningLevel(config.currentModel.thinkingLevel)
   const reasoningLabel = formatReasoningLevel(
     config.currentModel.thinkingLevel,
-    catalogModel?.supportedReasoningLevels,
+    catalogModel?.supportedReasoningLevels ?? openRouterModel?.supportedReasoningLevels,
   )
   const effectiveLabel = `${modelLabel} · ${reasoningLabel}`
   const originLabel = config.modelOrigin === 'session_override' ? 'session override' : 'project default'
@@ -117,6 +131,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
       'change',
       overridesData.overrides,
       overridesData.providerAvailability,
+      overridesData.openRouterModels,
     ).filter((row) => !row.unavailableReason)
     const currentIsSelectable = availableRows.some((row) => row.key === currentKey)
     const rows = currentIsSelectable
@@ -126,6 +141,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
             config.currentModel.provider,
             config.currentModel.modelId,
             config.currentModel.thinkingLevel,
+            overridesData.openRouterModels,
           ),
           ...availableRows,
         ]

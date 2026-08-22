@@ -5,7 +5,7 @@ The Authentication pane manages model-provider credentials for the selected Buil
 - **Anthropic** — Claude-based workers and managers. The current card manages an OAuth account pool.
 - **OpenAI** — GPT and Codex runtime sessions. The current card manages an OAuth account pool and the OpenAI/Codex-only Forge Auth broker mode.
 - **xAI** — One direct, non-pooled row for either an API key or OAuth for native Grok models.
-- **OpenRouter** — A masked API-key row for user-added OpenRouter models.
+- **OpenRouter** — A masked API-key row for user-added OpenRouter models. A configured key is required before an OpenRouter manager selection can run.
 - **Cursor SDK** — A masked key/token row for Composer 2.5 and Cursor Grok 4.5 sessions when those catalog models are visible. Shared secrets and environment configuration are also supported. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
 
 ## Configuring a provider
@@ -39,4 +39,4 @@ Claude models use the Anthropic credentials configured in Forge. Claude Code log
 
 ## Which credential do I need?
 
-You need at least one compatible provider credential to run agents. Choose Anthropic for its Claude models; OpenAI or Forge Auth broker mode for GPT/Codex; xAI for native Grok; OpenRouter for user-added OpenRouter models; or Cursor SDK for its visible catalog models. Native `grok-4.6` is the default and `grok-4.5` remains a variant; both can appear for normal manager create, change, and exact per-session override selectors, as well as specialist and spawn usage, when xAI auth is configured and the model is visible. OAuth-only `grok-build` and `grok-composer-2.5-fast` remain entitlement-gated worker/specialist choices excluded from normal manager selectors.
+You need at least one compatible provider credential to run agents. Choose Anthropic for its Claude models; OpenAI or Forge Auth broker mode for GPT/Codex; xAI for native Grok; OpenRouter for user-added OpenRouter models; or Cursor SDK for its visible catalog models. OpenRouter manager selection additionally requires a configured OpenRouter key; adding a row alone is not enough because live tool verification and the per-model manager opt-in are separate gates. Native `grok-4.6` is the default and `grok-4.5` remains a variant; both can appear for normal manager create, change, and exact per-session override selectors, as well as specialist and spawn usage, when xAI auth is configured and the model is visible. OAuth-only `grok-build` and `grok-composer-2.5-fast` remain entitlement-gated worker/specialist choices excluded from normal manager selectors.

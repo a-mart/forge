@@ -258,4 +258,70 @@ describe("openrouter-models", () => {
       models: {},
     });
   });
+
+  it("preserves missing, true, and false supportsTools while dropping non-boolean values",
+    async () => {
+      const dataDir = await makeTempDataDir();
+      const filePath = getOpenRouterModelsPath(dataDir);
+      const legacy = {
+        modelId: "anthropic/claude-3.5-sonnet",
+        displayName: "Claude 3.5 Sonnet",
+        contextWindow: 200_000,
+        maxOutputTokens: 8_192,
+        supportsReasoning: true,
+        supportedReasoningLevels: ["none", "low", "medium", "high"],
+        inputModes: ["text", "image"],
+        addedAt: "2026-04-03T00:00:00.000Z",
+      } satisfies OpenRouterModelEntry;
+      const toolCapable = {
+        ...legacy,
+        modelId: "z-ai/glm-5.1",
+        displayName: "GLM 5.1",
+        supportsTools: true,
+      } satisfies OpenRouterModelEntry;
+      const noTools = {
+        ...legacy,
+        modelId: "google/gemini-2.0-flash",
+        displayName: "Gemini 2.0 Flash",
+        supportsReasoning: false,
+        supportedReasoningLevels: ["none"],
+        supportsTools: false,
+      } satisfies OpenRouterModelEntry;
+
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(
+        filePath,
+        JSON.stringify({
+          version: 1,
+          models: {
+            [legacy.modelId]: legacy,
+            [toolCapable.modelId]: toolCapable,
+            [noTools.modelId]: noTools,
+            "invalid/tools": {
+              ...legacy,
+              modelId: "invalid/tools",
+              supportsTools: "yes",
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      await expect(readOpenRouterModels(dataDir)).resolves.toEqual({
+        version: 1,
+        models: {
+          [legacy.modelId]: legacy,
+          [toolCapable.modelId]: toolCapable,
+          [noTools.modelId]: noTools,
+        },
+      });
+
+      await addOpenRouterModel(dataDir, toolCapable);
+      const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
+        models: Record<string, OpenRouterModelEntry>;
+      };
+      expect(persisted.models[toolCapable.modelId]?.supportsTools).toBe(true);
+      expect(persisted.models[legacy.modelId]?.supportsTools).toBeUndefined();
+    },
+  );
 });

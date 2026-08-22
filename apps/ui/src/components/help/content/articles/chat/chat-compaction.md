@@ -13,7 +13,7 @@ Open the **⋮ menu** in the chat header. You'll see two options:
 
 If you run Smart compact manually while a Pi-backed manager is already idle, it stays idle afterward. If the manager is active, interrupted, or waiting on dispatch, it resumes after compaction.
 
-Settings for the compaction model, reasoning level, and timeout live in **Settings > General > Compaction**. They apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic. Cursor SDK and xAI/Grok runtimes are not controlled by these settings.
+Settings for the compaction model, reasoning level, and timeout live in **Settings > General > Compaction**. They apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not controlled by these settings; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices.
 
 ## Auto-compaction
 

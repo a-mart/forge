@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
-import { getCatalogModelKey } from '@forge/protocol'
+import { getCatalogModelKey, getOpenRouterModelOverrideKey } from '@forge/protocol'
+import { addOpenRouterModel } from '../openrouter-models.js'
+import { setModelOverride } from '../model-overrides.js'
 import {
   getSessionDir,
   getSessionGoalHistoryPath,
@@ -1444,6 +1446,71 @@ Never use plain assistant text for user communication.`
       thinkingLevel: 'medium',
     })
     expect(manager.getAgent('manager')?.model).toEqual(updated)
+    vi.unstubAllEnvs()
+  })
+
+  it('creates, changes, and rehydrates an OpenRouter manager after restart', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'sk-or-test-manager')
+    const config = await makeTempConfig()
+    const openRouterModel = {
+      modelId: 'z-ai/glm-5.1',
+      displayName: 'Z.ai: GLM 5.1',
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'] as const,
+      inputModes: ['text'] as const,
+      addedAt: '2026-04-03T00:00:00.000Z',
+      supportsTools: true,
+    }
+    await addOpenRouterModel(config.paths.dataDir, openRouterModel)
+    await setModelOverride(config.paths.dataDir, getOpenRouterModelOverrideKey(openRouterModel.modelId), {
+      managerEnabled: true,
+    })
+    await modelCatalogService.loadOverrides(config.paths.dataDir)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createManager('manager', {
+      name: 'OpenRouter Manager',
+      cwd: config.defaultCwd,
+      modelSelection: {
+        provider: 'openrouter',
+        modelId: openRouterModel.modelId,
+      },
+      reasoningLevel: 'ultra',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'openrouter',
+      modelId: openRouterModel.modelId,
+      thinkingLevel: 'high',
+    })
+
+    const { sessionAgent } = await manager.createSession(created.agentId, { label: 'OpenRouter Override Session' })
+    const sessionModel = await manager.updateSessionExactModel(sessionAgent.agentId, {
+      provider: 'openrouter',
+      modelId: openRouterModel.modelId,
+    }, 'high')
+    expect(sessionModel).toEqual({
+      provider: 'openrouter',
+      modelId: openRouterModel.modelId,
+      thinkingLevel: 'high',
+    })
+    expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual(sessionModel)
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    expect(rebooted.getAgent(created.agentId)?.model).toEqual({
+      provider: 'openrouter',
+      modelId: openRouterModel.modelId,
+      thinkingLevel: 'high',
+    })
+    expect(rebooted.getAgent(sessionAgent.agentId)?.model).toEqual({
+      provider: 'openrouter',
+      modelId: openRouterModel.modelId,
+      thinkingLevel: 'high',
+    })
     vi.unstubAllEnvs()
   })
 

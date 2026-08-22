@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, Loader2, Plug, Search } from 'lucide-react'
+import { getOpenRouterModelOverrideKey, type ModelOverrideEntry } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { OpenRouterModelCard } from './OpenRouterModelCard'
@@ -11,9 +12,21 @@ interface SettingsOpenRouterProps {
   wsUrl: string | undefined
   apiClient?: SettingsApiClient
   modelConfigChangeKey: number
+  overrides?: Record<string, ModelOverrideEntry>
+  onOverridesRefresh?: () => Promise<void>
+  onCardSaveStart?: (modelKey: string) => void
+  onCardSaveEnd?: (modelKey: string) => void
 }
 
-export function SettingsOpenRouter({ wsUrl, apiClient, modelConfigChangeKey }: SettingsOpenRouterProps) {
+export function SettingsOpenRouter({
+  wsUrl,
+  apiClient,
+  modelConfigChangeKey,
+  overrides = {},
+  onOverridesRefresh,
+  onCardSaveStart,
+  onCardSaveEnd,
+}: SettingsOpenRouterProps) {
   const clientOrWsUrl: SettingsApiClient | string | undefined = apiClient ?? wsUrl
   const [data, setData] = useState<OpenRouterModelsResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -154,9 +167,14 @@ export function SettingsOpenRouter({ wsUrl, apiClient, modelConfigChangeKey }: S
               {sortedModels.map((model) => (
                 <OpenRouterModelCard
                   key={model.modelId}
+                  clientOrWsUrl={clientOrWsUrl}
                   model={model}
+                  override={overrides[getOpenRouterModelOverrideKey(model.modelId)]}
                   onRemove={(id) => void handleRemove(id)}
                   isRemoving={removingModelId === model.modelId}
+                  onRefresh={onOverridesRefresh ?? loadModels}
+                  onCardSaveStart={onCardSaveStart}
+                  onCardSaveEnd={onCardSaveEnd}
                 />
               ))}
             </div>

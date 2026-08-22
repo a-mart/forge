@@ -325,4 +325,90 @@ describe('SessionModelPicker compact menu', () => {
 
     expect(queryByRole(document.body, 'menu')).toBeNull()
   })
+
+  it('includes an enabled OpenRouter model and refreshes after model_config_changed', async () => {
+    const glm = {
+      modelId: 'z-ai/glm-5.1',
+      displayName: 'Z.ai: GLM 5.1',
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+      inputModes: ['text'],
+      addedAt: '2026-04-03T00:00:00.000Z',
+      supportsTools: true,
+    }
+    modelsApiMock.fetchModelOverrides.mockResolvedValue({
+      version: 1,
+      overrides: {},
+      providerAvailability: {
+        'openai-codex': true,
+        anthropic: true,
+        xai: true,
+        openrouter: true,
+      },
+      openRouterModels: [glm],
+    })
+
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, { modelConfigChangeKey: 0 })
+    await openPicker()
+    await openSubmenu(/Model/)
+    expect(queryByRole(document.body, 'menuitemradio', { name: 'Z.ai: GLM 5.1' })).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    await flushAsyncWork()
+
+    modelsApiMock.fetchModelOverrides.mockResolvedValue({
+      version: 1,
+      overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
+      providerAvailability: {
+        'openai-codex': true,
+        anthropic: true,
+        xai: true,
+        openrouter: true,
+      },
+      openRouterModels: [glm],
+    })
+    rerenderPicker(onUpdate, { modelConfigChangeKey: 1 })
+    await flushAsyncWork()
+    await openPicker()
+    await openSubmenu(/Model/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Z.ai: GLM 5.1' })).toBeTruthy()
+    expect(modelsApiMock.fetchModelOverrides.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('keeps an unavailable current OpenRouter model as a disabled current option', async () => {
+    const glm = {
+      modelId: 'z-ai/glm-5.1',
+      displayName: 'Z.ai: GLM 5.1',
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+      inputModes: ['text'],
+      addedAt: '2026-04-03T00:00:00.000Z',
+      supportsTools: true,
+    }
+    modelsApiMock.fetchModelOverrides.mockResolvedValue({
+      version: 1,
+      overrides: {},
+      providerAvailability: {
+        'openai-codex': true,
+        anthropic: true,
+        xai: true,
+        openrouter: true,
+      },
+      openRouterModels: [glm],
+    })
+
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, {
+      currentModel: { provider: 'openrouter', modelId: glm.modelId, thinkingLevel: 'medium' },
+    })
+    await openPicker()
+    await openSubmenu(/Model/)
+    const current = getByRole(document.body, 'menuitemradio', { name: /Z.ai: GLM 5.1/ })
+    expect(current.getAttribute('data-disabled')).toBe('')
+    expect(current.textContent).toContain('Current')
+  })
 })

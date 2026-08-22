@@ -1,10 +1,27 @@
 import { describe, expect, it } from 'vitest'
+import { getOpenRouterModelOverrideKey, type OpenRouterModelEntry } from '@forge/protocol'
 import {
+  buildCurrentModelFallbackRow,
   buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
 } from './manager-model-selection'
+
+function openRouterEntry(overrides: Partial<OpenRouterModelEntry> = {}): OpenRouterModelEntry {
+  return {
+    modelId: 'z-ai/glm-5.1',
+    displayName: 'Z.ai: GLM 5.1',
+    contextWindow: 202_752,
+    maxOutputTokens: 202_752,
+    supportsReasoning: true,
+    supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+    inputModes: ['text'],
+    addedAt: '2026-04-03T00:00:00.000Z',
+    supportsTools: true,
+    ...overrides,
+  }
+}
 
 describe('encodeManagerModelValue / decodeManagerModelValue', () => {
   it('round-trips provider and modelId', () => {
@@ -130,16 +147,100 @@ describe('buildManagerModelRows provider availability gating', () => {
     expect(fable?.unavailableReason).toBeUndefined()
   })
 
-  it('does not gate external-availability providers on providerAvailability', () => {
-    // External providers (e.g. OpenRouter) should always be available regardless of providerAvailability
-    const rows = buildManagerModelRows('change', {}, {})
+})
 
-    const externalRows = rows.filter((r) => r.provider === 'openrouter')
-    // External providers may or may not have models on the change surface,
-    // but if they do, they should not be marked unavailable
-    for (const row of externalRows) {
-      expect(row.unavailableReason).toBeUndefined()
-    }
+describe('buildManagerModelRows OpenRouter dynamic entries', () => {
+  it('excludes user-added OpenRouter models by default even when tools and auth are present', () => {
+    const rows = buildManagerModelRows(
+      'create',
+      {},
+      { openrouter: true },
+      [openRouterEntry()],
+    )
+
+    expect(rows.some((row) => row.provider === 'openrouter')).toBe(false)
+  })
+
+  it('includes only managerEnabled tool-capable OpenRouter models with exact provider/modelId payloads', () => {
+    const enabled = openRouterEntry()
+    const disabled = openRouterEntry({
+      modelId: 'deepseek/deepseek-chat',
+      displayName: 'DeepSeek Chat',
+    })
+    const noTools = openRouterEntry({
+      modelId: 'google/gemini-2.0-flash',
+      displayName: 'Gemini 2.0 Flash',
+      supportsTools: false,
+    })
+    const unverified = openRouterEntry({
+      modelId: 'meta-llama/llama-3.1-8b-instruct',
+      displayName: 'Llama 3.1 8B',
+    })
+    delete (unverified as { supportsTools?: boolean }).supportsTools
+
+    const rows = buildManagerModelRows(
+      'change',
+      {
+        [getOpenRouterModelOverrideKey(enabled.modelId)]: { managerEnabled: true },
+        [getOpenRouterModelOverrideKey(disabled.modelId)]: { managerEnabled: false },
+        [getOpenRouterModelOverrideKey(noTools.modelId)]: { managerEnabled: true },
+        [getOpenRouterModelOverrideKey(unverified.modelId)]: { managerEnabled: true },
+      },
+      { openrouter: true },
+      [enabled, disabled, noTools, unverified],
+    )
+
+    const openRouterRows = rows.filter((row) => row.provider === 'openrouter')
+    expect(openRouterRows).toEqual([
+      expect.objectContaining({
+        key: 'openrouter::z-ai/glm-5.1',
+        provider: 'openrouter',
+        modelId: 'z-ai/glm-5.1',
+        displayName: 'Z.ai: GLM 5.1',
+        supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+        defaultReasoningLevel: 'medium',
+      }),
+    ])
+    expect(decodeManagerModelValue(openRouterRows[0].key)).toEqual({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.1',
+    })
+  })
+
+  it('marks enabled OpenRouter rows unavailable when OpenRouter is not configured', () => {
+    const model = openRouterEntry()
+    const rows = buildManagerModelRows(
+      'create',
+      { [getOpenRouterModelOverrideKey(model.modelId)]: { managerEnabled: true } },
+      { openrouter: false },
+      [model],
+    )
+
+    expect(rows.find((row) => row.modelId === model.modelId)).toMatchObject({
+      provider: 'openrouter',
+      unavailableReason: 'Provider not configured',
+    })
+  })
+
+  it('preserves an unavailable current OpenRouter model as a fallback row', () => {
+    const model = openRouterEntry()
+    const fallback = buildCurrentModelFallbackRow(
+      'openrouter',
+      model.modelId,
+      'high',
+      [model],
+    )
+
+    expect(fallback).toMatchObject({
+      key: 'openrouter::z-ai/glm-5.1',
+      provider: 'openrouter',
+      providerDisplayName: 'OpenRouter',
+      modelId: model.modelId,
+      displayName: model.displayName,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+      defaultReasoningLevel: 'medium',
+      unavailableReason: 'Not available for selection',
+    })
   })
 })
 

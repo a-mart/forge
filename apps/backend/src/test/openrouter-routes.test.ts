@@ -2,8 +2,9 @@ import { readFile, rm } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "../swarm/pi/pi-ai-compat.js";
 import type { SwarmConfig } from "../swarm/types.js";
-import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
+import { getOpenRouterModelsPath, getSharedModelOverridesPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
+import * as modelOverrides from "../swarm/model-overrides.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/http/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 import { TestSwarmManager, bootWithDefaultManager, createTempConfig, getAvailablePort } from "../test-support/index.js";
@@ -203,10 +204,237 @@ describe("openrouter-routes", () => {
       expect(secondResponse.status).toBe(200);
       await secondResponse.json();
 
-      expect(fetchSpy.mock.calls.filter(([input]) => {
+      const liveFetchCalls = fetchSpy.mock.calls.filter(([input]) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         return url === "https://openrouter.ai/api/v1/models";
-      })).toHaveLength(1);
+      });
+      expect(liveFetchCalls).toHaveLength(1);
+      expect(liveFetchCalls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("persists live-verified tool capability and ignores request-body supportsTools claims", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const originalFetch = globalThis.fetch;
+    const liveModel = {
+      id: "z-ai/glm-5.1",
+      name: "Z.ai: GLM 5.1",
+      context_length: 202_752,
+      max_completion_tokens: 202_752,
+      pricing: {
+        prompt: 0.000001,
+        completion: 0.0000032,
+      },
+      supported_parameters: ["reasoning", "tools"],
+      architecture: {
+        modality: "text->text",
+      },
+      top_provider: {
+        max_completion_tokens: 202_752,
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return new Response(JSON.stringify({ data: [liveModel] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
+    const { config, server } = await startServer();
+    const modelId = "z-ai/glm-5.1";
+
+    try {
+      const addResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: {
+              modelId,
+              displayName: "Client Claim",
+              upstreamProvider: "z-ai",
+              contextWindow: 1,
+              maxOutputTokens: 1,
+              supportsReasoning: false,
+              supportsTools: false,
+              inputModes: ["text"],
+            },
+          }),
+        },
+      );
+      expect(addResponse.status).toBe(200);
+      await expect(addResponse.json()).resolves.toMatchObject({
+        modelId,
+        displayName: "Z.ai: GLM 5.1",
+        supportsTools: true,
+      });
+
+      const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { supportsTools?: boolean }>;
+      };
+      expect(storedFile.models[modelId]?.supportsTools).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("does not persist supportsTools from request metadata when live OpenRouter metadata is unavailable", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        throw new Error("network unavailable in test");
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
+    const { config, server } = await startServer();
+    const modelId = "z-ai/glm-5.1";
+
+    try {
+      const addResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: {
+              modelId,
+              displayName: "Z.ai: GLM 5.1",
+              upstreamProvider: "z-ai",
+              contextWindow: 202_752,
+              maxOutputTokens: 202_752,
+              supportsReasoning: true,
+              supportsTools: true,
+              inputModes: ["text"],
+            },
+          }),
+        },
+      );
+      expect(addResponse.status).toBe(200);
+      const added = (await addResponse.json()) as { supportsTools?: boolean };
+      expect(added.supportsTools).toBeUndefined();
+
+      const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { supportsTools?: boolean }>;
+      };
+      expect(storedFile.models[modelId]?.supportsTools).toBeUndefined();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("clears the OpenRouter manager override on delete and restores it when projection reload fails", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const { config, manager, server } = await startServer();
+    const modelId = TEST_OPENROUTER_MODEL_ID;
+    const overrideKey = `openrouter:${modelId}`;
+
+    try {
+      const addResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "PUT" },
+      );
+      expect(addResponse.status).toBe(200);
+      await modelOverrides.writeModelOverrides(config.paths.dataDir, {
+        version: 1,
+        overrides: {
+          [overrideKey]: { managerEnabled: true },
+        },
+      });
+
+      const deleteResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "DELETE" },
+      );
+      expect(deleteResponse.status).toBe(200);
+      const storedOverrides = JSON.parse(await readFile(getSharedModelOverridesPath(config.paths.dataDir), "utf8")) as {
+        overrides: Record<string, unknown>;
+      };
+      expect(storedOverrides.overrides[overrideKey]).toBeUndefined();
+
+      const reAddResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "PUT" },
+      );
+      expect(reAddResponse.status).toBe(200);
+      await modelOverrides.writeModelOverrides(config.paths.dataDir, {
+        version: 1,
+        overrides: {
+          [overrideKey]: { managerEnabled: true },
+        },
+      });
+
+      const reloadSpy = vi
+        .spyOn(manager, "reloadModelCatalogOverridesAndProjection")
+        .mockRejectedValueOnce(new Error("projection failed"));
+      const failedDeleteResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "DELETE" },
+      );
+      expect(failedDeleteResponse.status).toBe(500);
+      const restoredOverrides = JSON.parse(await readFile(getSharedModelOverridesPath(config.paths.dataDir), "utf8")) as {
+        overrides: Record<string, { managerEnabled?: boolean }>;
+      };
+      expect(restoredOverrides.overrides[overrideKey]).toEqual({ managerEnabled: true });
+      const restoredModels = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { modelId: string }>;
+      };
+      expect(restoredModels.models[modelId]?.modelId).toBe(modelId);
+      reloadSpy.mockRestore();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rolls back overlay and override files when OpenRouter deletion fails during mutation", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const { config, server } = await startServer();
+    const modelId = TEST_OPENROUTER_MODEL_ID;
+    const overrideKey = `openrouter:${modelId}`;
+
+    try {
+      const addResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "PUT" },
+      );
+      expect(addResponse.status).toBe(200);
+      await modelOverrides.writeModelOverrides(config.paths.dataDir, {
+        version: 1,
+        overrides: {
+          [overrideKey]: { managerEnabled: true },
+        },
+      });
+
+      const writeSpy = vi.spyOn(modelOverrides, "resetModelOverride").mockRejectedValueOnce(
+        new Error("override write failed"),
+      );
+      const failedDeleteResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        { method: "DELETE" },
+      );
+      expect(failedDeleteResponse.status).toBe(500);
+      await expect(failedDeleteResponse.json()).resolves.toMatchObject({ error: "override write failed" });
+
+      const restoredModels = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { modelId: string }>;
+      };
+      expect(restoredModels.models[modelId]?.modelId).toBe(modelId);
+      const restoredOverrides = JSON.parse(await readFile(getSharedModelOverridesPath(config.paths.dataDir), "utf8")) as {
+        overrides: Record<string, { managerEnabled?: boolean }>;
+      };
+      expect(restoredOverrides.overrides[overrideKey]).toEqual({ managerEnabled: true });
+      writeSpy.mockRestore();
     } finally {
       await server.stop();
     }
@@ -214,6 +442,15 @@ describe("openrouter-routes", () => {
 
   it("adds live-only OpenRouter models from request metadata", async () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        throw new Error("network unavailable in test");
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
     const { config, manager, server } = await startServer();
     const modelId = "z-ai/glm-5.1";
     const projectionPath = getPiModelsProjectionPath(config.paths.dataDir);
@@ -256,6 +493,7 @@ describe("openrouter-routes", () => {
         supportedReasoningLevels: ["none", "low", "medium", "high"],
         inputModes: ["text"],
       });
+      expect(added).not.toHaveProperty("supportsTools");
       expect(reloadSpy).toHaveBeenCalledTimes(1);
 
       const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
@@ -320,7 +558,8 @@ describe("openrouter-routes", () => {
     const { config, manager, server } = await startServer();
     const modelId = TEST_OPENROUTER_MODEL_ID;
     const projectionPath = getPiModelsProjectionPath(config.paths.dataDir);
-    const reloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection");
+    const addReloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection");
+    const deleteReloadSpy = vi.spyOn(manager, "reloadModelCatalogOverridesAndProjection");
 
     try {
       const initialProjection = JSON.parse(await readFile(projectionPath, "utf8")) as {
@@ -344,7 +583,8 @@ describe("openrouter-routes", () => {
       expect(added.displayName.length).toBeGreaterThan(0);
       expect(added.supportedReasoningLevels.length).toBeGreaterThan(0);
       expect(added.inputModes.length).toBeGreaterThan(0);
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
+      expect(addReloadSpy).toHaveBeenCalledTimes(1);
+      expect(deleteReloadSpy).not.toHaveBeenCalled();
 
       const duplicateAddResponse = await fetch(
         `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
@@ -354,7 +594,8 @@ describe("openrouter-routes", () => {
       const duplicateAdded = (await duplicateAddResponse.json()) as { modelId: string; addedAt: string };
       expect(duplicateAdded.modelId).toBe(modelId);
       expect(duplicateAdded.addedAt).toBe(added.addedAt);
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
+      expect(addReloadSpy).toHaveBeenCalledTimes(1);
+      expect(deleteReloadSpy).not.toHaveBeenCalled();
 
       const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
         models: Record<string, { modelId: string; addedAt: string }>;
@@ -390,13 +631,15 @@ describe("openrouter-routes", () => {
           presetId: `openrouter:${modelId}`,
         }),
       );
+      deleteReloadSpy.mockClear();
 
       const deleteResponse = await fetch(
         `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
         { method: "DELETE" },
       );
       expect(deleteResponse.status).toBe(200);
-      expect(reloadSpy).toHaveBeenCalledTimes(2);
+      expect(addReloadSpy).toHaveBeenCalledTimes(1);
+      expect(deleteReloadSpy).toHaveBeenCalledTimes(1);
 
       const afterDeleteProjection = JSON.parse(await readFile(projectionPath, "utf8")) as {
         providers: Record<string, unknown>;
@@ -423,7 +666,8 @@ describe("openrouter-routes", () => {
         }),
       );
     } finally {
-      reloadSpy.mockRestore();
+      addReloadSpy.mockRestore();
+      deleteReloadSpy.mockRestore();
       await server.stop();
     }
   });

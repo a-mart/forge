@@ -170,6 +170,7 @@ export function CreateManagerDialog({
       'create',
       overridesData.overrides,
       overridesData.providerAvailability,
+      overridesData.openRouterModels,
     )
   }, [overridesData])
 

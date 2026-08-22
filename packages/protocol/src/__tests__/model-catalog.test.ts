@@ -10,8 +10,12 @@ import {
   getChangeManagerFamilies,
   getCreateManagerFamilies,
   getDefaultManagerEnabled,
+  getDefaultOpenRouterManagerEnabled,
   getEffectiveCompactionEnabled,
   getEffectiveManagerEnabled,
+  getEffectiveOpenRouterManagerEnabled,
+  getOpenRouterManagerDefaultReasoningLevel,
+  getOpenRouterModelOverrideKey,
   getSpawnPresetFamilies,
   getSpecialistFamilies,
   inferCatalogFamily,
@@ -20,8 +24,13 @@ import {
   isCatalogModelId,
   isCatalogModelManagerSupported,
   isCompactionModelSelectionSupported,
+  isCompactionProviderSupported,
+  isOpenRouterModelManagerSupported,
+  isOpenRouterModelOverrideKey,
   isRetiredForgeModel,
+  parseOpenRouterModelOverrideKey,
 } from '../model-catalog.js'
+import type { OpenRouterModelEntry } from '../model-catalog.js'
 
 const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
@@ -601,6 +610,60 @@ describe('model-catalog', () => {
     expect(isCatalogModelManagerSupported(discoveredGrok, 'create')).toBe(false)
     expect(getEffectiveManagerEnabled(discoveredGrok, { managerEnabled: true }, 'change')).toBe(false)
   })
+
+  it('keeps user-added OpenRouter manager eligibility default-off until an explicit override and live tool verification',
+    () => {
+      const toolCapable: OpenRouterModelEntry = {
+        modelId: 'anthropic/claude-3.5-sonnet',
+        displayName: 'Claude 3.5 Sonnet',
+        contextWindow: 200_000,
+        maxOutputTokens: 8_192,
+        supportsReasoning: true,
+        supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+        inputModes: ['text', 'image'],
+        addedAt: '2026-04-03T00:00:00.000Z',
+        supportsTools: true,
+      }
+      const noTools: OpenRouterModelEntry = { ...toolCapable, supportsTools: false }
+      const unverified: OpenRouterModelEntry = {
+        ...toolCapable,
+      }
+      delete unverified.supportsTools
+      const noReasoning: OpenRouterModelEntry = {
+        ...toolCapable,
+        supportsReasoning: false,
+        supportedReasoningLevels: ['none'],
+      }
+      const highOnly: OpenRouterModelEntry = {
+        ...toolCapable,
+        supportedReasoningLevels: ['high', 'max'],
+      }
+
+      expect(isOpenRouterModelManagerSupported(toolCapable)).toBe(true)
+      expect(isOpenRouterModelManagerSupported(noTools)).toBe(false)
+      expect(isOpenRouterModelManagerSupported(unverified)).toBe(false)
+      expect(getDefaultOpenRouterManagerEnabled(toolCapable, 'create')).toBe(false)
+      expect(getEffectiveOpenRouterManagerEnabled(toolCapable, undefined, 'create')).toBe(false)
+      expect(getEffectiveOpenRouterManagerEnabled(toolCapable, { managerEnabled: false }, 'change')).toBe(false)
+      expect(getEffectiveOpenRouterManagerEnabled(toolCapable, { managerEnabled: true }, 'create')).toBe(true)
+      expect(getEffectiveOpenRouterManagerEnabled(noTools, { managerEnabled: true }, 'create')).toBe(false)
+      expect(getEffectiveOpenRouterManagerEnabled(unverified, { managerEnabled: true }, 'change')).toBe(false)
+      expect(getOpenRouterManagerDefaultReasoningLevel(toolCapable)).toBe('medium')
+      expect(getOpenRouterManagerDefaultReasoningLevel(noReasoning)).toBe('none')
+      expect(getOpenRouterManagerDefaultReasoningLevel(highOnly)).toBe('high')
+      expect(isCompactionProviderSupported('openrouter')).toBe(false)
+      expect(isCompactionModelSelectionSupported('anthropic/claude-3.5-sonnet', 'openrouter')).toBe(false)
+      expect(getOpenRouterModelOverrideKey('anthropic/claude-3.5-sonnet')).toBe(
+        'openrouter:anthropic/claude-3.5-sonnet',
+      )
+      expect(isOpenRouterModelOverrideKey('openrouter:anthropic/claude-3.5-sonnet')).toBe(true)
+      expect(isOpenRouterModelOverrideKey('claude-opus-4-7')).toBe(false)
+      expect(parseOpenRouterModelOverrideKey('openrouter:anthropic/claude-3.5-sonnet')).toBe(
+        'anthropic/claude-3.5-sonnet',
+      )
+      expect(parseOpenRouterModelOverrideKey('claude-opus-4-7')).toBeUndefined()
+    },
+  )
 
   it('derives compaction eligibility from the dedicated provider allowlist instead of manager visibility', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')

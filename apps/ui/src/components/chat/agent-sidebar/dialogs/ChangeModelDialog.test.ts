@@ -5,20 +5,24 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ModelOverridesResponse, OpenRouterModelEntry } from '@forge/protocol'
 
-// Mock fetchModelOverrides to return empty (catalog defaults, all providers available)
-vi.mock('@/components/settings/models-api', () => ({
-  fetchModelOverrides: () =>
-    Promise.resolve({
-      version: 1,
-      overrides: {},
-      providerAvailability: {
-        'openai-codex': true,
-        'anthropic': true,
-          'xai': true,
-      },
-    }),
+const modelsApiMock = vi.hoisted(() => ({
+  fetchModelOverrides: vi.fn<(...args: unknown[]) => Promise<ModelOverridesResponse>>(() => Promise.resolve({
+    version: 1,
+    overrides: {},
+    providerAvailability: {
+      'openai-codex': true,
+      anthropic: true,
+      xai: true,
+    },
+    providerCredentials: {},
+    discoveredModels: [],
+    openRouterModels: [],
+  })),
 }))
+
+vi.mock('@/components/settings/models-api', () => modelsApiMock)
 
 // Must import after mock setup
 const { ChangeModelDialog } = await import('./ChangeModelDialog')
@@ -39,6 +43,19 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  vi.clearAllMocks()
+  modelsApiMock.fetchModelOverrides.mockResolvedValue({
+    version: 1,
+    overrides: {},
+    providerAvailability: {
+      'openai-codex': true,
+      anthropic: true,
+      xai: true,
+    },
+    providerCredentials: {},
+    discoveredModels: [],
+    openRouterModels: [],
+  })
 })
 
 async function renderDialog(overrides: Record<string, unknown> = {}) {
@@ -146,9 +163,7 @@ describe('ChangeModelDialog', () => {
     it('disables selectors and submit, shows error with retry on fetch failure', async () => {
       // Override the mock for this test to simulate failure, then immediately restore
       // so the spy doesn't leak into other tests sharing this module mock.
-      const modelsApi = await import('@/components/settings/models-api')
-      const originalMock = modelsApi.fetchModelOverrides
-      ;(modelsApi as any).fetchModelOverrides = vi.fn().mockRejectedValue(new Error('Network error'))
+      modelsApiMock.fetchModelOverrides.mockRejectedValueOnce(new Error('Network error'))
 
       const defaultProps = {
         wsUrl: undefined,
@@ -169,9 +184,6 @@ describe('ChangeModelDialog', () => {
         root.render(createElement(ChangeModelDialog, defaultProps))
       })
 
-      // Restore before assertions so test cleanup is safe
-      ;(modelsApi as any).fetchModelOverrides = originalMock
-
       const dialog = document.body.querySelector('[role="dialog"]')
 
       // Error message and retry should be shown
@@ -185,6 +197,71 @@ describe('ChangeModelDialog', () => {
       // Submit should be disabled
       const submitButton = findSubmitButton()
       expect(submitButton!.disabled).toBe(true)
+    })
+  })
+
+  describe('OpenRouter manager models', () => {
+    const glm: OpenRouterModelEntry = {
+      modelId: 'z-ai/glm-5.1',
+      displayName: 'Z.ai: GLM 5.1',
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+      inputModes: ['text'],
+      addedAt: '2026-04-03T00:00:00.000Z',
+      supportsTools: true,
+    }
+
+    it('includes an enabled OpenRouter model in the change selector', async () => {
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
+        providerAvailability: {
+          'openai-codex': true,
+          anthropic: true,
+          xai: true,
+          openrouter: true,
+        },
+        providerCredentials: {},
+        discoveredModels: [],
+        openRouterModels: [glm],
+      })
+
+      await renderDialog()
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('Z.ai: GLM 5.1')
+    })
+
+    it('preserves an unavailable current OpenRouter model as a disabled current option', async () => {
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: {},
+        providerAvailability: {
+          'openai-codex': true,
+          anthropic: true,
+          xai: true,
+          openrouter: true,
+        },
+        providerCredentials: {},
+        discoveredModels: [],
+        openRouterModels: [glm],
+      })
+
+      await renderDialog({
+        currentModel: {
+          provider: 'openrouter',
+          modelId: glm.modelId,
+          thinkingLevel: 'medium',
+        },
+        currentReasoningLevel: 'medium',
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('Z.ai: GLM 5.1')
+      expect(dialog?.textContent).toContain('(current)')
+      expect(findSubmitButton()?.disabled).toBe(true)
+      expect(findReasoningTrigger()?.disabled).toBe(true)
     })
   })
 })

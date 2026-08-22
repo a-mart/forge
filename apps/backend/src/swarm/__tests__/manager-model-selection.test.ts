@@ -2,9 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { OpenRouterModelEntry } from "@forge/protocol";
 import { resolveModelDescriptorFromPreset } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { writeModelOverrides } from "../model-overrides.js";
+import { writeOpenRouterModels } from "../openrouter-models.js";
 import { resolveExactManagerModelSelection } from "../catalog/manager-model-selection.js";
 import { parseXaiOAuthModelCatalog } from "../catalog/xai-oauth-model-discovery.js";
 
@@ -14,6 +16,20 @@ async function makeTempDataDir(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "forge-manager-model-selection-"));
   tempDirs.push(directory);
   return directory;
+}
+
+function openRouterEntry(overrides: Partial<OpenRouterModelEntry> = {}): OpenRouterModelEntry {
+  return {
+    modelId: "z-ai/glm-5.1",
+    displayName: "Z.ai: GLM 5.1",
+    contextWindow: 202_752,
+    maxOutputTokens: 202_752,
+    supportsReasoning: true,
+    supportedReasoningLevels: ["none", "low", "medium", "high"],
+    inputModes: ["text"],
+    addedAt: "2026-04-03T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 afterEach(async () => {
@@ -228,6 +244,98 @@ describe("manager model selection", () => {
       modelId: "claude-fable-5",
       thinkingLevel: "max",
     });
+  });
+
+  it("accepts a live-verified, manager-enabled OpenRouter model and clamps reasoning to stored levels", async () => {
+    const dataDir = await makeTempDataDir();
+    const model = openRouterEntry({
+      supportsTools: true,
+      supportedReasoningLevels: ["none", "low", "medium", "high"],
+    });
+    await writeOpenRouterModels(dataDir, {
+      version: 1,
+      models: { [model.modelId]: model },
+    });
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        [`openrouter:${model.modelId}`]: { managerEnabled: true },
+      },
+    });
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openrouter", modelId: model.modelId },
+        { surface: "create", providerAvailability: new Map([["openrouter", true]]) },
+      ),
+    ).toEqual({
+      provider: "openrouter",
+      modelId: model.modelId,
+      thinkingLevel: "medium",
+    });
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openrouter", modelId: model.modelId },
+        {
+          surface: "change",
+          providerAvailability: new Map([["openrouter", true]]),
+          reasoningLevel: "high",
+        },
+      ),
+    ).toEqual({
+      provider: "openrouter",
+      modelId: model.modelId,
+      thinkingLevel: "high",
+    });
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openrouter", modelId: model.modelId },
+        {
+          surface: "change",
+          providerAvailability: new Map([["openrouter", true]]),
+          reasoningLevel: "ultra",
+        },
+      ),
+    ).toEqual({
+      provider: "openrouter",
+      modelId: model.modelId,
+      thinkingLevel: "high",
+    });
+  });
+
+  it.each([
+    ["missing overlay", undefined, { managerEnabled: true }, new Map([["openrouter", true]]), "Unknown manager model selection"],
+    ["unverified tools", openRouterEntry(), { managerEnabled: true }, new Map([["openrouter", true]]), "is not available for manager"],
+    ["explicit no-tools", openRouterEntry({ supportsTools: false }), { managerEnabled: true }, new Map([["openrouter", true]]), "is not available for manager"],
+    ["default-off managerEnabled", openRouterEntry({ supportsTools: true }), undefined, new Map([["openrouter", true]]), "is disabled for manager agents"],
+    ["explicit managerEnabled false", openRouterEntry({ supportsTools: true }), { managerEnabled: false }, new Map([["openrouter", true]]), "is disabled for manager agents"],
+    ["missing credentials", openRouterEntry({ supportsTools: true }), { managerEnabled: true }, new Map(), "Provider openrouter is not configured"],
+    ["false credentials", openRouterEntry({ supportsTools: true }), { managerEnabled: true }, new Map([["openrouter", false]]), "Provider openrouter is not configured"],
+  ] as const)("rejects OpenRouter manager selection when %s", async (_label, model, override, availability, message) => {
+    const dataDir = await makeTempDataDir();
+    if (model) {
+      await writeOpenRouterModels(dataDir, {
+        version: 1,
+        models: { [model.modelId]: model },
+      });
+    }
+    if (override) {
+      await writeModelOverrides(dataDir, {
+        version: 1,
+        overrides: {
+          "openrouter:z-ai/glm-5.1": override,
+        },
+      });
+    }
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(() =>
+      resolveExactManagerModelSelection(
+        { provider: "openrouter", modelId: "z-ai/glm-5.1" },
+        { surface: "create", providerAvailability: availability },
+      ),
+    ).toThrow(message);
   });
 
   it("keeps pi-sonnet preset resolution on Sonnet 5 instead of Opus", async () => {

@@ -11,9 +11,10 @@ Three things affect the quality and speed of what you get back:
 ## Where models get configured
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
-- **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose concrete models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first.
+- **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose supported checked-in catalog models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first. User-added OpenRouter rows use a separate exact-ID manager path rather than a family or preset.
 - **Roster specialists:** Each specialist in a delegation preset combines a task type with its model and reasoning level. Different presets can optimize for speed, cost, provider diversity, or deeper capability.
 - **Fallback models:** Roster specialists and direct custom specialists can define a fallback model that activates if the primary is unavailable or rate-limited.
+- **User-added OpenRouter models:** These start with manager access off. A model needs live-verified tool support, an explicit per-model **Manager agents** opt-in, and a configured OpenRouter key before an exact manager selection can use it.
 
 ## Model-specific instructions
 

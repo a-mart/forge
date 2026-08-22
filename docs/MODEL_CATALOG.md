@@ -1,6 +1,6 @@
 # Forge Model Catalog
 
-Forge keeps its supported model metadata in one checked-in source of truth:
+Forge keeps checked-in metadata for its supported catalog models in one source of truth:
 
 - `packages/protocol/src/model-catalog-data.ts`
 
@@ -32,6 +32,21 @@ Forge owns model metadata end-to-end:
 5. Every Pi `ModelRegistry` is constructed with that generated projection path.
 6. Request-time provider quirks are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`. xAI native search is future/experimental pending a dedicated adapter; it is not a current production path.
 
+## User-added OpenRouter models
+
+OpenRouter models added by the user are persisted overlays, not checked-in catalog rows. They do not create a Forge family, preset, or variant.
+
+Manager eligibility is deliberately a separate, opt-in policy:
+
+- Forge records `supportsTools` only from live OpenRouter metadata observed while adding the model. A request-body capability claim is ignored. `supportsTools: true` is a necessary verified-tool-call gate; `false` or an absent field is not manager eligible.
+- Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The OpenRouter override accepts only this manager field; removing it returns to the default-off state.
+- Manager create, change, and session-override requests accept only an exact `{ provider: "openrouter", modelId: "<exact-id>" }` selection. OpenRouter rows have no family or preset fallback, and unknown IDs fail closed.
+- A configured OpenRouter credential is still required when the manager selection is resolved. Configure the key in Settings → Authentication or provide `OPENROUTER_API_KEY`.
+- Legacy rows without `supportsTools`, and rows verified as `supportsTools: false`, remain non-manager rows even if retained for existing worker or specialist configuration. They cannot be promoted by an override until a fresh live add records verified tool support.
+- Removing an OpenRouter row also removes its manager override, so re-adding the same ID cannot silently reactivate it.
+
+Manager eligibility does not change compaction policy. OpenRouter is not in the supported Forge compaction provider allowlist and does not appear in the compaction model selector.
+
 ## Codex app-server sidecar
 
 The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server as a direct sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it to the visible `Codex Plugin` specialist worker. The plugin-scoped path is read-only/safety-gated, uses server-owned scoped exact plugin tools, and returns preview/metadata-bounded normal tool output. Full connector exports use the scoped export artifact path instead of chat chunk relay. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
@@ -59,7 +74,7 @@ That proxy-only compatibility metadata is attached only to authenticated xAI OAu
 
 GPT-5.3 Codex Spark, Claude Sonnet 4.5, and Claude Haiku 4.5 are retired. They are absent from catalog, selector, preset, specialist, and generated projection surfaces. New requests using their canonical IDs, known dotted/dashed aliases, provider-scoped forms, or the removed `pi-codex-spark` preset are rejected before runtime provider dispatch.
 
-Persisted descriptors are normalized deterministically during hydration and restart: Spark becomes `openai-codex/gpt-5.5`, Anthropic Sonnet 4.5 and Haiku 4.5 become `anthropic/claude-sonnet-5`, known former Claude SDK selections become the same native `anthropic` model, and retired SDK Sonnet/Haiku 4.5 selections become `anthropic/claude-sonnet-5`. Unknown former SDK IDs remain unavailable and require an explicit native Anthropic selection. The existing reasoning level is clamped to the replacement model's supported levels. OpenRouter references are not migrated across providers; they fail closed and require an explicit new selection. Historical transcript entries remain unchanged for replay and analytics; they cannot select the runtime model. User-authored project resources are not rewritten and report remediation instead. Claude Code credentials are not transferred; configure native Anthropic auth in Forge. Continued sessions use native Anthropic reasoning and compaction semantics. Rollback requires reinstalling the prior binary; no history or external Claude Code data is rewritten.
+Persisted descriptors are normalized deterministically during hydration and restart: Spark becomes `openai-codex/gpt-5.5`, Anthropic Sonnet 4.5 and Haiku 4.5 become `anthropic/claude-sonnet-5`, known former Claude SDK selections become the same native `anthropic` model, and retired SDK Sonnet/Haiku 4.5 selections become `anthropic/claude-sonnet-5`. Unknown former SDK IDs remain unavailable and require an explicit native Anthropic selection. The existing reasoning level is clamped to the replacement model's supported levels. Retired OpenRouter IDs are hidden from the active model list, projection, and selector surfaces and rejected before provider dispatch. OpenRouter references are not migrated across providers; they fail closed and require an explicit exact new selection. Historical transcript entries remain unchanged for replay and analytics; they cannot select the runtime model. User-authored project resources are not rewritten and report remediation instead. Claude Code credentials are not transferred; configure native Anthropic auth in Forge. Continued sessions use native Anthropic reasoning and compaction semantics. Rollback requires reinstalling the prior binary; no history or external Claude Code data is rewritten.
 
 ## Override semantics
 
@@ -68,6 +83,7 @@ Local overrides are intentionally narrow and safe.
 Supported fields:
 
 - `enabled`: control whether a model can appear in manager-facing selectors, including create-session, change-default, and per-session override flows
+- `managerEnabled`: control manager-agent visibility separately from general model visibility. User-added OpenRouter rows default to off and require an explicit `true` after live tool verification
 - `contextWindowCap`: cap the effective context window
 
 ### Context window cap semantics

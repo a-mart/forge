@@ -14,9 +14,7 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
-// Default mock: all manager models disabled via managerEnabled overrides
-// so that availableRows ends up empty after successful load.
-vi.mock('@/components/settings/models-api', () => ({
+const modelsApiMock = vi.hoisted(() => ({
   fetchModelOverrides: vi.fn().mockResolvedValue({
     version: 1,
     overrides: {},
@@ -26,7 +24,12 @@ vi.mock('@/components/settings/models-api', () => ({
       'anthropic': false,
       'xai': false,
     },
+    openRouterModels: [],
   }),
+}))
+
+vi.mock('@/components/settings/models-api', () => ({
+  fetchModelOverrides: (...args: unknown[]) => modelsApiMock.fetchModelOverrides(...args),
 }))
 
 const { CreateManagerDialog } = await import('./CreateManagerDialog')
@@ -47,6 +50,17 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  vi.clearAllMocks()
+  modelsApiMock.fetchModelOverrides.mockResolvedValue({
+    version: 1,
+    overrides: {},
+    providerAvailability: {
+      'openai-codex': false,
+      anthropic: false,
+      xai: false,
+    },
+    openRouterModels: [],
+  })
 })
 
 function findSubmitButton(): HTMLButtonElement | null {
@@ -335,6 +349,86 @@ describe('CreateManagerDialog', () => {
         (button) => button.textContent === 'Cancelling…',
       )
       expect(cancellingButton?.disabled).toBe(true)
+    })
+  })
+
+  describe('OpenRouter manager models', () => {
+    it('includes an enabled tool-capable OpenRouter model in the create selector', async () => {
+      const onModelSelectionChange = vi.fn()
+      const onReasoningLevelChange = vi.fn()
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: {
+          'openrouter:z-ai/glm-5.1': { managerEnabled: true },
+        },
+        providerAvailability: {
+          'openai-codex': false,
+          anthropic: false,
+          xai: false,
+          openrouter: true,
+        },
+        openRouterModels: [{
+          modelId: 'z-ai/glm-5.1',
+          displayName: 'Z.ai: GLM 5.1',
+          contextWindow: 202_752,
+          maxOutputTokens: 202_752,
+          supportsReasoning: true,
+          supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+          inputModes: ['text'],
+          addedAt: '2026-04-03T00:00:00.000Z',
+          supportsTools: true,
+        }],
+      })
+
+      await act(async () => {
+        root = createRoot(container)
+        root.render(createElement(CreateManagerDialog, defaultProps({
+          onModelSelectionChange,
+          onReasoningLevelChange,
+        })))
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).not.toContain('No manager models are currently available')
+      expect(findSubmitButton()?.disabled).toBe(false)
+      expect(onModelSelectionChange).toHaveBeenCalledWith({
+        provider: 'openrouter',
+        modelId: 'z-ai/glm-5.1',
+      })
+      expect(onReasoningLevelChange).toHaveBeenCalledWith('medium')
+    })
+
+    it('keeps OpenRouter models out of the create selector until managerEnabled is true', async () => {
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: {},
+        providerAvailability: {
+          'openai-codex': false,
+          anthropic: false,
+          xai: false,
+          openrouter: true,
+        },
+        openRouterModels: [{
+          modelId: 'z-ai/glm-5.1',
+          displayName: 'Z.ai: GLM 5.1',
+          contextWindow: 202_752,
+          maxOutputTokens: 202_752,
+          supportsReasoning: true,
+          supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+          inputModes: ['text'],
+          addedAt: '2026-04-03T00:00:00.000Z',
+          supportsTools: true,
+        }],
+      })
+
+      await act(async () => {
+        root = createRoot(container)
+        root.render(createElement(CreateManagerDialog, defaultProps()))
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('No manager models are currently available')
+      expect(findSubmitButton()?.disabled).toBe(true)
     })
   })
 })

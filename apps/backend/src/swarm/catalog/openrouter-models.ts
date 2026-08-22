@@ -96,6 +96,10 @@ function sanitizeOpenRouterModelEntry(value: unknown): OpenRouterModelEntry | nu
     return null;
   }
 
+  if (candidate.supportsTools !== undefined && typeof candidate.supportsTools !== "boolean") {
+    return null;
+  }
+
   return {
     modelId,
     displayName,
@@ -105,6 +109,7 @@ function sanitizeOpenRouterModelEntry(value: unknown): OpenRouterModelEntry | nu
     supportedReasoningLevels,
     inputModes,
     addedAt,
+    ...(typeof candidate.supportsTools === "boolean" ? { supportsTools: candidate.supportsTools } : {}),
   };
 }
 

@@ -32,6 +32,8 @@ export interface SessionModelPickerConfig {
   modelOrigin?: AgentModelOrigin
   profileDefaultModel?: AgentModelDescriptor
   disabled?: boolean
+  /** Bump from `model_config_changed` so the existing model-config fetch refreshes. */
+  modelConfigChangeKey?: number
   onUpdate: (
     sessionAgentId: string,
     mode: SessionModelUpdateMode,

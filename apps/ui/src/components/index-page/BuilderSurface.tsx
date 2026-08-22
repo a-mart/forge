@@ -1747,6 +1747,7 @@ export function BuilderSurface({
           modelOrigin: activeAgent.modelOrigin,
           profileDefaultModel: activeAgentProfile?.defaultModel,
           disabled: !state.connected,
+          modelConfigChangeKey: state.modelConfigChangeKey,
           onUpdate: session.handleUpdateSessionModel,
         }
       : undefined

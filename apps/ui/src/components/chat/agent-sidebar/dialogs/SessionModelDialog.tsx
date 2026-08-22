@@ -98,6 +98,7 @@ export function SessionModelDialog({
       'change',
       overridesData.overrides,
       overridesData.providerAvailability,
+      overridesData.openRouterModels,
     )
 
     const availableRows = rows.filter((r) => !r.unavailableReason)
@@ -107,7 +108,12 @@ export function SessionModelDialog({
       ? availableRows
       : [
           ...(currentModel
-            ? [buildCurrentModelFallbackRow(currentModel.provider, currentModel.modelId, currentModel.thinkingLevel)]
+            ? [buildCurrentModelFallbackRow(
+                currentModel.provider,
+                currentModel.modelId,
+                currentModel.thinkingLevel,
+                overridesData.openRouterModels,
+              )]
             : []),
           ...availableRows,
         ]

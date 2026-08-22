@@ -412,10 +412,16 @@ function fakePiSkill(name: string, filePath: string, baseDir: string) {
 }
 
 function setupPiModel(provider = "openai-codex", modelId = "gpt-5.4-mini") {
+  const api =
+    provider === "openai-codex"
+      ? "openai-codex-responses"
+      : provider === "openrouter"
+        ? "openai-completions"
+        : "anthropic-messages";
   piCodingAgentMockState.modelRegistryFind.mockReturnValue({
     id: modelId,
     name: modelId,
-    api: provider === "openai-codex" ? "openai-codex-responses" : "anthropic-messages",
+    api,
     provider,
     baseUrl: `https://example.test/${provider}`,
     reasoning: true,
@@ -489,6 +495,42 @@ describe("RuntimeFactory", () => {
     );
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
     expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
+  });
+
+  it("creates an OpenRouter manager on Pi openai-completions with manager tools", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel("openrouter", "z-ai/glm-5.1");
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(
+      createManagerDescriptor(rootDir, {
+        model: {
+          provider: "openrouter",
+          modelId: "z-ai/glm-5.1",
+          thinkingLevel: "medium",
+        },
+      }),
+      "manager prompt",
+    );
+
+    expect(piCodingAgentMockState.modelRegistryFind).toHaveBeenCalledWith("openrouter", "z-ai/glm-5.1");
+    const sessionOptions = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0] as {
+      model?: { provider?: string; id?: string; api?: string };
+      customTools?: Array<{ name: string }>;
+    };
+    expect(sessionOptions.model).toMatchObject({
+      provider: "openrouter",
+      id: "z-ai/glm-5.1",
+      api: "openai-completions",
+    });
+    expect(sessionOptions.customTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["spawn_agent", "send_message_to_agent", "speak_to_user"]),
+    );
   });
 
   it.each([

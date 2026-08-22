@@ -5,10 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ModelOverridesResponse, OpenRouterModelEntry } from '@forge/protocol'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 
 const modelsApiMock = vi.hoisted(() => ({
-  fetchModelOverrides: vi.fn(() => Promise.resolve({
+  fetchModelOverrides: vi.fn<(client?: SettingsApiClient) => Promise<ModelOverridesResponse>>(() => Promise.resolve({
     version: 1,
     overrides: {},
     providerAvailability: {
@@ -16,6 +17,9 @@ const modelsApiMock = vi.hoisted(() => ({
       anthropic: true,
       xai: true,
     },
+    providerCredentials: {},
+    discoveredModels: [],
+    openRouterModels: [],
   })),
 }))
 
@@ -325,9 +329,8 @@ describe('SessionModelDialog', () => {
 
   describe('availability loading/error', () => {
     it('disables selectors and submit while availability is loading, then enables them after resolution', async () => {
-      type Availability = { 'openai-codex': boolean; anthropic: boolean; xai: boolean }
-      let resolveAvailability!: (value: { version: number; overrides: Record<string, never>; providerAvailability: Availability }) => void
-      const pending = new Promise<{ version: number; overrides: Record<string, never>; providerAvailability: Availability }>((resolve) => { resolveAvailability = resolve })
+      let resolveAvailability!: (value: ModelOverridesResponse) => void
+      const pending = new Promise<ModelOverridesResponse>((resolve) => { resolveAvailability = resolve })
       modelsApiMock.fetchModelOverrides.mockReturnValueOnce(pending)
 
       await renderDialog({ modelOrigin: 'profile_default' })
@@ -335,9 +338,82 @@ describe('SessionModelDialog', () => {
       expect(findModelTrigger()?.disabled).toBe(true)
       expect(findReasoningTrigger()?.disabled).toBe(true)
       expect(findSubmitButton()?.disabled).toBe(true)
-      await act(async () => resolveAvailability({ version: 1, overrides: {}, providerAvailability: { 'openai-codex': true, anthropic: true, xai: true } }))
+      await act(async () => resolveAvailability({
+        version: 1,
+        overrides: {},
+        providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+        providerCredentials: {},
+        discoveredModels: [],
+        openRouterModels: [],
+      }))
       expect(findModelTrigger()?.disabled).toBe(false)
       expect(findReasoningTrigger()?.disabled).toBe(false)
+    })
+  })
+
+  describe('OpenRouter manager models', () => {
+    const glm: OpenRouterModelEntry = {
+      modelId: 'z-ai/glm-5.1',
+      displayName: 'Z.ai: GLM 5.1',
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
+      inputModes: ['text'],
+      addedAt: '2026-04-03T00:00:00.000Z',
+      supportsTools: true,
+    }
+
+    it('includes an enabled OpenRouter model in the session selector', async () => {
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
+        providerAvailability: {
+          'openai-codex': true,
+          anthropic: true,
+          xai: true,
+          openrouter: true,
+        },
+        providerCredentials: {},
+        discoveredModels: [],
+        openRouterModels: [glm],
+      })
+
+      await renderDialog({ modelOrigin: 'profile_default' })
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('Z.ai: GLM 5.1')
+    })
+
+    it('preserves an unavailable current OpenRouter model as a disabled current option', async () => {
+      modelsApiMock.fetchModelOverrides.mockResolvedValue({
+        version: 1,
+        overrides: {},
+        providerAvailability: {
+          'openai-codex': true,
+          anthropic: true,
+          xai: true,
+          openrouter: true,
+        },
+        providerCredentials: {},
+        discoveredModels: [],
+        openRouterModels: [glm],
+      })
+
+      await renderDialog({
+        currentModel: {
+          provider: 'openrouter',
+          modelId: glm.modelId,
+          thinkingLevel: 'medium',
+        },
+        currentReasoningLevel: 'medium',
+        modelOrigin: 'session_override',
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('Z.ai: GLM 5.1')
+      expect(dialog?.textContent).toContain('(current)')
+      expect(findSubmitButton()?.disabled).toBe(true)
+      expect(findReasoningTrigger()?.disabled).toBe(true)
     })
   })
 })

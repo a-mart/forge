@@ -146,12 +146,37 @@ describe('models-api via client', () => {
     const { fetchModelOverrides } = await import('./models-api')
     const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
 
-    await fetchModelOverrides(client)
+    const payload = await fetchModelOverrides(client)
 
+    expect(payload.openRouterModels).toEqual([])
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://collab.example.com/api/settings/model-overrides',
       expect.objectContaining({ cache: 'no-store', credentials: 'include' }),
     )
+  })
+
+  it('parses openRouterModels from the model-config response', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      version: 1,
+      overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
+      providerAvailability: { openrouter: true },
+      openRouterModels: [{
+        modelId: 'z-ai/glm-5.1',
+        displayName: 'Z.ai: GLM 5.1',
+        supportsTools: true,
+      }],
+    }))
+    const { fetchModelOverrides } = await import('./models-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    await expect(fetchModelOverrides(client)).resolves.toMatchObject({
+      overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
+      providerAvailability: { openrouter: true },
+      openRouterModels: [expect.objectContaining({
+        modelId: 'z-ai/glm-5.1',
+        supportsTools: true,
+      })],
+    })
   })
 
   it('updates model override item through collab client', async () => {

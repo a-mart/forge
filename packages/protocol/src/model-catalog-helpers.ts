@@ -3,16 +3,44 @@ import type {
   ForgeFamilyDefinition,
   ForgeModelDefinition,
   ForgeProviderDefinition,
+  ForgeReasoningLevel,
   ModelOverrideEntry,
+  OpenRouterModelEntry,
 } from './model-catalog-types.js'
 
 const CATALOG_PROVIDERS = FORGE_MODEL_CATALOG.providers as Record<string, ForgeProviderDefinition>
 const CATALOG_FAMILIES = FORGE_MODEL_CATALOG.families as Record<string, ForgeFamilyDefinition>
 const CATALOG_MODELS = FORGE_MODEL_CATALOG.models as Record<string, ForgeModelDefinition>
 
+const OPENROUTER_OVERRIDE_KEY_PREFIX = 'openrouter:'
+
 /** Return the stable catalog key for a model definition. */
 export function getCatalogModelKey(model: ForgeModelDefinition): string {
   return model.catalogId ?? model.modelId
+}
+
+/** Return the unambiguous model-overrides key for a user-added OpenRouter model. */
+export function getOpenRouterModelOverrideKey(modelId: string): string {
+  const normalizedModelId = modelId.trim()
+  if (!normalizedModelId) {
+    throw new Error('OpenRouter modelId must be a non-empty string')
+  }
+  return `${OPENROUTER_OVERRIDE_KEY_PREFIX}${normalizedModelId}`
+}
+
+/** Whether an override key identifies a user-added OpenRouter model rather than a checked-in catalog row. */
+export function isOpenRouterModelOverrideKey(key: string): boolean {
+  return key.trim().toLowerCase().startsWith(OPENROUTER_OVERRIDE_KEY_PREFIX)
+}
+
+/** Extract the OpenRouter modelId from a dynamic override key. */
+export function parseOpenRouterModelOverrideKey(key: string): string | undefined {
+  const trimmed = key.trim()
+  if (!trimmed.toLowerCase().startsWith(OPENROUTER_OVERRIDE_KEY_PREFIX)) {
+    return undefined
+  }
+  const modelId = trimmed.slice(OPENROUTER_OVERRIDE_KEY_PREFIX.length).trim()
+  return modelId.length > 0 ? modelId : undefined
 }
 
 /** Lookup a model by catalog key or by provider + modelId. Returns undefined if not in catalog. */
@@ -164,6 +192,49 @@ function isCatalogModelGloballyEnabled(
   override: ModelOverrideEntry | undefined,
 ): boolean {
   return override?.enabled ?? model.enabledByDefault
+}
+
+/** Whether a user-added OpenRouter entry has server-verified tool support for manager eligibility. */
+export function isOpenRouterModelManagerSupported(entry: OpenRouterModelEntry): boolean {
+  return entry.supportsTools === true
+}
+
+/** Default manager-enabled state for a user-added OpenRouter model. Always off until explicitly enabled. */
+export function getDefaultOpenRouterManagerEnabled(
+  _entry: OpenRouterModelEntry,
+  _surface?: ManagerModelSurface,
+): boolean {
+  void _entry
+  void _surface
+  return false
+}
+
+/** Effective manager-enabled state for a user-added OpenRouter model on the requested surface. */
+export function getEffectiveOpenRouterManagerEnabled(
+  entry: OpenRouterModelEntry,
+  override: ModelOverrideEntry | undefined,
+  _surface?: ManagerModelSurface,
+): boolean {
+  void _surface
+  if (!isOpenRouterModelManagerSupported(entry)) {
+    return false
+  }
+  return override?.managerEnabled === true
+}
+
+/** Default reasoning level for a user-added OpenRouter model, derived only from stored metadata. */
+export function getOpenRouterManagerDefaultReasoningLevel(
+  entry: OpenRouterModelEntry,
+): ForgeReasoningLevel {
+  if (!entry.supportsReasoning) {
+    return 'none'
+  }
+
+  const supported = entry.supportedReasoningLevels
+  if (supported.includes('medium')) {
+    return 'medium'
+  }
+  return supported[0] ?? 'none'
 }
 
 /** Check whether a catalog model's family supports the requested manager selector surface. */

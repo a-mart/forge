@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSwarmModelIdNotRetired,
   getModelPresetInfoList,
@@ -14,6 +17,16 @@ import {
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { mapLegacyClaudeSdkModel } from "../catalog/legacy-claude-sdk-model.js";
+import { writeOpenRouterModels } from "../openrouter-models.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  const cleanDirectory = await mkdtemp(join(tmpdir(), "forge-model-presets-clean-"));
+  tempDirs.push(cleanDirectory);
+  await modelCatalogService.loadOverrides(cleanDirectory);
+  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
 
 describe("model-presets", () => {
   it("infers the xAI provider for Grok model IDs", () => {
@@ -266,6 +279,45 @@ describe("model-presets", () => {
         thinkingLevel: "none",
       })).toBe("low");
     }
+  });
+
+  it("preserves specialist reasoning for hydrated OpenRouter overlay descriptors", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-model-presets-"));
+    tempDirs.push(dataDir);
+    await writeOpenRouterModels(dataDir, {
+      version: 1,
+      models: {
+        "z-ai/glm-5.1": {
+          modelId: "z-ai/glm-5.1",
+          displayName: "Z.ai: GLM 5.1",
+          contextWindow: 202_752,
+          maxOutputTokens: 202_752,
+          supportsReasoning: true,
+          supportedReasoningLevels: ["none", "low", "medium", "high"],
+          inputModes: ["text"],
+          addedAt: "2026-04-03T00:00:00.000Z",
+          supportsTools: true,
+        },
+      },
+    });
+    await modelCatalogService.loadOverrides(dataDir);
+
+    for (const thinkingLevel of ["xhigh", "max", "ultra"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "openrouter",
+        modelId: "z-ai/glm-5.1",
+        thinkingLevel,
+      })).toBe(thinkingLevel);
+    }
+    expect(normalizePersistedSwarmModelDescriptor({
+      provider: "openrouter",
+      modelId: "z-ai/glm-5.1",
+      thinkingLevel: "ultra",
+    })).toEqual({
+      provider: "openrouter",
+      modelId: "z-ai/glm-5.1",
+      thinkingLevel: "ultra",
+    });
   });
 
   it("retains the legacy Anthropic clamp for unknown descriptors", () => {

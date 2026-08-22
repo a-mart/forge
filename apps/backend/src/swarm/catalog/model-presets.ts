@@ -1,4 +1,7 @@
-import { getSpawnPresetFamilies, type ModelPresetInfo } from "@forge/protocol";
+import {
+  getSpawnPresetFamilies,
+  type ModelPresetInfo,
+} from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "../types.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -289,21 +292,36 @@ export function normalizeThinkingLevelForModelDescriptor(
   const modelId = descriptor.modelId.trim().toLowerCase();
   const requestedLevel = overrideLevel ?? descriptor.thinkingLevel;
   const catalogModel = modelCatalogService.getModel(modelId, provider);
-  if (!catalogModel) {
-    if (provider === "cursor-sdk") {
-      return normalizeCursorSdkThinkingLevel(requestedLevel, modelId);
-    }
-    return provider === "anthropic"
-      ? normalizeAnthropicThinkingLevel(requestedLevel)
-      : normalizeDescriptorThinkingLevel(requestedLevel);
+  if (catalogModel) {
+    return clampThinkingLevelToSupportedMetadata(requestedLevel, {
+      supportsReasoning: catalogModel.supportsReasoning,
+      supportedReasoningLevels: catalogModel.supportedReasoningLevels,
+      defaultReasoningLevel: catalogModel.defaultReasoningLevel,
+    });
   }
 
-  if (!catalogModel.supportsReasoning) {
-    return catalogModel.defaultReasoningLevel;
+  if (provider === "cursor-sdk") {
+    return normalizeCursorSdkThinkingLevel(requestedLevel, modelId);
+  }
+  return provider === "anthropic"
+    ? normalizeAnthropicThinkingLevel(requestedLevel)
+    : normalizeDescriptorThinkingLevel(requestedLevel);
+}
+
+export function clampThinkingLevelToSupportedMetadata(
+  requestedLevel: string | undefined,
+  metadata: {
+    supportsReasoning: boolean;
+    supportedReasoningLevels: readonly string[];
+    defaultReasoningLevel: string;
+  },
+): string {
+  if (!metadata.supportsReasoning) {
+    return metadata.defaultReasoningLevel;
   }
 
   const normalized = normalizeDescriptorThinkingLevel(requestedLevel);
-  const supportedReasoningLevels: readonly string[] = catalogModel.supportedReasoningLevels;
+  const supportedReasoningLevels = metadata.supportedReasoningLevels;
   if (supportedReasoningLevels.includes(normalized)) {
     return normalized;
   }
@@ -332,7 +350,7 @@ export function normalizeThinkingLevelForModelDescriptor(
       return "high";
     }
   }
-  return catalogModel.defaultReasoningLevel;
+  return metadata.defaultReasoningLevel;
 }
 
 export function normalizeCursorSdkThinkingLevel(level: string | undefined, modelId = "grok-4.5"): string {

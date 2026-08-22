@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
-import { getCatalogModelKey } from "@forge/protocol";
+import { getCatalogModelKey, getOpenRouterModelOverrideKey } from "@forge/protocol";
 import { modelCatalogService } from "../swarm/model-catalog-service.js";
-import { readModelOverrides } from "../swarm/model-overrides.js";
+import { addOpenRouterModel } from "../swarm/openrouter-models.js";
+import { readModelOverrides, writeModelOverrides } from "../swarm/model-overrides.js";
 import { createModelConfigRoutes } from "../ws/http/routes/model-config-routes.js";
 import { createTempConfig } from "../test-support/index.js";
 
@@ -153,6 +154,220 @@ describe("model config routes", () => {
     expect(response.status).toBe(200);
     expect(body.providerAvailability.anthropic).toBe(false);
     expect(body.providerAvailability).not.toHaveProperty("claude-sdk");
+  });
+
+  it("includes added OpenRouter models and persists managerEnabled on the openrouter override key",
+    async () => {
+      const harness = await createModelConfigRouteHarness();
+      const openRouterModel = {
+        modelId: "z-ai/glm-5.1",
+        displayName: "Z.ai: GLM 5.1",
+        contextWindow: 202_752,
+        maxOutputTokens: 202_752,
+        supportsReasoning: true,
+        supportedReasoningLevels: ["none", "low", "medium", "high"] as const,
+        inputModes: ["text"] as const,
+        addedAt: "2026-04-03T00:00:00.000Z",
+        supportsTools: true,
+      };
+      await addOpenRouterModel(harness.dataDir, openRouterModel);
+      await modelCatalogService.loadOverrides(harness.dataDir);
+
+      const listResponse = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides`);
+      expect(listResponse.status).toBe(200);
+      await expect(listResponse.json()).resolves.toMatchObject({
+        openRouterModels: [
+          expect.objectContaining({
+            modelId: openRouterModel.modelId,
+            supportsTools: true,
+          }),
+        ],
+      });
+
+      const overrideKey = getOpenRouterModelOverrideKey(openRouterModel.modelId);
+      const putResponse = await fetch(
+        `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(overrideKey)}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ managerEnabled: true }),
+        },
+      );
+      expect(putResponse.status).toBe(200);
+      await expect(putResponse.json()).resolves.toMatchObject({
+        ok: true,
+        modelId: overrideKey,
+        override: { managerEnabled: true },
+      });
+      await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+        overrides: {
+          [overrideKey]: { managerEnabled: true },
+        },
+      });
+
+      const resetResponse = await fetch(
+        `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(overrideKey)}`,
+        { method: "DELETE" },
+      );
+      expect(resetResponse.status).toBe(200);
+      await expect(readModelOverrides(harness.dataDir)).resolves.toEqual({
+        version: 1,
+        overrides: {},
+      });
+    },
+  );
+
+  it("rejects OpenRouter override writes that are not a prefixed managerEnabled-only patch", async () => {
+    const harness = await createModelConfigRouteHarness();
+    const toolCapable = {
+      modelId: "z-ai/glm-5.1",
+      displayName: "Z.ai: GLM 5.1",
+      contextWindow: 202_752,
+      maxOutputTokens: 202_752,
+      supportsReasoning: true,
+      supportedReasoningLevels: ["none", "low", "medium", "high"] as const,
+      inputModes: ["text"] as const,
+      addedAt: "2026-04-03T00:00:00.000Z",
+      supportsTools: true,
+    };
+    const unverified = {
+      ...toolCapable,
+      modelId: "google/gemini-2.0-flash",
+      displayName: "Gemini 2.0 Flash",
+      supportsReasoning: false,
+      supportedReasoningLevels: ["none"] as const,
+    };
+    delete (unverified as { supportsTools?: boolean }).supportsTools;
+    await addOpenRouterModel(harness.dataDir, toolCapable);
+    await addOpenRouterModel(harness.dataDir, unverified);
+    await modelCatalogService.loadOverrides(harness.dataDir);
+
+    const rawIdResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(toolCapable.modelId)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: true }),
+      },
+    );
+    expect(rawIdResponse.status).toBe(404);
+
+    const extraFieldResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(getOpenRouterModelOverrideKey(toolCapable.modelId))}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: true, enabled: false }),
+      },
+    );
+    expect(extraFieldResponse.status).toBe(400);
+    await expect(extraFieldResponse.json()).resolves.toMatchObject({
+      error: "OpenRouter model overrides only accept managerEnabled",
+    });
+
+    const unverifiedResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(getOpenRouterModelOverrideKey(unverified.modelId))}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: true }),
+      },
+    );
+    expect(unverifiedResponse.status).toBe(400);
+    await expect(unverifiedResponse.json()).resolves.toMatchObject({
+      error: "Model Gemini 2.0 Flash is not verified for manager agents",
+    });
+
+    const disableUnverifiedResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(getOpenRouterModelOverrideKey(unverified.modelId))}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: false }),
+      },
+    );
+    expect(disableUnverifiedResponse.status).toBe(200);
+    await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+      overrides: {
+        [getOpenRouterModelOverrideKey(unverified.modelId)]: { managerEnabled: false },
+      },
+    });
+    expect(harness.swarmManager.notifyModelSpecificInstructionsChanged).not.toHaveBeenCalled();
+
+    const leftoverKey = getOpenRouterModelOverrideKey(toolCapable.modelId);
+    await writeModelOverrides(harness.dataDir, {
+      version: 1,
+      overrides: {
+        [leftoverKey]: {
+          enabled: false,
+          managerEnabled: false,
+          contextWindowCap: 8_192,
+          modelSpecificInstructions: "do not persist this",
+        },
+      },
+    });
+    const leftoverResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(leftoverKey)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          managerEnabled: true,
+          enabled: true,
+          contextWindowCap: 1_000,
+          modelSpecificInstructions: "should not write",
+        }),
+      },
+    );
+    expect(leftoverResponse.status).toBe(400);
+    await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+      overrides: {
+        [leftoverKey]: {
+          enabled: false,
+          managerEnabled: false,
+          contextWindowCap: 8_192,
+          modelSpecificInstructions: "do not persist this",
+        },
+      },
+    });
+    const leftoverToggleResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(leftoverKey)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: true }),
+      },
+    );
+    expect(leftoverToggleResponse.status).toBe(200);
+    await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+      overrides: {
+        [leftoverKey]: {
+          enabled: false,
+          managerEnabled: true,
+          contextWindowCap: 8_192,
+          modelSpecificInstructions: "do not persist this",
+        },
+      },
+    });
+    const nullResponse = await fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(leftoverKey)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ managerEnabled: null }),
+      },
+    );
+    expect(nullResponse.status).toBe(200);
+    await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+      overrides: {
+        [leftoverKey]: {
+          enabled: false,
+          contextWindowCap: 8_192,
+          modelSpecificInstructions: "do not persist this",
+        },
+      },
+    });
+    expect(harness.swarmManager.notifyModelSpecificInstructionsChanged).not.toHaveBeenCalled();
   });
 });
 

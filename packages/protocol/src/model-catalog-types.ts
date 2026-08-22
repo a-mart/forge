@@ -134,6 +134,21 @@ export interface OpenRouterModelEntry {
   supportedReasoningLevels: readonly ForgeReasoningLevel[]
   inputModes: readonly ForgeInputMode[]
   addedAt: string
+  /**
+   * Server-verified OpenRouter tool-call capability.
+   * Present only when the backend observed live OpenRouter metadata for this entry.
+   * Absence means unverified/legacy and is not eligible for manager selection.
+   */
+  supportsTools?: boolean
+}
+
+export interface ModelOverridesResponse {
+  version: number
+  overrides: Record<string, ModelOverrideEntry>
+  providerAvailability: Record<string, boolean>
+  providerCredentials: Record<string, ForgeProviderCredentialSummary>
+  discoveredModels: ForgeModelDefinition[]
+  openRouterModels: OpenRouterModelEntry[]
 }
 
 export interface OpenRouterModelsFile {

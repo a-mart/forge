@@ -22,6 +22,14 @@ The preset selection order is global default → project default → session ove
 
 Native xAI routing also follows the effective credential. `grok-4.6` is the family default, `grok-4.5` remains an explicit variant, and both are available to normal manager create, change, and exact per-session override selectors when xAI auth is configured. Authenticated OAuth discovery can add `grok-build` and `grok-composer-2.5-fast` only for entitled accounts; these remain OAuth-only worker/specialist choices excluded from normal manager selectors. Switching to API-key auth hides the entitlement models and rejects stale selections before a provider request. Losing entitlement or failing discovery removes them from refreshed catalog, projection, and selector results. The xAI Composer ID is separate from Cursor SDK `composer-2.5`. xAI/Grok is not eligible for manager compaction.
 
+### User-added OpenRouter manager models
+
+OpenRouter rows follow a stricter exact-model path than Forge's built-in families. The backend must have live-verified `supportsTools: true`; an absent field on a legacy row or `supportsTools: false` is not enough. Each verified row remains manager-disabled by default. Enable only that model's **Manager agents** setting with `managerEnabled: true` under `openrouter:<exact-model-id>`; the override does not create a family, preset, or alias.
+
+A manager create, change, or session override must name `{ provider: "openrouter", modelId: "<exact-model-id>" }`, and an OpenRouter API key must be configured. Unknown, unverified, disabled, credential-less, or retired IDs fail closed rather than falling back to another provider. Removing a row clears its manager override, so re-adding it cannot silently restore manager access. Worker/specialist use of a retained legacy row is a separate path and does not make it manager-eligible.
+
+OpenRouter manager eligibility is also separate from compaction: OpenRouter remains outside the supported compaction provider list and its models are not compaction choices.
+
 ## Custom specialists
 
 A saved custom specialist is an escape hatch for a durable domain-specific prompt or model assignment. It is selected directly and is not combined with a task type or roster route.

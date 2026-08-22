@@ -755,7 +755,15 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
         <div className={cn('text-sm text-muted-foreground')}>No models available.</div>
       ) : null}
 
-      <SettingsOpenRouter wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />
+      <SettingsOpenRouter
+        wsUrl={wsUrl}
+        apiClient={apiClient}
+        modelConfigChangeKey={modelConfigChangeKey}
+        overrides={overrides}
+        onOverridesRefresh={loadOverrides}
+        onCardSaveStart={handleCardSaveStart}
+        onCardSaveEnd={handleCardSaveEnd}
+      />
     </SettingsSection>
   )
 }
