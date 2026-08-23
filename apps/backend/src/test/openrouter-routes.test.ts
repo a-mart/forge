@@ -1,11 +1,16 @@
 import { readFile, rm } from "node:fs/promises";
+import type { OpenRouterModelEntry } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "../swarm/pi/pi-ai-compat.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { getOpenRouterModelsPath, getSharedModelOverridesPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
 import * as modelOverrides from "../swarm/model-overrides.js";
-import { writeOpenRouterModels } from "../swarm/openrouter-models.js";
+import {
+  addOpenRouterModel,
+  removeOpenRouterModel,
+  writeOpenRouterModels,
+} from "../swarm/openrouter-models.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/http/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 import { TestSwarmManager, bootWithDefaultManager, createTempConfig, getAvailablePort } from "../test-support/index.js";
@@ -298,6 +303,98 @@ describe("openrouter-routes", () => {
       expect(secondResponse.status).toBe(200);
       expect(reloadSpy).toHaveBeenCalledTimes(1);
     } finally {
+      reloadSpy.mockRestore();
+      await server.stop();
+    }
+  });
+
+  it("preserves concurrent model mutations when reconciliation projection reload fails", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const originalFetch = globalThis.fetch;
+    const liveModel = {
+      id: "moonshotai/kimi-k2.5",
+      name: "MoonshotAI: Kimi K2.5",
+      context_length: 262_144,
+      max_completion_tokens: 4_096,
+      supported_parameters: ["reasoning", "tools"],
+      architecture: { modality: "text+image->text" },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return new Response(JSON.stringify({ data: [liveModel] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
+    const { config, manager, server } = await startServer();
+    const storedEntry = (
+      modelId: string,
+      displayName: string,
+      supportsTools?: boolean,
+    ): OpenRouterModelEntry => ({
+      modelId,
+      displayName,
+      contextWindow: 262_144,
+      maxOutputTokens: 4_096,
+      supportsReasoning: true,
+      supportedReasoningLevels: ["none", "low", "medium", "high"],
+      inputModes: ["text"],
+      addedAt: "2026-04-03T00:00:00.000Z",
+      ...(supportsTools === undefined ? {} : { supportsTools }),
+    });
+    const legacyEntry = storedEntry(liveModel.id, liveModel.name);
+    const removedEntry = storedEntry("z-ai/glm-5.1", "Z.AI: GLM 5.1", true);
+    const addedEntry = storedEntry("stealth/ox-alpha", "Stealth: Ox Alpha", true);
+    await writeOpenRouterModels(config.paths.dataDir, {
+      version: 1,
+      models: {
+        [legacyEntry.modelId]: legacyEntry,
+        [removedEntry.modelId]: removedEntry,
+      },
+    });
+
+    let markReloadStarted: (() => void) | undefined;
+    const reloadStarted = new Promise<void>((resolve) => {
+      markReloadStarted = resolve;
+    });
+    let allowReloadFailure: (() => void) | undefined;
+    const reloadCanFail = new Promise<void>((resolve) => {
+      allowReloadFailure = resolve;
+    });
+    const originalReload = manager.reloadOpenRouterModelsAndProjection.bind(manager);
+    const reloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection")
+      .mockImplementationOnce(async () => {
+        markReloadStarted?.();
+        await reloadCanFail;
+        throw new Error("projection failed");
+      })
+      .mockImplementationOnce(originalReload);
+
+    try {
+      const responsePromise = fetch(`http://${config.host}:${config.port}/api/settings/openrouter/models`);
+      await reloadStarted;
+      await removeOpenRouterModel(config.paths.dataDir, removedEntry.modelId);
+      await addOpenRouterModel(config.paths.dataDir, addedEntry);
+      allowReloadFailure?.();
+
+      const response = await responsePromise;
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "projection failed" });
+      expect(reloadSpy).toHaveBeenCalledTimes(2);
+
+      const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { supportsTools?: boolean }>;
+      };
+      expect(storedFile.models[legacyEntry.modelId]?.supportsTools).toBe(true);
+      expect(storedFile.models[removedEntry.modelId]).toBeUndefined();
+      expect(storedFile.models[addedEntry.modelId]?.supportsTools).toBe(true);
+    } finally {
+      allowReloadFailure?.();
       reloadSpy.mockRestore();
       await server.stop();
     }

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isDeepStrictEqual } from "node:util";
 import { getModels } from "../../../swarm/pi/pi-ai-compat.js";
 import {
   getOpenRouterModelOverrideKey,
@@ -13,6 +14,7 @@ import {
 import {
   getOpenRouterModels,
   addOpenRouterModel,
+  mutateOpenRouterModelsFile,
   readOpenRouterModels,
   removeOpenRouterModel,
   writeOpenRouterModels,
@@ -148,20 +150,30 @@ async function handleOpenRouterModelsRequest(
         getManagedModelProviderCredentialAvailability(swarmManager.getConfig()),
         Object.keys(storedFile.models).length > 0 ? fetchLiveOpenRouterModels() : Promise.resolve([]),
       ]);
-      const previousFile = liveModels.length > 0
-        ? await readOpenRouterModels(dataDir)
-        : storedFile;
-      const reconciledFile = reconcileStoredOpenRouterToolCapabilities(previousFile, liveModels);
+      const reconciliation = await mutateOpenRouterModelsFile(
+        dataDir,
+        (currentFile) => reconcileStoredOpenRouterToolCapabilities(currentFile, liveModels),
+      );
 
-      if (reconciledFile) {
-        await mutateOpenRouterModelsWithProjectionReload({
-          swarmManager,
-          dataDir,
-          previousFile,
-          mutate: async () => {
-            await writeOpenRouterModels(dataDir, reconciledFile);
-          },
-        });
+      if (reconciliation.mutated) {
+        try {
+          await swarmManager.reloadOpenRouterModelsAndProjection();
+        } catch (error) {
+          await mutateOpenRouterModelsFile(dataDir, (currentFile) =>
+            isDeepStrictEqual(currentFile, reconciliation.nextFile)
+              ? reconciliation.previousFile
+              : null
+          );
+
+          try {
+            await swarmManager.reloadOpenRouterModelsAndProjection();
+          } catch {
+            // Best-effort restoration. Preserve the original projection error below.
+          }
+
+          throw error;
+        }
+
         broadcastModelConfigChanged(broadcastEvent);
       }
 

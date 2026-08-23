@@ -153,6 +153,27 @@ export async function writeOpenRouterModels(dataDir: string, file: OpenRouterMod
   await writeJsonFileAtomic(filePath, normalized);
 }
 
+export async function mutateOpenRouterModelsFile(
+  dataDir: string,
+  mutate: (currentFile: OpenRouterModelsFile) => OpenRouterModelsFile | null,
+): Promise<{
+  previousFile: OpenRouterModelsFile;
+  nextFile: OpenRouterModelsFile;
+  mutated: boolean;
+}> {
+  return withOpenRouterModelsWriteLock(async () => {
+    const previousFile = await readOpenRouterModels(dataDir);
+    const candidateFile = mutate(previousFile);
+    if (!candidateFile) {
+      return { previousFile, nextFile: previousFile, mutated: false };
+    }
+
+    const nextFile = sanitizeOpenRouterModelsFile(candidateFile);
+    await writeOpenRouterModels(dataDir, nextFile);
+    return { previousFile, nextFile, mutated: true };
+  });
+}
+
 export async function addOpenRouterModel(dataDir: string, entry: OpenRouterModelEntry): Promise<void> {
   const normalizedEntry = sanitizeOpenRouterModelEntry(entry);
   if (!normalizedEntry) {
