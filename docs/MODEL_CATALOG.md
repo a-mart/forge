@@ -38,12 +38,12 @@ OpenRouter models added by the user are persisted overlays, not checked-in catal
 
 Manager eligibility is deliberately a separate, opt-in policy:
 
-- Forge records `supportsTools` only from live OpenRouter metadata observed while adding the model. A request-body capability claim is ignored. `supportsTools: true` is a necessary verified-tool-call gate; `false` or an absent field is not manager eligible.
-- Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The OpenRouter override accepts only this manager field; removing it returns to the default-off state.
+- Forge records `supportsTools` only from live OpenRouter metadata when adding a model and when OpenRouter Settings loads and reconciles stored exact IDs. Any request-body capability claim is ignored. A live `supportsTools: true` is a necessary verified-tool-call gate; `false` or an absent field is not manager eligible.
+- Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The OpenRouter override accepts only this manager field; removing it returns to the default-off state. Reconciliation refreshes only live-derived `supportsTools`; it does not enable managers or mutate the exact row's default-off `managerEnabled` opt-in.
 - Manager create, change, and session-override requests accept only an exact `{ provider: "openrouter", modelId: "<exact-id>" }` selection. OpenRouter rows have no family or preset fallback, and unknown IDs fail closed.
 - A configured OpenRouter credential is still required when the manager selection is resolved. Configure the key in Settings → Authentication or provide `OPENROUTER_API_KEY`.
-- Forge automatically reconciles legacy rows without `supportsTools` against current live OpenRouter metadata when OpenRouter settings load. Rows that still cannot be verified, and rows verified as `supportsTools: false`, remain non-manager rows even if retained for existing worker or specialist configuration.
-- Removing an OpenRouter row also removes its manager override, so re-adding the same ID cannot silently reactivate it.
+- When OpenRouter Settings loads, Forge automatically reconciles stored exact IDs against current live metadata and refreshes matched legacy rows. Unmatched or unrefreshable rows, and rows verified as `supportsTools: false`, remain non-manager and fail closed until a later live verification, even if retained for existing worker or specialist configuration.
+- Removing an OpenRouter row clears its manager override. Retired OpenRouter IDs remain rejected.
 
 Manager eligibility does not change compaction policy. OpenRouter is not in the supported Forge compaction provider allowlist and does not appear in the compaction model selector.
 
