@@ -42,7 +42,7 @@ Manager eligibility is deliberately a separate, opt-in policy:
 - Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The OpenRouter override accepts only this manager field; removing it returns to the default-off state.
 - Manager create, change, and session-override requests accept only an exact `{ provider: "openrouter", modelId: "<exact-id>" }` selection. OpenRouter rows have no family or preset fallback, and unknown IDs fail closed.
 - A configured OpenRouter credential is still required when the manager selection is resolved. Configure the key in Settings → Authentication or provide `OPENROUTER_API_KEY`.
-- Legacy rows without `supportsTools`, and rows verified as `supportsTools: false`, remain non-manager rows even if retained for existing worker or specialist configuration. They cannot be promoted by an override until a fresh live add records verified tool support.
+- Forge automatically reconciles legacy rows without `supportsTools` against current live OpenRouter metadata when OpenRouter settings load. Rows that still cannot be verified, and rows verified as `supportsTools: false`, remain non-manager rows even if retained for existing worker or specialist configuration.
 - Removing an OpenRouter row also removes its manager override, so re-adding the same ID cannot silently reactivate it.
 
 Manager eligibility does not change compaction policy. OpenRouter is not in the supported Forge compaction provider allowlist and does not appear in the compaction model selector.

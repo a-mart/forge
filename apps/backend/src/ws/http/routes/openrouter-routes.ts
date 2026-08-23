@@ -143,13 +143,30 @@ async function handleOpenRouterModelsRequest(
 
   if (request.method === "GET" && requestUrl.pathname === MODELS_ENDPOINT_PATH) {
     try {
-      const [models, providerAvailability] = await Promise.all([
-        getOpenRouterModels(dataDir),
+      const storedFile = await readOpenRouterModels(dataDir);
+      const [providerAvailability, liveModels] = await Promise.all([
         getManagedModelProviderCredentialAvailability(swarmManager.getConfig()),
+        Object.keys(storedFile.models).length > 0 ? fetchLiveOpenRouterModels() : Promise.resolve([]),
       ]);
+      const previousFile = liveModels.length > 0
+        ? await readOpenRouterModels(dataDir)
+        : storedFile;
+      const reconciledFile = reconcileStoredOpenRouterToolCapabilities(previousFile, liveModels);
+
+      if (reconciledFile) {
+        await mutateOpenRouterModelsWithProjectionReload({
+          swarmManager,
+          dataDir,
+          previousFile,
+          mutate: async () => {
+            await writeOpenRouterModels(dataDir, reconciledFile);
+          },
+        });
+        broadcastModelConfigChanged(broadcastEvent);
+      }
 
       sendJson(response, 200, {
-        models,
+        models: await getOpenRouterModels(dataDir),
         isConfigured: providerAvailability.get("openrouter") ?? false,
       });
     } catch (error) {
@@ -331,6 +348,31 @@ function buildOpenRouterModelEntryFromMetadata(options: {
     addedAt: new Date().toISOString(),
     ...(typeof verifiedSupportsTools === "boolean" ? { supportsTools: verifiedSupportsTools } : {}),
   };
+}
+
+function reconcileStoredOpenRouterToolCapabilities(
+  file: OpenRouterModelsFile,
+  liveModels: readonly AvailableOpenRouterModel[],
+): OpenRouterModelsFile | null {
+  const liveModelsById = new Map(liveModels.map((model) => [model.modelId, model]));
+  let reconciledModels: Record<string, OpenRouterModelEntry> | null = null;
+
+  for (const [modelId, storedModel] of Object.entries(file.models)) {
+    const liveModel = liveModelsById.get(modelId);
+    if (!liveModel || storedModel.supportsTools === liveModel.supportsTools) {
+      continue;
+    }
+
+    reconciledModels ??= { ...file.models };
+    reconciledModels[modelId] = {
+      ...storedModel,
+      supportsTools: liveModel.supportsTools,
+    };
+  }
+
+  return reconciledModels
+    ? { version: file.version, models: reconciledModels }
+    : null;
 }
 
 function broadcastModelConfigChanged(broadcastEvent: (event: ServerEvent) => void): void {

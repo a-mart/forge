@@ -142,6 +142,6 @@ describe('OpenRouterModelCard manager toggle', () => {
 
     expect(queryByLabelText(container, /manager agents/i)).toBeNull()
     expect(getByText(container, 'Tools unverified')).toBeTruthy()
-    expect(getByText(container, 'Not supported for manager agents. Tool calling is unverified. Remove and re-add this model to verify current tool support.')).toBeTruthy()
+    expect(getByText(container, 'Tool support could not be verified from OpenRouter. Reload this section to retry.')).toBeTruthy()
   })
 })

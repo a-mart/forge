@@ -85,7 +85,7 @@ export function OpenRouterModelCard({
     ? 'Show this model in manager create/change selectors.'
     : model.supportsTools === false
       ? 'Not supported for manager agents. This model does not advertise tool calling.'
-      : 'Not supported for manager agents. Tool calling is unverified. Remove and re-add this model to verify current tool support.'
+      : 'Tool support could not be verified from OpenRouter. Reload this section to retry.'
 
   return (
     <div className="group space-y-3 rounded-lg border border-border/70 bg-card/40 px-4 py-3">

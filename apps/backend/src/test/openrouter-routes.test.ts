@@ -5,6 +5,7 @@ import type { SwarmConfig } from "../swarm/types.js";
 import { getOpenRouterModelsPath, getSharedModelOverridesPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
 import * as modelOverrides from "../swarm/model-overrides.js";
+import { writeOpenRouterModels } from "../swarm/openrouter-models.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/http/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 import { TestSwarmManager, bootWithDefaultManager, createTempConfig, getAvailablePort } from "../test-support/index.js";
@@ -211,6 +212,93 @@ describe("openrouter-routes", () => {
       expect(liveFetchCalls).toHaveLength(1);
       expect(liveFetchCalls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     } finally {
+      await server.stop();
+    }
+  });
+
+  it("reconciles existing stored models from live tool metadata without remove and re-add", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const originalFetch = globalThis.fetch;
+    const liveModels = [
+      {
+        id: "moonshotai/kimi-k2.5",
+        name: "MoonshotAI: Kimi K2.5",
+        context_length: 262_144,
+        max_completion_tokens: 4_096,
+        supported_parameters: ["reasoning", "tools"],
+        architecture: { modality: "text+image->text" },
+      },
+      {
+        id: "moonshotai/kimi-k2.6",
+        name: "MoonshotAI: Kimi K2.6",
+        context_length: 262_144,
+        max_completion_tokens: 262_144,
+        supported_parameters: ["reasoning"],
+        architecture: { modality: "text+image->text" },
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return new Response(JSON.stringify({ data: liveModels }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
+    const { config, manager, server } = await startServer();
+    const addedAt = "2026-04-03T00:00:00.000Z";
+    await writeOpenRouterModels(config.paths.dataDir, {
+      version: 1,
+      models: Object.fromEntries(liveModels.map((model) => [model.id, {
+        modelId: model.id,
+        displayName: model.name,
+        contextWindow: model.context_length,
+        maxOutputTokens: model.max_completion_tokens,
+        supportsReasoning: true,
+        supportedReasoningLevels: ["none", "low", "medium", "high"],
+        inputModes: ["text", "image"],
+        addedAt,
+      }])),
+    });
+    const reloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection");
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/settings/openrouter/models`);
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        models: Array<{ modelId: string; supportsTools?: boolean }>;
+      };
+      expect(payload.models).toEqual([
+        expect.objectContaining({ modelId: "moonshotai/kimi-k2.5", supportsTools: true }),
+        expect.objectContaining({ modelId: "moonshotai/kimi-k2.6", supportsTools: false }),
+      ]);
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+      const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { supportsTools?: boolean }>;
+      };
+      expect(storedFile.models["moonshotai/kimi-k2.5"]?.supportsTools).toBe(true);
+      expect(storedFile.models["moonshotai/kimi-k2.6"]?.supportsTools).toBe(false);
+
+      const modelConfigResponse = await fetch(`http://${config.host}:${config.port}/api/settings/model-overrides`);
+      expect(modelConfigResponse.status).toBe(200);
+      const modelConfig = (await modelConfigResponse.json()) as {
+        openRouterModels: Array<{ modelId: string; supportsTools?: boolean }>;
+      };
+      expect(modelConfig.openRouterModels).toEqual([
+        expect.objectContaining({ modelId: "moonshotai/kimi-k2.5", supportsTools: true }),
+        expect.objectContaining({ modelId: "moonshotai/kimi-k2.6", supportsTools: false }),
+      ]);
+
+      const secondResponse = await fetch(`http://${config.host}:${config.port}/api/settings/openrouter/models`);
+      expect(secondResponse.status).toBe(200);
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      reloadSpy.mockRestore();
       await server.stop();
     }
   });

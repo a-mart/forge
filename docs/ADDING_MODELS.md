@@ -30,7 +30,7 @@ Do not retune all specialists simply because a stronger model exists. A roster s
 
 ### User-added OpenRouter overlays
 
-OpenRouter models added by a user are persisted overlays, not checked-in catalog entries. They are manager-eligible only when live OpenRouter metadata verifies `supportsTools: true`, the per-model manager override is explicitly enabled with the exact `openrouter:<model-id>` key, and an OpenRouter credential is configured. The default is manager-off; no family or preset fallback is created. Legacy rows without verified tool metadata remain non-manager rows. OpenRouter manager eligibility is separate from compaction, and retired OpenRouter IDs fail closed rather than being migrated across providers.
+OpenRouter models added by a user are persisted overlays, not checked-in catalog entries. They are manager-eligible only when live OpenRouter metadata verifies `supportsTools: true`, the per-model manager override is explicitly enabled with the exact `openrouter:<model-id>` key, and an OpenRouter credential is configured. The default is manager-off; no family or preset fallback is created. When OpenRouter settings load, Forge automatically reconciles legacy rows against current live tool metadata; rows that cannot be matched or refreshed remain non-manager rows until a later retry succeeds. OpenRouter manager eligibility is separate from compaction, and retired OpenRouter IDs fail closed rather than being migrated across providers.
 
 ## 3. Handle models that Pi has not shipped yet
 
