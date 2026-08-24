@@ -13,7 +13,7 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
 import { type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
-import { projectRuntimeBrowserTabState } from '@/components/browser/browser-runtime-state'
+import { countOpenBrowserTabs, projectRuntimeBrowserTabState } from '@/components/browser/browser-runtime-state'
 import { BuilderBrowserPanel } from '@/components/index-page/BuilderBrowserPanel'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
@@ -695,6 +695,13 @@ export function BuilderSurface({
   })
 
   const isCortexSession = activeAgent?.archetypeId === 'cortex'
+  const browserSessionAgentId = !isRemoteOriginActive ? activeManagerAgent?.agentId ?? null : null
+  const browserProfileId = !isRemoteOriginActive
+    ? activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null
+    : null
+  const browserSessionSnapshot = browserSessionAgentId
+    ? localState.browserSessions[browserSessionAgentId] ?? null
+    : null
 
   // ── Workspace panels (file browser / diff viewer / artifacts / activity rail) ──
   const panels = useWorkspacePanels({
@@ -705,6 +712,7 @@ export function BuilderSurface({
     terminalSessionAgentId,
     terminalPanel,
     terminalCount: state.terminals.length,
+    browserTabCount: countOpenBrowserTabs(browserSessionSnapshot),
     isCortexSession,
     activeContextKey: `${activeOriginId}:${activeProjectId ?? 'none'}:${activeAgentId ?? 'none'}:${isDiffViewerCortexSession ? 'cortex' : 'workspace'}`,
     clientRef,
@@ -717,14 +725,6 @@ export function BuilderSurface({
   // is visible to every effect on the next commit, matching the original
   // in-component ordering where the ref always held the live coordinator.
   fileEditorCoordinatorRef.current = panels.fileEditorCoordinator
-
-  const browserSessionAgentId = !isRemoteOriginActive ? activeManagerAgent?.agentId ?? null : null
-  const browserProfileId = !isRemoteOriginActive
-    ? activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null
-    : null
-  const browserSessionSnapshot = browserSessionAgentId
-    ? localState.browserSessions[browserSessionAgentId] ?? null
-    : null
 
   useEffect(() => {
     const request = localState.streamDeckNavigationRequest

@@ -70,6 +70,7 @@ export interface UseWorkspacePanelsOptions {
   terminalSessionAgentId: string | null
   terminalPanel: TerminalPanel
   terminalCount: number
+  browserTabCount: number
   isCortexSession: boolean
   activeContextKey?: string
   clientRef: MutableRefObject<ManagerWsClient | null>
@@ -85,6 +86,7 @@ export function useWorkspacePanels({
   terminalSessionAgentId,
   terminalPanel,
   terminalCount,
+  browserTabCount,
   isCortexSession,
   activeContextKey,
   clientRef,
@@ -643,6 +645,7 @@ export function useWorkspacePanels({
         icon: Globe2,
         active: isBrowserOpen && !isInlineDiffViewerOpen,
         disabled: workspaceDisabled,
+        badge: browserTabCount > 0 ? browserTabCount : undefined,
         onClick: handleToggleBrowserFromRail,
       },
       {
@@ -710,6 +713,7 @@ export function useWorkspacePanels({
     activeAgentId,
     activeManagerAgent,
     artifactsPanelTab,
+    browserTabCount,
     cortexDashboardTab,
     handleOpenArtifactsFromRail,
     handleOpenCortexDashboardFromRail,

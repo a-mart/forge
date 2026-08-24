@@ -62,6 +62,11 @@ describe('ActivityRail', () => {
     expect(badgeButton).not.toBeNull()
     expect(badgeButton?.className).not.toContain('border')
     expect(badgeButton?.className).not.toContain('shadow')
+    const badge = badgeButton?.querySelector('span[aria-hidden="true"]')
+    expect(badge?.textContent).toBe('2')
+    expect(badge?.className).toContain('bg-blue-600')
+    expect(badge?.className).toContain('text-white')
+    expect(badge?.className).toContain('ring-sidebar')
   })
 
   it('uses the Rooms inboard treatment and reserves the bottom slot for Cortex', () => {

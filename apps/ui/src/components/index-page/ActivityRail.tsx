@@ -69,7 +69,10 @@ function ActivityRailButton({ item, roomsV2 = false }: { item: ActivityRailItem;
           ) : null}
           <Icon className="size-[18px]" strokeWidth={1.75} />
           {badge && badge > 0 ? (
-            <span className="absolute -top-1 -right-1 min-w-4 rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-primary-foreground">
+            <span
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold leading-none tabular-nums text-white shadow-sm ring-2 ring-sidebar"
+            >
               {badge > 9 ? '9+' : badge}
             </span>
           ) : null}
