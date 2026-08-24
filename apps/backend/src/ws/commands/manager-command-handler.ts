@@ -233,7 +233,7 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     try {
       requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
 
-      let eventModel: SwarmModelPreset;
+      let eventModel: SwarmModelPreset | undefined;
       if (command.modelSelection) {
         eventModel = inferEventModelPreset(
           await swarmManager.updateProfileDefaultExactModel(
@@ -335,7 +335,7 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
         requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
       }
 
-      let eventModel: SwarmModelPreset;
+      let eventModel: SwarmModelPreset | undefined;
       if (command.modelSelection) {
         eventModel = inferEventModelPreset(
           await swarmManager.updateManagerExactModel(
@@ -549,11 +549,7 @@ function requireManagerModelPreset(value: string | undefined): SwarmModelPreset 
   }
 }
 
-function inferEventModelPreset(descriptor: { provider: string; modelId: string }): SwarmModelPreset {
-  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
-  if (!preset) {
-    throw new Error(`Could not infer manager model preset for ${descriptor.provider}/${descriptor.modelId}`);
-  }
-
-  return preset;
+// Exact selections without a catalog preset family (discovered OpenRouter models) omit `model` from the ack event.
+function inferEventModelPreset(descriptor: { provider: string; modelId: string }): SwarmModelPreset | undefined {
+  return inferSwarmModelPresetFromDescriptor(descriptor);
 }
