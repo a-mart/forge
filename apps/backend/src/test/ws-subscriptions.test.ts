@@ -92,6 +92,28 @@ function createGoalSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, {
   }
 }
 
+function createBrowserSessionChangedEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'browser_session_changed' }> {
+  const timestamp = '2026-07-12T00:00:00.000Z'
+  return {
+    type: 'browser_session_changed',
+    reason: 'automation',
+    snapshot: {
+      schemaVersion: 2,
+      sessionAgentId,
+      profileId: 'profile-1',
+      hostingState: 'hosted',
+      tabs: [],
+      activeTabId: null,
+      defaultTabId: null,
+      panelVisible: false,
+      recentActions: [],
+      revision: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  }
+}
+
 function createManagerStub() {
   let agentsSnapshotVersion = 0
   let profilesSnapshotVersion = 0
@@ -203,6 +225,63 @@ function createSocket(): WebSocket {
 function getEventTypes(events: ServerEvent[]): string[] {
   return events.map((event) => event.type)
 }
+
+describe('WsSubscriptions session-scoped live delivery', () => {
+  it('isolates manager-owned browser state from sibling sessions while preserving profile-scoped delivery', () => {
+    const descriptors = new Map<string, any>([
+      ['profile-1', { agentId: 'profile-1', role: 'manager', profileId: 'profile-1' }],
+      ['session-1', { agentId: 'session-1', role: 'manager', profileId: 'profile-1' }],
+      ['worker-root', { agentId: 'worker-root', role: 'worker', managerId: 'profile-1' }],
+      ['profile-2', { agentId: 'profile-2', role: 'manager', profileId: 'profile-2' }],
+    ])
+    const manager = { ...createManagerStub(), getAgent: (agentId: string) => descriptors.get(agentId) }
+    const rootSocket = createSocket()
+    const siblingSocket = createSocket()
+    const workerSocket = createSocket()
+    const otherProfileSocket = createSocket()
+    const sockets = [rootSocket, siblingSocket, workerSocket, otherProfileSocket]
+    const events = new Map(sockets.map((socket) => [socket, [] as ServerEvent[]]))
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (socket, event) => {
+        events.get(socket)!.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set(sockets) }) as any,
+    })
+    subscriptions.subscriptions.set(rootSocket, 'profile-1')
+    subscriptions.subscriptions.set(siblingSocket, 'session-1')
+    subscriptions.subscriptions.set(workerSocket, 'worker-root')
+    subscriptions.subscriptions.set(otherProfileSocket, 'profile-2')
+
+    const rootBrowserEvent = createBrowserSessionChangedEvent('profile-1')
+    subscriptions.broadcastToManagerSession('profile-1', rootBrowserEvent)
+    expect(events.get(rootSocket)).toEqual([rootBrowserEvent])
+    expect(events.get(workerSocket)).toEqual([rootBrowserEvent])
+    expect(events.get(siblingSocket)).toEqual([])
+    expect(events.get(otherProfileSocket)).toEqual([])
+
+    for (const delivered of events.values()) delivered.length = 0
+    const siblingBrowserEvent = createBrowserSessionChangedEvent('session-1')
+    subscriptions.broadcastToManagerSession('session-1', siblingBrowserEvent)
+    expect(events.get(siblingSocket)).toEqual([siblingBrowserEvent])
+    expect(events.get(rootSocket)).toEqual([])
+    expect(events.get(workerSocket)).toEqual([])
+    expect(events.get(otherProfileSocket)).toEqual([])
+
+    for (const delivered of events.values()) delivered.length = 0
+    const profileScopedEvent = createGoalSnapshotEvent('profile-1')
+    subscriptions.broadcastToSession('profile-1', profileScopedEvent)
+    expect(events.get(rootSocket)).toEqual([profileScopedEvent])
+    expect(events.get(siblingSocket)).toEqual([profileScopedEvent])
+    expect(events.get(workerSocket)).toEqual([profileScopedEvent])
+    expect(events.get(otherProfileSocket)).toEqual([])
+  })
+})
 
 describe('WsSubscriptions snapshot delivery tracking', () => {
   it('echoes goal-control capability acceptance and strips shared correlation for every observer', async () => {

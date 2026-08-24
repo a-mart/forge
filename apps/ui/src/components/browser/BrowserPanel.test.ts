@@ -112,6 +112,13 @@ describe('BrowserPanel automatic experience', () => {
     expect(commands.open).toHaveBeenCalledWith()
   })
 
+  it('does not auto-open a blank tab when a background tab snapshot already exists', async () => {
+    const commands = render(snapshot([managedTab]))
+    await act(async () => { await Promise.resolve() })
+    expect(commands.open).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="tab"]')?.textContent).toBe('Embedded tab')
+  })
+
   it('automatically opens once from an empty hosted session with a deduplication key', async () => {
     const commands = render(snapshot([]))
     await act(async () => { await Promise.resolve() })

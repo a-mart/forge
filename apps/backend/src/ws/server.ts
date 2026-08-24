@@ -506,7 +506,7 @@ export class SwarmWebSocketServer {
     snapshot: BrowserSessionSnapshot,
     reason: "host-report" | "automation" | "human-command" | "lifecycle" | "recovery",
   ): void {
-    this.wsHandler.broadcastToSession(snapshot.sessionAgentId, {
+    this.wsHandler.broadcastToManagerSession(snapshot.sessionAgentId, {
       type: "browser_session_changed",
       snapshot,
       reason,

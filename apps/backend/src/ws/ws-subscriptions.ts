@@ -292,6 +292,24 @@ export class WsSubscriptions {
   }
 
   /**
+   * Deliver manager-owned session state without widening it to sibling sessions
+   * that share the same profile-scoped terminal authority.
+   */
+  broadcastToManagerSession(sessionAgentId: string, event: ServerEvent): void {
+    const wss = this.getServer();
+    if (!wss) return;
+
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      const subscribedAgent = this.subscriptions.get(client);
+      if (!subscribedAgent) continue;
+      const managerSessionAgentId = this.resolveManagerContextAgentId(subscribedAgent) ?? subscribedAgent;
+      if (managerSessionAgentId !== sessionAgentId) continue;
+      this.send(client, event);
+    }
+  }
+
+  /**
    * Count-only throughput stays on the local Builder socket. In particular it
    * intentionally does not use the Collaboration subscription manager or CLI.
    */
