@@ -423,6 +423,55 @@ describe("session command handler", () => {
     );
   });
 
+  it("updates session model overrides with exact selections that have no catalog preset family", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      updateSessionExactModel: vi.fn(async () => ({
+        provider: "openrouter",
+        modelId: "stealth/ox-alpha",
+        thinkingLevel: "high",
+      })),
+    };
+
+    await handleSessionCommand({
+      command: {
+        type: "update_session_model",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        modelSelection: { provider: "openrouter", modelId: "stealth/ox-alpha" },
+        requestId: "req-session-model-exact-openrouter",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateSessionExactModel).toHaveBeenCalledWith(
+      "manager--s2",
+      { provider: "openrouter", modelId: "stealth/ox-alpha" },
+      undefined,
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_model_updated",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        model: undefined,
+        requestId: "req-session-model-exact-openrouter",
+      }),
+    );
+    expect(send).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ code: "UPDATE_SESSION_MODEL_FAILED" }),
+    );
+  });
+
   it("updates session model overrides with the explicit session command", async () => {
     const send = vi.fn();
     const swarmManager = {

@@ -401,6 +401,52 @@ describe("manager command handler", () => {
     });
   });
 
+  it("updates profile default models with exact selections that have no catalog preset family", async () => {
+    const broadcastToSubscribed = vi.fn();
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      updateProfileDefaultExactModel: vi.fn(async () => ({
+        provider: "openrouter",
+        modelId: "stealth/ox-alpha",
+        thinkingLevel: "high",
+      })),
+    };
+
+    await handleManagerCommand({
+      command: {
+        type: "update_profile_default_model",
+        profileId: "alpha",
+        modelSelection: { provider: "openrouter", modelId: "stealth/ox-alpha" },
+        requestId: "req-default-model-exact-openrouter",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateProfileDefaultExactModel).toHaveBeenCalledWith(
+      "alpha",
+      { provider: "openrouter", modelId: "stealth/ox-alpha" },
+      undefined,
+    );
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "profile_default_model_updated",
+      profileId: "alpha",
+      model: undefined,
+      reasoningLevel: undefined,
+      requestId: "req-default-model-exact-openrouter",
+    });
+    expect(send).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ code: "UPDATE_PROFILE_DEFAULT_MODEL_FAILED" }),
+    );
+  });
+
   it("updates profile default models with the new explicit command", async () => {
     const broadcastToSubscribed = vi.fn();
     const swarmManager = {
@@ -465,6 +511,53 @@ describe("manager command handler", () => {
       reasoningLevel: undefined,
       requestId: "req-default-model-cursor-acp",
     });
+  });
+
+  it("updates manager models with exact selections that have no catalog preset family", async () => {
+    const broadcastToSubscribed = vi.fn();
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "alpha" })),
+      updateManagerExactModel: vi.fn(async () => ({
+        provider: "openrouter",
+        modelId: "stealth/ox-alpha",
+        thinkingLevel: "high",
+      })),
+    };
+
+    await handleManagerCommand({
+      command: {
+        type: "update_manager_model",
+        managerId: "alpha",
+        modelSelection: { provider: "openrouter", modelId: "stealth/ox-alpha" },
+        requestId: "req-manager-model-exact-openrouter",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateManagerExactModel).toHaveBeenCalledWith(
+      "alpha",
+      { provider: "openrouter", modelId: "stealth/ox-alpha" },
+      undefined,
+    );
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "manager_model_updated",
+      managerId: "alpha",
+      model: undefined,
+      reasoningLevel: undefined,
+      requestId: "req-manager-model-exact-openrouter",
+    });
+    expect(send).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ code: "UPDATE_MANAGER_MODEL_FAILED" }),
+    );
   });
 
   it("canonicalizes removed Cursor ACP manager model aliases before updating and emitting", async () => {

@@ -397,6 +397,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       const canonicalPreset = command.mode === "override" && !command.modelSelection
         ? parseSwarmModelPreset(command.model, "update_session_model.model")
         : undefined;
+      // Exact selections without a catalog preset family (discovered OpenRouter models) omit `model`.
       const eventModel = command.mode === "inherit"
         ? undefined
         : command.modelSelection
@@ -836,11 +837,6 @@ function resolveSessionProfileId(swarmManager: SwarmManager, sessionAgentId: str
   return resolveProfileIdForSessionAgent(sessionAgentId, (agentId) => swarmManager.getAgent(agentId));
 }
 
-function inferEventModelPreset(descriptor: { provider: string; modelId: string }): string {
-  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
-  if (!preset) {
-    throw new Error(`Could not infer manager model preset for ${descriptor.provider}/${descriptor.modelId}`);
-  }
-
-  return preset;
+function inferEventModelPreset(descriptor: { provider: string; modelId: string }): string | undefined {
+  return inferSwarmModelPresetFromDescriptor(descriptor);
 }

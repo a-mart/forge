@@ -21,7 +21,8 @@ export interface ManagerDeletedEvent {
 export interface ProfileDefaultModelUpdatedEvent {
   type: 'profile_default_model_updated'
   profileId: string
-  model: ManagerModelPreset
+  /** Omitted when the exact selection has no catalog preset family (for example, discovered OpenRouter models). */
+  model?: ManagerModelPreset
   reasoningLevel?: ManagerReasoningLevel
   requestId?: string
 }
@@ -29,7 +30,8 @@ export interface ProfileDefaultModelUpdatedEvent {
 export interface ManagerModelUpdatedEvent {
   type: 'manager_model_updated'
   managerId: string
-  model: ManagerModelPreset
+  /** Omitted when the exact selection has no catalog preset family (for example, discovered OpenRouter models). */
+  model?: ManagerModelPreset
   reasoningLevel?: ManagerReasoningLevel
   requestId?: string
 }
