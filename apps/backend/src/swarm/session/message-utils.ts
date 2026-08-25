@@ -25,6 +25,13 @@ export function hasMessageErrorMessageField(message: unknown): boolean {
   return Object.prototype.hasOwnProperty.call(message, "errorMessage");
 }
 
+const GENERIC_PROVIDER_ERROR_MESSAGES = new Set([
+  "provider returned error",
+  "provider error",
+  "error",
+  "unknown error"
+]);
+
 export function normalizeProviderErrorMessage(errorMessage: string | undefined): string | undefined {
   if (!errorMessage) {
     return undefined;
@@ -35,14 +42,17 @@ export function normalizeProviderErrorMessage(errorMessage: string | undefined):
     return undefined;
   }
 
+  const statusMatch = /^(\d{3})(?:\s*:|\b)/.exec(trimmed);
+  const statusCode = statusMatch?.[1];
+
   const jsonStart = trimmed.indexOf("{");
   if (jsonStart >= 0) {
     const jsonCandidate = trimmed.slice(jsonStart);
     try {
-      const parsed = JSON.parse(jsonCandidate) as { message?: unknown; error?: { message?: unknown } };
-      const nestedMessage = parseErrorMessageCandidate(parsed.error?.message) ?? parseErrorMessageCandidate(parsed.message);
+      const parsed = JSON.parse(jsonCandidate) as unknown;
+      const nestedMessage = extractNestedProviderErrorMessage(parsed);
       if (nestedMessage) {
-        return nestedMessage;
+        return boundProviderErrorMessage(prefixHttpStatus(nestedMessage, statusCode));
       }
     } catch {
       // fall through to regex and plain-text handling.
@@ -54,7 +64,7 @@ export function normalizeProviderErrorMessage(errorMessage: string | undefined):
     return overflowMatch[0];
   }
 
-  return trimmed.length > 240 ? previewForLog(trimmed, 240) : trimmed;
+  return boundProviderErrorMessage(trimmed);
 }
 
 export function isStrictContextOverflowMessage(message: string | undefined): boolean {
@@ -159,6 +169,51 @@ export function extractMessageImageAttachments(message: unknown): ConversationIm
   }
 
   return attachments;
+}
+
+function extractNestedProviderErrorMessage(parsed: unknown): string | undefined {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const nestedError =
+    record.error && typeof record.error === "object" && !Array.isArray(record.error)
+      ? (record.error as Record<string, unknown>)
+      : undefined;
+  const metadata =
+    record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+      ? (record.metadata as Record<string, unknown>)
+      : undefined;
+
+  const candidates = [
+    parseErrorMessageCandidate(nestedError?.message),
+    parseErrorMessageCandidate(metadata?.raw),
+    parseErrorMessageCandidate(record.message),
+    parseErrorMessageCandidate(record.error)
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => !isGenericProviderErrorMessage(candidate)) ?? candidates[0];
+}
+
+function isGenericProviderErrorMessage(message: string | undefined): boolean {
+  if (!message) {
+    return true;
+  }
+
+  return GENERIC_PROVIDER_ERROR_MESSAGES.has(message.replace(/\s+/g, " ").trim().toLowerCase());
+}
+
+function prefixHttpStatus(message: string, statusCode: string | undefined): string {
+  if (!statusCode || message.includes(statusCode)) {
+    return message;
+  }
+
+  return `HTTP ${statusCode}: ${message}`;
+}
+
+function boundProviderErrorMessage(message: string): string {
+  return message.length > 240 ? previewForLog(message, 240) : message;
 }
 
 function parseErrorMessageCandidate(value: unknown): string | undefined {
