@@ -277,6 +277,8 @@ export function DiffViewerContent({
               branchesQuery={branchesQuery}
               isDirty={(statusQuery.data?.summary.filesChanged ?? 0) > 0}
               sourceControlActive={active}
+              remoteUpdateSnapshot={activeRemoteUpdateSnapshot}
+              onRemoteUpdateSnapshotChange={onRemoteUpdateSnapshotChange}
               onMutationComplete={handleSourceControlMutationComplete}
               onRequestMutation={onRequestSourceControlMutation}
               />
