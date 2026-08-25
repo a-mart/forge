@@ -141,6 +141,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     await binding.executeBash({
+      secretAliases: ["deployment-key"],
       command: "safe-ssh-agent-use",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -149,7 +150,7 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
-  it("combines multiple automatic SSH keys in one execution-local agent", async () => {
+  it("delivers only the selected automatic SSH keys for each command", async () => {
     const harness = createHarness();
     const alpha = await harness.service.createLocalSecureSecret({
       displayAlias: "ssh-alpha",
@@ -178,6 +179,14 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     await binding.executeBash({
+      secretAliases: ["ssh-alpha"],
+      command: "safe-multiple-ssh-agent-use",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+    expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([ALPHA]);
+    await binding.executeBash({
+      secretAliases: ["ssh-alpha", "ssh-beta"],
       command: "safe-multiple-ssh-agent-use",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -185,6 +194,45 @@ describe("SecureSessionsService", () => {
     expect(new Set(harness.execution.sshAgentDeliveryValues.at(-1))).toEqual(
       new Set([ALPHA, BETA]),
     );
+    await harness.close();
+  });
+
+  it("keeps unrelated SSH keys out of a password-only command", async () => {
+    const harness = createHarness();
+    const sshKey = await harness.service.createLocalSecureSecret({
+      displayAlias: "unrelated-key",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const password = await harness.service.createLocalSecureSecret({
+      displayAlias: "server-password",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SERVER_PASSWORD" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(sshKey.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(password.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.startSecureSession("manager-a");
+
+    await harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!.executeBash({
+      secretAliases: ["server-password"],
+      command: "safe-password-use",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+
+    expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([]);
+    expect(harness.execution.environmentDeliveryNames.at(-1))
+      .toEqual(["SERVER_PASSWORD"]);
     await harness.close();
   });
 
@@ -584,6 +632,7 @@ describe("SecureSessionsService", () => {
     )!;
     harness.execution.destroyed.length = 0;
     const execution = binding.executeBash({
+      secretAliases: [],
       command: "wait-for-destroy",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -628,6 +677,7 @@ describe("SecureSessionsService", () => {
     )!;
     harness.execution.destroyed.length = 0;
     const execution = binding.executeBash({
+      secretAliases: [],
       command: "wait-for-destroy",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1037,6 +1087,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     const execution = binding.executeBash({
+      secretAliases: [],
       command: "wait-for-destroy",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1064,6 +1115,7 @@ describe("SecureSessionsService", () => {
     await expect(harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )?.executeBash({
+      secretAliases: [],
       command: "safe-beta",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1092,6 +1144,7 @@ describe("SecureSessionsService", () => {
     for (let index = 0; index < 16; index += 1) {
       const output: string[] = [];
       await alphaBinding.executeBash({
+      secretAliases: [],
         command: "safe-alpha",
         cwd: "/workspace-a",
         onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
@@ -1102,6 +1155,7 @@ describe("SecureSessionsService", () => {
 
     const crossSessionOutput: string[] = [];
     await betaBinding.executeBash({
+      secretAliases: [],
       command: "emit-alpha-canary",
       cwd: "/workspace-b",
       onData: (bytes) => crossSessionOutput.push(Buffer.from(bytes).toString("utf8")),
@@ -1115,6 +1169,7 @@ describe("SecureSessionsService", () => {
       stopProcesses: true,
     });
     await betaBinding.executeBash({
+      secretAliases: [],
       command: "safe-beta",
       cwd: "/workspace-b",
       onData: () => undefined,
@@ -1325,6 +1380,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     await expect(binding.executeBash({
+      secretAliases: [],
       command: "safe-existing",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1345,6 +1401,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     const execution = binding.executeBash({
+      secretAliases: [],
       command: "wait-for-destroy",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1381,6 +1438,7 @@ describe("SecureSessionsService", () => {
     const binding = harness.service.getSecureRuntimeBinding(harness.descriptors.get("manager-a")!)!;
     const output: string[] = [];
     await binding.executeBash({
+      secretAliases: [],
       command: "safe-zero-lease",
       cwd: "/workspace-a",
       onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
@@ -1396,6 +1454,7 @@ describe("SecureSessionsService", () => {
     await harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )!.executeBash({
+      secretAliases: ["alpha"],
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1430,6 +1489,7 @@ describe("SecureSessionsService", () => {
 
     expect(binding.guardValue(ALPHA)).toBe(SECURE_OUTPUT_QUARANTINE);
     await binding.executeBash({
+      secretAliases: ["alpha"],
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1609,6 +1669,7 @@ describe("SecureSessionsService", () => {
       consumed.descriptors.get("manager-a")!,
     )!;
     await binding.executeBash({
+      secretAliases: ["alpha"],
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1623,7 +1684,7 @@ describe("SecureSessionsService", () => {
     await consumed.close();
   });
 
-  it("keeps remaining task authority ready when a one-use lease is consumed", async () => {
+  it("preserves an unselected one-use lease and consumes it only when selected", async () => {
     const harness = createHarness();
     const taskSecret = await harness.service.createLocalSecureSecret({
       displayAlias: "task-secret",
@@ -1655,6 +1716,7 @@ describe("SecureSessionsService", () => {
     )!;
 
     await expect(binding.executeBash({
+      secretAliases: ["task-secret"],
       command: "safe",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1669,20 +1731,73 @@ describe("SecureSessionsService", () => {
       }),
       expect.objectContaining({
         secretId: oneUseSecret.secretId,
-        status: "consumed",
-        remainingUses: 0,
+        status: "active",
+        remainingUses: 1,
       }),
     ]));
     expect(harness.recycles).toHaveLength(recycleCountBeforeUse);
+    await expect(binding.executeBash({
+      secretAliases: ["one-use-secret"],
+      command: "safe-one-use",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    expect((await harness.service.getSecureSessionSnapshot("manager-a")).leases)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          secretId: oneUseSecret.secretId,
+          status: "consumed",
+          remainingUses: 0,
+        }),
+      ]));
     await expect(harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )!.executeBash({
+      secretAliases: ["task-secret"],
       command: "safe-again",
       cwd: "/workspace-a",
       onData: () => undefined,
     })).resolves.toEqual({ exitCode: 0 });
     expect((await harness.service.getSecureSessionSnapshot("manager-a"))
       .environmentStatus).toBe("ready");
+    await harness.close();
+  });
+
+  it("rejects an unavailable command alias before execution or one-use consumption", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "one-use-secret",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ONE_USE_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ONE_USE_TOKEN" }],
+      leaseKind: "one_use",
+    });
+    const executionsBefore = harness.execution.executed.length;
+
+    await expect(harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!.executeBash({
+      secretAliases: ["not-granted"],
+      command: "must-not-run",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+
+    expect(harness.execution.executed).toHaveLength(executionsBefore);
+    expect(await harness.service.getSecureSessionSnapshot("manager-a"))
+      .toEqual(expect.objectContaining({
+        environmentStatus: "ready",
+        leases: [expect.objectContaining({
+          secretId: secret.secretId,
+          status: "active",
+          remainingUses: 1,
+        })],
+      }));
     await harness.close();
   });
 
@@ -1705,12 +1820,14 @@ describe("SecureSessionsService", () => {
     )!;
 
     const first = binding.executeBash({
+      secretAliases: ["alpha"],
       command: "wait-for-release",
       cwd: "/workspace-a",
       onData: () => undefined,
     });
     await harness.execution.waitForBlockedExecution("manager-a");
     const second = binding.executeBash({
+      secretAliases: ["alpha"],
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1723,6 +1840,62 @@ describe("SecureSessionsService", () => {
     await expect(second).rejects.toThrow("SECURE_OPERATION_FAILED");
     expect(harness.execution.executed).toEqual(["manager-a"]);
     expect(harness.execution.destroyed).toContain("manager-a");
+    await harness.close();
+  });
+
+  it("rejects a second worker selecting an in-use one-use lease without stopping the first", async () => {
+    const harness = createHarness();
+    const workerA = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-a",
+    );
+    const workerB = workerDescriptor(
+      "worker-b",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-b",
+    );
+    harness.descriptors.set(workerA.agentId, workerA);
+    harness.descriptors.set(workerB.agentId, workerB);
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+      leaseKind: "one_use",
+    });
+    const first = harness.service.getSecureRuntimeBinding(workerA)!.executeBash({
+      secretAliases: ["alpha"],
+      command: "wait-for-release",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+    await harness.execution.waitForBlockedExecution("manager-a");
+
+    await expect(harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+      secretAliases: ["alpha"],
+      command: "must-not-run",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.execution.executed).toEqual(["manager-a"]);
+
+    harness.execution.releaseBlockedExecution("manager-a");
+    await expect(first).resolves.toEqual({ exitCode: 0 });
+    expect(await harness.service.getSecureSessionSnapshot("manager-a"))
+      .toEqual(expect.objectContaining({
+        environmentStatus: "stopped",
+        leases: [expect.objectContaining({ status: "consumed" })],
+      }));
     await harness.close();
   });
 
@@ -1749,6 +1922,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     const execution = binding.executeBash({
+      secretAliases: ["alpha"],
       command: "wait-for-release",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1816,6 +1990,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     await binding.executeBash({
+      secretAliases: ["historical"],
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1907,6 +2082,7 @@ describe("SecureSessionsService", () => {
 
       logicalNow += 1_001;
       await expect(binding.executeBash({
+      secretAliases: [],
         command: "safe-alpha",
         cwd: "/workspace-a",
         onData: () => undefined,
@@ -1954,6 +2130,7 @@ describe("SecureSessionsService", () => {
         harness.descriptors.get("manager-a")!,
       )!;
       const execution = binding.executeBash({
+      secretAliases: [],
         command: "wait-for-destroy",
         cwd: "/workspace-a",
         onData: () => undefined,
@@ -3208,6 +3385,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     )!;
     const execution = binding.executeBash({
+      secretAliases: [],
       command: "wait-for-release",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -3428,6 +3606,7 @@ describe("SecureSessionsService", () => {
       harness.descriptors.get("manager-a")!,
     );
     await expect(binding?.executeBash({
+      secretAliases: [],
       command: "safe-beta",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -3473,6 +3652,7 @@ describe("SecureSessionsService", () => {
     await expect(harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )?.executeBash({
+      secretAliases: [],
       command: "safe-beta",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -3911,6 +4091,7 @@ describe("SecureSessionsService", () => {
     const output: string[] = [];
     const destroyedBeforeReflection = harness.execution.destroyed.length;
     await expect(binding.executeBash({
+      secretAliases: ["alpha"],
       command: "emit-own-canary",
       cwd: "/workspace-a",
       onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
@@ -3920,6 +4101,7 @@ describe("SecureSessionsService", () => {
     expect(harness.execution.destroyed).toHaveLength(destroyedBeforeReflection);
     const safeOutput: string[] = [];
     await expect(binding.executeBash({
+      secretAliases: [],
       command: "emit-safe-output",
       cwd: "/workspace-a",
       onData: (bytes) => safeOutput.push(Buffer.from(bytes).toString("utf8")),
@@ -4039,6 +4221,7 @@ describe("SecureSessionsService", () => {
     const output: string[] = [];
 
     await expect(binding.executeBash({
+      secretAliases: [],
       command: "emit-public-marker",
       cwd: "/workspace-a",
       onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
@@ -4071,6 +4254,7 @@ describe("SecureSessionsService", () => {
     const binding = harness.service.getSecureRuntimeBinding(harness.descriptors.get("manager-a")!)!;
 
     await expect(binding.executeBash({
+      secretAliases: ["alpha"],
       command: "emit-own-canary",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -4412,6 +4596,7 @@ describe("SecureSessionsService", () => {
 
     await expect(
       harness.service.getSecureRuntimeBinding(workerA)!.executeBash({
+      secretAliases: [],
         command: "throw-execution-timeout",
         cwd: "/workspace-a",
         onData: () => undefined,
@@ -4444,6 +4629,7 @@ describe("SecureSessionsService", () => {
     expect(harness.service.getSecureRuntimeBinding(workerA)).toBeDefined();
     await expect(
       harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+      secretAliases: [],
         command: "worker-b-safe-follow-up",
         cwd: "/workspace-a",
         onData: () => undefined,
@@ -4453,6 +4639,7 @@ describe("SecureSessionsService", () => {
       harness.service.getSecureRuntimeBinding(
         harness.descriptors.get("manager-a")!,
       )!.executeBash({
+      secretAliases: [],
         command: "manager-safe-follow-up",
         cwd: "/workspace-a",
         onData: () => undefined,
@@ -4469,6 +4656,7 @@ describe("SecureSessionsService", () => {
     )!;
 
     await expect(binding.executeBash({
+      secretAliases: [],
       command: "throw-unsafe-backend-error",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -4525,6 +4713,7 @@ describe("SecureSessionsService", () => {
     const binding = harness.service.getSecureRuntimeBinding(worker);
     expect(binding).toBeDefined();
     await binding!.executeBash({
+      secretAliases: ["worker-alpha"],
       command: "emit-alpha-canary",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -4611,6 +4800,7 @@ describe("SecureSessionsService", () => {
       workerParentContext: { assignmentId: string };
     }).workerParentContext.assignmentId = "assignment-2";
     expect(() => assignmentOneBinding.executeBash({
+      secretAliases: [],
       command: "safe-stale-worker",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -4938,6 +5128,7 @@ describe("SecureSessionsService", () => {
     await harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )!.executeBash({
+      secretAliases: [],
       command: "manager-ssh",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -4953,6 +5144,7 @@ describe("SecureSessionsService", () => {
       hostKey: `ssh-ed25519 ${second.base64}`,
     });
     await harness.service.getSecureRuntimeBinding(worker)!.executeBash({
+      secretAliases: [],
       command: "worker-ssh",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -5243,6 +5435,7 @@ class FakeExecutionBackend implements SecureExecutionBackend {
     knownHosts: string;
   }> = [];
   readonly sshAgentDeliveryValues: string[][] = [];
+  readonly environmentDeliveryNames: string[][] = [];
   readonly destroyUnconfirmed = new Set<string>();
   private readonly blockedExecutions = new Map<
     string,
@@ -5319,6 +5512,9 @@ class FakeExecutionBackend implements SecureExecutionBackend {
   async execute(request: SecureExecutionRequest) {
     this.executed.push(request.task.taskId);
     this.lastDeliveryValue = request.delivery?.environment?.[0]?.value;
+    this.environmentDeliveryNames.push(
+      (request.delivery?.environment ?? []).map(({ name }) => name),
+    );
     this.sshAgentDeliveryValues.push(
       (request.delivery?.sshAgent ?? []).map(({ value }) =>
         Buffer.from(value).toString("utf8")

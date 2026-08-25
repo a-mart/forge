@@ -37,7 +37,7 @@ export function formatSecureBinding(binding: SecureSecretBindingView): string {
 export function formatSecurePolicy(policy: SecureLeasePolicyView): string {
   switch (policy.kind) {
     case 'one_use':
-      return 'Next Secure Bash command'
+      return 'One Secure Bash command'
     case 'task':
       return 'Until Secure Session stops'
     case 'timed': {

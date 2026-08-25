@@ -78,7 +78,7 @@ describe('SecureSecretRequestCard', () => {
 
     expect(container.textContent).toContain('Publish the verified release')
     expect(container.textContent).toContain('Environment variable DEPLOY_TOKEN')
-    expect(container.textContent).toContain('Next Secure Bash command')
+    expect(container.textContent).toContain('One Secure Bash command')
     expect(container.textContent).toContain(
       "Requested by Deploy worker. Approval adds the secret to this manager task's shared Secure Bash session",
     )

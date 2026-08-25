@@ -381,10 +381,12 @@ async function executeAndCapture(
   binding: SecureRuntimeBinding,
   workspacePath: string,
   command: string,
+  secretAliases: readonly string[] = [],
   timeoutMs?: number,
 ): Promise<{ exitCode: number | null; output: Buffer }> {
   const chunks: Buffer[] = [];
   const result = await binding.executeBash({
+    secretAliases,
     command,
     cwd: workspacePath,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -717,6 +719,7 @@ dockerSuite(
               [SHARED_ONE_USE],
               marker,
             ),
+            ["docker-e2e/primary", "docker-e2e/secondary"],
           );
           expect(execution.exitCode).toBe(0);
           assertSafeExactOutput(execution.output, needles, marker, marker);
@@ -749,6 +752,7 @@ dockerSuite(
                 releasePath: concurrentReleaseName,
               },
             ),
+            ["docker-e2e/primary", "docker-e2e/secondary"],
           ).then((execution) => ({ execution, marker }));
         });
         await waitForFiles(concurrentStarted);
@@ -782,9 +786,11 @@ dockerSuite(
               releasePath: timeoutSiblingReleaseName,
             },
           ),
+          ["docker-e2e/primary", "docker-e2e/secondary"],
         );
         await waitForFiles([timeoutSiblingStarted]);
         await expect(retainedBindings.get(WORKER_ONE)!.executeBash({
+          secretAliases: [],
           command: "sleep 30",
           cwd: harness.workspacePath,
           timeoutMs: 150,
@@ -826,6 +832,7 @@ dockerSuite(
             [SHARED_ONE_USE],
             "manager-follow-up-after-timeout",
           ),
+          ["docker-e2e/primary", "docker-e2e/secondary"],
         );
         assertSafeExactOutput(
           managerAfterTimeout.output,
@@ -870,6 +877,11 @@ dockerSuite(
               releasePath: oneUseReleaseName,
             },
           ),
+          [
+            "docker-e2e/primary",
+            "docker-e2e/secondary",
+            "docker-e2e/one-use",
+          ],
         );
         await waitForFiles([oneUseStarted]);
         const siblingWhileReserved = await executeAndCapture(
@@ -880,6 +892,7 @@ dockerSuite(
             [SHARED_ONE_USE],
             "worker-two-cannot-double-reserve",
           ),
+          ["docker-e2e/primary", "docker-e2e/secondary"],
         );
         assertSafeExactOutput(
           siblingWhileReserved.output,
@@ -925,6 +938,7 @@ dockerSuite(
           retainedBindings.get(WORKER_ONE)!,
           harness.workspacePath,
           reflectedEnvironmentCommand(SHARED_PRIMARY),
+          ["docker-e2e/primary"],
         );
         expect(reflected.exitCode).toBe(0);
         assertSafeExactOutput(
@@ -973,6 +987,7 @@ dockerSuite(
         );
         await expect(Promise.resolve().then(async () =>
           await staleBinding.executeBash({
+            secretAliases: [],
             command: writeSentinelCommand(staleSentinel),
             cwd: harness.workspacePath,
             onData: () => undefined,
@@ -991,6 +1006,7 @@ dockerSuite(
             [SHARED_ONE_USE],
             "replacement-assignment-shared-authority",
           ),
+          ["docker-e2e/primary", "docker-e2e/secondary"],
         );
         assertSafeExactOutput(
           replacement.output,
@@ -1026,6 +1042,7 @@ dockerSuite(
             [SHARED_ONE_USE],
             "worker-teardown-kept-team-authority",
           ),
+          ["docker-e2e/primary", "docker-e2e/secondary"],
         );
         assertSafeExactOutput(
           siblingAfterTeardown.output,

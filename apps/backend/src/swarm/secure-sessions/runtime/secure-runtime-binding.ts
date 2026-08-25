@@ -15,6 +15,12 @@ export interface SecureRuntimeBashExecutionRequest {
    */
   command: string;
   cwd: string;
+  /**
+   * Exact display aliases for the already-granted secrets this command may
+   * receive. An empty list keeps the command inside Secure Bash for SSH trust
+   * or isolation without delivering secret material.
+   */
+  secretAliases: readonly string[];
   signal?: AbortSignal;
   timeoutMs?: number;
   /**

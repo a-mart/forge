@@ -143,7 +143,11 @@ describe("Secure Pi runtime interception", () => {
     expect(hostBash.description).toContain("GitHub CLI");
     expect(secureBash.label).toBe("Secure Bash · Linux container");
     expect(secureBash.description).toContain("approved Secure Sessions value");
+    expect(secureBash.description).toContain("exact active secret aliases");
     expect(secureBash.description).toContain("SSH_AUTH_SOCK automatically");
+    expect((secureBash.parameters as { required?: string[] }).required).toContain(
+      "secretAliases",
+    );
 
     const hostUpdates: unknown[] = [];
     const hostResult = await hostBash.execute(
@@ -169,7 +173,11 @@ describe("Secure Pi runtime interception", () => {
     const secureUpdates: unknown[] = [];
     const secureResult = await secureBash.execute(
       "secure-call",
-      { command: "ssh target true", timeout: 2 },
+      {
+        command: "ssh target true",
+        timeout: 2,
+        secretAliases: ["deployment-key"],
+      },
       undefined,
       (update) => secureUpdates.push(update),
       {} as never,
@@ -178,6 +186,7 @@ describe("Secure Pi runtime interception", () => {
       expect.objectContaining({
         command: "ssh target true",
         cwd: "/tmp/forge-secure-runtime-test",
+        secretAliases: ["deployment-key"],
         timeoutMs: 2_000,
         onData: expect.any(Function),
       }),
@@ -185,6 +194,54 @@ describe("Secure Pi runtime interception", () => {
     expect(JSON.stringify({ result: secureResult, updates: secureUpdates })).toContain(
       "secure output",
     );
+  });
+
+  it("requires an explicit selection and keeps parallel command selections isolated", async () => {
+    const observed: Array<{ command: string; secretAliases: readonly string[] }> = [];
+    const binding = createBinding({
+      executeBash: vi.fn(async (request) => {
+        await Promise.resolve();
+        observed.push({
+          command: request.command,
+          secretAliases: request.secretAliases,
+        });
+        return { exitCode: 0 };
+      }),
+    });
+    const secureBash = createSecurePiCodingTools({
+      cwd: "/tmp/forge-secure-runtime-test",
+      binding,
+    }).find((tool) => tool.name === "secure_bash")!;
+
+    await expect(secureBash.execute(
+      "missing-selection",
+      { command: "true" },
+      undefined,
+      undefined,
+      {} as never,
+    )).rejects.toThrow("requires secretAliases");
+
+    await Promise.all([
+      secureBash.execute(
+        "alpha-call",
+        { command: "alpha", secretAliases: ["alpha-key"] },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+      secureBash.execute(
+        "beta-call",
+        { command: "beta", secretAliases: ["beta-password"] },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ]);
+
+    expect(observed).toEqual(expect.arrayContaining([
+      { command: "alpha", secretAliases: ["alpha-key"] },
+      { command: "beta", secretAliases: ["beta-password"] },
+    ]));
   });
 
   it("guards host Bash output across chunk boundaries before Pi accumulates it", async () => {
@@ -334,7 +391,7 @@ describe("Secure Pi runtime interception", () => {
     await expect(
       bash.execute(
         "call-timeout",
-        { command: "sleep 60", timeout: 1 },
+        { command: "sleep 60", timeout: 1, secretAliases: [] },
         undefined,
         undefined,
         {} as never,

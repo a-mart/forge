@@ -26,26 +26,26 @@ const POLICY_OPTIONS: Array<{
 }> = [
   {
     value: 'one_use',
-    label: 'Next Secure Bash command',
-    description: 'Injected into the next Secure Bash command and then revoked, whether or not the command uses it.',
+    label: 'One Secure Bash command',
+    description: 'Available to the next Secure Bash command that selects this alias, then revoked.',
     policy: { kind: 'one_use' },
   },
   {
     value: 'task',
     label: 'Until Secure Session stops',
-    description: 'Injected into every Secure Bash command and its child processes until you revoke it or stop the session.',
+    description: 'Available to Secure Bash commands that select this alias until you revoke it or stop the session.',
     policy: { kind: 'task' },
   },
   {
     value: 'timed:900',
     label: '15 minutes',
-    description: 'Injected into every Secure Bash command and its child processes for up to 15 minutes.',
+    description: 'Available to Secure Bash commands that select this alias for up to 15 minutes.',
     policy: { kind: 'timed', durationSeconds: 900 },
   },
   {
     value: 'timed:3600',
     label: '1 hour',
-    description: 'Injected into every Secure Bash command and its child processes for up to 1 hour.',
+    description: 'Available to Secure Bash commands that select this alias for up to 1 hour.',
     policy: { kind: 'timed', durationSeconds: 3_600 },
   },
 ]

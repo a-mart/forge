@@ -11,6 +11,8 @@ import {
   type LoadExtensionsResult,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Buffer } from "node:buffer";
 import {
   guardSecureRuntimeError,
@@ -20,6 +22,9 @@ import {
 } from "./secure-runtime-binding.js";
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+const SECURE_BASH_SECRET_SELECTION_MESSAGE =
+  "secure_bash requires secretAliases to list the exact active secret aliases this command needs; use [] when it needs only Secure Sessions SSH trust or isolation.";
 
 export function createSecurePiCodingTools(options: {
   cwd: string;
@@ -44,12 +49,18 @@ export function createSecurePiCodingTools(options: {
   hostBash.promptSnippet =
     "Use host Bash for ordinary repository work, builds, tests, Git, GitHub CLI, and host-integrated tools";
 
-  const secureBash = createBashToolDefinition(options.cwd, {
+  const secretSelection = new AsyncLocalStorage<readonly string[]>();
+  const baseSecureBash = createBashToolDefinition(options.cwd, {
     operations: {
       exec: async (command, cwd, execution) => {
+        const secretAliases = secretSelection.getStore();
+        if (!secretAliases) {
+          throw new Error(SECURE_BASH_SECRET_SELECTION_MESSAGE);
+        }
         const result = await options.binding.executeBash({
           command,
           cwd,
+          secretAliases,
           ...(execution.signal ? { signal: execution.signal } : {}),
           ...(typeof execution.timeout === "number"
             ? { timeoutMs: execution.timeout * 1_000 }
@@ -62,12 +73,47 @@ export function createSecurePiCodingTools(options: {
       },
     },
   });
+  const secureBash: AnyToolDefinition = {
+    ...(baseSecureBash as AnyToolDefinition),
+    parameters: Type.Object({
+      command: Type.String({
+        description: "Bash command to execute inside Forge's Linux secure container",
+      }),
+      timeout: Type.Optional(Type.Number({
+        description: "Timeout in seconds; omitted commands use Forge's default timeout",
+      })),
+      secretAliases: Type.Array(
+        Type.String({ minLength: 1, maxLength: 256 }),
+        {
+          description:
+            "Exact active secret display aliases this command needs. Use [] when the command needs only Secure Sessions SSH trust or isolation.",
+          uniqueItems: true,
+        },
+      ),
+    }),
+    async execute(toolCallId, params: any, signal, onUpdate, ctx) {
+      const secretAliases = parseSecureBashSecretAliases(params);
+      return await secretSelection.run(
+        secretAliases,
+        async () => await baseSecureBash.execute(
+          toolCallId,
+          {
+            command: params.command,
+            ...(typeof params.timeout === "number" ? { timeout: params.timeout } : {}),
+          },
+          signal,
+          onUpdate,
+          ctx,
+        ),
+      );
+    },
+  };
   secureBash.name = "secure_bash";
   secureBash.label = "Secure Bash · Linux container";
   secureBash.description =
-    "Execute Bash inside Forge's Linux secure container. Use only when the command needs an approved Secure Sessions value, SSH-agent key, or Secure Sessions SSH trust. SSH-agent grants set SSH_AUTH_SOCK automatically for ordinary ssh, scp, and Git commands. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
+    "Execute Bash inside Forge's Linux secure container. Set secretAliases to the exact active secret aliases this command needs, or [] when it needs only Secure Sessions SSH trust or isolation. Only those approved Secure Sessions values are delivered; no new approval is created. SSH-agent selections set SSH_AUTH_SOCK automatically for ordinary ssh, scp, and Git commands. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
   secureBash.promptSnippet =
-    "Use secure_bash only for commands that need approved secrets, SSH-agent keys, or Secure Sessions SSH trust";
+    "Use secure_bash only for commands that need approved secrets, SSH-agent keys, or Secure Sessions SSH trust; pass the exact needed active aliases in secretAliases, or [] for trust-only commands";
 
   return guardSecureRuntimeTools(
     [
@@ -82,6 +128,35 @@ export function createSecurePiCodingTools(options: {
     ],
     options.binding,
   );
+}
+
+function parseSecureBashSecretAliases(params: unknown): readonly string[] {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    throw new Error(SECURE_BASH_SECRET_SELECTION_MESSAGE);
+  }
+  const aliases = (params as { secretAliases?: unknown }).secretAliases;
+  if (!Array.isArray(aliases)) {
+    throw new Error(SECURE_BASH_SECRET_SELECTION_MESSAGE);
+  }
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const alias of aliases) {
+    if (
+      typeof alias !== "string"
+      || alias.trim().length === 0
+      || alias.length > 256
+      || alias.includes("\0")
+    ) {
+      throw new Error(SECURE_BASH_SECRET_SELECTION_MESSAGE);
+    }
+    const trimmed = alias.trim();
+    if (seen.has(trimmed)) {
+      throw new Error(SECURE_BASH_SECRET_SELECTION_MESSAGE);
+    }
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
 }
 
 function createGuardedHostBashOperations(

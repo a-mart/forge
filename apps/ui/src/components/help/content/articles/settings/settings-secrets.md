@@ -90,8 +90,8 @@ Under **Advanced delivery**, choose how an approved command receives the value:
 - an askpass helper;
 - an execution-local SSH agent.
 
-For a private SSH key, choose **SSH agent**. Forge loads every active SSH-key
-grant into one short-lived agent for each `secure_bash` command and sets
+For a private SSH key, choose **SSH agent**. The agent selects the granted key aliases
+needed by each `secure_bash` command. Forge loads only those keys into one short-lived agent and sets
 `SSH_AUTH_SOCK` automatically. The agent can use ordinary `ssh`, `scp`, SFTP,
 or SSH-backed Git commands without a private-key path. No private-key file is
 created. The agent ends when the direct command ends; another command gets a new
@@ -108,15 +108,17 @@ Open the shield beside **Send** in a supported local Builder session:
 2. Grant an alias and its bindings to the manager session.
 3. Choose task, timed, or one-use access.
 4. Let the agent use normal host `bash` for ordinary work and `secure_bash` only for
-commands that need a granted value, SSH-agent key, or Forge-managed SSH trust.
+commands that need a granted value, SSH-agent key, or Forge-managed SSH trust. The
+agent names the exact active aliases needed by each secure command; this does not
+create another approval prompt.
 5. Revoke one shared grant or stop Team Secure Mode to revoke the session.
 
 Agent requests appear as private approval cards, not transcript messages. A request
 belongs to the manager session; a worker identity is recorded only to show who asked.
-A one-use grant means the session's next `secure_bash` command and is consumed even if
-the command does not reference the binding. Task and timed grants are delivered to
-every `secure_bash` command from the manager or an eligible worker while active, and
-the direct command's child processes inherit that delivery. An SSH-agent socket is
+A one-use grant is consumed by the next `secure_bash` command that selects its alias.
+Task and timed grants remain available to the manager and eligible workers, but each
+command receives only the active aliases it selects. The direct command's child
+processes inherit that delivery. An SSH-agent socket is
 intentionally command-local: a detached background process cannot keep using it after
 the direct `secure_bash` command returns.
 

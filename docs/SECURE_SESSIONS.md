@@ -5,7 +5,8 @@ secret value in chat, a model prompt, tool arguments, WebSocket messages, or the
 conversation transcript. The agent continues to call the ordinary Pi Bash and file
 tools for normal host work. While Team Secure Mode is active, Forge adds a separate
 `secure_bash` tool backed by the Linux secure execution plane. Approved values are
-resolved only after a `secure_bash` call has reached that local boundary; normal
+resolved only after a `secure_bash` call has reached that local boundary and selected
+their already-granted display aliases; normal
 `bash` never receives them.
 
 This feature is designed for the practical middle ground between two unsafe extremes:
@@ -30,6 +31,8 @@ create a second secret grant or sandbox. While it is active:
   macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
   a protected RAM-backed file, an askpass helper, or an execution-local SSH agent;
+- each secure command names the exact active aliases it needs, so unrelated grants
+  are not delivered and no additional approval prompt is required;
 - a task or timed grant can be reused across many commands from the manager or any
   eligible worker in the session;
 - output from both `bash` and `secure_bash` is filtered before the Pi tool
@@ -97,8 +100,8 @@ no authority beyond the environment variables already granted to that command.
 An advanced `SSH_ASKPASS` binding remains available for tools that require that
 specific delivery shape.
 
-For a private SSH key, choose the **SSH agent** binding. Every active SSH-agent
-key is loaded through stdin into one agent created for each `secure_bash` command.
+For a private SSH key, choose the **SSH agent** binding. Only the SSH-agent aliases
+selected by a `secure_bash` command are loaded through stdin into its short-lived agent.
 Forge sets `SSH_AUTH_SOCK` automatically, so the agent can use ordinary `ssh`,
 `scp`, SFTP, and SSH-backed Git commands without naming a key file:
 
@@ -110,7 +113,7 @@ git fetch ssh://git@example.internal/team/repository.git
 Private keys are never written to the workspace, a binding file, or Docker
 metadata. The socket and agent are removed when the direct command finishes;
 the next command transparently receives a fresh agent while its lease remains
-active. Multiple active SSH-key aliases share that command-local agent. A key
+active. Multiple selected SSH-key aliases share that command-local agent. A key
 that OpenSSH cannot load returns the fixed `ssh-agent-key-rejected` result and
 does not destroy the shared session container.
 
@@ -220,7 +223,7 @@ binding does not grant access.
 | Stdin | The value on the command's standard input | `read`, installers, and password consumers |
 | File | A mode `0400` or `0600` file under `/run/forge-secure/bindings/` | Certificates, config fragments, and clients requiring a path |
 | Askpass | A generated helper path in a named variable | SSH, Git, and compatible password prompts |
-| SSH agent | `SSH_AUTH_SOCK` for a command-local agent loaded with every active SSH-key grant | SSH, SCP, SFTP, and SSH-backed Git without a private-key file |
+| SSH agent | `SSH_AUTH_SOCK` for a command-local agent loaded with the selected SSH-key grants | SSH, SCP, SFTP, and SSH-backed Git without a private-key file |
 
 Examples of `secure_bash` commands after a grant:
 
@@ -234,7 +237,8 @@ scp release.tar.gz server.example:/tmp/release.tar.gz
 ```
 
 There is no secret interpolation syntax in the model-originated command. The value
-is added only to the selected child inside the task container. The same commands run
+is added only to the selected child inside the task container. The tool call carries
+only safe display aliases in `secretAliases`, never the values. The same commands run
 through normal `bash` do not receive the value. An `SSH_ASKPASS` binding automatically supplies the non-secret
 `DISPLAY` and `SSH_ASKPASS_REQUIRE=force` settings needed for password authentication
 without a terminal.
@@ -301,20 +305,23 @@ secret and its **Every project** policy are not deleted with any one project.
    - **Until Secure Session stops** is the default and remains available until the
      user revokes it or stops the Secure Session.
    - **Timed** remains available for the selected duration, up to 24 hours.
-   - **One use** is atomically consumed by the next `secure_bash` command, whether or
-     not that command actually references the binding.
+   - **One use** is atomically consumed by the next `secure_bash` command that selects
+     its alias.
 6. Continue ordinary repository work, builds, Git, GitHub CLI, and host-integrated
    tasks with `bash`. Use `secure_bash` only for commands that need an approved value
-   or Forge-managed SSH trust. The same task or timed lease is checked on every
-   `secure_bash` call from the manager or its eligible workers, so a 16-command
-   credentialed workflow does not require 16 prompts.
+   or Forge-managed SSH trust. The agent passes the exact active display aliases each
+   command needs in `secretAliases`, or `[]` for a trust-only command. The same task
+   or timed lease remains available across calls from the manager or its eligible
+   workers, so a 16-command credentialed workflow does not require 16 prompts.
 7. Revoke one shared lease or stop Team Secure Mode to revoke the manager session and
    destroy its environment.
 
-Every active task or timed grant is injected into every `secure_bash` command and is
-available to that command's child processes. This broad process scope is what
-preserves ordinary Bash syntax; it is not a semantic promise that the value is used
-only for the action the user had in mind. Grant narrowly and revoke promptly.
+Each `secure_bash` command receives only the active grants named in its
+`secretAliases` input, and those values are available to that command's child
+processes. The alias list is safe metadata and does not create a new grant. This
+process scope preserves ordinary Bash syntax; it is not a semantic promise that the
+value is used only for the action the user had in mind. Grant narrowly and revoke
+promptly.
 
 `secure_bash` calls from one agent are serialized across their complete authorization
 and execution boundary. Different eligible workers can execute concurrently in the

@@ -3166,7 +3166,11 @@ export class SecureSessionsService {
     ) {
       throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
     }
-    const activeLeases = stored.leases.filter((lease) => lease.state === "active");
+    const activeLeases = this.selectCommandLeases(
+      store,
+      stored.leases.filter((lease) => lease.state === "active"),
+      request.secretAliases,
+    );
     const reserved: ReservedLease[] = [];
     const resolved: ResolvedSecureSecretBinding[] = [];
     let guard: SecureValueGuard | null = null;
@@ -3179,7 +3183,9 @@ export class SecureSessionsService {
           sessionAgentId,
           now: this.now(),
         });
-        if (!reservation.reserved) continue;
+        if (!reservation.reserved) {
+          throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+        }
         reserved.push({ lease, operationId, exposureIds: [] });
       }
       resolved.push(...await this.resolveDeliveries(store, reserved));
@@ -3226,6 +3232,39 @@ export class SecureSessionsService {
       for (const item of resolved) item.value.fill(0);
       throw this.publicError(error);
     }
+  }
+
+  private selectCommandLeases(
+    store: SecureSessionStore,
+    activeLeases: readonly SecureSessionLease[],
+    requestedAliases: readonly string[],
+  ): SecureSessionLease[] {
+    if (
+      !Array.isArray(requestedAliases)
+      || requestedAliases.length > activeLeases.length
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    const leasesByAlias = new Map<string, SecureSessionLease[]>();
+    for (const lease of activeLeases) {
+      const secret = store.getSecret(lease.secretId);
+      if (!secret) continue;
+      const matching = leasesByAlias.get(secret.displayAlias) ?? [];
+      matching.push(lease);
+      leasesByAlias.set(secret.displayAlias, matching);
+    }
+    const selected: SecureSessionLease[] = [];
+    const seen = new Set<string>();
+    for (const rawAlias of requestedAliases) {
+      const alias = bounded(rawAlias, 256);
+      const matching = leasesByAlias.get(alias);
+      if (seen.has(alias) || matching?.length !== 1) {
+        throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      }
+      seen.add(alias);
+      selected.push(matching[0]!);
+    }
+    return selected;
   }
 
   private async runPreparedSecureBashExecution(

@@ -72,7 +72,7 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
     await harness.close();
   });
 
-  it("delivers the same manager leases to either worker without duplicating grants", async () => {
+  it("lets each worker select from the same manager grants without duplication", async () => {
     const harness = createHarness();
     const first = await createEnvironmentSecret(
       harness,
@@ -98,17 +98,17 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
       },
     ]);
 
-    await executeAs(harness, WORKER_A1, "worker-one");
-    await executeAs(harness, WORKER_A2, "worker-two");
+    await executeAs(harness, WORKER_A1, "worker-one", ["team/first"]);
+    await executeAs(harness, WORKER_A2, "worker-two", ["team/second"]);
 
     expect(harness.execution.records).toEqual([
       expect.objectContaining({
         taskId: MANAGER_A,
-        environmentNames: ["TEAM_FIRST", "TEAM_SECOND"],
+        environmentNames: ["TEAM_FIRST"],
       }),
       expect.objectContaining({
         taskId: MANAGER_A,
-        environmentNames: ["TEAM_FIRST", "TEAM_SECOND"],
+        environmentNames: ["TEAM_SECOND"],
       }),
     ]);
     expect(await harness.service.getSecureSessionSnapshot(WORKER_A1)).toEqual(
@@ -135,7 +135,7 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
     }]);
     const destroyCountBeforeUse = harness.execution.destroyed.length;
 
-    await executeAs(harness, WORKER_A1, "consume-once");
+    await executeAs(harness, WORKER_A1, "consume-once", ["team/one-use"]);
 
     const manager = await harness.service.getSecureSessionSnapshot(MANAGER_A);
     expect(manager).toEqual(expect.objectContaining({
@@ -204,6 +204,7 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
 
     setWorkerAssignment(worker, "assignment-a1-next");
     expect(() => staleBinding.executeBash({
+      secretAliases: [],
       command: "stale",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -216,6 +217,7 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
     const replacement = harness.service.getSecureRuntimeBinding(worker);
     expect(replacement).toBeDefined();
     await replacement!.executeBash({
+      secretAliases: [],
       command: "replacement",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -298,6 +300,7 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
     await harness.service.getSecureRuntimeBinding(
       harness.descriptors.get(WORKER_A1)!,
     )!.executeBash({
+      secretAliases: ["team/quarantine"],
       command: "emit-first-environment-secret",
       cwd: "/workspace-a",
       onData: (data) => output.push(Buffer.from(data)),
@@ -384,10 +387,12 @@ async function executeAs(
   harness: Harness,
   workerAgentId: string,
   command: string,
+  secretAliases: readonly string[] = [],
 ): Promise<{ exitCode: number | null }> {
   return await harness.service.getSecureRuntimeBinding(
     harness.descriptors.get(workerAgentId)!,
   )!.executeBash({
+    secretAliases,
     command,
     cwd: "/workspace-a",
     onData: () => undefined,

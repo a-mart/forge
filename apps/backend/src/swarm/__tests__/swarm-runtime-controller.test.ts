@@ -730,6 +730,7 @@ describe("SwarmRuntimeController", () => {
       await controller.createRuntimeForDescriptor(worker, "prompt", token);
       controller.attachRuntime(worker.agentId, runtime);
       await expect(retainedBinding.executeBash({
+      secretAliases: [],
         command: "safe-before-lifecycle-change",
         cwd: worker.cwd,
         onData: () => undefined,
@@ -746,6 +747,7 @@ describe("SwarmRuntimeController", () => {
       );
       expect(retainedBinding.isActive()).toBe(false);
       await expect(retainedBinding.executeBash({
+      secretAliases: [],
         command: "must-not-run-after-lifecycle-change",
         cwd: worker.cwd,
         onData: () => undefined,
@@ -818,6 +820,7 @@ describe("SwarmRuntimeController", () => {
     );
     expect(controller.getRuntimeToken(worker.agentId)).toBe(oldToken);
     await expect(oldBinding.executeBash({
+      secretAliases: [],
       command: "fallback-binding-still-usable",
       cwd: worker.cwd,
       onData: () => undefined,
