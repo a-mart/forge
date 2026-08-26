@@ -5,7 +5,9 @@ import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
+import { createRemoteUpdateAwarenessMutationTarget } from './remote-update-awareness-mutation'
 import {
   markOriginFetchCompleted,
   resetSourceControlAutoFetchFreshnessForTests,
@@ -19,6 +21,7 @@ const {
   pullGitFfOnlyMock,
   pushGitUpstreamMock,
   invalidateGitCachesMock,
+  dismissRemoteUpdateAwarenessProjectUpdateMock,
 } = vi.hoisted(() => ({
   fetchGitOriginMock: vi.fn(),
   fetchMutationPreflightMock: vi.fn(),
@@ -26,6 +29,7 @@ const {
   pullGitFfOnlyMock: vi.fn(),
   pushGitUpstreamMock: vi.fn(),
   invalidateGitCachesMock: vi.fn(),
+  dismissRemoteUpdateAwarenessProjectUpdateMock: vi.fn(),
 }))
 
 vi.mock('./use-diff-queries', () => ({
@@ -41,6 +45,22 @@ vi.mock('./use-diff-queries', () => ({
 vi.mock('@/components/file-browser/use-file-browser-queries', () => ({
   invalidateFileBrowserCaches: vi.fn(),
 }))
+
+vi.mock('@/components/settings/remote-update-awareness-api', () => ({
+  dismissRemoteUpdateAwarenessProjectUpdate: dismissRemoteUpdateAwarenessProjectUpdateMock,
+}))
+
+const remoteUpdateSnapshot: RemoteUpdateAwarenessProjectSnapshot = {
+  projectId: 'project-1',
+  override: 'inherit',
+  globalEnabled: true,
+  effectiveEnabled: true,
+  state: 'update_available',
+  lastObservedAt: null,
+  failureCode: null,
+  attentionRequired: true,
+  dismissalTarget: { generation: 7 },
+}
 
 const branchData = {
   branches: [
@@ -71,6 +91,7 @@ beforeEach(() => {
   pullGitFfOnlyMock.mockReset()
   pushGitUpstreamMock.mockReset()
   invalidateGitCachesMock.mockReset()
+  dismissRemoteUpdateAwarenessProjectUpdateMock.mockReset()
   fetchMutationPreflightMock.mockResolvedValue({ issues: [], allowed: true })
   resetSourceControlAutoFetchFreshnessForTests()
   fetchGitOriginMock.mockResolvedValue({ success: true, warnings: [], errors: [] })
@@ -418,6 +439,137 @@ describe('SourceControlBranchActions', () => {
       })
     })
   })
+
+  it('dismisses the visible remote-advanced banner after a successful pull', async () => {
+    pullGitFfOnlyMock.mockResolvedValue({
+      success: true,
+      warnings: [],
+      errors: [],
+    })
+    const dismissedSnapshot = { ...remoteUpdateSnapshot, attentionRequired: false }
+    dismissRemoteUpdateAwarenessProjectUpdateMock.mockResolvedValue({ snapshot: dismissedSnapshot })
+    const onRemoteUpdateSnapshotChange = vi.fn()
+
+    renderActions({
+      isDirty: false,
+      remoteUpdateSnapshot,
+      onRemoteUpdateSnapshotChange,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(dismissRemoteUpdateAwarenessProjectUpdateMock).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'project-1',
+        7,
+      )
+    })
+    expect(onRemoteUpdateSnapshotChange).toHaveBeenCalledWith(
+      dismissedSnapshot,
+      createRemoteUpdateAwarenessMutationTarget(remoteUpdateSnapshot, 0),
+    )
+  })
+
+  it('still completes a successful pull when auto-dismiss fails', async () => {
+    pullGitFfOnlyMock.mockResolvedValue({
+      success: true,
+      warnings: [],
+      errors: [],
+    })
+    dismissRemoteUpdateAwarenessProjectUpdateMock.mockRejectedValue(new Error('offline'))
+    const onMutationComplete = vi.fn()
+    const onRemoteUpdateSnapshotChange = vi.fn()
+
+    renderActions({
+      isDirty: false,
+      remoteUpdateSnapshot,
+      onRemoteUpdateSnapshotChange,
+      onMutationComplete,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(onMutationComplete).toHaveBeenCalled()
+      expect(dismissRemoteUpdateAwarenessProjectUpdateMock).toHaveBeenCalled()
+    })
+    expect(onRemoteUpdateSnapshotChange).not.toHaveBeenCalled()
+    expect(document.body.textContent ?? '').not.toContain('Pull?')
+  })
+
+  it('does not dismiss the banner when pull fails', async () => {
+    pullGitFfOnlyMock.mockResolvedValue({
+      success: false,
+      warnings: [],
+      errors: ['Fast-forward pull failed.'],
+    })
+    const onRemoteUpdateSnapshotChange = vi.fn()
+
+    renderActions({
+      isDirty: false,
+      remoteUpdateSnapshot,
+      onRemoteUpdateSnapshotChange,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? '').toContain('Fast-forward pull failed.')
+    })
+    expect(dismissRemoteUpdateAwarenessProjectUpdateMock).not.toHaveBeenCalled()
+    expect(onRemoteUpdateSnapshotChange).not.toHaveBeenCalled()
+  })
+
+  it('does not dismiss the banner after a successful push/sync', async () => {
+    pushGitUpstreamMock.mockResolvedValue({
+      success: true,
+      warnings: [],
+      errors: [],
+    })
+    const onRemoteUpdateSnapshotChange = vi.fn()
+
+    renderActions({
+      isDirty: false,
+      remoteUpdateSnapshot,
+      onRemoteUpdateSnapshotChange,
+      branchData: {
+        ...branchData,
+        branches: [
+          { name: 'main', kind: 'current' as const, headSha: 'abc', ahead: 2, behind: 0 },
+          { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
+        ],
+      },
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: /Sync Changes 2/i }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Push' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(pushGitUpstreamMock).toHaveBeenCalled()
+    })
+    expect(dismissRemoteUpdateAwarenessProjectUpdateMock).not.toHaveBeenCalled()
+    expect(onRemoteUpdateSnapshotChange).not.toHaveBeenCalled()
+  })
 })
 
 function unmountActions(): void {
@@ -430,6 +582,9 @@ function renderActions(options: {
   worktreeId?: string
   sourceControlActive?: boolean
   branchData?: typeof branchData
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
+  onRemoteUpdateSnapshotChange?: ReturnType<typeof vi.fn>
+  onMutationComplete?: ReturnType<typeof vi.fn>
   onRequestMutation?: (
     mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
     target: { agentId: string; worktreeId: string | null },
@@ -452,7 +607,9 @@ function renderActions(options: {
         },
         isDirty: options.isDirty,
         sourceControlActive: options.sourceControlActive ?? false,
-        onMutationComplete: vi.fn(),
+        remoteUpdateSnapshot: options.remoteUpdateSnapshot,
+        onRemoteUpdateSnapshotChange: options.onRemoteUpdateSnapshotChange,
+        onMutationComplete: options.onMutationComplete ?? vi.fn(),
         onRequestMutation: options.onRequestMutation,
       }),
     )

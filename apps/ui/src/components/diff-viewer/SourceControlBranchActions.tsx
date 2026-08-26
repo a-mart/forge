@@ -1,4 +1,4 @@
-import type { GitBranchSummary } from '@forge/protocol'
+import type { GitBranchSummary, RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
 import { ArrowDown, ArrowUp, ChevronDown, GitBranch, Plus, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { GitMutationConfirmDialog } from './GitMutationConfirmDialog'
+import { dismissVisibleRemoteUpdateBanner } from './remote-update-awareness-dismiss'
+import type { RemoteUpdateAwarenessSnapshotChange } from './remote-update-awareness-mutation'
 import {
   createGitBranch,
   fetchGitOrigin,
@@ -39,6 +41,8 @@ interface SourceControlBranchActionsProps {
   branchesQuery: GitBranchesQueryResult
   isDirty: boolean
   sourceControlActive?: boolean
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
+  onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
   onMutationComplete: () => void
   onRequestMutation?: (
     mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only' | 'push',
@@ -56,6 +60,8 @@ export function SourceControlBranchActions({
   branchesQuery,
   isDirty,
   sourceControlActive = true,
+  remoteUpdateSnapshot = null,
+  onRemoteUpdateSnapshotChange,
   onMutationComplete,
   onRequestMutation,
 }: SourceControlBranchActionsProps) {
@@ -381,18 +387,43 @@ export function SourceControlBranchActions({
         setActionWarning(result.warnings.join(' '))
       }
 
+      const completedPull = pendingMutation.kind === 'pull'
+      const bannerToDismiss = completedPull ? remoteUpdateSnapshot : null
+
       setPendingMutation(null)
       setNewBranchName('')
       setCreateFromRemote(null)
       setPreflightWarnings([])
       setPreflightBlockedReasons([])
       invalidateAfterMutation()
+
+      if (completedPull) {
+        void dismissVisibleRemoteUpdateBanner(wsUrl, bannerToDismiss)
+          .then((dismissed) => {
+            if (dismissed) {
+              onRemoteUpdateSnapshotChange?.(dismissed.snapshot, dismissed.expectedTarget)
+            }
+          })
+          .catch(() => {
+            // Pull already succeeded; keep the existing Dismiss action if auto-dismiss fails.
+          })
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Git action failed.')
     } finally {
       setIsSubmitting(false)
     }
-  }, [agentId, branchData, invalidateAfterMutation, pendingMutation, repoTarget, worktreeId, wsUrl])
+  }, [
+    agentId,
+    branchData,
+    invalidateAfterMutation,
+    onRemoteUpdateSnapshotChange,
+    pendingMutation,
+    remoteUpdateSnapshot,
+    repoTarget,
+    worktreeId,
+    wsUrl,
+  ])
 
   const pendingDialog = useMemo(() => {
     if (!pendingMutation || !branchData) {
