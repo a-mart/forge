@@ -18,6 +18,7 @@ import type {
 import type { AgentDescriptor, SwarmConfig } from '../types.js'
 import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkersDir, sanitizePathSegment } from '../storage/data-paths.js'
 import { CONVERSATION_ENTRY_TYPE } from './conversation-timeline.js'
+import { normalizeProviderErrorMessage } from './message-utils.js'
 import { isCanonicalWorkerTranscriptFileName } from './worker-transcript-files.js'
 
 const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
@@ -1337,15 +1338,16 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
   }
 
   const contentSummary = summarizeNativeProviderContent(message, role)
-  if (!contentSummary) {
+  const errorPreview = extractNativeProviderErrorPreview(message)
+  if (!contentSummary && !errorPreview) {
     return undefined
   }
 
   const entryTimestamp = stringValue(message.timestamp) ?? stringValue(wrapper.timestamp)
-  const toolName = contentSummary.toolName ?? boundedMetadataValue(message.toolName) ?? boundedMetadataValue(message.name)
-  const toolCallId = contentSummary.toolCallId ?? boundedMetadataValue(message.toolCallId) ?? boundedMetadataValue(message.id)
+  const toolName = contentSummary?.toolName ?? boundedMetadataValue(message.toolName) ?? boundedMetadataValue(message.name)
+  const toolCallId = contentSummary?.toolCallId ?? boundedMetadataValue(message.toolCallId) ?? boundedMetadataValue(message.id)
 
-  if (contentSummary.kind === 'toolCall') {
+  if (contentSummary?.kind === 'toolCall') {
     const title = `Provider tool call${toolName ? `: ${toolName}` : ''}`
     const preview = buildProviderToolPreview('tool call', toolName, toolCallId, contentSummary.contentItemCount)
     return {
@@ -1360,9 +1362,9 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     }
   }
 
-  if (contentSummary.kind === 'toolResult' || role === 'toolResult') {
+  if (contentSummary?.kind === 'toolResult' || role === 'toolResult') {
     const title = `Provider tool result${toolName ? `: ${toolName}` : ''}`
-    const preview = buildProviderToolPreview('tool result', toolName, toolCallId, contentSummary.contentItemCount)
+    const preview = buildProviderToolPreview('tool result', toolName, toolCallId, contentSummary?.contentItemCount)
     return {
       role,
       entryTimestamp,
@@ -1375,9 +1377,9 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     }
   }
 
-  if (role === 'system' || contentSummary.kind === 'system') {
-    const textCharCount = contentSummary.textCharCount ?? contentSummary.text?.length ?? 0
-    const itemCount = contentSummary.contentItemCount
+  if (role === 'system' || contentSummary?.kind === 'system') {
+    const textCharCount = contentSummary?.textCharCount ?? contentSummary?.text?.length ?? 0
+    const itemCount = contentSummary?.contentItemCount
     const preview = `Provider system message content hidden${textCharCount > 0 ? ` (${textCharCount} text char${textCharCount === 1 ? '' : 's'}${itemCount !== undefined ? ` across ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''})` : ''}`
     return {
       role,
@@ -1388,7 +1390,7 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     }
   }
 
-  if (contentSummary.kind === 'thinking') {
+  if (contentSummary?.kind === 'thinking') {
     const hiddenCount = contentSummary.hiddenContentItemCount ?? contentSummary.contentItemCount ?? 0
     const preview = `Provider assistant thinking hidden${hiddenCount > 0 ? ` (${hiddenCount} block${hiddenCount === 1 ? '' : 's'})` : ''}`
     return {
@@ -1400,8 +1402,8 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     }
   }
 
-  const textPreview = truncateText(contentSummary.text ?? '').text
-  const title = `Provider ${role} message`
+  const textPreview = truncateText(contentSummary?.text || errorPreview || '').text
+  const title = errorPreview && !contentSummary?.text ? `Provider ${role} error` : `Provider ${role} message`
   const summary = textPreview ? `${title}: ${textPreview}` : title
   return {
     role,
@@ -1410,6 +1412,16 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     summary,
     preview: textPreview,
   }
+}
+
+function extractNativeProviderErrorPreview(message: Record<string, unknown>): string | undefined {
+  const stopReason = stringValue(message.stopReason)
+  const errorMessage = stringValue(message.errorMessage)
+  if (stopReason !== 'error' && !errorMessage) {
+    return undefined
+  }
+
+  return normalizeProviderErrorMessage(errorMessage)
 }
 
 function summarizeNativeProviderContent(message: Record<string, unknown>, role: string): NativeProviderContentSummary | undefined {

@@ -250,7 +250,7 @@ describe("RuntimeConversationEventMapper", () => {
         type: "conversation_message",
         agentId: "worker",
         role: "system",
-        text: "⚠️ Worker reply failed: provider quota failed. The manager may need to retry after checking provider auth, quotas, or rate limits.",
+        text: "⚠️ Worker reply failed: provider quota failed.",
         timestamp: FIXED_NOW,
         source: "system"
       },
@@ -374,6 +374,38 @@ describe("RuntimeConversationEventMapper", () => {
         source: "system"
       }
     ]);
+    expect(projections[0]?.text).not.toContain("provider auth and rate limits");
+  });
+
+  it("surfaces OpenRouter upstream rate-limit metadata instead of the generic wrapper message", () => {
+    const descriptor = makeDescriptor({ agentId: "manager", role: "manager", managerId: "manager" });
+    const errorMessage =
+      '429: {"message":"Provider returned error","code":429,"metadata":{"raw":"stealth/ox-alpha is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Stealth","is_byok":false,"limit_source":"upstream_provider_shared_pool"}}';
+
+    const projections = mapRuntimeEvent({
+      descriptor,
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage
+        } as never
+      }
+    });
+
+    expect(projections).toEqual([
+      {
+        type: "conversation_message",
+        agentId: "manager",
+        role: "system",
+        text: "⚠️ Manager reply failed: HTTP 429: stealth/ox-alpha is temporarily rate-limited upstream. Please retry shortly.",
+        timestamp: FIXED_NOW,
+        source: "system"
+      }
+    ]);
+    expect(projections[0]?.text).not.toContain("Provider returned error");
     expect(projections[0]?.text).not.toContain("provider auth and rate limits");
   });
 

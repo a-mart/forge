@@ -8,6 +8,7 @@ import {
   isStrictContextOverflowMessage,
   normalizeProviderErrorMessage
 } from "./message-utils.js";
+import { classifyRuntimeCapacityError } from "../runtime/runtime-utils.js";
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
@@ -557,7 +558,7 @@ function buildManagerErrorConversationText(options: {
   }
 
   if (options.errorMessage) {
-    return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${MANAGER_ERROR_GENERIC_HINT}`;
+    return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)}${genericErrorHintSuffix(options.errorMessage)}`;
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
@@ -580,7 +581,7 @@ function buildWorkerErrorConversationText(options: {
   }
 
   if (options.errorMessage) {
-    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${WORKER_ERROR_GENERIC_HINT}`;
+    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)}${genericWorkerErrorHintSuffix(options.errorMessage)}`;
   }
 
   return `⚠️ Worker reply failed. ${WORKER_ERROR_GENERIC_HINT}`;
@@ -593,4 +594,20 @@ function formatManagerErrorMessage(errorMessage: string): string {
   }
 
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function genericErrorHintSuffix(errorMessage: string): string {
+  if (classifyRuntimeCapacityError(errorMessage).isQuotaOrRateLimit) {
+    return "";
+  }
+
+  return ` ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function genericWorkerErrorHintSuffix(errorMessage: string): string {
+  if (classifyRuntimeCapacityError(errorMessage).isQuotaOrRateLimit) {
+    return "";
+  }
+
+  return ` ${WORKER_ERROR_GENERIC_HINT}`;
 }

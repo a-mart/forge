@@ -352,6 +352,32 @@ describe('SessionAuditService', () => {
     expect(assistantItem?.preview.length).toBeLessThan(longAssistantText.length)
   })
 
+  it('classifies empty-content provider assistant errors from OpenRouter metadata.raw', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-assistant-error', {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429: {"message":"Provider returned error","code":429,"metadata":{"raw":"stealth/ox-alpha is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Stealth"}}',
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({
+      category: 'runtime_log',
+      role: 'assistant',
+      title: 'Provider assistant error',
+      preview: 'HTTP 429: stealth/ox-alpha is temporarily rate-limited upstream. Please retry shortly',
+    })
+    expect(item.summary).toContain('temporarily rate-limited upstream')
+    expect(item.summary).not.toContain('Provider returned error')
+  })
+
   it('classifies native provider system rows conservatively without dumping full content', async () => {
     const fixture = await createFixture()
     const systemSecret = `SYSTEM_DO_NOT_LEAK ${'s'.repeat(2_000)}`
