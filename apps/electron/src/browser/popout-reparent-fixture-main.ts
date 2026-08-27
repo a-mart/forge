@@ -101,7 +101,6 @@ void app.whenReady().then(async () => {
 
   const manager = new BrowserAutomationManager({
     approvedDataRoot: root,
-    hostWebContentsId: mainWindow.webContents.id,
     sendToRenderer: (channel, payload) => {
       if (channel === BROWSER_RECORDING_FRAME_CHANNEL) {
         const data = payload && typeof payload === 'object' ? (payload as { data?: unknown }).data : undefined
@@ -205,7 +204,7 @@ void app.whenReady().then(async () => {
       return new Promise((resolve,reject)=>{const open=indexedDB.open('continuity-db',1);open.onupgradeneeded=()=>open.result.createObjectStore('state');open.onerror=()=>reject(open.error);open.onsuccess=()=>{const tx=open.result.transaction('state','readwrite');tx.objectStore('state').put('indexeddb-ok','value');tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error)}})
     })()`)
     registerCount += 1
-    manager.registerWebview({ tab: { ...tab, url: guest.getURL(), lifecycle: 'ready', loading: false }, webContentsId: guestId, visible: false, created: false }, guest)
+    manager.registerTabWebContents({ tab: { ...tab, url: guest.getURL(), lifecycle: 'ready', loading: false }, visible: false, created: false }, guest)
     const presentation = manager.setTabPresentation({
       tabId: tab.tabId, visible: true, viewportSetting: { mode: 'fill' },
       renderedViewport: { width: bounds.width, height: bounds.height, deviceScaleFactor: 1 },
@@ -357,7 +356,7 @@ void app.whenReady().then(async () => {
     if (remainingPopout && !remainingPopout.isDestroyed()) remainingPopout.destroy()
     mainWindow.contentView.removeChildView(view)
     unregisterCount += 1
-    manager.unregisterWebview(tab.tabId, guestId)
+    manager.unregisterTabWebContents(tab.tabId, guestId)
     if (!guest.isDestroyed()) guest.close()
     await waitUntil('guest teardown', () => guest.isDestroyed()).catch(() => undefined)
     await manager.destroy()

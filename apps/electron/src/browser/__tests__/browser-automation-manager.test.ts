@@ -34,6 +34,7 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
   hangCaptureOnce = false
   viewport = { width: 800, height: 600, deviceScaleFactor: 2 }
   commands: string[] = []
+  commandCalls: Array<{ method: string; params: Record<string, unknown> }> = []
   attach(): void { this.attached = true }
   detach(): void { this.attached = false }
   isAttached(): boolean { return this.attached }
@@ -41,6 +42,7 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
   off(event: 'message', listener: (event: unknown, method: string, params: Record<string, unknown>) => void): this { return super.off(event, listener) }
   async sendCommand(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     this.commands.push(method)
+    this.commandCalls.push({ method, params })
     if (method === 'Input.dispatchMouseEvent') {
       this.activeInput += 1
       this.maximumActiveInput = Math.max(this.maximumActiveInput, this.activeInput)
@@ -159,9 +161,9 @@ async function setup(
   options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile' | 'sendToRenderer'> = {},
 ): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-manager-'))
-  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: vi.fn(), ...options })
+  const manager = new BrowserAutomationManager({ approvedDataRoot: root, sendToRenderer: vi.fn(), ...options })
   const webview = new FakeWebContents(101)
-  manager.registerWebview({ tab: tabSnapshot(), webContentsId: webview.id, visible: false, created }, webview)
+  manager.registerTabWebContents({ tab: tabSnapshot(), visible: false, created }, webview)
   manager.setTabPresentation({ tabId: 'tab-1', visible: true, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 800, height: 600, deviceScaleFactor: 1 }, hostGeneration: 1, sessionRevision: 1, sequence: 1 })
   managers.push(manager)
   return { manager, webview, root }
@@ -216,6 +218,30 @@ describe('BrowserAutomationManager', () => {
     expect(snapshot?.ok && snapshot.operation === 'snapshot' ? snapshot.result : null).toMatchObject({
       visibleText: 'Fixture text', viewport: { width: 800, height: 600 }, screenshot: { mimeType: 'image/png', width: 800, height: 600 },
     })
+  })
+
+  it('uses non-gesture evaluation and enables CDP domains only when attaching the debugger', async () => {
+    const { manager, webview } = await setup()
+    const expression = 'Promise.resolve({ok:true})'
+    await expect(manager.execute(request('evaluate', { expression, awaitPromise: true, returnByValue: true })))
+      .resolves.toMatchObject({ ok: true, result: { value: { ok: true } } })
+    await expect(manager.execute(request('snapshot', {}))).resolves.toMatchObject({ ok: true })
+    await expect(manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 }))).resolves.toMatchObject({ ok: true })
+    const recordingStart = request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' }
+    await manager.prepareRecording(recordingStart)
+    await expect(manager.execute(recordingStart)).resolves.toMatchObject({ ok: true })
+
+    const evaluations = webview.debugger.commandCalls.filter(({ method }) => method === 'Runtime.evaluate')
+    expect(evaluations).not.toHaveLength(0)
+    expect(evaluations.every(({ params }) => params.userGesture === false)).toBe(true)
+    expect(evaluations).toContainEqual({
+      method: 'Runtime.evaluate',
+      params: { expression, awaitPromise: true, returnByValue: true, userGesture: false },
+    })
+    expect(webview.debugger.commands.filter((method) => method === 'Runtime.enable')).toHaveLength(1)
+    expect(webview.debugger.commands.filter((method) => method === 'Accessibility.enable')).toHaveLength(1)
+    expect(webview.debugger.commands.filter((method) => method === 'Page.enable')).toHaveLength(1)
+    expect(webview.debugger.commands).toContain('Input.setIgnoreInputEvents')
   })
 
   it('fails snapshot capture when the measured viewport is below the 8px minimum', async () => {
@@ -365,7 +391,7 @@ describe('BrowserAutomationManager', () => {
     expect(webview.debugger.maximumActiveInput).toBe(1)
 
     const second = new FakeWebContents(102)
-    manager.registerWebview({ tab: tabSnapshot('tab-2'), webContentsId: second.id, visible: true, created: false }, second)
+    manager.registerTabWebContents({ tab: tabSnapshot('tab-2'), visible: true, created: false }, second)
     await Promise.all([
       manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 })),
       manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 }, 'tab-2')),
@@ -487,9 +513,9 @@ describe('BrowserAutomationManager', () => {
     expect(first).toMatchObject({ ok: true, result: { created: true, panelRevealRequested: true } })
     const second = await manager.execute(request('open', { show: false, reuseExistingTab: true }))
     expect(second).toMatchObject({ ok: true, result: { created: false, panelRevealRequested: false } })
-    manager.unregisterWebview('tab-1', webview.id)
+    manager.unregisterTabWebContents('tab-1', webview.id)
     const reconnected = new FakeWebContents(104)
-    manager.registerWebview({ tab: tabSnapshot(), webContentsId: reconnected.id, visible: false, created: false }, reconnected)
+    manager.registerTabWebContents({ tab: tabSnapshot(), visible: false, created: false }, reconnected)
     manager.setTabPresentation({ tabId: 'tab-1', visible: true, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 800, height: 600, deviceScaleFactor: 1 }, hostGeneration: 1, sessionRevision: 2, sequence: 2 })
     const afterReconnect = await manager.execute(request('open', { show: false, reuseExistingTab: true }))
     expect(afterReconnect).toMatchObject({ ok: true, result: { created: false } })
@@ -585,12 +611,12 @@ describe('BrowserAutomationManager', () => {
   it('makes destroyed-event, repeated unregister, and manager teardown races harmless', async () => {
     const { manager, webview } = await setup()
     const other = new FakeWebContents(202)
-    manager.registerWebview({ tab: tabSnapshot('tab-2'), webContentsId: other.id, visible: false, created: false }, other)
+    manager.registerTabWebContents({ tab: tabSnapshot('tab-2'), visible: false, created: false }, other)
     webview.throwOnDestroyedAccess = true
 
     expect(() => webview.close()).not.toThrow()
-    expect(() => manager.unregisterWebview('tab-1', webview.id)).not.toThrow()
-    expect(() => manager.unregisterWebview('tab-1', webview.id)).not.toThrow()
+    expect(() => manager.unregisterTabWebContents('tab-1', webview.id)).not.toThrow()
+    expect(() => manager.unregisterTabWebContents('tab-1', webview.id)).not.toThrow()
     await expect(manager.destroy()).resolves.toBeUndefined()
     await expect(manager.destroy()).resolves.toBeUndefined()
     expect(other.destroyed).toBe(true)
@@ -599,10 +625,10 @@ describe('BrowserAutomationManager', () => {
   it('keeps other tabs functional after a destroyed/unregister race', async () => {
     const { manager, webview } = await setup()
     const other = new FakeWebContents(203)
-    manager.registerWebview({ tab: tabSnapshot('tab-2'), webContentsId: other.id, visible: false, created: false }, other)
+    manager.registerTabWebContents({ tab: tabSnapshot('tab-2'), visible: false, created: false }, other)
     webview.throwOnDestroyedAccess = true
     webview.close()
-    manager.unregisterWebview('tab-1', webview.id)
+    manager.unregisterTabWebContents('tab-1', webview.id)
 
     const response = await manager.execute(request('evaluate', { expression: 'Promise.resolve({ok:true})', awaitPromise: true, returnByValue: true }, 'tab-2'))
     expect(response).toMatchObject({ ok: true, result: { value: { ok: true } } })
@@ -614,7 +640,7 @@ describe('BrowserAutomationManager', () => {
     expect(mismatch).toMatchObject({ ok: false, error: { code: 'tab-session-mismatch' } })
     await manager.execute(request('snapshot', {}))
     const replacement = new FakeWebContents(103)
-    manager.registerWebview({ tab: tabSnapshot(), webContentsId: replacement.id, visible: true, created: false }, replacement)
+    manager.registerTabWebContents({ tab: tabSnapshot(), visible: true, created: false }, replacement)
     expect(webview.debugger.isAttached()).toBe(false)
   })
 })

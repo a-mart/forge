@@ -54,7 +54,6 @@ export type ForgeActionKind =
 
 export interface VisibleForgeAction {
   id: string
-  manifestId: string
   kind: ForgeActionKind
   action: {
     setImage(image?: string): Promise<void>

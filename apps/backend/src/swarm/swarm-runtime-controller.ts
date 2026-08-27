@@ -1223,10 +1223,6 @@ export class SwarmRuntimeController {
     this.runtimeBinding.recordRuntimeExtensionSnapshot(agentId, snapshot);
   }
 
-  updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
-    this.getRuntimeEventProjector().updateWorkerActivity(agentId, event);
-  }
-
   async resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor
   ): Promise<AgentModelDescriptor | undefined> {

@@ -11,6 +11,7 @@ import type {
 import type { ProjectExecutableTrustPlan } from '../swarm/project-executable-trust.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type { SwarmRuntimeLifecycleCoordinator } from '../swarm/swarm-runtime-lifecycle-coordinator.js'
+import type { WorkerStallState } from '../swarm/swarm-worker-health-service.js'
 import type {
   InboundTurnContextInput,
   TurnContextCoordinator,
@@ -215,6 +216,14 @@ export class TestSwarmManager extends SwarmManager {
     }).facadeServices.recovery
   }
 
+  private get workerStallStateForTest(): Map<string, WorkerStallState> {
+    return (this as unknown as {
+      runtimeController: {
+        host: { workerStallState: Map<string, WorkerStallState> }
+      }
+    }).runtimeController.host.workerStallState
+  }
+
   handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -235,12 +244,8 @@ export class TestSwarmManager extends SwarmManager {
     return this.runtimeLifecycleForTest.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId)
   }
 
-  get workerStallState() {
-    return this.runtimeLifecycleForTest.workerStallState
-  }
-
-  get workerActivityState() {
-    return this.runtimeLifecycleForTest.workerActivityState
+  getWorkerStallStateForTest(agentId: string): WorkerStallState | undefined {
+    return this.workerStallStateForTest.get(agentId)
   }
 
   checkForStalledWorkers(): Promise<void> {

@@ -17,7 +17,7 @@ import {
 import '@/styles/syntax-highlight.css'
 import '@/styles/file-browser.css'
 import { FileContentHeader } from './FileContentHeader'
-import type { FileEditSessionController } from './use-file-edit-session'
+import type { FileEditSessionController } from './use-file-edit-sessions'
 import { formatFileSize, isImageFile, isPdfFile } from './file-browser-utils'
 import { ImagePreview } from './ImagePreview'
 import { PdfPreview } from './PdfPreview'

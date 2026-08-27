@@ -1,14 +1,6 @@
 /* Managed browser security posture follows T3 Code DesktopWindow.ts at 9a0a0716 (MIT). */
 import path from 'node:path'
 import type { Event, Session, WebContents, WebPreferences } from 'electron'
-import { isBrowserPartition } from './browser-session.js'
-
-export interface WebviewAttachParams {
-  partition?: string
-  preload?: string
-  src?: string
-  [key: string]: unknown
-}
 
 export function secureBrowserWebPreferences(webPreferences: WebPreferences, guestPreloadPath: string): void {
   webPreferences.preload = path.resolve(guestPreloadPath)
@@ -64,23 +56,4 @@ export function secureManagedBrowserWebContents(contents: WebContents): () => vo
   return () => {
     if (!contents.isDestroyed()) contents.off('will-navigate', willNavigate)
   }
-}
-
-/** @deprecated Renderer webviews are retained only by the historical fixture. */
-export function enforceBrowserWebviewAttachment(
-  event: Pick<Event, 'preventDefault'>,
-  webPreferences: WebPreferences,
-  params: WebviewAttachParams,
-  guestPreloadPath: string,
-): boolean {
-  if (typeof params.partition !== 'string' || !isBrowserPartition(params.partition)) {
-    event.preventDefault()
-    return false
-  }
-  if (typeof params.src === 'string' && !isAllowedManagedBrowserUrl(params.src)) {
-    event.preventDefault()
-    return false
-  }
-  secureBrowserWebPreferences(webPreferences, guestPreloadPath)
-  return true
 }

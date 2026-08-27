@@ -868,7 +868,6 @@ if (!hasSingleInstanceLock) {
     const automaticChromeTransport = externalChromeCoordinator.transport()
     const browserManager = new BrowserAutomationManager({
       approvedDataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
-      hostWebContentsId: mainWindow.webContents.id,
       sendToRenderer: (channel, payload) => {
         sendToRendererWindow(mainWindow, channel, payload)
       },

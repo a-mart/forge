@@ -5,13 +5,12 @@ import type {
   RequestedDeliveryMode
 } from "./types.js";
 import {
-  formatToolExecutionPayload,
   normalizeOptionalAgentId,
   toDisplayToolName,
   trimToMaxChars,
   trimToMaxCharsFromEnd
 } from "./swarm-manager-utils.js";
-import { extractMessageErrorMessage, extractMessageText, extractRole } from "./message-utils.js";
+import { extractMessageErrorMessage, extractMessageText } from "./message-utils.js";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import { isExternalThreadDescriptor } from "./external-thread-compatibility.js";
 import type { WorkerResultCoordinator } from "./worker-result-coordinator.js";
@@ -208,16 +207,6 @@ export class SwarmWorkerHealthService {
     return this.pendingTransientWorkerTerminatedErrors.has(agentId);
   }
 
-  handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void {
-    const descriptor = this.options.descriptors.get(agentId);
-    if (descriptor && isExternalThreadDescriptor(descriptor)) {
-      return;
-    }
-
-    this.trackWorkerStallProgressEvent(agentId, event);
-    this.updateWorkerActivity(agentId, event);
-  }
-
   async handleRuntimeStatus(
     agentId: string,
     descriptor: AgentDescriptor & { role: "worker" },
@@ -306,8 +295,7 @@ export class SwarmWorkerHealthService {
   }
   reconcileRuntimeStateAfterFallbackRollback(
     agentId: string,
-    restoredStatus: AgentStatus,
-    options?: { receivedAgentEnd?: boolean }
+    restoredStatus: AgentStatus
   ): void {
     if (restoredStatus === "streaming") {
       if (!this.workerStallState.has(agentId)) {
@@ -326,7 +314,6 @@ export class SwarmWorkerHealthService {
       this.workerActivityState.delete(agentId);
     }
 
-    void options;
   }
 
   async checkForStalledWorkers(): Promise<void> {
@@ -356,14 +343,6 @@ export class SwarmWorkerHealthService {
     await this.runHandleStallAutoKill(agentId, elapsedMs);
   }
 
-  deleteWorkerStallState(agentId: string): void {
-    this.workerStallState.delete(agentId);
-  }
-
-  deleteWorkerActivityState(agentId: string): void {
-    this.workerActivityState.delete(agentId);
-  }
-
   private clearTransientWorkerTerminatedTimer(agentId: string): void {
     const timer = this.transientWorkerTerminatedTimers.get(agentId);
     if (timer) {
@@ -373,6 +352,8 @@ export class SwarmWorkerHealthService {
   }
 
   clearWorkerHealthState(agentId: string): void {
+    this.workerStallState.delete(agentId);
+    this.workerActivityState.delete(agentId);
     this.cancelPendingTransientWorkerTerminatedError(agentId, "clear_state");
     this.deferredWorkerResultAgentIds.delete(agentId);
     this.workerCompletionCandidateAssignments.delete(agentId);
@@ -486,111 +467,6 @@ export class SwarmWorkerHealthService {
         message: error instanceof Error ? error.message : String(error)
       });
     });
-  }
-
-  private trackWorkerStallProgressEvent(agentId: string, event: RuntimeSessionEvent): void {
-    const stallState = this.workerStallState.get(agentId);
-    if (!stallState) {
-      return;
-    }
-
-    switch (event.type) {
-      case "tool_execution_start": {
-        stallState.lastToolName = event.toolName;
-        stallState.lastToolInput = trimToMaxChars(formatToolExecutionPayload(event.args), 500);
-        stallState.lastToolOutput = null;
-        this.workerStallState.set(agentId, stallState);
-        return;
-      }
-
-      case "tool_execution_update": {
-        stallState.lastToolName = event.toolName;
-        const chunk = formatToolExecutionPayload(event.partialResult);
-        const mergedOutput = `${stallState.lastToolOutput ?? ""}${chunk}`;
-        stallState.lastToolOutput = trimToMaxCharsFromEnd(mergedOutput, 500);
-        this.workerStallState.set(agentId, stallState);
-        return;
-      }
-
-      case "tool_execution_end":
-      case "turn_end":
-        this.recordWorkerStallProgress(agentId);
-        return;
-
-      case "message_update":
-      case "message_end": {
-        const role = extractRole(event.message);
-        if (role === "assistant" || role === "system") {
-          this.recordWorkerStallProgress(agentId);
-        }
-        return;
-      }
-
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        this.recordWorkerStallProgress(agentId);
-        break;
-
-      default:
-        break;
-    }
-  }
-
-  private updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
-    if (!this.workerStallState.has(agentId)) {
-      this.workerActivityState.delete(agentId);
-      return;
-    }
-
-    let state = this.workerActivityState.get(agentId);
-    if (!state) {
-      state = {
-        currentToolName: null,
-        currentToolStartedAt: null,
-        lastProgressAt: Date.now(),
-        toolCallCount: 0,
-        errorCount: 0,
-        turnCount: 0
-      };
-      this.workerActivityState.set(agentId, state);
-    }
-
-    switch (event.type) {
-      case "tool_execution_start":
-        state.currentToolName = event.toolName;
-        state.currentToolStartedAt = Date.now();
-        state.toolCallCount++;
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "tool_execution_end":
-        state.currentToolName = null;
-        state.currentToolStartedAt = null;
-        if (event.isError) {
-          state.errorCount++;
-        }
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "turn_end":
-        state.turnCount++;
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "message_update":
-      case "message_end":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        state.lastProgressAt = Date.now();
-        break;
-
-      default:
-        break;
-    }
   }
 
   private recordWorkerStallProgress(agentId: string): void {

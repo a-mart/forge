@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { ChoiceAnswer } from '@forge/protocol'
+import { isChoiceAnswer, type ChoiceAnswer } from '@forge/protocol/choices'
 
 import { CliError } from '../output.js'
 import { EXIT_CODES } from '../version.js'
@@ -63,17 +63,6 @@ export function parsePinned(value: string | undefined, fallback: boolean): boole
   if (value === 'true') return true
   if (value === 'false') return false
   throw usage('--pinned must be true or false.')
-}
-
-function isChoiceAnswer(value: unknown): value is ChoiceAnswer {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const record = value as Record<string, unknown>
-  return (
-    typeof record.questionId === 'string' &&
-    record.questionId.length > 0 &&
-    Array.isArray(record.selectedOptionIds) &&
-    record.selectedOptionIds.every((optionId) => typeof optionId === 'string')
-  )
 }
 
 function usage(message: string): CliError {

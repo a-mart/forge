@@ -15,9 +15,12 @@ import { preloadBuiltInSounds } from '@/lib/notification-service'
 import { installSidebarPerfDebugHooks } from '@/lib/perf/sidebar-perf-debug'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
 import { useTitleBarOverlay } from '@/lib/use-title-bar-overlay'
+import { normalizeRootDocumentAssetHref } from './-root-document-assets'
 import { IndexPage } from './index'
 
 import appCss from '../styles.css?url'
+
+const appCssHref = normalizeRootDocumentAssetHref(appCss)
 
 export const Route = createRootRoute({
   head: () => ({
@@ -41,7 +44,7 @@ export const Route = createRootRoute({
       },
       {
         rel: 'stylesheet',
-        href: appCss,
+        href: appCssHref,
       },
     ],
   }),

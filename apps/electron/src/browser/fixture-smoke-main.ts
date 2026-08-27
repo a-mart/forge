@@ -31,7 +31,7 @@ void app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, width: 1_000, height: 800, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false } })
   const sessions = new BrowserSessionRegistry()
   const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
-  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: window.webContents.id, sendToRenderer: (channel, payload) => window.webContents.send(channel, payload) })
+  const manager = new BrowserAutomationManager({ approvedDataRoot: root, sendToRenderer: (channel, payload) => window.webContents.send(channel, payload) })
   const viewHost = new ManagedBrowserViewHost({ manager, sessions, guestPreloadPath })
   const dispose = installBrowserIpc({ ipcMain, mainWindow: window, manager, viewHost })
   let settled = false

@@ -24,7 +24,7 @@ describe('BrowserTargetAdapter routing', () => {
   it('routes a target-agnostic status request through the automatic Managed Browser default', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-managed-adapter-'))
     roots.push(root)
-    const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: () => undefined })
+    const manager = new BrowserAutomationManager({ approvedDataRoot: root, sendToRenderer: () => undefined })
 
     await expect(manager.execute(request('status', {}, null))).resolves.toMatchObject({ ok: true, operation: 'status' })
     expect(manager.capabilities.protocolVersions).toEqual({ minimum: 2, maximum: 2 })
@@ -36,7 +36,6 @@ describe('BrowserTargetAdapter routing', () => {
     const transport = new FakeExternalChromeTransport()
     const manager = new BrowserAutomationManager({
       approvedDataRoot: root,
-      hostWebContentsId: 1,
       sendToRenderer: () => undefined,
       externalChromeAdapter: new ExternalChromeTargetAdapter(transport),
     })

@@ -25,7 +25,7 @@ import {
   shiftDayKey,
   toDayKey,
 } from "./stats-time.js";
-import type { CacheEntry, StatsServiceOptions } from "./stats-types.js";
+import type { CacheEntry, StatsScanResult, StatsServiceOptions } from "./stats-types.js";
 import { computeModelDistribution, computeProvidersUsed, emptyDailyTotals, round2, sumDailyEntries, trimmedMean } from "./stats-usage.js";
 
 export { STATS_CACHE_TTL_MS } from "./stats-shared.js";
@@ -36,6 +36,7 @@ export class StatsService {
   private readonly inFlightComputations = new Map<string, Promise<StatsSnapshot>>();
   private readonly cacheFilePath: string;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly scanProfiles = scanProfilesData;
 
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
@@ -67,7 +68,6 @@ export class StatsService {
 
     const timezone = normalizeTimezone(options.timezone);
     const cacheKey = getStatsCacheKey(range);
-    const inFlightKey = getStatsInFlightKey(range, timezone);
     const nowMs = Date.now();
 
     if (!options.forceRefresh) {
@@ -82,22 +82,11 @@ export class StatsService {
       }
     }
 
-    const inFlight = this.inFlightComputations.get(inFlightKey);
-    if (inFlight) {
-      return inFlight.then((snapshot) => this.withLatestTokenStats(snapshot, timezone));
-    }
-
-    const computePromise = this.computeSnapshot(range, nowMs, timezone)
-      .then((snapshot) => {
-        this.cache.set(cacheKey, createStatsCacheEntry(snapshot, timezone));
-        this.queuePersistCacheWrite();
-        return snapshot;
-      })
-      .finally(() => {
-        this.inFlightComputations.delete(inFlightKey);
-      });
-
-    this.inFlightComputations.set(inFlightKey, computePromise);
+    const computePromise = this.getOrCreateSnapshotComputation(
+      range,
+      timezone,
+      () => this.computeSnapshot(range, nowMs, timezone),
+    );
     return computePromise.then((snapshot) => this.withLatestTokenStats(snapshot, timezone));
   }
 
@@ -125,18 +114,51 @@ export class StatsService {
     const refreshPromise = (async () => {
       const ranges: StatsRange[] = ["7d", "30d", "all"];
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await this.ensurePersistentCacheLoaded();
+
+      while (true) {
+        const existingComputations = ranges
+          .map((range) => this.inFlightComputations.get(getStatsInFlightKey(range, timezone)))
+          .filter((promise): promise is Promise<StatsSnapshot> => Boolean(promise));
+        if (existingComputations.length === 0) {
+          break;
+        }
+        await Promise.allSettled(existingComputations);
+      }
+
+      const nowMs = Date.now();
+      let scanContextPromise: Promise<StatsScanContext> | null = null;
       let allSnapshot: StatsSnapshot | null = null;
-      for (const range of ranges) {
-        try {
-          const snapshot = await this.getSnapshot(range, { forceRefresh: true, timezone });
-          if (range === "all") {
-            allSnapshot = snapshot;
-          }
-        } catch {
-          // keep refreshing other ranges even if one fails
+      const computations = ranges.map((range) => ({
+        range,
+        promise: this.getOrCreateSnapshotComputation(
+          range,
+          timezone,
+          async () => {
+            scanContextPromise ??= this.scanAllProfiles(timezone);
+            return this.computeSnapshotFromScan(range, nowMs, timezone, await scanContextPromise);
+          },
+          false,
+        ),
+      }));
+      const results = await Promise.allSettled(computations.map(({ promise }) => promise));
+      let cacheChanged = false;
+
+      for (const [index, result] of results.entries()) {
+        if (result.status !== "fulfilled") {
+          continue;
+        }
+
+        cacheChanged = true;
+        if (computations[index]?.range === "all") {
+          allSnapshot = result.value;
         }
       }
-      return allSnapshot;
+
+      if (cacheChanged) {
+        this.queuePersistCacheWrite();
+      }
+      return allSnapshot ? this.withLatestTokenStats(allSnapshot, timezone) : null;
     })().catch(() => null);
 
     this.refreshAllPromise = refreshPromise
@@ -203,11 +225,55 @@ export class StatsService {
       });
   }
 
+  private getOrCreateSnapshotComputation(
+    range: StatsRange,
+    timezone: string,
+    compute: () => Promise<StatsSnapshot>,
+    persistCache = true,
+  ): Promise<StatsSnapshot> {
+    const inFlightKey = getStatsInFlightKey(range, timezone);
+    const existing = this.inFlightComputations.get(inFlightKey);
+    if (existing) {
+      return existing;
+    }
+
+    const computePromise = compute()
+      .then((snapshot) => {
+        this.cache.set(getStatsCacheKey(range), createStatsCacheEntry(snapshot, timezone));
+        if (persistCache) {
+          this.queuePersistCacheWrite();
+        }
+        return snapshot;
+      })
+      .finally(() => {
+        if (this.inFlightComputations.get(inFlightKey) === computePromise) {
+          this.inFlightComputations.delete(inFlightKey);
+        }
+      });
+
+    this.inFlightComputations.set(inFlightKey, computePromise);
+    return computePromise;
+  }
+
   private async computeSnapshot(range: StatsRange, nowMs: number, timezone: string): Promise<StatsSnapshot> {
+    const scanContext = await this.scanAllProfiles(timezone);
+    return this.computeSnapshotFromScan(range, nowMs, timezone, scanContext);
+  }
+
+  private async scanAllProfiles(timezone: string): Promise<StatsScanContext> {
     const dataDir = this.swarmManager.getConfig().paths.dataDir;
     const profileIds = await listDirectoryNames(getProfilesDir(dataDir));
-    const scanResult = await scanProfilesData(dataDir, profileIds, timezone);
+    const scanResult = await this.scanProfiles(dataDir, profileIds, timezone);
+    return { profileIds, scanResult };
+  }
 
+  private async computeSnapshotFromScan(
+    range: StatsRange,
+    nowMs: number,
+    timezone: string,
+    context: StatsScanContext,
+  ): Promise<StatsSnapshot> {
+    const { profileIds, scanResult } = context;
     const todayKey = toDayKey(nowMs, timezone);
     const yesterdayKey = shiftDayKey(todayKey, -1);
     const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayKey, timezone);
@@ -322,6 +388,11 @@ export class StatsService {
       },
     };
   }
+}
+
+interface StatsScanContext {
+  readonly profileIds: readonly string[];
+  readonly scanResult: StatsScanResult;
 }
 
 function buildTokenStats(

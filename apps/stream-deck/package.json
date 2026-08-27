@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "rollup -c",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "watch": "rollup -c -w",
     "validate": "streamdeck validate com.forge.command-center.sdPlugin",

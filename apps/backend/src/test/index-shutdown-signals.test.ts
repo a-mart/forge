@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SwarmConfig } from "../swarm/types.js";
 
@@ -105,11 +106,159 @@ describe("index shutdown signal registration", () => {
 
     expect(calls).toEqual(["stop:start", "stop:complete", "exit:0"]);
   });
+
+  it("exits after an IPC shutdown even when cleanup reports an error", async () => {
+    const calls: string[] = [];
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      calls.push(`exit:${code}`);
+      return undefined as never;
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message) => {
+      calls.push(`error:${message}`);
+    });
+
+    await loadRegisteredSignals("win32", {}, undefined, {
+      isDesktop: true,
+      stop: async () => {
+        calls.push("stop");
+        throw new Error("cleanup failed");
+      },
+      inspect: async (listeners) => {
+        listeners.message[0]?.({ type: "shutdown" });
+        await waitFor(() => exitSpy.mock.calls.length > 0);
+      },
+    });
+
+    expect(calls).toEqual([
+      "stop",
+      "error:Failed to finish backend shutdown: cleanup failed",
+      "exit:0",
+    ]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("spawns a replacement before stopping and exiting the current backend", async () => {
+    const calls: string[] = [];
+    let replacementEnv: NodeJS.ProcessEnv | undefined;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      calls.push(`exit:${code}`);
+      return undefined as never;
+    });
+
+    await loadRegisteredSignals("linux", {
+      FORGE_DAEMONIZED: undefined,
+      FORGE_RESTART_PARENT_PID: undefined,
+    }, undefined, {
+      stop: async () => {
+        calls.push("stop:start");
+        await Promise.resolve();
+        calls.push("stop:complete");
+      },
+      spawn: (_command, _args, options) => {
+        calls.push("spawn:start");
+        replacementEnv = options.env;
+        const child = new EventEmitter();
+        queueMicrotask(() => {
+          calls.push("spawn:ready");
+          child.emit("spawn");
+        });
+        return child;
+      },
+      inspect: async (listeners) => {
+        expect(listeners.SIGUSR1).toHaveLength(1);
+        listeners.SIGUSR1[0]?.();
+        await waitFor(() => exitSpy.mock.calls.length > 0);
+        expect(process.env.FORGE_RESTART_PARENT_PID).toBeUndefined();
+      },
+    });
+
+    expect(replacementEnv?.FORGE_RESTART_PARENT_PID).toBe(String(process.pid));
+    expect(calls).toEqual([
+      "spawn:start",
+      "spawn:ready",
+      "stop:start",
+      "stop:complete",
+      "exit:0",
+    ]);
+  });
+
+  it("leaves the current backend running when replacement spawn fails", async () => {
+    const calls: string[] = [];
+    const stop = vi.fn(async () => {
+      calls.push("stop");
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await loadRegisteredSignals("linux", {
+      FORGE_DAEMONIZED: undefined,
+    }, undefined, {
+      stop,
+      spawn: () => {
+        calls.push("spawn:start");
+        const child = new EventEmitter();
+        queueMicrotask(() => {
+          calls.push("spawn:error");
+          child.emit("error", new Error("spawn unavailable"));
+        });
+        return child;
+      },
+      inspect: async (listeners) => {
+        expect(listeners.SIGUSR1).toHaveLength(1);
+        listeners.SIGUSR1[0]?.();
+        await waitFor(() => errorSpy.mock.calls.length > 0);
+      },
+    });
+
+    expect(calls).toEqual(["spawn:start", "spawn:error"]);
+    expect(stop).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[reboot] Failed to restart current process: spawn unavailable",
+    );
+  });
+
+  it("exits the current backend after spawning a replacement even when cleanup reports an error", async () => {
+    const calls: string[] = [];
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      calls.push(`exit:${code}`);
+      return undefined as never;
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message) => {
+      calls.push(`error:${message}`);
+    });
+
+    await loadRegisteredSignals("linux", { FORGE_DAEMONIZED: undefined }, undefined, {
+      stop: async () => {
+        calls.push("stop");
+        throw new Error("late stop failure");
+      },
+      spawn: () => {
+        calls.push("spawn");
+        const child = new EventEmitter();
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+      inspect: async (listeners) => {
+        listeners.SIGUSR1[0]?.();
+        await waitFor(() => exitSpy.mock.calls.length > 0);
+      },
+    });
+
+    expect(calls).toEqual([
+      "spawn",
+      "stop",
+      "error:[reboot] Backend cleanup reported an error: late stop failure",
+      "exit:0",
+    ]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 interface LifecycleTestOptions {
   isDesktop?: boolean;
   stop?: () => Promise<void>;
+  spawn?: (...args: any[]) => EventEmitter;
   inspect?: (
     listeners: Partial<Record<(typeof TRACKED_EVENTS)[number], Array<(...args: any[]) => void>>>,
   ) => Promise<void> | void;
@@ -199,14 +348,22 @@ async function loadRegisteredSignals(
     readDesktopSecureControlTokenFromFd: async () => "t".repeat(32),
   }));
 
+  vi.doMock("node:child_process", async (importOriginal) => {
+    const original = await importOriginal<typeof import("node:child_process")>();
+    return {
+      ...original,
+      spawn: lifecycleOptions.spawn ?? vi.fn(() => {
+        throw new Error("Unexpected replacement process spawn");
+      }),
+    };
+  });
+
   vi.doMock("../server.js", () => ({
     startServer: async () => ({
       host: BASE_CONFIG.host,
       port: BASE_CONFIG.port,
       config: BASE_CONFIG,
       stop: lifecycleOptions.stop ?? (async () => {}),
-      stopListening: async () => {},
-      startListening: async () => {},
     }),
   }));
 

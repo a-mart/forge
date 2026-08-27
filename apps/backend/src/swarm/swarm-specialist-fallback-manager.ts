@@ -809,9 +809,7 @@ export class SwarmSpecialistFallbackManager {
     if (handoffState?.receivedAgentEnd) {
       this.options.clearTrackedToolPaths(agentId);
     }
-    this.options.workerHealthService.reconcileRuntimeStateAfterFallbackRollback(agentId, reconciledStatus, {
-      receivedAgentEnd: handoffState?.receivedAgentEnd === true
-    });
+    this.options.workerHealthService.reconcileRuntimeStateAfterFallbackRollback(agentId, reconciledStatus);
 
     await this.saveWorkerDescriptorBestEffort(agentId, restoredDescriptor.specialistId);
 

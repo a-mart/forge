@@ -564,16 +564,14 @@ export function BuilderSurface({
       : null,
     [secureSessionSnapshot],
   )
-  const securePendingRequestViews = useMemo(() => {
-    return secureSessionSnapshot
-      ? toSecureSessionSnapshotView(secureSessionSnapshot).pendingRequests
-      : []
-  }, [secureSessionSnapshot])
-  const securePendingSshTrustRequestViews = useMemo(() => {
-    return secureSessionSnapshot
-      ? toSecureSessionSnapshotView(secureSessionSnapshot).pendingSshTrustRequests ?? []
-      : []
-  }, [secureSessionSnapshot])
+  const securePendingRequestViews = useMemo(
+    () => secureSessionSnapshotView?.pendingRequests ?? [],
+    [secureSessionSnapshotView],
+  )
+  const securePendingSshTrustRequestViews = useMemo(
+    () => secureSessionSnapshotView?.pendingSshTrustRequests ?? [],
+    [secureSessionSnapshotView],
+  )
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager

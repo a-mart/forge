@@ -249,7 +249,7 @@ export class RuntimeEventProjector {
     this.trackedToolPathsByAgentId.delete(agentId);
   }
 
-  updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
+  private updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
     if (!this.deps.workerStallState.has(agentId)) {
       this.deps.workerActivityState.delete(agentId);
       return;

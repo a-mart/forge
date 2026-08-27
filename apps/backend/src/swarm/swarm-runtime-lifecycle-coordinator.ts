@@ -12,11 +12,7 @@ import type {
   SwarmAgentRuntime,
 } from "./runtime-contracts.js";
 import type { SwarmRuntimeControllerHost } from "./swarm-runtime-controller.js";
-import type {
-  SwarmWorkerHealthService,
-  WorkerActivityState,
-  WorkerStallState,
-} from "./swarm-worker-health-service.js";
+import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
 import { ManagerTurnWatchdog } from "./manager-turn-watchdog.js";
 import { shouldPreserveActiveTurnForRuntimeError } from "./runtime-error-lifecycle-policy.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
@@ -224,10 +220,6 @@ export class SwarmRuntimeLifecycleCoordinator {
       emitConversationMessage: (event) => options.events.emitConversationMessage(event),
       logDebug: options.logDebug,
     });
-  }
-
-  get workerHealth(): SwarmWorkerHealthService {
-    return this.options.workerHealth;
   }
 
   get runtimes(): Map<string, SwarmAgentRuntime> {
@@ -602,14 +594,6 @@ export class SwarmRuntimeLifecycleCoordinator {
     return this.options.workerHealth.handleRuntimeStatus(agentId, descriptor, status, pendingCount);
   }
 
-  deleteWorkerStallState(agentId: string): void {
-    this.options.workerHealth.deleteWorkerStallState(agentId);
-  }
-
-  deleteWorkerActivityState(agentId: string): void {
-    this.options.workerHealth.deleteWorkerActivityState(agentId);
-  }
-
   clearWorkerHealthState(agentId: string): void {
     this.options.workerHealth.clearWorkerHealthState(agentId);
   }
@@ -631,14 +615,6 @@ export class SwarmRuntimeLifecycleCoordinator {
 
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean {
     return this.options.workerHealth.hasPendingTransientWorkerTerminatedError(agentId);
-  }
-
-  get workerStallState(): Map<string, WorkerStallState> {
-    return this.options.workerHealth.workerStallState;
-  }
-
-  get workerActivityState(): Map<string, WorkerActivityState> {
-    return this.options.workerHealth.workerActivityState;
   }
 
   private clearPendingManualManagerStopNoticeTimer(agentId: string): void {

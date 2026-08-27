@@ -179,6 +179,28 @@ describe('TerminalWsProxy over a real HTTP upgrade', () => {
     }
   })
 
+  it('stops while a terminal WebSocket client remains connected', async () => {
+    const service = createService()
+    const { server, proxy, port } = await startProxy(service)
+    const client = new WebSocket(wsUrl(port), { origin: 'http://127.0.0.1' })
+    try {
+      await once(client, 'open')
+      await vi.waitFor(() => expect(service.service.attachClient).toHaveBeenCalledTimes(1))
+      const clientClosed = once(client, 'close')
+
+      await proxy.stop()
+      await clientClosed
+
+      expect(service.detached).toBe(1)
+    } finally {
+      if (client.readyState === WebSocket.OPEN) client.terminate()
+      if (server.listening) {
+        server.close()
+        await once(server, 'close')
+      }
+    }
+  })
+
   it('closes overloaded clients and detaches when the proxy stops', async () => {
     const service = createService()
     const { server, proxy, port } = await startProxy(service)

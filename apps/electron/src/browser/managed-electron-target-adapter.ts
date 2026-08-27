@@ -9,7 +9,6 @@ import type {
   BrowserActionTimelineEntry,
   BrowserAutomationErrorCode,
   BrowserAutomationFailure,
-  BrowserAutomationOperation,
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserAutomationResultByOperation,
@@ -111,11 +110,6 @@ export interface BrowserTabRegistration {
   created: boolean
 }
 
-/** @deprecated Main-owned tabs no longer register renderer webview IDs. */
-export interface BrowserWebviewRegistration extends BrowserTabRegistration {
-  webContentsId: number
-}
-
 interface ExpectedInput {
   sequence: string
   signal: InputSignal
@@ -171,7 +165,6 @@ export interface PreparedRecording {
 
 export interface ManagedElectronTargetAdapterOptions {
   approvedDataRoot: string
-  hostWebContentsId: number
   sendToRenderer(channel: string, payload: unknown): void
   now?: () => number
   isMac?: boolean
@@ -241,12 +234,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     this.now = options.now ?? Date.now
     this.isMac = options.isMac ?? process.platform === 'darwin'
     this.writeArtifactFile = options.writeArtifactFile ?? writeFile
-    void options.hostWebContentsId
-  }
-
-  /** @deprecated Read capabilities.supportedOperations. */
-  get supportedOperations(): BrowserAutomationOperation[] {
-    return [...this.capabilities.supportedOperations]
   }
 
   registerTabWebContents(registration: BrowserTabRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
@@ -287,11 +274,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     this.attachTabListeners(runtime)
     void this.ensureDebugger(runtime).catch(() => undefined)
     return this.syncSnapshot(runtime)
-  }
-
-  /** Compatibility seam for the native fixture while callers migrate to main-owned tabs. */
-  registerWebview(registration: BrowserWebviewRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
-    return this.registerTabWebContents(registration, webContents)
   }
 
   hasTab(tabId: string): boolean {
@@ -406,11 +388,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     }
     this.disposeTabRuntime(tab, false)
     this.tabs.delete(tabId)
-  }
-
-  /** @deprecated Main-owned tabs use unregisterTabWebContents. */
-  unregisterWebview(tabId: string, webContentsId?: number): void {
-    this.unregisterTabWebContents(tabId, webContentsId)
   }
 
   async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
@@ -733,7 +710,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   }
 
   private async snapshot(tab: TabRuntime, send: SendCommand): Promise<BrowserAutomationResultByOperation['snapshot']> {
-    await Promise.all([send('Runtime.enable'), send('Accessibility.enable')])
     const page = await this.evaluateValue<{
       url: string; title: string; loading: boolean; visibleText: string; interactiveElements: BrowserSnapshotElement[]
     }>(tab, send, `(() => {
@@ -795,7 +771,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   }
 
   private async click(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'click' }>['input'], send: SendCommand): Promise<BrowserAutomationResultByOperation['click']> {
-    await this.prepareInput(send, true)
+    await this.prepareInput(send)
     const point = 'x' in input
       ? { x: input.x, y: input.y }
       : await this.boundLocatorWork(tab, input.timeoutMs, 'Click target resolution timed out', () =>
@@ -852,7 +828,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   }
 
   private async press(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'press' }>['input'], send: SendCommand, cleanup: SendCommand): Promise<BrowserAutomationResultByOperation['press']> {
-    await this.prepareInput(send, false)
+    await this.prepareInput(send)
     const keySequence = makeBrowserKeySequence(input, this.isMac)
     await this.installKeyDeliveryProbe(send)
     let down = false
@@ -948,7 +924,6 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     if (!recording) throw new BrowserHostError('execution-failed', 'Recording reservation was lost')
     if (recording.phase === 'prepared') {
       await this.serialize(tab, 'recording.start', async (send) => {
-        await send('Page.enable')
         await send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 1_600, maxHeight: 1_200, everyNthFrame: 1 })
       }, deadline)
       recording.phase = 'recording'
@@ -1295,7 +1270,7 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
   private pushNetwork(tab: TabRuntime, entry: BrowserNetworkEntry): void { tab.diagnostics.networkEntries = [...tab.diagnostics.networkEntries, entry].slice(-BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES) }
 
   private async evaluateRaw(send: SendCommand, expression: string, returnByValue: boolean, awaitPromise: boolean): Promise<UnknownRecord> {
-    const response = this.record(await send('Runtime.evaluate', { expression, awaitPromise, returnByValue, userGesture: true }))
+    const response = this.record(await send('Runtime.evaluate', { expression, awaitPromise, returnByValue, userGesture: false }))
     if (response.exceptionDetails) {
       const details = this.record(response.exceptionDetails)
       const exception = this.record(details.exception)
@@ -1310,8 +1285,8 @@ export class ManagedElectronTargetAdapter implements BrowserTargetAdapter {
     return this.record(response.result).value as T
   }
 
-  private prepareInput(send: SendCommand, runtime: boolean): Promise<unknown[]> {
-    return Promise.all([...(runtime ? [send('Runtime.enable')] : []), send('Input.setIgnoreInputEvents', { ignore: false })])
+  private prepareInput(send: SendCommand): Promise<unknown> {
+    return send('Input.setIgnoreInputEvents', { ignore: false })
   }
 
   private async installKeyDeliveryProbe(send: SendCommand): Promise<void> {

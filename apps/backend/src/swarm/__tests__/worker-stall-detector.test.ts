@@ -124,12 +124,12 @@ async function setupManagerWithStreamingWorker() {
     worker,
     workerRuntime,
     managerRuntime,
-    stallState: (state.workerStallState as Map<string, StallStateSnapshot>).get(worker.agentId)
+    stallState: manager.getWorkerStallStateForTest(worker.agentId)
   };
 }
 
 function readWorkerStallState(manager: TestSwarmManager, workerId: string): StallStateSnapshot | undefined {
-  return (manager as any).workerStallState.get(workerId);
+  return manager.getWorkerStallStateForTest(workerId);
 }
 
 async function emitRuntimeEvent(manager: TestSwarmManager, workerId: string, event: RuntimeSessionEvent): Promise<void> {

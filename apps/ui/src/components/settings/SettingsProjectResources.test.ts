@@ -1,8 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { getByText } from '@testing-library/dom'
-import { createElement } from 'react'
-import { flushSync } from 'react-dom'
+import { fireEvent, getByRole, getByText, queryByRole } from '@testing-library/dom'
+import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from './settings-api-client'
@@ -26,25 +25,22 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  projectResourcesApiMock.fetchProjectResourcesSnapshot.mockReset()
+  projectResourcesApiMock.updateProjectResourcesOverride.mockReset()
+  projectResourcesApiMock.updateProjectResourcesTrust.mockReset()
+  projectResourcesApiMock.activateRepoProjectAgent.mockReset()
   container = document.createElement('div')
   document.body.appendChild(container)
 })
 
 afterEach(() => {
   if (root) {
-    flushSync(() => root?.unmount())
+    act(() => root?.unmount())
   }
   root = null
   container.remove()
-  vi.clearAllMocks()
 })
-
-async function flushPromises(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  flushSync(() => {})
-}
 
 function makeBaseSnapshot(overrides: Record<string, unknown> = {}) {
   return {
@@ -69,17 +65,18 @@ function makeBaseSnapshot(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function renderComponent(snapshotOverrides: Record<string, unknown> = {}) {
+async function renderComponent(snapshotOverrides: Record<string, unknown> = {}) {
   const snapshot = makeBaseSnapshot(snapshotOverrides)
   projectResourcesApiMock.fetchProjectResourcesSnapshot.mockResolvedValue(snapshot)
 
   root = createRoot(container)
-  flushSync(() => {
+  await act(async () => {
     root?.render(createElement(SettingsProjectResources, {
       managers: [{ agentId: 'session-a', profileId: 'profile-a', role: 'manager', cwd: '/test/workspace' } as never],
       previewSession: { agentId: 'session-a', profileId: 'profile-a' },
       apiClient: { fetchJson: vi.fn() } as unknown as SettingsApiClient,
     }))
+    await Promise.resolve()
   })
   return snapshot
 }
@@ -92,16 +89,15 @@ describe('SettingsProjectResources', () => {
     }))
 
     root = createRoot(container)
-    flushSync(() => {
+    await act(async () => {
       root?.render(createElement(SettingsProjectResources, {
         managers: [{ agentId: 'session-alpha', profileId: 'project-alpha', role: 'manager' } as never],
         previewSession: { agentId: 'session-alpha', profileId: 'project-alpha' },
         projectContext: { profileId: 'project-beta', sessionAgentId: 'session-beta' },
         apiClient: { fetchJson: vi.fn() } as unknown as SettingsApiClient,
       }))
+      await Promise.resolve()
     })
-    await flushPromises()
-
     expect(projectResourcesApiMock.fetchProjectResourcesSnapshot).toHaveBeenCalledWith(
       expect.anything(),
       { profileId: 'project-beta', sessionAgentId: 'session-beta' },
@@ -130,21 +126,20 @@ describe('SettingsProjectResources', () => {
     })
 
     root = createRoot(container)
-    flushSync(() => {
+    await act(async () => {
       root?.render(createElement(SettingsProjectResources, {
         managers: [{ agentId: 'session-a', profileId: 'profile-a', role: 'manager', cwd: '/missing/workspace' } as never],
         previewSession: { agentId: 'session-a', profileId: 'profile-a' },
         apiClient: { fetchJson: vi.fn() } as unknown as SettingsApiClient,
       }))
+      await Promise.resolve()
     })
-    await flushPromises()
-
     expect(getByText(container, 'Repository unavailable')).toBeTruthy()
     expect(getByText(container, 'Session working directory is unavailable: path does not exist')).toBeTruthy()
   })
 
   it('renders project agent inventory section with valid definitions', async () => {
-    renderComponent({
+    await renderComponent({
       resources: {
         skills: { exists: true, count: 0, items: [] },
         specialists: { exists: true, count: 0, items: [] },
@@ -181,33 +176,30 @@ describe('SettingsProjectResources', () => {
         },
       },
     })
-    await flushPromises()
+    expect(getByText(container, 'Project Agent Definitions')).toBeTruthy()
 
     // Section title is visible
-    expect(document.body.querySelector('h3')?.textContent || document.body.textContent).toContain('Project Agent Definitions')
+    expect(container.querySelector('h3')?.textContent || container.textContent).toContain('Project Agent Definitions')
 
     // Both agent handles rendered
-    expect(document.body.textContent).toContain('@docs')
-    expect(document.body.textContent).toContain('@releases')
+    expect(container.textContent).toContain('@docs')
+    expect(container.textContent).toContain('@releases')
 
     // Display name rendered
-    expect(document.body.textContent).toContain('Documentation Agent')
+    expect(container.textContent).toContain('Documentation Agent')
 
     // When-to-use rendered
-    expect(document.body.textContent).toContain('Use for documentation tasks')
+    expect(container.textContent).toContain('Use for documentation tasks')
 
     // Active badge for activated agent
-    expect(document.body.textContent).toContain('Active')
+    expect(container.textContent).toContain('Active')
 
     // Activate button for non-activated valid agent
-    const activateButton = Array.from(document.body.querySelectorAll('button')).find(
-      (btn) => btn.textContent?.includes('Activate'),
-    )
-    expect(activateButton).toBeTruthy()
+    expect(getByRole(container, 'button', { name: 'Activate' })).toBeTruthy()
   })
 
   it('renders invalid status badges and diagnostics', async () => {
-    renderComponent({
+    await renderComponent({
       resources: {
         skills: { exists: true, count: 0, items: [] },
         specialists: { exists: true, count: 0, items: [] },
@@ -233,17 +225,14 @@ describe('SettingsProjectResources', () => {
         },
       },
     })
-    await flushPromises()
+    expect(getByText(container, '@broken')).toBeTruthy()
 
-    expect(document.body.textContent).toContain('@broken')
-    expect(document.body.textContent).toContain('Invalid')
-    expect(document.body.textContent).toContain('prompt.md is missing')
+    expect(container.textContent).toContain('@broken')
+    expect(container.textContent).toContain('Invalid')
+    expect(container.textContent).toContain('prompt.md is missing')
 
     // No activate button for invalid definitions
-    const activateButton = Array.from(document.body.querySelectorAll('button')).find(
-      (btn) => btn.textContent?.includes('Activate'),
-    )
-    expect(activateButton).toBeFalsy()
+    expect(queryByRole(container, 'button', { name: 'Activate' })).toBeNull()
   })
 
   it('calls activateRepoProjectAgent API on activate button click', async () => {
@@ -281,7 +270,7 @@ describe('SettingsProjectResources', () => {
       projectAgent: {},
     })
 
-    renderComponent({
+    await renderComponent({
       resources: {
         skills: { exists: true, count: 0, items: [] },
         specialists: { exists: true, count: 0, items: [] },
@@ -308,17 +297,12 @@ describe('SettingsProjectResources', () => {
         },
       },
     })
-    await flushPromises()
+    expect(getByRole(container, 'button', { name: 'Activate' })).toBeTruthy()
 
-    const activateButton = Array.from(document.body.querySelectorAll('button')).find(
-      (btn) => btn.textContent?.includes('Activate'),
-    )
-    expect(activateButton).toBeTruthy()
-
-    flushSync(() => {
-      activateButton!.click()
+    await act(async () => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Activate' }))
+      await Promise.resolve()
     })
-    await flushPromises()
 
     expect(projectResourcesApiMock.activateRepoProjectAgent).toHaveBeenCalledWith(
       expect.anything(),
@@ -334,9 +318,9 @@ describe('SettingsProjectResources', () => {
   })
 
   it('does not render project agent section when projectAgents is absent', async () => {
-    renderComponent()
-    await flushPromises()
+    await renderComponent()
+    expect(getByText(container, 'Inventory')).toBeTruthy()
 
-    expect(document.body.textContent).not.toContain('Project Agent Definitions')
+    expect(container.textContent).not.toContain('Project Agent Definitions')
   })
 })

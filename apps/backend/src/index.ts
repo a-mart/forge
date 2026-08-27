@@ -10,7 +10,6 @@ import {
   clearRestartParentPidEnv,
   readDaemonizedEnv,
   readRestartParentPidEnv,
-  setRestartParentPidEnv,
 } from "./reboot/control-pid.js";
 import { startServer, type StartedServer } from "./server.js";
 import { readServerVersion } from "./stats/stats-git.js";
@@ -63,7 +62,12 @@ function registerProcessLifecycle(server: StartedServer, isDesktop: boolean): vo
 
     shuttingDown = true;
     console.log(`Received ${signal}. Shutting down...`);
-    await server.stop();
+    try {
+      await server.stop();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to finish backend shutdown: ${message}`);
+    }
     // The Electron supervisor waits for this child to exit before falling back to force termination.
     process.exit(0);
   };
@@ -81,22 +85,25 @@ function registerProcessLifecycle(server: StartedServer, isDesktop: boolean): vo
     console.log(`[reboot] Received ${RESTART_SIGNAL}. Restarting backend...`);
 
     try {
-      await server.stopListening();
       await spawnReplacementProcess();
-      await server.stop();
-      process.exit(0);
     } catch (error) {
       restarting = false;
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[reboot] Failed to restart current process: ${message}`);
-
-      try {
-        await server.startListening();
-      } catch (restartError) {
-        const restartMessage = restartError instanceof Error ? restartError.message : String(restartError);
-        console.error(`[reboot] Failed to restore WebSocket server after restart failure: ${restartMessage}`);
-      }
+      return;
     }
+
+    try {
+      await server.stop();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[reboot] Backend cleanup reported an error: ${message}`);
+    }
+
+    // Once the replacement exists, this process must exit even if best-effort
+    // cleanup reports an error. The child waits for this PID to disappear before
+    // it can acquire the runtime lock, so two runtimes can never share the data dir.
+    process.exit(0);
   };
 
   process.on("SIGINT", () => {
@@ -146,8 +153,7 @@ async function waitForRestartParentToExit(isDesktop: boolean): Promise<void> {
     return;
   }
 
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
+  while (true) {
     try {
       process.kill(parentPid, 0);
     } catch (error) {
@@ -166,9 +172,8 @@ async function spawnReplacementProcess(): Promise<void> {
   const replacementArgs = [...process.execArgv, ...process.argv.slice(1)];
   const replacementEnv = {
     ...process.env,
+    FORGE_RESTART_PARENT_PID: `${process.pid}`,
   };
-  setRestartParentPidEnv(`${process.pid}`);
-  replacementEnv.FORGE_RESTART_PARENT_PID = `${process.pid}`;
 
   await new Promise<void>((resolveSpawn, reject) => {
     const child = spawn(process.execPath, replacementArgs, {

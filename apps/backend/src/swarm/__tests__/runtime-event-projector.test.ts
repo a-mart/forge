@@ -1566,7 +1566,7 @@ describe("RuntimeEventProjector", () => {
       await projector.projectEvent({ agentId: worker.agentId, event: { type: "turn_end", toolResults: [] } });
       expect(workerActivityState.get(worker.agentId)?.turnCount).toBe(1);
       workerStallState.delete(worker.agentId);
-      projector.updateWorkerActivity(worker.agentId, { type: "message_update", message: { role: "assistant", content: "stale" } });
+      await projector.projectEvent({ agentId: worker.agentId, event: { type: "message_update", message: { role: "assistant", content: "stale" } } });
       expect(workerActivityState.has(worker.agentId)).toBe(false);
     } finally {
       vi.useRealTimers();

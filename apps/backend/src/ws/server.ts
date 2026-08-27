@@ -1106,24 +1106,32 @@ export class SwarmWebSocketServer {
     this.httpServer = null;
     this.actualPort = null;
 
-    // Stop local Git observations before transport teardown and before closing feature storage.
+    // Close ingress immediately, but retain handler state until in-flight work
+    // has settled. Repository creation shutdown can still depend on the real
+    // socket bookkeeping while it aborts and cleans up active operations.
+    const transportShutdown = Promise.allSettled([
+      this.terminalWsProxy?.stop() ?? Promise.resolve(),
+      currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
+      currentCliWss ? closeWebSocketServer(currentCliWss) : Promise.resolve(),
+      currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
+    ]);
+
+    // Stop local Git observations before closing feature storage.
     await this.remoteUpdateAwarenessService?.stop();
-    // Abort in-flight clones and await termination/cleanup before tearing down transport.
-    await this.repositoryProjectCreationService?.shutdown()
+    // Abort in-flight clones and await termination/cleanup before persistence drains.
+    await this.repositoryProjectCreationService?.shutdown();
 
     this.wsHandler.reset();
     this.cliWsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
     this.telemetryService?.stop();
+
     await this.swarmManager.flushPendingPersistence?.();
 
     await Promise.allSettled([
       this.mobilePushService.stop(),
       this.unreadTracker.flush(),
-      this.terminalWsProxy?.stop() ?? Promise.resolve(),
-      currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
-      currentCliWss ? closeWebSocketServer(currentCliWss) : Promise.resolve(),
-      currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
+      transportShutdown,
     ]);
     await this.generationThroughputService.dispose();
 
@@ -1537,6 +1545,10 @@ function isErrorWithCode(error: unknown, code: string): boolean {
 }
 
 async function closeWebSocketServer(server: WebSocketServer): Promise<void> {
+  for (const client of server.clients) {
+    client.terminate();
+  }
+
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) {

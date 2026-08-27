@@ -1249,10 +1249,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
       });
   }
 
-  updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
-    this.services.runtime.controller.updateWorkerActivity(agentId, event);
-  }
-
   resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor,
   ): Promise<AgentModelDescriptor | undefined> {

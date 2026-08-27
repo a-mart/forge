@@ -26,8 +26,6 @@ export const BROWSER_IPC = {
   prepareRecording: 'forge:browser-recording-prepare', stopRecordingCapture: 'forge:browser-recording-stop-capture',
   saveRecording: 'forge:browser-recording-save', cancelRecording: 'forge:browser-recording-cancel',
   recordingFrame: 'forge:browser-recording-frame', stateChanged: 'forge:browser-state-changed',
-  // Historical renderer-webview channels retained only by the legacy fixture.
-  config: 'forge:browser-config', register: 'forge:browser-register-webview', unregister: 'forge:browser-unregister-webview',
 } as const
 
 export const BROWSER_WORKSPACE_IPC = {

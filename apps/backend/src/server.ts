@@ -18,7 +18,7 @@ import { ObservabilityService } from "./observability/observability-service.js";
 import type { ObservabilityFacade } from "./observability/observability-types.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
-import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
+import { acquireRuntimeLock } from "./runtime-lock.js";
 import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./runtime-target.js";
 import { FeedbackService } from "./swarm/feedback-service.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
@@ -56,8 +56,6 @@ export interface StartServerOptions {
 
 export interface StartedServer extends ServerReadyInfo {
   stop(): Promise<void>;
-  stopListening(): Promise<void>;
-  startListening(): Promise<void>;
   /** Test hook for the route-inventory classification gate. */
   listRegisteredHttpRoutes(): ReadonlyArray<{ methods: string; matches: (pathname: string) => boolean }>;
 }
@@ -80,15 +78,22 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       })
     : createNoopObservabilityFacade(config.runtimeTarget);
 
-  // Ensure the lock is released even on unclean exits (Ctrl+C, crashes, SIGTERM)
+  // Signal-driven shutdown is owned by index.ts so the lock remains held until
+  // graceful shutdown completes. This hook is only a final best-effort fallback
+  // for process exits that bypass that lifecycle.
+  let runtimeLockReleased = false;
   const emergencyRelease = () => {
+    if (runtimeLockReleased) return;
     try { runtimeLock.release(); } catch { /* best effort */ }
   };
   process.once("exit", emergencyRelease);
-  process.once("SIGINT", emergencyRelease);
-  process.once("SIGTERM", emergencyRelease);
+  const releaseRuntimeLock = () => {
+    if (runtimeLockReleased) return;
+    runtimeLock.release();
+    runtimeLockReleased = true;
+    process.removeListener("exit", emergencyRelease);
+  };
 
-  // eslint-disable-next-line prefer-const -- forward reference: used in onCommit callback before assignment
   let swarmManager: SwarmManager | undefined;
   let wsServer: SwarmWebSocketServer | undefined;
   const browserAutomationService = new BrowserAutomationService({
@@ -104,23 +109,35 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     },
   });
 
-  await seedBuiltins(config.paths.dataDir, { runtimeTarget: config.runtimeTarget });
-  await runCollaborationAuthMigrations(config);
+  try {
+    await seedBuiltins(config.paths.dataDir, { runtimeTarget: config.runtimeTarget });
+    await runCollaborationAuthMigrations(config);
 
-  if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {
-    const authService = await getOrCreateCollaborationBetterAuthService(config);
-    const collaborationDatabase = await getOrCreateCollaborationAuthDb(config);
-    await bootstrapCollaborationAdmin(config, collaborationDatabase, authService);
+    if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {
+      const authService = await getOrCreateCollaborationBetterAuthService(config);
+      const collaborationDatabase = await getOrCreateCollaborationAuthDb(config);
+      await bootstrapCollaborationAdmin(config, collaborationDatabase, authService);
+    }
+
+    await observabilityService.initialize();
+
+    swarmManager = new SwarmManager(config, {
+      versioningService,
+      observability: observabilityService,
+      browserAutomationService,
+    });
+    await versioningService.start();
+  } catch (error) {
+    await Promise.allSettled([
+      swarmManager?.closeSecureSessions(),
+      observabilityService.shutdown({ timeoutMs: 3000 }),
+      versioningService.stop(),
+    ]);
+    clearCollaborationBetterAuthService(config);
+    closeCollaborationAuthDb(config);
+    releaseRuntimeLock();
+    throw error;
   }
-
-  await observabilityService.initialize();
-
-  swarmManager = new SwarmManager(config, {
-    versioningService,
-    observability: observabilityService,
-    browserAutomationService,
-  });
-  await versioningService.start();
 
   const schedulersByProfileId = new Map<string, CronSchedulerService>();
   let schedulerLifecycle: Promise<void> = Promise.resolve();
@@ -382,8 +399,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       secureControlToken: options.secureControlToken,
     });
 
+    await wsServer.start();
     server = new BackendServer({
       config,
+      port: wsServer.getPort(),
       swarmManager,
       versioningService,
       observabilityService,
@@ -393,10 +412,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       terminalService,
       handleTerminalSessionLifecycle,
       handleTerminalAgentsSnapshot,
-      runtimeLock,
+      releaseRuntimeLock,
     });
-
-    await server.startListening();
 
     activeServer = server;
     await options.onReady?.({
@@ -415,6 +432,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         swarmManager?.off("agents_snapshot", handleTerminalAgentsSnapshot);
       }
       await Promise.allSettled([
+        wsServer?.stop(),
         queueSchedulerSync(new Set<string>()),
         swarmManager?.closeSecureSessions(),
         terminalService?.shutdown(),
@@ -423,7 +441,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       ]);
       clearCollaborationBetterAuthService(config);
       closeCollaborationAuthDb(config);
-      runtimeLock.release();
+      releaseRuntimeLock();
     }
     throw error;
   }
@@ -443,13 +461,13 @@ class BackendServer implements StartedServer {
   private readonly terminalService: TerminalService | null;
   private readonly handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void;
   private readonly handleTerminalAgentsSnapshot: () => void;
-  private readonly runtimeLock: RuntimeLock;
+  private readonly releaseRuntimeLock: () => void;
 
-  private listening = false;
   private stopped = false;
 
   constructor(options: {
     config: SwarmConfig;
+    port: number;
     swarmManager: SwarmManager;
     versioningService: EmbeddedGitVersioningService;
     observabilityService: ObservabilityFacade;
@@ -459,10 +477,10 @@ class BackendServer implements StartedServer {
     terminalService: TerminalService | null;
     handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void;
     handleTerminalAgentsSnapshot: () => void;
-    runtimeLock: RuntimeLock;
+    releaseRuntimeLock: () => void;
   }) {
     this.host = options.config.host;
-    this.port = options.config.port;
+    this.port = options.port;
     this.config = options.config;
     this.swarmManager = options.swarmManager;
     this.versioningService = options.versioningService;
@@ -473,26 +491,7 @@ class BackendServer implements StartedServer {
     this.terminalService = options.terminalService;
     this.handleTerminalSessionLifecycle = options.handleTerminalSessionLifecycle;
     this.handleTerminalAgentsSnapshot = options.handleTerminalAgentsSnapshot;
-    this.runtimeLock = options.runtimeLock;
-  }
-
-  async startListening(): Promise<void> {
-    if (this.stopped || this.listening) {
-      return;
-    }
-
-    await this.wsServer.start();
-    this.port = this.wsServer.getPort();
-    this.listening = true;
-  }
-
-  async stopListening(): Promise<void> {
-    if (this.stopped || !this.listening) {
-      return;
-    }
-
-    this.listening = false;
-    await this.wsServer.stop();
+    this.releaseRuntimeLock = options.releaseRuntimeLock;
   }
 
   listRegisteredHttpRoutes(): ReadonlyArray<{ methods: string; matches: (pathname: string) => boolean }> {
@@ -509,27 +508,26 @@ class BackendServer implements StartedServer {
     this.swarmManager.off("session_lifecycle", this.handleTerminalSessionLifecycle);
     this.swarmManager.off("agents_snapshot", this.handleTerminalAgentsSnapshot);
 
-    const shouldStopWsServer = this.listening;
-    this.listening = false;
-
-    if (shouldStopWsServer) {
+    try {
       await this.wsServer.stop();
-    }
+    } finally {
+      await Promise.allSettled([
+        this.queueSchedulerSync(new Set<string>()),
+        this.swarmManager.closeSecureSessions(),
+        this.terminalService?.shutdown(),
+        this.observabilityService.shutdown({ timeoutMs: 3000 }),
+        this.versioningService.stop(),
+        Promise.resolve().then(() => clearCollaborationBetterAuthService(this.config)),
+        Promise.resolve().then(() => closeCollaborationAuthDb(this.config)),
+      ]);
 
-    await Promise.allSettled([
-      this.queueSchedulerSync(new Set<string>()),
-      this.swarmManager.closeSecureSessions(),
-      this.terminalService?.shutdown(),
-      this.observabilityService.shutdown({ timeoutMs: 3000 }),
-      this.versioningService.stop(),
-    ]);
-
-    clearCollaborationBetterAuthService(this.config);
-    closeCollaborationAuthDb(this.config);
-    this.runtimeLock.release();
-
-    if (activeServer === this) {
-      activeServer = null;
+      try {
+        this.releaseRuntimeLock();
+      } finally {
+        if (activeServer === this) {
+          activeServer = null;
+        }
+      }
     }
   }
 }

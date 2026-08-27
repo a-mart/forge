@@ -168,8 +168,6 @@ function baseLifecycleOptions(
     logDebug: overrides.logDebug ?? vi.fn(),
     seedWorkerCompletionReportTimestamp: overrides.seedWorkerCompletionReportTimestamp ?? vi.fn(),
     clearWatchdogState: overrides.clearWatchdogState ?? vi.fn(),
-    deleteWorkerStallState: overrides.deleteWorkerStallState ?? vi.fn(),
-    deleteWorkerActivityState: overrides.deleteWorkerActivityState ?? vi.fn(),
     deleteWorkerCompletionReportState: overrides.deleteWorkerCompletionReportState ?? vi.fn(),
     clearWorkerHealthState: overrides.clearWorkerHealthState ?? vi.fn(),
     clearTrackedToolPaths: overrides.clearTrackedToolPaths ?? vi.fn(),
@@ -2655,7 +2653,6 @@ describe("SwarmAgentLifecycleService", () => {
     const runtimes = new Map([[worker.agentId, makeRuntimeStub({ descriptor: worker })]]);
 
     const clearWorkerHealthState = vi.fn();
-    const deleteWorkerStallState = vi.fn();
     const suppressIntentionalStopRuntimeCallbacks = vi.fn();
     const runRuntimeShutdown = vi.fn(async () => ({ status: "clean", runtimeToken: 1 }));
 
@@ -2664,7 +2661,6 @@ describe("SwarmAgentLifecycleService", () => {
         descriptors,
         runtimes,
         clearWorkerHealthState,
-        deleteWorkerStallState,
         runRuntimeShutdown,
         suppressIntentionalStopRuntimeCallbacks
       })
@@ -2674,7 +2670,6 @@ describe("SwarmAgentLifecycleService", () => {
     expect(suppressIntentionalStopRuntimeCallbacks).toHaveBeenCalled();
     expect(runRuntimeShutdown).toHaveBeenCalled();
     expect(clearWorkerHealthState).toHaveBeenCalled();
-    expect(deleteWorkerStallState).toHaveBeenCalled();
     expect(runtimes.has("w1")).toBe(false);
     expect(worker.status).toBe("idle");
   });

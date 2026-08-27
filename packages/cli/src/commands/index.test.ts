@@ -333,7 +333,6 @@ function mockClient(overrides: { status?: CliStatusResponse } = {}): ForgeClient
   const worker = agentFixture('worker-1', 'worker')
   const status = overrides.status ?? statusResponse()
   return {
-    getCapabilities: async () => ({ serverTime: status.serverTime, serverVersion: status.serverVersion, capabilities: status.capabilities }),
     getStatus: async () => status,
     listProfiles: async () => ({ profiles: [profile] }),
     showProfile: async () => ({ profile }),

@@ -8,7 +8,7 @@ import {
   parseP0HttpRouteJsonResponse as parseJsonResponse,
 } from "../../../../test-support/ws-integration-harness.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
-import type { ConversationEntryEvent } from "@forge/protocol";
+import { CLI_PROTOCOL_VERSION, type ConversationEntryEvent } from "@forge/protocol";
 import type { AgentDescriptor, ManagerProfile } from "../../../../swarm/types.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 import { SwarmWebSocketServer } from "../../../server.js";
@@ -56,7 +56,7 @@ describe("CLI routes and bearer auth", () => {
     expect(payload.json).toMatchObject({
       serverVersion: "1.0.0",
       capabilities: {
-        protocolVersion: 1,
+        protocolVersion: CLI_PROTOCOL_VERSION,
         available: true,
         runtimeTarget: "builder",
         features: {

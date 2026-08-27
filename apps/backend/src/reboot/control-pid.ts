@@ -21,10 +21,6 @@ export function readRestartParentPidEnv(): string | undefined {
   return process.env[RESTART_PARENT_PID_ENV_VAR] ?? process.env[LEGACY_RESTART_PARENT_PID_ENV_VAR];
 }
 
-export function setRestartParentPidEnv(value: string): void {
-  process.env[RESTART_PARENT_PID_ENV_VAR] = value;
-}
-
 export function clearRestartParentPidEnv(): void {
   delete process.env[RESTART_PARENT_PID_ENV_VAR];
   delete process.env[LEGACY_RESTART_PARENT_PID_ENV_VAR];

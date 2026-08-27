@@ -244,7 +244,6 @@ describe("SwarmManagerRuntimeComposition", () => {
 
     const completed = composition.complete(boundServices());
 
-    expect(completed.runtimeLifecycle.workerHealth).toBe(composition.workerHealth);
     expect(completed.turnContext).toBeDefined();
     expect(completed.lifecycle).toBeDefined();
     expect(completed.boot).toBeDefined();

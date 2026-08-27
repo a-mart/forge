@@ -43,7 +43,7 @@ export interface TerminalArchiveHooks {
 export interface SwarmManagerFacadeRuntimeServices {
   controller: Pick<
     SwarmRuntimeController,
-    "getGenerationThroughputSnapshot" | "listRuntimeExtensionSnapshots" | "updateWorkerActivity"
+    "getGenerationThroughputSnapshot" | "listRuntimeExtensionSnapshots"
   >;
   lifecycle: Pick<
     SwarmRuntimeLifecycleCoordinator,

@@ -257,8 +257,6 @@ export interface SwarmAgentLifecycleServiceOptions {
   emitProfilesSnapshot: () => void;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
   clearWorkerHealthState: (agentId: string) => void;
-  deleteWorkerStallState: (agentId: string) => void;
-  deleteWorkerActivityState: (agentId: string) => void;
   clearTrackedToolPaths: (agentId: string) => void;
   suppressIntentionalStopRuntimeCallbacks: (agentId: string, runtimeToken?: number) => void;
   clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
@@ -356,8 +354,6 @@ export class SwarmAgentLifecycleService {
 
   private clearWorkerTeardownState(agentId: string): void {
     this.options.clearWorkerHealthState(agentId);
-    this.options.deleteWorkerStallState(agentId);
-    this.options.deleteWorkerActivityState(agentId);
     this.options.clearTrackedToolPaths(agentId);
     this.options.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
@@ -1081,8 +1077,6 @@ export class SwarmAgentLifecycleService {
       }
 
       this.options.clearWorkerHealthState(agentId);
-      this.options.deleteWorkerStallState(agentId);
-      this.options.deleteWorkerActivityState(agentId);
       this.options.clearAgentTurnState(agentId);
 
       if (rollbackShutdownIncomplete) {

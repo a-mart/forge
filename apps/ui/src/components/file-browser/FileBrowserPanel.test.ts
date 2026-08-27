@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FileBrowserPanel } from './FileBrowserPanel'
 import type { FileContentResult } from './use-file-browser-queries'
-import type { FileEditSessionController } from './use-file-edit-session'
+import type { FileEditSessionController } from './use-file-edit-sessions'
 import { useFileEditSessions } from './use-file-edit-sessions'
 import type { FileEditorSessionKey } from './use-file-editor-coordinator'
 

@@ -1,19 +1,47 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { FileContentResult, FileVersionToken } from '@forge/protocol'
+import type { FileContentResult, FileSaveConflictResponse, FileVersionToken } from '@forge/protocol'
 import {
   applySuccessfulFileSaveToCaches,
   fetchFileContent,
   saveFileContent,
   setFileContentCache,
 } from './use-file-browser-queries'
-import type {
-  FileEditMode,
-  FileEditSessionController,
-  FileEditSessionState,
-  FileSaveState,
-  KeyedFileEditorContent,
-} from './use-file-edit-session'
 import type { FileEditorDirtySnapshot, FileEditorGuardApi, FileEditorSessionKey } from './use-file-editor-coordinator'
+
+export type FileEditMode = 'preview' | 'edit'
+export type FileSaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict' | 'reloading'
+
+export interface FileEditSessionState {
+  key: FileEditorSessionKey | null
+  mode: FileEditMode
+  draft: string
+  baseContent: string
+  baseVersion: FileVersionToken | null
+  dirty: boolean
+  focused: boolean
+  saveState: FileSaveState
+  error: string | null
+  conflict: FileSaveConflictResponse | null
+}
+
+export interface KeyedFileEditorContent {
+  key: FileEditorSessionKey
+  content: FileContentResult | null
+}
+
+export interface FileEditSessionController {
+  state: FileEditSessionState
+  canEnterEditMode: boolean
+  enterEditMode: () => void
+  updateDraft: (next: string) => void
+  setFocused: (focused: boolean) => void
+  save: (options?: { overwrite?: boolean }) => Promise<boolean>
+  reloadFromDisk: () => Promise<boolean>
+  dismissConflict: () => void
+  revert: () => void
+  discard: () => void
+  getDirtySnapshot: () => FileEditorDirtySnapshot | null
+}
 
 const EMPTY_STATE: FileEditSessionState = {
   key: null,

@@ -6,7 +6,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const modulePath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(modulePath), '..');
 const defaultReportPath = path.join(repoRoot, '.forge', 'quality', 'latest.json');
 const schemaVersion = 1;
 const validTiers = new Set(['quick', 'changed', 'full', 'report']);
@@ -61,7 +62,7 @@ function usage() {
     `Tiers:\n` +
     `  quick    Fast local checks for changed files/packages; no knip or build.\n` +
     `  changed  Conservative path-aware workspace lint/typecheck/test checks.\n` +
-    `  full     Repo quality gate: lint, knip, test, all workspace typechecks, build.\n` +
+    `  full     Repo quality gate: lint, knip, tests, typechecks, Docker context safety, build.\n` +
     `  report   Print the latest .forge/quality/latest.json artifact.\n`;
 }
 
@@ -124,6 +125,61 @@ const helpValidateCheck = {
   command: [node, [path.join(repoRoot, 'scripts', 'validate-help-content.mjs'), '--strict']],
 };
 
+const verifyDockerignoreCheck = {
+  id: 'verify:dockerignore',
+  label: 'Docker build-context safety',
+  command: [pnpm, ['verify:dockerignore']],
+};
+
+function backendScriptTestCheck(id, label, testFile) {
+  return {
+    id,
+    label,
+    command: [
+      pnpm,
+      ['exec', 'vitest', 'run', path.join('..', '..', 'scripts', '__tests__', testFile)],
+      path.join(repoRoot, 'apps', 'backend'),
+    ],
+  };
+}
+
+const packagedRuntimePreflightCheck = backendScriptTestCheck(
+  'test:packaged-runtime-preflight',
+  'Packaged runtime preflight',
+  'packaged-runtime-preflight.test.mjs',
+);
+
+const browserAttributionCheck = backendScriptTestCheck(
+  'test:browser-third-party-notices',
+  'Browser attribution and notice validation',
+  'browser-third-party-notices.test.mjs',
+);
+
+const releaseVersionConsistencyCheck = backendScriptTestCheck(
+  'test:release-version-consistency',
+  'Release version consistency',
+  'release-version-consistency.test.mjs',
+);
+
+export function isDockerConfigRelated(file) {
+  const basename = path.posix.basename(file);
+  return file === 'scripts/verify-dockerignore-sensitive-context.mjs'
+    || basename === '.dockerignore'
+    || /^Dockerfile(?:\..+)?$/u.test(basename)
+    || /^(?:docker-compose|compose)(?:\.[^.]+)?\.ya?ml$/u.test(basename);
+}
+
+function isBrowserAttributionRelated(file) {
+  return file === 'THIRD_PARTY_NOTICES.md'
+    || file === 'packages/protocol/src/browser-automation.ts'
+    || file === 'apps/electron/scripts/build-all.mjs'
+    || file.startsWith('apps/electron/src/browser/');
+}
+
+function isReleaseVersionRelated(file) {
+  return file === 'version.json' || file === 'apps/electron/package.json';
+}
+
 async function gitLines(args) {
   const result = await run(git, args, { capture: true });
   if (result.exitCode !== 0) return [];
@@ -173,23 +229,49 @@ function isCodeFile(file) {
 }
 
 function isTestFile(file) {
-  return /(?:^|[/.])(?:__tests__|tests?)(?:\/|$)|\.(?:test|spec)\.(?:c|m)?tsx?$/u.test(file);
+  return /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file);
 }
 
-function classify(file) {
+function testWorkspace(file) {
+  const workspacePrefixes = [
+    ['apps/backend/', 'apps/backend'],
+    ['apps/ui/', 'apps/ui'],
+    ['apps/electron/', 'apps/electron'],
+    ['apps/chrome-extension/', 'apps/chrome-extension'],
+    ['apps/native-messaging-host/', 'apps/native-messaging-host'],
+    ['apps/stream-deck/', 'apps/stream-deck'],
+    ['apps/skill-share-worker/', 'apps/skill-share-worker'],
+    ['packages/protocol/', 'packages/protocol'],
+    ['packages/cli/', 'packages/cli'],
+    ['scripts/', 'apps/backend'],
+  ];
+  return workspacePrefixes.find(([prefix]) => file.startsWith(prefix))?.[1] ?? null;
+}
+
+export function classify(file) {
   const areas = new Set();
   const broadReasons = [];
   if (file.startsWith('apps/backend/')) areas.add('backend');
   else if (file.startsWith('apps/ui/')) areas.add('ui');
   else if (file.startsWith('apps/electron/')) areas.add('electron');
+  else if (file.startsWith('apps/chrome-extension/')) areas.add('chrome-extension');
+  else if (file.startsWith('apps/native-messaging-host/')) areas.add('native-messaging-host');
+  else if (file.startsWith('apps/stream-deck/')) areas.add('stream-deck');
   else if (file.startsWith('apps/skill-share-worker/')) areas.add('skill-share-worker');
   else if (file.startsWith('packages/protocol/')) {
     areas.add('protocol');
     broadReasons.push('protocol changes can affect all workspaces');
   } else if (file.startsWith('packages/cli/')) areas.add('cli');
 
-  if (/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u.test(file)) broadReasons.push('dependency/workspace config changed');
-  if (/^(eslint\.config\.|tsconfig|vite\.config|vitest\.config|tailwind\.config)/u.test(file)) broadReasons.push('root config changed');
+  if (/(?:^|\/)package\.json$/u.test(file) || /^(pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u.test(file)) {
+    broadReasons.push('dependency/workspace config changed');
+  }
+  if (file === '.nvmrc' || /^(eslint\.config\.|knip\.json$|tsconfig|vite\.config|vitest\.config|tailwind\.config)/u.test(file)) {
+    broadReasons.push('root config changed');
+  }
+  if (isDockerConfigRelated(file)) broadReasons.push('Docker config changed');
+  if (file.startsWith('patches/')) broadReasons.push('patched dependency changed');
+  if (file.startsWith('.githooks/')) broadReasons.push('repository hook changed');
   if (file.startsWith('.github/workflows/')) broadReasons.push('workflow changed');
   if (file.startsWith('scripts/')) broadReasons.push('root script changed');
   if (/^(AGENTS\.md|README\.md|docs\/)/u.test(file)) areas.add('docs');
@@ -206,6 +288,9 @@ function addWorkspaceChecks(checks, areas, mode) {
       if (areas.has('backend')) lintPaths.push('apps/backend');
       if (areas.has('ui')) lintPaths.push('apps/ui');
       if (areas.has('electron')) lintPaths.push('apps/electron');
+      if (areas.has('chrome-extension')) lintPaths.push('apps/chrome-extension');
+      if (areas.has('native-messaging-host')) lintPaths.push('apps/native-messaging-host');
+      if (areas.has('stream-deck')) lintPaths.push('apps/stream-deck');
       if (areas.has('skill-share-worker')) lintPaths.push('apps/skill-share-worker');
       if (areas.has('protocol')) lintPaths.push('packages/protocol');
       if (areas.has('cli')) lintPaths.push('packages/cli');
@@ -213,11 +298,14 @@ function addWorkspaceChecks(checks, areas, mode) {
     }
   }
   if (mode === 'typecheck') {
-    if (wantsAll || areas.has('backend')) add({ id: 'typecheck:backend', label: 'Backend production typecheck', command: [pnpm, ['exec', 'tsc', '-p', 'tsconfig.build.json', '--noEmit'], path.join(repoRoot, 'apps', 'backend')] });
-    if (wantsAll || areas.has('ui')) add({ id: 'typecheck:ui', label: 'UI typecheck', command: [pnpm, ['exec', 'tsc', '--noEmit'], path.join(repoRoot, 'apps', 'ui')] });
+    if (wantsAll || areas.has('backend')) add({ id: 'typecheck:backend', label: 'Backend production typecheck', command: [pnpm, ['--filter', '@forge/backend', 'typecheck']] });
+    if (wantsAll || areas.has('ui')) add({ id: 'typecheck:ui', label: 'UI typecheck', command: [pnpm, ['--filter', '@forge/ui', 'typecheck']] });
     if (wantsAll || areas.has('protocol')) add({ id: 'typecheck:protocol', label: 'Protocol typecheck', command: [pnpm, ['--filter', '@forge/protocol', 'typecheck']] });
     if (wantsAll || areas.has('cli')) add({ id: 'typecheck:cli', label: 'CLI typecheck', command: [pnpm, ['--filter', '@forge/cli', 'typecheck']] });
-    if (wantsAll || areas.has('electron')) add({ id: 'typecheck:electron', label: 'Electron typecheck', command: [pnpm, ['exec', 'tsc', '--noEmit'], path.join(repoRoot, 'apps', 'electron')] });
+    if (wantsAll || areas.has('electron')) add({ id: 'typecheck:electron', label: 'Electron typecheck', command: [pnpm, ['--filter', '@forge/electron', 'typecheck']] });
+    if (wantsAll || areas.has('chrome-extension')) add({ id: 'typecheck:chrome-extension', label: 'Chrome extension typecheck', command: [pnpm, ['--filter', '@forge/chrome-extension', 'typecheck']] });
+    if (wantsAll || areas.has('native-messaging-host')) add({ id: 'typecheck:native-messaging-host', label: 'Native messaging host typecheck', command: [pnpm, ['--filter', '@forge/external-chrome-native-host', 'typecheck']] });
+    if (wantsAll || areas.has('stream-deck')) add({ id: 'typecheck:stream-deck', label: 'Stream Deck typecheck', command: [pnpm, ['--filter', '@forge/stream-deck', 'typecheck']] });
     if (wantsAll || areas.has('skill-share-worker')) add({ id: 'typecheck:skill-share-worker', label: 'Skill-share worker typecheck', command: [pnpm, ['--filter', '@forge/skill-share-worker', 'typecheck']] });
   }
   if (mode === 'test') {
@@ -225,6 +313,10 @@ function addWorkspaceChecks(checks, areas, mode) {
     if (wantsAll || areas.has('ui')) add({ id: 'test:ui', label: 'UI tests', command: [pnpm, ['--filter', '@forge/ui', 'test']] });
     if (wantsAll || areas.has('protocol')) add({ id: 'test:protocol', label: 'Protocol tests', command: [pnpm, ['--filter', '@forge/protocol', 'test']] });
     if (wantsAll || areas.has('cli')) add({ id: 'test:cli', label: 'CLI tests', command: [pnpm, ['--filter', '@forge/cli', 'test']] });
+    if (wantsAll || areas.has('electron')) add({ id: 'test:electron', label: 'Electron tests', command: [pnpm, ['--filter', '@forge/electron', 'test']] });
+    if (wantsAll || areas.has('chrome-extension')) add({ id: 'test:chrome-extension', label: 'Chrome extension tests', command: [pnpm, ['--filter', '@forge/chrome-extension', 'test']] });
+    if (wantsAll || areas.has('native-messaging-host')) add({ id: 'test:native-messaging-host', label: 'Native messaging host tests', command: [pnpm, ['--filter', '@forge/external-chrome-native-host', 'test']] });
+    if (wantsAll || areas.has('stream-deck')) add({ id: 'test:stream-deck', label: 'Stream Deck tests', command: [pnpm, ['--filter', '@forge/stream-deck', 'test']] });
     if (wantsAll || areas.has('skill-share-worker')) add({ id: 'test:skill-share-worker', label: 'Skill-share worker tests', command: [pnpm, ['--filter', '@forge/skill-share-worker', 'test']] });
   }
 }
@@ -238,7 +330,7 @@ function dedupeChecks(checks) {
   });
 }
 
-function selectChecks(tier, changedFiles) {
+export function selectChecks(tier, changedFiles) {
   const checks = [];
   const skipped = [];
   const failureHints = [];
@@ -255,6 +347,7 @@ function selectChecks(tier, changedFiles) {
         { id: 'test', label: 'All tests', command: [pnpm, ['test']] },
         { id: 'typecheck', label: 'All workspace typechecks', command: [pnpm, ['typecheck']] },
         helpValidateCheck,
+        verifyDockerignoreCheck,
         { id: 'build', label: 'Build', command: [pnpm, ['build']] },
       ],
       skipped,
@@ -284,6 +377,30 @@ function selectChecks(tier, changedFiles) {
     skipped.push({ id: 'help:validate', reason: 'No help-content-related changes detected.' });
   }
 
+  if (changedFiles.some((entry) => isDockerConfigRelated(entry.path))) {
+    checks.push(verifyDockerignoreCheck);
+  } else {
+    skipped.push({ id: 'verify:dockerignore', reason: 'No Docker build-context config changes detected.' });
+  }
+
+  if (tier === 'quick' && changedFiles.some((entry) => entry.path === '.nvmrc')) {
+    checks.push(packagedRuntimePreflightCheck);
+  }
+
+  if (
+    changedFiles.some((entry) => isBrowserAttributionRelated(entry.path))
+    && (tier === 'quick' || !areas.has('all'))
+  ) {
+    checks.push(browserAttributionCheck);
+  }
+
+  if (
+    changedFiles.some((entry) => isReleaseVersionRelated(entry.path))
+    && (tier === 'quick' || !areas.has('all'))
+  ) {
+    checks.push(releaseVersionConsistencyCheck);
+  }
+
   if (tier === 'quick') {
     const existingChangedFiles = changedFiles.filter((entry) => existsSync(path.join(repoRoot, entry.path)));
     const lintFiles = existingChangedFiles.map((entry) => entry.path).filter((file) => isCodeFile(file));
@@ -294,12 +411,7 @@ function selectChecks(tier, changedFiles) {
     const testFiles = existingChangedFiles.map((entry) => entry.path).filter((file) => isTestFile(file));
     const grouped = new Map();
     for (const file of testFiles) {
-      const group = file.startsWith('apps/backend/') ? 'apps/backend'
-        : file.startsWith('apps/ui/') ? 'apps/ui'
-          : file.startsWith('packages/protocol/') ? 'packages/protocol'
-            : file.startsWith('packages/cli/') ? 'packages/cli'
-              : file.startsWith('apps/skill-share-worker/') ? 'apps/skill-share-worker'
-                : null;
+      const group = testWorkspace(file);
       if (!group) continue;
       const relative = path.relative(path.join(repoRoot, group), path.join(repoRoot, file));
       grouped.set(group, [...(grouped.get(group) ?? []), relative]);
@@ -449,33 +561,35 @@ async function main() {
   process.exitCode = exitCode;
 }
 
-main().catch(async (error) => {
-  const report = {
-    schemaVersion,
-    status: 'error',
-    tier: 'unknown',
-    baseRef: null,
-    headSha: '',
-    changedFiles: [],
-    selectedChecks: [],
-    executedChecks: [],
-    skippedChecks: [],
-    command: `node scripts/local-quality.mjs ${process.argv.slice(2).join(' ')}`.trim(),
-    durationMs: Date.now() - startTime,
-    exitCode: 1,
-    summary: error instanceof Error ? error.message : String(error),
-    failureHints: ['Run pnpm quality:quick -- --help for usage.'],
-    artifacts: [],
-  };
-  console.error(report.summary);
-  try {
-    const args = parseArgs(process.argv.slice(2));
-    if (args.write) {
-      report.tier = args.tier ?? 'unknown';
-      await writeReport(report, args.output ?? defaultReportPath);
+if (process.argv[1] && path.resolve(process.argv[1]) === modulePath) {
+  main().catch(async (error) => {
+    const report = {
+      schemaVersion,
+      status: 'error',
+      tier: 'unknown',
+      baseRef: null,
+      headSha: '',
+      changedFiles: [],
+      selectedChecks: [],
+      executedChecks: [],
+      skippedChecks: [],
+      command: `node scripts/local-quality.mjs ${process.argv.slice(2).join(' ')}`.trim(),
+      durationMs: Date.now() - startTime,
+      exitCode: 1,
+      summary: error instanceof Error ? error.message : String(error),
+      failureHints: ['Run pnpm quality:quick -- --help for usage.'],
+      artifacts: [],
+    };
+    console.error(report.summary);
+    try {
+      const args = parseArgs(process.argv.slice(2));
+      if (args.write) {
+        report.tier = args.tier ?? 'unknown';
+        await writeReport(report, args.output ?? defaultReportPath);
+      }
+    } catch {
+      // Ignore secondary parse/write errors.
     }
-  } catch {
-    // Ignore secondary parse/write errors.
-  }
-  process.exitCode = 1;
-});
+    process.exitCode = 1;
+  });
+}

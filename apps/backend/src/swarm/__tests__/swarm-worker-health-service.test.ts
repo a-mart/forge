@@ -324,6 +324,55 @@ describe("SwarmWorkerHealthService", () => {
     expect(deliverCompletedWorker).not.toHaveBeenCalled();
   });
 
+  it("clears every owned worker-health state through one operation", async () => {
+    vi.useFakeTimers();
+    const workerDescriptor = worker();
+    const descriptors = new Map([[workerDescriptor.agentId, workerDescriptor]]);
+    const { service } = createHarness({ descriptors });
+    const expire = vi.fn(async () => undefined);
+
+    service.workerStallState.set(workerDescriptor.agentId, {
+      lastProgressAt: Date.now(),
+      nudgeSent: true,
+      nudgeSentAt: Date.now(),
+      lastToolName: "shell",
+      lastToolInput: "input",
+      lastToolOutput: "output",
+      lastDetailedReportAt: Date.now(),
+    });
+    service.workerActivityState.set(workerDescriptor.agentId, {
+      currentToolName: "shell",
+      currentToolStartedAt: Date.now(),
+      lastProgressAt: Date.now(),
+      toolCallCount: 1,
+      errorCount: 0,
+      turnCount: 0,
+    });
+    expect(service.beginPendingTransientWorkerTerminatedError(
+      workerDescriptor.agentId,
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "terminated",
+        },
+      },
+      expire,
+    )).toBe(true);
+
+    service.clearWorkerHealthState(workerDescriptor.agentId);
+
+    expect(service.workerStallState.has(workerDescriptor.agentId)).toBe(false);
+    expect(service.workerActivityState.has(workerDescriptor.agentId)).toBe(false);
+    expect(service.hasPendingTransientWorkerTerminatedError(workerDescriptor.agentId)).toBe(false);
+    expect(service.getWorkerActivity(workerDescriptor.agentId)).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+    expect(expire).not.toHaveBeenCalled();
+  });
+
   it("keeps stall detection separate from normal worker completion", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-16T12:00:00.000Z"));

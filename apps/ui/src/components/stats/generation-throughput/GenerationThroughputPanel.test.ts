@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { fireEvent, getByText, waitFor } from '@testing-library/dom'
-import { createElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { GenerationThroughputSnapshot } from '@forge/protocol'
@@ -13,6 +13,19 @@ const fetchCallsMock = vi.fn()
 
 vi.mock('./use-generation-throughput', () => ({ useGenerationThroughput: (...args: unknown[]) => useGenerationThroughputMock(...args) }))
 vi.mock('./generation-throughput-api', async (importOriginal) => ({ ...(await importOriginal<typeof import('./generation-throughput-api')>()), fetchGenerationCalls: (...args: unknown[]) => fetchCallsMock(...args) }))
+vi.mock('recharts', async (importOriginal) => {
+  const recharts = await importOriginal<typeof import('recharts')>()
+  const { cloneElement, isValidElement } = await import('react')
+  return {
+    ...recharts,
+    ResponsiveContainer: ({ children }: { children?: unknown }) => isValidElement(children)
+      ? cloneElement(
+          children as ReactElement<{ width?: number; height?: number }>,
+          { width: 800, height: 224 },
+        )
+      : null,
+  }
+})
 
 let container: HTMLDivElement
 let root: Root | null = null

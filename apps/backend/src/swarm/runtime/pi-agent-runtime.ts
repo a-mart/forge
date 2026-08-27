@@ -99,7 +99,6 @@ const DIRECT_USER_SOURCE_CONTEXT_PATTERN = /^\[sourceContext\]\s+(\{[^\n]*\})(?:
 export const DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE =
   "Handle this user message with the appropriate output path now. For direct web/session-transcript replies, answer normally or continue with brief assistant progress followed by same-turn work. Use speak_to_user.target only for non-web/routed delivery; otherwise use present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
-const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
 const ESTIMATION_ERROR_MARGIN_PERCENT = 0.05;
 const ESTIMATION_ERROR_MARGIN_MIN_TOKENS = 4_096;
@@ -1695,10 +1694,6 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private checkContextBudget(): void {
-    if (!MID_TURN_CONTEXT_GUARD_ENABLED) {
-      return;
-    }
-
     if (this.isContextRecoveryActive() || this.status === "terminated" || !this.session.isStreaming) {
       return;
     }

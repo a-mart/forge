@@ -29,8 +29,8 @@ describe('ForgeClient', () => {
       },
     })
 
-    await client.getCapabilities()
-    expect(calls).toEqual([{ url: 'http://127.0.0.1:47287/api/cli/capabilities', auth: 'Bearer secret' }])
+    await client.getStatus()
+    expect(calls).toEqual([{ url: 'http://127.0.0.1:47287/api/cli/status', auth: 'Bearer secret' }])
   })
 
   it('redacts API keys from HTTP error messages', async () => {

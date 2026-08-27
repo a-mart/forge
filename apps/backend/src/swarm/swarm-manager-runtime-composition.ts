@@ -723,8 +723,6 @@ export class SwarmManagerRuntimeComposition {
       emitProfilesSnapshot: events.emitProfilesSnapshot,
       logDebug: events.logDebug,
       clearWorkerHealthState: (agentId) => runtimeLifecycle.clearWorkerHealthState(agentId),
-      deleteWorkerStallState: (agentId) => runtimeLifecycle.deleteWorkerStallState(agentId),
-      deleteWorkerActivityState: (agentId) => runtimeLifecycle.deleteWorkerActivityState(agentId),
       clearTrackedToolPaths: (agentId) => this.runtimeController.clearTrackedToolPaths(agentId),
       suppressIntentionalStopRuntimeCallbacks: (agentId, token) =>
         this.runtimeController.suppressIntentionalStopRuntimeCallbacks(agentId, token),

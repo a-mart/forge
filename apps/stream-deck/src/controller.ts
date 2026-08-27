@@ -50,11 +50,10 @@ export class ForgeDeckController {
 
   register(
     action: KeyAction,
-    manifestId: string,
     kind: ForgeActionKind,
     settings: ForgeActionSettings,
   ): void {
-    this.visible.set(action.id, { id: action.id, manifestId, kind, action, settings })
+    this.visible.set(action.id, { id: action.id, kind, action, settings })
     void this.render(this.visible.get(action.id)!)
     this.schedulePoll(0)
   }

@@ -85,7 +85,7 @@ export class TerminalWsProxy {
 
   async stop(): Promise<void> {
     for (const client of this.wss.clients) {
-      closeSocket(client, 1012, "Terminal proxy shutting down");
+      client.terminate();
     }
 
     await new Promise<void>((resolve, reject) => {

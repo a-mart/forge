@@ -2,7 +2,7 @@
 
 First-party Forge command-line interface for headless automation.
 
-The built CLI entrypoint is bundled to `dist/cli.js`. `@forge/protocol` is used as a workspace type source during development but is intentionally not a published/runtime dependency.
+The built CLI entrypoint is bundled to `dist/cli.js`. `@forge/protocol` is used as a workspace build-time source and bundled into the entrypoint, but is intentionally not a published/runtime dependency.
 
 ## Install
 

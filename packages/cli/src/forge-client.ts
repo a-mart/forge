@@ -4,7 +4,6 @@ import type {
   ChoiceAnswer,
   CliAgentShowResponse,
   CliAgentsListResponse,
-  CliCapabilitiesResponse,
   CliChoiceRouteResult,
   CliChoiceShowResponse,
   CliChoicesListResponse,
@@ -95,7 +94,6 @@ export interface ClientSessionTranscriptOptions {
 }
 
 export interface ForgeClientLike {
-  getCapabilities(): Promise<CliCapabilitiesResponse>
   getStatus(): Promise<CliStatusResponse>
   listProfiles(): Promise<CliProfilesListResponse>
   showProfile(profileId: string): Promise<CliProfileShowResponse>
@@ -138,10 +136,6 @@ export class ForgeClient implements ForgeClientLike {
     this.apiKey = options.apiKey
     this.fetchImpl = options.fetchImpl ?? fetch
     this.WebSocketImpl = options.WebSocketImpl ?? WebSocket
-  }
-
-  getCapabilities(): Promise<CliCapabilitiesResponse> {
-    return this.get('capabilities')
   }
 
   getStatus(): Promise<CliStatusResponse> {
@@ -518,7 +512,7 @@ export class ForgeClient implements ForgeClientLike {
   }
 }
 
-export function assertSupportedCapabilities(response: CliCapabilitiesResponse | CliStatusResponse): void {
+export function assertSupportedCapabilities(response: CliStatusResponse): void {
   const capabilities = response.capabilities
   if (!capabilities.available) {
     throw new CliError('Forge CLI API is not available on this server.', {

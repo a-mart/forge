@@ -16,7 +16,6 @@ import {
   ManagedElectronTargetAdapter,
   type BrowserTabRegistration,
   type BrowserWebContentsLike,
-  type BrowserWebviewRegistration,
   type ManagedElectronTargetAdapterOptions,
   type PreparedRecording,
 } from './managed-electron-target-adapter.js'
@@ -49,7 +48,6 @@ export class BrowserAutomationManager {
   }
 
   get capabilities(): AutomaticBrowserHost['capabilities'] { return this.automaticHost.capabilities }
-  get supportedOperations() { return this.managed.supportedOperations }
   get runtimeCount(): number { return this.managed.runtimeCount }
 
   synchronizeSessions(snapshots: readonly BrowserSessionSnapshot[]): void {
@@ -60,11 +58,6 @@ export class BrowserAutomationManager {
     const tab = this.managed.registerTabWebContents(registration, webContents)
     this.automaticHost.adoptTarget(tab)
     return tab
-  }
-
-  /** @deprecated Main-owned tabs no longer register renderer webview IDs. */
-  registerWebview(registration: BrowserWebviewRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
-    return this.registerTabWebContents(registration, webContents)
   }
 
   hasTab(tabId: string): boolean { return this.managed.hasTab(tabId) }
@@ -84,11 +77,6 @@ export class BrowserAutomationManager {
   unregisterTabWebContents(tabId: string, webContentsId?: number): void {
     this.managed.unregisterTabWebContents(tabId, webContentsId)
   }
-  /** @deprecated Main-owned tabs use unregisterTabWebContents. */
-  unregisterWebview(tabId: string, webContentsId?: number): void {
-    this.unregisterTabWebContents(tabId, webContentsId)
-  }
-
   execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
     return this.automaticHost.perform(request)
   }

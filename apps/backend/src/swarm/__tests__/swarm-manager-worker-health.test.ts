@@ -383,21 +383,4 @@ describe("SwarmManager worker results", () => {
     expect(message).toContain("provider rate limit was reached");
   });
 
-  it("does not recreate worker activity state after a worker stops streaming", async () => {
-    const config = await makeTempConfig();
-    const manager = new TestSwarmManager(config);
-    await bootWithDefaultManager(manager, config);
-    const worker = await manager.spawnAgent("manager", { agentId: "late-event-worker" });
-
-    const state = manager as unknown as {
-      workerStallState: Map<string, unknown>;
-      workerActivityState: Map<string, unknown>;
-      updateWorkerActivity(agentId: string, event: unknown): void;
-    };
-    state.updateWorkerActivity(worker.agentId, { type: "turn_end", toolResults: [] });
-
-    expect(state.workerStallState.has(worker.agentId)).toBe(false);
-    expect(state.workerActivityState.has(worker.agentId)).toBe(false);
-    expect(manager.getWorkerActivity(worker.agentId)).toBeUndefined();
-  });
 });

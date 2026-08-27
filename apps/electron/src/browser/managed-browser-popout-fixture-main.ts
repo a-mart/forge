@@ -24,7 +24,7 @@ void app.whenReady().then(async () => {
   const port = await listen(server)
   const main = new BrowserWindow({ show: false, width: 900, height: 700 })
   const popout = new BrowserWindow({ show: false, width: 900, height: 700 })
-  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: main.webContents.id, sendToRenderer: () => undefined })
+  const manager = new BrowserAutomationManager({ approvedDataRoot: root, sendToRenderer: () => undefined })
   const host = new ManagedBrowserViewHost({ manager, sessions: new BrowserSessionRegistry(), guestPreloadPath: path.join(__dirname, 'guest-preload.js') })
   const now = new Date().toISOString()
   const url = `http://127.0.0.1:${port}/fixture`

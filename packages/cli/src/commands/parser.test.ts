@@ -23,6 +23,12 @@ describe('parseArgs', () => {
     expect(parsed.options).toEqual({ [option]: value })
   })
 
+  it('preserves empty values in equals form', () => {
+    expect(parseArgs(['command', '--label='])).toEqual({
+      positionals: ['command'], options: { label: '' },
+    })
+  })
+
   it('parses all boolean flags and short aliases', () => {
     expect(parseArgs(['--json', '--quiet', '--help', '-h', '--yes', '--stop-on-timeout', '--include-worker-updates', '--version', '-v'])).toEqual({
       positionals: [], options: { json: true, quiet: true, help: true, yes: true, stopOnTimeout: true, includeWorkerUpdates: true, version: true },
@@ -45,6 +51,7 @@ describe('parseArgs', () => {
   it('rejects another flag as a value and unknown options', () => {
     expect(() => parseArgs(['--timeout', '--json'])).toThrow(/Missing value for --timeout/u)
     expect(() => parseArgs(['--wat'])).toThrow(/Unknown option: --wat/u)
+    expect(() => parseArgs(['--wat=value'])).toThrow(/Unknown option: --wat=value/u)
     expect(() => parseArgs(['-x'])).toThrow(/Unknown option: -x/u)
   })
 })

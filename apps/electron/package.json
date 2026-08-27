@@ -13,6 +13,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:all": "node ./scripts/build-all.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "test:browser-fixture": "pnpm build && node ./scripts/browser-fixture-smoke.mjs",
     "test:browser-popout-reparent": "pnpm build && node ./scripts/browser-popout-reparent-smoke.mjs",
     "test:browser-popout-product": "pnpm build && node ./scripts/managed-browser-popout-product-smoke.mjs",

@@ -19,7 +19,7 @@ abstract class ForgeAction extends SingletonAction<ForgeActionSettings> {
 
   onWillAppear(event: WillAppearEvent<ForgeActionSettings>): void {
     if (!event.action.isKey()) return
-    this.controller.register(event.action, event.action.manifestId, this.kind, event.payload.settings)
+    this.controller.register(event.action, this.kind, event.payload.settings)
   }
 
   onWillDisappear(event: WillDisappearEvent<ForgeActionSettings>): void {

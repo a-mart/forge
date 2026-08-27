@@ -12,10 +12,11 @@ pnpm quality:report
 ```
 
 - `quality:quick` lints changed JS/TS files, runs routed typechecks, and runs changed Vitest files when they can be mapped to a workspace.
-- `quality:changed` runs conservative workspace-level lint, typecheck, and tests for affected areas.
-- `quality:full` runs the repo gate: lint, knip, tests, all workspace typechecks (including Electron), and build.
+- `quality:changed` runs conservative workspace-level lint, typecheck, and tests for affected areas, including Electron, the Chrome extension, the native messaging host, and Stream Deck. Tooling, dependency, workflow, patch, and Docker configuration changes route broadly.
+- `quality:full` runs the repo gate: lint, knip, every workspace test suite, all workspace typechecks, strict help validation, Docker build-context safety, and build.
 - `quality:report` prints the latest `.forge/quality/latest.json` report.
 - Help-content edits are routed to `pnpm help:validate`; `pnpm help:validate:migration` is reserved for one-time migration baseline fidelity checks, not normal authoring.
+- Node runtime-pin, release-version, and browser-attribution changes include their repository-specific tests; the full tier includes those tests in the complete workspace suites.
 
 ## Required Secure Sessions gate
 

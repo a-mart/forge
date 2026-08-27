@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByLabelText, getByRole, waitFor } from '@testing-library/dom'
+import { fireEvent, getByLabelText, getByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
@@ -18,26 +18,34 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
-  act(() => root.unmount())
+afterEach(async () => {
+  await act(async () => {
+    root.unmount()
+    await Promise.resolve()
+  })
   container.remove()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
-function render(onAuthenticated = vi.fn()) {
-  act(() => {
+async function render(onAuthenticated = vi.fn()) {
+  await act(async () => {
     root.render(createElement(CollaborationInlineLoginDialog, {
       apiBaseUrl: 'https://collab.example.com/',
       onAuthenticated,
     }))
+    await Promise.resolve()
   })
   return onAuthenticated
 }
 
-function submit(email = 'member@example.com', password = 'correct-password') {
-  fireEvent.change(getByLabelText(document.body, 'Email'), { target: { value: email } })
-  fireEvent.change(getByLabelText(document.body, 'Password'), { target: { value: password } })
-  fireEvent.click(getByRole(document.body, 'button', { name: 'Sign in' }))
+async function submit(email = 'member@example.com', password = 'correct-password') {
+  await act(async () => {
+    fireEvent.change(getByLabelText(document.body, 'Email'), { target: { value: email } })
+    fireEvent.change(getByLabelText(document.body, 'Password'), { target: { value: password } })
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Sign in' }))
+    await Promise.resolve()
+  })
 }
 
 describe('CollaborationInlineLoginDialog', () => {
@@ -46,11 +54,12 @@ describe('CollaborationInlineLoginDialog', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    const onAuthenticated = render()
+    const onAuthenticated = await render()
 
-    submit()
+    await submit()
 
-    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledOnce())
+    expect(onAuthenticated).toHaveBeenCalledOnce()
+    expect((getByRole(document.body, 'button', { name: 'Sign in' }) as HTMLButtonElement).disabled).toBe(false)
     expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://collab.example.com/api/auth/sign-in/email', {
       method: 'POST',
       credentials: 'include',
@@ -67,37 +76,41 @@ describe('CollaborationInlineLoginDialog', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
       resolveSignIn = resolve
     })))
-    render()
+    await render()
 
     expect(document.body.querySelector('[aria-label="Close"]')).toBeNull()
-    submit()
+    await submit()
 
-    await waitFor(() => {
-      expect((getByLabelText(document.body, 'Email') as HTMLInputElement).disabled).toBe(true)
-      expect((getByLabelText(document.body, 'Password') as HTMLInputElement).disabled).toBe(true)
+    expect((getByLabelText(document.body, 'Email') as HTMLInputElement).disabled).toBe(true)
+    expect((getByLabelText(document.body, 'Password') as HTMLInputElement).disabled).toBe(true)
+
+    await act(async () => {
+      resolveSignIn?.(new Response(JSON.stringify({ message: 'Invalid email or password' }), { status: 401 }))
+      await Promise.resolve()
     })
-
-    resolveSignIn?.(new Response(JSON.stringify({ message: 'Invalid email or password' }), { status: 401 }))
-    await waitFor(() => expect(getByRole(document.body, 'alert').textContent).toContain('Invalid email or password'))
+    expect(getByRole(document.body, 'alert').textContent).toContain('Invalid email or password')
+    expect((getByRole(document.body, 'button', { name: 'Sign in' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('keeps the dialog open and shows invalid credentials without navigating away', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'Invalid email or password' }), { status: 401 })))
-    const onAuthenticated = render()
+    const onAuthenticated = await render()
 
-    submit()
+    await submit()
 
-    await waitFor(() => expect(getByRole(document.body, 'alert').textContent).toContain('Invalid email or password'))
+    expect(getByRole(document.body, 'alert').textContent).toContain('Invalid email or password')
+    expect((getByRole(document.body, 'button', { name: 'Sign in' }) as HTMLButtonElement).disabled).toBe(false)
     expect(onAuthenticated).not.toHaveBeenCalled()
     expect(document.body.textContent).not.toContain('Settings')
   })
 
   it('shows a clear network error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network unavailable')))
-    render()
+    await render()
 
-    submit()
+    await submit()
 
-    await waitFor(() => expect(getByRole(document.body, 'alert').textContent).toContain('Network unavailable'))
+    expect(getByRole(document.body, 'alert').textContent).toContain('Network unavailable')
+    expect((getByRole(document.body, 'button', { name: 'Sign in' }) as HTMLButtonElement).disabled).toBe(false)
   })
 })

@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileContentResult } from '@forge/protocol'
 import { FileContentViewer } from './FileContentViewer'
-import type { FileEditSessionController, FileEditSessionState } from './use-file-edit-session'
+import type { FileEditSessionController, FileEditSessionState } from './use-file-edit-sessions'
 
 const codeMirrorProps: Array<Record<string, unknown>> = []
 const headerProps: Array<Record<string, unknown>> = []
