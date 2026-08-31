@@ -30,6 +30,7 @@ import {
   SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MIN_PROJECT_DEFAULTS,
+  parseMaxProjectDefaults,
   type ManagerProfile,
   type SecureBrowserControlStatus,
 } from '@forge/protocol'
@@ -271,9 +272,13 @@ function BuilderSecretsSettings({
   }, [apiClient])
 
   const handleSaveLimit = useCallback(async () => {
-    const parsed = Number(limitDraft)
-    if (!Number.isFinite(parsed)) {
-      setError('Enter a whole number for the automatic-grant limit.')
+    let parsed: number
+    try {
+      parsed = parseMaxProjectDefaults(Number(limitDraft))
+    } catch {
+      setError(
+        `Enter a whole number from ${SECURE_SECRET_MIN_PROJECT_DEFAULTS} to ${SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS}.`,
+      )
       return
     }
     setSavingLimit(true)
@@ -367,6 +372,7 @@ function BuilderSecretsSettings({
         installingRunner={installingRunner}
         runnerInstallMessage={runnerInstallMessage}
         providers={catalog.providers}
+        maxProjectDefaults={maxProjectDefaults}
         configuredProjectDefaultCount={contextualProfileId
           ? new Set([
               ...catalog.projectDefaults

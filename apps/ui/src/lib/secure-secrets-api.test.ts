@@ -366,6 +366,54 @@ describe('secure secrets API', () => {
     )
   })
 
+  it('falls back to the compile-time default only for an older-backend 404', async () => {
+    const fetchMock = vi.fn(async (path: string) => new Response(
+      JSON.stringify(
+        path.endsWith('/api/settings/secure-secrets')
+          ? { error: 'not found' }
+          : path.endsWith('/providers')
+            ? { providers: [PROVIDER_SUMMARY] }
+            : path.endsWith('/project-defaults')
+              ? { projectDefaults: [] }
+              : path.endsWith('/ssh-trusted-hosts')
+                ? [SSH_HOST_SUMMARY]
+                : { secrets: [SECRET_SUMMARY] },
+      ),
+      {
+        status: path.endsWith('/api/settings/secure-secrets') ? 404 : 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(fetchSecureSecretsCatalog(client)).resolves.toEqual({
+      providers: [PROVIDER_SUMMARY],
+      secrets: [SECRET_SUMMARY],
+      projectDefaults: [],
+      sshTrustedHosts: [SSH_HOST_SUMMARY],
+      maxProjectDefaults: 50,
+    })
+  })
+
+  it('does not fall back to the compile-time default for other settings errors', async () => {
+    const fetchMock = vi.fn(async (path: string) => new Response(
+      JSON.stringify(
+        path.endsWith('/api/settings/secure-secrets')
+          ? { error: 'failed while using raw-secret-server-detail' }
+          : { providers: [PROVIDER_SUMMARY] },
+      ),
+      {
+        status: path.endsWith('/api/settings/secure-secrets') ? 500 : 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(fetchSecureSecretsCatalog(client)).rejects.toMatchObject({
+      code: 'SECURE_SOURCE_UNAVAILABLE',
+    })
+  })
+
   it('creates, updates, and removes project SSH trust metadata with secure control', async () => {
     const fetchMock = vi.fn(async (_path: string, init?: RequestInit) =>
       init?.method === 'DELETE'

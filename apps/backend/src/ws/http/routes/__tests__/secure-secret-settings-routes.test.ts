@@ -61,6 +61,56 @@ describe("createSecureSecretSettingsRoutes", () => {
     expect(service.getMaxProjectDefaults()).toBe(12);
   });
 
+  it("returns 400 for decimal and out-of-range updates", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-secure-secret-settings-invalid-"));
+    const service = new SecureSecretSettingsService({ dataDir });
+    await service.load();
+    const server = await createRouteServer(
+      createSecureSecretSettingsRoutes({ settingsService: service, runtimeTarget: "builder" }),
+    );
+
+    const decimal = await fetch(`${server.baseUrl}/api/settings/secure-secrets`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ maxProjectDefaults: 12.5 }),
+    });
+    expect(decimal.status).toBe(400);
+    await expect(decimal.json()).resolves.toEqual({
+      error: "maxProjectDefaults must be an integer from 1 to 256",
+    });
+
+    const tooHigh = await fetch(`${server.baseUrl}/api/settings/secure-secrets`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ maxProjectDefaults: 257 }),
+    });
+    expect(tooHigh.status).toBe(400);
+    expect(service.getMaxProjectDefaults()).toBe(50);
+  });
+
+  it("returns 409 when lowering below occupied automatic grants", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-secure-secret-settings-occupied-"));
+    const service = new SecureSecretSettingsService({
+      dataDir,
+      getOccupiedProjectDefaultCount: () => 8,
+    });
+    await service.load();
+    const server = await createRouteServer(
+      createSecureSecretSettingsRoutes({ settingsService: service, runtimeTarget: "builder" }),
+    );
+
+    const response = await fetch(`${server.baseUrl}/api/settings/secure-secrets`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ maxProjectDefaults: 7 }),
+    });
+    const body = await response.json() as { code: string; error: string };
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("SECURE_PROJECT_DEFAULT_LIMIT_REACHED");
+    expect(body.error).toContain("8 automatic grants");
+    expect(service.getMaxProjectDefaults()).toBe(50);
+  });
+
   it("returns 404 for collaboration runtime", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-secure-secret-settings-collab-"));
     const service = new SecureSecretSettingsService({ dataDir });

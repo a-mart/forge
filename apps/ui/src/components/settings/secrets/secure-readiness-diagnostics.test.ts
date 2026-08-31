@@ -29,6 +29,7 @@ describe('safe Secure Sessions diagnostics', () => {
       privateEntryAvailable: false,
       providers: [provider],
       configuredProjectDefaultCount: 100,
+      maxProjectDefaults: 50,
       checkedAt: '2026-07-24T12:34:56.000Z',
     })
     const parsed = JSON.parse(serialized)
@@ -43,10 +44,10 @@ describe('safe Secure Sessions diagnostics', () => {
         status: 'auth_required',
         statusCode: 'provider_auth_required',
       }],
-      projectDefaults: Array.from(
-        { length: 16 },
-        () => ({ state: 'configured', statusCode: 'ok' }),
-      ),
+      projectDefaults: {
+        configuredCount: 100,
+        truncated: true,
+      },
     })
     for (const forbidden of [
       'provider-secret-id',

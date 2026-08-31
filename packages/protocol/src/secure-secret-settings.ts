@@ -41,3 +41,17 @@ export function getSecureSecretSettingsConstraints(): SecureSecretSettingsConstr
     },
   }
 }
+
+export function parseMaxProjectDefaults(value: unknown): number {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value < SECURE_SECRET_MIN_PROJECT_DEFAULTS
+    || value > SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
+  ) {
+    throw new TypeError(
+      `maxProjectDefaults must be an integer from ${SECURE_SECRET_MIN_PROJECT_DEFAULTS} to ${SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS}`,
+    )
+  }
+  return value
+}

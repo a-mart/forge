@@ -6,6 +6,7 @@ import type {
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import {
+  SecureSecretSettingsConflictError,
   SecureSecretSettingsService,
   SecureSecretSettingsValidationError,
 } from "../../../swarm/secure-sessions/secure-secret-settings-service.js";
@@ -82,6 +83,13 @@ async function handleSecureSecretSettingsRequest(
   } catch (error) {
     if (error instanceof SecureSecretSettingsValidationError) {
       sendJson(response, 400, { error: error.message });
+      return;
+    }
+    if (error instanceof SecureSecretSettingsConflictError) {
+      sendJson(response, 409, {
+        code: error.code,
+        error: error.message,
+      });
       return;
     }
 

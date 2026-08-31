@@ -9,6 +9,7 @@ import {
 } from "@forge/protocol";
 import { getSecureSecretSettingsPath } from "../data-paths.js";
 import {
+  SecureSecretSettingsConflictError,
   SecureSecretSettingsService,
   SecureSecretSettingsValidationError,
   createDefaultSecureSecretSettings,
@@ -59,7 +60,7 @@ describe("SecureSecretSettingsService", () => {
     expect(reloaded.getMaxProjectDefaults()).toBe(12);
   });
 
-  it("clamps out-of-range values on load and update", async () => {
+  it("clamps malformed persisted files on load only", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "secure-secret-settings-clamp-"));
     const settingsPath = getSecureSecretSettingsPath(dataDir);
     await mkdir(dirname(settingsPath), { recursive: true });
@@ -76,18 +77,39 @@ describe("SecureSecretSettingsService", () => {
     const service = new SecureSecretSettingsService({ dataDir });
     await service.load();
     expect(service.getMaxProjectDefaults()).toBe(SECURE_SECRET_MIN_PROJECT_DEFAULTS);
-
-    const high = await service.update({ maxProjectDefaults: 10_000 });
-    expect(high.maxProjectDefaults).toBe(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS);
   });
 
-  it("rejects non-numeric updates", async () => {
+  it("rejects empty, decimal, and out-of-range updates without clamping", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "secure-secret-settings-invalid-"));
     const service = new SecureSecretSettingsService({ dataDir });
     await service.load();
 
     await expect(service.update({ maxProjectDefaults: "12" as never }))
       .rejects.toBeInstanceOf(SecureSecretSettingsValidationError);
+    await expect(service.update({ maxProjectDefaults: 12.5 }))
+      .rejects.toBeInstanceOf(SecureSecretSettingsValidationError);
+    await expect(service.update({ maxProjectDefaults: 0 }))
+      .rejects.toBeInstanceOf(SecureSecretSettingsValidationError);
+    await expect(service.update({ maxProjectDefaults: 257 }))
+      .rejects.toBeInstanceOf(SecureSecretSettingsValidationError);
     await expect(service.update(null)).rejects.toBeInstanceOf(SecureSecretSettingsValidationError);
+    expect(service.getMaxProjectDefaults()).toBe(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
+  });
+
+  it("rejects lowering below the occupied automatic-grant count", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "secure-secret-settings-occupied-"));
+    const service = new SecureSecretSettingsService({
+      dataDir,
+      getOccupiedProjectDefaultCount: () => 8,
+    });
+    await service.load();
+
+    await expect(service.update({ maxProjectDefaults: 7 }))
+      .rejects.toBeInstanceOf(SecureSecretSettingsConflictError);
+    expect(service.getMaxProjectDefaults()).toBe(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
+
+    await expect(service.update({ maxProjectDefaults: 8 })).resolves.toEqual(
+      expect.objectContaining({ maxProjectDefaults: 8 }),
+    );
   });
 });

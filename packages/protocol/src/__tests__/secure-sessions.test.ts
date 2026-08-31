@@ -11,7 +11,9 @@ import {
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
   SECURE_SECRET_MIN_PROJECT_DEFAULTS,
   SECURE_SECRET_PROVIDER_KINDS,
+  SECURE_SESSIONS_MAX_GRANTS,
   getSecureSecretSettingsConstraints,
+  parseMaxProjectDefaults,
   SECURE_SESSION_PRINCIPAL_KINDS,
   SecureSessionsContractError,
   isSecureSecretBinding,
@@ -84,9 +86,14 @@ describe('Secure Sessions protocol', () => {
     expect(SECURE_SECRET_MAX_PROJECT_DEFAULTS).toBe(50)
     expect(SECURE_SECRET_MIN_PROJECT_DEFAULTS).toBe(1)
     expect(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS).toBe(256)
+    expect(SECURE_SESSIONS_MAX_GRANTS).toBe(16)
     expect(getSecureSecretSettingsConstraints()).toEqual({
       maxProjectDefaults: { min: 1, max: 256, default: 50 },
     })
+    expect(parseMaxProjectDefaults(12)).toBe(12)
+    expect(() => parseMaxProjectDefaults(12.5)).toThrow(TypeError)
+    expect(() => parseMaxProjectDefaults(0)).toThrow(TypeError)
+    expect(() => parseMaxProjectDefaults(257)).toThrow(TypeError)
 
     const provider = {
       providerId: 'provider-local',
@@ -370,7 +377,7 @@ describe('Secure Sessions protocol', () => {
 
     for (const grants of [
       [],
-      Array.from({ length: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS + 1 }, (_, index) => ({
+      Array.from({ length: SECURE_SESSIONS_MAX_GRANTS + 1 }, (_, index) => ({
         secretId: `secret-${index}`,
         exposures: [{ deliveryKind: 'stdin' }],
         leaseKind: 'task',

@@ -106,6 +106,7 @@ export function SecureSessionsReadinessPanel({
   runnerInstallMessage,
   providers,
   configuredProjectDefaultCount,
+  maxProjectDefaults,
   onRefresh,
   onUnlockPrivateEntry,
   onInstallRunner,
@@ -120,6 +121,7 @@ export function SecureSessionsReadinessPanel({
   runnerInstallMessage: string | null
   providers: SecureSecretProviderSummary[]
   configuredProjectDefaultCount?: number
+  maxProjectDefaults?: number
   onRefresh: () => void | Promise<void>
   onUnlockPrivateEntry: () => void | Promise<void>
   onInstallRunner: () => void | Promise<void>
@@ -142,6 +144,7 @@ export function SecureSessionsReadinessPanel({
         privateEntryAvailable,
         providers,
         configuredProjectDefaultCount,
+        maxProjectDefaults,
       }))
       setCopyState('copied')
     } catch {

@@ -33,6 +33,7 @@ import {
   SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
+  SECURE_SESSIONS_MAX_GRANTS,
 } from "@forge/protocol";
 import {
   createExecutionDeliveryFromBindings,
@@ -257,14 +258,33 @@ export class SecureSessionsService {
     const configured = this.options.getMaxProjectDefaults?.();
     if (
       typeof configured !== "number"
-      || !Number.isFinite(configured)
+      || !Number.isSafeInteger(configured)
     ) {
       return SECURE_SECRET_MAX_PROJECT_DEFAULTS;
     }
     return Math.min(
       SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
-      Math.max(1, Math.round(configured)),
+      Math.max(1, configured),
     );
+  }
+
+  async getOccupiedProjectDefaultCount(): Promise<number> {
+    const store = await this.store();
+    let occupied = 0;
+    for (const { profileId, archivedAt, profileType } of this.options.listProfiles()) {
+      if (archivedAt || profileType === "system") continue;
+      occupied = Math.max(
+        occupied,
+        this.listEffectiveProjectDefaultsForProfile(store, profileId).length,
+      );
+    }
+    return occupied;
+  }
+
+  async notifySecureSecretSettingsChanged(): Promise<void> {
+    const store = await this.store();
+    store.bumpCatalogRevision();
+    this.emitCatalog(store);
   }
 
   async isSecurePrivateEntryAvailable(): Promise<boolean> {
@@ -2530,7 +2550,7 @@ export class SecureSessionsService {
     if (
       !Array.isArray(input.grants)
       || input.grants.length < 1
-      || input.grants.length > SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
+      || input.grants.length > SECURE_SESSIONS_MAX_GRANTS
       || new Set(input.grants.map(({ secretId }) => secretId)).size
         !== input.grants.length
     ) {

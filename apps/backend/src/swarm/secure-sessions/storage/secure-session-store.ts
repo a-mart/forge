@@ -203,6 +203,10 @@ export class SecureSessionStore {
     return { revision: row.revision, updatedAt: row.updated_at };
   }
 
+  bumpCatalogRevision(): SecureSessionCatalogState {
+    return this.bumpCatalog(this.now().toISOString());
+  }
+
   getProviderBackendConfig(providerId: string): SecureSessionProviderBackendConfig | null {
     assertId(providerId, "provider ID");
     const row = this.database.prepare(`

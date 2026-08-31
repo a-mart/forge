@@ -22,7 +22,10 @@ import type {
   UpdateSecureSecretSettingsRequest,
   UpdateSecureSecretSettingsResponse,
 } from '@forge/protocol'
-import { SECURE_SECRET_MAX_PROJECT_DEFAULTS } from '@forge/protocol'
+import {
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+  parseMaxProjectDefaults,
+} from '@forge/protocol'
 
 export type {
   SecureSecretBinding,
@@ -177,10 +180,11 @@ export function secureSecretsErrorMessage(error: unknown): string {
 export function resolveMaxProjectDefaults(
   catalog: Pick<SecureSecretsCatalog, 'maxProjectDefaults'> | null | undefined,
 ): number {
-  const configured = catalog?.maxProjectDefaults
-  return typeof configured === 'number' && Number.isFinite(configured)
-    ? configured
-    : SECURE_SECRET_MAX_PROJECT_DEFAULTS
+  try {
+    return parseMaxProjectDefaults(catalog?.maxProjectDefaults)
+  } catch {
+    return SECURE_SECRET_MAX_PROJECT_DEFAULTS
+  }
 }
 
 export function isSecureMaterialEntryAvailable(): boolean {
@@ -247,10 +251,12 @@ export async function fetchSecureSecretsCatalog(
       apiClient,
       '/api/secure-secrets/ssh-trusted-hosts',
     ),
-    requestJson<GetSecureSecretSettingsResponse>(
-      apiClient,
-      '/api/settings/secure-secrets',
-    ).catch(() => null),
+    fetchSecureSecretSettings(apiClient).catch((error) => {
+      if (error instanceof SecureSecretsError && error.code === 'SECURE_SECRET_NOT_FOUND') {
+        return null
+      }
+      throw error
+    }),
   ])
 
   return {
@@ -262,8 +268,7 @@ export async function fetchSecureSecretsCatalog(
     sshTrustedHosts: Array.isArray(sshTrustedHostPayload)
       ? sshTrustedHostPayload
       : sshTrustedHostPayload.trustedHosts,
-    maxProjectDefaults: settingsPayload?.settings.maxProjectDefaults
-      ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+    maxProjectDefaults: resolveMaxProjectDefaults(settingsPayload?.settings),
   }
 }
 

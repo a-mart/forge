@@ -8,6 +8,7 @@ import {
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MIN_PROJECT_DEFAULTS,
   getSecureSecretSettingsConstraints,
+  parseMaxProjectDefaults,
 } from "@forge/protocol";
 import { readFile } from "node:fs/promises";
 import { getSecureSecretSettingsPath } from "../data-paths.js";
@@ -29,15 +30,34 @@ export class SecureSecretSettingsValidationError extends Error {
   }
 }
 
+export class SecureSecretSettingsConflictError extends Error {
+  readonly code = "SECURE_PROJECT_DEFAULT_LIMIT_REACHED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SecureSecretSettingsConflictError";
+  }
+}
+
 export class SecureSecretSettingsService {
   private readonly settingsPath: string;
   private readonly now: () => Date;
+  private readonly getOccupiedProjectDefaultCount: () => number | Promise<number>;
+  private readonly onSettingsChanged?: () => void | Promise<void>;
   private settings: SecureSecretSettings = createDefaultSecureSecretSettings();
   private updateMutex: Promise<void> = Promise.resolve();
 
-  constructor(options: { dataDir: string; now?: () => Date }) {
+  constructor(options: {
+    dataDir: string;
+    now?: () => Date;
+    getOccupiedProjectDefaultCount?: () => number | Promise<number>;
+    onSettingsChanged?: () => void | Promise<void>;
+  }) {
     this.settingsPath = getSecureSecretSettingsPath(options.dataDir);
     this.now = options.now ?? (() => new Date());
+    this.getOccupiedProjectDefaultCount = options.getOccupiedProjectDefaultCount
+      ?? (() => 0);
+    this.onSettingsChanged = options.onSettingsChanged;
   }
 
   async load(): Promise<void> {
@@ -82,16 +102,30 @@ export class SecureSecretSettingsService {
     const patch = normalizeUpdatePayload(payload);
 
     return this.withUpdateLock(async () => {
+      const nextMaxProjectDefaults = patch.maxProjectDefaults === undefined
+        ? this.settings.maxProjectDefaults
+        : requireMaxProjectDefaults(patch.maxProjectDefaults);
+      if (nextMaxProjectDefaults !== this.settings.maxProjectDefaults) {
+        const occupied = await this.getOccupiedProjectDefaultCount();
+        if (
+          typeof occupied === "number"
+          && Number.isFinite(occupied)
+          && occupied > nextMaxProjectDefaults
+        ) {
+          throw new SecureSecretSettingsConflictError(
+            `maxProjectDefaults cannot be lower than the ${occupied} automatic grants already assigned to a project`,
+          );
+        }
+      }
+
       const next: SecureSecretSettings = {
-        maxProjectDefaults:
-          patch.maxProjectDefaults === undefined
-            ? this.settings.maxProjectDefaults
-            : normalizeMaxProjectDefaults(patch.maxProjectDefaults),
+        maxProjectDefaults: nextMaxProjectDefaults,
         updatedAt: this.now().toISOString(),
       };
 
       await writeSettingsFile(this.settingsPath, next);
       this.settings = next;
+      await this.onSettingsChanged?.();
       return this.getSettings();
     });
   }
@@ -120,22 +154,29 @@ export function createDefaultSecureSecretSettings(): SecureSecretSettings {
   };
 }
 
-export function clampMaxProjectDefaults(value: number): number {
-  const rounded = Math.round(value);
+/**
+ * Recovers a usable integer from a malformed or legacy persisted settings
+ * file. Live PUT updates must use `requireMaxProjectDefaults` instead and
+ * never clamp, round, or coerce invalid values.
+ */
+export function clampLoadedMaxProjectDefaults(value: number): number {
+  const rounded = Math.trunc(value);
   return Math.min(
     SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
     Math.max(SECURE_SECRET_MIN_PROJECT_DEFAULTS, rounded),
   );
 }
 
-export function normalizeMaxProjectDefaults(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+export function requireMaxProjectDefaults(value: unknown): number {
+  try {
+    return parseMaxProjectDefaults(value);
+  } catch (error) {
     throw new SecureSecretSettingsValidationError(
-      "maxProjectDefaults must be a finite number",
+      error instanceof Error
+        ? error.message
+        : `maxProjectDefaults must be an integer from ${SECURE_SECRET_MIN_PROJECT_DEFAULTS} to ${SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS}`,
     );
   }
-
-  return clampMaxProjectDefaults(value);
 }
 
 function normalizeLoadedSettings(value: unknown): SecureSecretSettings {
@@ -159,7 +200,7 @@ function normalizeLoadedMaxProjectDefaults(value: unknown, fallback: number): nu
     return fallback;
   }
 
-  return clampMaxProjectDefaults(value);
+  return clampLoadedMaxProjectDefaults(value);
 }
 
 function normalizeUpdatePayload(payload: unknown): UpdateSecureSecretSettingsRequest {
@@ -172,7 +213,7 @@ function normalizeUpdatePayload(payload: unknown): UpdateSecureSecretSettingsReq
     maxProjectDefaults:
       maybe.maxProjectDefaults === undefined
         ? undefined
-        : normalizeMaxProjectDefaults(maybe.maxProjectDefaults),
+        : requireMaxProjectDefaults(maybe.maxProjectDefaults),
   };
 }
 

@@ -2900,6 +2900,71 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("reports occupied automatic grants and invalidates the catalog after a settings change", async () => {
+    const harness = createHarness({ maxProjectDefaults: 3 });
+    const secretA = await harness.service.createLocalSecureSecret({
+      displayAlias: "occupied-a",
+      encryptedMaterial: Buffer.from(`${ALPHA}-a`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "OCCUPIED_A" }],
+    });
+    const secretB = await harness.service.createLocalSecureSecret({
+      displayAlias: "occupied-b",
+      encryptedMaterial: Buffer.from(`${ALPHA}-b`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "OCCUPIED_B" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secretA.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(secretB.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    expect(await harness.service.getOccupiedProjectDefaultCount()).toBe(2);
+
+    const before = harness.store.getCatalogState().revision;
+    await harness.service.notifySecureSecretSettingsChanged();
+    expect(harness.store.getCatalogState().revision).toBe(before + 1);
+    expect(harness.catalogEvents.at(-1)).toEqual({
+      type: "secure_secret_catalog_changed",
+      revision: before + 1,
+    });
+    await harness.close();
+  });
+
+  it("keeps public manual grant batches at 16 while applying more automatic defaults", async () => {
+    const harness = createHarness({ maxProjectDefaults: 17 });
+    const secrets = [];
+    for (let index = 0; index < 17; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `manual-cap-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `MANUAL_CAP_${index}`,
+        }],
+      }));
+    }
+    for (const secret of secrets) {
+      await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      });
+    }
+    const started = await harness.service.startSecureSession("manager-a");
+    expect(started.leases).toHaveLength(17);
+
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: secrets.map((secret) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: "IGNORED" }],
+        leaseKind: "task" as const,
+      })),
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    await harness.close();
+  });
+
   it("applies a durable all-project policy to current and future projects", async () => {
     const harness = createHarness();
     const secret = await harness.service.createLocalSecureSecret({
@@ -5702,6 +5767,7 @@ function createHarness(options: {
     dispose() {},
   };
   const snapshots: SecureSessionSnapshotEvent[] = [];
+  const catalogEvents: Array<{ type: string; revision: number }> = [];
   const recycles: string[] = [];
   let recycleDisposition = options.recycleDisposition;
   let nextId = 0;
@@ -5758,7 +5824,7 @@ function createHarness(options: {
       return value;
     },
     emitSnapshot: (event) => snapshots.push(event),
-    emitCatalogChanged: () => undefined,
+    emitCatalogChanged: (event) => catalogEvents.push(event),
     applyModeRuntimeRecycle: async (agentId) => {
       recycles.push(agentId);
       if (options.recycleThrows) throw new Error("recycle failed");
@@ -5792,6 +5858,7 @@ function createHarness(options: {
     passwordManagerCliInstalls,
     passwordManagerStatusPaths,
     snapshots,
+    catalogEvents,
     recycles,
     setRecycleDisposition(value: "recycled" | "deferred" | "none") {
       recycleDisposition = value;

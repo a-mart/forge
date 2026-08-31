@@ -268,6 +268,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.secureSecretSettingsService = new SecureSecretSettingsService({
       dataDir: this.config.paths.dataDir,
       now: () => new Date(this.now()),
+      getOccupiedProjectDefaultCount: () => this.secureSessionsService.getOccupiedProjectDefaultCount(),
+      onSettingsChanged: () => this.secureSessionsService.notifySecureSecretSettingsChanged(),
     });
     this.secureSessionsService = this.createSecureSessionsService(foundation.secureSessions);
     const { compactionRuntimeSettingsProvider, liveCompactionRuntimeSettingsProvider } = foundation;

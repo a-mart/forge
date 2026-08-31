@@ -932,7 +932,7 @@ describe('SettingsSecrets', () => {
         status: 'auth_required',
         statusCode: 'provider_auth_required',
       }],
-      projectDefaults: [{ state: 'configured', statusCode: 'ok' }],
+      projectDefaults: { configuredCount: 1, truncated: false },
     })
     expect(Object.keys(diagnostics).sort()).toEqual([
       'checkedAt',
@@ -1596,6 +1596,35 @@ describe('SettingsSecrets', () => {
       )
       expect(container.textContent).toContain('Automatic-grant limit saved.')
     })
+  })
+
+  it('rejects empty, decimal, and out-of-range automatic-grant limits without saving', async () => {
+    render()
+
+    await waitFor(() => {
+      expect(getByLabelText(container, 'Automatic grants per project')).toBeTruthy()
+    })
+    const limitInput = getByLabelText(container, 'Automatic grants per project') as HTMLInputElement
+    const save = () => fireEvent.click(getByRole(container, 'button', { name: 'Save' }))
+
+    fireEvent.change(limitInput, { target: { value: '' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+
+    fireEvent.change(limitInput, { target: { value: '12.5' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+
+    fireEvent.change(limitInput, { target: { value: '257' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+    expect(secureSecretsApiMock.updateSecureSecretSettings).not.toHaveBeenCalled()
   })
 
   it('prevents enabling another automatic secret once the live limit is reached', async () => {
