@@ -110,6 +110,7 @@ import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSessionAuditRoutes } from "./http/routes/session-audit-routes.js";
 import {
   createSecureSecretRoutes,
+  isDesktopOnlySecureSecretPath,
   type SecureSecretTransportService,
 } from "./http/routes/secure-secret-routes.js";
 import {
@@ -1301,9 +1302,9 @@ export class SwarmWebSocketServer {
           }
         }
         const isPreflight = request.method === "OPTIONS";
-        const desktopOnlyPath = isDesktopOnlySecureBrowserPath(
-          requestUrl.pathname,
-        );
+        const desktopOnlyPath =
+          isDesktopOnlySecureBrowserPath(requestUrl.pathname)
+          || isDesktopOnlySecureSecretPath(requestUrl.pathname);
         const mutationRequiresControl =
           request.method !== "GET"
           && request.method !== "HEAD"

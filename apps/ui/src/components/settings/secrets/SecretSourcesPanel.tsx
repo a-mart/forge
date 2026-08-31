@@ -23,12 +23,14 @@ import {
   type SecureSecretSourceStatus,
 } from '@/lib/secure-secrets-api'
 import { SourceStatusBadge } from './secret-ui'
+import { VaultTransferPanel } from './VaultTransferPanel'
 
 interface SecretSourcesPanelProps {
   apiClient: SettingsApiClient
   providers: SecureSecretProviderSummary[]
   materialEntrySupported: boolean
   materialEntryAvailable: boolean
+  vaultTransferSupported: boolean
   onChanged: (message: string) => Promise<void>
   onError: (error: unknown) => void
 }
@@ -38,6 +40,7 @@ export function SecretSourcesPanel({
   providers,
   materialEntrySupported,
   materialEntryAvailable,
+  vaultTransferSupported,
   onChanged,
   onError,
 }: SecretSourcesPanelProps) {
@@ -382,6 +385,15 @@ export function SecretSourcesPanel({
             </div>
           ) : null}
         </div>
+
+        {vaultTransferSupported ? (
+          <VaultTransferPanel
+            apiClient={apiClient}
+            available={materialEntryAvailable}
+            onChanged={onChanged}
+            onError={onError}
+          />
+        ) : null}
 
         {bitwardenProviders.map((provider) => (
           <div

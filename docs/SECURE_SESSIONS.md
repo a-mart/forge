@@ -559,16 +559,25 @@ retries when the current project's automatic grants depend on the local vault. *
 vault** remains available for manual retries and migration recovery; it is not a
 required routine step after unlocking.
 
-When a Forge data directory is copied to another machine, aliases, bindings, scopes,
-and automatic-grant policy can remain useful, but local-vault ciphertext and the
-encrypted Bitwarden machine-account token remain bound to the original operating
-system encryption context. Recover those sources under **Sources**:
+The operating-system seal on local-vault values and Bitwarden machine-account tokens
+is machine-bound, so copying the Forge data directory by itself cannot make those
+ciphertexts readable on a new machine. Use **Sources → Move vault to another machine**
+for the infrequent transfer case:
 
-- Choose **Test vault**. If saved local values cannot be decrypted, Forge lists the
-  affected aliases and offers them one at a time. **Save and continue** replaces only
-  that value while preserving its alias, bindings, scope, and automatic-grant policy. You can
-  also skip or delete the alias.
-- When a Bitwarden source reports **Reconnect required**, choose **Reconnect** and
-  enter a new machine-account token. Forge verifies it before replacing only the
-  encrypted credential; the connection and its imported aliases, bindings, scopes,
-  and automatic-grant policies stay in place.
+1. On the old machine, choose **Export transfer file** and save the displayed transfer
+   code somewhere separate from the downloaded file. The file is authenticated
+   ciphertext; the code is the random key and is not stored by Forge.
+2. Quit Forge without changing the vault, then copy the normal Forge data directory
+   and the transfer file to the new machine.
+3. Start Forge on the new machine, unlock private storage, and import the transfer file
+   with its code. Forge verifies that every encrypted record still matches the copied
+   database, then atomically re-seals all saved local values and Bitwarden credentials
+   for the new operating-system context.
+4. Test the vault and connected sources, then delete the transfer file and the saved
+   code.
+
+The export and import endpoints accept only the Forge Desktop control capability; a
+paired browser cannot use them. If the old machine is unavailable or no transfer was
+exported, the one-at-a-time **Test vault** recovery and Bitwarden **Reconnect** flow
+remain the fallback and preserve aliases, bindings, scopes, and automatic-grant
+policy.

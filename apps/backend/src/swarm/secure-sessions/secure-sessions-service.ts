@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
 import path from "node:path";
 import type {
@@ -23,6 +23,9 @@ import type {
   SecureSessionExecutionIncident,
   SecureSessionSnapshot as PublicSecureSessionSnapshot,
   SecureSessionSnapshotEvent,
+  ExportSecureVaultTransferResult,
+  ImportSecureVaultTransferRequest,
+  ImportSecureVaultTransferResult,
 } from "@forge/protocol";
 import {
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
@@ -58,6 +61,13 @@ import type {
   UpdateSecureSecretInput,
   UpdateSecureSshTrustedHostInput,
 } from "./secure-sessions-api.js";
+import {
+  SecureVaultTransferError,
+  createSecureVaultTransfer,
+  withOpenSecureVaultTransfer,
+  type OpenSecureVaultTransferItem,
+  type SecureVaultTransferSourceItem,
+} from "./secure-vault-transfer.js";
 import {
   SecureSessionsServiceError,
   type SecureSessionsServiceErrorCode,
@@ -163,6 +173,12 @@ interface ReservedLease {
   lease: SecureSessionLease;
   operationId: string;
   exposureIds: string[];
+}
+
+interface PreparedVaultTransferImportItem {
+  item: OpenSecureVaultTransferItem;
+  currentCiphertext: Buffer;
+  replacementCiphertext: Buffer | null;
 }
 
 interface PreparedSecureBashExecution {
@@ -625,6 +641,86 @@ export class SecureSessionsService {
   async listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> {
     const store = await this.store();
     return store.listProviders().map(toProviderSummary);
+  }
+
+  async exportSecureVaultTransfer(): Promise<ExportSecureVaultTransferResult> {
+    return await this.withAuthorityMutation(async () => {
+      const ownedCiphertexts: Buffer[] = [];
+      try {
+        await this.options.cipher.status();
+        const store = await this.store();
+        const items: SecureVaultTransferSourceItem[] = [];
+
+        for (const secret of store.listSecrets()) {
+          if (secret.retention !== "saved") continue;
+          const provider = store.getProvider(secret.providerId);
+          if (provider?.kind !== "local_keychain") continue;
+          const encrypted = store.getEncryptedSecret(secret.secretId);
+          const expectedCiphertext = encrypted?.encryptedMaterial ?? null;
+          if (!encrypted || !expectedCiphertext) {
+            encrypted?.encryptedMaterial?.fill(0);
+            throw new SecureSourceError("SECURE_SOURCE_NOT_FOUND");
+          }
+          ownedCiphertexts.push(expectedCiphertext);
+          items.push({
+            kind: "local_secret",
+            recordId: secret.secretId,
+            expectedCiphertext,
+            resolveMaterial: async () => {
+              const resolution = await this.options.localSource.resolve({
+                sourceLocator: encrypted.sourceLocator,
+                encryptedMaterial: expectedCiphertext,
+              });
+              resolution.refreshedEncryptedMaterial?.fill(0);
+              return resolution.material;
+            },
+          });
+        }
+
+        for (const provider of store.listProviders()) {
+          if (provider.kind !== "bitwarden_secrets_manager") continue;
+          const config = store.getProviderBackendConfig(provider.providerId);
+          if (!config) continue;
+          ownedCiphertexts.push(config.encryptedAccessToken);
+          items.push({
+            kind: "provider_credential",
+            recordId: provider.providerId,
+            expectedCiphertext: config.encryptedAccessToken,
+            resolveMaterial: async () => {
+              const decrypted = await this.options.cipher.decrypt(
+                config.encryptedAccessToken,
+              );
+              decrypted.reEncryptedCiphertext?.fill(0);
+              return decrypted.material;
+            },
+          });
+        }
+
+        return await createSecureVaultTransfer(items, this.now());
+      } catch (error) {
+        throw this.publicError(error);
+      } finally {
+        for (const ciphertext of ownedCiphertexts) ciphertext.fill(0);
+      }
+    });
+  }
+
+  async importSecureVaultTransfer(
+    input: ImportSecureVaultTransferRequest,
+  ): Promise<ImportSecureVaultTransferResult> {
+    return await this.withAuthorityMutation(async () => {
+      try {
+        await this.options.cipher.status();
+        const store = await this.store();
+        return await withOpenSecureVaultTransfer(
+          input.bundle,
+          input.transferCode,
+          async (items) => await this.importOpenVaultTransferItems(store, items),
+        );
+      } catch (error) {
+        throw this.publicError(error);
+      }
+    });
   }
 
   async listSecureSshTrustedHosts(): Promise<SecureSshTrustedHostSummary[]> {
@@ -4788,6 +4884,107 @@ export class SecureSessionsService {
     );
   }
 
+  private async importOpenVaultTransferItems(
+    store: SecureSessionStore,
+    items: readonly OpenSecureVaultTransferItem[],
+  ): Promise<ImportSecureVaultTransferResult> {
+    const prepared: PreparedVaultTransferImportItem[] = [];
+    let localSecretCount = 0;
+    let providerCredentialCount = 0;
+    try {
+      for (const item of items) {
+        let currentCiphertext: Buffer | null = null;
+        if (item.kind === "local_secret") {
+          const secret = store.getEncryptedSecret(item.recordId);
+          const provider = secret
+            ? store.getProvider(secret.providerId)
+            : null;
+          if (
+            !secret
+            || secret.retention !== "saved"
+            || provider?.kind !== "local_keychain"
+            || !secret.encryptedMaterial
+          ) {
+            secret?.encryptedMaterial?.fill(0);
+            throw new SecureSessionsServiceError(
+              "SECURE_VAULT_TRANSFER_MISMATCH",
+            );
+          }
+          currentCiphertext = secret.encryptedMaterial;
+          localSecretCount += 1;
+        } else {
+          const provider = store.getProvider(item.recordId);
+          const config = provider?.kind === "bitwarden_secrets_manager"
+            ? store.getProviderBackendConfig(item.recordId)
+            : null;
+          if (!config) {
+            throw new SecureSessionsServiceError(
+              "SECURE_VAULT_TRANSFER_MISMATCH",
+            );
+          }
+          currentCiphertext = config.encryptedAccessToken;
+          providerCredentialCount += 1;
+        }
+        if (!ciphertextMatchesDigest(
+          currentCiphertext,
+          item.expectedCiphertextDigest,
+        )) {
+          currentCiphertext.fill(0);
+          throw new SecureSessionsServiceError(
+            "SECURE_VAULT_TRANSFER_MISMATCH",
+          );
+        }
+        prepared.push({
+          item,
+          currentCiphertext,
+          replacementCiphertext: null,
+        });
+      }
+
+      for (const entry of prepared) {
+        entry.replacementCiphertext = await this.options.cipher.encrypt(
+          entry.item.material,
+        );
+      }
+
+      store.withTransaction(() => {
+        for (const entry of prepared) {
+          const replacement = entry.replacementCiphertext;
+          if (!replacement) {
+            throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+          }
+          const updated = entry.item.kind === "local_secret"
+            ? store.rotateEncryptedSecretMaterial({
+                secretId: entry.item.recordId,
+                expectedEncryptedMaterial: entry.currentCiphertext,
+                encryptedMaterial: replacement,
+              })
+            : store.rotateProviderBackendCredential({
+                providerId: entry.item.recordId,
+                expectedEncryptedAccessToken: entry.currentCiphertext,
+                encryptedAccessToken: replacement,
+              });
+          if (!updated) {
+            throw new SecureSessionsServiceError(
+              "SECURE_VAULT_TRANSFER_MISMATCH",
+            );
+          }
+        }
+      });
+
+      return {
+        importedItemCount: items.length,
+        localSecretCount,
+        providerCredentialCount,
+      };
+    } finally {
+      for (const entry of prepared) {
+        entry.currentCiphertext.fill(0);
+        entry.replacementCiphertext?.fill(0);
+      }
+    }
+  }
+
   private async store(): Promise<SecureSessionStore> {
     if (this.closed) throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
     this.storePromise ??= this.options.storeFactory();
@@ -4829,6 +5026,13 @@ export class SecureSessionsService {
     if (error instanceof SecureSessionRequestExpiredError) {
       return new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
+    if (error instanceof SecureVaultTransferError) {
+      return new SecureSessionsServiceError(
+        error.code === "empty"
+          ? "SECURE_VAULT_TRANSFER_EMPTY"
+          : "SECURE_VAULT_TRANSFER_INVALID",
+      );
+    }
     if (error instanceof SecureSourceError) {
       return new SecureSessionsServiceError(sourcePublicCode(error.code));
     }
@@ -4841,6 +5045,19 @@ export class SecureSessionsService {
 
   private now(): string {
     return this.options.now?.() ?? new Date().toISOString();
+  }
+}
+
+function ciphertextMatchesDigest(
+  ciphertext: Uint8Array,
+  expectedDigest: Uint8Array,
+): boolean {
+  const actualDigest = createHash("sha256").update(ciphertext).digest();
+  try {
+    return expectedDigest.byteLength === actualDigest.byteLength
+      && timingSafeEqual(expectedDigest, actualDigest);
+  } finally {
+    actualDigest.fill(0);
   }
 }
 

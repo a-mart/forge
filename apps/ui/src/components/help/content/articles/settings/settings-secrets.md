@@ -193,12 +193,21 @@ successful unlock. Starting Team Secure Mode also retries when the current proje
 automatic grants require the local vault. You do not need to run **Test vault** as a
 routine second step.
 
-After copying a Forge data directory to another machine, aliases and configuration can
-remain valid while operating-system-sealed values cannot. Under **Sources**:
+Copying the Forge data directory alone does not migrate saved values because the
+operating-system seal is machine-bound. For a one-time move, open **Sources → Move
+vault to another machine**:
 
-- **Test vault** is the manual retry and migration-recovery path. It identifies affected
-  local aliases and offers them one at a time.
-  Re-entering a value preserves its bindings, scope, and automatic-grant policy. You can
-  also skip or delete it.
-- **Reconnect** on a Bitwarden source verifies and replaces only its machine-account
-  token. The connection and imported secret references stay in place.
+1. On the old machine, export the encrypted transfer file and save its displayed code
+   separately. Forge does not store the code.
+2. Quit Forge without changing the vault, then copy the Forge data directory and the
+   transfer file to the new machine.
+3. Start Forge on the new machine, unlock private storage, and import the file with its
+   code. Forge verifies the copied database and atomically re-seals saved local values
+   and Bitwarden credentials for the new machine.
+4. Test the vault and connected sources, then delete the transfer file and code.
+
+This transfer control is available only in Forge Desktop, not in a paired browser. If
+the old machine or transfer is unavailable, **Test vault** still offers affected local
+aliases one at a time, and **Reconnect** replaces a Bitwarden machine-account token.
+Those fallback actions preserve the existing aliases, bindings, scopes, and automatic
+grant policy.

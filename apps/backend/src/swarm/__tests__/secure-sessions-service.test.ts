@@ -31,6 +31,58 @@ const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
 
 describe("SecureSessionsService", () => {
+  it("exports and transactionally re-seals machine-bound vault material", async () => {
+    const harness = createHarness();
+    const local = await harness.service.createLocalSecureSecret({
+      displayAlias: "migration/local",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: { kind: "instance" },
+    });
+    await harness.service.connectBitwardenSecureSecretProvider({
+      displayName: "Migration provider",
+      serverOrigin: "https://vault.example.test",
+      encryptedAccessToken: Buffer.from("synthetic-bws-token").toString("base64"),
+    });
+
+    const exported = await harness.service.exportSecureVaultTransfer();
+    expect(exported).toMatchObject({
+      localSecretCount: 1,
+      providerCredentialCount: 1,
+    });
+    expect(exported.bundle.itemCount).toBe(2);
+    expect(JSON.stringify(exported.bundle)).not.toContain(ALPHA);
+    expect(JSON.stringify(exported.bundle)).not.toContain("synthetic-bws-token");
+
+    await expect(harness.service.importSecureVaultTransfer({
+      bundle: exported.bundle,
+      transferCode: exported.transferCode,
+    })).resolves.toEqual({
+      importedItemCount: 2,
+      localSecretCount: 1,
+      providerCredentialCount: 1,
+    });
+
+    const wrongCode = `${exported.transferCode.slice(0, -1)}${
+      exported.transferCode.endsWith("A") ? "B" : "A"
+    }`;
+    await expect(harness.service.importSecureVaultTransfer({
+      bundle: exported.bundle,
+      transferCode: wrongCode,
+    })).rejects.toMatchObject({ code: "SECURE_VAULT_TRANSFER_INVALID" });
+
+    await harness.service.updateSecureSecret(local.secretId, {
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+    });
+    await expect(harness.service.importSecureVaultTransfer({
+      bundle: exported.bundle,
+      transferCode: exported.transferCode,
+    })).rejects.toMatchObject({ code: "SECURE_VAULT_TRANSFER_MISMATCH" });
+    const stillUpdated = harness.store.getEncryptedSecret(local.secretId);
+    expect(stillUpdated?.encryptedMaterial?.toString("utf8")).toBe(BETA);
+    stillUpdated?.encryptedMaterial?.fill(0);
+    await harness.close();
+  });
+
   it("seals a bounded trusted-browser private entry", async () => {
     const harness = createHarness();
     const encodedValue = Buffer.from(ALPHA).toString("base64");

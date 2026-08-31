@@ -30,6 +30,8 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   importBitwardenSecret: vi.fn(),
   testSecureSecretProvider: vi.fn(),
   disconnectSecureSecretProvider: vi.fn(),
+  exportSecureVaultTransfer: vi.fn(),
+  importSecureVaultTransfer: vi.fn(),
   createSecureSshTrustedHost: vi.fn(),
   updateSecureSshTrustedHost: vi.fn(),
   deleteSecureSshTrustedHost: vi.fn(),
@@ -68,6 +70,10 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.testSecureSecretProvider(...args),
     disconnectSecureSecretProvider: (...args: unknown[]) =>
       secureSecretsApiMock.disconnectSecureSecretProvider(...args),
+    exportSecureVaultTransfer: (...args: unknown[]) =>
+      secureSecretsApiMock.exportSecureVaultTransfer(...args),
+    importSecureVaultTransfer: (...args: unknown[]) =>
+      secureSecretsApiMock.importSecureVaultTransfer(...args),
     createSecureSshTrustedHost: (...args: unknown[]) =>
       secureSecretsApiMock.createSecureSshTrustedHost(...args),
     updateSecureSshTrustedHost: (...args: unknown[]) =>
@@ -111,6 +117,22 @@ const BITWARDEN_PROVIDER = {
   providerId: 'bitwarden-1',
   kind: 'bitwarden_secrets_manager' as const,
   displayName: 'Bitwarden work',
+}
+
+const VAULT_TRANSFER = {
+  bundle: {
+    format: 'forge-secure-vault-transfer' as const,
+    version: 1 as const,
+    algorithm: 'aes-256-gcm' as const,
+    createdAt: '2026-08-31T12:00:00.000Z',
+    itemCount: 2,
+    nonce: 'A'.repeat(16),
+    authTag: 'B'.repeat(22),
+    ciphertext: btoa('encrypted-transfer'),
+  },
+  transferCode: 'C'.repeat(43),
+  localSecretCount: 1,
+  providerCredentialCount: 1,
 }
 
 const PROFILES = [
@@ -166,6 +188,16 @@ beforeEach(() => {
     configurable: true,
     value: { writeText: clipboardWriteText },
   })
+  Object.defineProperties(URL, {
+    createObjectURL: {
+      configurable: true,
+      value: vi.fn(() => 'blob:forge-vault-transfer'),
+    },
+    revokeObjectURL: {
+      configurable: true,
+      value: vi.fn(),
+    },
+  })
   secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(true)
   secureSecretsApiMock.isSecureMaterialEntryAvailable.mockReturnValue(true)
   secureSecretsApiMock.unlockSecureMaterialEntry.mockReset()
@@ -180,6 +212,8 @@ beforeEach(() => {
     code: 'ok',
     affectedSecrets: [],
   })
+  secureSecretsApiMock.exportSecureVaultTransfer.mockReset()
+  secureSecretsApiMock.importSecureVaultTransfer.mockReset()
   secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
     providers: [LOCAL_PROVIDER],
     secrets: [],
@@ -264,6 +298,61 @@ describe('SettingsSecrets', () => {
         .getAttribute('data-state')).toBe('active')
       expect(container.textContent).toContain('Private sources')
     })
+  })
+
+  it('exports and imports one encrypted Desktop vault transfer without retaining the import code', async () => {
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    secureSecretsApiMock.exportSecureVaultTransfer.mockResolvedValue(VAULT_TRANSFER)
+    secureSecretsApiMock.importSecureVaultTransfer.mockResolvedValue({
+      importedItemCount: 2,
+      localSecretCount: 1,
+      providerCredentialCount: 1,
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Move vault to another machine')).toBeTruthy()
+    })
+    fireEvent.click(getByText(container, 'Move vault to another machine'))
+    fireEvent.click(getByRole(container, 'button', { name: 'Export transfer file' }))
+
+    const exportedCode = await waitFor(() => getByLabelText(
+      container,
+      'Exported vault transfer code',
+    ) as HTMLInputElement)
+    expect(exportedCode.value).toBe(VAULT_TRANSFER.transferCode)
+    expect(anchorClick).toHaveBeenCalledOnce()
+    fireEvent.click(getByRole(container, 'button', { name: 'Copy code' }))
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith(VAULT_TRANSFER.transferCode)
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Hide code' }))
+
+    const file = new File(
+      [JSON.stringify(VAULT_TRANSFER.bundle)],
+      'migration.forge-vault-transfer',
+      { type: 'application/json' },
+    )
+    const fileInput = getByLabelText(container, 'Transfer file') as HTMLInputElement
+    const codeInput = getByLabelText(container, 'Transfer code') as HTMLInputElement
+    fireEvent.change(fileInput, { target: { files: [file] } })
+    fireEvent.change(codeInput, { target: { value: VAULT_TRANSFER.transferCode } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Import transfer file' }))
+
+    await waitFor(() => {
+      expect(codeInput.value).toBe('')
+      expect(secureSecretsApiMock.importSecureVaultTransfer).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          bundle: VAULT_TRANSFER.bundle,
+          transferCode: VAULT_TRANSFER.transferCode,
+        },
+      )
+      expect(container.textContent).toContain('2 vault items were transferred')
+    })
+    expect(container.innerHTML).not.toContain(VAULT_TRANSFER.transferCode)
   })
 
   it('adds a project-scoped trusted SSH host from the SSH hosts tab', async () => {

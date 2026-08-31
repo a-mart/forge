@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   SECURE_SECRET_RETENTIONS,
+  SECURE_VAULT_TRANSFER_ALGORITHM,
+  SECURE_VAULT_TRANSFER_FORMAT,
+  SECURE_VAULT_TRANSFER_MAX_CIPHERTEXT_BYTES,
+  SECURE_VAULT_TRANSFER_VERSION,
   SecureSessionsContractError,
   parseSecureSecretBinding,
   parseSecureSecretAutomaticGrantPolicy,
@@ -17,6 +21,10 @@ import {
   type SecureSecretScope,
   type SecureSecretSummary,
   type SecureSshTrustedHostSummary,
+  type ExportSecureVaultTransferResult,
+  type ImportSecureVaultTransferRequest,
+  type ImportSecureVaultTransferResult,
+  type SecureVaultTransferBundle,
   type UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
@@ -24,7 +32,9 @@ import type { HttpRoute } from "../shared/http-route.js";
 
 const SECURE_SECRETS_PATH = "/api/secure-secrets";
 const SECURE_SECRET_PROVIDERS_PATH = `${SECURE_SECRETS_PATH}/providers`;
+const SECURE_VAULT_TRANSFER_PATH = `${SECURE_SECRETS_PATH}/transfer`;
 const MAX_SECURE_REQUEST_BYTES = 256 * 1024;
+const MAX_SECURE_TRANSFER_REQUEST_BYTES = 48 * 1024 * 1024;
 const MAX_ID_LENGTH = 256;
 const MAX_LABEL_LENGTH = 256;
 const MAX_NOTE_LENGTH = 2_000;
@@ -41,6 +51,9 @@ export const SECURE_ROUTE_ERROR_CODES = [
   "SECURE_SECRET_ALIAS_CONFLICT",
   "SECURE_SSH_HOST_KEY_CONFLICT",
   "SECURE_SSH_HOST_NOT_FOUND",
+  "SECURE_VAULT_TRANSFER_EMPTY",
+  "SECURE_VAULT_TRANSFER_INVALID",
+  "SECURE_VAULT_TRANSFER_MISMATCH",
   "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
   "SECURE_STALE_REVISION",
   "SECURE_OPERATION_FAILED",
@@ -91,6 +104,10 @@ export interface UpdateBitwardenSecureSecretProviderCredentialInput {
 
 export interface SecureSecretTransportService {
   listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> | SecureSecretProviderSummary[];
+  exportSecureVaultTransfer(): Promise<ExportSecureVaultTransferResult>;
+  importSecureVaultTransfer(
+    input: ImportSecureVaultTransferRequest,
+  ): Promise<ImportSecureVaultTransferResult>;
   connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary>;
@@ -135,6 +152,11 @@ export interface SecureSecretTransportService {
   deleteSecureSshTrustedHost(trustedHostId: string): Promise<boolean>;
 }
 
+export function isDesktopOnlySecureSecretPath(pathname: string): boolean {
+  return pathname === SECURE_VAULT_TRANSFER_PATH
+    || pathname.startsWith(`${SECURE_VAULT_TRANSFER_PATH}/`);
+}
+
 export function createSecureSecretRoutes(options: {
   service: SecureSecretTransportService;
 }): HttpRoute[] {
@@ -155,6 +177,36 @@ export function createSecureSecretRoutes(options: {
       }
 
       try {
+        if (
+          request.method === "POST"
+          && requestUrl.pathname === `${SECURE_VAULT_TRANSFER_PATH}/export`
+        ) {
+          sendSecureJson(
+            response,
+            200,
+            await options.service.exportSecureVaultTransfer(),
+          );
+          return;
+        }
+
+        if (
+          request.method === "POST"
+          && requestUrl.pathname === `${SECURE_VAULT_TRANSFER_PATH}/import`
+        ) {
+          const input = parseImportSecureVaultTransferInput(
+            await readSecureJsonBody(
+              request,
+              MAX_SECURE_TRANSFER_REQUEST_BYTES,
+            ),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.importSecureVaultTransfer(input),
+          );
+          return;
+        }
+
         if (request.method === "GET" && requestUrl.pathname === SECURE_SECRET_PROVIDERS_PATH) {
           sendSecureJson(response, 200, await options.service.listSecureSecretProviders());
           return;
@@ -546,6 +598,94 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
   };
 }
 
+function parseImportSecureVaultTransferInput(
+  value: unknown,
+): ImportSecureVaultTransferRequest {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["bundle", "transferCode"]);
+  return {
+    bundle: parseSecureVaultTransferBundle(input.bundle),
+    transferCode: parseTransferCode(input.transferCode),
+  };
+}
+
+function parseSecureVaultTransferBundle(
+  value: unknown,
+): SecureVaultTransferBundle {
+  const bundle = requireObject(value, "bundle");
+  assertKnownKeys(bundle, [
+    "format",
+    "version",
+    "algorithm",
+    "createdAt",
+    "itemCount",
+    "nonce",
+    "authTag",
+    "ciphertext",
+  ]);
+  if (
+    bundle.format !== SECURE_VAULT_TRANSFER_FORMAT
+    || bundle.version !== SECURE_VAULT_TRANSFER_VERSION
+    || bundle.algorithm !== SECURE_VAULT_TRANSFER_ALGORITHM
+    || typeof bundle.createdAt !== "string"
+    || bundle.createdAt.length > 64
+    || !Number.isFinite(Date.parse(bundle.createdAt))
+    || !Number.isSafeInteger(bundle.itemCount)
+    || (bundle.itemCount as number) <= 0
+    || (bundle.itemCount as number) > 512
+  ) {
+    throw new SecureSessionsContractError("bundle metadata is invalid");
+  }
+  return {
+    format: SECURE_VAULT_TRANSFER_FORMAT,
+    version: SECURE_VAULT_TRANSFER_VERSION,
+    algorithm: SECURE_VAULT_TRANSFER_ALGORITHM,
+    createdAt: bundle.createdAt,
+    itemCount: bundle.itemCount as number,
+    nonce: parseTransferBase64Url(bundle.nonce, "bundle.nonce", 16),
+    authTag: parseTransferBase64Url(bundle.authTag, "bundle.authTag", 22),
+    ciphertext: parseTransferCiphertext(bundle.ciphertext),
+  };
+}
+
+function parseTransferCode(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(value)) {
+    throw new SecureSessionsContractError("transferCode is invalid");
+  }
+  return value;
+}
+
+function parseTransferBase64Url(
+  value: unknown,
+  field: string,
+  exactLength: number,
+): string {
+  if (
+    typeof value !== "string"
+    || value.length !== exactLength
+    || !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    throw new SecureSessionsContractError(`${field} is invalid`);
+  }
+  return value;
+}
+
+function parseTransferCiphertext(value: unknown): string {
+  const maxBase64Length = Math.ceil(
+    SECURE_VAULT_TRANSFER_MAX_CIPHERTEXT_BYTES / 3,
+  ) * 4;
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > maxBase64Length
+    || value.length % 4 !== 0
+    || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)
+  ) {
+    throw new SecureSessionsContractError("bundle.ciphertext is invalid");
+  }
+  return value;
+}
+
 function parseSetProjectDefaultInput(value: unknown): { enabled: boolean } {
   const input = requireObject(value);
   assertKnownKeys(input, ["enabled"]);
@@ -798,6 +938,12 @@ function mapSecureRouteError(error: unknown): {
       return { code: "SECURE_SSH_HOST_KEY_CONFLICT", statusCode: 409 };
     case "SECURE_SSH_HOST_NOT_FOUND":
       return { code: "SECURE_SSH_HOST_NOT_FOUND", statusCode: 404 };
+    case "SECURE_VAULT_TRANSFER_EMPTY":
+      return { code: "SECURE_VAULT_TRANSFER_EMPTY", statusCode: 409 };
+    case "SECURE_VAULT_TRANSFER_INVALID":
+      return { code: "SECURE_VAULT_TRANSFER_INVALID", statusCode: 400 };
+    case "SECURE_VAULT_TRANSFER_MISMATCH":
+      return { code: "SECURE_VAULT_TRANSFER_MISMATCH", statusCode: 409 };
     case "SECURE_PROJECT_DEFAULT_LIMIT_REACHED":
       return { code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED", statusCode: 409 };
     case "SECURE_SOURCE_UNAVAILABLE":

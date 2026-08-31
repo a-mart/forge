@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type {
+  ExportSecureVaultTransferResult,
+  ImportSecureVaultTransferResult,
   SecureSecretProviderSummary,
   SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
@@ -10,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpRoute } from "../../shared/http-route.js";
 import {
   createSecureSecretRoutes,
+  isDesktopOnlySecureSecretPath,
   type SecureSecretTransportService,
 } from "../secure-secret-routes.js";
 
@@ -33,6 +36,28 @@ const providerTestResult: SecureSecretProviderTestResult = {
   provider,
   code: "ok",
   affectedSecrets: [],
+};
+
+const transferExport: ExportSecureVaultTransferResult = {
+  bundle: {
+    format: "forge-secure-vault-transfer",
+    version: 1,
+    algorithm: "aes-256-gcm",
+    createdAt: "2026-08-31T12:00:00.000Z",
+    itemCount: 2,
+    nonce: "A".repeat(16),
+    authTag: "B".repeat(22),
+    ciphertext: Buffer.from("authenticated-ciphertext").toString("base64"),
+  },
+  transferCode: "C".repeat(43),
+  localSecretCount: 1,
+  providerCredentialCount: 1,
+};
+
+const transferImport: ImportSecureVaultTransferResult = {
+  importedItemCount: 2,
+  localSecretCount: 1,
+  providerCredentialCount: 1,
 };
 
 const secret: SecureSecretSummary = {
@@ -71,6 +96,8 @@ const sshTrustedHost: SecureSshTrustedHostSummary = {
 function fakeService(): SecureSecretTransportService {
   return {
     listSecureSecretProviders: vi.fn(() => [provider]),
+    exportSecureVaultTransfer: vi.fn(async () => transferExport),
+    importSecureVaultTransfer: vi.fn(async () => transferImport),
     connectBitwardenSecureSecretProvider: vi.fn(async () => provider),
     testSecureSecretProvider: vi.fn(async () => providerTestResult),
     updateBitwardenSecureSecretProviderCredential: vi.fn(async () => provider),
@@ -93,6 +120,47 @@ function fakeService(): SecureSecretTransportService {
 }
 
 describe("secure secret routes", () => {
+  it("keeps vault transfer paths Desktop-only and forwards only encrypted bundles", async () => {
+    expect(isDesktopOnlySecureSecretPath(
+      "/api/secure-secrets/transfer/export",
+    )).toBe(true);
+    expect(isDesktopOnlySecureSecretPath("/api/secure-secrets/local")).toBe(false);
+
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+    const exported = await postJson(
+      `${server.baseUrl}/api/secure-secrets/transfer/export`,
+      {},
+    );
+    expect(exported.status).toBe(200);
+    expect(await exported.json()).toEqual(transferExport);
+
+    const imported = await postJson(
+      `${server.baseUrl}/api/secure-secrets/transfer/import`,
+      {
+        bundle: transferExport.bundle,
+        transferCode: transferExport.transferCode,
+      },
+    );
+    expect(imported.status).toBe(200);
+    expect(await imported.json()).toEqual(transferImport);
+    expect(service.importSecureVaultTransfer).toHaveBeenCalledWith({
+      bundle: transferExport.bundle,
+      transferCode: transferExport.transferCode,
+    });
+
+    const plaintextRejected = await postJson(
+      `${server.baseUrl}/api/secure-secrets/transfer/import`,
+      {
+        bundle: transferExport.bundle,
+        transferCode: transferExport.transferCode,
+        plaintext: "must-not-pass",
+      },
+    );
+    expect(plaintextRejected.status).toBe(400);
+    expect(service.importSecureVaultTransfer).toHaveBeenCalledTimes(1);
+  });
+
   it("serves metadata and forwards only encrypted local and Bitwarden inputs", async () => {
     const service = fakeService();
     const server = await createRouteServer(createSecureSecretRoutes({ service }));

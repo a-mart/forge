@@ -14,6 +14,9 @@ import type {
   SecureSessionReadiness,
   SecureBrowserPrivateEntryChallenge,
   SecureBrowserSealedPrivateEntry,
+  ExportSecureVaultTransferResult,
+  ImportSecureVaultTransferRequest,
+  ImportSecureVaultTransferResult,
 } from "@forge/protocol";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
@@ -47,6 +50,16 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> {
     return this.secureSessions.listSecureSecretProviders();
+  }
+
+  exportSecureVaultTransfer(): Promise<ExportSecureVaultTransferResult> {
+    return this.secureSessions.exportSecureVaultTransfer();
+  }
+
+  importSecureVaultTransfer(
+    input: ImportSecureVaultTransferRequest,
+  ): Promise<ImportSecureVaultTransferResult> {
+    return this.secureSessions.importSecureVaultTransfer(input);
   }
 
   listSecureSshTrustedHosts(): Promise<SecureSshTrustedHostSummary[]> {

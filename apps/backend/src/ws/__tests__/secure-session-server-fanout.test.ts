@@ -149,6 +149,17 @@ describe("secure session server transport", () => {
       },
     );
     expect(pairedBrowserSettings.status).toBe(403);
+    const pairedBrowserTransferExport = await fetch(
+      `${browserOrigin}/api/secure-secrets/transfer/export`,
+      {
+        method: "POST",
+        headers: {
+          cookie: pairedCookie ?? "",
+          Origin: browserOrigin,
+        },
+      },
+    );
+    expect(pairedBrowserTransferExport.status).toBe(403);
 
     await manager.requestSecureSecretAccess("manager", "web-dismissal-tool", {
       displayAlias: "WEB_DISMISSAL_TEST",

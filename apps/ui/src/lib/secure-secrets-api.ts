@@ -13,6 +13,9 @@ import type {
   SecureSshTrustedHostSummary,
   CreateSecureSshTrustedHostRequest,
   UpdateSecureSshTrustedHostRequest,
+  ExportSecureVaultTransferResult,
+  ImportSecureVaultTransferRequest,
+  ImportSecureVaultTransferResult,
 } from '@forge/protocol'
 
 export type {
@@ -29,6 +32,9 @@ export type {
   SecureSessionReadiness,
   SecureSessionReadinessCode,
   SecureSshTrustedHostSummary,
+  SecureVaultTransferBundle,
+  ExportSecureVaultTransferResult,
+  ImportSecureVaultTransferResult,
 } from '@forge/protocol'
 
 export type SecureSecretsCatalog =
@@ -107,6 +113,9 @@ export type SecureSecretsErrorCode =
   | 'SECURE_SECRET_NOT_FOUND'
   | 'SECURE_SSH_HOST_KEY_CONFLICT'
   | 'SECURE_SSH_HOST_NOT_FOUND'
+  | 'SECURE_VAULT_TRANSFER_EMPTY'
+  | 'SECURE_VAULT_TRANSFER_INVALID'
+  | 'SECURE_VAULT_TRANSFER_MISMATCH'
   | 'SECURE_STALE_REVISION'
   | 'SECURE_OPERATION_FAILED'
 
@@ -124,6 +133,12 @@ const ERROR_MESSAGES: Record<SecureSecretsErrorCode, string> = {
   SECURE_SSH_HOST_KEY_CONFLICT:
     'This SSH alias already has different connection details or a different host key. Review the saved host before replacing it.',
   SECURE_SSH_HOST_NOT_FOUND: 'That trusted SSH host no longer exists.',
+  SECURE_VAULT_TRANSFER_EMPTY:
+    'There is no machine-bound secret material to transfer.',
+  SECURE_VAULT_TRANSFER_INVALID:
+    'The vault transfer file or transfer code is invalid.',
+  SECURE_VAULT_TRANSFER_MISMATCH:
+    'This transfer does not match the copied Forge data on this machine.',
   SECURE_STALE_REVISION: 'Secret settings changed elsewhere. Refresh and try again.',
   SECURE_OPERATION_FAILED: 'The secure secrets operation could not be completed.',
 }
@@ -215,6 +230,33 @@ export async function fetchSecureSecretsCatalog(
       ? sshTrustedHostPayload
       : sshTrustedHostPayload.trustedHosts,
   }
+}
+
+export async function exportSecureVaultTransfer(
+  apiClient: SettingsApiClient,
+): Promise<ExportSecureVaultTransferResult> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<ExportSecureVaultTransferResult>(
+    apiClient,
+    '/api/secure-secrets/transfer/export',
+    { method: 'POST' },
+  )
+}
+
+export async function importSecureVaultTransfer(
+  apiClient: SettingsApiClient,
+  input: ImportSecureVaultTransferRequest,
+): Promise<ImportSecureVaultTransferResult> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<ImportSecureVaultTransferResult>(
+    apiClient,
+    '/api/secure-secrets/transfer/import',
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(input),
+    },
+  )
 }
 
 export async function createSecureSshTrustedHost(

@@ -9,9 +9,11 @@ import {
   createSecureSshTrustedHost,
   createLocalSecret,
   deleteSecureSshTrustedHost,
+  exportSecureVaultTransfer,
   fetchSecureSessionReadiness,
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
+  importSecureVaultTransfer,
   installSecureRunner,
   reconnectBitwardenProvider,
   secureSecretsErrorMessage,
@@ -217,6 +219,62 @@ describe('secure secrets API', () => {
       '/api/secure-secrets/ssh-trusted-hosts/ssh-host-1',
       expect.objectContaining({ method: 'DELETE' }),
     )
+  })
+
+  it('exports and imports only the encrypted Desktop vault transfer contract', async () => {
+    const transferBundle = {
+      format: 'forge-secure-vault-transfer' as const,
+      version: 1 as const,
+      algorithm: 'aes-256-gcm' as const,
+      createdAt: '2026-08-31T12:00:00.000Z',
+      itemCount: 2,
+      nonce: 'bm9uY2U',
+      authTag: 'YXV0aC10YWc',
+      ciphertext: 'ZW5jcnlwdGVkLW9ubHk=',
+    }
+    const exported = {
+      bundle: transferBundle,
+      transferCode: 'transfer-code-not-persisted',
+      localSecretCount: 1,
+      providerCredentialCount: 1,
+    }
+    const imported = {
+      importedItemCount: 2,
+      localSecretCount: 1,
+      providerCredentialCount: 1,
+    }
+    const fetchMock = vi.fn(async (path: string, _init?: RequestInit) => new Response(
+      JSON.stringify(path.endsWith('/export') ? exported : imported),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(exportSecureVaultTransfer(client)).resolves.toEqual(exported)
+    await expect(importSecureVaultTransfer(client, {
+      bundle: transferBundle,
+      transferCode: exported.transferCode,
+    })).resolves.toEqual(imported)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/secure-secrets/transfer/export',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/secure-secrets/transfer/import',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          bundle: transferBundle,
+          transferCode: exported.transferCode,
+        }),
+      }),
+    )
+    for (const call of fetchMock.mock.calls) {
+      expect(new Headers(call[1]?.headers).get('X-Forge-Secure-Control'))
+        .toBe('test-secure-control-token-that-is-long-enough')
+    }
   })
 
   it('loads and installs through only the fixed Secure Sessions readiness contract', async () => {

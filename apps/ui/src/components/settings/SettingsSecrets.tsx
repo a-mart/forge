@@ -357,6 +357,7 @@ function BuilderSecretsSettings({
               providers={catalog.providers}
               materialEntrySupported={materialEntrySupported}
               materialEntryAvailable={materialEntryAvailable}
+              vaultTransferSupported={localMaterialEntrySupported}
               onChanged={handleChanged}
               onError={handleError}
             />
