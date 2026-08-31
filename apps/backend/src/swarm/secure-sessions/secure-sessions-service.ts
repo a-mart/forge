@@ -33,7 +33,6 @@ import {
   SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
-  SECURE_SESSIONS_MAX_GRANTS,
 } from "@forge/protocol";
 import {
   createExecutionDeliveryFromBindings,
@@ -2550,11 +2549,13 @@ export class SecureSessionsService {
     if (
       !Array.isArray(input.grants)
       || input.grants.length < 1
-      || input.grants.length > SECURE_SESSIONS_MAX_GRANTS
       || new Set(input.grants.map(({ secretId }) => secretId)).size
         !== input.grants.length
     ) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    if (input.grants.length > this.maxProjectDefaults()) {
+      throw new SecureSessionsServiceError("SECURE_PROJECT_DEFAULT_LIMIT_REACHED");
     }
     const initialState = store.listSessionStates().find(
       (state) => state.sessionAgentId === sessionAgentId,

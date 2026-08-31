@@ -189,9 +189,10 @@ export type SecureSecretScope =
   | { kind: 'profiles'; profileIds: string[] }
 
 /**
- * One project may automatically grant at most this many saved secrets by
- * default. Operators can raise or lower the live limit in Secrets settings
- * to an integer from `SECURE_SECRET_MIN_PROJECT_DEFAULTS` through
+ * One project may grant at most this many saved secrets by default, for both
+ * automatic grants and manual grant request batches. Operators can raise or
+ * lower the live limit in Secrets settings to an integer from
+ * `SECURE_SECRET_MIN_PROJECT_DEFAULTS` through
  * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS`.
  *
  * A live override cannot go below the highest number of effective automatic
@@ -199,10 +200,10 @@ export type SecureSecretScope =
  * clients disable impossible default selections before they reach the
  * value-entry boundary when the live override is not yet loaded.
  *
- * Manual grant batches remain capped at `SECURE_SESSIONS_MAX_GRANTS`.
- * Internal automatic-default lease creation may use up to
- * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS` entries so a raised live
- * limit can still start Team Secure Mode in one operation.
+ * Protocol parsing accepts grant batches up to
+ * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS`. Backend runtime enforcement
+ * uses the current configured limit. Per-secret exposure/binding counts remain
+ * capped at 16 and are independent of this grant-batch limit.
  */
 export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 50
 export const SECURE_SECRET_MIN_PROJECT_DEFAULTS = 1
@@ -587,7 +588,7 @@ const SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS = 4096
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
-export const SECURE_SESSIONS_MAX_GRANTS = 16
+export const SECURE_SESSIONS_MAX_GRANTS = SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
 const SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH = 128
 const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
 const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256

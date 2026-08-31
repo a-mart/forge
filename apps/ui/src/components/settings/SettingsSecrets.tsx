@@ -292,7 +292,7 @@ function BuilderSecretsSettings({
         maxProjectDefaults: result.settings.maxProjectDefaults,
       }))
       setLimitDraft(String(result.settings.maxProjectDefaults))
-      setNotice('Automatic-grant limit saved.')
+      setNotice('Secure-grant limit saved.')
     } catch (nextError) {
       setError(secureSecretsErrorMessage(nextError))
     } finally {
@@ -324,10 +324,10 @@ function BuilderSecretsSettings({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
             <Label htmlFor="max-project-defaults" className="text-sm font-medium">
-              Automatic grants per project
+              Secure grants per project
             </Label>
             <p className="text-xs text-muted-foreground">
-              Each project can automatically grant at most this many saved secrets when Team Secure Mode starts. Default is {SECURE_SECRET_MAX_PROJECT_DEFAULTS}.
+              Each project can grant at most this many saved secrets automatically or in one manual request. Default is {SECURE_SECRET_MAX_PROJECT_DEFAULTS}.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -339,7 +339,7 @@ function BuilderSecretsSettings({
               value={limitDraft}
               onChange={(event) => setLimitDraft(event.target.value)}
               className="w-24"
-              aria-label="Automatic grants per project"
+              aria-label="Secure grants per project"
             />
             <Button
               type="button"

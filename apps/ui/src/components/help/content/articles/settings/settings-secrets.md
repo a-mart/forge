@@ -73,9 +73,11 @@ Changing this setting while Team Secure Mode is active marks it **Configured**. 
 **Apply now** in the shield to apply or retry non-active automatic grants for the
 session without restarting. An unavailable source or conflicting delivery skips only
 that grant and reports a fixed status without blocking other grants. Each project
-supports at most 50 effective automatic grants by default. Change that limit under
-**Automatic grants per project** to a whole number from 1 to 256. Forge rejects a
-lower limit when any project already has more automatic grants than the new value.
+supports at most 50 effective secure grants by default, for both automatic grants
+and one manual request batch. Change that limit under **Secure grants per project**
+to a whole number from 1 to 256. Forge rejects a lower limit when any project already
+has more automatic grants than the new value. Each saved secret still has at most 16
+bindings.
 
 Archiving a project preserves its project-only secrets and automatic-grant mappings.
 Permanently deleting a project removes that project from selected-project entries,

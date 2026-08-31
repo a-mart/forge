@@ -1581,9 +1581,9 @@ describe('SettingsSecrets', () => {
     render()
 
     await waitFor(() => {
-      expect(getByLabelText(container, 'Automatic grants per project')).toBeTruthy()
+      expect(getByLabelText(container, 'Secure grants per project')).toBeTruthy()
     })
-    const limitInput = getByLabelText(container, 'Automatic grants per project') as HTMLInputElement
+    const limitInput = getByLabelText(container, 'Secure grants per project') as HTMLInputElement
     expect(limitInput.value).toBe(String(SECURE_SECRET_MAX_PROJECT_DEFAULTS))
 
     fireEvent.change(limitInput, { target: { value: '12' } })
@@ -1594,7 +1594,7 @@ describe('SettingsSecrets', () => {
         expect.anything(),
         { maxProjectDefaults: 12 },
       )
-      expect(container.textContent).toContain('Automatic-grant limit saved.')
+      expect(container.textContent).toContain('Secure-grant limit saved.')
     })
   })
 
@@ -1602,9 +1602,9 @@ describe('SettingsSecrets', () => {
     render()
 
     await waitFor(() => {
-      expect(getByLabelText(container, 'Automatic grants per project')).toBeTruthy()
+      expect(getByLabelText(container, 'Secure grants per project')).toBeTruthy()
     })
-    const limitInput = getByLabelText(container, 'Automatic grants per project') as HTMLInputElement
+    const limitInput = getByLabelText(container, 'Secure grants per project') as HTMLInputElement
     const save = () => fireEvent.click(getByRole(container, 'button', { name: 'Save' }))
 
     fireEvent.change(limitInput, { target: { value: '' } })

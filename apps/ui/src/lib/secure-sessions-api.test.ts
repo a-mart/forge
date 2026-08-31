@@ -75,7 +75,7 @@ describe('Secure Sessions API', () => {
   it('maps the project-default limit to a fixed safe message', () => {
     expect(secureSessionUiErrorMessage(
       new SecureSessionUiError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'),
-    )).toBe('This project already has the maximum number of automatic secrets.')
+    )).toBe('This project already has the maximum number of secure grants.')
   })
 
   it('maps additive SSH trust metadata into the UI snapshot', () => {

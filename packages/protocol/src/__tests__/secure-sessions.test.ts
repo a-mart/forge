@@ -86,7 +86,7 @@ describe('Secure Sessions protocol', () => {
     expect(SECURE_SECRET_MAX_PROJECT_DEFAULTS).toBe(50)
     expect(SECURE_SECRET_MIN_PROJECT_DEFAULTS).toBe(1)
     expect(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS).toBe(256)
-    expect(SECURE_SESSIONS_MAX_GRANTS).toBe(16)
+    expect(SECURE_SESSIONS_MAX_GRANTS).toBe(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS)
     expect(getSecureSecretSettingsConstraints()).toEqual({
       maxProjectDefaults: { min: 1, max: 256, default: 50 },
     })
@@ -408,6 +408,24 @@ describe('Secure Sessions protocol', () => {
         exposures: [{ deliveryKind: 'stdin' }],
         leaseKind: 'task',
         sourceLocator: 'forbidden',
+      }],
+    })).toThrow(SecureSessionsContractError)
+
+    const maxGrants = Array.from({ length: SECURE_SESSIONS_MAX_GRANTS }, (_, index) => ({
+      secretId: `secret-${index}`,
+      exposures: [{ deliveryKind: 'stdin' as const }],
+      leaseKind: 'task' as const,
+    }))
+    expect(parseGrantSecureSecretLeasesRequest({
+      baseRevision: 4,
+      grants: maxGrants,
+    }).grants).toHaveLength(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS)
+    expect(() => parseGrantSecureSecretLeasesRequest({
+      baseRevision: 4,
+      grants: [{
+        secretId: 'secret-api',
+        exposures: Array.from({ length: 17 }, () => ({ deliveryKind: 'stdin' })),
+        leaseKind: 'task',
       }],
     })).toThrow(SecureSessionsContractError)
   })

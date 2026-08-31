@@ -55,8 +55,9 @@ export type SecureSecretsCatalog =
     projectDefaults: SecureSecretProjectDefaultSummary[]
     sshTrustedHosts?: SecureSshTrustedHostSummary[]
     /**
-     * Live per-project automatic-grant limit. Older backends may omit it;
-     * clients treat omission as `SECURE_SECRET_MAX_PROJECT_DEFAULTS`.
+     * Live per-project secure-grant limit for automatic grants and manual
+     * grant request batches. Older backends may omit it; clients treat
+     * omission as `SECURE_SECRET_MAX_PROJECT_DEFAULTS`.
      */
     maxProjectDefaults?: number
   }
