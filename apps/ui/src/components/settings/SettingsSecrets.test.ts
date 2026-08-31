@@ -32,6 +32,8 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   disconnectSecureSecretProvider: vi.fn(),
   connectBitwardenPasswordManager: vi.fn(),
   fetchBitwardenPasswordManagerSettings: vi.fn(),
+  installBitwardenPasswordManagerCli: vi.fn(),
+  updateBitwardenPasswordManagerCli: vi.fn(),
   unlockBitwardenPasswordManager: vi.fn(),
   lockBitwardenPasswordManager: vi.fn(),
   replaceBitwardenPasswordManagerCollections: vi.fn(),
@@ -79,6 +81,10 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.connectBitwardenPasswordManager(...args),
     fetchBitwardenPasswordManagerSettings: (...args: unknown[]) =>
       secureSecretsApiMock.fetchBitwardenPasswordManagerSettings(...args),
+    installBitwardenPasswordManagerCli: (...args: unknown[]) =>
+      secureSecretsApiMock.installBitwardenPasswordManagerCli(...args),
+    updateBitwardenPasswordManagerCli: (...args: unknown[]) =>
+      secureSecretsApiMock.updateBitwardenPasswordManagerCli(...args),
     unlockBitwardenPasswordManager: (...args: unknown[]) =>
       secureSecretsApiMock.unlockBitwardenPasswordManager(...args),
     lockBitwardenPasswordManager: (...args: unknown[]) =>
@@ -147,6 +153,15 @@ const BITWARDEN_PASSWORD_MANAGER_SETTINGS = {
   providerId: BITWARDEN_PASSWORD_MANAGER_PROVIDER.providerId,
   accountEmail: 'forge@example.test',
   serverUrl: 'https://vault.example.test',
+  cli: {
+    state: 'ready' as const,
+    source: 'system' as const,
+    executablePath: '/usr/local/bin/bw',
+    configuredExecutablePath: null,
+    version: '2026.8.0',
+    managedVersion: '2026.8.0',
+    canInstall: true,
+  },
   collections: [
     {
       collectionId: '11111111-1111-4111-8111-111111111111',
@@ -263,6 +278,8 @@ beforeEach(() => {
   secureSecretsApiMock.fetchBitwardenPasswordManagerSettings.mockResolvedValue(
     BITWARDEN_PASSWORD_MANAGER_SETTINGS,
   )
+  secureSecretsApiMock.installBitwardenPasswordManagerCli.mockReset()
+  secureSecretsApiMock.updateBitwardenPasswordManagerCli.mockReset()
   secureSecretsApiMock.unlockBitwardenPasswordManager.mockReset()
   secureSecretsApiMock.lockBitwardenPasswordManager.mockReset()
   secureSecretsApiMock.replaceBitwardenPasswordManagerCollections.mockReset()
@@ -398,6 +415,82 @@ describe('SettingsSecrets', () => {
       )
       expect(container.textContent).toContain(
         'Bitwarden collections saved. 2 added, 0 removed.',
+      )
+    })
+  })
+
+  it('installs a Forge-managed Bitwarden CLI and shows its exact sign-in command', async () => {
+    const missingCliSettings = {
+      ...BITWARDEN_PASSWORD_MANAGER_SETTINGS,
+      accountEmail: null,
+      serverUrl: null,
+      cli: {
+        state: 'missing' as const,
+        source: null,
+        executablePath: null,
+        configuredExecutablePath: null,
+        version: null,
+        managedVersion: '2026.8.0',
+        canInstall: true,
+      },
+      collections: [],
+    }
+    const installedSettings = {
+      ...missingCliSettings,
+      cli: {
+        ...missingCliSettings.cli,
+        state: 'ready' as const,
+        source: 'managed' as const,
+        executablePath: 'C:\\Users\\adam\\AppData\\Local\\Forge\\bw.exe',
+        version: '2026.8.0',
+      },
+    }
+    const unavailableProvider = {
+      ...BITWARDEN_PASSWORD_MANAGER_PROVIDER,
+      status: 'unreachable' as const,
+      lastStatusCode: 'source_unreachable' as const,
+    }
+    const authRequiredProvider = {
+      ...unavailableProvider,
+      status: 'auth_required' as const,
+      lastStatusCode: 'provider_auth_required' as const,
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog
+      .mockResolvedValueOnce({
+        providers: [LOCAL_PROVIDER, unavailableProvider],
+        secrets: [],
+        projectDefaults: [],
+        sshTrustedHosts: [],
+      })
+      .mockResolvedValue({
+        providers: [LOCAL_PROVIDER, authRequiredProvider],
+        secrets: [],
+        projectDefaults: [],
+        sshTrustedHosts: [],
+      })
+    secureSecretsApiMock.fetchBitwardenPasswordManagerSettings
+      .mockResolvedValueOnce(missingCliSettings)
+      .mockResolvedValue(installedSettings)
+    secureSecretsApiMock.installBitwardenPasswordManagerCli.mockResolvedValue(
+      installedSettings,
+    )
+    render()
+
+    const install = await waitFor(() => getByRole(
+      container,
+      'button',
+      { name: 'Install CLI' },
+    ))
+    fireEvent.click(install)
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.installBitwardenPasswordManagerCli).toHaveBeenCalledWith(
+        expect.anything(),
+        unavailableProvider.providerId,
+      )
+      expect(container.textContent).toContain('managed by Forge')
+      expect(container.textContent).toContain(
+        '& "C:\\Users\\adam\\AppData\\Local\\Forge\\bw.exe" login',
       )
     })
   })

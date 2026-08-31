@@ -13,17 +13,29 @@ interface AtomicJsonUpdateOptions extends AtomicWriteOptions {
   createIfMissing?: boolean;
 }
 
-export async function writeFileAtomic(filePath: string, content: string, options: AtomicWriteOptions = {}): Promise<void> {
+export async function writeFileAtomic(
+  filePath: string,
+  content: string | Uint8Array,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
   const targetDirectory = dirname(filePath);
   const tempPath = createTempPath(filePath);
 
   if (options.createParentDir !== false) {
     await mkdir(targetDirectory, { recursive: true });
   }
-  await writeFile(tempPath, content, {
-    encoding: "utf8",
-    ...(options.mode === undefined ? {} : { mode: options.mode }),
-  });
+  await writeFile(
+    tempPath,
+    content,
+    typeof content === "string"
+      ? {
+          encoding: "utf8",
+          ...(options.mode === undefined ? {} : { mode: options.mode }),
+        }
+      : options.mode === undefined
+        ? undefined
+        : { mode: options.mode },
+  );
   await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
 }
 

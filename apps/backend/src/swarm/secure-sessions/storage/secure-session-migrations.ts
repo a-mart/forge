@@ -1051,6 +1051,24 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
           ON secure_session_bitwarden_collection(provider_id, name, collection_id);
       `);
     }
+  },
+  {
+    version: 10,
+    name: "bitwarden_password_manager_cli_path",
+    requiresForeignKeysOff: false,
+    up(database) {
+      database.exec(`
+        ALTER TABLE secure_session_provider
+        ADD COLUMN cli_executable_path TEXT
+          CHECK (
+            cli_executable_path IS NULL
+            OR (
+              kind = 'bitwarden_password_manager'
+              AND length(cli_executable_path) BETWEEN 1 AND 4096
+            )
+          );
+      `);
+    }
   }
 ];
 

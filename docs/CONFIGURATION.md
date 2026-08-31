@@ -314,6 +314,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 
 ```
 <data-dir>/
+├── integrations/bitwarden-cli/            # Versioned Forge-managed Bitwarden CLI
 ├── integrations/external-chrome/          # Optional Chrome adapter deployment for this data directory
 │   ├── extension/                         # Stable Chrome Load unpacked folder
 │   │   ├── current.json                   # Verified selected payload

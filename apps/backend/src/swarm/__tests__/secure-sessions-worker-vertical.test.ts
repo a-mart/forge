@@ -26,6 +26,18 @@ const ASSIGNMENT_A1 = "assignment-a1";
 const ASSIGNMENT_A2 = "assignment-a2";
 const PROFILE_A = "profile-a";
 
+function testPasswordManagerCliSummary() {
+  return {
+    state: "ready" as const,
+    source: "system" as const,
+    executablePath: "/usr/local/bin/bw",
+    configuredExecutablePath: null,
+    version: "2026.8.0",
+    managedVersion: "2026.8.0",
+    canInstall: true,
+  };
+}
+
 describe("Secure Sessions shared team sandbox vertical slice", () => {
   it("starts one sandbox and one automatic grant for the complete manager team", async () => {
     const harness = createHarness();
@@ -461,8 +473,30 @@ function createHarness() {
   let nextId = 0;
   const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
     kind: "bitwarden_password_manager",
-    async status() { return { state: "locked", accountEmail: null, serverUrl: null }; },
-    async unlock() { return { state: "available", accountEmail: null, serverUrl: null }; },
+    async status() {
+      return {
+        state: "locked",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
+    async installCli() {
+      return {
+        state: "locked",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
+    async unlock() {
+      return {
+        state: "available",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
     async lock() {},
     async sync() {},
     async listCollections() { return []; },

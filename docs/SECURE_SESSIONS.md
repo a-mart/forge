@@ -218,15 +218,20 @@ For a small trusted team that already organizes credentials in Bitwarden Passwor
 Manager, Forge can use selected organization collections without a separate Secrets
 Manager project or machine token:
 
-1. Install the official `bw` CLI and run `bw login` once on the Builder computer for
-   the dedicated Forge Bitwarden account. Complete any Bitwarden login or two-factor
-   prompts in that terminal.
-2. In **Settings → Secrets → Sources**, add **Bitwarden Password Manager**.
-3. Enter the account's master password in Forge when the source is locked. Forge
+1. In **Settings → Secrets → Sources**, add **Bitwarden Password Manager**.
+2. If Forge does not find a working `bw` command, choose **Install CLI**. Forge
+   downloads the pinned official CLI for the current Windows, macOS, or Linux
+   platform into its own data directory, verifies the release checksum, and uses it
+   without an administrator install or a global `PATH` change. Advanced settings can
+   instead select a compatible existing `bw`, `bw.exe`, or Windows `bw.cmd` path.
+3. Run the exact sign-in command shown by Forge once on the Builder computer for the
+   dedicated Bitwarden account. Complete Bitwarden login and any two-factor prompt in
+   PowerShell or Terminal, then choose **Check again**.
+4. Enter the account's master password in Forge when the source is locked. Forge
    encrypts the entry through the same Desktop or paired-browser private-entry path
    used by the local vault, passes it to `bw unlock --passwordenv`, and clears the
    form immediately. The password is never saved.
-4. Select one or more collections and choose **Save and sync**. The same button can be
+5. Select one or more collections and choose **Save and sync**. The same button can be
    used later to run `bw sync` and discover added or removed items without changing
    the selection.
 
@@ -244,6 +249,12 @@ the desired project scope, delivery binding, or automatic-grant policy in the no
 revokes their active leases. Choosing **Lock** clears the in-memory Bitwarden session
 and revokes active leases from this source; selected collection metadata remains for
 the next unlock.
+
+Forge checks a configured executable first, then its managed copy, then common system
+locations and `PATH`. The Settings card shows which copy is active, its detected
+version, and its full path. The managed installer currently covers Windows x64, macOS
+Intel and Apple silicon, and Linux x64 and arm64; another platform can still use a
+working custom executable path.
 
 This source intentionally uses the local CLI rather than the Bitwarden MCP server. The
 MCP path is designed to place vault results in an agent tool response, while Forge's

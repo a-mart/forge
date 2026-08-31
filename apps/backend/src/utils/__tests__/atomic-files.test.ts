@@ -55,6 +55,17 @@ describe("atomic-files", () => {
     expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 
+  it("writeFileAtomic preserves binary bytes", async () => {
+    const root = await createTempRoot();
+    const filePath = join(root, "tool.bin");
+    const bytes = Uint8Array.from([0, 1, 2, 127, 128, 254, 255]);
+
+    await writeFileAtomic(filePath, bytes, { mode: 0o700 });
+
+    await expect(readFile(filePath)).resolves.toEqual(Buffer.from(bytes));
+    expect((await stat(filePath)).mode & 0o777).toBe(0o700);
+  });
+
   it("readJsonFileIfExists returns parsed data for existing files", async () => {
     const root = await createTempRoot();
     const filePath = join(root, "config.json");

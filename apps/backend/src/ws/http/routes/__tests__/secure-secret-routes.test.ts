@@ -49,6 +49,15 @@ const passwordManagerSettings = {
   providerId: passwordManagerProvider.providerId,
   accountEmail: "forge@example.test",
   serverUrl: "https://vault.example.test",
+  cli: {
+    state: "ready" as const,
+    source: "managed" as const,
+    executablePath: "/forge/managed/bw",
+    configuredExecutablePath: null,
+    version: "2026.8.0",
+    managedVersion: "2026.8.0",
+    canInstall: true,
+  },
   collections: [{
     collectionId: "11111111-1111-4111-8111-111111111111",
     organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -120,6 +129,8 @@ function fakeService(): SecureSecretTransportService {
     connectBitwardenSecureSecretProvider: vi.fn(async () => provider),
     connectBitwardenPasswordManager: vi.fn(async () => passwordManagerProvider),
     getBitwardenPasswordManagerSettings: vi.fn(async () => passwordManagerSettings),
+    installBitwardenPasswordManagerCli: vi.fn(async () => passwordManagerSettings),
+    updateBitwardenPasswordManagerCli: vi.fn(async () => passwordManagerSettings),
     unlockBitwardenPasswordManager: vi.fn(async () => passwordManagerSettings),
     lockBitwardenPasswordManager: vi.fn(async () => ({
       ...passwordManagerProvider,
@@ -207,6 +218,67 @@ describe("secure secret routes", () => {
     );
     expect(plaintextRejected.status).toBe(400);
     expect(service.unlockBitwardenPasswordManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs or selects a Bitwarden CLI through strict metadata-only inputs", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+
+    const installed = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/cli/install`,
+      {},
+    );
+    expect(installed.status).toBe(200);
+    expect(await installed.json()).toEqual(passwordManagerSettings);
+    expect(service.installBitwardenPasswordManagerCli).toHaveBeenCalledWith(
+      "password-manager-1",
+    );
+
+    const customPath = "C:\\Tools\\Bitwarden CLI\\bw.exe";
+    const configured = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/cli`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ executablePath: customPath }),
+      },
+    );
+    expect(configured.status).toBe(200);
+    expect(service.updateBitwardenPasswordManagerCli).toHaveBeenCalledWith(
+      "password-manager-1",
+      { executablePath: customPath },
+    );
+
+    const reset = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/cli`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ executablePath: null }),
+      },
+    );
+    expect(reset.status).toBe(200);
+    expect(service.updateBitwardenPasswordManagerCli).toHaveBeenLastCalledWith(
+      "password-manager-1",
+      { executablePath: null },
+    );
+
+    for (const invalidBody of [
+      { executablePath: "" },
+      { executablePath: "C:\\Tools\\bw.exe", plaintext: "forbidden" },
+      { executablePath: "C:\\Tools\\bw.exe\n--malicious" },
+    ]) {
+      const rejected = await fetch(
+        `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/cli`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(invalidBody),
+        },
+      );
+      expect(rejected.status).toBe(400);
+    }
+    expect(service.updateBitwardenPasswordManagerCli).toHaveBeenCalledTimes(2);
   });
 
   it("keeps vault transfer paths Desktop-only and forwards only encrypted bundles", async () => {

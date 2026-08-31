@@ -1,11 +1,16 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { BitwardenPasswordManagerCliSummary } from "@forge/protocol";
 import {
   HostOnlySecret,
   SecureSourceError,
   type SecureSecretResolution,
 } from "./host-only-secret.js";
 import type { SecureVaultCipher } from "./electron-safe-storage-client.js";
+import {
+  BitwardenCliManager,
+  spawnBitwardenCli,
+  type BitwardenCliInvocation,
+} from "./bitwarden-cli-manager.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -18,10 +23,15 @@ export type BitwardenPasswordManagerVaultState =
   | "locked"
   | "available";
 
-export interface BitwardenPasswordManagerStatus {
+export interface BitwardenPasswordManagerVaultStatus {
   state: BitwardenPasswordManagerVaultState;
   accountEmail: string | null;
   serverUrl: string | null;
+}
+
+export interface BitwardenPasswordManagerStatus
+extends BitwardenPasswordManagerVaultStatus {
+  cli: BitwardenPasswordManagerCliSummary;
 }
 
 export interface BitwardenPasswordManagerCollection {
@@ -38,8 +48,8 @@ export interface BitwardenPasswordManagerItemMetadata {
 }
 
 export interface BitwardenPasswordManagerClient {
-  status(): Promise<BitwardenPasswordManagerStatus>;
-  unlock(masterPassword: Buffer): Promise<BitwardenPasswordManagerStatus>;
+  status(): Promise<BitwardenPasswordManagerVaultStatus>;
+  unlock(masterPassword: Buffer): Promise<BitwardenPasswordManagerVaultStatus>;
   lock(): Promise<void>;
   sync(): Promise<void>;
   listCollections(): Promise<BitwardenPasswordManagerCollection[]>;
@@ -53,8 +63,12 @@ export interface BitwardenPasswordManagerClient {
 
 export interface BitwardenPasswordManagerSource {
   readonly kind: "bitwarden_password_manager";
-  status(): Promise<BitwardenPasswordManagerStatus>;
-  unlock(encryptedMasterPassword: Uint8Array): Promise<BitwardenPasswordManagerStatus>;
+  status(configuredExecutablePath: string | null): Promise<BitwardenPasswordManagerStatus>;
+  installCli(): Promise<BitwardenPasswordManagerStatus>;
+  unlock(
+    encryptedMasterPassword: Uint8Array,
+    configuredExecutablePath: string | null,
+  ): Promise<BitwardenPasswordManagerStatus>;
   lock(): Promise<void>;
   sync(): Promise<void>;
   listCollections(): Promise<BitwardenPasswordManagerCollection[]>;
@@ -79,13 +93,23 @@ export interface BitwardenPasswordManagerSource {
 export class BitwardenPasswordManagerCommandClient
 implements BitwardenPasswordManagerClient {
   private sessionKey: Buffer | null = null;
+  private readonly invocation: BitwardenCliInvocation;
 
   constructor(
-    private readonly executable = "bw",
+    executable: string | BitwardenCliInvocation = "bw",
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
-  ) {}
+  ) {
+    this.invocation = typeof executable === "string"
+      ? {
+          executablePath: executable,
+          source: "system",
+          platform: process.platform,
+          commandShell: null,
+        }
+      : executable;
+  }
 
-  async status(): Promise<BitwardenPasswordManagerStatus> {
+  async status(): Promise<BitwardenPasswordManagerVaultStatus> {
     if (this.sessionKey) {
       try {
         const withSession = await this.readStatus(this.sessionKey);
@@ -106,7 +130,7 @@ implements BitwardenPasswordManagerClient {
     }
   }
 
-  async unlock(masterPassword: Buffer): Promise<BitwardenPasswordManagerStatus> {
+  async unlock(masterPassword: Buffer): Promise<BitwardenPasswordManagerVaultStatus> {
     if (!Buffer.isBuffer(masterPassword) || masterPassword.byteLength < 1) {
       throw new SecureSourceError("SECURE_SOURCE_LOCKED");
     }
@@ -209,7 +233,7 @@ implements BitwardenPasswordManagerClient {
 
   private async readStatus(
     sessionKey: Buffer | null,
-  ): Promise<BitwardenPasswordManagerStatus> {
+  ): Promise<BitwardenPasswordManagerVaultStatus> {
     const output = await this.run(["status"], {
       captureStdout: true,
       errorCode: "SECURE_SOURCE_UNAVAILABLE",
@@ -250,7 +274,7 @@ implements BitwardenPasswordManagerClient {
         environment.BW_SESSION = options.sessionKey.toString("utf8");
       }
       Object.assign(environment, options.extraEnvironment);
-      const child = spawn(this.executable, args, {
+      const child = spawnBitwardenCli(this.invocation, args, {
         env: environment,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -313,36 +337,75 @@ implements BitwardenPasswordManagerClient {
 
 export class BitwardenPasswordManagerSecretSource {
   readonly kind = "bitwarden_password_manager" as const;
+  private client: BitwardenPasswordManagerCommandClient | null = null;
+  private executablePath: string | null = null;
 
   constructor(
     private readonly cipher: SecureVaultCipher,
-    private readonly client: BitwardenPasswordManagerClient =
-      new BitwardenPasswordManagerCommandClient(),
+    private readonly cliManager: BitwardenCliManager,
   ) {}
 
-  status(): Promise<BitwardenPasswordManagerStatus> {
-    return this.client.status();
+  async status(
+    configuredExecutablePath: string | null,
+  ): Promise<BitwardenPasswordManagerStatus> {
+    const resolution = await this.prepare(configuredExecutablePath);
+    if (!resolution.invocation || !this.client) {
+      return {
+        state: "unavailable",
+        accountEmail: null,
+        serverUrl: null,
+        cli: resolution.summary,
+      };
+    }
+    const status = await this.client.status();
+    return { ...status, cli: resolution.summary };
+  }
+
+  async installCli(): Promise<BitwardenPasswordManagerStatus> {
+    this.client?.dispose();
+    this.client = null;
+    this.executablePath = null;
+    const resolution = await this.cliManager.install();
+    if (!resolution.invocation) {
+      return {
+        state: "unavailable",
+        accountEmail: null,
+        serverUrl: null,
+        cli: resolution.summary,
+      };
+    }
+    this.setClient(resolution.invocation);
+    const status = await this.client!.status();
+    return { ...status, cli: resolution.summary };
   }
 
   listCollections(): Promise<BitwardenPasswordManagerCollection[]> {
-    return this.client.listCollections();
+    return this.requireClient().listCollections();
   }
 
   listItems(
     collectionIds: readonly string[],
   ): Promise<BitwardenPasswordManagerItemMetadata[]> {
-    return this.client.listItems(collectionIds);
+    return this.requireClient().listItems(collectionIds);
   }
 
-  async unlock(encryptedMasterPassword: Uint8Array): Promise<BitwardenPasswordManagerStatus> {
+  async unlock(
+    encryptedMasterPassword: Uint8Array,
+    configuredExecutablePath: string | null,
+  ): Promise<BitwardenPasswordManagerStatus> {
     if (!encryptedMasterPassword.byteLength) {
       throw new SecureSourceError("SECURE_SOURCE_LOCKED");
     }
+    const resolution = await this.prepare(configuredExecutablePath);
+    if (!resolution.invocation) {
+      throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
+    }
     const decrypted = await this.cipher.decrypt(encryptedMasterPassword);
     try {
-      return await decrypted.material.withBytes(async (password) =>
-        await this.client.unlock(password)
+      const status = await decrypted.material.withBytes(async (password) =>
+        await this.requireClient().unlock(password)
       );
+      return { ...status, cli: resolution.summary };
     } finally {
       decrypted.reEncryptedCiphertext?.fill(0);
       decrypted.material.release();
@@ -350,18 +413,18 @@ export class BitwardenPasswordManagerSecretSource {
   }
 
   lock(): Promise<void> {
-    return this.client.lock();
+    return this.client?.lock() ?? Promise.resolve();
   }
 
   sync(): Promise<void> {
-    return this.client.sync();
+    return this.requireClient().sync();
   }
 
   async resolve(input: {
     sourceLocator: string;
     allowedCollectionIds: readonly string[];
   }): Promise<SecureSecretResolution> {
-    const record = await this.client.getSecret({
+    const record = await this.requireClient().getSecret({
       itemId: input.sourceLocator,
       allowedCollectionIds: input.allowedCollectionIds,
     });
@@ -373,14 +436,40 @@ export class BitwardenPasswordManagerSecretSource {
   }
 
   dispose(): void {
-    this.client.dispose();
+    this.client?.dispose();
+    this.client = null;
+    this.executablePath = null;
+  }
+
+  private async prepare(configuredExecutablePath: string | null) {
+    const resolution = await this.cliManager.resolve(configuredExecutablePath);
+    if (!resolution.invocation) {
+      this.client?.dispose();
+      this.client = null;
+      this.executablePath = null;
+      return resolution;
+    }
+    this.setClient(resolution.invocation);
+    return resolution;
+  }
+
+  private setClient(invocation: BitwardenCliInvocation): void {
+    if (this.client && this.executablePath === invocation.executablePath) return;
+    this.client?.dispose();
+    this.client = new BitwardenPasswordManagerCommandClient(invocation);
+    this.executablePath = invocation.executablePath;
+  }
+
+  private requireClient(): BitwardenPasswordManagerCommandClient {
+    if (!this.client) throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
+    return this.client;
   }
 }
 
 function parseStatus(
   output: Buffer,
   hasSession: boolean,
-): BitwardenPasswordManagerStatus {
+): BitwardenPasswordManagerVaultStatus {
   const parsed = parseJsonObject(output);
   const rawStatus = parsed.status;
   const accountEmail = optionalBoundedString(parsed.userEmail, 512);

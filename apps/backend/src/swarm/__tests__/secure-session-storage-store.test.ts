@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -171,6 +171,65 @@ describe("SecureSessionStore", () => {
     expect(store.listBitwardenCollections("password-manager")).toEqual([]);
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
+  });
+
+  it("persists and restores only the Password Manager CLI executable path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "forge-secure-cli-path-"));
+    const databasePath = join(directory, "secure-sessions.db");
+    try {
+      const firstDatabase = new Database(databasePath);
+      firstDatabase.pragma("foreign_keys = ON");
+      runSecureSessionMigrations(firstDatabase);
+      const first = new SecureSessionStore(
+        firstDatabase,
+        undefined,
+        () => new Date(NOW),
+      );
+      first.upsertProvider({
+        providerId: "password-manager",
+        kind: "bitwarden_password_manager",
+        displayName: "Team Bitwarden",
+      });
+      first.upsertProvider({
+        providerId: "local",
+        kind: "local_keychain",
+        displayName: "Local vault",
+      });
+
+      expect(first.updateBitwardenPasswordManagerCliPath(
+        "password-manager",
+        "C:\\Tools\\Bitwarden CLI\\bw.exe",
+      )).toEqual(expect.objectContaining({
+        providerId: "password-manager",
+        cliExecutablePath: "C:\\Tools\\Bitwarden CLI\\bw.exe",
+      }));
+      expect(() => first.updateBitwardenPasswordManagerCliPath(
+        "local",
+        "/usr/local/bin/bw",
+      )).toThrow(/Password Manager provider/);
+      firstDatabase.close();
+
+      const secondDatabase = new Database(databasePath);
+      secondDatabase.pragma("foreign_keys = ON");
+      runSecureSessionMigrations(secondDatabase);
+      const second = new SecureSessionStore(
+        secondDatabase,
+        undefined,
+        () => new Date(NOW),
+      );
+      expect(second.getProvider("password-manager")).toEqual(
+        expect.objectContaining({
+          cliExecutablePath: "C:\\Tools\\Bitwarden CLI\\bw.exe",
+        }),
+      );
+      expect(second.updateBitwardenPasswordManagerCliPath(
+        "password-manager",
+        null,
+      )).toEqual(expect.objectContaining({ cliExecutablePath: null }));
+      secondDatabase.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("rotates ciphertext with CAS without changing catalog policy state", () => {

@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, Loader2, LockKeyhole, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  Download,
+  KeyRound,
+  Loader2,
+  LockKeyhole,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -9,9 +17,11 @@ import {
   connectBitwardenPasswordManager,
   disconnectSecureSecretProvider,
   fetchBitwardenPasswordManagerSettings,
+  installBitwardenPasswordManagerCli,
   lockBitwardenPasswordManager,
   replaceBitwardenPasswordManagerCollections,
   testSecureSecretProvider,
+  updateBitwardenPasswordManagerCli,
   unlockBitwardenPasswordManager,
   type BitwardenPasswordManagerSettings,
   type SecureSecretProviderSummary,
@@ -36,6 +46,7 @@ export function BitwardenPasswordManagerPanel({
   const [settings, setSettings] = useState<BitwardenPasswordManagerSettings | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [masterPassword, setMasterPassword] = useState('')
+  const [cliPath, setCliPath] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const providerId = provider?.providerId
   const providerStatus = provider?.status
@@ -45,6 +56,7 @@ export function BitwardenPasswordManagerPanel({
     if (!providerId) {
       setSettings(null)
       setSelectedIds(new Set())
+      setCliPath('')
       return () => {
         cancelled = true
       }
@@ -54,6 +66,7 @@ export function BitwardenPasswordManagerPanel({
         if (cancelled) return
         setSettings(next)
         setSelectedIds(selectedCollectionIds(next))
+        setCliPath(next.cli.configuredExecutablePath ?? '')
       })
       .catch((error) => {
         if (!cancelled && providerStatus === 'available') onError(error)
@@ -104,6 +117,7 @@ export function BitwardenPasswordManagerPanel({
       )
       setSettings(next)
       setSelectedIds(selectedCollectionIds(next))
+      setCliPath(next.cli.configuredExecutablePath ?? '')
       await onChanged('Bitwarden Password Manager unlocked.')
     } catch (error) {
       onError(error)
@@ -120,6 +134,64 @@ export function BitwardenPasswordManagerPanel({
       setSettings(null)
       setSelectedIds(new Set())
       await onChanged('Bitwarden Password Manager locked.')
+    } catch (error) {
+      onError(error)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const installCli = async () => {
+    if (!provider) return
+    setBusy('install-cli')
+    try {
+      const next = await installBitwardenPasswordManagerCli(
+        apiClient,
+        provider.providerId,
+      )
+      setSettings(next)
+      setCliPath(next.cli.configuredExecutablePath ?? '')
+      await onChanged('Bitwarden CLI installed. Sign in once with the command shown below.')
+    } catch (error) {
+      onError(error)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const saveCliPath = async () => {
+    if (!provider) return
+    setBusy('cli-path')
+    try {
+      const next = await updateBitwardenPasswordManagerCli(
+        apiClient,
+        provider.providerId,
+        cliPath.trim() || null,
+      )
+      setSettings(next)
+      setCliPath(next.cli.configuredExecutablePath ?? '')
+      await onChanged(cliPath.trim()
+        ? 'Custom Bitwarden CLI path saved.'
+        : 'Automatic Bitwarden CLI discovery restored.')
+    } catch (error) {
+      onError(error)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const resetCliPath = async () => {
+    if (!provider) return
+    setBusy('cli-path')
+    try {
+      const next = await updateBitwardenPasswordManagerCli(
+        apiClient,
+        provider.providerId,
+        null,
+      )
+      setSettings(next)
+      setCliPath('')
+      await onChanged('Automatic Bitwarden CLI discovery restored.')
     } catch (error) {
       onError(error)
     } finally {
@@ -195,8 +267,8 @@ export function BitwardenPasswordManagerPanel({
           </Button>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          One-time prerequisite: install the <code>bw</code> CLI and run <code>bw login</code>
-          {' '}for the dedicated Forge Bitwarden account.
+          After adding the source, Forge can install its own CLI copy. You will run
+          {' '}<code>bw login</code> once for the dedicated Forge Bitwarden account.
         </p>
       </div>
     )
@@ -220,15 +292,104 @@ export function BitwardenPasswordManagerPanel({
         <SourceStatusBadge status={provider.status} />
       </div>
 
+      {settings ? (
+        <div className="mt-3 rounded-md border border-border/70 bg-background/40 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">Bitwarden CLI</p>
+              {settings.cli.state === 'ready' ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Version {settings.cli.version} · {cliSourceLabel(settings.cli.source)}
+                  </p>
+                  <p className="break-all font-mono text-[11px] text-muted-foreground">
+                    {settings.cli.executablePath}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {settings.cli.state === 'unsupported'
+                    ? 'Automatic installation is unavailable for this operating system or architecture.'
+                    : 'No working Bitwarden CLI was found.'}
+                </p>
+              )}
+            </div>
+            {settings.cli.state !== 'ready' && settings.cli.canInstall ? (
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={busy !== null}
+                onClick={() => void installCli()}
+              >
+                {busy === 'install-cli'
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : <Download className="size-3.5" />}
+                Install CLI
+              </Button>
+            ) : null}
+          </div>
+          <details className="mt-3 border-t border-border/70 pt-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+              Use another CLI installation
+            </summary>
+            <div className="mt-3 space-y-2">
+              <Label htmlFor="bitwarden-password-manager-cli-path">
+                Executable path
+              </Label>
+              <Input
+                id="bitwarden-password-manager-cli-path"
+                value={cliPath}
+                onChange={(event) => setCliPath(event.target.value)}
+                placeholder={settings.cli.executablePath ?? 'Full path to bw or bw.exe'}
+                disabled={busy !== null}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={() => void saveCliPath()}
+                >
+                  {busy === 'cli-path' ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                  Save path
+                </Button>
+                {settings.cli.configuredExecutablePath ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setCliPath('')
+                        void resetCliPath()
+                    }}
+                  >
+                    Use automatic discovery
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Leave this empty to prefer Forge’s managed CLI, then a compatible CLI already
+                installed on this computer.
+              </p>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
       {provider.status === 'auth_required' ? (
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
           <p className="font-medium text-amber-700 dark:text-amber-300">
             Bitwarden CLI is not logged in.
           </p>
           <p className="mt-1 text-muted-foreground">
-            Run <code>bw login</code> once on this computer, then check again. Forge will handle
-            later unlocks here.
+            Run this once on this computer, then check again. Forge will handle later unlocks here.
           </p>
+          <code className="mt-2 block select-all break-all rounded border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground">
+            {bitwardenLoginCommand(settings?.cli.executablePath ?? null)}
+          </code>
         </div>
       ) : null}
 
@@ -238,8 +399,8 @@ export function BitwardenPasswordManagerPanel({
             Bitwarden CLI is unavailable.
           </p>
           <p className="mt-1 text-muted-foreground">
-            Install <code>bw</code> and confirm <code>bw status</code> works from this computer,
-            then check again.
+            Install it above, or choose an existing <code>bw</code> executable under
+            {' '}Use another CLI installation.
           </p>
         </div>
       ) : null}
@@ -419,4 +580,25 @@ function selectedCollectionIds(settings: BitwardenPasswordManagerSettings): Set<
       .filter((collection) => collection.selected)
       .map((collection) => collection.collectionId),
   )
+}
+
+function cliSourceLabel(source: BitwardenPasswordManagerSettings['cli']['source']): string {
+  switch (source) {
+    case 'managed':
+      return 'managed by Forge'
+    case 'configured':
+      return 'custom path'
+    case 'system':
+      return 'installed on this computer'
+    default:
+      return 'detected locally'
+  }
+}
+
+function bitwardenLoginCommand(executablePath: string | null): string {
+  if (!executablePath) return 'bw login'
+  if (/\.exe$/iu.test(executablePath) || /^[A-Za-z]:[\\/]/u.test(executablePath)) {
+    return `& "${executablePath.replaceAll('`', '``').replaceAll('"', '`"')}" login`
+  }
+  return `'${executablePath.replaceAll("'", "'\\''")}' login`
 }

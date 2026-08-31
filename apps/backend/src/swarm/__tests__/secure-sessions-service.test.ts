@@ -36,6 +36,18 @@ const NOW = "2026-07-23T12:00:00.000Z";
 const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
 
+function testBitwardenCliSummary() {
+  return {
+    state: "ready" as const,
+    source: "system" as const,
+    executablePath: "/usr/local/bin/bw",
+    configuredExecutablePath: null,
+    version: "2026.8.0",
+    managedVersion: "2026.8.0",
+    canInstall: true,
+  };
+}
+
 describe("SecureSessionsService", () => {
   it("exports and transactionally re-seals machine-bound vault material", async () => {
     const harness = createHarness();
@@ -131,6 +143,15 @@ describe("SecureSessionsService", () => {
       providerId: provider.providerId,
       accountEmail: null,
       serverUrl: null,
+      cli: {
+        state: "ready",
+        source: "system",
+        executablePath: "/usr/local/bin/bw",
+        configuredExecutablePath: null,
+        version: "2026.8.0",
+        managedVersion: "2026.8.0",
+        canInstall: true,
+      },
       collections: [{
         collectionId: collection.id,
         organizationId: collection.organizationId,
@@ -143,6 +164,48 @@ describe("SecureSessionsService", () => {
     expect(JSON.stringify(harness.store.listProviders())).not.toContain(
       "synthetic-master-password",
     );
+    await harness.close();
+  });
+
+  it("installs a managed Password Manager CLI or persists a custom executable path", async () => {
+    const harness = createHarness();
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Team Bitwarden",
+    });
+
+    const installed = await harness.service.installBitwardenPasswordManagerCli(
+      provider.providerId,
+    );
+    expect(installed.cli).toEqual(expect.objectContaining({
+      state: "ready",
+      source: "managed",
+      executablePath: "/forge/managed/bw",
+      configuredExecutablePath: null,
+    }));
+    expect(harness.passwordManagerCliInstalls).toHaveLength(1);
+    expect(harness.store.getProvider(provider.providerId)?.cliExecutablePath).toBeNull();
+
+    const customPath = "C:\\Tools\\Bitwarden CLI\\bw.exe";
+    const configured = await harness.service.updateBitwardenPasswordManagerCli(
+      provider.providerId,
+      { executablePath: customPath },
+    );
+    expect(configured.cli).toEqual(expect.objectContaining({
+      state: "ready",
+      source: "configured",
+      executablePath: customPath,
+      configuredExecutablePath: customPath,
+    }));
+    expect(harness.passwordManagerStatusPaths).toContain(customPath);
+    expect(harness.store.getProvider(provider.providerId)?.cliExecutablePath).toBe(
+      customPath,
+    );
+
+    await harness.service.updateBitwardenPasswordManagerCli(
+      provider.providerId,
+      { executablePath: null },
+    );
+    expect(harness.store.getProvider(provider.providerId)?.cliExecutablePath).toBeNull();
     await harness.close();
   });
 
@@ -178,6 +241,7 @@ describe("SecureSessionsService", () => {
         state: "available",
         accountEmail: "forge@example.test",
         serverUrl: "https://vault.example.test",
+        cli: testBitwardenCliSummary(),
       },
       passwordManagerCollections: collections,
       passwordManagerItems: items,
@@ -480,6 +544,7 @@ describe("SecureSessionsService", () => {
         state: "available",
         accountEmail: "forge@example.com",
         serverUrl: "https://vault.bitwarden.com",
+        cli: testBitwardenCliSummary(),
       },
     });
     const provider = await harness.service.connectBitwardenPasswordManager({
@@ -5468,6 +5533,8 @@ function createHarness(options: {
   const bitwardenTests: Array<{ credential: string; endpointOrigin: string | null }> = [];
   const passwordManagerUnlocks: string[] = [];
   const passwordManagerSyncs: string[] = [];
+  const passwordManagerCliInstalls: string[] = [];
+  const passwordManagerStatusPaths: Array<string | null> = [];
   let sourceResolutionStarted!: () => void;
   let sourceResolutionRelease!: () => void;
   const sourceResolutionStartedPromise = new Promise<void>((resolve) => {
@@ -5547,9 +5614,35 @@ function createHarness(options: {
   };
   const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
     kind: "bitwarden_password_manager",
-    async status() {
-      return options.passwordManagerStatus
-        ?? { state: "locked", accountEmail: null, serverUrl: null };
+    async status(configuredExecutablePath) {
+      passwordManagerStatusPaths.push(configuredExecutablePath);
+      if (options.passwordManagerStatus) return options.passwordManagerStatus;
+      return {
+          state: "locked",
+          accountEmail: null,
+          serverUrl: null,
+          cli: configuredExecutablePath
+            ? {
+                ...testBitwardenCliSummary(),
+                source: "configured",
+                executablePath: configuredExecutablePath,
+                configuredExecutablePath,
+              }
+            : testBitwardenCliSummary(),
+        };
+    },
+    async installCli() {
+      passwordManagerCliInstalls.push(now());
+      return {
+        state: "locked",
+        accountEmail: null,
+        serverUrl: null,
+        cli: {
+          ...testBitwardenCliSummary(),
+          source: "managed",
+          executablePath: "/forge/managed/bw",
+        },
+      };
     },
     async unlock(encryptedMasterPassword) {
       passwordManagerUnlocks.push(Buffer.from(encryptedMasterPassword).toString("utf8"));
@@ -5557,6 +5650,7 @@ function createHarness(options: {
         state: "available",
         accountEmail: options.passwordManagerStatus?.accountEmail ?? null,
         serverUrl: options.passwordManagerStatus?.serverUrl ?? null,
+        cli: options.passwordManagerStatus?.cli ?? testBitwardenCliSummary(),
       };
     },
     async lock() {},
@@ -5661,6 +5755,8 @@ function createHarness(options: {
     bitwardenTests,
     passwordManagerUnlocks,
     passwordManagerSyncs,
+    passwordManagerCliInstalls,
+    passwordManagerStatusPaths,
     snapshots,
     recycles,
     setRecycleDisposition(value: "recycled" | "deferred" | "none") {

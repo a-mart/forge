@@ -177,7 +177,7 @@ export class SecureSessionStore {
   listProviders(): SecureSessionProvider[] {
     return (this.database.prepare(`
       SELECT provider_id, kind, display_name, enabled, status, last_verified_at,
-        last_status_code, created_at, updated_at
+        last_status_code, cli_executable_path, created_at, updated_at
       FROM secure_session_provider
       ORDER BY display_name COLLATE NOCASE, provider_id
     `).all() as ProviderRow[]).map(mapProvider);
@@ -187,7 +187,7 @@ export class SecureSessionStore {
     assertId(providerId, "provider ID");
     const row = this.database.prepare(`
       SELECT provider_id, kind, display_name, enabled, status, last_verified_at,
-        last_status_code, created_at, updated_at
+        last_status_code, cli_executable_path, created_at, updated_at
       FROM secure_session_provider WHERE provider_id = ?
     `).get(providerId) as ProviderRow | undefined;
     return row ? mapProvider(row) : null;
@@ -456,6 +456,10 @@ export class SecureSessionStore {
             WHEN excluded.kind = 'bitwarden_secrets_manager' THEN secure_session_provider.encrypted_access_token
             ELSE NULL
           END,
+          cli_executable_path = CASE
+            WHEN excluded.kind = 'bitwarden_password_manager' THEN secure_session_provider.cli_executable_path
+            ELSE NULL
+          END,
           updated_at = excluded.updated_at
       `).run(
         input.providerId,
@@ -524,6 +528,38 @@ export class SecureSessionStore {
       });
       this.bumpCatalog(now);
       return this.requireProvider(input.providerId);
+    })();
+  }
+
+  updateBitwardenPasswordManagerCliPath(
+    providerId: string,
+    executablePath: string | null,
+  ): SecureSessionProvider {
+    assertId(providerId, "provider ID");
+    const normalized = executablePath === null
+      ? null
+      : normalizeOptionalCliExecutablePath(executablePath);
+    const now = this.timestamp();
+    return this.database.transaction(() => {
+      const provider = this.requireProvider(providerId);
+      if (provider.kind !== "bitwarden_password_manager") {
+        throw new Error("Only Bitwarden Password Manager providers accept a CLI path");
+      }
+      this.revokeCatalogLeases("provider", providerId, "policy_changed", now);
+      this.database.prepare(`
+        UPDATE secure_session_provider
+        SET cli_executable_path = ?, status = 'unreachable',
+          last_status_code = 'source_unreachable', last_verified_at = ?, updated_at = ?
+        WHERE provider_id = ?
+      `).run(normalized, now, now, providerId);
+      this.audit({
+        eventType: "provider_backend_updated",
+        providerId,
+        outcome: "updated",
+        occurredAt: now,
+      });
+      this.bumpCatalog(now);
+      return this.requireProvider(providerId);
     })();
   }
 
@@ -3409,6 +3445,7 @@ interface ProviderRow {
   status: SecureSessionProvider["status"];
   last_verified_at: string | null;
   last_status_code: SecureSessionProvider["lastStatusCode"];
+  cli_executable_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3594,6 +3631,7 @@ function mapProvider(row: ProviderRow): SecureSessionProvider {
     status: row.status,
     lastVerifiedAt: row.last_verified_at,
     lastStatusCode: row.last_status_code,
+    cliExecutablePath: row.cli_executable_path,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -4182,6 +4220,14 @@ function normalizeOptionalText(
 ): string | null {
   if (value === null || value === undefined) return null;
   assertBoundedText(value, label, maximum);
+  return value;
+}
+
+function normalizeOptionalCliExecutablePath(value: string): string {
+  assertBoundedText(value, "Bitwarden CLI path", MAX_SOURCE_LOCATOR_LENGTH);
+  if (value.trim() !== value || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error("Bitwarden CLI path contains invalid whitespace or control characters");
+  }
   return value;
 }
 

@@ -25,8 +25,8 @@ import { SecretsEnvService } from "./secrets-env-service.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import { DockerSecureExecutionBackend } from "./secure-sessions/execution/docker-secure-execution-backend.js";
 import { BitwardenBwsSecretSource, BwsCommandClient } from "./secure-sessions/sources/bitwarden-bws-source.js";
+import { BitwardenCliManager } from "./secure-sessions/sources/bitwarden-cli-manager.js";
 import {
-  BitwardenPasswordManagerCommandClient,
   BitwardenPasswordManagerSecretSource,
 } from "./secure-sessions/sources/bitwarden-password-manager-source.js";
 import { ElectronSafeStorageClient } from "./secure-sessions/sources/electron-safe-storage-client.js";
@@ -193,7 +193,6 @@ export function createSwarmManagerFoundation(
   });
   const secureVaultCipher = new ElectronSafeStorageClient();
   const bitwardenClient = new BwsCommandClient();
-  const bitwardenPasswordManagerClient = new BitwardenPasswordManagerCommandClient();
   const secureSessions: SecureSessionsFoundation = {
     storeFactory: () =>
       SecureSessionStore.open(
@@ -210,7 +209,7 @@ export function createSwarmManagerFoundation(
     bitwardenSource: new BitwardenBwsSecretSource(secureVaultCipher, bitwardenClient),
     bitwardenPasswordManagerSource: new BitwardenPasswordManagerSecretSource(
       secureVaultCipher,
-      bitwardenPasswordManagerClient,
+      new BitwardenCliManager({ dataDir: config.paths.dataDir }),
     ),
     probeBitwarden: () => bitwardenClient.probe(),
     execution: new DockerSecureExecutionBackend({

@@ -21,6 +21,33 @@ afterEach(() => {
 });
 
 describe("BitwardenPasswordManagerCommandClient", () => {
+  it("launches npm-style Windows command shims through cmd.exe without shell interpolation", async () => {
+    spawnMock.mockImplementation((
+      _executable: string,
+      _args: string[],
+    ) => fakeChild(JSON.stringify({ status: "locked" })));
+    const client = new BitwardenPasswordManagerCommandClient({
+      executablePath: "C:\\Program Files\\nodejs\\bw.cmd",
+      source: "configured",
+      platform: "win32",
+      commandShell: "C:\\Windows\\System32\\cmd.exe",
+    });
+
+    await expect(client.status()).resolves.toMatchObject({ state: "locked" });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "C:\\Windows\\System32\\cmd.exe",
+      [
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Program Files\\nodejs\\bw.cmd" "status""',
+      ],
+      expect.objectContaining({ windowsHide: true }),
+    );
+    client.dispose();
+  });
+
   it("keeps unlock material out of arguments and reuses only the in-memory session", async () => {
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
     spawnMock.mockImplementation((

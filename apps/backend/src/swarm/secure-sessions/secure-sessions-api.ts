@@ -44,6 +44,10 @@ export interface UnlockBitwardenPasswordManagerInput {
   encryptedMasterPassword: string;
 }
 
+export interface UpdateBitwardenPasswordManagerCliInput {
+  executablePath: string | null;
+}
+
 export interface ReplaceBitwardenPasswordManagerCollectionsInput {
   collectionIds: string[];
 }

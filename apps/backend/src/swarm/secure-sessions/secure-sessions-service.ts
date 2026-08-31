@@ -62,6 +62,7 @@ import type {
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
+  UpdateBitwardenPasswordManagerCliInput,
   UnlockBitwardenPasswordManagerInput,
   UpdateSecureSecretInput,
   UpdateSecureSshTrustedHostInput,
@@ -948,7 +949,7 @@ export class SecureSessionsService {
         const existing = store.listProviders().find(
           (provider) => provider.kind === "bitwarden_password_manager",
         );
-        const status = await this.options.bitwardenPasswordManagerSource.status();
+        const status = await this.options.bitwardenPasswordManagerSource.status(null);
         const providerStatus = passwordManagerProviderStatus(status.state);
         const provider = store.upsertProvider({
           providerId: existing?.providerId ?? this.id(),
@@ -976,7 +977,9 @@ export class SecureSessionsService {
         if (!provider || provider.kind !== "bitwarden_password_manager") {
           throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
         }
-        const status = await this.options.bitwardenPasswordManagerSource.status();
+        const status = await this.options.bitwardenPasswordManagerSource.status(
+          provider.cliExecutablePath,
+        );
         const next = passwordManagerProviderStatus(status.state);
         if (
           provider.status !== next.status
@@ -1014,6 +1017,7 @@ export class SecureSessionsService {
         }
         const status = await this.options.bitwardenPasswordManagerSource.unlock(
           encryptedMasterPassword,
+          provider.cliExecutablePath,
         );
         store.updateProviderStatus({
           providerId,
@@ -1079,6 +1083,32 @@ export class SecureSessionsService {
     }
   }
 
+  async installBitwardenPasswordManagerCli(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    return await this.mutateBitwardenPasswordManagerCli(
+      providerId,
+      null,
+      async () => await this.options.bitwardenPasswordManagerSource.installCli(),
+    );
+  }
+
+  async updateBitwardenPasswordManagerCli(
+    providerId: string,
+    input: UpdateBitwardenPasswordManagerCliInput,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    const executablePath = input.executablePath === null
+      ? null
+      : bounded(input.executablePath, 4096);
+    return await this.mutateBitwardenPasswordManagerCli(
+      providerId,
+      executablePath,
+      async () => await this.options.bitwardenPasswordManagerSource.status(
+        executablePath,
+      ),
+    );
+  }
+
   async replaceBitwardenPasswordManagerCollections(
     providerId: string,
     input: ReplaceBitwardenPasswordManagerCollectionsInput,
@@ -1091,7 +1121,9 @@ export class SecureSessionsService {
         throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
       }
       try {
-        const status = await this.options.bitwardenPasswordManagerSource.status();
+        const status = await this.options.bitwardenPasswordManagerSource.status(
+          provider.cliExecutablePath,
+        );
         assertPasswordManagerAvailable(status.state);
         await this.options.bitwardenPasswordManagerSource.sync();
         const availableCollections =
@@ -1290,7 +1322,9 @@ export class SecureSessionsService {
           }
         } else {
           const passwordManagerStatus =
-            await this.options.bitwardenPasswordManagerSource.status();
+            await this.options.bitwardenPasswordManagerSource.status(
+              provider.cliExecutablePath,
+            );
           assertPasswordManagerAvailable(passwordManagerStatus.state);
           await this.options.bitwardenPasswordManagerSource.sync();
           await this.options.bitwardenPasswordManagerSource.listCollections();
@@ -4182,7 +4216,9 @@ export class SecureSessionsService {
     providedCollections?: readonly BitwardenPasswordManagerCollection[],
   ): Promise<BitwardenPasswordManagerSettings> {
     const status = providedStatus
-      ?? await this.options.bitwardenPasswordManagerSource.status();
+      ?? await this.options.bitwardenPasswordManagerSource.status(
+        store.getProvider(providerId)?.cliExecutablePath ?? null,
+      );
     const selected = store.listBitwardenCollections(providerId);
     let available: readonly BitwardenPasswordManagerCollection[] = [];
     if (status.state === "available") {
@@ -4219,11 +4255,79 @@ export class SecureSessionsService {
       providerId,
       accountEmail: status.accountEmail,
       serverUrl: status.serverUrl,
+      cli: {
+        ...status.cli,
+        configuredExecutablePath:
+          store.getProvider(providerId)?.cliExecutablePath ?? null,
+      },
       collections: [...collections.values()].sort((left, right) =>
         left.name.localeCompare(right.name)
         || left.collectionId.localeCompare(right.collectionId)
       ),
     };
+  }
+
+  private async mutateBitwardenPasswordManagerCli(
+    providerId: string,
+    executablePath: string | null,
+    inspect: () => Promise<BitwardenPasswordManagerStatus>,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        if (!provider || provider.kind !== "bitwarden_password_manager") {
+          throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+        const secretIds = store.listSecrets(providerId).map(
+          (secret) => secret.secretId,
+        );
+        this.assertSecretMutationLifecycleAvailable(store, secretIds);
+        const initiallyAffected = this.captureAffectedLeases(store, secretIds);
+        return await this.withSessionMutations(
+          initiallyAffected.sessionIds,
+          async () => {
+            const affected = this.captureAffectedLeases(store, secretIds);
+            await this.options.bitwardenPasswordManagerSource.lock()
+              .catch(() => undefined);
+            store.updateBitwardenPasswordManagerCliPath(
+              providerId,
+              executablePath,
+            );
+            this.releaseLeases(affected.leaseIds);
+            await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+            let status: BitwardenPasswordManagerStatus;
+            try {
+              status = await inspect();
+            } catch (error) {
+              store.updateProviderStatus({
+                providerId,
+                status: "unreachable",
+                lastStatusCode: "source_unreachable",
+                lastVerifiedAt: this.now(),
+              });
+              this.emitCatalog(store);
+              this.emitSessionSnapshots(store, affected.sessionIds);
+              throw error;
+            }
+            store.updateProviderStatus({
+              providerId,
+              ...passwordManagerProviderStatus(status.state),
+              lastVerifiedAt: this.now(),
+            });
+            this.emitCatalog(store);
+            this.emitSessionSnapshots(store, affected.sessionIds);
+            return await this.buildBitwardenPasswordManagerSettings(
+              store,
+              providerId,
+              status,
+            );
+          },
+        );
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    }
   }
 
   private markProviderResolutionSucceeded(

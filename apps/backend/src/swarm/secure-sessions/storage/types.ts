@@ -89,6 +89,8 @@ export interface SecureSessionProvider {
   status: SecureSessionSourceStatus;
   lastVerifiedAt: string | null;
   lastStatusCode: SecureSessionSourceStatusCode | null;
+  /** Optional operator-selected local CLI path. Never an argument or credential. */
+  cliExecutablePath: string | null;
   createdAt: string;
   updatedAt: string;
 }

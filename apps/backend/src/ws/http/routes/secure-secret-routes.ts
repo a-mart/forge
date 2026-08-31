@@ -112,6 +112,10 @@ export interface UnlockBitwardenPasswordManagerInput {
   encryptedMasterPassword: string;
 }
 
+export interface UpdateBitwardenPasswordManagerCliInput {
+  executablePath: string | null;
+}
+
 export interface ReplaceBitwardenPasswordManagerCollectionsInput {
   collectionIds: string[];
 }
@@ -138,6 +142,13 @@ export interface SecureSecretTransportService {
   lockBitwardenPasswordManager(
     providerId: string,
   ): Promise<SecureSecretProviderSummary>;
+  installBitwardenPasswordManagerCli(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings>;
+  updateBitwardenPasswordManagerCli(
+    providerId: string,
+    input: UpdateBitwardenPasswordManagerCliInput,
+  ): Promise<BitwardenPasswordManagerSettings>;
   replaceBitwardenPasswordManagerCollections(
     providerId: string,
     input: ReplaceBitwardenPasswordManagerCollectionsInput,
@@ -399,6 +410,41 @@ export function createSecureSecretRoutes(options: {
             response,
             200,
             await options.service.lockBitwardenPasswordManager(providerId),
+          );
+          return;
+        }
+
+        const passwordManagerCliInstallMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/cli\/install$/,
+        );
+        if (request.method === "POST" && passwordManagerCliInstallMatch) {
+          const providerId = parsePathId(
+            passwordManagerCliInstallMatch[1],
+            "providerId",
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.installBitwardenPasswordManagerCli(providerId),
+          );
+          return;
+        }
+
+        const passwordManagerCliMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/cli$/,
+        );
+        if (request.method === "PATCH" && passwordManagerCliMatch) {
+          const providerId = parsePathId(
+            passwordManagerCliMatch[1],
+            "providerId",
+          );
+          const input = parseUpdateBitwardenPasswordManagerCliInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.updateBitwardenPasswordManagerCli(providerId, input),
           );
           return;
         }
@@ -906,6 +952,24 @@ function parseUnlockBitwardenPasswordManagerInput(
       "encryptedMasterPassword",
     ),
   };
+}
+
+function parseUpdateBitwardenPasswordManagerCliInput(
+  value: unknown,
+): UpdateBitwardenPasswordManagerCliInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["executablePath"]);
+  if (input.executablePath === null) return { executablePath: null };
+  if (
+    typeof input.executablePath !== "string"
+    || input.executablePath.trim() !== input.executablePath
+    || input.executablePath.length < 1
+    || input.executablePath.length > 4096
+    || /[\u0000-\u001f\u007f]/u.test(input.executablePath)
+  ) {
+    throw new SecureSessionsContractError("request.executablePath is invalid");
+  }
+  return { executablePath: input.executablePath };
 }
 
 function parseReplaceBitwardenPasswordManagerCollectionsInput(

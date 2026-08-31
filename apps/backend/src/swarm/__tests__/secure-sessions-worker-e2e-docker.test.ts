@@ -68,6 +68,18 @@ const SHARED_PRIMARY = "FORGE_DOCKER_E2E_SHARED_PRIMARY";
 const SHARED_SECONDARY = "FORGE_DOCKER_E2E_SHARED_SECONDARY";
 const SHARED_ONE_USE = "FORGE_DOCKER_E2E_SHARED_ONE_USE";
 
+function testPasswordManagerCliSummary() {
+  return {
+    state: "ready" as const,
+    source: "system" as const,
+    executablePath: "/usr/local/bin/bw",
+    configuredExecutablePath: null,
+    version: "2026.8.0",
+    managedVersion: "2026.8.0",
+    canInstall: true,
+  };
+}
+
 const repositoryRoot = await realpath(resolve(process.cwd(), "../.."));
 const dockerAvailable = await probeLocalLinuxDockerDaemon();
 if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
@@ -479,8 +491,30 @@ async function createDockerHarness() {
   let nextId = 0;
   const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
     kind: "bitwarden_password_manager",
-    async status() { return { state: "locked", accountEmail: null, serverUrl: null }; },
-    async unlock() { return { state: "available", accountEmail: null, serverUrl: null }; },
+    async status() {
+      return {
+        state: "locked",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
+    async installCli() {
+      return {
+        state: "locked",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
+    async unlock() {
+      return {
+        state: "available",
+        accountEmail: null,
+        serverUrl: null,
+        cli: testPasswordManagerCliSummary(),
+      };
+    },
     async lock() {},
     async sync() {},
     async listCollections() { return []; },

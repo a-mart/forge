@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
+  BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES,
+  BITWARDEN_PASSWORD_MANAGER_CLI_STATES,
   SECURE_SECRET_DELIVERY_KINDS,
   SECURE_SECRET_LEASE_GRANT_SOURCES,
   SECURE_SECRET_LEASE_KINDS,
@@ -42,6 +44,19 @@ import {
 const now = '2026-07-23T12:00:00.000Z'
 
 describe('Secure Sessions protocol', () => {
+  it('exports bounded Bitwarden Password Manager CLI diagnostics', () => {
+    expect(BITWARDEN_PASSWORD_MANAGER_CLI_STATES).toEqual([
+      'ready',
+      'missing',
+      'unsupported',
+    ])
+    expect(BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES).toEqual([
+      'configured',
+      'managed',
+      'system',
+    ])
+  })
+
   it('exports the metadata-only provider and catalog vocabulary', () => {
     expect(SECURE_SECRET_PROVIDER_KINDS).toEqual([
       'local_keychain',

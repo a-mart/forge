@@ -62,11 +62,41 @@ export interface BitwardenPasswordManagerCollectionSummary {
   selected: boolean
 }
 
+export const BITWARDEN_PASSWORD_MANAGER_CLI_STATES = [
+  'ready',
+  'missing',
+  'unsupported',
+] as const
+
+export type BitwardenPasswordManagerCliState =
+  (typeof BITWARDEN_PASSWORD_MANAGER_CLI_STATES)[number]
+
+export const BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES = [
+  'configured',
+  'managed',
+  'system',
+] as const
+
+export type BitwardenPasswordManagerCliSource =
+  (typeof BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES)[number]
+
+/** Safe local-tool diagnostics. No account or vault material is included. */
+export interface BitwardenPasswordManagerCliSummary {
+  state: BitwardenPasswordManagerCliState
+  source: BitwardenPasswordManagerCliSource | null
+  executablePath: string | null
+  configuredExecutablePath: string | null
+  version: string | null
+  managedVersion: string | null
+  canInstall: boolean
+}
+
 export interface BitwardenPasswordManagerSettings {
   providerId: string
   /** Safe operator-facing account context reported by `bw status`. */
   accountEmail: string | null
   serverUrl: string | null
+  cli: BitwardenPasswordManagerCliSummary
   collections: BitwardenPasswordManagerCollectionSummary[]
 }
 

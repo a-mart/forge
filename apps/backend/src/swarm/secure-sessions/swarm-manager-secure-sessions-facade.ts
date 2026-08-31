@@ -39,6 +39,7 @@ import type {
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
+  UpdateBitwardenPasswordManagerCliInput,
   UnlockBitwardenPasswordManagerInput,
   UpdateSecureSecretInput,
   UpdateSecureSshTrustedHostInput,
@@ -149,6 +150,22 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     providerId: string,
   ): Promise<SecureSecretProviderSummary> {
     return this.secureSessions.lockBitwardenPasswordManager(providerId);
+  }
+
+  installBitwardenPasswordManagerCli(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    return this.secureSessions.installBitwardenPasswordManagerCli(providerId);
+  }
+
+  updateBitwardenPasswordManagerCli(
+    providerId: string,
+    input: UpdateBitwardenPasswordManagerCliInput,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    return this.secureSessions.updateBitwardenPasswordManagerCli(
+      providerId,
+      input,
+    );
   }
 
   replaceBitwardenPasswordManagerCollections(

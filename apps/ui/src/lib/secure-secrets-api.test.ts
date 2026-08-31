@@ -16,6 +16,7 @@ import {
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
   importSecureVaultTransfer,
+  installBitwardenPasswordManagerCli,
   installSecureRunner,
   lockBitwardenPasswordManager,
   replaceBitwardenPasswordManagerCollections,
@@ -28,6 +29,7 @@ import {
   updateSecureSecretAutomaticGrant,
   updateSecureSecretProjectDefault,
   updateSecureSshTrustedHost,
+  updateBitwardenPasswordManagerCli,
 } from './secure-secrets-api'
 
 const SECRET_SUMMARY = {
@@ -123,6 +125,56 @@ afterEach(() => {
 })
 
 describe('secure secrets API', () => {
+  it('installs and configures the Bitwarden CLI through metadata-only endpoints', async () => {
+    const cliSettings = {
+      providerId: 'password-manager-1',
+      accountEmail: null,
+      serverUrl: null,
+      cli: {
+        state: 'ready' as const,
+        source: 'managed' as const,
+        executablePath: 'C:\\Forge\\bw.exe',
+        configuredExecutablePath: null,
+        version: '2026.8.0',
+        managedVersion: '2026.8.0',
+        canInstall: true,
+      },
+      collections: [],
+    }
+    const fetchMock = vi.fn(async () => jsonResponse(cliSettings))
+    const client = makeClient(fetchMock)
+
+    await installBitwardenPasswordManagerCli(client, 'password-manager-1')
+    await updateBitwardenPasswordManagerCli(
+      client,
+      'password-manager-1',
+      'C:\\Tools\\bw.exe',
+    )
+    await updateBitwardenPasswordManagerCli(client, 'password-manager-1', null)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/secure-secrets/providers/password-manager-1/cli/install',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/secure-secrets/providers/password-manager-1/cli',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ executablePath: 'C:\\Tools\\bw.exe' }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/secure-secrets/providers/password-manager-1/cli',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ executablePath: null }),
+      }),
+    )
+  })
+
   it('encrypts Password Manager unlock locally and sends only collection metadata afterward', async () => {
     const encryptLocalValue = vi.fn(async () => ({
       ok: true as const,
@@ -138,6 +190,15 @@ describe('secure secrets API', () => {
           providerId: 'password-manager-1',
           accountEmail: 'forge@example.test',
           serverUrl: 'https://vault.example.test',
+          cli: {
+            state: 'ready',
+            source: 'system',
+            executablePath: '/usr/local/bin/bw',
+            configuredExecutablePath: null,
+            version: '2026.8.0',
+            managedVersion: '2026.8.0',
+            canInstall: true,
+          },
           collections: [],
         })
       }

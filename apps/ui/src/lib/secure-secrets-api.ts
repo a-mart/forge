@@ -488,6 +488,35 @@ export async function lockBitwardenPasswordManager(
   )
 }
 
+export async function installBitwardenPasswordManagerCli(
+  apiClient: SettingsApiClient,
+  providerId: string,
+): Promise<BitwardenPasswordManagerSettings> {
+  assertBuilderTarget(apiClient)
+  return requestJson<BitwardenPasswordManagerSettings>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/cli/install`,
+    { method: 'POST' },
+  )
+}
+
+export async function updateBitwardenPasswordManagerCli(
+  apiClient: SettingsApiClient,
+  providerId: string,
+  executablePath: string | null,
+): Promise<BitwardenPasswordManagerSettings> {
+  assertBuilderTarget(apiClient)
+  return requestJson<BitwardenPasswordManagerSettings>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/cli`,
+    {
+      method: 'PATCH',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ executablePath }),
+    },
+  )
+}
+
 export async function replaceBitwardenPasswordManagerCollections(
   apiClient: SettingsApiClient,
   providerId: string,

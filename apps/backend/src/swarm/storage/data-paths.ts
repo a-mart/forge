@@ -105,6 +105,25 @@ export function getExternalChromeInstallStatePath(dataDir: string): string {
   return join(getExternalChromeStateDir(dataDir), "install.json");
 }
 
+export function getBitwardenCliDir(dataDir: string): string {
+  return join(getIntegrationsDir(dataDir), "bitwarden-cli");
+}
+
+export function getBitwardenCliVersionDir(dataDir: string, version: string): string {
+  return join(getBitwardenCliDir(dataDir), sanitizePathSegment(version));
+}
+
+export function getBitwardenCliExecutablePath(
+  dataDir: string,
+  version: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return join(
+    getBitwardenCliVersionDir(dataDir, version),
+    platform === "win32" ? "bw.exe" : "bw"
+  );
+}
+
 export function getExternalChromePreviousStatePath(dataDir: string): string {
   return join(getExternalChromeStateDir(dataDir), "previous.json");
 }

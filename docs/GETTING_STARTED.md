@@ -194,6 +194,10 @@ this task only** avoids creating a reusable saved secret.
 The **Settings → Secrets** readiness panel can test the local vault and Bitwarden
 connections after a data-directory move. Its safe diagnostics contain fixed codes
 only; local re-entry and Bitwarden reconnect preserve existing secret configuration.
+For Bitwarden Password Manager, Forge can install a pinned, checksum-verified `bw`
+copy inside its own data directory on supported Windows, macOS, and Linux systems, or
+use a custom existing executable path. The account's one-time interactive `bw login`
+still happens in PowerShell or Terminal; later vault unlocks happen privately in Forge.
 Secure Sessions currently require Forge Desktop for private value entry, a Pi-backed
 runtime, Docker, and the Forge runner image. Read [Secure Sessions](SECURE_SESSIONS.md)
 before relying on it: software that receives a raw value can still intentionally

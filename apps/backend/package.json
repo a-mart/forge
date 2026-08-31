@@ -33,6 +33,7 @@
     "better-sqlite3": "^12.11.1",
     "cron-parser": "^5.4.0",
     "dotenv": "^17.3.1",
+    "extract-zip": "2.0.1",
     "jiti": "^2.6.1",
     "jsdom": "^27.0.1",
     "koffi": "2.15.2",
