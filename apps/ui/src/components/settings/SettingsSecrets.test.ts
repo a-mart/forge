@@ -43,6 +43,7 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   createSecureSshTrustedHost: vi.fn(),
   updateSecureSshTrustedHost: vi.fn(),
   deleteSecureSshTrustedHost: vi.fn(),
+  updateSecureSecretSettings: vi.fn(),
   isSecureMaterialEntryAvailable: vi.fn(() => true),
   checkSecureMaterialEntryAvailability: vi.fn(async () => true),
   unlockSecureMaterialEntry: vi.fn(async () => true),
@@ -102,6 +103,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.updateSecureSshTrustedHost(...args),
     deleteSecureSshTrustedHost: (...args: unknown[]) =>
       secureSecretsApiMock.deleteSecureSshTrustedHost(...args),
+    updateSecureSecretSettings: (...args: unknown[]) =>
+      secureSecretsApiMock.updateSecureSecretSettings(...args),
     isSecureMaterialEntryAvailable: () =>
       secureSecretsApiMock.isSecureMaterialEntryAvailable(),
     checkSecureMaterialEntryAvailability: () =>
@@ -1570,12 +1573,38 @@ describe('SettingsSecrets', () => {
     })
   })
 
-  it('prevents enabling a seventeenth automatic secret in one project', async () => {
+  it('defaults the automatic-grant limit to 50 and persists a custom override', async () => {
+    secureSecretsApiMock.updateSecureSecretSettings.mockResolvedValue({
+      ok: true,
+      settings: { maxProjectDefaults: 12, updatedAt: '2026-08-31T12:00:00.000Z' },
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByLabelText(container, 'Automatic grants per project')).toBeTruthy()
+    })
+    const limitInput = getByLabelText(container, 'Automatic grants per project') as HTMLInputElement
+    expect(limitInput.value).toBe(String(SECURE_SECRET_MAX_PROJECT_DEFAULTS))
+
+    fireEvent.change(limitInput, { target: { value: '12' } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecretSettings).toHaveBeenCalledWith(
+        expect.anything(),
+        { maxProjectDefaults: 12 },
+      )
+      expect(container.textContent).toContain('Automatic-grant limit saved.')
+    })
+  })
+
+  it('prevents enabling another automatic secret once the live limit is reached', async () => {
     secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
       providers: [LOCAL_PROVIDER],
       secrets: [],
+      maxProjectDefaults: 2,
       projectDefaults: Array.from(
-        { length: SECURE_SECRET_MAX_PROJECT_DEFAULTS },
+        { length: 2 },
         (_, index) => ({
           profileId: 'project-alpha',
           secretId: `existing-secret-${index + 1}`,
@@ -1596,7 +1625,7 @@ describe('SettingsSecrets', () => {
     }) as HTMLButtonElement
     expect(automaticGrantCheckbox.disabled).toBe(true)
     expect(container.textContent).toContain(
-      `A project with ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic grants cannot receive another until one is removed.`,
+      'A project with 2 automatic grants cannot receive another until one is removed.',
     )
   })
 

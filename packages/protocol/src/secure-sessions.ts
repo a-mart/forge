@@ -189,13 +189,18 @@ export type SecureSecretScope =
   | { kind: 'profiles'; profileIds: string[] }
 
 /**
- * One project may automatically grant at most this many saved secrets.
+ * One project may automatically grant at most this many saved secrets by
+ * default. Operators can raise or lower the live limit in Secrets settings.
  *
- * This matches the bounded lease-grant operation accepted by the secure
- * runner. Keeping the policy public lets clients disable impossible default
- * selections before they reach the value-entry boundary.
+ * Keeping the default public lets clients disable impossible default
+ * selections before they reach the value-entry boundary when the live
+ * override is not yet loaded. Manual grant batches may use up to
+ * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS` entries so a raised live
+ * limit can still start Team Secure Mode in one operation.
  */
-export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 16
+export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 50
+export const SECURE_SECRET_MIN_PROJECT_DEFAULTS = 1
+export const SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS = 256
 
 /**
  * Projects where a saved secret is granted automatically when Team Secure
@@ -576,7 +581,7 @@ const SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS = 4096
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
-const SECURE_SESSIONS_MAX_GRANTS = 16
+const SECURE_SESSIONS_MAX_GRANTS = SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
 const SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH = 128
 const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
 const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256

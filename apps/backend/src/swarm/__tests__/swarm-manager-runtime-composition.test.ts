@@ -156,6 +156,7 @@ function createOptions(late: ReturnType<typeof vi.fn>): SwarmManagerRuntimeCompo
       ensureDirectories: late,
       loadStore: late,
       loadSecrets: late,
+      loadSecureSecretSettings: late,
       reloadSkillMetadata: late,
       reloadModelCatalog: late,
       preloadSessionPlanStates: late,

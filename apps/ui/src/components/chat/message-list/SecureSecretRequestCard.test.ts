@@ -284,7 +284,7 @@ describe('SecureSecretRequestCard', () => {
     }) as HTMLInputElement
     expect(automaticCheckbox.disabled).toBe(true)
     expect(document.body.textContent).toContain(
-      'This project already has 16 automatic secrets',
+      'This project already has 50 automatic secrets',
     )
 
     const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement

@@ -1,6 +1,7 @@
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import { encryptRemoteSecureValue } from './secure-browser-control-api'
 import type {
+  GetSecureSecretSettingsResponse,
   SecureSecretBinding,
   SecureSecretAutomaticGrantPolicy,
   BitwardenPasswordManagerSettings,
@@ -18,7 +19,10 @@ import type {
   ImportSecureVaultTransferRequest,
   ImportSecureVaultTransferResult,
   UpdateBitwardenPasswordManagerCollectionsResult,
+  UpdateSecureSecretSettingsRequest,
+  UpdateSecureSecretSettingsResponse,
 } from '@forge/protocol'
+import { SECURE_SECRET_MAX_PROJECT_DEFAULTS } from '@forge/protocol'
 
 export type {
   SecureSecretBinding,
@@ -47,6 +51,11 @@ export type SecureSecretsCatalog =
   & {
     projectDefaults: SecureSecretProjectDefaultSummary[]
     sshTrustedHosts?: SecureSshTrustedHostSummary[]
+    /**
+     * Live per-project automatic-grant limit. Older backends may omit it;
+     * clients treat omission as `SECURE_SECRET_MAX_PROJECT_DEFAULTS`.
+     */
+    maxProjectDefaults?: number
   }
 
 export interface CreateLocalSecretInput {
@@ -165,6 +174,15 @@ export function secureSecretsErrorMessage(error: unknown): string {
     : ERROR_MESSAGES.SECURE_OPERATION_FAILED
 }
 
+export function resolveMaxProjectDefaults(
+  catalog: Pick<SecureSecretsCatalog, 'maxProjectDefaults'> | null | undefined,
+): number {
+  const configured = catalog?.maxProjectDefaults
+  return typeof configured === 'number' && Number.isFinite(configured)
+    ? configured
+    : SECURE_SECRET_MAX_PROJECT_DEFAULTS
+}
+
 export function isSecureMaterialEntryAvailable(): boolean {
   return getPrivateBridge() !== null
 }
@@ -199,7 +217,13 @@ export async function fetchSecureSecretsCatalog(
   apiClient: SettingsApiClient,
 ): Promise<SecureSecretsCatalog> {
   assertBuilderTarget(apiClient)
-  const [providerPayload, secretPayload, projectDefaultPayload, sshTrustedHostPayload] =
+  const [
+    providerPayload,
+    secretPayload,
+    projectDefaultPayload,
+    sshTrustedHostPayload,
+    settingsPayload,
+  ] =
     await Promise.all([
     requestJson<SecureSecretProviderSummary[] | { providers: SecureSecretProviderSummary[] }>(
       apiClient,
@@ -223,6 +247,10 @@ export async function fetchSecureSecretsCatalog(
       apiClient,
       '/api/secure-secrets/ssh-trusted-hosts',
     ),
+    requestJson<GetSecureSecretSettingsResponse>(
+      apiClient,
+      '/api/settings/secure-secrets',
+    ).catch(() => null),
   ])
 
   return {
@@ -234,7 +262,35 @@ export async function fetchSecureSecretsCatalog(
     sshTrustedHosts: Array.isArray(sshTrustedHostPayload)
       ? sshTrustedHostPayload
       : sshTrustedHostPayload.trustedHosts,
+    maxProjectDefaults: settingsPayload?.settings.maxProjectDefaults
+      ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   }
+}
+
+export async function fetchSecureSecretSettings(
+  apiClient: SettingsApiClient,
+): Promise<GetSecureSecretSettingsResponse> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<GetSecureSecretSettingsResponse>(
+    apiClient,
+    '/api/settings/secure-secrets',
+  )
+}
+
+export async function updateSecureSecretSettings(
+  apiClient: SettingsApiClient,
+  patch: UpdateSecureSecretSettingsRequest,
+): Promise<UpdateSecureSecretSettingsResponse> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<UpdateSecureSecretSettingsResponse>(
+    apiClient,
+    '/api/settings/secure-secrets',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+  )
 }
 
 export async function exportSecureVaultTransfer(

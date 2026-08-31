@@ -40,6 +40,7 @@ describe("SwarmBootCoordinator", () => {
       "reloadModelCatalog",
       "loadSecrets",
       "loadCompactionSettings",
+      "loadSecureSecretSettings",
       "reloadSkillMetadata",
       "resolveDefaultCwd",
       "refreshDefaultMemoryTemplate",
@@ -219,6 +220,7 @@ function createHarness(
     reloadModelCatalog: mark("reloadModelCatalog"),
     loadSecrets: mark("loadSecrets"),
     loadCompactionSettings: mark("loadCompactionSettings"),
+    loadSecureSecretSettings: mark("loadSecureSecretSettings"),
     reloadSkillMetadata: mark("reloadSkillMetadata"),
     resolveDefaultCwd: overrides.resolveDefaultCwd ?? (async (cwd) => {
       order.push("resolveDefaultCwd");

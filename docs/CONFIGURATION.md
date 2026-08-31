@@ -337,6 +337,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   │   ├── auth.db                    # Collaboration auth + structured domain state
 │   │   │   └── auth-secret.key            # Generated collaboration auth secret
 │   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
+│   │   ├── secure-secret-settings.json    # Secure secret automatic-grant limit
 │   ├── state/
 │   │   ├── secure-sessions.db             # Secure Session metadata and OS-encrypted material
 │   │   ├── builder-sidebar-order.json     # Local unified project order

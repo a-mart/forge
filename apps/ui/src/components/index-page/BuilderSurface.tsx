@@ -87,7 +87,10 @@ import {
   toSecureSessionSnapshotView,
   unlockLocalProjectDefaultsIfNeeded,
 } from '@/lib/secure-sessions-api'
-import type { SecureSecretsCatalog } from '@/lib/secure-secrets-api'
+import {
+  resolveMaxProjectDefaults,
+  type SecureSecretsCatalog,
+} from '@/lib/secure-secrets-api'
 import {
   claimSecureBrowserPairing,
   createSecureBrowserPairingRequest,
@@ -131,7 +134,6 @@ import { useConversationThroughputDisplayPreference } from '@/hooks/use-conversa
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
 import {
-  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   type AgentDescriptor,
   type ProjectAgentExternalDirectoryEntry,
   type RemoteUpdateAwarenessProjectSnapshot,
@@ -1665,7 +1667,8 @@ export function BuilderSurface({
                 (secureCatalog?.projectDefaults?.filter(
                   (projectDefault) =>
                     projectDefault.profileId === secureSessionSnapshot.profileId,
-                ).length ?? 0) >= SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+                ).length ?? 0) >= resolveMaxProjectDefaults(secureCatalog),
+              maxProjectDefaults: resolveMaxProjectDefaults(secureCatalog),
             },
           }
         : {}),

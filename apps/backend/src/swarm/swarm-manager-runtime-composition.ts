@@ -145,6 +145,7 @@ export interface RuntimeCompositionRuntimeResources {
   ensureDirectories(): Promise<void>;
   loadStore(): Promise<AgentsStoreFile>;
   loadSecrets(): Promise<void>;
+  loadSecureSecretSettings(): Promise<void>;
   reloadSkillMetadata(): Promise<void>;
   reloadModelCatalog(): Promise<void>;
   preloadSessionPlanStates(): Promise<void>;
@@ -932,6 +933,7 @@ export class SwarmManagerRuntimeComposition {
         reloadModelCatalog: runtimeResources.reloadModelCatalog,
         loadSecrets: runtimeResources.loadSecrets,
         loadCompactionSettings: () => services.knowledge.loadCompactionSettingsForRuntime(),
+        loadSecureSecretSettings: runtimeResources.loadSecureSecretSettings,
         reloadSkillMetadata: runtimeResources.reloadSkillMetadata,
         resolveDefaultCwd: (cwd) => runtimeResources.resolveAndValidateCwd(cwd, { enforceAllowlist: false }),
         refreshDefaultMemoryTemplate: () => services.knowledge.refreshMemoryTemplateForBoot(),

@@ -45,6 +45,7 @@ import {
 } from "../swarm/cortex-auto-review-settings.js";
 import { BuilderSidebarOrderService } from "../swarm/builder-sidebar-order-service.js";
 import { CompactionSettingsService } from "../swarm/compaction-settings-service.js";
+import { SecureSecretSettingsService } from "../swarm/secure-sessions/secure-secret-settings-service.js";
 import { KnowledgeV2SettingsService } from "../swarm/knowledge-v2-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import { StreamDeckAccessService } from "../swarm/stream-deck-access-service.js";
@@ -86,6 +87,7 @@ import { createStreamDeckPairingRoutes } from "./http/routes/stream-deck-pairing
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCompactionSettingsRoutes } from "./http/routes/compaction-settings-routes.js";
+import { createSecureSecretSettingsRoutes } from "./http/routes/secure-secret-settings-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
 import { createDebugRoutes } from "./http/routes/debug-routes.js";
 import { createExtensionRoutes } from "./http/routes/extension-routes.js";
@@ -177,6 +179,7 @@ export class SwarmWebSocketServer {
   private readonly builderSidebarOrderService: BuilderSidebarOrderService | null;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService | null;
   private readonly compactionSettingsService: CompactionSettingsService | null;
+  private readonly secureSecretSettingsService: SecureSecretSettingsService | null;
   private readonly repositorySettingsService: RepositorySettingsService | null;
   private readonly repositoryProjectCreationService: RepositoryProjectCreationService | null;
   private readonly terminalService: TerminalService | null;
@@ -555,6 +558,7 @@ export class SwarmWebSocketServer {
     builderSidebarOrderService?: BuilderSidebarOrderService;
     knowledgeV2SettingsService?: KnowledgeV2SettingsService;
     compactionSettingsService?: CompactionSettingsService;
+    secureSecretSettingsService?: SecureSecretSettingsService;
     observabilityService?: ObservabilityFacade;
     feedbackService?: FeedbackService;
     remoteUpdateAwarenessService?: LocalRemoteUpdateAwarenessService;
@@ -581,6 +585,9 @@ export class SwarmWebSocketServer {
       null;
     this.compactionSettingsService =
       options.compactionSettingsService ?? this.swarmManager.getCompactionSettingsService();
+    this.secureSecretSettingsService =
+      options.secureSecretSettingsService
+      ?? (isBuilder ? this.swarmManager.getSecureSecretSettingsService() : null);
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),
@@ -840,6 +847,12 @@ export class SwarmWebSocketServer {
             runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
           })
         : []),
+      ...(this.secureSecretSettingsService
+        ? createSecureSecretSettingsRoutes({
+            settingsService: this.secureSecretSettingsService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
       ...(this.repositorySettingsService
         ? createRepositorySettingsRoutes({
             settingsService: this.repositorySettingsService,
@@ -933,6 +946,9 @@ export class SwarmWebSocketServer {
     }
     if (this.compactionSettingsService) {
       await this.compactionSettingsService.load();
+    }
+    if (this.secureSecretSettingsService) {
+      await this.secureSecretSettingsService.load();
     }
     if (this.repositorySettingsService) {
       await this.repositorySettingsService.load();

@@ -3,11 +3,15 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES,
   BITWARDEN_PASSWORD_MANAGER_CLI_STATES,
+  SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_DELIVERY_KINDS,
   SECURE_SECRET_LEASE_GRANT_SOURCES,
   SECURE_SECRET_LEASE_KINDS,
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
+  SECURE_SECRET_MIN_PROJECT_DEFAULTS,
   SECURE_SECRET_PROVIDER_KINDS,
+  getSecureSecretSettingsConstraints,
   SECURE_SESSION_PRINCIPAL_KINDS,
   SecureSessionsContractError,
   isSecureSecretBinding,
@@ -77,6 +81,12 @@ describe('Secure Sessions protocol', () => {
       'project_default',
     ])
     expect(SECURE_SESSION_PRINCIPAL_KINDS).toEqual(['manager', 'worker'])
+    expect(SECURE_SECRET_MAX_PROJECT_DEFAULTS).toBe(50)
+    expect(SECURE_SECRET_MIN_PROJECT_DEFAULTS).toBe(1)
+    expect(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS).toBe(256)
+    expect(getSecureSecretSettingsConstraints()).toEqual({
+      maxProjectDefaults: { min: 1, max: 256, default: 50 },
+    })
 
     const provider = {
       providerId: 'provider-local',
@@ -360,7 +370,7 @@ describe('Secure Sessions protocol', () => {
 
     for (const grants of [
       [],
-      Array.from({ length: 17 }, (_, index) => ({
+      Array.from({ length: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS + 1 }, (_, index) => ({
         secretId: `secret-${index}`,
         exposures: [{ deliveryKind: 'stdin' }],
         leaseKind: 'task',
@@ -522,8 +532,8 @@ describe('Secure Sessions protocol', () => {
     expect(JSON.stringify(invalidation)).not.toContain('secrets')
   })
 
-  it('parses automatic-grant policies independently of the 16-secret limit', () => {
-    const profileIds = Array.from({ length: 17 }, (_, index) => `profile-${index}`)
+  it('parses automatic-grant policies independently of the project-default limit', () => {
+    const profileIds = Array.from({ length: SECURE_SECRET_MAX_PROJECT_DEFAULTS + 1 }, (_, index) => `profile-${index}`)
     expect(parseSecureSecretAutomaticGrantPolicy({
       kind: 'projects',
       profileIds,

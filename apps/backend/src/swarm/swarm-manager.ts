@@ -66,6 +66,7 @@ import {
 } from "./swarm-agent-lifecycle-service.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
+import { SecureSecretSettingsService } from "./secure-sessions/secure-secret-settings-service.js";
 import { SecureSessionsService } from "./secure-sessions/secure-sessions-service.js";
 import { createSecureSessionLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import { SessionPinCoordinator } from "./session-pin-coordinator.js";
@@ -168,6 +169,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly skillMetadataService: SkillMetadataService;
   private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
+  private readonly secureSecretSettingsService: SecureSecretSettingsService;
   private readonly secureSessionsService: SecureSessionsService;
   private readonly sessionMetaService: SwarmSessionMetaService;
   private readonly collaborationStorageProvisioner: CollaborationStorageProvisioner;
@@ -263,6 +265,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.secretsEnvService = foundation.secretsEnvService;
     this.observabilityCoordinator = foundation.observabilityCoordinator; this.browserAutomationService = options?.browserAutomationService ?? new BrowserAutomationService({ dataDir: this.config.paths.dataDir, now: this.now });
     this.agentDirectory = this.createAgentDirectory();
+    this.secureSecretSettingsService = new SecureSecretSettingsService({
+      dataDir: this.config.paths.dataDir,
+      now: () => new Date(this.now()),
+    });
     this.secureSessionsService = this.createSecureSessionsService(foundation.secureSessions);
     const { compactionRuntimeSettingsProvider, liveCompactionRuntimeSettingsProvider } = foundation;
     const runtimeComposition = this.createRuntimeComposition();
@@ -543,6 +549,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       emitCatalogChanged: (event) => this.emit("secure_secret_catalog_changed", event),
       applyModeRuntimeRecycle: (agentId) => this.projectExecutableTrustCoordinator.applyManagerRuntimeRecyclePolicy(agentId, "secure_session_mode_change"),
       now: this.now,
+      getMaxProjectDefaults: () => this.secureSecretSettingsService.getMaxProjectDefaults(),
     });
   }
   private createSessionInteractionCoordinator(): SessionInteractionCoordinator {
@@ -668,6 +675,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         ensureDirectories: () => this.persistenceService.ensureDirectories(),
         loadStore: () => this.descriptorStoreAdapter.loadStore(),
         loadSecrets: () => this.configurationCoordinator.loadSecretsStore(),
+        loadSecureSecretSettings: () => this.secureSecretSettingsService.load(),
         reloadSkillMetadata: () => this.configurationCoordinator.reloadSkillMetadata(),
         reloadModelCatalog: () =>
           this.configurationCoordinator.reloadModelCatalogOverridesAndProjection(),
@@ -1313,6 +1321,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   ): Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }> {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
+  getSecureSecretSettingsService(): SecureSecretSettingsService {
+    return this.secureSecretSettingsService;
+  }
+
   private logDebug(message: string, details?: unknown, config = this.config): void {
     if (!config.debug) return;
     const prefix = `[swarm][${this.now()}] ${message}`;

@@ -65,6 +65,7 @@ interface SecretCatalogPanelProps {
   profiles: ManagerProfile[]
   initialProfileId?: string
   materialEntryAvailable: boolean
+  maxProjectDefaults?: number
   onChanged: (message: string) => Promise<void>
   onError: (error: unknown) => void
 }
@@ -77,6 +78,7 @@ export function SecretCatalogPanel({
   profiles,
   initialProfileId,
   materialEntryAvailable,
+  maxProjectDefaults = SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   onChanged,
   onError,
 }: SecretCatalogPanelProps) {
@@ -213,14 +215,14 @@ export function SecretCatalogPanel({
   ) => Boolean(
     profileId
     && (automaticGrantCountByProfileId.get(profileId) ?? 0)
-      >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+      >= maxProjectDefaults
     && (!secretId || !policyAppliesToProfile(
       automaticGrantPolicyBySecretId.get(secretId),
       profileId,
     ))
   )
   const isEveryProjectLimitReached = (secretId?: string) =>
-    allProjectsAutomaticGrantCount >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+    allProjectsAutomaticGrantCount >= maxProjectDefaults
     && automaticGrantPolicyBySecretId.get(secretId ?? '')?.kind !== 'all_projects'
   const limitReachedProfileIds = (secretId?: string) => new Set(
     profiles
@@ -671,6 +673,7 @@ export function SecretCatalogPanel({
                         everyProject={editEveryProject}
                         limitReachedProfileIds={limitReachedProfileIds(secret.secretId)}
                         everyProjectLimitReached={isEveryProjectLimitReached(secret.secretId)}
+                        maxProjectDefaults={maxProjectDefaults}
                         disabled={isBusy}
                         onProfileCheckedChange={(profileId, checked) => {
                           setEditAutomaticProfileIds((current) =>
@@ -905,6 +908,7 @@ export function SecretCatalogPanel({
               everyProject={bitwardenEveryProject}
               limitReachedProfileIds={limitReachedProfileIds()}
               everyProjectLimitReached={isEveryProjectLimitReached()}
+              maxProjectDefaults={maxProjectDefaults}
               disabled={busyKey !== null}
               onProfileCheckedChange={(profileId, checked) => {
                 setBitwardenAutomaticProfileIds((current) =>
@@ -1019,6 +1023,7 @@ export function SecretCatalogPanel({
             everyProject={localEveryProject}
             limitReachedProfileIds={limitReachedProfileIds()}
             everyProjectLimitReached={isEveryProjectLimitReached()}
+            maxProjectDefaults={maxProjectDefaults}
             disabled={!materialEntryAvailable || busyKey !== null}
             onProfileCheckedChange={(profileId, checked) => {
               setLocalAutomaticProfileIds((current) =>

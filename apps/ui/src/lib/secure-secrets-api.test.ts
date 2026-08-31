@@ -14,6 +14,7 @@ import {
   fetchSecureSessionReadiness,
   fetchBitwardenPasswordManagerSettings,
   fetchSecureSecretsCatalog,
+  fetchSecureSecretSettings,
   importBitwardenSecret,
   importSecureVaultTransfer,
   installBitwardenPasswordManagerCli,
@@ -28,6 +29,7 @@ import {
   updateSecureSecret,
   updateSecureSecretAutomaticGrant,
   updateSecureSecretProjectDefault,
+  updateSecureSecretSettings,
   updateSecureSshTrustedHost,
   updateBitwardenPasswordManagerCli,
 } from './secure-secrets-api'
@@ -287,6 +289,12 @@ describe('secure secrets API', () => {
             ? { projectDefaults: [] }
             : path.endsWith('/ssh-trusted-hosts')
               ? [SSH_HOST_SUMMARY]
+            : path.endsWith('/api/settings/secure-secrets')
+              ? {
+                  settings: { maxProjectDefaults: 50, updatedAt: null },
+                  defaults: { maxProjectDefaults: 50, updatedAt: null },
+                  constraints: { maxProjectDefaults: { min: 1, max: 256, default: 50 } },
+                }
             : { secrets: [SECRET_SUMMARY] },
       ),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -298,6 +306,7 @@ describe('secure secrets API', () => {
       secrets: [SECRET_SUMMARY],
       projectDefaults: [],
       sshTrustedHosts: [SSH_HOST_SUMMARY],
+      maxProjectDefaults: 50,
     })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets/providers',
@@ -314,6 +323,46 @@ describe('secure secrets API', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets/ssh-trusted-hosts',
       expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/secure-secrets',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('loads and updates the live automatic-grant limit', async () => {
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => new Response(
+      JSON.stringify(
+        init?.method === 'PUT'
+          ? {
+              ok: true,
+              settings: { maxProjectDefaults: 12, updatedAt: '2026-08-31T12:00:00.000Z' },
+            }
+          : {
+              settings: { maxProjectDefaults: 50, updatedAt: null },
+              defaults: { maxProjectDefaults: 50, updatedAt: null },
+              constraints: { maxProjectDefaults: { min: 1, max: 256, default: 50 } },
+            },
+      ),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(fetchSecureSecretSettings(client)).resolves.toEqual({
+      settings: { maxProjectDefaults: 50, updatedAt: null },
+      defaults: { maxProjectDefaults: 50, updatedAt: null },
+      constraints: { maxProjectDefaults: { min: 1, max: 256, default: 50 } },
+    })
+    await expect(updateSecureSecretSettings(client, { maxProjectDefaults: 12 })).resolves.toEqual({
+      ok: true,
+      settings: { maxProjectDefaults: 12, updatedAt: '2026-08-31T12:00:00.000Z' },
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/secure-secrets',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ maxProjectDefaults: 12 }),
+      }),
     )
   })
 

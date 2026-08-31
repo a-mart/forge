@@ -2837,7 +2837,7 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
-  it("enforces the shared project-default limit without mutating the 17th selection", async () => {
+  it("enforces the shared project-default limit without mutating the overflow selection", async () => {
     const harness = createHarness();
     const secrets = [];
     for (let index = 0; index <= SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
@@ -2865,6 +2865,38 @@ describe("SecureSessionsService", () => {
     });
     expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
       .toHaveLength(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
+    await harness.close();
+  });
+
+  it("enforces a configured project-default limit below the default", async () => {
+    const harness = createHarness({ maxProjectDefaults: 2 });
+    const secrets = [];
+    for (let index = 0; index < 3; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `custom-limit-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `CUSTOM_LIMIT_${index}`,
+        }],
+      }));
+    }
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[0]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).resolves.toEqual(expect.objectContaining({ secretId: secrets[0]!.secretId }));
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[1]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).resolves.toEqual(expect.objectContaining({ secretId: secrets[1]!.secretId }));
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[2]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).rejects.toMatchObject({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toHaveLength(2);
     await harness.close();
   });
 
@@ -5481,6 +5513,7 @@ async function grant(
 }
 
 function createHarness(options: {
+  maxProjectDefaults?: number;
   blockProviderStatus?: boolean;
   blockSourceResolution?: boolean;
   blockEnsures?: readonly string[];
@@ -5742,6 +5775,7 @@ function createHarness(options: {
     },
     now,
     createId: () => `id-${++nextId}`,
+    getMaxProjectDefaults: () => options.maxProjectDefaults ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   });
   return {
     service,

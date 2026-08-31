@@ -73,7 +73,8 @@ Changing this setting while Team Secure Mode is active marks it **Configured**. 
 **Apply now** in the shield to apply or retry non-active automatic grants for the
 session without restarting. An unavailable source or conflicting delivery skips only
 that grant and reports a fixed status without blocking other grants. Each project
-supports at most 16 effective automatic grants.
+supports at most 50 effective automatic grants by default. Change that limit under
+**Automatic grants per project** on this page.
 
 Archiving a project preserves its project-only secrets and automatic-grant mappings.
 Permanently deleting a project removes that project from selected-project entries,

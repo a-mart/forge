@@ -114,6 +114,7 @@ export interface SecureSessionProjectContext {
   profileId: string
   displayName: string
   projectDefaultLimitReached?: boolean
+  maxProjectDefaults?: number
 }
 
 export type SecurePrivateFulfillmentInput =

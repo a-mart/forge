@@ -307,7 +307,7 @@ separate from the secret's catalog availability scope:
 - an all-projects secret can be granted automatically in any combination of projects
   without becoming automatic elsewhere;
 - **Every project** is available only for an all-projects secret;
-- each project may have at most 16 effective automatic grants;
+- each project may have at most 50 effective automatic grants by default, or the live limit configured in Secrets settings;
 - when Team Secure Mode starts, Forge evaluates each applicable policy once for the
   manager session;
 - each applicable policy creates one **Until Secure Session stops** lease in the

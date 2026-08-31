@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Database, Link2, Loader2, Server } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import type { SettingsApiClient } from './settings-api-client'
 import {
   checkSecureMaterialEntryAvailability,
@@ -8,9 +11,11 @@ import {
   fetchSecureSessionReadiness,
   installSecureRunner,
   isSecureMaterialEntryAvailable,
+  resolveMaxProjectDefaults,
   secureSecretsErrorMessage,
   testSecureSecretProvider,
   unlockSecureMaterialEntry,
+  updateSecureSecretSettings,
   type SecureSecretsCatalog,
   type SecureSessionReadiness,
 } from '@/lib/secure-secrets-api'
@@ -21,9 +26,12 @@ import { SecretSourcesPanel } from './secrets/SecretSourcesPanel'
 import { SecureSessionsReadinessPanel } from './secrets/SecureSessionsReadinessPanel'
 import { SecureBrowserAccessPanel } from './secrets/SecureBrowserAccessPanel'
 import { SshTrustedHostsPanel } from './secrets/SshTrustedHostsPanel'
-import type {
-  ManagerProfile,
-  SecureBrowserControlStatus,
+import {
+  SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+  SECURE_SECRET_MIN_PROJECT_DEFAULTS,
+  type ManagerProfile,
+  type SecureBrowserControlStatus,
 } from '@forge/protocol'
 
 interface SettingsSecretsProps {
@@ -68,6 +76,7 @@ function BuilderSecretsSettings({
     secrets: [],
     projectDefaults: [],
     sshTrustedHosts: [],
+    maxProjectDefaults: SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -85,6 +94,9 @@ function BuilderSecretsSettings({
   const [readiness, setReadiness] = useState<SecureSessionReadiness | null>(null)
   const [installingRunner, setInstallingRunner] = useState(false)
   const [runnerInstallMessage, setRunnerInstallMessage] = useState<string | null>(null)
+  const [limitDraft, setLimitDraft] = useState(String(SECURE_SECRET_MAX_PROJECT_DEFAULTS))
+  const [savingLimit, setSavingLimit] = useState(false)
+  const maxProjectDefaults = resolveMaxProjectDefaults(catalog)
   const projectProfiles = useMemo(
     () => profiles.filter((profile) =>
       profile.profileType !== 'system' && !profile.archivedAt
@@ -153,11 +165,14 @@ function BuilderSecretsSettings({
       ])
     if (catalogResult.status === 'fulfilled') {
       const nextCatalog = catalogResult.value
+      const nextLimit = resolveMaxProjectDefaults(nextCatalog)
       setCatalog({
         ...nextCatalog,
         projectDefaults: nextCatalog.projectDefaults ?? [],
         sshTrustedHosts: nextCatalog.sshTrustedHosts ?? [],
+        maxProjectDefaults: nextLimit,
       })
+      setLimitDraft(String(nextLimit))
     } else {
       setError(secureSecretsErrorMessage(catalogResult.reason))
     }
@@ -255,6 +270,31 @@ function BuilderSecretsSettings({
     }
   }, [apiClient])
 
+  const handleSaveLimit = useCallback(async () => {
+    const parsed = Number(limitDraft)
+    if (!Number.isFinite(parsed)) {
+      setError('Enter a whole number for the automatic-grant limit.')
+      return
+    }
+    setSavingLimit(true)
+    setError(null)
+    try {
+      const result = await updateSecureSecretSettings(apiClient, {
+        maxProjectDefaults: parsed,
+      })
+      setCatalog((current) => ({
+        ...current,
+        maxProjectDefaults: result.settings.maxProjectDefaults,
+      }))
+      setLimitDraft(String(result.settings.maxProjectDefaults))
+      setNotice('Automatic-grant limit saved.')
+    } catch (nextError) {
+      setError(secureSecretsErrorMessage(nextError))
+    } finally {
+      setSavingLimit(false)
+    }
+  }, [apiClient, limitDraft])
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -275,6 +315,39 @@ function BuilderSecretsSettings({
           <span>{error}</span>
         </div>
       ) : null}
+      <div className="rounded-md border border-border/70 bg-card/30 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <Label htmlFor="max-project-defaults" className="text-sm font-medium">
+              Automatic grants per project
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Each project can automatically grant at most this many saved secrets when Team Secure Mode starts. Default is {SECURE_SECRET_MAX_PROJECT_DEFAULTS}.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              id="max-project-defaults"
+              type="number"
+              min={SECURE_SECRET_MIN_PROJECT_DEFAULTS}
+              max={SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS}
+              value={limitDraft}
+              onChange={(event) => setLimitDraft(event.target.value)}
+              className="w-24"
+              aria-label="Automatic grants per project"
+            />
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => { void handleSaveLimit() }}
+              disabled={savingLimit || limitDraft === String(maxProjectDefaults)}
+            >
+              {savingLimit ? <Loader2 className="size-3.5 animate-spin" /> : 'Save'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
       {notice ? (
         <div
           role="status"
@@ -371,6 +444,7 @@ function BuilderSecretsSettings({
               profiles={projectProfiles}
               initialProfileId={initialProfileId}
               materialEntryAvailable={materialEntryAvailable}
+              maxProjectDefaults={maxProjectDefaults}
               onChanged={handleChanged}
               onError={handleError}
             />

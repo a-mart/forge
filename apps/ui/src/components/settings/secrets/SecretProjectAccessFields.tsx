@@ -130,6 +130,7 @@ export function AutomaticGrantFields({
   everyProject,
   limitReachedProfileIds,
   everyProjectLimitReached,
+  maxProjectDefaults = SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   disabled,
   onProfileCheckedChange,
   onEveryProjectChange,
@@ -142,6 +143,7 @@ export function AutomaticGrantFields({
   everyProject: boolean
   limitReachedProfileIds: Set<string>
   everyProjectLimitReached: boolean
+  maxProjectDefaults?: number
   disabled: boolean
   onProfileCheckedChange: (profileId: string, checked: boolean) => void
   onEveryProjectChange: (enabled: boolean) => void
@@ -224,7 +226,7 @@ export function AutomaticGrantFields({
               <span className="min-w-0 flex-1 truncate">{displayName}</span>
               {limitReached ? (
                 <span className="text-xs text-muted-foreground">
-                  {SECURE_SECRET_MAX_PROJECT_DEFAULTS}/{SECURE_SECRET_MAX_PROJECT_DEFAULTS}
+                  {maxProjectDefaults}/{maxProjectDefaults}
                 </span>
               ) : null}
             </label>
@@ -235,14 +237,14 @@ export function AutomaticGrantFields({
       {everyProjectBlocked ? (
         <p className="text-xs text-amber-700 dark:text-amber-300">
           Every project is unavailable because one or more projects already have the maximum of{' '}
-          {SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic grants. Remove one there first.
+          {maxProjectDefaults} automatic grants. Remove one there first.
         </p>
       ) : null}
       {[...limitReachedProfileIds].some(
         (profileId) => !selectedProfileIds.has(profileId),
       ) && !everyProjectBlocked ? (
         <p className="text-xs text-muted-foreground">
-          A project with {SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic grants cannot receive
+          A project with {maxProjectDefaults} automatic grants cannot receive
           another until one is removed.
         </p>
       ) : null}

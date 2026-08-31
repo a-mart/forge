@@ -69,6 +69,8 @@ export function PrivateSecretValueDialog({
   const [submitMode, setSubmitMode] = useState<SubmitMode | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const projectDefaultLimitReached = project.projectDefaultLimitReached === true
+  const maxProjectDefaults =
+    project.maxProjectDefaults ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS
 
   const setPrivateInputRef = useCallback((input: HTMLTextAreaElement | null) => {
     if (!input && inputRef.current) inputRef.current.value = ''
@@ -260,7 +262,7 @@ export function PrivateSecretValueDialog({
               </span>
               <span className="block text-xs text-muted-foreground">
                 {projectDefaultLimitReached
-                  ? `This project already has ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic secrets. Remove one in Settings to enable another.`
+                  ? `This project already has ${maxProjectDefaults} automatic secrets. Remove one in Settings to enable another.`
                   : 'Each future Team Secure Mode in this project receives access until it stops.'}
               </span>
             </span>
