@@ -803,7 +803,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + exa-search + cron-scheduling + agent-browser + image-generation + slash-commands + create-skill + forge-project-resources skills', async () => {
+  it('auto-loads per-runtime memory context and wires required built-in skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -860,6 +860,13 @@ describe('SwarmManager', () => {
     const slashCommandsSkill = await readFile(slashCommandsSkillPath!, 'utf8')
     expect(slashCommandsSkill).toContain('name: slash-commands')
     expect(slashCommandsSkill).toContain('slash-commands.js create')
+
+    const delegationPresetsSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('delegation-presets', 'SKILL.md')))
+    expect(delegationPresetsSkillPath).toBeDefined()
+    const delegationPresetsSkill = await readFile(delegationPresetsSkillPath!, 'utf8')
+    expect(delegationPresetsSkill).toContain('name: delegation-presets')
+    expect(delegationPresetsSkill).toContain('manage-delegation-presets.mjs create')
+    expect(delegationPresetsSkill).toContain('Do not edit the storage file directly.')
 
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(false)
 
