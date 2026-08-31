@@ -25,6 +25,10 @@ import { SecretsEnvService } from "./secrets-env-service.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import { DockerSecureExecutionBackend } from "./secure-sessions/execution/docker-secure-execution-backend.js";
 import { BitwardenBwsSecretSource, BwsCommandClient } from "./secure-sessions/sources/bitwarden-bws-source.js";
+import {
+  BitwardenPasswordManagerCommandClient,
+  BitwardenPasswordManagerSecretSource,
+} from "./secure-sessions/sources/bitwarden-password-manager-source.js";
 import { ElectronSafeStorageClient } from "./secure-sessions/sources/electron-safe-storage-client.js";
 import { LocalEncryptedSecretSource } from "./secure-sessions/sources/local-encrypted-source.js";
 import { SecureSessionStore } from "./secure-sessions/storage/secure-session-store.js";
@@ -43,6 +47,7 @@ export interface SecureSessionsFoundation {
   cipher: ElectronSafeStorageClient;
   localSource: LocalEncryptedSecretSource;
   bitwardenSource: BitwardenBwsSecretSource;
+  bitwardenPasswordManagerSource: BitwardenPasswordManagerSecretSource;
   probeBitwarden: () => Promise<boolean>;
   execution: DockerSecureExecutionBackend;
 }
@@ -188,6 +193,7 @@ export function createSwarmManagerFoundation(
   });
   const secureVaultCipher = new ElectronSafeStorageClient();
   const bitwardenClient = new BwsCommandClient();
+  const bitwardenPasswordManagerClient = new BitwardenPasswordManagerCommandClient();
   const secureSessions: SecureSessionsFoundation = {
     storeFactory: () =>
       SecureSessionStore.open(
@@ -202,6 +208,10 @@ export function createSwarmManagerFoundation(
     cipher: secureVaultCipher,
     localSource: new LocalEncryptedSecretSource(secureVaultCipher),
     bitwardenSource: new BitwardenBwsSecretSource(secureVaultCipher, bitwardenClient),
+    bitwardenPasswordManagerSource: new BitwardenPasswordManagerSecretSource(
+      secureVaultCipher,
+      bitwardenPasswordManagerClient,
+    ),
     probeBitwarden: () => bitwardenClient.probe(),
     execution: new DockerSecureExecutionBackend({
       scope: config.paths.dataDir,

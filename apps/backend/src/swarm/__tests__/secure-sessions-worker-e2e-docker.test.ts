@@ -48,6 +48,7 @@ import { SecureSessionsService } from "../secure-sessions/secure-sessions-servic
 import type {
   SecureVaultCipher,
 } from "../secure-sessions/sources/electron-safe-storage-client.js";
+import type { BitwardenPasswordManagerSource } from "../secure-sessions/sources/bitwarden-password-manager-source.js";
 import {
   HostOnlySecret,
   type SecureSecretSource,
@@ -476,11 +477,23 @@ async function createDockerHarness() {
     },
   };
   let nextId = 0;
+  const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
+    kind: "bitwarden_password_manager",
+    async status() { return { state: "locked", accountEmail: null, serverUrl: null }; },
+    async unlock() { return { state: "available", accountEmail: null, serverUrl: null }; },
+    async lock() {},
+    async sync() {},
+    async listCollections() { return []; },
+    async listItems() { return []; },
+    async resolve() { throw new Error("unused Password Manager source"); },
+    dispose() {},
+  };
   const service = new SecureSessionsService({
     storeFactory: async () => store,
     cipher,
     localSource: source,
     bitwardenSource: source,
+    bitwardenPasswordManagerSource,
     probeBitwarden: async () => true,
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),

@@ -5,19 +5,24 @@ import type { SettingsApiClient } from '@/components/settings/settings-api-clien
 import {
   SecureSecretsError,
   checkSecureMaterialEntryAvailability,
+  connectBitwardenPasswordManager,
   connectBitwardenProvider,
   createSecureSshTrustedHost,
   createLocalSecret,
   deleteSecureSshTrustedHost,
   exportSecureVaultTransfer,
   fetchSecureSessionReadiness,
+  fetchBitwardenPasswordManagerSettings,
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
   importSecureVaultTransfer,
   installSecureRunner,
+  lockBitwardenPasswordManager,
+  replaceBitwardenPasswordManagerCollections,
   reconnectBitwardenProvider,
   secureSecretsErrorMessage,
   testSecureSecretProvider,
+  unlockBitwardenPasswordManager,
   unlockSecureMaterialEntry,
   updateSecureSecret,
   updateSecureSecretAutomaticGrant,
@@ -82,6 +87,13 @@ function makeClient(
   }
 }
 
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 function installSecureVault(
   encryptLocalValue = vi.fn(async () => ({
     ok: true as const,
@@ -111,6 +123,74 @@ afterEach(() => {
 })
 
 describe('secure secrets API', () => {
+  it('encrypts Password Manager unlock locally and sends only collection metadata afterward', async () => {
+    const encryptLocalValue = vi.fn(async () => ({
+      ok: true as const,
+      encryptedPayloadBase64: 'encrypted-master-password',
+    }))
+    installSecureVault(encryptLocalValue)
+    const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/bitwarden-password-manager')) {
+        return jsonResponse(PROVIDER_SUMMARY)
+      }
+      if (path.endsWith('/unlock')) {
+        return jsonResponse({
+          providerId: 'password-manager-1',
+          accountEmail: 'forge@example.test',
+          serverUrl: 'https://vault.example.test',
+          collections: [],
+        })
+      }
+      if (path.endsWith('/lock')) return jsonResponse(PROVIDER_SUMMARY)
+      if (path.endsWith('/collections') && init?.method === 'PUT') {
+        return jsonResponse({
+          settings: {
+            providerId: 'password-manager-1',
+            accountEmail: 'forge@example.test',
+            serverUrl: 'https://vault.example.test',
+            collections: [],
+          },
+          addedSecrets: 0,
+          removedSecrets: 0,
+        })
+      }
+      return jsonResponse({
+        providerId: 'password-manager-1',
+        accountEmail: 'forge@example.test',
+        serverUrl: 'https://vault.example.test',
+        collections: [],
+      })
+    })
+    const client = makeClient(fetchMock)
+
+    await connectBitwardenPasswordManager(client)
+    await fetchBitwardenPasswordManagerSettings(client, 'password-manager-1')
+    await unlockBitwardenPasswordManager(
+      client,
+      'password-manager-1',
+      'synthetic-master-password',
+    )
+    await replaceBitwardenPasswordManagerCollections(
+      client,
+      'password-manager-1',
+      ['11111111-1111-4111-8111-111111111111'],
+    )
+    await lockBitwardenPasswordManager(client, 'password-manager-1')
+
+    expect(encryptLocalValue).toHaveBeenCalledWith('synthetic-master-password')
+    const unlockRequest = fetchMock.mock.calls.find(([path]) =>
+      path.endsWith('/unlock'))
+    expect(JSON.parse(String(unlockRequest?.[1]?.body))).toEqual({
+      encryptedMasterPassword: 'encrypted-master-password',
+    })
+    expect(String(unlockRequest?.[1]?.body)).not.toContain('synthetic-master-password')
+    const collectionRequest = fetchMock.mock.calls.find(([path, init]) =>
+      path.endsWith('/collections') && init?.method === 'PUT')
+    expect(JSON.parse(String(collectionRequest?.[1]?.body))).toEqual({
+      collectionIds: ['11111111-1111-4111-8111-111111111111'],
+    })
+  })
+
   it('reports the real desktop vault status rather than bridge presence alone', async () => {
     const unlock = vi.fn(async () => ({
       ok: true as const,

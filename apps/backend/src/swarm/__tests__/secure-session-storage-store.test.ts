@@ -128,6 +128,51 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
+  it("persists several Password Manager collections as metadata and cascades them with the provider", () => {
+    const { database, store } = createMemoryStore();
+    store.upsertProvider({
+      providerId: "password-manager",
+      kind: "bitwarden_password_manager",
+      displayName: "Team Bitwarden",
+      status: "locked",
+      lastStatusCode: "source_locked",
+    });
+    expect(store.replaceBitwardenCollections({
+      providerId: "password-manager",
+      collections: [
+        {
+          collectionId: "11111111-1111-4111-8111-111111111111",
+          organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Infrastructure",
+        },
+        {
+          collectionId: "22222222-2222-4222-8222-222222222222",
+          organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Development",
+        },
+      ],
+    })).toEqual([
+      expect.objectContaining({
+        collectionId: "22222222-2222-4222-8222-222222222222",
+        name: "Development",
+      }),
+      expect.objectContaining({
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        name: "Infrastructure",
+      }),
+    ]);
+    expect(database.prepare(`
+      SELECT encrypted_access_token
+      FROM secure_session_provider
+      WHERE provider_id = 'password-manager'
+    `).get()).toEqual({ encrypted_access_token: null });
+
+    expect(store.deleteProvider("password-manager")).toBe(true);
+    expect(store.listBitwardenCollections("password-manager")).toEqual([]);
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
   it("rotates ciphertext with CAS without changing catalog policy state", () => {
     const { database, store } = createMemoryStore();
     store.upsertProvider({

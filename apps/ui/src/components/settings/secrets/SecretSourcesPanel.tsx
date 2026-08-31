@@ -23,6 +23,7 @@ import {
   type SecureSecretSourceStatus,
 } from '@/lib/secure-secrets-api'
 import { SourceStatusBadge } from './secret-ui'
+import { BitwardenPasswordManagerPanel } from './BitwardenPasswordManagerPanel'
 import { VaultTransferPanel } from './VaultTransferPanel'
 
 interface SecretSourcesPanelProps {
@@ -67,6 +68,10 @@ export function SecretSourcesPanel({
   )
   const bitwardenProviders = useMemo(
     () => providers.filter((provider) => provider.kind === 'bitwarden_secrets_manager'),
+    [providers],
+  )
+  const bitwardenPasswordManagerProvider = useMemo(
+    () => providers.find((provider) => provider.kind === 'bitwarden_password_manager'),
     [providers],
   )
   const localStatus: SecureSecretSourceStatus = materialEntryAvailable
@@ -385,6 +390,14 @@ export function SecretSourcesPanel({
             </div>
           ) : null}
         </div>
+
+        <BitwardenPasswordManagerPanel
+          apiClient={apiClient}
+          provider={bitwardenPasswordManagerProvider}
+          materialEntryAvailable={materialEntryAvailable}
+          onChanged={onChanged}
+          onError={onError}
+        />
 
         {vaultTransferSupported ? (
           <VaultTransferPanel

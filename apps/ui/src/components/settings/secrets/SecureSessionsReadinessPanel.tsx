@@ -29,6 +29,7 @@ const EXECUTION_LABELS: Record<SecureSessionReadinessCode, string> = {
 const SOURCE_LABELS: Record<SecureSecretProviderSummary['kind'], string> = {
   local_keychain: 'Local vault',
   bitwarden_secrets_manager: 'Bitwarden Secrets Manager',
+  bitwarden_password_manager: 'Bitwarden Password Manager',
 }
 
 const SOURCE_STATUS_LABELS: Record<SecureSecretSourceStatus, string> = {

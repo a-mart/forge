@@ -30,6 +30,11 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   importBitwardenSecret: vi.fn(),
   testSecureSecretProvider: vi.fn(),
   disconnectSecureSecretProvider: vi.fn(),
+  connectBitwardenPasswordManager: vi.fn(),
+  fetchBitwardenPasswordManagerSettings: vi.fn(),
+  unlockBitwardenPasswordManager: vi.fn(),
+  lockBitwardenPasswordManager: vi.fn(),
+  replaceBitwardenPasswordManagerCollections: vi.fn(),
   exportSecureVaultTransfer: vi.fn(),
   importSecureVaultTransfer: vi.fn(),
   createSecureSshTrustedHost: vi.fn(),
@@ -70,6 +75,16 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.testSecureSecretProvider(...args),
     disconnectSecureSecretProvider: (...args: unknown[]) =>
       secureSecretsApiMock.disconnectSecureSecretProvider(...args),
+    connectBitwardenPasswordManager: (...args: unknown[]) =>
+      secureSecretsApiMock.connectBitwardenPasswordManager(...args),
+    fetchBitwardenPasswordManagerSettings: (...args: unknown[]) =>
+      secureSecretsApiMock.fetchBitwardenPasswordManagerSettings(...args),
+    unlockBitwardenPasswordManager: (...args: unknown[]) =>
+      secureSecretsApiMock.unlockBitwardenPasswordManager(...args),
+    lockBitwardenPasswordManager: (...args: unknown[]) =>
+      secureSecretsApiMock.lockBitwardenPasswordManager(...args),
+    replaceBitwardenPasswordManagerCollections: (...args: unknown[]) =>
+      secureSecretsApiMock.replaceBitwardenPasswordManagerCollections(...args),
     exportSecureVaultTransfer: (...args: unknown[]) =>
       secureSecretsApiMock.exportSecureVaultTransfer(...args),
     importSecureVaultTransfer: (...args: unknown[]) =>
@@ -117,6 +132,35 @@ const BITWARDEN_PROVIDER = {
   providerId: 'bitwarden-1',
   kind: 'bitwarden_secrets_manager' as const,
   displayName: 'Bitwarden work',
+}
+
+const BITWARDEN_PASSWORD_MANAGER_PROVIDER = {
+  ...LOCAL_PROVIDER,
+  providerId: 'bitwarden-password-manager-1',
+  kind: 'bitwarden_password_manager' as const,
+  displayName: 'Team Bitwarden',
+  status: 'available' as const,
+  lastStatusCode: 'ok' as const,
+}
+
+const BITWARDEN_PASSWORD_MANAGER_SETTINGS = {
+  providerId: BITWARDEN_PASSWORD_MANAGER_PROVIDER.providerId,
+  accountEmail: 'forge@example.test',
+  serverUrl: 'https://vault.example.test',
+  collections: [
+    {
+      collectionId: '11111111-1111-4111-8111-111111111111',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Infrastructure',
+      selected: true,
+    },
+    {
+      collectionId: '22222222-2222-4222-8222-222222222222',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Development',
+      selected: false,
+    },
+  ],
 }
 
 const VAULT_TRANSFER = {
@@ -214,6 +258,14 @@ beforeEach(() => {
   })
   secureSecretsApiMock.exportSecureVaultTransfer.mockReset()
   secureSecretsApiMock.importSecureVaultTransfer.mockReset()
+  secureSecretsApiMock.connectBitwardenPasswordManager.mockReset()
+  secureSecretsApiMock.fetchBitwardenPasswordManagerSettings.mockReset()
+  secureSecretsApiMock.fetchBitwardenPasswordManagerSettings.mockResolvedValue(
+    BITWARDEN_PASSWORD_MANAGER_SETTINGS,
+  )
+  secureSecretsApiMock.unlockBitwardenPasswordManager.mockReset()
+  secureSecretsApiMock.lockBitwardenPasswordManager.mockReset()
+  secureSecretsApiMock.replaceBitwardenPasswordManagerCollections.mockReset()
   secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
     providers: [LOCAL_PROVIDER],
     secrets: [],
@@ -297,6 +349,97 @@ describe('SettingsSecrets', () => {
       expect(getByRole(container, 'tab', { name: 'Sources' })
         .getAttribute('data-state')).toBe('active')
       expect(container.textContent).toContain('Private sources')
+    })
+  })
+
+  it('configures several Password Manager collections with one save-and-sync action', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER, BITWARDEN_PASSWORD_MANAGER_PROVIDER],
+      secrets: [],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    secureSecretsApiMock.replaceBitwardenPasswordManagerCollections.mockResolvedValue({
+      settings: {
+        ...BITWARDEN_PASSWORD_MANAGER_SETTINGS,
+        collections: BITWARDEN_PASSWORD_MANAGER_SETTINGS.collections.map((collection) => ({
+          ...collection,
+          selected: true,
+        })),
+      },
+      addedSecrets: 2,
+      removedSecrets: 0,
+    })
+    render()
+
+    const development = await waitFor(() => getByRole(
+      container,
+      'checkbox',
+      { name: 'Development' },
+    ))
+    expect(getByRole(container, 'checkbox', { name: 'Infrastructure' })
+      .getAttribute('data-state')).toBe('checked')
+    fireEvent.click(development)
+    await waitFor(() => {
+      expect(development.getAttribute('data-state')).toBe('checked')
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save and sync' }))
+
+    await waitFor(() => {
+      expect(
+        secureSecretsApiMock.replaceBitwardenPasswordManagerCollections,
+      ).toHaveBeenCalledWith(
+        expect.anything(),
+        BITWARDEN_PASSWORD_MANAGER_PROVIDER.providerId,
+        [
+          '11111111-1111-4111-8111-111111111111',
+          '22222222-2222-4222-8222-222222222222',
+        ],
+      )
+      expect(container.textContent).toContain(
+        'Bitwarden collections saved. 2 added, 0 removed.',
+      )
+    })
+  })
+
+  it('clears the Password Manager password before awaiting unlock', async () => {
+    const lockedProvider = {
+      ...BITWARDEN_PASSWORD_MANAGER_PROVIDER,
+      status: 'locked' as const,
+      lastStatusCode: 'source_locked' as const,
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER, lockedProvider],
+      secrets: [],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    let finishUnlock!: () => void
+    secureSecretsApiMock.unlockBitwardenPasswordManager.mockImplementation(
+      () => new Promise((resolve) => {
+        finishUnlock = () => resolve(BITWARDEN_PASSWORD_MANAGER_SETTINGS)
+      }),
+    )
+    render()
+
+    const password = await waitFor(() => getByLabelText(
+      container,
+      'Bitwarden master password',
+    ) as HTMLInputElement)
+    fireEvent.change(password, { target: { value: 'synthetic-master-password' } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Unlock' }))
+
+    await waitFor(() => {
+      expect(password.value).toBe('')
+      expect(secureSecretsApiMock.unlockBitwardenPasswordManager).toHaveBeenCalledWith(
+        expect.anything(),
+        lockedProvider.providerId,
+        'synthetic-master-password',
+      )
+    })
+    finishUnlock()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Bitwarden Password Manager unlocked.')
     })
   })
 

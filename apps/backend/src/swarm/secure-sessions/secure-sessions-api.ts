@@ -35,6 +35,19 @@ export interface UpdateBitwardenSecureSecretProviderCredentialInput {
   encryptedAccessToken: string;
 }
 
+export interface ConnectBitwardenPasswordManagerInput {
+  displayName: string;
+}
+
+export interface UnlockBitwardenPasswordManagerInput {
+  /** Ephemeral Electron safeStorage ciphertext encoded as canonical base64. */
+  encryptedMasterPassword: string;
+}
+
+export interface ReplaceBitwardenPasswordManagerCollectionsInput {
+  collectionIds: string[];
+}
+
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;

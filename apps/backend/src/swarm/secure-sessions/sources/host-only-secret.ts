@@ -82,7 +82,10 @@ export interface SecureSecretResolution {
 }
 
 export interface SecureSecretSource {
-  readonly kind: "local_keychain" | "bitwarden_secrets_manager";
+  readonly kind:
+    | "local_keychain"
+    | "bitwarden_secrets_manager"
+    | "bitwarden_password_manager";
   resolve(input: {
     sourceLocator: string;
     encryptedCredential?: Uint8Array;

@@ -46,6 +46,7 @@ describe('Secure Sessions protocol', () => {
     expect(SECURE_SECRET_PROVIDER_KINDS).toEqual([
       'local_keychain',
       'bitwarden_secrets_manager',
+      'bitwarden_password_manager',
     ])
     expect(SECURE_SECRET_DELIVERY_KINDS).toEqual([
       'environment',

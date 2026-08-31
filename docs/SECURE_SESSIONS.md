@@ -212,6 +212,43 @@ Bitwarden is a long-lived source, not a permanent task grant. Reusing a task gra
 not require re-entering the value. A task still needs either an explicit lease or an
 enabled automatic-grant policy.
 
+### Bitwarden Password Manager collections
+
+For a small trusted team that already organizes credentials in Bitwarden Password
+Manager, Forge can use selected organization collections without a separate Secrets
+Manager project or machine token:
+
+1. Install the official `bw` CLI and run `bw login` once on the Builder computer for
+   the dedicated Forge Bitwarden account. Complete any Bitwarden login or two-factor
+   prompts in that terminal.
+2. In **Settings → Secrets → Sources**, add **Bitwarden Password Manager**.
+3. Enter the account's master password in Forge when the source is locked. Forge
+   encrypts the entry through the same Desktop or paired-browser private-entry path
+   used by the local vault, passes it to `bw unlock --passwordenv`, and clears the
+   form immediately. The password is never saved.
+4. Select one or more collections and choose **Save and sync**. The same button can be
+   used later to run `bw sync` and discover added or removed items without changing
+   the selection.
+
+Forge stores only the account label, selected collection IDs and names, Bitwarden item
+IDs and names, and normal Forge alias/binding policy. It holds the `bw` session key in
+backend memory until the source is locked or Forge stops. Item values are resolved on
+the trusted host only when a Secure Session grant needs them. **Login** items use their
+password field; **Secure Note** items use their note body. Other Bitwarden item types
+are not imported automatically.
+
+Synchronized items receive editable `bitwarden/...` aliases, an automatic environment
+delivery, instance-wide catalog availability, and no automatic project grant. Select
+the desired project scope, delivery binding, or automatic-grant policy in the normal
+**Secrets** view. Removing a collection removes its synchronized catalog entries and
+revokes their active leases. Choosing **Lock** clears the in-memory Bitwarden session
+and revokes active leases from this source; selected collection metadata remains for
+the next unlock.
+
+This source intentionally uses the local CLI rather than the Bitwarden MCP server. The
+MCP path is designed to place vault results in an agent tool response, while Forge's
+contract requires values to remain outside prompts, chat, and model-visible results.
+
 ## Configure delivery bindings
 
 A binding describes how a command can receive a value after it has a lease. Saving a

@@ -46,8 +46,11 @@ Ordinary web clients have no local browser host, and Forge does not forward the 
 ### Secure Sessions
 
 Secure Sessions are configured through **Settings → Secrets** rather than environment
-variables. Forge Desktop encrypts local values and Bitwarden machine credentials before
-the local Builder stores them. Saved local-vault and Bitwarden-backed aliases can be
+variables. Forge Desktop encrypts local values, Bitwarden Secrets Manager machine
+credentials, and one-time Bitwarden Password Manager unlock entries before the local
+Builder receives them. Password Manager collection selection and unlock state are
+configured under **Sources**; several collections can be selected and synchronized in
+one action. Saved local-vault and Bitwarden-backed aliases can be
 available to one selected project or all local projects. A project-specific alias
 overrides an all-projects alias of the same name in that project.
 

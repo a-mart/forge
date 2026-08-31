@@ -10,6 +10,7 @@
 export const SECURE_SECRET_PROVIDER_KINDS = [
   'local_keychain',
   'bitwarden_secrets_manager',
+  'bitwarden_password_manager',
 ] as const
 
 export type SecureSecretProviderKind = (typeof SECURE_SECRET_PROVIDER_KINDS)[number]
@@ -47,6 +48,32 @@ export interface SecureSecretProviderSummary {
   lastVerifiedAt: string | null
   /** Fixed code only. Provider exception messages are never public metadata. */
   lastStatusCode: SecureSecretSourceStatusCode | null
+}
+
+/**
+ * Safe collection metadata from the locally authenticated Bitwarden Password
+ * Manager account. Item contents and vault session material are never part of
+ * this contract.
+ */
+export interface BitwardenPasswordManagerCollectionSummary {
+  collectionId: string
+  organizationId: string
+  name: string
+  selected: boolean
+}
+
+export interface BitwardenPasswordManagerSettings {
+  providerId: string
+  /** Safe operator-facing account context reported by `bw status`. */
+  accountEmail: string | null
+  serverUrl: string | null
+  collections: BitwardenPasswordManagerCollectionSummary[]
+}
+
+export interface UpdateBitwardenPasswordManagerCollectionsResult {
+  settings: BitwardenPasswordManagerSettings
+  addedSecrets: number
+  removedSecrets: number
 }
 
 export const SECURE_SECRET_PROVIDER_TEST_CODES = [

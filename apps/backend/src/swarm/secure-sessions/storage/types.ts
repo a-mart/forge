@@ -1,6 +1,10 @@
 import type { SecureSecretAutomaticGrantPolicy } from "@forge/protocol";
 
-export const SECURE_SESSION_PROVIDER_KINDS = ["local_keychain", "bitwarden_secrets_manager"] as const;
+export const SECURE_SESSION_PROVIDER_KINDS = [
+  "local_keychain",
+  "bitwarden_secrets_manager",
+  "bitwarden_password_manager",
+] as const;
 export type SecureSessionProviderKind = (typeof SECURE_SESSION_PROVIDER_KINDS)[number];
 
 export const SECURE_SESSION_SOURCE_STATUSES = [
@@ -106,6 +110,24 @@ export interface SecureSessionProviderBackendConfig {
   projectId: string | null;
   /** Electron safeStorage ciphertext only. */
   encryptedAccessToken: Buffer;
+}
+
+export interface SecureSessionBitwardenCollection {
+  providerId: string;
+  collectionId: string;
+  organizationId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplaceSecureSessionBitwardenCollectionsInput {
+  providerId: string;
+  collections: Array<{
+    collectionId: string;
+    organizationId: string;
+    name: string;
+  }>;
 }
 
 export type UpsertSecureSessionProviderBackendConfigInput = SecureSessionProviderBackendConfig;

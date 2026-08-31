@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import path from "node:path";
 import type {
   AgentDescriptor,
+  BitwardenPasswordManagerSettings,
   GrantSecureSecretLeaseInput,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
@@ -26,6 +27,7 @@ import type {
   ExportSecureVaultTransferResult,
   ImportSecureVaultTransferRequest,
   ImportSecureVaultTransferResult,
+  UpdateBitwardenPasswordManagerCollectionsResult,
 } from "@forge/protocol";
 import {
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
@@ -49,15 +51,18 @@ import type {
   FulfillSecureAccessRequestInput,
   ApplySecureSessionProjectDefaultsInput,
   ImportBitwardenSecureSecretInput,
+  ConnectBitwardenPasswordManagerInput,
   ConnectBitwardenSecureSecretProviderInput,
   CreateLocalSecureSecretInput,
   CreateSecureSshTrustedHostInput,
   RequestSecureSecretAccessInput,
   RequestSecureSshHostTrustInput,
+  ReplaceBitwardenPasswordManagerCollectionsInput,
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
+  UnlockBitwardenPasswordManagerInput,
   UpdateSecureSecretInput,
   UpdateSecureSshTrustedHostInput,
 } from "./secure-sessions-api.js";
@@ -73,6 +78,11 @@ import {
   type SecureSessionsServiceErrorCode,
 } from "./secure-sessions-error.js";
 import type { SecureVaultCipher } from "./sources/electron-safe-storage-client.js";
+import type {
+  BitwardenPasswordManagerCollection,
+  BitwardenPasswordManagerSource,
+  BitwardenPasswordManagerStatus,
+} from "./sources/bitwarden-password-manager-source.js";
 import {
   HostOnlySecret,
   SecureSourceError,
@@ -125,6 +135,7 @@ interface SecureSessionsServiceOptions {
       signal?: AbortSignal;
     }): Promise<{ refreshedEncryptedCredential?: Buffer } | void>;
   };
+  bitwardenPasswordManagerSource: BitwardenPasswordManagerSource;
   probeBitwarden: () => Promise<boolean>;
   execution: SecureExecutionBackend;
   getDescriptor: (agentId: string) => AgentDescriptor | undefined;
@@ -538,6 +549,28 @@ export class SecureSessionsService {
     this.startupRecoveryPromise ??= (async () => {
       const store = await this.store();
       let catalogChanged = false;
+      // Password Manager sessions are intentionally process-memory-only. A
+      // persisted "available" status can therefore never survive a Forge
+      // restart, even though the collection selection and catalog metadata do.
+      // Normalize it locally instead of invoking the CLI on the startup path.
+      for (const provider of store.listProviders()) {
+        if (
+          provider.kind !== "bitwarden_password_manager"
+          || (
+            provider.status === "locked"
+            && provider.lastStatusCode === "source_locked"
+          )
+        ) {
+          continue;
+        }
+        store.updateProviderStatus({
+          providerId: provider.providerId,
+          status: "locked",
+          lastStatusCode: "source_locked",
+          lastVerifiedAt: this.now(),
+        });
+        catalogChanged = true;
+      }
       const orphanedProfileIds = new Set<string>();
       for (const secret of store.listSecrets()) {
         if (secret.scopeKind !== "profile") continue;
@@ -906,6 +939,276 @@ export class SecureSessionsService {
     }
   }
 
+  async connectBitwardenPasswordManager(
+    input: ConnectBitwardenPasswordManagerInput,
+  ): Promise<SecureSecretProviderSummary> {
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const existing = store.listProviders().find(
+          (provider) => provider.kind === "bitwarden_password_manager",
+        );
+        const status = await this.options.bitwardenPasswordManagerSource.status();
+        const providerStatus = passwordManagerProviderStatus(status.state);
+        const provider = store.upsertProvider({
+          providerId: existing?.providerId ?? this.id(),
+          kind: "bitwarden_password_manager",
+          displayName: bounded(input.displayName, 256),
+          enabled: true,
+          ...providerStatus,
+          lastVerifiedAt: this.now(),
+        });
+        this.emitCatalog(store);
+        return toProviderSummary(provider);
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    }
+  }
+
+  async getBitwardenPasswordManagerSettings(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        if (!provider || provider.kind !== "bitwarden_password_manager") {
+          throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+        const status = await this.options.bitwardenPasswordManagerSource.status();
+        const next = passwordManagerProviderStatus(status.state);
+        if (
+          provider.status !== next.status
+          || provider.lastStatusCode !== next.lastStatusCode
+        ) {
+          store.updateProviderStatus({
+            providerId,
+            ...next,
+            lastVerifiedAt: this.now(),
+          });
+          this.emitCatalog(store);
+        }
+        return await this.buildBitwardenPasswordManagerSettings(
+          store,
+          providerId,
+          status,
+        );
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    }
+  }
+
+  async unlockBitwardenPasswordManager(
+    providerId: string,
+    input: UnlockBitwardenPasswordManagerInput,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    const encryptedMasterPassword = decodeCiphertext(input.encryptedMasterPassword);
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        if (!provider || provider.kind !== "bitwarden_password_manager") {
+          throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+        const status = await this.options.bitwardenPasswordManagerSource.unlock(
+          encryptedMasterPassword,
+        );
+        store.updateProviderStatus({
+          providerId,
+          status: "available",
+          lastStatusCode: "ok",
+          lastVerifiedAt: this.now(),
+        });
+        this.emitCatalog(store);
+        return await this.buildBitwardenPasswordManagerSettings(
+          store,
+          providerId,
+          status,
+        );
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    } finally {
+      encryptedMasterPassword.fill(0);
+    }
+  }
+
+  async lockBitwardenPasswordManager(
+    providerId: string,
+  ): Promise<SecureSecretProviderSummary> {
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        if (!provider || provider.kind !== "bitwarden_password_manager") {
+          throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+        const secretIds = store.listSecrets(providerId).map(
+          (secret) => secret.secretId,
+        );
+        this.assertSecretMutationLifecycleAvailable(store, secretIds);
+        const initiallyAffected = this.captureAffectedLeases(store, secretIds);
+        return await this.withSessionMutations(
+          initiallyAffected.sessionIds,
+          async () => {
+            const affected = this.captureAffectedLeases(store, secretIds);
+            await this.options.bitwardenPasswordManagerSource.lock()
+              .catch(() => undefined);
+            const updated = store.updateProviderStatus({
+              providerId,
+              status: "locked",
+              lastStatusCode: "source_locked",
+              lastVerifiedAt: this.now(),
+              revokeLeases: true,
+            });
+            if (!updated) {
+              throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+            }
+            this.releaseLeases(affected.leaseIds);
+            await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+            this.emitCatalog(store);
+            this.emitSessionSnapshots(store, affected.sessionIds);
+            return toProviderSummary(updated);
+          },
+        );
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    }
+  }
+
+  async replaceBitwardenPasswordManagerCollections(
+    providerId: string,
+    input: ReplaceBitwardenPasswordManagerCollectionsInput,
+  ): Promise<UpdateBitwardenPasswordManagerCollectionsResult> {
+    const requestedIds = normalizeProviderIds(input.collectionIds, 64);
+    return await this.withAuthorityMutation(async () => {
+      const store = await this.store();
+      const provider = store.getProvider(providerId);
+      if (!provider || provider.kind !== "bitwarden_password_manager") {
+        throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+      }
+      try {
+        const status = await this.options.bitwardenPasswordManagerSource.status();
+        assertPasswordManagerAvailable(status.state);
+        await this.options.bitwardenPasswordManagerSource.sync();
+        const availableCollections =
+          await this.options.bitwardenPasswordManagerSource.listCollections();
+        const availableById = new Map(
+          availableCollections.map((collection) => [collection.id, collection]),
+        );
+        const selectedCollections = requestedIds.map((collectionId) => {
+          const collection = availableById.get(collectionId);
+          if (!collection) {
+            throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+          }
+          return collection;
+        });
+        const items = requestedIds.length === 0
+          ? []
+          : await this.options.bitwardenPasswordManagerSource.listItems(requestedIds);
+        const existingSecrets = store.listSecrets(providerId);
+        this.assertSecretMutationLifecycleAvailable(
+          store,
+          existingSecrets.map((secret) => secret.secretId),
+        );
+        const initiallyAffected = this.captureAffectedLeases(
+          store,
+          existingSecrets.map((secret) => secret.secretId),
+        );
+        return await this.withSessionMutations(
+          initiallyAffected.sessionIds,
+          async () => {
+            const affected = this.captureAffectedLeases(
+              store,
+              existingSecrets.map((secret) => secret.secretId),
+            );
+            let addedSecrets = 0;
+            let removedSecrets = 0;
+            store.withTransaction(() => {
+              store.replaceBitwardenCollections({
+                providerId,
+                collections: selectedCollections.map((collection) => ({
+                  collectionId: collection.id,
+                  organizationId: collection.organizationId,
+                  name: collection.name,
+                })),
+              });
+              const itemIds = new Set(items.map((item) => item.id));
+              for (const secret of existingSecrets) {
+                if (itemIds.has(secret.sourceLocator)) continue;
+                if (store.deleteSecret(secret.secretId)) removedSecrets += 1;
+              }
+              const existingLocators = new Set(
+                existingSecrets.map((secret) => secret.sourceLocator),
+              );
+              const usedAliases = new Set(
+                store.listSecrets().map((secret) => secret.displayAlias),
+              );
+              for (const item of items) {
+                if (existingLocators.has(item.id)) continue;
+                const secretId = this.id();
+                const displayAlias = uniquePasswordManagerAlias(
+                  item.name,
+                  item.id,
+                  usedAliases,
+                );
+                usedAliases.add(displayAlias);
+                store.createSecretWithBindings({
+                  secret: {
+                    secretId,
+                    providerId,
+                    displayAlias,
+                    displayName: item.name,
+                    note: null,
+                    scopeKind: "instance",
+                    profileId: null,
+                    profileIds: [],
+                    retention: "saved",
+                    sourceLocator: item.id,
+                    encryptedMaterial: null,
+                  },
+                  bindings: normalizeBindings(
+                    [defaultSecureSecretBinding(secretId, displayAlias)],
+                    this.id.bind(this),
+                  ),
+                });
+                addedSecrets += 1;
+              }
+            });
+            this.releaseLeases(affected.leaseIds);
+            await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+            this.emitCatalog(store);
+            this.emitSessionSnapshots(store, affected.sessionIds);
+            return {
+              settings: await this.buildBitwardenPasswordManagerSettings(
+                store,
+                providerId,
+                status,
+                availableCollections,
+              ),
+              addedSecrets,
+              removedSecrets,
+            };
+          },
+        );
+      } catch (error) {
+        if (error instanceof SecureSourceError) {
+          const next = providerStatusForError(error);
+          store.updateProviderStatus({
+            providerId,
+            ...next,
+            lastVerifiedAt: this.now(),
+          });
+          this.emitCatalog(store);
+        }
+        throw this.publicError(error);
+      }
+    });
+  }
+
   async testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult> {
     return await this.withAuthorityMutation(async () => {
       const store = await this.store();
@@ -962,7 +1265,7 @@ export class SecureSessionsService {
             code = "local_secret_decrypt_failed";
             ({ status, lastStatusCode } = providerStatusForError(firstError));
           }
-        } else {
+        } else if (provider.kind === "bitwarden_secrets_manager") {
           const config = store.getProviderBackendConfig(providerId);
           if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
           try {
@@ -985,6 +1288,12 @@ export class SecureSessionsService {
           } finally {
             config.encryptedAccessToken.fill(0);
           }
+        } else {
+          const passwordManagerStatus =
+            await this.options.bitwardenPasswordManagerSource.status();
+          assertPasswordManagerAvailable(passwordManagerStatus.state);
+          await this.options.bitwardenPasswordManagerSource.sync();
+          await this.options.bitwardenPasswordManagerSource.listCollections();
         }
       } catch (error) {
         code = "provider_unavailable";
@@ -1061,11 +1370,15 @@ export class SecureSessionsService {
   async deleteSecureSecretProvider(providerId: string): Promise<void> {
     await this.withAuthorityMutation(async () => {
       const store = await this.store();
+      const provider = store.getProvider(providerId);
       const secretIds = store.listSecrets(providerId).map((secret) => secret.secretId);
       this.assertSecretMutationLifecycleAvailable(store, secretIds);
       const initiallyAffected = this.captureAffectedLeases(store, secretIds);
       await this.withSessionMutations(initiallyAffected.sessionIds, async () => {
         const affected = this.captureAffectedLeases(store, secretIds);
+        if (provider?.kind === "bitwarden_password_manager") {
+          await this.options.bitwardenPasswordManagerSource.lock().catch(() => undefined);
+        }
         if (!store.deleteProvider(providerId)) {
           throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
         }
@@ -3190,6 +3503,7 @@ export class SecureSessionsService {
     } catch {
       // Shutdown cleanup remains best effort after every task is destroyed.
     }
+    this.options.bitwardenPasswordManagerSource.dispose();
     this.closed = true;
   }
 
@@ -3800,6 +4114,27 @@ export class SecureSessionsService {
           resolution.refreshedEncryptedMaterial?.fill(0);
         }
       }
+      if (provider.kind === "bitwarden_password_manager") {
+        const selectedCollections = store.listBitwardenCollections(
+          provider.providerId,
+        );
+        if (selectedCollections.length === 0) {
+          throw new SecureSourceError("SECURE_SOURCE_NOT_FOUND");
+        }
+        const resolution = await this.options.bitwardenPasswordManagerSource.resolve({
+          sourceLocator: secret.sourceLocator,
+          allowedCollectionIds: selectedCollections.map(
+            (collection) => collection.collectionId,
+          ),
+        });
+        try {
+          this.markProviderResolutionSucceeded(store, provider);
+          return resolution.material;
+        } catch (error) {
+          resolution.material.release();
+          throw error;
+        }
+      }
       const config = store.getProviderBackendConfig(provider.providerId);
       if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
       providerCredential = config.encryptedAccessToken;
@@ -3838,6 +4173,57 @@ export class SecureSessionsService {
       secret.encryptedMaterial?.fill(0);
       providerCredential?.fill(0);
     }
+  }
+
+  private async buildBitwardenPasswordManagerSettings(
+    store: SecureSessionStore,
+    providerId: string,
+    providedStatus?: BitwardenPasswordManagerStatus,
+    providedCollections?: readonly BitwardenPasswordManagerCollection[],
+  ): Promise<BitwardenPasswordManagerSettings> {
+    const status = providedStatus
+      ?? await this.options.bitwardenPasswordManagerSource.status();
+    const selected = store.listBitwardenCollections(providerId);
+    let available: readonly BitwardenPasswordManagerCollection[] = [];
+    if (status.state === "available") {
+      if (providedCollections) {
+        available = providedCollections;
+      } else {
+        await this.options.bitwardenPasswordManagerSource.sync();
+        available = await this.options.bitwardenPasswordManagerSource.listCollections();
+      }
+    }
+    const collections = new Map<string, {
+      collectionId: string;
+      organizationId: string;
+      name: string;
+      selected: boolean;
+    }>();
+    for (const collection of available) {
+      collections.set(collection.id, {
+        collectionId: collection.id,
+        organizationId: collection.organizationId,
+        name: collection.name,
+        selected: false,
+      });
+    }
+    for (const collection of selected) {
+      collections.set(collection.collectionId, {
+        collectionId: collection.collectionId,
+        organizationId: collection.organizationId,
+        name: collection.name,
+        selected: true,
+      });
+    }
+    return {
+      providerId,
+      accountEmail: status.accountEmail,
+      serverUrl: status.serverUrl,
+      collections: [...collections.values()].sort((left, right) =>
+        left.name.localeCompare(right.name)
+        || left.collectionId.localeCompare(right.collectionId)
+      ),
+    };
   }
 
   private markProviderResolutionSucceeded(
@@ -5859,6 +6245,76 @@ function sourcePublicCode(code: SecureSourceError["code"]): SecureSessionsServic
     default:
       return "SECURE_OPERATION_FAILED";
   }
+}
+
+function passwordManagerProviderStatus(
+  state: BitwardenPasswordManagerStatus["state"],
+): Pick<SecureSessionProvider, "status" | "lastStatusCode"> {
+  switch (state) {
+    case "available":
+      return { status: "available", lastStatusCode: "ok" };
+    case "locked":
+      return { status: "locked", lastStatusCode: "source_locked" };
+    case "unauthenticated":
+      return {
+        status: "auth_required",
+        lastStatusCode: "provider_auth_required",
+      };
+    case "unavailable":
+      return { status: "unreachable", lastStatusCode: "source_unreachable" };
+  }
+}
+
+function assertPasswordManagerAvailable(
+  state: BitwardenPasswordManagerStatus["state"],
+): void {
+  switch (state) {
+    case "available":
+      return;
+    case "locked":
+      throw new SecureSourceError("SECURE_SOURCE_LOCKED");
+    case "unauthenticated":
+      throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
+    case "unavailable":
+      throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
+  }
+}
+
+function normalizeProviderIds(values: readonly string[], maximum: number): string[] {
+  if (!Array.isArray(values) || values.length > maximum) {
+    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  }
+  const normalized = values.map((value) => {
+    if (typeof value !== "string" || !/^[0-9a-fA-F-]{16,128}$/.test(value)) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    return value;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  }
+  return normalized.sort();
+}
+
+function uniquePasswordManagerAlias(
+  itemName: string,
+  itemId: string,
+  usedAliases: ReadonlySet<string>,
+): string {
+  const readable = itemName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180) || "secret";
+  const suffix = itemId.replaceAll("-", "").slice(0, 8).toLowerCase();
+  const base = `bitwarden/${readable}-${suffix}`;
+  if (!usedAliases.has(base)) return base;
+  for (let index = 2; index <= 100; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!usedAliases.has(candidate)) return candidate;
+  }
+  throw new SecureSessionsServiceError("SECURE_SECRET_ALIAS_CONFLICT");
 }
 
 function providerStatusForError(error: unknown): {

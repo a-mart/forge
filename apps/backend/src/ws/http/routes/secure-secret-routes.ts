@@ -5,6 +5,7 @@ import {
   SECURE_VAULT_TRANSFER_FORMAT,
   SECURE_VAULT_TRANSFER_MAX_CIPHERTEXT_BYTES,
   SECURE_VAULT_TRANSFER_VERSION,
+  type BitwardenPasswordManagerSettings,
   SecureSessionsContractError,
   parseSecureSecretBinding,
   parseSecureSecretAutomaticGrantPolicy,
@@ -24,6 +25,7 @@ import {
   type ExportSecureVaultTransferResult,
   type ImportSecureVaultTransferRequest,
   type ImportSecureVaultTransferResult,
+  type UpdateBitwardenPasswordManagerCollectionsResult,
   type SecureVaultTransferBundle,
   type UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
@@ -102,6 +104,18 @@ export interface UpdateBitwardenSecureSecretProviderCredentialInput {
   encryptedAccessToken: string;
 }
 
+export interface ConnectBitwardenPasswordManagerInput {
+  displayName: string;
+}
+
+export interface UnlockBitwardenPasswordManagerInput {
+  encryptedMasterPassword: string;
+}
+
+export interface ReplaceBitwardenPasswordManagerCollectionsInput {
+  collectionIds: string[];
+}
+
 export interface SecureSecretTransportService {
   listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> | SecureSecretProviderSummary[];
   exportSecureVaultTransfer(): Promise<ExportSecureVaultTransferResult>;
@@ -111,6 +125,23 @@ export interface SecureSecretTransportService {
   connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary>;
+  connectBitwardenPasswordManager(
+    input: ConnectBitwardenPasswordManagerInput,
+  ): Promise<SecureSecretProviderSummary>;
+  getBitwardenPasswordManagerSettings(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings>;
+  unlockBitwardenPasswordManager(
+    providerId: string,
+    input: UnlockBitwardenPasswordManagerInput,
+  ): Promise<BitwardenPasswordManagerSettings>;
+  lockBitwardenPasswordManager(
+    providerId: string,
+  ): Promise<SecureSecretProviderSummary>;
+  replaceBitwardenPasswordManagerCollections(
+    providerId: string,
+    input: ReplaceBitwardenPasswordManagerCollectionsInput,
+  ): Promise<UpdateBitwardenPasswordManagerCollectionsResult>;
   testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult>;
   updateBitwardenSecureSecretProviderCredential(
     providerId: string,
@@ -285,6 +316,89 @@ export function createSecureSecretRoutes(options: {
             response,
             200,
             await options.service.connectBitwardenSecureSecretProvider(input),
+          );
+          return;
+        }
+
+        if (
+          request.method === "POST"
+          && requestUrl.pathname
+            === `${SECURE_SECRET_PROVIDERS_PATH}/bitwarden-password-manager`
+        ) {
+          const input = parseConnectBitwardenPasswordManagerInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.connectBitwardenPasswordManager(input),
+          );
+          return;
+        }
+
+        const passwordManagerCollectionsMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/collections$/,
+        );
+        if (passwordManagerCollectionsMatch) {
+          const providerId = parsePathId(
+            passwordManagerCollectionsMatch[1],
+            "providerId",
+          );
+          if (request.method === "GET") {
+            sendSecureJson(
+              response,
+              200,
+              await options.service.getBitwardenPasswordManagerSettings(providerId),
+            );
+            return;
+          }
+          if (request.method === "PUT") {
+            const input = parseReplaceBitwardenPasswordManagerCollectionsInput(
+              await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+            );
+            sendSecureJson(
+              response,
+              200,
+              await options.service.replaceBitwardenPasswordManagerCollections(
+                providerId,
+                input,
+              ),
+            );
+            return;
+          }
+        }
+
+        const passwordManagerUnlockMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/unlock$/,
+        );
+        if (request.method === "POST" && passwordManagerUnlockMatch) {
+          const providerId = parsePathId(
+            passwordManagerUnlockMatch[1],
+            "providerId",
+          );
+          const input = parseUnlockBitwardenPasswordManagerInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.unlockBitwardenPasswordManager(providerId, input),
+          );
+          return;
+        }
+
+        const passwordManagerLockMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/lock$/,
+        );
+        if (request.method === "POST" && passwordManagerLockMatch) {
+          const providerId = parsePathId(
+            passwordManagerLockMatch[1],
+            "providerId",
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.lockBitwardenPasswordManager(providerId),
           );
           return;
         }
@@ -769,6 +883,54 @@ function parseConnectBitwardenInput(
       "encryptedAccessToken",
     ),
   };
+}
+
+function parseConnectBitwardenPasswordManagerInput(
+  value: unknown,
+): ConnectBitwardenPasswordManagerInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["displayName"]);
+  return {
+    displayName: parseLabel(input.displayName, "displayName"),
+  };
+}
+
+function parseUnlockBitwardenPasswordManagerInput(
+  value: unknown,
+): UnlockBitwardenPasswordManagerInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["encryptedMasterPassword"]);
+  return {
+    encryptedMasterPassword: parseEncryptedPayload(
+      input.encryptedMasterPassword,
+      "encryptedMasterPassword",
+    ),
+  };
+}
+
+function parseReplaceBitwardenPasswordManagerCollectionsInput(
+  value: unknown,
+): ReplaceBitwardenPasswordManagerCollectionsInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["collectionIds"]);
+  if (!Array.isArray(input.collectionIds) || input.collectionIds.length > 64) {
+    throw new SecureSessionsContractError(
+      "request.collectionIds must contain at most 64 collection IDs",
+    );
+  }
+  const collectionIds = input.collectionIds.map((collectionId) => {
+    if (
+      typeof collectionId !== "string"
+      || !/^[0-9a-fA-F-]{16,128}$/u.test(collectionId)
+    ) {
+      throw new SecureSessionsContractError("request.collectionIds is invalid");
+    }
+    return collectionId;
+  });
+  if (new Set(collectionIds).size !== collectionIds.length) {
+    throw new SecureSessionsContractError("request.collectionIds contains duplicates");
+  }
+  return { collectionIds };
 }
 
 function parseUpdateBitwardenCredentialInput(

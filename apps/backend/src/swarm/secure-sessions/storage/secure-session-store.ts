@@ -33,6 +33,7 @@ import {
   type PutSecureSessionProjectDefaultInput,
   type PutSecureSessionSshTrustedHostInput,
   type ReplaceSecureSessionAutomaticGrantPolicyInput,
+  type ReplaceSecureSessionBitwardenCollectionsInput,
   type PutSecureSessionSecretWithBindingsInput,
   type PutSecureSessionBindingInput,
   type ReplaceSecureSessionProviderBackendCredentialInput,
@@ -43,6 +44,7 @@ import {
   type RevokeSecureSessionLeaseInput,
   type SecureSessionAuditRecord,
   type SecureSessionBinding,
+  type SecureSessionBitwardenCollection,
   type SecureSessionAllProjectDefault,
   type SecureSessionCatalogState,
   type SecureSessionEncryptedSecret,
@@ -210,6 +212,65 @@ export class SecureSessionStore {
     return row ? mapProviderBackend(row) : null;
   }
 
+  listBitwardenCollections(providerId: string): SecureSessionBitwardenCollection[] {
+    assertId(providerId, "provider ID");
+    return (this.database.prepare(`
+      SELECT provider_id, collection_id, organization_id, name, created_at, updated_at
+      FROM secure_session_bitwarden_collection
+      WHERE provider_id = ?
+      ORDER BY name COLLATE NOCASE, collection_id
+    `).all(providerId) as BitwardenCollectionRow[]).map(mapBitwardenCollection);
+  }
+
+  replaceBitwardenCollections(
+    input: ReplaceSecureSessionBitwardenCollectionsInput
+  ): SecureSessionBitwardenCollection[] {
+    assertId(input.providerId, "provider ID");
+    const normalized = input.collections.map((collection) => {
+      assertId(collection.collectionId, "collection ID");
+      assertId(collection.organizationId, "organization ID");
+      assertBoundedText(collection.name, "collection name", MAX_DISPLAY_LENGTH);
+      return { ...collection };
+    });
+    if (new Set(normalized.map(({ collectionId }) => collectionId)).size !== normalized.length) {
+      throw new Error("Bitwarden collection IDs must be unique");
+    }
+    return this.database.transaction(() => {
+      const provider = this.requireProvider(input.providerId);
+      if (provider.kind !== "bitwarden_password_manager") {
+        throw new Error("Only Bitwarden Password Manager providers accept collections");
+      }
+      const now = this.timestamp();
+      this.revokeCatalogLeases("provider", input.providerId, "policy_changed", now);
+      this.database.prepare(`
+        DELETE FROM secure_session_bitwarden_collection WHERE provider_id = ?
+      `).run(input.providerId);
+      const insert = this.database.prepare(`
+        INSERT INTO secure_session_bitwarden_collection (
+          provider_id, collection_id, organization_id, name, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const collection of normalized) {
+        insert.run(
+          input.providerId,
+          collection.collectionId,
+          collection.organizationId,
+          collection.name,
+          now,
+          now
+        );
+      }
+      this.audit({
+        eventType: "provider_backend_updated",
+        providerId: input.providerId,
+        outcome: "updated",
+        occurredAt: now
+      });
+      this.bumpCatalog(now);
+      return this.listBitwardenCollections(input.providerId);
+    })();
+  }
+
   upsertProviderBackendConfig(
     input: UpsertSecureSessionProviderBackendConfigInput
   ): SecureSessionProviderBackendConfig {
@@ -345,7 +406,13 @@ export class SecureSessionStore {
     assertBoundedText(input.displayName, "provider display name", MAX_DISPLAY_LENGTH);
     const enabled = input.enabled !== false;
     const status = enabled
-      ? (input.status ?? (input.kind === "bitwarden_secrets_manager" ? "auth_required" : "available"))
+      ? (input.status ?? (
+          input.kind === "bitwarden_secrets_manager"
+            ? "auth_required"
+            : input.kind === "bitwarden_password_manager"
+              ? "locked"
+              : "available"
+        ))
       : "disabled";
     const statusCode = enabled
       ? (input.lastStatusCode ?? defaultStatusCode(status))
@@ -417,6 +484,7 @@ export class SecureSessionStore {
     status: SecureSessionProvider["status"];
     lastStatusCode: SecureSessionProvider["lastStatusCode"];
     lastVerifiedAt: string;
+    revokeLeases?: boolean;
   }): SecureSessionProvider | null {
     assertId(input.providerId, "provider ID");
     assertEnum(input.status, SECURE_SESSION_SOURCE_STATUSES, "provider status");
@@ -433,6 +501,9 @@ export class SecureSessionStore {
     );
     const now = this.timestamp();
     return this.database.transaction(() => {
+      if (input.revokeLeases === true) {
+        this.revokeCatalogLeases("provider", input.providerId, "policy_changed", now);
+      }
       const result = this.database.prepare(`
         UPDATE secure_session_provider
         SET status = ?, last_verified_at = ?, last_status_code = ?, updated_at = ?
@@ -2660,6 +2731,7 @@ export class SecureSessionStore {
     const metadata = mapSecretMetadata(row);
     const provider = this.requireProvider(row.provider_id);
     const providerConfigured = provider.kind === "local_keychain" ||
+      provider.kind === "bitwarden_password_manager" ||
       this.getProviderBackendConfig(provider.providerId) !== null;
     return {
       ...metadata,
@@ -3340,6 +3412,14 @@ interface ProviderRow {
   created_at: string;
   updated_at: string;
 }
+interface BitwardenCollectionRow {
+  provider_id: string;
+  collection_id: string;
+  organization_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
 interface SecretRow {
   secret_id: string;
   provider_id: string;
@@ -3514,6 +3594,19 @@ function mapProvider(row: ProviderRow): SecureSessionProvider {
     status: row.status,
     lastVerifiedAt: row.last_verified_at,
     lastStatusCode: row.last_status_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapBitwardenCollection(
+  row: BitwardenCollectionRow
+): SecureSessionBitwardenCollection {
+  return {
+    providerId: row.provider_id,
+    collectionId: row.collection_id,
+    organizationId: row.organization_id,
+    name: row.name,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

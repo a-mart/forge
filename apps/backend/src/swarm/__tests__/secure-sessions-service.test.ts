@@ -18,6 +18,12 @@ import {
 } from "../secure-sessions/redaction/secure-value-guard.js";
 import { SecureSessionsService } from "../secure-sessions/secure-sessions-service.js";
 import type { SecureVaultCipher } from "../secure-sessions/sources/electron-safe-storage-client.js";
+import type {
+  BitwardenPasswordManagerCollection,
+  BitwardenPasswordManagerItemMetadata,
+  BitwardenPasswordManagerSource,
+  BitwardenPasswordManagerStatus,
+} from "../secure-sessions/sources/bitwarden-password-manager-source.js";
 import {
   HostOnlySecret,
   SecureSourceError,
@@ -93,6 +99,147 @@ describe("SecureSessionsService", () => {
     await expect(
       harness.service.encryptTrustedBrowserPrivateEntry(`${encodedValue}=`),
     ).rejects.toThrow("SECURE_REQUEST_INVALID");
+    await harness.close();
+  });
+
+  it("unlocks Password Manager from encrypted private entry without persisting the password", async () => {
+    const collection = {
+      id: "11111111-1111-4111-8111-111111111111",
+      organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Infrastructure",
+    };
+    const harness = createHarness({
+      passwordManagerCollections: [collection],
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Team Bitwarden",
+    });
+    expect(provider).toMatchObject({
+      kind: "bitwarden_password_manager",
+      status: "locked",
+      lastStatusCode: "source_locked",
+    });
+
+    const settings = await harness.service.unlockBitwardenPasswordManager(
+      provider.providerId,
+      {
+        encryptedMasterPassword: Buffer.from("synthetic-master-password")
+          .toString("base64"),
+      },
+    );
+    expect(settings).toEqual({
+      providerId: provider.providerId,
+      accountEmail: null,
+      serverUrl: null,
+      collections: [{
+        collectionId: collection.id,
+        organizationId: collection.organizationId,
+        name: collection.name,
+        selected: false,
+      }],
+    });
+    expect(harness.passwordManagerUnlocks).toEqual(["synthetic-master-password"]);
+    expect(harness.store.getProviderBackendConfig(provider.providerId)).toBeNull();
+    expect(JSON.stringify(harness.store.listProviders())).not.toContain(
+      "synthetic-master-password",
+    );
+    await harness.close();
+  });
+
+  it("synchronizes several Password Manager collections into requestable catalog metadata", async () => {
+    const collections = [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Infrastructure",
+      },
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Development",
+      },
+    ];
+    const items: BitwardenPasswordManagerItemMetadata[] = [
+      {
+        id: "33333333-3333-4333-8333-333333333333",
+        name: "Ansible Vault",
+        collectionIds: [collections[0]!.id],
+        revisionDate: NOW,
+      },
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        name: "GitHub Work Token",
+        collectionIds: [collections[1]!.id],
+        revisionDate: NOW,
+      },
+    ];
+    const harness = createHarness({
+      passwordManagerStatus: {
+        state: "available",
+        accountEmail: "forge@example.test",
+        serverUrl: "https://vault.example.test",
+      },
+      passwordManagerCollections: collections,
+      passwordManagerItems: items,
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Team Bitwarden",
+    });
+    const result = await harness.service.replaceBitwardenPasswordManagerCollections(
+      provider.providerId,
+      { collectionIds: collections.map(({ id }) => id) },
+    );
+
+    expect(result).toMatchObject({ addedSecrets: 2, removedSecrets: 0 });
+    expect(harness.passwordManagerSyncs).toHaveLength(1);
+    expect(result.settings.collections).toEqual([
+      expect.objectContaining({ name: "Development", selected: true }),
+      expect.objectContaining({ name: "Infrastructure", selected: true }),
+    ]);
+    expect(harness.store.listSecrets(provider.providerId)).toEqual([
+      expect.objectContaining({
+        displayAlias: "bitwarden/ansible-vault-33333333",
+        displayName: "Ansible Vault",
+        sourceLocator: items[0]!.id,
+        retention: "saved",
+        scopeKind: "instance",
+      }),
+      expect.objectContaining({
+        displayAlias: "bitwarden/github-work-token-44444444",
+        displayName: "GitHub Work Token",
+        sourceLocator: items[1]!.id,
+        retention: "saved",
+        scopeKind: "instance",
+      }),
+    ]);
+    expect(harness.store.listProjectDefaults()).toEqual([]);
+
+    await expect(
+      harness.service.replaceBitwardenPasswordManagerCollections(
+        provider.providerId,
+        { collectionIds: ["99999999-9999-4999-8999-999999999999"] },
+      ),
+    ).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.store.getProvider(provider.providerId)?.status).toBe("available");
+
+    const syncedSecret = harness.store.listSecrets(provider.providerId)[0]!;
+    const started = await harness.service.startSecureSession("manager-a");
+    const granted = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: syncedSecret.secretId,
+      exposures: [{
+        deliveryKind: "environment",
+        targetName: syncedSecret.bindings[0]!.targetName!,
+      }],
+      leaseKind: "task",
+    });
+    expect(granted.leases).toHaveLength(1);
+    await expect(
+      harness.service.lockBitwardenPasswordManager(provider.providerId),
+    ).resolves.toMatchObject({ status: "locked", lastStatusCode: "source_locked" });
+    expect(harness.store.getSnapshot("manager-a").leases).toEqual([
+      expect.objectContaining({ state: "revoked", revocationReason: "policy_changed" }),
+    ]);
     await harness.close();
   });
 
@@ -324,6 +471,30 @@ describe("SecureSessionsService", () => {
 
     expect(harness.execution.recoveryCalls).toEqual([[]]);
     expect(harness.execution.ensured).toEqual(["manager-a", "manager-b"]);
+    await harness.close();
+  });
+
+  it("returns an unlocked Password Manager source to locked after restart recovery", async () => {
+    const harness = createHarness({
+      passwordManagerStatus: {
+        state: "available",
+        accountEmail: "forge@example.com",
+        serverUrl: "https://vault.bitwarden.com",
+      },
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Bitwarden Password Manager",
+    });
+    expect(harness.store.getProvider(provider.providerId)?.status).toBe("available");
+
+    await harness.service.initializeSecureSessions();
+
+    expect(harness.store.getProvider(provider.providerId)).toEqual(
+      expect.objectContaining({
+        status: "locked",
+        lastStatusCode: "source_locked",
+      }),
+    );
     await harness.close();
   });
 
@@ -5275,6 +5446,9 @@ function createHarness(options: {
     agentId: string,
   ) => "recycled" | "deferred" | "none";
   rotatedLocalCiphertext?: string;
+  passwordManagerStatus?: BitwardenPasswordManagerStatus;
+  passwordManagerCollections?: readonly BitwardenPasswordManagerCollection[];
+  passwordManagerItems?: readonly BitwardenPasswordManagerItemMetadata[];
 } = {}) {
   const database = new Database(":memory:");
   database.pragma("foreign_keys = ON");
@@ -5292,6 +5466,8 @@ function createHarness(options: {
   const sourceResolutions = new Map<string, number>();
   const resolvedMaterials: HostOnlySecret[] = [];
   const bitwardenTests: Array<{ credential: string; endpointOrigin: string | null }> = [];
+  const passwordManagerUnlocks: string[] = [];
+  const passwordManagerSyncs: string[] = [];
   let sourceResolutionStarted!: () => void;
   let sourceResolutionRelease!: () => void;
   const sourceResolutionStartedPromise = new Promise<void>((resolve) => {
@@ -5369,6 +5545,35 @@ function createHarness(options: {
       };
     },
   };
+  const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
+    kind: "bitwarden_password_manager",
+    async status() {
+      return options.passwordManagerStatus
+        ?? { state: "locked", accountEmail: null, serverUrl: null };
+    },
+    async unlock(encryptedMasterPassword) {
+      passwordManagerUnlocks.push(Buffer.from(encryptedMasterPassword).toString("utf8"));
+      return {
+        state: "available",
+        accountEmail: options.passwordManagerStatus?.accountEmail ?? null,
+        serverUrl: options.passwordManagerStatus?.serverUrl ?? null,
+      };
+    },
+    async lock() {},
+    async sync() { passwordManagerSyncs.push(now()); },
+    async listCollections() { return [...(options.passwordManagerCollections ?? [])]; },
+    async listItems(collectionIds) {
+      return (options.passwordManagerItems ?? []).filter((item) =>
+        item.collectionIds.some((collectionId) => collectionIds.includes(collectionId))
+      );
+    },
+    async resolve() {
+      const material = new HostOnlySecret(Buffer.from("bitwarden-password-manager-resolved"));
+      resolvedMaterials.push(material);
+      return { material, sourceVersion: null, resolvedAt: NOW };
+    },
+    dispose() {},
+  };
   const snapshots: SecureSessionSnapshotEvent[] = [];
   const recycles: string[] = [];
   let recycleDisposition = options.recycleDisposition;
@@ -5401,6 +5606,7 @@ function createHarness(options: {
     cipher,
     localSource,
     bitwardenSource,
+    bitwardenPasswordManagerSource,
     probeBitwarden: async () => true,
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
@@ -5453,6 +5659,8 @@ function createHarness(options: {
     sourceResolutions,
     resolvedMaterials,
     bitwardenTests,
+    passwordManagerUnlocks,
+    passwordManagerSyncs,
     snapshots,
     recycles,
     setRecycleDisposition(value: "recycled" | "deferred" | "none") {

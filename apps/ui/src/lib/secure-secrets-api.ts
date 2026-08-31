@@ -3,6 +3,7 @@ import { encryptRemoteSecureValue } from './secure-browser-control-api'
 import type {
   SecureSecretBinding,
   SecureSecretAutomaticGrantPolicy,
+  BitwardenPasswordManagerSettings,
   SecureSecretCatalog,
   SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
@@ -16,6 +17,7 @@ import type {
   ExportSecureVaultTransferResult,
   ImportSecureVaultTransferRequest,
   ImportSecureVaultTransferResult,
+  UpdateBitwardenPasswordManagerCollectionsResult,
 } from '@forge/protocol'
 
 export type {
@@ -33,8 +35,11 @@ export type {
   SecureSessionReadinessCode,
   SecureSshTrustedHostSummary,
   SecureVaultTransferBundle,
+  BitwardenPasswordManagerCollectionSummary,
+  BitwardenPasswordManagerSettings,
   ExportSecureVaultTransferResult,
   ImportSecureVaultTransferResult,
+  UpdateBitwardenPasswordManagerCollectionsResult,
 } from '@forge/protocol'
 
 export type SecureSecretsCatalog =
@@ -422,6 +427,80 @@ export async function reconnectBitwardenProvider(
       method: 'PATCH',
       headers: jsonHeaders(),
       body: JSON.stringify({ encryptedAccessToken }),
+    },
+  )
+}
+
+export async function connectBitwardenPasswordManager(
+  apiClient: SettingsApiClient,
+  displayName = 'Bitwarden Password Manager',
+): Promise<SecureSecretProviderSummary> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSecretProviderSummary>(
+    apiClient,
+    '/api/secure-secrets/providers/bitwarden-password-manager',
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ displayName }),
+    },
+  )
+}
+
+export async function fetchBitwardenPasswordManagerSettings(
+  apiClient: SettingsApiClient,
+  providerId: string,
+): Promise<BitwardenPasswordManagerSettings> {
+  assertBuilderTarget(apiClient)
+  return requestJson<BitwardenPasswordManagerSettings>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/collections`,
+  )
+}
+
+export async function unlockBitwardenPasswordManager(
+  apiClient: SettingsApiClient,
+  providerId: string,
+  masterPassword: string,
+): Promise<BitwardenPasswordManagerSettings> {
+  assertBuilderTarget(apiClient)
+  const encryptedMasterPassword = await encryptMaterial(apiClient, masterPassword)
+  return requestJson<BitwardenPasswordManagerSettings>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/unlock`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ encryptedMasterPassword }),
+    },
+  )
+}
+
+export async function lockBitwardenPasswordManager(
+  apiClient: SettingsApiClient,
+  providerId: string,
+): Promise<SecureSecretProviderSummary> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSecretProviderSummary>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/lock`,
+    { method: 'POST' },
+  )
+}
+
+export async function replaceBitwardenPasswordManagerCollections(
+  apiClient: SettingsApiClient,
+  providerId: string,
+  collectionIds: string[],
+): Promise<UpdateBitwardenPasswordManagerCollectionsResult> {
+  assertBuilderTarget(apiClient)
+  return requestJson<UpdateBitwardenPasswordManagerCollectionsResult>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/collections`,
+    {
+      method: 'PUT',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ collectionIds }),
     },
   )
 }

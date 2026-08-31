@@ -165,8 +165,9 @@ A connected Forge Desktop host is required. Ordinary web clients do not attempt 
 
 ### Secure Sessions
 
-Secure Sessions let a supported local Builder team use saved local or
-Bitwarden-backed secrets without placing their values in chat or model-visible tool
+Secure Sessions let a supported local Builder team use saved local, Bitwarden Secrets
+Manager, or selected Bitwarden Password Manager collection secrets without placing
+their values in chat or model-visible tool
 arguments. Under **Settings → Secrets**, choose whether an alias is available only to
 one project or to all local projects. Right-click a local project header and choose
 **Project Secrets** to open the same settings with that project preselected.

@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 export interface SecureSessionMigration {
   version: number;
   name: string;
+  requiresForeignKeysOff?: boolean;
   up: (database: Database.Database) => void;
 }
 
@@ -974,6 +975,82 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         END;
       `);
     }
+  },
+  {
+    version: 9,
+    name: "bitwarden_password_manager_collections",
+    requiresForeignKeysOff: true,
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_provider_with_password_manager (
+          provider_id TEXT PRIMARY KEY CHECK (length(provider_id) BETWEEN 1 AND 256),
+          kind TEXT NOT NULL CHECK (kind IN (
+            'local_keychain', 'bitwarden_secrets_manager', 'bitwarden_password_manager'
+          )),
+          display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 256),
+          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+          status TEXT NOT NULL CHECK (status IN (
+            'available', 'locked', 'auth_required', 'unreachable', 'missing', 'disabled'
+          )),
+          last_verified_at TEXT,
+          last_status_code TEXT CHECK (last_status_code IS NULL OR last_status_code IN (
+            'ok', 'source_locked', 'provider_auth_required', 'source_unreachable',
+            'source_missing', 'provider_disabled', 'provider_error'
+          )),
+          server_origin TEXT CHECK (server_origin IS NULL OR length(server_origin) BETWEEN 1 AND 4096),
+          organization_id TEXT CHECK (organization_id IS NULL OR length(organization_id) BETWEEN 1 AND 256),
+          project_id TEXT CHECK (project_id IS NULL OR length(project_id) BETWEEN 1 AND 256),
+          encrypted_access_token BLOB CHECK (
+            encrypted_access_token IS NULL OR (
+              typeof(encrypted_access_token) = 'blob'
+              AND length(encrypted_access_token) BETWEEN 1 AND 1048576
+            )
+          ),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            kind = 'bitwarden_secrets_manager'
+            OR (
+              server_origin IS NULL AND organization_id IS NULL AND project_id IS NULL
+              AND encrypted_access_token IS NULL
+            )
+          )
+        ) STRICT;
+
+        INSERT INTO secure_session_provider_with_password_manager (
+          provider_id, kind, display_name, enabled, status, last_verified_at,
+          last_status_code, server_origin, organization_id, project_id,
+          encrypted_access_token, created_at, updated_at
+        )
+        SELECT
+          provider_id, kind, display_name, enabled, status, last_verified_at,
+          last_status_code, server_origin, organization_id, project_id,
+          encrypted_access_token, created_at, updated_at
+        FROM secure_session_provider;
+
+        DROP TABLE secure_session_provider;
+
+        ALTER TABLE secure_session_provider_with_password_manager
+          RENAME TO secure_session_provider;
+
+        CREATE TABLE secure_session_bitwarden_collection (
+          provider_id TEXT NOT NULL
+            REFERENCES secure_session_provider(provider_id) ON DELETE CASCADE,
+          collection_id TEXT NOT NULL
+            CHECK (length(collection_id) BETWEEN 1 AND 256),
+          organization_id TEXT NOT NULL
+            CHECK (length(organization_id) BETWEEN 1 AND 256),
+          name TEXT NOT NULL
+            CHECK (length(name) BETWEEN 1 AND 256),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (provider_id, collection_id)
+        ) STRICT;
+
+        CREATE INDEX secure_session_bitwarden_collection_provider_idx
+          ON secure_session_bitwarden_collection(provider_id, name, collection_id);
+      `);
+    }
   }
 ];
 
@@ -1000,13 +1077,22 @@ export function runSecureSessionMigrations(database: Database.Database): void {
   const appliedVersions = new Set(appliedRows.map(({ version }) => version));
   for (const migration of SECURE_SESSION_MIGRATIONS) {
     if (appliedVersions.has(migration.version)) continue;
-    database.transaction(() => {
-      migration.up(database);
-      database.prepare(`
-        INSERT INTO secure_session_schema_migrations (version, name, applied_at)
-        VALUES (?, ?, ?)
-      `).run(migration.version, migration.name, new Date().toISOString());
-    })();
+    if (migration.requiresForeignKeysOff) {
+      database.pragma("foreign_keys = OFF");
+    }
+    try {
+      database.transaction(() => {
+        migration.up(database);
+        database.prepare(`
+          INSERT INTO secure_session_schema_migrations (version, name, applied_at)
+          VALUES (?, ?, ?)
+        `).run(migration.version, migration.name, new Date().toISOString());
+      })();
+    } finally {
+      if (migration.requiresForeignKeysOff) {
+        database.pragma("foreign_keys = ON");
+      }
+    }
   }
 
   const quickCheck = database.pragma("quick_check", { simple: true });

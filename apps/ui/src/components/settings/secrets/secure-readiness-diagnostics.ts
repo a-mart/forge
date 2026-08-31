@@ -21,6 +21,7 @@ const EXECUTION_CODES = new Set<SecureSessionReadinessCode>([
 const SOURCE_KINDS = new Set<SecureSecretProviderSummary['kind']>([
   'local_keychain',
   'bitwarden_secrets_manager',
+  'bitwarden_password_manager',
 ])
 
 const SOURCE_STATUSES = new Set<SecureSecretSourceStatus>([

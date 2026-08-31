@@ -1,5 +1,6 @@
 import type {
   AgentDescriptor,
+  BitwardenPasswordManagerSettings,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
@@ -17,6 +18,7 @@ import type {
   ExportSecureVaultTransferResult,
   ImportSecureVaultTransferRequest,
   ImportSecureVaultTransferResult,
+  UpdateBitwardenPasswordManagerCollectionsResult,
 } from "@forge/protocol";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
@@ -24,17 +26,20 @@ import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
 import type { SecureOrphanRecoveryResult } from "./execution/secure-execution-backend.js";
 import type {
   ConnectBitwardenSecureSecretProviderInput,
+  ConnectBitwardenPasswordManagerInput,
   ApplySecureSessionProjectDefaultsInput,
   CreateLocalSecureSecretInput,
   CreateSecureSshTrustedHostInput,
   FulfillSecureAccessRequestInput,
   ImportBitwardenSecureSecretInput,
   RequestSecureSecretAccessInput,
+  ReplaceBitwardenPasswordManagerCollectionsInput,
   RequestSecureSshHostTrustInput,
   SecureSessionAgentView,
   StartSecureSessionInput,
   StopSecureSessionInput,
   UpdateBitwardenSecureSecretProviderCredentialInput,
+  UnlockBitwardenPasswordManagerInput,
   UpdateSecureSecretInput,
   UpdateSecureSshTrustedHostInput,
 } from "./secure-sessions-api.js";
@@ -119,6 +124,41 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary> {
     return this.secureSessions.connectBitwardenSecureSecretProvider(input);
+  }
+
+  connectBitwardenPasswordManager(
+    input: ConnectBitwardenPasswordManagerInput,
+  ): Promise<SecureSecretProviderSummary> {
+    return this.secureSessions.connectBitwardenPasswordManager(input);
+  }
+
+  getBitwardenPasswordManagerSettings(
+    providerId: string,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    return this.secureSessions.getBitwardenPasswordManagerSettings(providerId);
+  }
+
+  unlockBitwardenPasswordManager(
+    providerId: string,
+    input: UnlockBitwardenPasswordManagerInput,
+  ): Promise<BitwardenPasswordManagerSettings> {
+    return this.secureSessions.unlockBitwardenPasswordManager(providerId, input);
+  }
+
+  lockBitwardenPasswordManager(
+    providerId: string,
+  ): Promise<SecureSecretProviderSummary> {
+    return this.secureSessions.lockBitwardenPasswordManager(providerId);
+  }
+
+  replaceBitwardenPasswordManagerCollections(
+    providerId: string,
+    input: ReplaceBitwardenPasswordManagerCollectionsInput,
+  ): Promise<UpdateBitwardenPasswordManagerCollectionsResult> {
+    return this.secureSessions.replaceBitwardenPasswordManagerCollections(
+      providerId,
+      input,
+    );
   }
 
   testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult> {

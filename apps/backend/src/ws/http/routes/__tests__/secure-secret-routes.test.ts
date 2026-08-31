@@ -38,6 +38,25 @@ const providerTestResult: SecureSecretProviderTestResult = {
   affectedSecrets: [],
 };
 
+const passwordManagerProvider: SecureSecretProviderSummary = {
+  ...provider,
+  providerId: "password-manager-1",
+  kind: "bitwarden_password_manager",
+  displayName: "Team Bitwarden",
+};
+
+const passwordManagerSettings = {
+  providerId: passwordManagerProvider.providerId,
+  accountEmail: "forge@example.test",
+  serverUrl: "https://vault.example.test",
+  collections: [{
+    collectionId: "11111111-1111-4111-8111-111111111111",
+    organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    name: "Infrastructure",
+    selected: true,
+  }],
+};
+
 const transferExport: ExportSecureVaultTransferResult = {
   bundle: {
     format: "forge-secure-vault-transfer",
@@ -99,6 +118,19 @@ function fakeService(): SecureSecretTransportService {
     exportSecureVaultTransfer: vi.fn(async () => transferExport),
     importSecureVaultTransfer: vi.fn(async () => transferImport),
     connectBitwardenSecureSecretProvider: vi.fn(async () => provider),
+    connectBitwardenPasswordManager: vi.fn(async () => passwordManagerProvider),
+    getBitwardenPasswordManagerSettings: vi.fn(async () => passwordManagerSettings),
+    unlockBitwardenPasswordManager: vi.fn(async () => passwordManagerSettings),
+    lockBitwardenPasswordManager: vi.fn(async () => ({
+      ...passwordManagerProvider,
+      status: "locked",
+      lastStatusCode: "source_locked",
+    })),
+    replaceBitwardenPasswordManagerCollections: vi.fn(async () => ({
+      settings: passwordManagerSettings,
+      addedSecrets: 1,
+      removedSecrets: 0,
+    })),
     testSecureSecretProvider: vi.fn(async () => providerTestResult),
     updateBitwardenSecureSecretProviderCredential: vi.fn(async () => provider),
     deleteSecureSecretProvider: vi.fn(async () => undefined),
@@ -120,6 +152,63 @@ function fakeService(): SecureSecretTransportService {
 }
 
 describe("secure secret routes", () => {
+  it("forwards Password Manager unlock and multi-collection configuration as bounded inputs", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+    const connected = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/bitwarden-password-manager`,
+      { displayName: "Team Bitwarden" },
+    );
+    expect(connected.status).toBe(200);
+    expect(await connected.json()).toEqual(passwordManagerProvider);
+
+    const settings = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/collections`,
+    );
+    expect(settings.status).toBe(200);
+    expect(await settings.json()).toEqual(passwordManagerSettings);
+
+    const encryptedMasterPassword = Buffer.from("encrypted-only").toString("base64");
+    const unlocked = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/unlock`,
+      { encryptedMasterPassword },
+    );
+    expect(unlocked.status).toBe(200);
+    expect(service.unlockBitwardenPasswordManager).toHaveBeenCalledWith(
+      "password-manager-1",
+      { encryptedMasterPassword },
+    );
+
+    const selected = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/collections`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          collectionIds: [passwordManagerSettings.collections[0]!.collectionId],
+        }),
+      },
+    );
+    expect(selected.status).toBe(200);
+    expect(service.replaceBitwardenPasswordManagerCollections).toHaveBeenCalledWith(
+      "password-manager-1",
+      { collectionIds: [passwordManagerSettings.collections[0]!.collectionId] },
+    );
+
+    const locked = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/lock`,
+      {},
+    );
+    expect(locked.status).toBe(200);
+
+    const plaintextRejected = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/unlock`,
+      { masterPassword: "must-not-pass" },
+    );
+    expect(plaintextRejected.status).toBe(400);
+    expect(service.unlockBitwardenPasswordManager).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps vault transfer paths Desktop-only and forwards only encrypted bundles", async () => {
     expect(isDesktopOnlySecureSecretPath(
       "/api/secure-secrets/transfer/export",
