@@ -27,6 +27,19 @@ import {
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
 
+// Electron-as-Node can exceed Vitest's generic 5s default on constrained Linux CI.
+// Bound the real subprocess so a stuck binary cannot hang the suite, and keep the
+// Vitest case slightly larger so ETIMEDOUT is reported instead of a generic timeout.
+const ELECTRON_NODE_PROBE_TIMEOUT_MS = 15_000
+const ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS = 20_000
+
+function electronNodeProbeFailureMessage(result) {
+  if (result.error?.code === 'ETIMEDOUT') {
+    return `electron -p process.versions.node timed out after ${ELECTRON_NODE_PROBE_TIMEOUT_MS}ms; stuck Electron-as-Node was killed`
+  }
+  return String(result.stderr || result.error || '')
+}
+
 function satisfiesNodeFloor(version, minimum = '22.19.0') {
   const parse = (value) => {
     const match = String(value).trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/)
@@ -131,6 +144,14 @@ describe('Node engine floor for packaged Electron child', () => {
     expect(satisfiesNodeFloor(process.version)).toBe(true)
   })
 
+  it('reports a bounded Electron-as-Node probe timeout instead of hanging', () => {
+    expect(ELECTRON_NODE_PROBE_TIMEOUT_MS).toBeGreaterThan(5_000)
+    expect(ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS).toBeGreaterThan(ELECTRON_NODE_PROBE_TIMEOUT_MS)
+    expect(electronNodeProbeFailureMessage({ error: { code: 'ETIMEDOUT' } })).toBe(
+      `electron -p process.versions.node timed out after ${ELECTRON_NODE_PROBE_TIMEOUT_MS}ms; stuck Electron-as-Node was killed`,
+    )
+  })
+
   it('asserts Electron bundled Node matches the authoritative packaged runtime when electron is available', async () => {
     const electronBin = join(repoRoot, 'apps/electron/node_modules/.bin/electron')
     try {
@@ -147,13 +168,15 @@ describe('Node engine floor for packaged Electron child', () => {
     const result = spawnSync(electronBin, ['-p', 'process.versions.node'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       encoding: 'utf8',
+      timeout: ELECTRON_NODE_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
     })
-    expect(result.status, `electron -p process.versions.node failed: ${result.stderr || result.error || ''}`).toBe(0)
+    expect(result.status, `electron -p process.versions.node failed: ${electronNodeProbeFailureMessage(result)}`).toBe(0)
     const bundledNode = String(result.stdout || '').trim().split(/\r?\n/).at(-1)
     expect(bundledNode?.length).toBeGreaterThan(0)
     expect(bundledNode).toBe(ELECTRON_RUNTIME_VERSIONS.node)
     expect(satisfiesNodeFloor(bundledNode)).toBe(true)
-  })
+  }, ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS)
 })
 
 describe('validateStagedPiCodingAgentPackageDir', () => {
