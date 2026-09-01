@@ -259,9 +259,13 @@ export function buildManifestForVersion(version, options = {}) {
   return { manifestPath, manifest };
 }
 
+// Fixture bytes and their supply-chain identities are the portable contract. The
+// toolchain records where the committed fixture was originally produced; it is
+// audit metadata, not a requirement that every verifier use that host OS/Node.
 export function stableManifestForCompare(manifest) {
   const clone = structuredClone(manifest);
   delete clone.generatedAt;
+  delete clone.generation.toolchain;
   return clone;
 }
 

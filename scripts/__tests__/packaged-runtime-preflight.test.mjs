@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { ELECTRON_RUNTIME_VERSIONS } from '../../apps/electron/scripts/verify-electron-runtime.mjs'
 import {
   loadRuntimeModuleFromEntry,
   pickPackageEntryFromExports,
@@ -130,7 +131,7 @@ describe('Node engine floor for packaged Electron child', () => {
     expect(satisfiesNodeFloor(process.version)).toBe(true)
   })
 
-  it('asserts Electron bundled Node satisfies >=22.19.0 when electron is available', async () => {
+  it('asserts Electron bundled Node matches the authoritative packaged runtime when electron is available', async () => {
     const electronBin = join(repoRoot, 'apps/electron/node_modules/.bin/electron')
     try {
       await access(electronBin)
@@ -148,8 +149,9 @@ describe('Node engine floor for packaged Electron child', () => {
       encoding: 'utf8',
     })
     expect(result.status, `electron -p process.versions.node failed: ${result.stderr || result.error || ''}`).toBe(0)
-    const bundledNode = String(result.stdout || '').trim()
-    expect(bundledNode.length).toBeGreaterThan(0)
+    const bundledNode = String(result.stdout || '').trim().split(/\r?\n/).at(-1)
+    expect(bundledNode?.length).toBeGreaterThan(0)
+    expect(bundledNode).toBe(ELECTRON_RUNTIME_VERSIONS.node)
     expect(satisfiesNodeFloor(bundledNode)).toBe(true)
   })
 })

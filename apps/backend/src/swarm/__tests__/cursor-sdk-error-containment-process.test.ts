@@ -12,6 +12,16 @@ type ChildResult = {
   stderr: string;
 };
 
+// Node 26 emits this exact runtime deprecation while loading the current Cursor
+// SDK dependency. Keep child stderr strict: only this known Node diagnostic is
+// portable noise, and every other byte remains assertion-visible.
+const NODE_26_CURSOR_SDK_REGISTER_DEPRECATION =
+  /^\(node:\d+\) \[DEP0205\] DeprecationWarning: `module\.register\(\)` is deprecated\. Use `module\.registerHooks\(\)` instead\.\r?\n\(Use `node --trace-deprecation \.\.\.` to show where the warning was created\)\r?\n?/gm;
+
+function withoutKnownCursorSdkNode26Warning(stderr: string): string {
+  return stderr.replace(NODE_26_CURSOR_SDK_REGISTER_DEPRECATION, "");
+}
+
 async function runScenario(scenario: string): Promise<ChildResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--unhandled-rejections=strict", "--import", "tsx", fixturePath, scenario], {
@@ -37,6 +47,14 @@ async function runScenario(scenario: string): Promise<ChildResult> {
 }
 
 describe("Cursor SDK containment child process behavior", () => {
+  it("filters only the known Node 26 module.register deprecation", () => {
+    const warning = "(node:12345) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n" +
+      "(Use `node --trace-deprecation ...` to show where the warning was created)\n";
+    expect(withoutKnownCursorSdkNode26Warning(warning)).toBe("");
+    expect(withoutKnownCursorSdkNode26Warning(`${warning}unexpected stderr\n`)).toBe("unexpected stderr\n");
+    expect(withoutKnownCursorSdkNode26Warning("(node:12345) [DEP0205] DeprecationWarning: different detail\n")).toContain("different detail");
+  });
+
   it.each([
     { scenario: "contained-transient", expectedBucket: "retryable_transport" },
     { scenario: "contained-auth", expectedBucket: "auth_permission" }
@@ -44,7 +62,7 @@ describe("Cursor SDK containment child process behavior", () => {
     const result = await runScenario(scenario);
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    expect(withoutKnownCursorSdkNode26Warning(result.stderr)).toBe("");
     expect(JSON.parse(result.stdout.trim())).toMatchObject({
       marker: "contained",
       bucket: expectedBucket,

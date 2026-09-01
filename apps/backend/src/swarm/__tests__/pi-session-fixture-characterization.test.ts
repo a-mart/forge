@@ -184,7 +184,7 @@ describe("pi session fixture provenance gate", () => {
     expect(String(target.targetNativeSemantics?.noneUltraMapping)).toMatch(/none|ultra|max/i);
   });
 
-  it("regenerates equivalent provenance manifests from the committed generator", () => {
+  it("regenerates an equivalent fixture contract from the committed generator", () => {
     const built = buildAllManifests({ generatedAt: "2026-07-11T00:00:00.000Z" });
     expect(built).toHaveLength(2);
     for (const { manifestPath, manifest } of built) {
@@ -193,6 +193,25 @@ describe("pi session fixture provenance gate", () => {
       expect(manifest.producingCommit).toBe(committed.producingCommit);
       expect(Object.values(manifest.fixtureHashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
     }
+  });
+
+  it("keeps producer-host metadata out of the portable contract without accepting fixture drift", async () => {
+    const committed = await readManifest("0.80.6");
+    const fromAnotherHost = structuredClone(committed);
+    fromAnotherHost.generatedAt = "2026-09-01T00:00:00.000Z";
+    fromAnotherHost.generation.toolchain = {
+      runtime: "node",
+      nodeVersion: "26.5.0",
+      nodeMajor: 26,
+      pnpmVersion: "10.30.1",
+      platform: "linux",
+      arch: "x64",
+    };
+
+    expect(stableManifestForCompare(fromAnotherHost)).toEqual(stableManifestForCompare(committed));
+
+    fromAnotherHost.fixtureHashes["compat-matrix"] = "0".repeat(64);
+    expect(stableManifestForCompare(fromAnotherHost)).not.toEqual(stableManifestForCompare(committed));
   });
 });
 
