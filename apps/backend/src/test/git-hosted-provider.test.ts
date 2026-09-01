@@ -16,6 +16,7 @@ import {
   parseGitHubRepoFromRemoteUrl
 } from "../ws/http/services/git-hosted-provider.js";
 import type { GitSourceControlContext } from "../ws/http/shared/route-helpers.js";
+import { configureGitTestIdentity } from "./test-helpers.js";
 
 describe("parseGitHubRepoFromRemoteUrl", () => {
   it("parses SSH and HTTPS GitHub remotes", () => {
@@ -769,6 +770,7 @@ process.exit(1);
 
   await mkdir(repoDir, { recursive: true });
   await execFileAsync("git", ["init", "-b", options.branch], { cwd: repoDir });
+  await configureGitTestIdentity(repoDir);
   await writeRepoFile(join(repoDir, "README.md"), "# test\n", "utf8");
   await execFileAsync("git", ["add", "README.md"], { cwd: repoDir });
   await execFileAsync("git", ["commit", "-m", "init"], { cwd: repoDir });

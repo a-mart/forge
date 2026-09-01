@@ -24,6 +24,7 @@ import {
   resolveStableWorktreePathKey
 } from "../versioning/git-source-control-helpers.js";
 import { createGitSourceControlRoutes } from "../ws/http/routes/git-source-control-routes.js";
+import { configureGitTestIdentity } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -513,8 +514,7 @@ describe("git-source-control-routes", () => {
     const server = await createRemoteBackedTestServer({ aheadOnLocal: true });
     const remoteCloneDir = join(server.root, "unfetched-remote-advance");
     await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
-    await execGit(remoteCloneDir, ["config", "user.name", "Forge Test"]);
-    await execGit(remoteCloneDir, ["config", "user.email", "forge-test@example.com"]);
+    await configureGitTestIdentity(remoteCloneDir);
     await writeFile(join(remoteCloneDir, "remote-advance.txt"), "remote\n", "utf8");
     await execGit(remoteCloneDir, ["add", "remote-advance.txt"]);
     await execGit(remoteCloneDir, ["commit", "-m", "unfetched remote advance"]);
@@ -577,8 +577,7 @@ describe("git-source-control-routes", () => {
 
     const remoteCloneDir = join(server.root, "remote-clobber");
     await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
-    await execGit(remoteCloneDir, ["config", "user.name", "Forge Test"]);
-    await execGit(remoteCloneDir, ["config", "user.email", "forge-test@example.com"]);
+    await configureGitTestIdentity(remoteCloneDir);
     await writeFile(join(remoteCloneDir, "ignored.txt"), "remote tracked\n", "utf8");
     await execGit(remoteCloneDir, ["add", "-f", "ignored.txt"]);
     await execGit(remoteCloneDir, ["commit", "-m", "remote tracks ignored file"]);
@@ -611,8 +610,7 @@ describe("git-source-control-routes", () => {
 
     const remoteCloneDir = join(server.root, "remote-clobber-dir");
     await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
-    await execGit(remoteCloneDir, ["config", "user.name", "Forge Test"]);
-    await execGit(remoteCloneDir, ["config", "user.email", "forge-test@example.com"]);
+    await configureGitTestIdentity(remoteCloneDir);
     await mkdir(join(remoteCloneDir, "dist"), { recursive: true });
     await writeFile(join(remoteCloneDir, "dist", "a.txt"), "remote tracked child\n", "utf8");
     await execGit(remoteCloneDir, ["add", "-f", "dist/a.txt"]);
@@ -1375,8 +1373,7 @@ async function initGitRepo(
   await mkdir(join(cwd, dirnameSafe(relativePath)), { recursive: true });
   await writeFile(join(cwd, relativePath), content, "utf8");
   await execGit(cwd, ["init", "-b", branch]);
-  await execGit(cwd, ["config", "user.name", "Forge Test"]);
-  await execGit(cwd, ["config", "user.email", "forge-test@example.com"]);
+  await configureGitTestIdentity(cwd);
   await execGit(cwd, ["add", relativePath]);
   await execGit(cwd, ["commit", "-m", message]);
 }
@@ -1547,6 +1544,7 @@ async function createRemoteBackedTestServer(options: {
     await execGit(mainDir, ["commit", "-m", "local divergence"]);
 
     await execGit(root, ["clone", "-b", "main", bareDir, remoteCloneDir]);
+    await configureGitTestIdentity(remoteCloneDir);
     await writeFile(join(remoteCloneDir, "remote-only.txt"), "remote\n", "utf8");
     await execGit(remoteCloneDir, ["add", "remote-only.txt"]);
     await execGit(remoteCloneDir, ["commit", "-m", "remote divergence"]);
