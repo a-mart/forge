@@ -1725,7 +1725,7 @@ export function BuilderSurface({
     isActiveManager,
     isRemoteOriginActive,
     secureCatalogLoading,
-    secureCatalog?.projectDefaults,
+    secureCatalog,
     secureSecretOptions,
     securePendingRequestViews,
     securePendingSshTrustRequestViews,

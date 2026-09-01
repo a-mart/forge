@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import type { PromptRegistry } from "./prompt-registry.js";
-import { ConversationProjector } from "./conversation-projector.js";
+import type { ConversationProjector } from "./conversation-projector.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { createLiveCompactionRuntimeSettingsProvider, type CompactionRuntimeSettingsProvider } from "./compaction-runtime-settings-provider.js";
 import { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
@@ -17,10 +17,7 @@ import { CollaborationStorageProvisioner } from "./collaboration-storage-provisi
 import { AgentMessageDispatcher, type AgentMessageLedgerPort } from "./agent-message-dispatcher.js";
 import { SwarmCompactionCoordinator } from "./swarm-compaction-coordinator.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
-import {
-  createDescriptorStoreAdapter,
-  type DescriptorStoreAdapter,
-} from "./agents/descriptor-store/live-map-adapter.js";
+import type { DescriptorStoreAdapter } from "./agents/descriptor-store/live-map-adapter.js";
 import { AgentDirectory } from "./agent-directory.js";
 import {
   createSwarmManagerFoundation,
@@ -28,17 +25,18 @@ import {
 } from "./swarm-manager-foundation.js";
 import { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import { createSwarmManagerSessionComposition } from "./swarm-manager-session-composition.js";
+import { createSwarmManagerCoreServices } from "./swarm-manager-core-services.js";
 import { createSwarmManagerRuntimeComposition } from "./swarm-manager-runtime-composition.js";
 import { SessionInteractionCoordinator } from "./session-interaction-coordinator.js";
 import { isWorkGraphWorkerActive } from "./planning/work-graph-restart-recovery.js";
 import { SwarmManagerFacade } from "./swarm-manager-facade.js";
 import type { SwarmManagerFacadeServices, TerminalArchiveHooks } from "./swarm-manager-facade-services.js";
-import { ManagerBootstrapCoordinator } from "./manager-bootstrap-coordinator.js";
+import type { ManagerBootstrapCoordinator } from "./manager-bootstrap-coordinator.js";
 import { ProfileSessionBookkeepingCoordinator } from "./profile-session-bookkeeping-coordinator.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator } from "./archive/archive-last-used-hydrator.js";
 import { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
-import { PersistenceService } from "./persistence-service.js";
+import type { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
 import { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import { SwarmRuntimeController } from "./swarm-runtime-controller.js";
@@ -98,10 +96,8 @@ import type {
   SwarmModelPreset,
 } from "./types.js";
 import {
-  extractDescriptorAgentId,
   normalizeOptionalAgentId,
   nowIso,
-  validateAgentDescriptor
 } from "./swarm-manager-utils.js";
 import {
   type CodexMcpToolGateEvaluation,
@@ -282,59 +278,47 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.runtimes = runtimeComposition.runtimes;
     this.runtimeCreationPromisesByAgentId = runtimeComposition.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = runtimeComposition.runtimeTokensByAgentId;
-    this.managerBootstrapCoordinator = new ManagerBootstrapCoordinator({
-      dataDir: this.config.paths.dataDir,
-      descriptors: this.descriptors,
-      promptRegistry: this.promptRegistry,
-      hasRuntime: (agentId) => this.runtimes.has(agentId),
-      sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
-        this.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
-      logDebug: (message, details) => this.logDebug(message, details),
-    });
-    this.descriptorStoreAdapter = createDescriptorStoreAdapter({
-      store: this.descriptorStore,
-      descriptors: this.descriptors,
-      profiles: this.profiles,
-      logDebug: (message, details) => this.logDebug(message, details),
-    });
-    this.persistenceService = new PersistenceService({
-      config: this.config,
-      descriptors: this.descriptors,
-      sortedDescriptors: () => this.agentDirectory.sortedDescriptors(),
-      sortedProfiles: () => this.agentDirectory.sortedProfiles(),
-      getConfiguredManagerId: () => this.agentDirectory.getConfiguredManagerId(),
-      resolveMemoryOwnerAgentId: (descriptor) =>
-        this.knowledgeMemoryCoordinator.resolveMemoryOwnerAgentId(descriptor),
-      validateAgentDescriptor,
-      extractDescriptorAgentId,
-      logDebug: (message, details) => this.logDebug(message, details)
-    });
-    this.conversationProjector = new ConversationProjector({
-      descriptors: this.descriptors,
-      runtimes: this.runtimes,
-      conversationEntriesByAgentId: this.conversationEntriesByAgentId,
-      now: this.now,
-      emitServerEvent: (eventName, payload) => {
-        this.emit(eventName, payload);
-        if (payload.type === "agent_tool_call") {
-          this.eventCoordinator.emitSessionActiveToolsSnapshot(this.sessionActiveTools.recordToolCall(payload)); this.eventCoordinator.emitManagerToolActivityForToolCall(payload);
-        }
+    const coreServices = createSwarmManagerCoreServices({
+      state: {
+        config: this.config,
+        descriptors: this.descriptors,
+        profiles: this.profiles,
+        runtimes: this.runtimes,
+        conversationEntriesByAgentId: this.conversationEntriesByAgentId,
+        now: this.now,
       },
+      foundation,
+      descriptorStore: this.descriptorStore,
+      directory: this.agentDirectory,
       logDebug: (message, details) => this.logDebug(message, details),
-      perf: this.sidebarPerfRecorder,
-      getPinnedMessageIds: (agentId) => this.sessionPinCoordinator.getPinnedMessageIds(agentId)
+      managerBootstrap: {
+        sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
+          this.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
+      },
+      descriptorStoreAdapter: {},
+      persistence: {
+        resolveMemoryOwnerAgentId: (descriptor) =>
+          this.knowledgeMemoryCoordinator.resolveMemoryOwnerAgentId(descriptor),
+      },
+      conversation: {
+        emitServerEvent: (eventName, payload) => {
+          this.emit(eventName, payload);
+          if (payload.type === "agent_tool_call") {
+            this.eventCoordinator.emitSessionActiveToolsSnapshot(this.sessionActiveTools.recordToolCall(payload)); this.eventCoordinator.emitManagerToolActivityForToolCall(payload);
+          }
+        },
+        getPinnedMessageIds: (agentId) => this.sessionPinCoordinator.getPinnedMessageIds(agentId),
+      },
+      sessionPlan: {
+        emitSnapshot: (event) => this.emit("session_plan_snapshot", event),
+        isWorkerActive: (workerId) => isWorkGraphWorkerActive(this.descriptors, workerId),
+      },
     });
-    this.sessionPlanCoordinator = new SessionPlanCoordinator({
-      dataDir: this.config.paths.dataDir,
-      now: this.now,
-      getPlanSummaries: (sessionAgentId) => this.conversationProjector
-        .getConversationHistory(sessionAgentId)
-        .filter((entry) => entry.type === "plan_summary"),
-      emitPlanSummary: (event) => this.conversationProjector.emitPlanSummary(event),
-      emitSnapshot: (event) => this.emit("session_plan_snapshot", event),
-      isWorkerActive: (workerId) => isWorkGraphWorkerActive(this.descriptors, workerId),
-      logDebug: (message, details) => this.logDebug(message, details),
-    });
+    this.managerBootstrapCoordinator = coreServices.managerBootstrapCoordinator;
+    this.descriptorStoreAdapter = coreServices.descriptorStoreAdapter;
+    this.persistenceService = coreServices.persistenceService;
+    this.conversationProjector = coreServices.conversationProjector;
+    this.sessionPlanCoordinator = coreServices.sessionPlanCoordinator;
     this.compactionCoordinator = runtimeComposition.attachPlanning(this.sessionPlanCoordinator);
     this.codexDirectSidecarCoordinator = this.createCodexDirectSidecarCoordinator(options);
     this.codexPluginDelegationCoordinator = this.createCodexPluginDelegationCoordinator();
