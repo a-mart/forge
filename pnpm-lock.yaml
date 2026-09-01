@@ -482,6 +482,9 @@ importers:
       '@tanstack/devtools-vite':
         specifier: ^0.3.11
         version: 0.3.12(vite@7.3.1(@types/node@22.19.11)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.0))
+      '@tanstack/router-cli':
+        specifier: 1.159.9
+        version: 1.159.9
       '@testing-library/dom':
         specifier: ^10.4.0
         version: 10.4.1
@@ -3855,6 +3858,11 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@tanstack/router-cli@1.159.9':
+    resolution: {integrity: sha512-I/mRhRPfpK8E0YvABA0O3eF7P14lOy2ApVkaaX+7b8yY1lniulPklyCTJfh6MWtg1qbtyA1fhvlCi6hhPvAmWw==}
+    engines: {node: '>=12'}
+    hasBin: true
 
   '@tanstack/router-core@1.159.9':
     resolution: {integrity: sha512-A9B8gvklvMCjSAFG8nDAhfmROI8kjcij8wzznQaw4RfGIOrYXyNe5fCAcbHXGpgNeTE2JnK75b6AjidDPQfrmw==}
@@ -11673,6 +11681,14 @@ snapshots:
       '@tanstack/virtual-core': 3.13.23
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
+
+  '@tanstack/router-cli@1.159.9':
+    dependencies:
+      '@tanstack/router-generator': 1.159.9
+      chokidar: 3.6.0
+      yargs: 17.7.2
+    transitivePeerDependencies:
+      - supports-color
 
   '@tanstack/router-core@1.159.9':
     dependencies:
