@@ -18,11 +18,14 @@ const repoRoot = path.resolve(path.dirname(scriptPath), '..')
 const electronDir = path.join(repoRoot, 'apps', 'electron')
 const uiDir = path.join(repoRoot, 'apps', 'ui')
 const uiRequire = createRequire(path.join(uiDir, 'package.json'))
-const vitePackagePath = uiRequire.resolve('vite/package.json')
-const viteCliPath = path.join(path.dirname(vitePackagePath), 'bin', 'vite.js')
 const UI_PORT = 47_188
 const BACKEND_PORT = 47_287
 const UI_START_TIMEOUT_MS = 45_000
+
+function resolveViteCliPath() {
+  const vitePackagePath = uiRequire.resolve('vite/package.json')
+  return path.join(path.dirname(vitePackagePath), 'bin', 'vite.js')
+}
 
 export function createElectronDevelopmentWorkspaceEnvironment({
   environment = process.env,
@@ -119,6 +122,11 @@ export function createElectronDevelopmentSetupCommands({
   })
 
   return [
+    pnpmCommand('Workspace dependency sync', [
+      'install',
+      '--frozen-lockfile',
+      '--prefer-offline',
+    ]),
     pnpmCommand('Stream Deck build', ['run', 'streamdeck:build']),
     pnpmCommand('Stream Deck package', ['run', 'streamdeck:pack']),
     pnpmCommand('Protocol build', ['--filter', '@forge/protocol', 'build']),
@@ -294,6 +302,7 @@ export async function runElectronDevelopmentWorkspace({
     if (interrupted) return await startupInterrupt
 
     logger.log(`[dev:electron] Starting UI on http://127.0.0.1:${UI_PORT}...`)
+    const viteCliPath = resolveViteCliPath()
     let uiSpawnError = null
     uiChild = spawnProcess(process.execPath, [viteCliPath, 'dev', '--port', String(UI_PORT), '--strictPort'], {
       cwd: uiDir,

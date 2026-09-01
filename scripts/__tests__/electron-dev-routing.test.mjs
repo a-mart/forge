@@ -34,10 +34,11 @@ describe('Electron development backend routing', () => {
   })
 
   it('uses a JavaScript package-manager launcher directly', () => {
-    const [command] = createElectronDevelopmentSetupCommands({
+    const commands = createElectronDevelopmentSetupCommands({
       environment: { npm_execpath: '/opt/pnpm/bin/pnpm.cjs' },
       platform: 'darwin',
     })
+    const command = commands.find(({ label }) => label === 'Stream Deck build')
 
     expect(command.command).toBe(process.execPath)
     expect(command.args).toEqual([
@@ -48,23 +49,25 @@ describe('Electron development backend routing', () => {
   })
 
   it('does not ask Node to parse a native package-manager executable', () => {
-    const [command] = createElectronDevelopmentSetupCommands({
+    const commands = createElectronDevelopmentSetupCommands({
       environment: { npm_execpath: '/opt/pnpm/bin/pnpm' },
       platform: 'darwin',
     })
+    const command = commands.find(({ label }) => label === 'Stream Deck build')
 
     expect(command.command).toBe('pnpm')
     expect(command.args).toEqual(['run', 'streamdeck:build'])
   })
 
   it('keeps the Windows command-wrapper path for a native package-manager executable', () => {
-    const [command] = createElectronDevelopmentSetupCommands({
+    const commands = createElectronDevelopmentSetupCommands({
       environment: {
         ComSpec: 'C:\\Windows\\System32\\cmd.exe',
         npm_execpath: 'C:\\pnpm\\pnpm.exe',
       },
       platform: 'win32',
     })
+    const command = commands.find(({ label }) => label === 'Stream Deck build')
 
     expect(command.command).toBe('C:\\Windows\\System32\\cmd.exe')
     expect(command.args).toEqual([
@@ -75,5 +78,30 @@ describe('Electron development backend routing', () => {
       'run',
       'streamdeck:build',
     ])
+  })
+
+  it('synchronizes the frozen workspace before any build or runtime starts', () => {
+    const [command] = createElectronDevelopmentSetupCommands({
+      environment: {
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        npm_execpath: 'C:\\pnpm\\pnpm.exe',
+      },
+      platform: 'win32',
+    })
+
+    expect(command).toEqual({
+      label: 'Workspace dependency sync',
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: [
+        '/d',
+        '/s',
+        '/c',
+        'pnpm.cmd',
+        'install',
+        '--frozen-lockfile',
+        '--prefer-offline',
+      ],
+      cwd: expect.any(String),
+    })
   })
 })

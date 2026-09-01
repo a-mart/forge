@@ -36,6 +36,10 @@ pnpm prod:daemon
 pnpm prod:restart
 ```
 
+The Electron development commands reconcile the checked-in frozen lockfile before
+launching. After pulling a revision that adds or changes dependencies, the first
+start may take slightly longer while pnpm updates the local workspace.
+
 All core `pnpm` commands (`dev`, `dev:electron`, `dev:electron:remote`, `build`, `test`,
 `prod:daemon`, `prod:restart`) work natively on Windows without WSL. The
 remote Electron command exposes the unauthenticated local Builder only to a
