@@ -132,19 +132,24 @@ describe('buildManagerModelRows provider availability gating', () => {
     expect(opus?.unavailableReason).toBeUndefined()
   })
 
-  it('includes Claude Fable 5 with its catalog reasoning levels', () => {
+  it('includes Claude Fable 5.1 as default and retains Claude Fable 5', () => {
     const rows = buildManagerModelRows('create', {}, { anthropic: true })
-    const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5')
+    const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5-1')
+    const priorFable = rows.find((row) => row.key === 'anthropic::claude-fable-5')
 
     expect(fable).toMatchObject({
       provider: 'anthropic',
       familyId: 'pi-fable',
-      modelId: 'claude-fable-5',
-      displayName: 'Claude Fable 5',
+      modelId: 'claude-fable-5-1',
+      displayName: 'Claude Fable 5.1',
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultReasoningLevel: 'high',
     })
     expect(fable?.unavailableReason).toBeUndefined()
+    expect(priorFable).toMatchObject({
+      modelId: 'claude-fable-5',
+      displayName: 'Claude Fable 5',
+    })
   })
 
 })

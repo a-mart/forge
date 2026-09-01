@@ -205,36 +205,36 @@ describe("model-presets", () => {
     expect(modelCatalogService.isKnownModelId("gpt-5.6-sol", "openai-codex")).toBe(true);
   });
 
-  it("exposes Claude Fable 5 and preserves its catalog-supported reasoning levels", () => {
+  it("exposes Claude Fable 5.1 by default and preserves Fable reasoning levels", () => {
     const preset = getModelPresetInfoList().find((entry) => entry.presetId === "pi-fable");
 
     expect(preset).toMatchObject({
       provider: "anthropic",
-      modelId: "claude-fable-5",
-      displayName: "Claude Fable 5",
+      modelId: "claude-fable-5-1",
+      displayName: "Claude Fable 5.1",
       defaultReasoningLevel: "high",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     });
     expect(resolveModelDescriptorFromPreset("pi-fable")).toEqual({
       provider: "anthropic",
-      modelId: "claude-fable-5",
+      modelId: "claude-fable-5-1",
       thinkingLevel: "high",
     });
     expect(inferSwarmModelPresetFromDescriptor({
       provider: "anthropic",
-      modelId: "claude-fable-5",
+      modelId: "claude-fable-5-1",
     })).toBe("pi-fable");
 
     for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
       expect(normalizeThinkingLevelForModelDescriptor({
         provider: "anthropic",
-        modelId: "claude-fable-5",
+        modelId: "claude-fable-5-1",
         thinkingLevel: level,
       })).toBe(level);
     }
     expect(normalizeThinkingLevelForModelDescriptor({
       provider: "anthropic",
-      modelId: "claude-fable-5",
+      modelId: "claude-fable-5-1",
       thinkingLevel: "none",
     })).toBe("low");
   });

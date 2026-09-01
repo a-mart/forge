@@ -85,7 +85,7 @@ const EXPECTED_FAMILIES = {
   },
   'pi-fable': {
     provider: 'anthropic',
-    defaultModelId: 'claude-fable-5',
+    defaultModelId: 'claude-fable-5-1',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -206,6 +206,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'claude-fable-5-1': {
+    provider: 'anthropic',
+    familyId: 'pi-fable',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'claude-fable-5': {
     provider: 'anthropic',
     familyId: 'pi-fable',
@@ -299,7 +307,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(22)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -339,8 +347,25 @@ describe('model-catalog', () => {
       intentionalDivergenceNotes:
         'Intentional divergence: Claude Opus 4.8 is restricted to low, medium, and high reasoning levels.',
     })
-    expect(getCatalogModel('claude-fable-5')).toMatchObject({
+    expect(getCatalogModel('claude-fable-5-1')).toMatchObject({
       isFamilyDefault: true,
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+      thinkingLevelMap: { off: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+      piCompat: { forceAdaptiveThinking: true, supportsTemperature: false },
+      piCost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: 'claude-fable-5-1',
+      intentionalDivergenceNotes:
+        'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships claude-fable-5-1.',
+    })
+    expect(getCatalogModel('claude-fable-5-1')?.supportedReasoningLevels).not.toContain('none')
+    expect(getCatalogModel('claude-fable-5')).toMatchObject({
+      isFamilyDefault: false,
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultReasoningLevel: 'high',
       thinkingLevelMap: { off: null, xhigh: 'xhigh', max: 'max' },
@@ -544,6 +569,7 @@ describe('model-catalog', () => {
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
     expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
+    expect(getCatalogFamilyForModel('claude-fable-5-1', 'anthropic')?.familyId).toBe('pi-fable')
     expect(getCatalogFamilyForModel('claude-fable-5', 'anthropic')?.familyId).toBe('pi-fable')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
@@ -580,6 +606,7 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-next')).toBe('pi-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBeUndefined()
+    expect(inferCatalogFamily('anthropic', 'claude-fable-5-1')).toBe('pi-fable')
     expect(inferCatalogFamily('anthropic', 'claude-fable-5')).toBe('pi-fable')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
