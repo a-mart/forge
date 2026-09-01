@@ -146,7 +146,77 @@ describe("model-catalog-projection", () => {
     expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
-  it("projects Fable overrides through the real ModelRegistry without losing upstream runtime metadata", async () => {
+  it("projects pending Fable 5.1 with adaptive-thinking compatibility and curated pricing", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    expect(getModels("anthropic").some((model) => model.id === "claude-fable-5-1")).toBe(false);
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-fable51-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        models?: Array<{
+          id: string;
+          contextWindow?: number;
+          maxTokens?: number;
+          thinkingLevelMap?: Record<string, string | null>;
+          cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+          compat?: Record<string, unknown>;
+        }>;
+      }>;
+    };
+    const projectedFable51 = projection.providers.anthropic?.models?.find(
+      (model) => model.id === "claude-fable-5-1",
+    );
+
+    expect(projectedFable51).toMatchObject({
+      id: "claude-fable-5-1",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => {
+        contextWindow?: number;
+        maxTokens?: number;
+        cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+        compat?: Record<string, unknown>;
+        thinkingLevelMap?: Record<string, string | null>;
+      } | undefined;
+    };
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("anthropic", "claude-fable-5-1")).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+  });
+
+  it("projects Fable 5 overrides through the real ModelRegistry without losing upstream runtime metadata", async () => {
     const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
       "@earendil-works/pi-coding-agent",
     );

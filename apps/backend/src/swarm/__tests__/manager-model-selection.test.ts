@@ -225,24 +225,34 @@ describe("manager model selection", () => {
     });
   });
 
-  it("selects Claude Fable 5 exactly with its extended reasoning levels", async () => {
+  it("selects Claude Fable 5.1 by default and retains Fable 5 as a variant", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
 
     expect(resolveModelDescriptorFromPreset("pi-fable")).toEqual({
       provider: "anthropic",
-      modelId: "claude-fable-5",
+      modelId: "claude-fable-5-1",
       thinkingLevel: "high",
     });
     expect(
       resolveExactManagerModelSelection(
-        { provider: "anthropic", modelId: "claude-fable-5" },
+        { provider: "anthropic", modelId: "claude-fable-5-1" },
         { surface: "create", providerAvailability: new Map([["anthropic", true]]), reasoningLevel: "max" },
       ),
     ).toEqual({
       provider: "anthropic",
-      modelId: "claude-fable-5",
+      modelId: "claude-fable-5-1",
       thinkingLevel: "max",
+    });
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "anthropic", modelId: "claude-fable-5" },
+        { surface: "change", providerAvailability: new Map([["anthropic", true]]), reasoningLevel: "low" },
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      thinkingLevel: "low",
     });
   });
 
