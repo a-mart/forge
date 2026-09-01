@@ -6,6 +6,7 @@ import {
   getByRole,
   getByText,
   queryByRole,
+  queryByText,
   waitFor,
 } from '@testing-library/dom'
 import { createElement } from 'react'
@@ -348,12 +349,6 @@ function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
       getData: (format: string) => format === 'text/plain' ? value : '',
     },
   })
-}
-
-function maskedPrivateValue(value: string): string {
-  return value.replace(/\r\n?|\n|[^\r\n]/g, (character) => (
-    character === '\r' || character === '\n' || character === '\r\n' ? '\n' : '•'
-  ))
 }
 
 describe('SettingsSecrets', () => {
@@ -993,6 +988,43 @@ describe('SettingsSecrets', () => {
     })
   })
 
+  it('filters saved secrets immediately by their visible metadata', async () => {
+    const sshSecret = {
+      ...SECRET_SUMMARY,
+      secretId: 'secret-2',
+      displayAlias: 'ssh/production',
+      displayName: 'Production SSH key',
+      note: 'Break-glass server access.',
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [SECRET_SUMMARY, sshSecret],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    const search = getByLabelText(container, 'Search saved secrets')
+    expect(getByText(container, 'GitHub work token')).toBeTruthy()
+    expect(getByText(container, 'Production SSH key')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'ssh/production' } })
+    expect(queryByText(container, 'GitHub work token')).toBeNull()
+    expect(getByText(container, 'Production SSH key')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'release automation' } })
+    expect(getByText(container, 'GitHub work token')).toBeTruthy()
+    expect(queryByText(container, 'Production SSH key')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'no such secret' } })
+    expect(getByText(container, 'No matching secrets')).toBeTruthy()
+  })
+
   it('clears submitted local material immediately and leaves no secret value in the DOM', async () => {
     let resolveCreate: ((value: typeof SECRET_SUMMARY) => void) | undefined
     secureSecretsApiMock.createLocalSecret.mockImplementation(() => new Promise((resolve) => {
@@ -1007,7 +1039,7 @@ describe('SettingsSecrets', () => {
 
     const aliasInput = getByLabelText(container, 'Alias') as HTMLInputElement
     const noteInput = getByLabelText(container, 'Note (optional)') as HTMLTextAreaElement
-    const materialInput = getByLabelText(container, 'Private value') as HTMLInputElement
+    const materialInput = getByLabelText(container, 'Private value') as HTMLTextAreaElement
     const rawSecret = 'dom-secret-canary-value'
     fireEvent.change(aliasInput, { target: { value: 'github/work' } })
     fireEvent.change(noteInput, {
@@ -1054,12 +1086,12 @@ describe('SettingsSecrets', () => {
       container,
       'Private value',
     ) as HTMLTextAreaElement
-    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
+    expect(materialInput.className).not.toContain('text-security')
     expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
     expect(container.textContent).not.toContain('not-a-real-private-key')
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
@@ -1097,12 +1129,12 @@ describe('SettingsSecrets', () => {
       container,
       'Replace private value (optional)',
     ) as HTMLTextAreaElement)
-    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
+    expect(materialInput.className).not.toContain('text-security')
     expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
 

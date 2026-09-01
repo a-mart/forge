@@ -6,6 +6,7 @@ import {
   Pencil,
   Plus,
   Save,
+  Search,
   ShieldOff,
   Trash2,
   X,
@@ -15,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
+import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
 import {
   Select,
   SelectContent,
@@ -120,6 +121,7 @@ export function SecretCatalogPanel({
     useState<Set<string>>(new Set())
   const [editEveryProject, setEditEveryProject] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [secretSearch, setSecretSearch] = useState('')
 
   const providerById = useMemo(
     () => new Map(providers.map((provider) => [provider.providerId, provider])),
@@ -129,6 +131,27 @@ export function SecretCatalogPanel({
     () => new Map(profiles.map((profile) => [profile.profileId, profile])),
     [profiles],
   )
+  const filteredSecrets = useMemo(() => {
+    const query = secretSearch.trim().toLowerCase()
+    if (!query) return secrets
+
+    return secrets.filter((secret) => {
+      const searchableValues = [
+        secret.displayAlias,
+        secret.displayName,
+        secret.note,
+        providerLabel(secret.providerId, providers),
+        scopeLabel(secret.scope, profileById),
+        ...scopeProfileIds(secret.scope).map((profileId) =>
+          projectName(profileId, profileById)
+        ),
+        ...secret.bindings.flatMap((binding) =>
+          Object.values(binding).filter((value): value is string => typeof value === 'string')
+        ),
+      ]
+      return searchableValues.some((value) => value?.toLowerCase().includes(query))
+    })
+  }, [profileById, providers, secretSearch, secrets])
   const projectDefaultsBySecretId = useMemo(() => {
     const result = new Map<string, Set<string>>()
     for (const projectDefault of projectDefaults) {
@@ -540,19 +563,40 @@ export function SecretCatalogPanel({
         <div>
           <h3 className="text-base font-semibold">Saved secrets</h3>
           <p className="text-sm text-muted-foreground">
-            These entries identify stored sources. They are not active task grants and their values
-            are never displayed.
+            These entries identify stored sources. They are not active task grants, and saved values
+            are never returned or revealed.
           </p>
         </div>
+
+        {secrets.length > 0 ? (
+          <div className="relative">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              aria-label="Search saved secrets"
+              value={secretSearch}
+              onChange={(event) => setSecretSearch(event.target.value)}
+              placeholder="Search by name, alias, note, source, project, or binding"
+              className="pl-9"
+            />
+          </div>
+        ) : null}
 
         {secrets.length === 0 ? (
           <EmptyState
             title="No saved secrets"
             description="Add a local secret below or connect a source that supplies secret metadata."
           />
+        ) : filteredSecrets.length === 0 ? (
+          <EmptyState
+            title="No matching secrets"
+            description="Try a different name, alias, note, source, project, or binding."
+          />
         ) : (
           <div className="space-y-2">
-            {secrets.map((secret) => {
+            {filteredSecrets.map((secret) => {
               const provider = providerById.get(secret.providerId)
               const isLocal = provider?.kind === 'local_keychain'
               const isEditing = editingId === secret.secretId
@@ -640,7 +684,7 @@ export function SecretCatalogPanel({
                           label="Replace private value (optional)"
                           htmlFor={`replace-material-${secret.secretId}`}
                         >
-                          <MaskedTextarea
+                          <PrivateValueTextarea
                             id={`replace-material-${secret.secretId}`}
                             value={replacementMaterial}
                             onValueChange={setReplacementMaterial}
@@ -893,8 +937,8 @@ export function SecretCatalogPanel({
         <div>
           <h3 className="text-base font-semibold">Add local secret</h3>
           <p className="text-sm text-muted-foreground">
-            The private value is cleared from this form as soon as you submit it. Forge never shows
-            a masked suffix or reveal control for saved values.
+            The private value stays visible while you enter it and is cleared from this form as soon
+            as you submit. Saved values cannot be revealed later.
           </p>
         </div>
 
@@ -933,7 +977,7 @@ export function SecretCatalogPanel({
             </p>
           </Field>
           <Field label="Private value" htmlFor="local-secret-material">
-            <MaskedTextarea
+            <PrivateValueTextarea
               id="local-secret-material"
               name="localSecretMaterial"
               value={material}

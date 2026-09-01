@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
+import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
 import {
   secureSessionUiErrorMessage,
   SecureSessionUiError,
@@ -177,7 +177,7 @@ export function PrivateSecretValueDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor={inputId}>{alias ? `Value for ${alias}` : 'Private value'}</Label>
-            <MaskedTextarea
+            <PrivateValueTextarea
               id={inputId}
               ref={setPrivateInputRef}
               value={privateValue}
