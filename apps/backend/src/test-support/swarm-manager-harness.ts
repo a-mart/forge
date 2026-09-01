@@ -317,6 +317,13 @@ export class TestSwarmManager extends SwarmManager {
     return Array.from(state.conversationEntriesByAgentId.keys()).sort((left, right) => left.localeCompare(right))
   }
 
+  async flushPendingHistoryCacheWritesForTest(): Promise<void> {
+    const state = this as unknown as {
+      conversationProjector: { flushPendingHistoryCacheWrites(): Promise<void> }
+    }
+    await state.conversationProjector.flushPendingHistoryCacheWrites()
+  }
+
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,

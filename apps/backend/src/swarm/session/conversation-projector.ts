@@ -138,6 +138,11 @@ export class ConversationProjector {
     return this.getConversationHistoryWithDiagnostics(agentId).history;
   }
 
+  /** Completes this projector's deferred history-cache writes before its session files are released. */
+  async flushPendingHistoryCacheWrites(): Promise<void> {
+    await this.historyCacheStore.flushPendingWrites();
+  }
+
   getConversationHistoryPage(
     agentId: string,
     options?: { cursor?: string; limit?: number; view?: BuilderTimelineChannelView },
