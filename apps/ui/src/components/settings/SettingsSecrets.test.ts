@@ -350,6 +350,12 @@ function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
   })
 }
 
+function maskedPrivateValue(value: string): string {
+  return value.replace(/\r\n?|\n|[^\r\n]/g, (character) => (
+    character === '\r' || character === '\n' || character === '\r\n' ? '\n' : '•'
+  ))
+}
+
 describe('SettingsSecrets', () => {
   it('never loads secure settings for a remote origin', () => {
     render(makeClient('collab'))
@@ -1053,7 +1059,7 @@ describe('SettingsSecrets', () => {
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
     expect(container.textContent).not.toContain('not-a-real-private-key')
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
@@ -1096,7 +1102,7 @@ describe('SettingsSecrets', () => {
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
 

@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --port 47189 --strictPort",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:masked-textarea-chromium": "node ./scripts/test-masked-textarea-chromium.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.3",
