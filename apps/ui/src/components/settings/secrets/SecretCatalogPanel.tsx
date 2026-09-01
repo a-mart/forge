@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
 import {
   Select,
   SelectContent,
@@ -639,11 +640,10 @@ export function SecretCatalogPanel({
                           label="Replace private value (optional)"
                           htmlFor={`replace-material-${secret.secretId}`}
                         >
-                          <Input
+                          <MaskedTextarea
                             id={`replace-material-${secret.secretId}`}
-                            type="password"
                             value={replacementMaterial}
-                            onChange={(event) => setReplacementMaterial(event.target.value)}
+                            onValueChange={setReplacementMaterial}
                             autoComplete="new-password"
                             placeholder="Leave empty to keep the current value"
                             disabled={!materialEntryAvailable || isBusy}
@@ -933,12 +933,11 @@ export function SecretCatalogPanel({
             </p>
           </Field>
           <Field label="Private value" htmlFor="local-secret-material">
-            <Input
+            <MaskedTextarea
               id="local-secret-material"
               name="localSecretMaterial"
-              type="password"
               value={material}
-              onChange={(event) => setMaterial(event.target.value)}
+              onValueChange={setMaterial}
               autoComplete="new-password"
               placeholder="Paste value"
               disabled={!materialEntryAvailable || busyKey !== null}

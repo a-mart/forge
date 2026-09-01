@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
 import {
   secureSessionUiErrorMessage,
   SecureSessionUiError,
@@ -59,7 +60,8 @@ export function PrivateSecretValueDialog({
   const projectScopeId = useId()
   const instanceScopeId = useId()
   const projectDefaultId = useId()
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [privateValue, setPrivateValue] = useState('')
   const [hasValue, setHasValue] = useState(false)
   const [displayName, setDisplayName] = useState(alias ?? '')
   const [savedScope, setSavedScope] = useState<SavedScope>('project')
@@ -68,13 +70,14 @@ export function PrivateSecretValueDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const projectDefaultLimitReached = project.projectDefaultLimitReached === true
 
-  const setPrivateInputRef = useCallback((input: HTMLInputElement | null) => {
+  const setPrivateInputRef = useCallback((input: HTMLTextAreaElement | null) => {
     if (!input && inputRef.current) inputRef.current.value = ''
     inputRef.current = input
   }, [])
 
   const clearPrivateInput = () => {
     if (inputRef.current) inputRef.current.value = ''
+    setPrivateValue('')
     setHasValue(false)
   }
 
@@ -86,8 +89,8 @@ export function PrivateSecretValueDialog({
 
   const fulfill = async (mode: SubmitMode) => {
     if (submitMode) return
-    let privateValue = inputRef.current?.value ?? ''
-    if (!privateValue) return
+    let valueForFulfillment = privateValue
+    if (!valueForFulfillment) return
 
     // Remove the plaintext from the DOM before handing it across the private
     // Electron bridge. A failed request requires deliberate re-entry.
@@ -95,15 +98,14 @@ export function PrivateSecretValueDialog({
     setErrorMessage(null)
     setSubmitMode(mode)
     try {
-      if (mode === 'session') {
-        await onFulfill({
-          value: privateValue,
+      const fulfillment = mode === 'session'
+        ? onFulfill({
+          value: valueForFulfillment,
           retention: 'session',
           scope: { kind: 'profile', profileId: project.profileId },
         })
-      } else {
-        await onFulfill({
-          value: privateValue,
+        : onFulfill({
+          value: valueForFulfillment,
           ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
           retention: 'saved',
           scope: savedScope === 'project'
@@ -113,11 +115,11 @@ export function PrivateSecretValueDialog({
             ? { makeProjectDefault: true }
             : {}),
         })
-      }
-      privateValue = ''
+      if (fulfillment) await fulfillment
+      valueForFulfillment = ''
       close()
     } catch (error) {
-      privateValue = ''
+      valueForFulfillment = ''
       setSubmitMode(null)
       const nextStep =
         error instanceof SecureSessionUiError
@@ -175,11 +177,14 @@ export function PrivateSecretValueDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor={inputId}>{alias ? `Value for ${alias}` : 'Private value'}</Label>
-            <Input
+            <MaskedTextarea
               id={inputId}
               ref={setPrivateInputRef}
-              type="password"
-              onChange={(event) => setHasValue(event.currentTarget.value.length > 0)}
+              value={privateValue}
+              onValueChange={(value) => {
+                setPrivateValue(value)
+                setHasValue(value.length > 0)
+              }}
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"

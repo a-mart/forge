@@ -194,6 +194,12 @@ const VAULT_TRANSFER = {
   providerCredentialCount: 1,
 }
 
+const MULTILINE_PRIVATE_VALUE = [
+  '-----BEGIN OPENSSH PRIVATE KEY-----',
+  'not-a-real-private-key',
+  '-----END OPENSSH PRIVATE KEY-----',
+].join('\r\n')
+
 const PROFILES = [
   {
     profileId: 'project-alpha',
@@ -333,6 +339,14 @@ function render(
       profiles: PROFILES,
       ...(currentProfileId ? { currentProfileId } : {}),
     }))
+  })
+}
+
+function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
+  fireEvent.paste(control, {
+    clipboardData: {
+      getData: (format: string) => format === 'text/plain' ? value : '',
+    },
   })
 }
 
@@ -1015,6 +1029,84 @@ describe('SettingsSecrets', () => {
     await waitFor(() => {
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
       expect(noteInput.value).toBe('')
+    })
+  })
+
+  it('preserves a multiline private value when creating a local secret', async () => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'ssh/deploy' },
+    })
+    const materialInput = getByLabelText(
+      container,
+      'Private value',
+    ) as HTMLTextAreaElement
+    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
+    expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
+    flushSync(() => {
+      pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
+    })
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(container.textContent).not.toContain('not-a-real-private-key')
+
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          displayAlias: 'ssh/deploy',
+          material: MULTILINE_PRIVATE_VALUE,
+        }),
+      )
+      expect(materialInput.value).toBe('')
+    })
+  })
+
+  it('preserves a multiline private value when replacing a local secret', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [SECRET_SUMMARY],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    secureSecretsApiMock.updateSecureSecret.mockResolvedValue(SECRET_SUMMARY)
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
+
+    const materialInput = await waitFor(() => getByLabelText(
+      container,
+      'Replace private value (optional)',
+    ) as HTMLTextAreaElement)
+    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
+    expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
+    flushSync(() => {
+      pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
+    })
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+
+    fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        SECRET_SUMMARY.secretId,
+        expect.objectContaining({ material: MULTILINE_PRIVATE_VALUE }),
+      )
+      expect(materialInput.value).toBe('')
     })
   })
 

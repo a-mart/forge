@@ -38,6 +38,12 @@ const secrets = [{
   bindings: [{ kind: 'env' as const, variable: 'DEPLOY_TOKEN' }],
 }]
 
+const MULTILINE_PRIVATE_VALUE = [
+  '-----BEGIN OPENSSH PRIVATE KEY-----',
+  'not-a-real-private-key',
+  '-----END OPENSSH PRIVATE KEY-----',
+].join('\r\n')
+
 function renderCard(overrides: Record<string, unknown> = {}) {
   const props = {
     request,
@@ -55,8 +61,18 @@ function renderCard(overrides: Record<string, unknown> = {}) {
   return props
 }
 
-function privateValueInputs(): HTMLInputElement[] {
-  return Array.from(document.body.querySelectorAll<HTMLInputElement>('input[type="password"]'))
+function privateValueInputs(): HTMLTextAreaElement[] {
+  return Array.from(document.body.querySelectorAll<HTMLTextAreaElement>(
+    'textarea[data-slot="masked-textarea"]',
+  ))
+}
+
+function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
+  fireEvent.paste(control, {
+    clipboardData: {
+      getData: (format: string) => format === 'text/plain' ? value : '',
+    },
+  })
 }
 
 beforeEach(() => {
@@ -151,9 +167,48 @@ describe('SecureSecretRequestCard', () => {
     })
     await waitFor(() => expect(privateValueInputs()).toHaveLength(0))
     expect(document.body.textContent).not.toContain('private-value-123')
-    expect(Array.from(document.body.querySelectorAll('input')).some(
+    expect(Array.from(document.body.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >('input, textarea')).some(
       (candidate) => candidate.value === 'private-value-123',
     )).toBe(false)
+  })
+
+  it('preserves a multiline private value byte-for-byte while masking it', () => {
+    const onPrivateFulfill = vi.fn()
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(
+      document.body,
+      'Value for deploy-token',
+    ) as HTMLTextAreaElement
+    expect(input.getAttribute('autocomplete')).toBe('off')
+    expect(input.className).toContain('[-webkit-text-security:disc]')
+
+    flushSync(() => {
+      pastePrivateValue(input, MULTILINE_PRIVATE_VALUE)
+    })
+    expect(input.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(document.body.textContent).not.toContain('not-a-real-private-key')
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Use for this task only' }))
+    })
+
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: MULTILINE_PRIVATE_VALUE,
+      retention: 'session',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+    })
+    expect(privateValueInputs()).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('not-a-real-private-key')
   })
 
   it('adds and approves an agent-requested SSH key without asking for a key path', () => {
@@ -290,7 +345,9 @@ describe('SecureSecretRequestCard', () => {
     expect(onPrivateFulfill).not.toHaveBeenCalled()
     expect(privateValueInputs()).toHaveLength(0)
     expect(document.body.textContent).not.toContain('cancelled-private-value')
-    expect(Array.from(document.body.querySelectorAll('input')).some(
+    expect(Array.from(document.body.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >('input, textarea')).some(
       (candidate) => candidate.value === 'cancelled-private-value',
     )).toBe(false)
   })
