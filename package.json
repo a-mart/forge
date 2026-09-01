@@ -31,6 +31,8 @@
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "knip": "pnpm --filter @forge/ui run generate:routes && knip",
+    "verify:clean-knip": "node apps/ui/scripts/verify-clean-knip.mjs",
     "typecheck": "pnpm -r --workspace-concurrency=1 --if-present run typecheck",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "pi-package:identity": "node scripts/pi-package-identity.mjs",

@@ -588,7 +588,6 @@ const SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS = 4096
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
-export const SECURE_SESSIONS_MAX_GRANTS = SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
 const SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH = 128
 const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
 const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256
@@ -881,10 +880,10 @@ export function parseGrantSecureSecretLeasesRequest(
   if (
     !Array.isArray(input.grants)
     || input.grants.length === 0
-    || input.grants.length > SECURE_SESSIONS_MAX_GRANTS
+    || input.grants.length > SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
   ) {
     throw new SecureSessionsContractError(
-      `request.grants must contain 1 to ${SECURE_SESSIONS_MAX_GRANTS} grants`,
+      `request.grants must contain 1 to ${SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS} grants`,
     )
   }
   const grants = input.grants.map((grant, index) =>

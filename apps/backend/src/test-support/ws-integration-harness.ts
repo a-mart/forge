@@ -5,6 +5,7 @@ import { AuthStorage, SessionManager, type AuthCredential } from '@earendil-work
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { ensureCanonicalAuthFilePath } from '../swarm/auth-storage-paths.js'
 import { getGlobalForgeExtensionsDir } from '../swarm/data-paths.js'
+import { SecureSecretSettingsService } from '../swarm/secure-sessions/secure-secret-settings-service.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type {
@@ -179,6 +180,7 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
   private readonly runtimeExtensionSnapshots: unknown[]
   private readonly forgeSettingsSnapshot: Record<string, unknown>
   private readonly perf: SidebarPerfRecorder
+  private readonly secureSecretSettingsService: SecureSecretSettingsService
   readonly pooledCredentialAdds: Array<{ provider: string; credential: unknown; identity?: unknown }> = []
   readonly authCredentialUpdates: Array<{ provider: string; credential: AuthCredential }> = []
 
@@ -192,6 +194,9 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
     this.agents = agents
     this.runtimeExtensionSnapshots = options?.runtimeExtensionSnapshots ?? []
     this.perf = options?.perf ?? createP0HttpRoutePerfStub()
+    this.secureSecretSettingsService = new SecureSecretSettingsService({
+      dataDir: config.paths.dataDir,
+    })
     this.forgeSettingsSnapshot = options?.forgeSettingsSnapshot ?? {
       discovered: [],
       snapshots: [],
@@ -254,6 +259,10 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
 
   getCompactionSettingsService(): null {
     return null
+  }
+
+  getSecureSecretSettingsService(): SecureSecretSettingsService {
+    return this.secureSecretSettingsService
   }
 
   readSidebarPerfSummary() {

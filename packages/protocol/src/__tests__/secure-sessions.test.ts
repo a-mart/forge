@@ -11,7 +11,6 @@ import {
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
   SECURE_SECRET_MIN_PROJECT_DEFAULTS,
   SECURE_SECRET_PROVIDER_KINDS,
-  SECURE_SESSIONS_MAX_GRANTS,
   getSecureSecretSettingsConstraints,
   parseMaxProjectDefaults,
   SECURE_SESSION_PRINCIPAL_KINDS,
@@ -86,7 +85,6 @@ describe('Secure Sessions protocol', () => {
     expect(SECURE_SECRET_MAX_PROJECT_DEFAULTS).toBe(50)
     expect(SECURE_SECRET_MIN_PROJECT_DEFAULTS).toBe(1)
     expect(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS).toBe(256)
-    expect(SECURE_SESSIONS_MAX_GRANTS).toBe(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS)
     expect(getSecureSecretSettingsConstraints()).toEqual({
       maxProjectDefaults: { min: 1, max: 256, default: 50 },
     })
@@ -377,7 +375,7 @@ describe('Secure Sessions protocol', () => {
 
     for (const grants of [
       [],
-      Array.from({ length: SECURE_SESSIONS_MAX_GRANTS + 1 }, (_, index) => ({
+      Array.from({ length: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS + 1 }, (_, index) => ({
         secretId: `secret-${index}`,
         exposures: [{ deliveryKind: 'stdin' }],
         leaseKind: 'task',
@@ -411,7 +409,7 @@ describe('Secure Sessions protocol', () => {
       }],
     })).toThrow(SecureSessionsContractError)
 
-    const maxGrants = Array.from({ length: SECURE_SESSIONS_MAX_GRANTS }, (_, index) => ({
+    const maxGrants = Array.from({ length: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS }, (_, index) => ({
       secretId: `secret-${index}`,
       exposures: [{ deliveryKind: 'stdin' as const }],
       leaseKind: 'task' as const,
