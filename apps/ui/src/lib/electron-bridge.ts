@@ -129,7 +129,9 @@ export interface ElectronBridge {
   checkForUpdates?(): Promise<void>; downloadUpdate?(): Promise<void>; installUpdate?(): Promise<void>
   getBetaChannel?(): Promise<boolean>; setBetaChannel?(enabled: boolean): Promise<void>
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
-  revealInFolder?(filePath: string): Promise<void>; installCli?(): Promise<CliInstallResult>; verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
+  revealInFolder?(filePath: string): Promise<void>
+  openPdfInDefaultApp?(request: { filePath?: string; bytes?: Uint8Array; fileName?: string }): Promise<{ success: boolean; error?: string }>
+  installCli?(): Promise<CliInstallResult>; verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
   getStreamDeckPluginStatus?(): Promise<StreamDeckPluginStatus>
   installStreamDeckPlugin?(): Promise<{ success: boolean; message: string }>
   openStreamDeck?(): Promise<{ success: boolean; message: string }>

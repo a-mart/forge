@@ -1,5 +1,5 @@
 import { createElement, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
-import { Check, ChevronRight, ClipboardCopy, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
+import { Check, ChevronRight, ClipboardCopy, Copy, FileCode2, FileText, FileType, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { MermaidBlock } from './message-list/MermaidBlock'
 import { ContentZoomDialog } from './ContentZoomDialog'
+import { isArtifactPdfPath } from './artifact-pdf'
 
 const EXTRA_ALLOWED_PROTOCOLS = /^(vscode-insiders|vscode|swarm-file):\/\//i
 
@@ -442,7 +443,8 @@ function ArtifactReferenceCard({
   onClick: (artifact: ArtifactReference) => void
 }) {
   const isMarkdownFile = MARKDOWN_EXTENSION_PATTERN.test(artifact.fileName)
-  const CardIcon = isMarkdownFile ? FileText : FileCode2
+  const isPdfFile = isArtifactPdfPath(artifact.fileName, artifact.path)
+  const CardIcon = isMarkdownFile ? FileText : isPdfFile ? FileType : FileCode2
   const [pathCopied, setPathCopied] = useState(false)
 
   const handleCopyPath = useCallback(

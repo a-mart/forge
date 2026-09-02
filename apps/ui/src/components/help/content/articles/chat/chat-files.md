@@ -15,7 +15,7 @@ Supported text files open in CodeMirror on desktop. Saves are versioned: if the 
 
 Markdown files (`.md`, `.markdown`, and `.mdx`) open in rendered **Preview** by default, even when they are editable. Preview renders the current draft, including unsaved changes. Use **Preview / Source** to switch views. Source is editable CodeMirror on desktop and read-only highlighted text on mobile. Switching to another file and back resets Markdown to Preview.
 
-PDFs use the built-in read-only preview. Unsupported or non-editable content remains read-only.
+PDFs use the built-in read-only preview, with page, zoom, and reload controls. **Open PDF** uses the system default PDF app in the desktop app, or a new tab in the browser. Unsupported or non-editable content remains read-only.
 
 ## Create, rename, and delete
 

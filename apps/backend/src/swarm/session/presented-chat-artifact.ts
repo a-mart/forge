@@ -6,6 +6,7 @@ import * as path from "node:path";
 import MarkdownIt from "markdown-it";
 import {
   CHAT_ARTIFACT_MAX_IMAGE_BYTES,
+  CHAT_ARTIFACT_MAX_PDF_BYTES,
   CHAT_ARTIFACT_MAX_TEXT_BYTES,
   isUserVisibleAssistantConversationMessage,
   type ChatArtifactReadResponse,
@@ -20,11 +21,31 @@ import { MAX_READ_FILE_CONTENT_BYTES } from "../../ws/ws-file-access.js";
 import { resolveReadFileContentType } from "../../ws/http-utils.js";
 
 // Keep document reads aligned with the existing 2 MiB text/file-reader budget. Images retain a
-// separate 4 MiB budget and capable clients can move those bytes over a one-use HTTP ticket.
+// separate 4 MiB budget, PDFs a 16 MiB in-panel budget, and capable clients can move those bytes
+// over a one-use HTTP ticket. JSON/base64 responses never use the larger PDF budget.
 export const MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES = CHAT_ARTIFACT_MAX_IMAGE_BYTES;
+export const MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES = CHAT_ARTIFACT_MAX_PDF_BYTES;
 export const MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES = CHAT_ARTIFACT_MAX_TEXT_BYTES;
 if (MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES !== MAX_READ_FILE_CONTENT_BYTES) {
   throw new Error("Chat artifact and generic file-reader text limits must remain aligned");
+}
+
+function isImageContentType(contentType: string): boolean {
+  return contentType.startsWith("image/");
+}
+
+function isPdfContentType(contentType: string): boolean {
+  return contentType === "application/pdf";
+}
+
+function isTicketableBinaryContentType(contentType: string): boolean {
+  return isImageContentType(contentType) || isPdfContentType(contentType);
+}
+
+function maxPresentedBytesForContentType(contentType: string, ticketableRaw = false): number {
+  if (isImageContentType(contentType)) return MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES;
+  if (isPdfContentType(contentType) && ticketableRaw) return MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES;
+  return MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
 }
 
 export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch" | "ticket_capacity_exceeded";
@@ -196,9 +217,9 @@ export async function securelyInspectPresentedArtifact(target: string): Promise<
   identity: PresentedArtifactIdentitySnapshot;
 }> {
   const contentType = resolveReadFileContentType(target);
-  if (!contentType.startsWith("image/")) fail("invalid_request");
+  if (!isTicketableBinaryContentType(contentType)) fail("invalid_request");
   const identity = await walkFile(target, "initial");
-  if (identity.finalSize > BigInt(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES)) fail("file_too_large");
+  if (identity.finalSize > BigInt(maxPresentedBytesForContentType(contentType, true))) fail("file_too_large");
   return { contentType, totalBytes: Number(identity.finalSize), identity };
 }
 
@@ -213,10 +234,12 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: {
   rawImage?: boolean;
 }): Promise<ChatArtifactReadResponse | { contentType: string; content: Buffer; totalBytes: number }> {
   const contentType = resolveReadFileContentType(target);
-  const isImage = contentType.startsWith("image/");
-  const maxBytes = isImage ? MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES : MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
+  const isImage = isImageContentType(contentType);
+  const isPdf = isPdfContentType(contentType);
+  const ticketableRaw = Boolean(hooks?.rawImage) && isTicketableBinaryContentType(contentType);
+  const maxBytes = maxPresentedBytesForContentType(contentType, ticketableRaw);
   const previewBytes = validatePreviewBytes(hooks?.previewBytes);
-  const boundedTextRead = !isImage && previewBytes !== undefined;
+  const boundedTextRead = !isImage && !isPdf && previewBytes !== undefined;
   const initial = await walkFile(target, "initial");
   if (hooks?.expectedIdentity && !sameArtifactIdentity(initial, hooks.expectedIdentity)) fail("file_identity_changed");
   if ((!boundedTextRead && initial.finalSize > BigInt(maxBytes)) || initial.finalSize > BigInt(Number.MAX_SAFE_INTEGER)) fail("file_too_large");
@@ -252,7 +275,7 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: {
     };
     await verifyPath();
     const totalBytes = Number(opened.size);
-    const requestedReadBytes = !isImage && previewBytes !== undefined ? Math.min(previewBytes, totalBytes) : totalBytes;
+    const requestedReadBytes = boundedTextRead ? Math.min(previewBytes!, totalBytes) : totalBytes;
     const buffer = Buffer.alloc(requestedReadBytes); let offset = 0;
     while (offset < buffer.length) {
       let bytesRead = 0;
@@ -265,9 +288,9 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: {
     await verifyHandle();
     await verifyPath();
     const content = buffer.subarray(0, offset);
-    const binary = isImage || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
+    const binary = isImage || isPdf || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
     if (hooks?.rawImage) {
-      if (!isImage) fail("invalid_request");
+      if (!isTicketableBinaryContentType(contentType)) fail("invalid_request");
       return { contentType, content, totalBytes };
     }
     if (binary) {
@@ -461,7 +484,7 @@ export async function readPresentedChatArtifact(
   if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
   if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
   const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(target, options?.targetResolution);
-  if (raw.imageTransport === "http_ticket" && resolveReadFileContentType(authorizedTarget).startsWith("image/")) {
+  if (raw.imageTransport === "http_ticket" && isTicketableBinaryContentType(resolveReadFileContentType(authorizedTarget))) {
     const ticketStore = options?.ticketStore;
     if (!ticketStore) throw new ChatArtifactError("invalid_request");
     const issued = await ticketStore.issue(authorizedTarget, options?.ticketAuthBinding);

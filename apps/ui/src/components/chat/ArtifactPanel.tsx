@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FrontMatterBlock } from '@/components/ui/FrontMatterBlock'
 import { parseFrontMatter } from '@/lib/parse-front-matter'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { Check, ClipboardCopy, ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Loader2, X } from 'lucide-react'
+import { Check, ClipboardCopy, ExternalLink, FileCode2, FileImage, FileText, FileType, FolderOpen, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -18,6 +18,13 @@ import { cn } from '@/lib/utils'
 import { isElectron } from '@/lib/electron-bridge'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 import { MarkdownMessage } from './MarkdownMessage'
+import { PdfPreview } from '@/components/file-browser/PdfPreview'
+import {
+  createArtifactPdfBlobUrl,
+  isArtifactPdfPath,
+  resolveSafeArtifactPdfTicketUrl,
+  revokeArtifactPdfBlobUrl,
+} from './artifact-pdf'
 import type { ChatArtifactReadResponse } from '@forge/protocol'
 
 interface ArtifactPanelProps {
@@ -51,6 +58,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [resolvedPath, setResolvedPath] = useState<string | null>(null)
   const [previewInfo, setPreviewInfo] = useState<{ truncated: boolean; totalBytes: number } | null>(null)
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -90,6 +98,10 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     if (!artifactPath) {
       setContent('')
       setImagePreviewUrl(null)
+      setPdfPreviewUrl((current) => {
+        revokeArtifactPdfBlobUrl(current)
+        return null
+      })
       setResolvedPath(null)
       setPreviewInfo(null)
       setError(null)
@@ -99,10 +111,29 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
 
     const isImageArtifact =
       IMAGE_FILE_PATTERN.test(artifactFileName ?? '') || IMAGE_FILE_PATTERN.test(artifactPath)
+    const isPdfArtifact = isArtifactPdfPath(artifactFileName, artifactPath)
     const hasTranscriptProvenance = Boolean(transcriptAgentId && transcriptMessageId)
     if (isImageArtifact && !hasTranscriptProvenance) {
       setContent('')
       setImagePreviewUrl(resolveReadFileUrl(wsUrl, artifactPath, artifactSourceAgentId ?? activeAgentId))
+      setPdfPreviewUrl((current) => {
+        revokeArtifactPdfBlobUrl(current)
+        return null
+      })
+      setResolvedPath(artifactPath)
+      setPreviewInfo(null)
+      setError(null)
+      setIsLoading(false)
+      return
+    }
+    if (isPdfArtifact && !hasTranscriptProvenance) {
+      const legacyPdfUrl = resolveReadFileUrl(wsUrl, artifactPath, artifactSourceAgentId ?? activeAgentId)
+      setContent('')
+      setImagePreviewUrl(null)
+      setPdfPreviewUrl((current) => {
+        revokeArtifactPdfBlobUrl(current)
+        return legacyPdfUrl
+      })
       setResolvedPath(artifactPath)
       setPreviewInfo(null)
       setError(null)
@@ -111,11 +142,16 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     }
 
     const abortController = new AbortController()
+    let ownedBlobUrl: string | null = null
 
     setIsLoading(true)
     setError(null)
     setContent('')
     setImagePreviewUrl(null)
+    setPdfPreviewUrl((current) => {
+      revokeArtifactPdfBlobUrl(current)
+      return null
+    })
     setResolvedPath(null)
     setPreviewInfo(null)
 
@@ -145,6 +181,19 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             ? resolveSafeArtifactTicketUrl(wsUrl, file)
             : toSafeImageDataUrl(file))
           setContent('')
+        } else if (isPdfArtifact) {
+          if (file.transport !== 'http_ticket') {
+            throw new Error('PDF preview requires an authorized ticket response.')
+          }
+          const ticketUrl = resolveSafeArtifactPdfTicketUrl(wsUrl, file)
+          ownedBlobUrl = await createArtifactPdfBlobUrl(ticketUrl, abortController.signal)
+          if (abortController.signal.aborted) {
+            revokeArtifactPdfBlobUrl(ownedBlobUrl)
+            ownedBlobUrl = null
+            return
+          }
+          setPdfPreviewUrl(ownedBlobUrl)
+          setContent('')
         } else {
           if (file.binary) {
             throw new Error('Binary files cannot be displayed as text.')
@@ -161,6 +210,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
           return
         }
 
+        revokeArtifactPdfBlobUrl(ownedBlobUrl)
+        ownedBlobUrl = null
         setError(readError instanceof Error ? readError.message : 'Failed to read file.')
       } finally {
         if (!abortController.signal.aborted) {
@@ -171,6 +222,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
 
     return () => {
       abortController.abort()
+      revokeArtifactPdfBlobUrl(ownedBlobUrl)
     }
   }, [
     activeAgentId,
@@ -216,6 +268,10 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     () => IMAGE_FILE_PATTERN.test(artifact?.fileName ?? '') || IMAGE_FILE_PATTERN.test(displayPath),
     [artifact?.fileName, displayPath],
   )
+  const isPdf = useMemo(
+    () => isArtifactPdfPath(artifact?.fileName, displayPath),
+    [artifact?.fileName, displayPath],
+  )
   const isMarkdown = useMemo(() => MARKDOWN_FILE_PATTERN.test(displayPath), [displayPath])
   const frontMatter = useMemo(
     () => (isMarkdown && content ? parseFrontMatter(content) : null),
@@ -238,7 +294,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     return null
   }
 
-  const FileIcon = isImage ? FileImage : isMarkdown ? FileText : FileCode2
+  const FileIcon = isImage ? FileImage : isPdf ? FileType : isMarkdown ? FileText : FileCode2
   const isOpen = Boolean(artifactPath) || isClosing
 
   return (
@@ -374,6 +430,16 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
           </header>
 
           {/* Content */}
+          {isPdf && pdfPreviewUrl && !isLoading && !error ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <PdfPreview
+                sourceUrl={pdfPreviewUrl}
+                fileName={artifact?.fileName ?? 'Document.pdf'}
+                nativeFilePath={displayPath || artifact?.path || null}
+                openUrl={pdfPreviewUrl}
+              />
+            </div>
+          ) : (
           <ScrollArea
             className={cn(
               'min-h-0 flex-1',
@@ -435,6 +501,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
               )}
           </div>
         </ScrollArea>
+          )}
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>

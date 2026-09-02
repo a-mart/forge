@@ -10,6 +10,7 @@ The panel loads the file at the absolute path referenced in the chat message and
 
 - **Markdown files** (.md, .mdx) render with full formatting, including Mermaid diagrams.
 - **Images** (PNG, JPG, GIF, WebP, SVG) display inline.
+- **PDFs** open in the same built-in preview used by Files, with page, zoom, and reload controls. In the desktop app, **Open PDF** uses the system default PDF app; in the browser it opens a new tab.
 - **Code and text files** show syntax-highlighted source.
 
 Artifact viewing is distinct from the Files rail's inline editor. Use the Files rail when you want desktop in-app editing; use this panel for conversation artifacts and file references. The header shows the file name, full path, and an "Open in Editor" link. In the desktop app, a "Show in folder" button also appears.

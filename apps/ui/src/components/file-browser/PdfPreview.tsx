@@ -8,12 +8,12 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { openPdfInDefaultApp } from '@/lib/open-pdf-in-default-app'
 import '@/styles/file-browser.css'
 import { pdfjsLib, type PDFDocumentProxy } from './pdfjs-preview-lib'
 import {
-  buildPdfRawUrl,
   clampPageNumber,
   computeCurrentPageFromScroll,
   computePdfRenderScale,
@@ -28,10 +28,10 @@ import {
 } from './pdf-preview-utils'
 
 interface PdfPreviewProps {
-  wsUrl: string
-  filePath: string
-  agentId: string
-  worktreeId?: string | null
+  sourceUrl: string
+  fileName: string
+  nativeFilePath?: string | null
+  openUrl?: string | null
 }
 
 const ZOOM_STEP = 1.25
@@ -243,13 +243,9 @@ function PdfPreviewPage({
   )
 }
 
-export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfPreviewProps) {
-  const pdfUrl = useMemo(
-    () => buildPdfRawUrl(wsUrl, filePath, agentId, worktreeId),
-    [wsUrl, filePath, agentId, worktreeId],
-  )
-
-  const fileName = filePath.split('/').pop() ?? 'Document.pdf'
+export function PdfPreview({ sourceUrl, fileName, nativeFilePath = null, openUrl = null }: PdfPreviewProps) {
+  const pdfUrl = sourceUrl
+  const fallbackOpenUrl = openUrl ?? sourceUrl
 
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -269,9 +265,20 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
   const loadEpochRef = useRef(0)
 
+  const [openErrorMessage, setOpenErrorMessage] = useState<string | null>(null)
+
   const handleReload = useCallback(() => {
     setReloadToken((value) => value + 1)
   }, [])
+
+  const handleOpenPdf = useCallback(async () => {
+    const result = await openPdfInDefaultApp({
+      filePath: nativeFilePath,
+      fallbackUrl: fallbackOpenUrl,
+      fileName,
+    })
+    setOpenErrorMessage(result.opened === 'none' ? result.error : null)
+  }, [fallbackOpenUrl, fileName, nativeFilePath])
 
   const estimatePageHeight = useCallback(
     (pageNumber: number) => {
@@ -510,16 +517,21 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
             <RotateCw className="size-3.5" aria-hidden="true" />
             Reload
           </Button>
-          <a
-            href={pdfUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => void handleOpenPdf()}
             data-testid="pdf-preview-open-raw"
           >
             Open PDF
-          </a>
+          </Button>
         </div>
+        {openErrorMessage ? (
+          <p className="max-w-md text-center text-xs text-destructive/80" data-testid="pdf-preview-open-error">
+            {openErrorMessage}
+          </p>
+        ) : null}
       </div>
     )
   }
@@ -624,15 +636,21 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         <Button type="button" size="icon" variant="outline" className="size-8" aria-label="Reload PDF" onClick={handleReload}>
           <RotateCw className="size-4" />
         </Button>
-        <a
-          href={pdfUrl}
-          target="_blank"
-          rel="noreferrer"
-          className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-8 px-2')}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-8 px-2"
+          onClick={() => void handleOpenPdf()}
           data-testid="pdf-preview-open-raw"
         >
           Open PDF
-        </a>
+        </Button>
+        {openErrorMessage ? (
+          <p className="w-full text-center text-xs text-destructive/80" data-testid="pdf-preview-open-error">
+            {openErrorMessage}
+          </p>
+        ) : null}
       </div>
     </div>
   )
