@@ -88,6 +88,7 @@ import {
   unlockLocalProjectDefaultsIfNeeded,
 } from '@/lib/secure-sessions-api'
 import {
+  fetchBitwardenPasswordManagerSettings,
   resolveMaxProjectDefaults,
   type SecureSecretsCatalog,
 } from '@/lib/secure-secrets-api'
@@ -1563,6 +1564,38 @@ export function BuilderSurface({
     reportSecureMutationError,
   ])
 
+  const handleLoadSecurePrivateDestinations = useCallback(async () => {
+    const apiClient = httpClientRef.current
+    if (!apiClient || isRemoteOriginActive) return []
+    const providers = (secureCatalog?.providers ?? []).filter(
+      (provider) => provider.kind === 'bitwarden_password_manager'
+        && provider.enabled
+        && provider.status === 'available',
+    )
+    const settings = await Promise.all(
+      providers.map(async (provider) => ({
+        provider,
+        settings: await fetchBitwardenPasswordManagerSettings(
+          apiClient,
+          provider.providerId,
+        ),
+      })),
+    )
+    return settings.flatMap(({ provider, settings: providerSettings }) =>
+      providerSettings.collections
+        .filter((collection) => collection.selected)
+        .map((collection) => ({
+          destination: {
+            kind: 'bitwarden_password_manager' as const,
+            providerId: provider.providerId,
+            collectionId: collection.collectionId,
+          },
+          label: `${provider.displayName} — ${collection.name}`,
+          description: `Creates a Bitwarden login in ${collection.name}.`,
+        })),
+    )
+  }, [httpClientRef, isRemoteOriginActive, secureCatalog?.providers])
+
   const handleCreateSecureBrowserPairing = useCallback(async () => {
     const apiClient = httpClientRef.current
     if (!apiClient || isRemoteOriginActive) {
@@ -1697,6 +1730,9 @@ export function BuilderSurface({
       )
         ? { onPrivateFulfill: handlePrivateSecureFulfillment }
         : {}),
+      ...(!isRemoteOriginActive
+        ? { loadPrivateDestinations: handleLoadSecurePrivateDestinations }
+        : {}),
       ...(
         !isRemoteOriginActive
         && !isSecureControlAvailable(secureBrowserControl?.authorized === true)
@@ -1716,6 +1752,7 @@ export function BuilderSurface({
     handleDenySecureRequest,
     handleDismissSecureSshTrustRequest,
     handleGrantSecureSession,
+    handleLoadSecurePrivateDestinations,
     handleTrustSecureSshHost,
     handlePrivateSecureFulfillment,
     handleCreateSecureBrowserPairing,

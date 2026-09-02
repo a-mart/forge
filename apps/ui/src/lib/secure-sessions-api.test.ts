@@ -709,6 +709,77 @@ describe('Secure Sessions API', () => {
     })
   })
 
+  it('fulfills a requested login into Bitwarden with username and destination metadata', async () => {
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        secureControlToken: 'test-secure-control-token-that-is-long-enough',
+        secureVault: {
+          status: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          unlock: vi.fn(async () => ({ ok: true as const, available: true as const })),
+          encryptLocalValue: vi.fn(async () => ({
+            ok: true as const,
+            encryptedPayloadBase64: 'ciphertext-only',
+          })),
+        },
+      },
+    })
+    const fetch = vi.fn<SettingsApiClient['fetch']>(async () =>
+      new Response(JSON.stringify(snapshot(5)), { status: 200 }))
+    const request: SecureAccessRequestSummary = {
+      requestId: 'request-login',
+      secretId: null,
+      displayAlias: 'deployment/login',
+      username: 'agent-suggested-user',
+      requestedLeaseKind: 'task',
+      requestedExposures: [{ deliveryKind: 'environment', targetName: 'DEPLOY_PASSWORD' }],
+      purposeSummary: 'Sign in to the deployment service',
+      requestedByAgentId: 'manager-1',
+      requestedByDisplayName: 'Release manager',
+      workerAssignmentId: null,
+      createdAt: '2026-07-23T12:00:00.000Z',
+      expiresAt: null,
+    }
+
+    await fulfillSecureAccessRequestPrivately(
+      makeClient(fetch),
+      'manager-1',
+      request,
+      4,
+      {
+        value: 'raw-super-secret',
+        displayName: 'Deployment login',
+        username: 'corrected-user',
+        destination: {
+          kind: 'bitwarden_password_manager',
+          providerId: 'password-manager-1',
+          collectionId: '11111111-1111-4111-8111-111111111111',
+        },
+        retention: 'saved',
+        scope: { kind: 'profile', profileId: 'profile-1' },
+      },
+    )
+
+    const requestBody = String(fetch.mock.calls[0]?.[1]?.body)
+    expect(requestBody).not.toContain('raw-super-secret')
+    expect(JSON.parse(requestBody)).toEqual({
+      baseRevision: 4,
+      displayAlias: 'deployment/login',
+      displayName: 'Deployment login',
+      username: 'corrected-user',
+      destination: {
+        kind: 'bitwarden_password_manager',
+        providerId: 'password-manager-1',
+        collectionId: '11111111-1111-4111-8111-111111111111',
+      },
+      encryptedMaterial: 'ciphertext-only',
+      retention: 'saved',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+      leaseKind: 'task',
+      exposures: [{ deliveryKind: 'environment', targetName: 'DEPLOY_PASSWORD' }],
+    })
+  })
+
   it('surfaces a saved-alias race as a fixed actionable error', async () => {
     Object.defineProperty(window, 'electronBridge', {
       configurable: true,

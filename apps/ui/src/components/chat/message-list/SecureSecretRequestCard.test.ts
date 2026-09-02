@@ -174,6 +174,64 @@ describe('SecureSecretRequestCard', () => {
     )).toBe(false)
   })
 
+  it('prefills an agent-proposed username and can generate a new Bitwarden login', async () => {
+    const onPrivateFulfill = vi.fn()
+    const loadPrivateDestinations = vi.fn(async () => [{
+      destination: {
+        kind: 'bitwarden_password_manager' as const,
+        providerId: 'password-manager-1',
+        collectionId: '11111111-1111-4111-8111-111111111111',
+      },
+      label: 'Team Bitwarden / Infrastructure',
+      description: 'Stored as a Bitwarden login in Infrastructure.',
+    }])
+    renderCard({
+      request: {
+        ...request,
+        secretId: undefined,
+        username: 'agent-suggested-user',
+      },
+      secrets: [],
+      onPrivateFulfill,
+      loadPrivateDestinations,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const username = getByLabelText(document.body, 'Username (optional)') as HTMLInputElement
+    expect(username.value).toBe('agent-suggested-user')
+    fireEvent.change(username, { target: { value: 'corrected-user' } })
+
+    const destination = getByRole(document.body, 'combobox', { name: 'Store in' })
+    await waitFor(() => {
+      expect(loadPrivateDestinations).toHaveBeenCalledTimes(1)
+      expect(destination.textContent).toContain('Team Bitwarden / Infrastructure')
+    })
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Generate / refresh' }))
+    const privateValue = getByLabelText(
+      document.body,
+      'Value for deploy-token',
+    ) as HTMLTextAreaElement
+    await waitFor(() => expect(privateValue.value).toHaveLength(24))
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
+
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: expect.any(String),
+      displayName: 'deploy-token',
+      username: 'corrected-user',
+      destination: {
+        kind: 'bitwarden_password_manager',
+        providerId: 'password-manager-1',
+        collectionId: '11111111-1111-4111-8111-111111111111',
+      },
+      retention: 'saved',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+    })
+    expect(onPrivateFulfill.mock.calls[0]![1].value).toHaveLength(24)
+  })
+
   it('preserves a visible multiline private value byte-for-byte', () => {
     const onPrivateFulfill = vi.fn()
     renderCard({

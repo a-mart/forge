@@ -188,9 +188,13 @@ changes do not create or destroy secret authority. Unsupported worker runtimes f
 closed. Team processes can write the same selected workspace, so use separate Git
 worktrees for high-risk or concurrently writing agents.
 The agent can also propose an alias that does not exist. Its request contains only the
-alias, purpose, delivery, and lease. **Add secret and approve** collects the value
-privately in Forge Desktop and saves it to the current project by default; **Use for
-this task only** avoids creating a reusable saved secret.
+alias, optional non-secret username, purpose, delivery, and lease. **Add secret and
+approve** collects the value privately in Forge Desktop and saves it to the current
+project by default; **Use for this task only** avoids creating a reusable saved secret.
+The private dialog and Settings form can generate a random password or passphrase and
+save a reusable Login either to the local vault or directly into any selected,
+unlocked Bitwarden Password Manager collection. Usernames remain visible catalog
+metadata so an agent can construct the login without gaining access to the password.
 The **Settings → Secrets** readiness panel can test the local vault and Bitwarden
 connections after a data-directory move. Its safe diagnostics contain fixed codes
 only; local re-entry and Bitwarden reconnect preserve existing secret configuration.

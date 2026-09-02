@@ -64,6 +64,7 @@ function safeView(): SecureSessionAgentView {
     leases: [
       {
         displayAlias: "github-work",
+        username: "git-user",
         leaseKind: "task",
         exposures: [
           {
@@ -80,6 +81,7 @@ function safeView(): SecureSessionAgentView {
     pendingRequests: [
       {
         displayAlias: "deploy-key",
+        username: "deploy-user",
         requestedLeaseKind: "timed",
         requestedDurationSeconds: 300,
         requestedExposures: [
@@ -97,6 +99,7 @@ function safeView(): SecureSessionAgentView {
     availableSecrets: [
       {
         displayAlias: "github-work",
+        username: "git-user",
         bindings: [
           {
             deliveryKind: "environment",
@@ -348,6 +351,7 @@ describe("secure session agent tools", () => {
         availableSecrets: [
           {
             displayAlias: "github-work",
+            username: "git-user",
             bindings: [
               {
                 deliveryKind: "environment",
@@ -389,6 +393,7 @@ describe("secure session agent tools", () => {
     );
     const valid = {
       displayAlias: "github-work",
+      username: "git-user",
       purposeSummary: "Read repository issue metadata.",
       leaseKind: "timed",
       durationSeconds: 300,
@@ -445,6 +450,7 @@ describe("secure session agent tools", () => {
 
     const names = propertyNames(request.parameters);
     expect(names).not.toContain("value");
+    expect(names).toContain("username");
     expect(names).not.toContain("rawValue");
     expect(names).not.toContain("ciphertext");
     expect(names).not.toContain("sourceLocator");
@@ -536,6 +542,7 @@ describe("secure session agent tools", () => {
     );
     const input = {
       displayAlias: "deploy-key",
+      username: "deploy-user",
       purposeSummary: "Authenticate one approved deployment command.",
       leaseKind: "one_use",
       exposures: [

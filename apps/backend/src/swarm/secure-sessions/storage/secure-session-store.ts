@@ -74,6 +74,7 @@ import {
 
 const MAX_ID_LENGTH = 256;
 const MAX_DISPLAY_LENGTH = 256;
+const MAX_USERNAME_LENGTH = 512;
 const MAX_NOTE_LENGTH = 2000;
 const MAX_SOURCE_LOCATOR_LENGTH = 4096;
 const MAX_TARGET_LENGTH = 4096;
@@ -634,7 +635,7 @@ export class SecureSessionStore {
   getEncryptedSecret(secretId: string): SecureSessionEncryptedSecret | null {
     assertId(secretId, "secret ID");
     const row = this.database.prepare(`
-      SELECT secret_id, provider_id, display_alias, display_name, note, scope_kind, profile_id,
+      SELECT secret_id, provider_id, display_alias, display_name, username, note, scope_kind, profile_id,
         retention, source_locator, encrypted_material, created_at, updated_at
       FROM secure_session_secret WHERE secret_id = ?
     `).get(secretId) as EncryptedSecretRow | undefined;
@@ -701,14 +702,15 @@ export class SecureSessionStore {
       }
       this.database.prepare(`
         INSERT INTO secure_session_secret (
-          secret_id, provider_id, display_alias, display_name, note, scope_kind, profile_id,
+          secret_id, provider_id, display_alias, display_name, username, note, scope_kind, profile_id,
           retention, source_locator, encrypted_material, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.secretId,
         input.providerId,
         input.displayAlias,
         normalized.displayName,
+        normalized.username,
         normalized.note,
         input.scopeKind,
         normalized.profileId,
@@ -762,13 +764,14 @@ export class SecureSessionStore {
       }
       this.database.prepare(`
         UPDATE secure_session_secret
-        SET provider_id = ?, display_alias = ?, display_name = ?, note = ?, scope_kind = ?,
+        SET provider_id = ?, display_alias = ?, display_name = ?, username = ?, note = ?, scope_kind = ?,
           profile_id = ?, retention = ?, source_locator = ?, encrypted_material = ?, updated_at = ?
         WHERE secret_id = ?
       `).run(
         input.providerId,
         input.displayAlias,
         normalized.displayName,
+        normalized.username,
         normalized.note,
         input.scopeKind,
         normalized.profileId,
@@ -1792,16 +1795,17 @@ export class SecureSessionStore {
       this.database.prepare(`
         INSERT INTO secure_session_request (
           request_id, session_agent_id, worker_assignment_id, secret_id,
-          display_alias, requested_lease_kind, requested_duration_seconds,
+          display_alias, username, requested_lease_kind, requested_duration_seconds,
           purpose_summary, requested_by_agent_id, requested_by_display_name,
           state, requested_at, expires_at, resolved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
       `).run(
         input.requestId,
         input.sessionAgentId,
         normalized.workerAssignmentId,
         input.secretId ?? null,
         input.displayAlias,
+        normalized.username,
         input.requestedLeaseKind,
         normalized.durationSeconds,
         input.purposeSummary,
@@ -2679,6 +2683,7 @@ export class SecureSessionStore {
 
   private normalizeSecretInput(input: CreateSecureSessionSecretInput): {
     displayName: string | null;
+    username: string | null;
     note: string | null;
     profileId: string | null;
     profileIds: string[];
@@ -2688,6 +2693,7 @@ export class SecureSessionStore {
     assertId(input.providerId, "provider ID");
     assertBoundedText(input.displayAlias, "secret display alias", MAX_DISPLAY_LENGTH);
     const displayName = normalizeOptionalText(input.displayName, "secret display name", MAX_DISPLAY_LENGTH);
+    const username = normalizeOptionalText(input.username, "secret username", MAX_USERNAME_LENGTH);
     const note = normalizeOptionalText(input.note, "secret note", MAX_NOTE_LENGTH);
     assertEnum(input.scopeKind, SECURE_SESSION_SCOPE_KINDS, "secret scope");
     const profileIds = input.scopeKind === "instance"
@@ -2730,6 +2736,7 @@ export class SecureSessionStore {
     }
     return {
       displayName,
+      username,
       note,
       profileId,
       profileIds,
@@ -2808,6 +2815,7 @@ export class SecureSessionStore {
     durationSeconds: number | null;
     expiresAt: string | null;
     workerAssignmentId: string | null;
+    username: string | null;
   } {
     assertId(input.requestId, "request ID");
     assertId(input.sessionAgentId, "session agent ID");
@@ -2815,6 +2823,7 @@ export class SecureSessionStore {
       assertId(input.secretId, "secret ID");
     }
     assertBoundedText(input.displayAlias, "request display alias", MAX_DISPLAY_LENGTH);
+    const username = normalizeOptionalText(input.username, "request username", MAX_USERNAME_LENGTH);
     if (
       !Array.isArray(input.requestedExposures) ||
       input.requestedExposures.length < 1 ||
@@ -2835,6 +2844,7 @@ export class SecureSessionStore {
     assertBoundedText(input.requestedByDisplayName, "requesting agent display name", MAX_DISPLAY_LENGTH);
     return {
       requestedExposures,
+      username,
       durationSeconds,
       workerAssignmentId: normalizeOptionalId(
         input.workerAssignmentId,
@@ -3022,6 +3032,7 @@ export class SecureSessionStore {
       workerAssignmentId: row.worker_assignment_id,
       secretId: row.secret_id,
       displayAlias: row.display_alias,
+      username: row.username,
       requestedExposures: this.listRequestExposures(row.request_id),
       leaseKind: row.requested_lease_kind,
       requestedLeaseKind: row.requested_lease_kind,
@@ -3420,7 +3431,7 @@ export class SecureSessionStore {
   }
 }
 
-const SECRET_SELECT = `SELECT secret_id, provider_id, display_alias, display_name, note,
+const SECRET_SELECT = `SELECT secret_id, provider_id, display_alias, display_name, username, note,
   scope_kind, profile_id, retention, source_locator, created_at, updated_at
   FROM secure_session_secret`;
 const BINDING_SELECT = `SELECT binding_id, secret_id, delivery_kind, target_name,
@@ -3430,7 +3441,7 @@ const LEASE_SELECT = `SELECT lease_id, session_agent_id, secret_id, request_id,
   remaining_uses, revoked_at, revocation_reason, one_use_operation_id, created_at,
   updated_at FROM secure_session_lease`;
 const REQUEST_SELECT = `SELECT request_id, session_agent_id, secret_id,
-  display_alias, requested_lease_kind, requested_duration_seconds, purpose_summary,
+  display_alias, username, requested_lease_kind, requested_duration_seconds, purpose_summary,
   requested_by_agent_id, requested_by_display_name, state, requested_at,
   expires_at, resolved_at, worker_assignment_id FROM secure_session_request`;
 const SSH_TRUSTED_HOST_SELECT = `SELECT trusted_host_id, profile_id, alias,
@@ -3468,6 +3479,7 @@ interface SecretRow {
   provider_id: string;
   display_alias: string;
   display_name: string | null;
+  username: string | null;
   note: string | null;
   scope_kind: SecureSessionSecret["scopeKind"];
   profile_id: string | null;
@@ -3539,6 +3551,7 @@ interface RequestRow {
   worker_assignment_id: string | null;
   secret_id: string | null;
   display_alias: string;
+  username: string | null;
   requested_lease_kind: SecureSessionRequest["requestedLeaseKind"];
   requested_duration_seconds: number | null;
   purpose_summary: string;
@@ -3735,6 +3748,7 @@ function mapSecretMetadata(
     providerId: row.provider_id,
     displayAlias: row.display_alias,
     displayName: row.display_name,
+    username: row.username,
     note: row.note,
     scopeKind: row.scope_kind,
     profileId: row.profile_id,
@@ -3874,12 +3888,14 @@ function sameRequest(
     durationSeconds: number | null;
     expiresAt: string | null;
     workerAssignmentId: string | null;
+    username: string | null;
   }
 ): boolean {
   return existing.sessionAgentId === input.sessionAgentId &&
     existing.workerAssignmentId === normalized.workerAssignmentId &&
     existing.secretId === (input.secretId ?? null) &&
     existing.displayAlias === input.displayAlias &&
+    existing.username === normalized.username &&
     existing.requestedLeaseKind === input.requestedLeaseKind &&
     existing.requestedDurationSeconds === normalized.durationSeconds &&
     existing.purposeSummary === input.purposeSummary &&

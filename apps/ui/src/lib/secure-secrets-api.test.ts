@@ -7,6 +7,7 @@ import {
   checkSecureMaterialEntryAvailability,
   connectBitwardenPasswordManager,
   connectBitwardenProvider,
+  createBitwardenPasswordManagerSecret,
   createSecureSshTrustedHost,
   createLocalSecret,
   deleteSecureSshTrustedHost,
@@ -590,6 +591,41 @@ describe('secure secrets API', () => {
     expect(requestBody).toContain(
       '"scope":{"kind":"profiles","profileIds":["project-alpha","project-beta"]}',
     )
+    expect(requestBody).not.toContain(rawSecret)
+  })
+
+  it('creates a Bitwarden login with encrypted material and safe username metadata', async () => {
+    const rawSecret = 'generated-password-never-in-http'
+    installSecureVault(vi.fn(async () => ({
+      ok: true as const,
+      encryptedPayloadBase64: 'ciphertext-only',
+    })))
+    const fetchMock = vi.fn<SettingsApiClient['fetch']>(async () => jsonResponse(SECRET_SUMMARY))
+    const client = makeClient(fetchMock)
+
+    await createBitwardenPasswordManagerSecret(client, 'password-manager/one', {
+      collectionId: '11111111-1111-4111-8111-111111111111',
+      displayAlias: 'deployment/login',
+      displayName: 'Deployment login',
+      username: 'deploy-user',
+      note: 'Used for releases.',
+      material: rawSecret,
+      scope: { kind: 'profile', profileId: 'project-alpha' },
+    })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/secure-secrets/providers/password-manager%2Fone/items',
+    )
+    const requestBody = String(fetchMock.mock.calls[0]?.[1]?.body)
+    expect(JSON.parse(requestBody)).toEqual({
+      collectionId: '11111111-1111-4111-8111-111111111111',
+      displayAlias: 'deployment/login',
+      displayName: 'Deployment login',
+      username: 'deploy-user',
+      note: 'Used for releases.',
+      encryptedMaterial: 'ciphertext-only',
+      scope: { kind: 'profile', profileId: 'project-alpha' },
+    })
     expect(requestBody).not.toContain(rawSecret)
   })
 

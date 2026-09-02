@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
+import { PasswordGenerator } from '@/components/secure-session/PasswordGenerator'
 import {
   Select,
   SelectContent,
@@ -27,9 +28,11 @@ import {
 import type { SettingsApiClient } from '../settings-api-client'
 import {
   SecureSecretsError,
+  createBitwardenPasswordManagerSecret,
   createLocalSecret,
   deleteSecureSecret,
   importBitwardenSecret,
+  fetchBitwardenPasswordManagerSettings,
   updateSecureSecretAutomaticGrant,
   updateSecureSecret,
   type SecureSecretAutomaticGrantPolicy,
@@ -37,6 +40,7 @@ import {
   type SecureSecretProviderSummary,
   type SecureSecretScope,
   type SecureSecretSummary,
+  type BitwardenPasswordManagerCollectionSummary,
 } from '@/lib/secure-secrets-api'
 import { EmptyState } from './secret-ui'
 import { providerLabel } from './secret-ui-values'
@@ -85,6 +89,7 @@ export function SecretCatalogPanel({
   const firstProfileId = initialProfileId ?? profiles[0]?.profileId ?? ''
   const [displayAlias, setDisplayAlias] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [username, setUsername] = useState('')
   const [note, setNote] = useState('')
   const [material, setMaterial] = useState('')
   const [localScopeKind, setLocalScopeKind] = useState<SecretScopeKind>(
@@ -114,6 +119,7 @@ export function SecretCatalogPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editAlias, setEditAlias] = useState('')
   const [editName, setEditName] = useState('')
+  const [editUsername, setEditUsername] = useState('')
   const [editNote, setEditNote] = useState('')
   const [replacementMaterial, setReplacementMaterial] = useState('')
   const [editScopeKind, setEditScopeKind] = useState<SecretScopeKind>('instance')
@@ -124,6 +130,15 @@ export function SecretCatalogPanel({
   const [editEveryProject, setEditEveryProject] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [secretSearch, setSecretSearch] = useState('')
+  const [saveDestination, setSaveDestination] = useState('local')
+  const [passwordManagerCollections, setPasswordManagerCollections] = useState<Array<{
+    providerId: string
+    providerName: string
+    collection: BitwardenPasswordManagerCollectionSummary
+  }>>([])
+  const selectedPasswordManagerDestination = passwordManagerCollections.find(
+    (candidate) => passwordManagerDestinationKey(candidate) === saveDestination,
+  )
 
   const providerById = useMemo(
     () => new Map(providers.map((provider) => [provider.providerId, provider])),
@@ -141,6 +156,7 @@ export function SecretCatalogPanel({
       const searchableValues = [
         secret.displayAlias,
         secret.displayName,
+        secret.username,
         secret.note,
         providerLabel(secret.providerId, providers),
         scopeLabel(secret.scope, profileById),
@@ -263,6 +279,34 @@ export function SecretCatalogPanel({
     ? bitwardenProviderId
     : bitwardenProviders[0]?.providerId ?? ''
 
+  useEffect(() => {
+    let active = true
+    const passwordManagers = providers.filter(
+      (provider) => provider.kind === 'bitwarden_password_manager'
+        && provider.enabled
+        && provider.status === 'available',
+    )
+    void Promise.all(passwordManagers.map(async (provider) => ({
+      provider,
+      settings: await fetchBitwardenPasswordManagerSettings(apiClient, provider.providerId),
+    }))).then((results) => {
+      if (!active) return
+      const collections = results.flatMap(({ provider, settings }) =>
+        settings.collections
+          .filter((collection) => collection.selected)
+          .map((collection) => ({
+            providerId: provider.providerId,
+            providerName: provider.displayName,
+            collection,
+          })),
+      )
+      setPasswordManagerCollections(collections)
+    }).catch(() => {
+      if (active) setPasswordManagerCollections([])
+    })
+    return () => { active = false }
+  }, [apiClient, providers])
+
   const submitLocalSecret = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const materialForSubmission = material
@@ -312,16 +356,31 @@ export function SecretCatalogPanel({
     setBusyKey('create')
     let saved = false
     try {
-      const created = await createLocalSecret(apiClient, {
+      const selectedPasswordManager = passwordManagerCollections.find(
+        (candidate) => passwordManagerDestinationKey(candidate) === saveDestination,
+      )
+      const createInput = {
         displayAlias: displayAlias.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+        ...(username.trim() ? { username: username.trim() } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
         material: materialForSubmission,
         scope,
-      })
+      }
+      const created = selectedPasswordManager
+        ? await createBitwardenPasswordManagerSecret(
+            apiClient,
+            selectedPasswordManager.providerId,
+            {
+              ...createInput,
+              collectionId: selectedPasswordManager.collection.collectionId,
+            },
+          )
+        : await createLocalSecret(apiClient, createInput)
       saved = true
       setDisplayAlias('')
       setDisplayName('')
+      setUsername('')
       setNote('')
       setLocalAutomaticProfileIds(new Set())
       setLocalEveryProject(false)
@@ -334,13 +393,13 @@ export function SecretCatalogPanel({
       }
       await onChanged(
         automaticGrantPolicy.kind !== 'none'
-          ? 'Local secret saved with its automatic grant policy.'
-          : 'Local secret saved. No task has access until you grant it.',
+          ? 'Secret saved with its automatic grant policy.'
+          : 'Secret saved. No task has access until you grant it.',
       )
     } catch (error) {
       if (saved) {
         await onChanged(
-          'Local secret saved, but its automatic grant policy could not be enabled.',
+          'Secret saved, but its automatic grant policy could not be enabled.',
         )
       } else {
         onError(error)
@@ -442,6 +501,7 @@ export function SecretCatalogPanel({
     setEditingId(secret.secretId)
     setEditAlias(secret.displayAlias)
     setEditName(secret.displayName ?? '')
+    setEditUsername(secret.username ?? '')
     setEditNote(secret.note ?? '')
     setReplacementMaterial('')
     setEditScopeKind(scopeKindFor(secret.scope))
@@ -458,6 +518,7 @@ export function SecretCatalogPanel({
     setEditingId(null)
     setEditAlias('')
     setEditName('')
+    setEditUsername('')
     setEditNote('')
     setReplacementMaterial('')
     setEditScopeKind('instance')
@@ -512,6 +573,7 @@ export function SecretCatalogPanel({
       await updateSecureSecret(apiClient, secret.secretId, {
         displayAlias: editAlias.trim(),
         displayName: editName.trim() || null,
+        username: editUsername.trim() || null,
         note: editNote.trim() || null,
         ...(materialForSubmission ? { material: materialForSubmission } : {}),
         scope,
@@ -627,6 +689,18 @@ export function SecretCatalogPanel({
                             id={`edit-name-${secret.secretId}`}
                             value={editName}
                             onChange={(event) => setEditName(event.target.value)}
+                            disabled={isBusy}
+                          />
+                        </Field>
+                        <Field label="Username (optional)" htmlFor={`edit-username-${secret.secretId}`}>
+                          <Input
+                            id={`edit-username-${secret.secretId}`}
+                            value={editUsername}
+                            onChange={(event) => setEditUsername(event.target.value)}
+                            maxLength={512}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
                             disabled={isBusy}
                           />
                         </Field>
@@ -763,6 +837,11 @@ export function SecretCatalogPanel({
                         </div>
                         {secret.displayName ? (
                           <p className="text-sm text-muted-foreground">{secret.displayName}</p>
+                        ) : null}
+                        {secret.username ? (
+                          <p className="text-sm text-muted-foreground">
+                            Username: <span className="font-mono text-foreground">{secret.username}</span>
+                          </p>
                         ) : null}
                         {secret.note ? (
                           <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
@@ -939,7 +1018,9 @@ export function SecretCatalogPanel({
 
       <section className="space-y-3 border-t border-border/70 pt-5">
         <div>
-          <h3 className="text-base font-semibold">Add local secret</h3>
+          <h3 className="text-base font-semibold">
+            {saveDestination === 'local' ? 'Add local secret' : 'Add Bitwarden login'}
+          </h3>
           <p className="text-sm text-muted-foreground">
             The private value stays visible while you enter it and is cleared from this form as soon
             as you submit. Saved values cannot be revealed later.
@@ -947,6 +1028,34 @@ export function SecretCatalogPanel({
         </div>
 
         <form className="space-y-4 rounded-md border border-border/70 p-4" onSubmit={submitLocalSecret}>
+          <Field label="Store in" htmlFor="secret-save-destination">
+            <Select
+              value={saveDestination}
+              onValueChange={setSaveDestination}
+              disabled={!materialEntryAvailable || busyKey !== null}
+            >
+              <SelectTrigger id="secret-save-destination" className="w-full">
+                <span data-slot="select-value">
+                  {saveDestination === 'local'
+                    ? 'Local Forge vault'
+                    : selectedPasswordManagerDestination
+                      ? `${selectedPasswordManagerDestination.providerName} — ${selectedPasswordManagerDestination.collection.name}`
+                      : 'Choose storage'}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local Forge vault</SelectItem>
+                {passwordManagerCollections.map((candidate) => (
+                  <SelectItem
+                    key={passwordManagerDestinationKey(candidate)}
+                    value={passwordManagerDestinationKey(candidate)}
+                  >
+                    {candidate.providerName} — {candidate.collection.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Alias" htmlFor="local-secret-alias">
               <Input
@@ -980,6 +1089,23 @@ export function SecretCatalogPanel({
               Visible in Forge settings. Do not include the secret value.
             </p>
           </Field>
+          <Field label="Username (optional)" htmlFor="local-secret-username">
+            <Input
+              id="local-secret-username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              maxLength={512}
+              autoComplete="username"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="name@example.com"
+              disabled={!materialEntryAvailable || busyKey !== null}
+            />
+            <p className="text-xs text-muted-foreground">
+              Visible to agents as login metadata; the private value remains protected.
+            </p>
+          </Field>
           <Field label="Private value" htmlFor="local-secret-material">
             <PrivateValueTextarea
               id="local-secret-material"
@@ -991,6 +1117,10 @@ export function SecretCatalogPanel({
               disabled={!materialEntryAvailable || busyKey !== null}
             />
           </Field>
+          <PasswordGenerator
+            disabled={!materialEntryAvailable || busyKey !== null}
+            onGenerate={setMaterial}
+          />
           <SecretScopeFields
             idPrefix="local-secret"
             profiles={profiles}
@@ -1046,12 +1176,19 @@ export function SecretCatalogPanel({
             {busyKey === 'create'
               ? <Loader2 className="size-3.5 animate-spin" />
               : <Plus className="size-3.5" />}
-            Save local secret
+            {saveDestination === 'local' ? 'Save local secret' : 'Save to Bitwarden'}
           </Button>
         </form>
       </section>
     </div>
   )
+}
+
+function passwordManagerDestinationKey(input: {
+  providerId: string
+  collection: Pick<BitwardenPasswordManagerCollectionSummary, 'collectionId'>
+}): string {
+  return `${input.providerId}:${input.collection.collectionId}`
 }
 
 function Field({

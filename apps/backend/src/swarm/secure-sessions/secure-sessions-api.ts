@@ -6,6 +6,7 @@ import type {
   SecureSecretLeaseKind,
   SecureSecretRetention,
   SecureSecretScope,
+  SecureSecretSaveDestination,
   UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
 
@@ -47,12 +48,26 @@ export interface ReplaceBitwardenPasswordManagerCollectionsInput {
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;
+  username?: string;
   note?: string;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial: string;
   bindings?: SecureSecretBinding[];
   scope?: SecureSecretScope;
   retention?: SecureSecretRetention;
+}
+
+export interface CreateBitwardenPasswordManagerSecretInput {
+  collectionId: string;
+  displayAlias: string;
+  displayName?: string;
+  username?: string;
+  note?: string;
+  /** Ephemeral Electron safeStorage ciphertext encoded as canonical base64. */
+  encryptedMaterial: string;
+  bindings?: SecureSecretBinding[];
+  scope?: SecureSecretScope;
+  retention?: Extract<SecureSecretRetention, "saved">;
 }
 
 export interface ImportBitwardenSecureSecretInput {
@@ -68,6 +83,7 @@ export interface ImportBitwardenSecureSecretInput {
 export interface UpdateSecureSecretInput {
   displayAlias?: string;
   displayName?: string | null;
+  username?: string | null;
   note?: string | null;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial?: string;
@@ -92,6 +108,7 @@ export type FulfillSecureAccessRequestInput = {
   baseRevision: number;
   displayAlias: string;
   displayName?: string;
+  username?: string;
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];
@@ -110,6 +127,7 @@ export type FulfillSecureAccessRequestInput = {
    * owning Builder profile; callers cannot select a different project here.
    */
   makeProjectDefault?: boolean;
+  destination?: SecureSecretSaveDestination;
 } & (
   | { leaseKind: Exclude<SecureSecretLeaseKind, "timed"> }
   | { leaseKind: "timed"; durationSeconds: number }
@@ -117,6 +135,7 @@ export type FulfillSecureAccessRequestInput = {
 
 export type RequestSecureSecretAccessInput = {
   displayAlias: string;
+  username?: string;
   exposures: SecureSecretBinding[];
   purposeSummary: string;
 } & (

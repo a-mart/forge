@@ -1395,6 +1395,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               onCreateBrowserPairing={secureSessionRequests.onCreateBrowserPairing}
               onClaimBrowserPairing={secureSessionRequests.onClaimBrowserPairing}
               onBrowserPaired={secureSessionRequests.onBrowserPaired}
+              loadPrivateDestinations={secureSessionRequests.loadPrivateDestinations}
             />
           ))}
           {pendingSshTrustRequests.map((request) => (

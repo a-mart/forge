@@ -55,6 +55,7 @@ import type {
   ConnectBitwardenPasswordManagerInput,
   ConnectBitwardenSecureSecretProviderInput,
   CreateLocalSecureSecretInput,
+  CreateBitwardenPasswordManagerSecretInput,
   CreateSecureSshTrustedHostInput,
   RequestSecureSecretAccessInput,
   RequestSecureSshHostTrustInput,
@@ -101,6 +102,7 @@ import { isExternalThreadDescriptor } from "../external-thread-compatibility.js"
 import { isCodexPluginWorkerDescriptor } from "../codex-app-server/codex-plugin-scope-service.js";
 import type {
   SecureSessionBinding as StoredBinding,
+  SecureSessionBitwardenCollection,
   SecureSessionLease,
   SecureSessionProvider,
   SecureSessionProjectDefault,
@@ -1208,14 +1210,39 @@ export class SecureSessionsService {
                 if (itemIds.has(secret.sourceLocator)) continue;
                 if (store.deleteSecret(secret.secretId)) removedSecrets += 1;
               }
-              const existingLocators = new Set(
-                existingSecrets.map((secret) => secret.sourceLocator),
+              const existingByLocator = new Map(
+                existingSecrets.map((secret) => [secret.sourceLocator, secret]),
               );
               const usedAliases = new Set(
                 store.listSecrets().map((secret) => secret.displayAlias),
               );
               for (const item of items) {
-                if (existingLocators.has(item.id)) continue;
+                const existing = existingByLocator.get(item.id);
+                if (existing) {
+                  if (
+                    existing.displayName !== item.name
+                    || existing.username !== item.username
+                  ) {
+                    store.updateSecretWithBindings({
+                      secret: {
+                        secretId: existing.secretId,
+                        providerId: existing.providerId,
+                        displayAlias: existing.displayAlias,
+                        displayName: item.name,
+                        username: item.username,
+                        note: existing.note,
+                        scopeKind: existing.scopeKind,
+                        profileId: existing.profileId,
+                        profileIds: existing.profileIds,
+                        retention: existing.retention,
+                        sourceLocator: existing.sourceLocator,
+                        encryptedMaterial: null,
+                      },
+                      bindings: existing.bindings.map(toBindingInput),
+                    });
+                  }
+                  continue;
+                }
                 const secretId = this.id();
                 const displayAlias = uniquePasswordManagerAlias(
                   item.name,
@@ -1229,6 +1256,7 @@ export class SecureSessionsService {
                     providerId,
                     displayAlias,
                     displayName: item.name,
+                    username: item.username,
                     note: null,
                     scopeKind: "instance",
                     profileId: null,
@@ -1763,6 +1791,7 @@ export class SecureSessionsService {
             providerId: LOCAL_PROVIDER_ID,
             displayAlias,
             displayName: optionalBounded(input.displayName, 256),
+            username: optionalBounded(input.username, 512),
             note: optionalBounded(input.note, 2_000),
             ...scope,
             retention: input.retention ?? "saved",
@@ -1778,6 +1807,84 @@ export class SecureSessionsService {
         });
         this.emitCatalog(store);
         return this.toSecretSummary(store, result.secret);
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    } finally {
+      encryptedMaterial.fill(0);
+    }
+  }
+
+  async createBitwardenPasswordManagerSecret(
+    providerId: string,
+    input: CreateBitwardenPasswordManagerSecretInput,
+  ): Promise<SecureSecretSummary> {
+    const encryptedMaterial = decodeCiphertext(input.encryptedMaterial);
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        const collection = store.listBitwardenCollections(providerId)
+          .find((candidate) => candidate.collectionId === input.collectionId);
+        if (
+          provider?.kind !== "bitwarden_password_manager"
+          || !provider.enabled
+          || provider.status !== "available"
+          || !collection
+        ) {
+          throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
+        }
+        const secretId = this.id();
+        const displayAlias = bounded(input.displayAlias, 256);
+        const displayName = optionalBounded(input.displayName, 256);
+        const username = optionalBounded(input.username, 512);
+        const scope = toStoredScope(input.scope);
+        this.requireExistingProfileScope(scope);
+        this.assertScopeLifecycleAvailable(scope);
+        assertDoesNotShadowConfiguredDefault(
+          store,
+          scope,
+          displayAlias,
+          undefined,
+          (profileId) => this.isAllProjectAutomaticGrantEligible(profileId),
+        );
+        const material = (await this.options.localSource.resolve({
+          sourceLocator: "local",
+          encryptedMaterial,
+        })).material;
+        try {
+          const item = await this.options.bitwardenPasswordManagerSource.createItem({
+            name: displayName ?? displayAlias,
+            username,
+            collectionId: collection.collectionId,
+            organizationId: collection.organizationId,
+            material,
+          });
+          const result = store.createSecretWithBindings({
+            secret: {
+              secretId,
+              providerId,
+              displayAlias,
+              displayName,
+              username,
+              note: optionalBounded(input.note, 2_000),
+              ...scope,
+              retention: "saved",
+              sourceLocator: item.id,
+              encryptedMaterial: null,
+            },
+            bindings: normalizeBindings(
+              input.bindings?.length
+                ? input.bindings
+                : [defaultSecureSecretBinding(secretId, displayAlias)],
+              this.id.bind(this),
+            ),
+          });
+          this.emitCatalog(store);
+          return this.toSecretSummary(store, result.secret);
+        } finally {
+          material.release();
+        }
       });
     } catch (error) {
       throw this.publicError(error);
@@ -1918,6 +2025,9 @@ export class SecureSessionsService {
               displayName: input.displayName === undefined
                 ? existing.displayName
                 : optionalBounded(input.displayName, 256),
+              username: input.username === undefined
+                ? existing.username
+                : optionalBounded(input.username, 512),
               note: input.note === undefined
                 ? existing.note
                 : optionalBounded(input.note, 2_000),
@@ -2943,9 +3053,32 @@ export class SecureSessionsService {
     }
     const encryptedMaterial = decodeCiphertext(input.encryptedMaterial);
     const secretId = this.id();
-    const sourceLocator = input.retention === "session"
+    const destination = input.destination ?? { kind: "local" as const };
+    if (input.retention === "session" && destination.kind !== "local") {
+      encryptedMaterial.fill(0);
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    let providerId = LOCAL_PROVIDER_ID;
+    let sourceLocator = input.retention === "session"
       ? `session:${sessionAgentId}`
       : "local";
+    let bitwardenCollection: SecureSessionBitwardenCollection | null = null;
+    if (destination.kind === "bitwarden_password_manager") {
+      const provider = store.getProvider(destination.providerId);
+      bitwardenCollection = store.listBitwardenCollections(destination.providerId)
+        .find((collection) => collection.collectionId === destination.collectionId) ?? null;
+      if (
+        input.retention !== "saved"
+        || provider?.kind !== "bitwarden_password_manager"
+        || !provider.enabled
+        || provider.status !== "available"
+        || !bitwardenCollection
+      ) {
+        encryptedMaterial.fill(0);
+        throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
+      }
+      providerId = provider.providerId;
+    }
     const normalizedBindings = normalizeBindings(input.exposures, this.id.bind(this));
     assertPublicBindingCompatibility(store, snapshot, input.exposures);
     if (input.makeProjectDefault === true) {
@@ -2984,18 +3117,31 @@ export class SecureSessionsService {
         throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
       }
       const leaseId = this.id();
+      if (destination.kind === "bitwarden_password_manager" && bitwardenCollection) {
+        const createdItem = await this.options.bitwardenPasswordManagerSource.createItem({
+          name: input.displayName ?? request.displayAlias,
+          username: input.username ?? request.username,
+          collectionId: bitwardenCollection.collectionId,
+          organizationId: bitwardenCollection.organizationId,
+          material,
+        });
+        sourceLocator = createdItem.id;
+      }
       const lease = store.withTransaction(() => {
-        this.ensureLocalProvider(store);
+        if (destination.kind === "local") this.ensureLocalProvider(store);
         const created = store.createSecretWithBindings({
           secret: {
             secretId,
-            providerId: LOCAL_PROVIDER_ID,
+            providerId,
             displayAlias: request.displayAlias,
             ...(input.displayName ? { displayName: input.displayName } : {}),
+            ...((input.username ?? request.username)
+              ? { username: input.username ?? request.username }
+              : {}),
             ...scope,
             retention: input.retention,
             sourceLocator,
-            encryptedMaterial,
+            encryptedMaterial: destination.kind === "local" ? encryptedMaterial : null,
           },
           bindings: normalizedBindings,
         });
@@ -3052,6 +3198,7 @@ export class SecureSessionsService {
       environmentStatus: snapshot.environmentStatus,
       leases: snapshot.leases.map((lease) => ({
         displayAlias: lease.displayAlias,
+        ...(lease.username ? { username: lease.username } : {}),
         leaseKind: lease.leaseKind,
         exposures: lease.exposures,
         status: lease.status,
@@ -3061,6 +3208,7 @@ export class SecureSessionsService {
       })),
       pendingRequests: snapshot.pendingRequests.map((request) => ({
         displayAlias: request.displayAlias,
+        ...(request.username ? { username: request.username } : {}),
         requestedLeaseKind: request.requestedLeaseKind,
         ...(request.requestedDurationSeconds === undefined
           ? {}
@@ -3072,6 +3220,7 @@ export class SecureSessionsService {
       })),
       availableSecrets: secrets.map((secret) => ({
         displayAlias: secret.displayAlias,
+        ...(secret.username ? { username: secret.username } : {}),
         bindings: secret.bindings,
       })),
       trustedSshHosts: snapshot.trustedSshHosts?.map((host) => ({
@@ -3173,6 +3322,7 @@ export class SecureSessionsService {
         workerAssignmentId: null,
         secretId: secret?.secretId ?? null,
         displayAlias,
+        username: secret?.username ?? input.username ?? null,
         requestedExposures,
         requestedLeaseKind: input.leaseKind,
         requestedDurationSeconds,
@@ -3914,6 +4064,7 @@ export class SecureSessionsService {
         statuses.set(projectDefault.secretId, {
           secretId: projectDefault.secretId,
           displayAlias: secret?.displayAlias ?? "unavailable",
+          ...(secret?.username ? { username: secret.username } : {}),
           state: "conflict",
           statusCode: "binding_conflict",
         });
@@ -4892,6 +5043,7 @@ export class SecureSessionsService {
           leaseId: lease.leaseId,
           secretId: lease.secretId,
           displayAlias: secret?.displayAlias ?? "unavailable",
+          ...(secret?.username ? { username: secret.username } : {}),
           leaseKind: lease.leaseKind,
           exposures: lease.bindingIds.map((bindingId) => {
             const binding = store.getBinding(bindingId);
@@ -4909,6 +5061,7 @@ export class SecureSessionsService {
         requestId: request.requestId,
         secretId: request.secretId,
         displayAlias: request.displayAlias,
+        ...(request.username ? { username: request.username } : {}),
         requestedLeaseKind: request.requestedLeaseKind,
         ...(request.requestedDurationSeconds === null
           ? {}
@@ -4981,6 +5134,7 @@ export class SecureSessionsService {
       providerId: secret.providerId,
       displayAlias: secret.displayAlias,
       displayName: secret.displayName,
+      username: secret.username,
       note: secret.note,
       scope: toPublicScope(secret),
       retention: secret.retention,

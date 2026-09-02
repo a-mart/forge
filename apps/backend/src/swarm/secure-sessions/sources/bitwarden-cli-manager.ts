@@ -14,6 +14,7 @@ import { constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import type { Writable } from "node:stream";
 import extractZip from "extract-zip";
 import type {
   BitwardenPasswordManagerCliSource,
@@ -350,16 +351,35 @@ export function spawnBitwardenCli(
     stdio: ["ignore", "pipe", "pipe"];
     windowsHide: boolean;
   },
-): ChildProcessByStdio<null, Readable, Readable> {
+): ChildProcessByStdio<null, Readable, Readable>;
+export function spawnBitwardenCli(
+  invocation: BitwardenCliInvocation,
+  args: readonly string[],
+  options: {
+    env: NodeJS.ProcessEnv;
+    stdio: ["pipe", "pipe", "pipe"];
+    windowsHide: boolean;
+  },
+): ChildProcessByStdio<Writable, Readable, Readable>;
+export function spawnBitwardenCli(
+  invocation: BitwardenCliInvocation,
+  args: readonly string[],
+  options: {
+    env: NodeJS.ProcessEnv;
+    stdio: ["ignore" | "pipe", "pipe", "pipe"];
+    windowsHide: boolean;
+  },
+): ChildProcessByStdio<Writable | null, Readable, Readable> {
   if (!invocation.commandShell) {
-    return spawn(invocation.executablePath, [...args], options);
+    return spawn(invocation.executablePath, [...args], options) as
+      ChildProcessByStdio<Writable | null, Readable, Readable>;
   }
   const commandLine = windowsCommandLine(invocation.executablePath, args);
   return spawn(
     invocation.commandShell,
     ["/d", "/s", "/c", commandLine],
     options,
-  );
+  ) as ChildProcessByStdio<Writable | null, Readable, Readable>;
 }
 
 async function normalizeExecutablePath(

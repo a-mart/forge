@@ -65,14 +65,20 @@ export type SecureSecretsCatalog =
 export interface CreateLocalSecretInput {
   displayAlias: string
   displayName?: string
+  username?: string
   note?: string
   material: string
   scope: SecureSecretScope
 }
 
+export interface CreateBitwardenPasswordManagerSecretInput extends CreateLocalSecretInput {
+  collectionId: string
+}
+
 export interface UpdateSecureSecretInput {
   displayAlias?: string
   displayName?: string | null
+  username?: string | null
   note?: string | null
   material?: string
   bindings?: SecureSecretBinding[]
@@ -404,11 +410,38 @@ export async function createLocalSecret(
     body: JSON.stringify({
       displayAlias: input.displayAlias,
       ...(input.displayName ? { displayName: input.displayName } : {}),
+      ...(input.username ? { username: input.username } : {}),
       ...(input.note ? { note: input.note } : {}),
       encryptedMaterial,
       scope: input.scope,
     }),
   })
+}
+
+export async function createBitwardenPasswordManagerSecret(
+  apiClient: SettingsApiClient,
+  providerId: string,
+  input: CreateBitwardenPasswordManagerSecretInput,
+): Promise<SecureSecretSummary> {
+  assertBuilderTarget(apiClient)
+  const encryptedMaterial = await encryptMaterial(apiClient, input.material)
+  return requestJson<SecureSecretSummary>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/items`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        collectionId: input.collectionId,
+        displayAlias: input.displayAlias,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
+        ...(input.username ? { username: input.username } : {}),
+        ...(input.note ? { note: input.note } : {}),
+        encryptedMaterial,
+        scope: input.scope,
+      }),
+    },
+  )
 }
 
 export async function updateSecureSecret(
@@ -430,6 +463,7 @@ export async function updateSecureSecret(
       body: JSON.stringify({
         ...(input.displayAlias === undefined ? {} : { displayAlias: input.displayAlias }),
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+        ...(input.username === undefined ? {} : { username: input.username }),
         ...(input.note === undefined ? {} : { note: input.note }),
         ...(input.bindings === undefined ? {} : { bindings: input.bindings }),
         ...(input.scope === undefined ? {} : { scope: input.scope }),

@@ -100,6 +100,15 @@ export interface BitwardenPasswordManagerSettings {
   collections: BitwardenPasswordManagerCollectionSummary[]
 }
 
+/** User-selected storage target for a newly entered private value. */
+export type SecureSecretSaveDestination =
+  | { kind: 'local' }
+  | {
+      kind: 'bitwarden_password_manager'
+      providerId: string
+      collectionId: string
+    }
+
 export interface UpdateBitwardenPasswordManagerCollectionsResult {
   settings: BitwardenPasswordManagerSettings
   addedSecrets: number
@@ -224,6 +233,8 @@ export interface SecureSecretSummary {
   providerId: string
   displayAlias: string
   displayName: string | null
+  /** Optional non-secret login identity that agents may use with this secret. */
+  username?: string | null
   /**
    * Optional operator-authored catalog metadata. This is never secret
    * material and is not injected into Secure Bash.
@@ -296,6 +307,8 @@ export interface SecureSessionLeaseSummary {
   leaseId: string
   secretId: string
   displayAlias: string
+  /** Safe login identity metadata; the private value remains unavailable. */
+  username?: string | null
   leaseKind: SecureSecretLeaseKind
   exposures: SecureSecretBinding[]
   status: SecureSecretLeaseStatus
@@ -317,6 +330,8 @@ export interface SecureAccessRequestSummary {
   requestId: string
   secretId: string | null
   displayAlias: string
+  /** Agent-suggested or saved non-secret login identity. */
+  username?: string | null
   requestedLeaseKind: SecureSecretLeaseKind
   requestedDurationSeconds?: number
   requestedExposures: SecureSecretBinding[]

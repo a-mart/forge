@@ -9,6 +9,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { BitwardenPasswordManagerCommandClient } from "../secure-sessions/sources/bitwarden-password-manager-source.js";
+import { HostOnlySecret } from "../secure-sessions/sources/host-only-secret.js";
 
 const COLLECTION_A = "11111111-1111-4111-8111-111111111111";
 const COLLECTION_B = "22222222-2222-4222-8222-222222222222";
@@ -123,6 +124,7 @@ describe("BitwardenPasswordManagerCommandClient", () => {
       await expect(client.listItems([COLLECTION_A, COLLECTION_B])).resolves.toEqual([{
         id: ITEM,
         name: "Ansible Vault",
+        username: null,
         collectionIds: [COLLECTION_A, COLLECTION_B],
         revisionDate: "2026-08-31T12:00:00.000Z",
       }]);
@@ -143,6 +145,96 @@ describe("BitwardenPasswordManagerCommandClient", () => {
       expect(calls.at(-1)?.env.BW_SESSION).toBeUndefined();
     } finally {
       masterPassword.fill(0);
+      client.dispose();
+    }
+  });
+
+  it("creates a login through stdin without putting its password in Windows arguments or environment", async () => {
+    let createdChild: ReturnType<typeof fakeChild> | null = null;
+    let createdEnvironment: NodeJS.ProcessEnv | null = null;
+    let createdInput: Buffer | null = null;
+    spawnMock.mockImplementation((
+      _executable: string,
+      args: string[],
+      options: { env: NodeJS.ProcessEnv },
+    ) => {
+      if (args.some((arg) => arg.includes("status"))) {
+        return fakeChild(JSON.stringify({ status: "unlocked" }));
+      }
+      createdEnvironment = { ...options.env };
+      createdChild = fakeChild(JSON.stringify({
+        id: ITEM,
+        name: "Production login",
+        type: 1,
+        collectionIds: [COLLECTION_A],
+        revisionDate: "2026-09-02T12:00:00.000Z",
+        login: { username: "deploy-user" },
+      }));
+      createdChild.stdin.end.mockImplementation((value: Buffer) => {
+        createdInput = Buffer.from(value);
+      });
+      return createdChild;
+    });
+    const client = new BitwardenPasswordManagerCommandClient({
+      executablePath: "C:\\Program Files\\nodejs\\bw.cmd",
+      source: "configured",
+      platform: "win32",
+      commandShell: "C:\\Windows\\System32\\cmd.exe",
+    });
+    const password = new HostOnlySecret(Buffer.from("private-generated-password"));
+    try {
+      // Establish the same memory-only session used by createItem.
+      spawnMock.mockImplementationOnce(() => fakeChild(SESSION_KEY));
+      const masterPassword = Buffer.from("synthetic-master-password");
+      try {
+        await client.unlock(masterPassword);
+      } finally {
+        masterPassword.fill(0);
+      }
+
+      const created = await client.createItem({
+        name: "Production login",
+        username: "deploy-user",
+        collectionId: COLLECTION_A,
+        organizationId: ORGANIZATION,
+        material: password,
+      });
+
+      expect(created).toEqual({
+        id: ITEM,
+        name: "Production login",
+        username: "deploy-user",
+        collectionIds: [COLLECTION_A],
+        revisionDate: "2026-09-02T12:00:00.000Z",
+      });
+      const invocation = spawnMock.mock.calls.at(-1)!;
+      expect(invocation[0]).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(invocation[1]).toEqual([
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Program Files\\nodejs\\bw.cmd" "create" "item""',
+      ]);
+      expect(JSON.stringify(invocation)).not.toContain("private-generated-password");
+      expect(createdEnvironment!.BW_SESSION).toBe(SESSION_KEY);
+      expect(Object.values(createdEnvironment!)).not.toContain("private-generated-password");
+
+      const item = JSON.parse(
+        Buffer.from(createdInput!.toString("utf8"), "base64").toString("utf8"),
+      );
+      expect(item).toEqual({
+        type: 1,
+        name: "Production login",
+        organizationId: ORGANIZATION,
+        collectionIds: [COLLECTION_A],
+        login: {
+          username: "deploy-user",
+          password: "private-generated-password",
+        },
+      });
+    } finally {
+      createdInput?.fill(0);
+      password.release();
       client.dispose();
     }
   });
@@ -187,10 +279,12 @@ function fakeChild(stdout: string, exitCode = 0) {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
     stderr: EventEmitter;
+    stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
     kill: ReturnType<typeof vi.fn>;
   };
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
+  child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
   child.kill = vi.fn();
   queueMicrotask(() => {
     if (stdout) child.stdout.emit("data", Buffer.from(stdout));

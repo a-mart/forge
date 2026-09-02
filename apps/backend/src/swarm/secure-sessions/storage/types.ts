@@ -151,6 +151,7 @@ export interface SecureSessionSecret {
   providerId: string;
   displayAlias: string;
   displayName: string | null;
+  username: string | null;
   note: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId: string | null;
@@ -204,6 +205,7 @@ export interface CreateSecureSessionSecretInput {
   providerId: string;
   displayAlias: string;
   displayName?: string | null;
+  username?: string | null;
   note?: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId?: string | null;
@@ -284,6 +286,7 @@ export interface SecureSessionRequest {
   workerAssignmentId: string | null;
   secretId: string | null;
   displayAlias: string;
+  username: string | null;
   requestedExposures: SecureSessionRequestedExposure[];
   leaseKind: SecureSessionLeaseKind;
   requestedLeaseKind: SecureSessionLeaseKind;
@@ -458,6 +461,7 @@ export interface CreateSecureSessionRequestInput {
   workerAssignmentId?: string | null;
   secretId?: string | null;
   displayAlias: string;
+  username?: string | null;
   requestedExposures: readonly SecureSessionExposureDescriptor[];
   requestedLeaseKind: SecureSessionLeaseKind;
   requestedDurationSeconds?: number | null;

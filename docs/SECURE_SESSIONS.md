@@ -184,10 +184,19 @@ changing the active conversation or its draft.
 
 ### Local vault
 
-Choose **Secrets**, enter an alias and value, and save it. The renderer immediately
+Choose **Secrets**, enter an alias, optional username, and value, and save it. The
+username is safe catalog metadata that agents can use when constructing a login; it
+must not contain a password, token, or other private material. The renderer immediately
 sends the value to Electron's private encryption IPC and clears its input state.
 Electron `safeStorage` seals it with the operating-system-backed encryption service.
 Only ciphertext is stored in `shared/state/secure-sessions.db`.
+
+The private-value field includes a local password generator. It can produce a random
+password with a chosen length and character classes, or a multi-word passphrase with
+a chosen word count, separator, capitalization, and optional number. **Generate** or
+**Refresh** replaces only the visible private-entry draft; generation runs in the
+renderer and does not send the result to the agent, chat, or backend until the user
+saves it through the private-entry path.
 
 Forge refuses new local-vault writes when Electron reports an unavailable backend or
 Linux `basic_text` storage. A saved value is never returned by the settings API.
@@ -236,11 +245,21 @@ Manager project or machine token:
    the selection.
 
 Forge stores only the account label, selected collection IDs and names, Bitwarden item
-IDs and names, and normal Forge alias/binding policy. It holds the `bw` session key in
-backend memory until the source is locked or Forge stops. Item values are resolved on
-the trusted host only when a Secure Session grant needs them. **Login** items use their
-password field; **Secure Note** items use their note body. Other Bitwarden item types
-are not imported automatically.
+IDs and names, Login usernames, and normal Forge alias/binding policy. A username is
+agent-visible metadata; passwords and note bodies remain private. Forge holds the `bw`
+session key in backend memory until the source is locked or Forge stops. Item values
+are resolved on the trusted host only when a Secure Session grant needs them. **Login**
+items use their password field; **Secure Note** items use their note body. Other
+Bitwarden item types are not imported automatically.
+
+The normal **Add secret** form can create a Login item directly in any selected,
+available collection. Choose that collection under **Store in**, enter or generate the
+private value, and save. Forge decrypts the submitted value only inside the trusted
+backend, sends the Login JSON to the unlocked local `bw create item` process over
+standard input, then records the returned item as a normal Forge catalog alias. The
+private value is not placed in command arguments, environment variables, temporary
+files, API responses, or the saved Forge catalog row. A locked or unavailable source
+must be unlocked before its collection appears as a destination.
 
 Synchronized items receive editable `bitwarden/...` aliases, an automatic environment
 delivery, instance-wide catalog availability, and no automatic project grant. Select
@@ -385,18 +404,17 @@ a stable guest path; environment, stdin, and askpass deliveries remain concurren
 
 An agent can inspect safe session status and request an alias, binding, and lease
 shape. If the alias does not exist, the agent can propose the missing secret by alias,
-purpose, delivery, and lease only. The tool has no field for protected material.
-Forge shows **Add secret and approve**, which opens a private entry dialog that saves
-the value to the local vault and defaults to the current project. The requested alias,
-delivery, and lease remain fixed while the prefilled display name can be edited. The
-dialog can instead save it for all projects, mark it automatic for the current
+optional non-secret username, purpose, delivery, and lease. The tool has no field for
+protected material and explicitly rejects using the username field as a private-value
+channel. Forge shows **Add secret and approve**, which opens a private entry dialog
+with the proposed username prefilled and editable. The requested alias, delivery, and
+lease remain fixed while the display name and username can be edited. The dialog can
+save the new Login to the local vault or any selected, unlocked Bitwarden Password
+Manager collection, save it for all projects, mark it automatic for the current
 project, or choose **Use for this task only** without keeping a reusable saved secret.
+The same random-password and passphrase generator used in Settings is available here.
 A browser that is not yet paired can start pairing from the request card, obtain
 Desktop approval, and continue the same request without navigating to Settings.
-
-The missing-secret dialog currently accepts local-vault material. To use Bitwarden,
-first import its reference under **Settings → Secrets**; the agent can then request and
-you can approve that saved catalog alias normally.
 
 Requests and their approval cards stay outside the persisted transcript. Every
 request belongs to the manager session. A worker request records the worker identity

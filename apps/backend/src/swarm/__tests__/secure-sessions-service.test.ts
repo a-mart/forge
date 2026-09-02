@@ -227,12 +227,14 @@ describe("SecureSessionsService", () => {
       {
         id: "33333333-3333-4333-8333-333333333333",
         name: "Ansible Vault",
+        username: "vault-user",
         collectionIds: [collections[0]!.id],
         revisionDate: NOW,
       },
       {
         id: "44444444-4444-4444-8444-444444444444",
         name: "GitHub Work Token",
+        username: null,
         collectionIds: [collections[1]!.id],
         revisionDate: NOW,
       },
@@ -265,6 +267,7 @@ describe("SecureSessionsService", () => {
       expect.objectContaining({
         displayAlias: "bitwarden/ansible-vault-33333333",
         displayName: "Ansible Vault",
+        username: "vault-user",
         sourceLocator: items[0]!.id,
         retention: "saved",
         scopeKind: "instance",
@@ -278,6 +281,21 @@ describe("SecureSessionsService", () => {
       }),
     ]);
     expect(harness.store.listProjectDefaults()).toEqual([]);
+
+    items[0]!.name = "Ansible Vault Login";
+    items[0]!.username = "rotated-vault-user";
+    const refreshed = await harness.service.replaceBitwardenPasswordManagerCollections(
+      provider.providerId,
+      { collectionIds: collections.map(({ id }) => id) },
+    );
+    expect(refreshed).toMatchObject({ addedSecrets: 0, removedSecrets: 0 });
+    expect(harness.store.listSecrets(provider.providerId)).toContainEqual(
+      expect.objectContaining({
+        sourceLocator: items[0]!.id,
+        displayName: "Ansible Vault Login",
+        username: "rotated-vault-user",
+      }),
+    );
 
     await expect(
       harness.service.replaceBitwardenPasswordManagerCollections(
@@ -305,6 +323,61 @@ describe("SecureSessionsService", () => {
     expect(harness.store.getSnapshot("manager-a").leases).toEqual([
       expect.objectContaining({ state: "revoked", revocationReason: "policy_changed" }),
     ]);
+    await harness.close();
+  });
+
+  it("creates a Bitwarden login with username metadata and keeps its password out of Forge storage", async () => {
+    const collection = {
+      id: "11111111-1111-4111-8111-111111111111",
+      organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Infrastructure",
+    };
+    const harness = createHarness({
+      passwordManagerStatus: {
+        state: "available",
+        accountEmail: "forge@example.test",
+        serverUrl: "https://vault.example.test",
+        cli: testBitwardenCliSummary(),
+      },
+      passwordManagerCollections: [collection],
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Team Bitwarden",
+    });
+    await harness.service.replaceBitwardenPasswordManagerCollections(
+      provider.providerId,
+      { collectionIds: [collection.id] },
+    );
+
+    const secret = await harness.service.createBitwardenPasswordManagerSecret(
+      provider.providerId,
+      {
+        collectionId: collection.id,
+        displayAlias: "production/login",
+        displayName: "Production login",
+        username: "deploy-user",
+        note: "Used by the release agent.",
+        encryptedMaterial: Buffer.from(BETA).toString("base64"),
+        scope: { kind: "profile", profileId: "profile-a" },
+      },
+    );
+
+    expect(harness.passwordManagerCreates).toEqual([{
+      name: "Production login",
+      username: "deploy-user",
+      collectionId: collection.id,
+      organizationId: collection.organizationId,
+      material: BETA,
+    }]);
+    expect(secret).toMatchObject({
+      providerId: provider.providerId,
+      displayAlias: "production/login",
+      displayName: "Production login",
+      username: "deploy-user",
+      note: "Used by the release agent.",
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    expect(harness.store.getEncryptedSecret(secret.secretId)?.encryptedMaterial).toBeNull();
     await harness.close();
   });
 
@@ -4213,6 +4286,81 @@ describe("SecureSessionsService", () => {
     await saved.close();
   });
 
+  it("fulfills an agent-proposed login into a selected Bitwarden collection", async () => {
+    const collection = {
+      id: "11111111-1111-4111-8111-111111111111",
+      organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Infrastructure",
+    };
+    const harness = createHarness({
+      passwordManagerStatus: {
+        state: "available",
+        accountEmail: "forge@example.test",
+        serverUrl: "https://vault.example.test",
+        cli: testBitwardenCliSummary(),
+      },
+      passwordManagerCollections: [collection],
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({
+      displayName: "Team Bitwarden",
+    });
+    await harness.service.replaceBitwardenPasswordManagerCollections(
+      provider.providerId,
+      { collectionIds: [collection.id] },
+    );
+    await harness.service.requestSecureSecretAccess("manager-a", "login-tool", {
+      displayAlias: "deployment/login",
+      username: "agent-suggested-user",
+      exposures: [{ deliveryKind: "environment", targetName: "DEPLOY_PASSWORD" }],
+      leaseKind: "task",
+      purposeSummary: "Sign in to the deployment service.",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+
+    const fulfilled = await harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "deployment/login",
+        displayName: "Deployment login",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        destination: {
+          kind: "bitwarden_password_manager",
+          providerId: provider.providerId,
+          collectionId: collection.id,
+        },
+        exposures: [{ deliveryKind: "environment", targetName: "DEPLOY_PASSWORD" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        leaseKind: "task",
+      },
+    );
+
+    expect(harness.passwordManagerCreates).toEqual([{
+      name: "Deployment login",
+      username: "agent-suggested-user",
+      collectionId: collection.id,
+      organizationId: collection.organizationId,
+      material: ALPHA,
+    }]);
+    expect(fulfilled.leases).toEqual([
+      expect.objectContaining({
+        displayAlias: "deployment/login",
+        username: "agent-suggested-user",
+        status: "active",
+      }),
+    ]);
+    expect(await harness.service.listSecureSecrets()).toContainEqual(
+      expect.objectContaining({
+        providerId: provider.providerId,
+        displayAlias: "deployment/login",
+        username: "agent-suggested-user",
+      }),
+    );
+    await harness.close();
+  });
+
   it("keeps fulfillment pending when guard preflight fails", async () => {
     const harness = createHarness({ guardFailures: 1 });
     await harness.service.requestSecureSecretAccess("manager-a", "guard-tool", {
@@ -5736,6 +5884,13 @@ function createHarness(options: {
   const passwordManagerSyncs: string[] = [];
   const passwordManagerCliInstalls: string[] = [];
   const passwordManagerStatusPaths: Array<string | null> = [];
+  const passwordManagerCreates: Array<{
+    name: string;
+    username: string | null;
+    collectionId: string;
+    organizationId: string;
+    material: string;
+  }> = [];
   let sourceResolutionStarted!: () => void;
   let sourceResolutionRelease!: () => void;
   const sourceResolutionStartedPromise = new Promise<void>((resolve) => {
@@ -5862,6 +6017,23 @@ function createHarness(options: {
         item.collectionIds.some((collectionId) => collectionIds.includes(collectionId))
       );
     },
+    async createItem(input) {
+      const material = await input.material.withBytes((bytes) => bytes.toString("utf8"));
+      passwordManagerCreates.push({
+        name: input.name,
+        username: input.username ?? null,
+        collectionId: input.collectionId,
+        organizationId: input.organizationId,
+        material,
+      });
+      return {
+        id: `55555555-5555-4555-8555-${String(passwordManagerCreates.length).padStart(12, "0")}`,
+        name: input.name,
+        username: input.username ?? null,
+        collectionIds: [input.collectionId],
+        revisionDate: now(),
+      };
+    },
     async resolve() {
       const material = new HostOnlySecret(Buffer.from("bitwarden-password-manager-resolved"));
       resolvedMaterials.push(material);
@@ -5965,6 +6137,7 @@ function createHarness(options: {
     passwordManagerSyncs,
     passwordManagerCliInstalls,
     passwordManagerStatusPaths,
+    passwordManagerCreates,
     snapshots,
     catalogEvents,
     recycles,

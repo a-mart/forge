@@ -17,6 +17,7 @@ import type {
   SecureAccessRequestView,
   SecureGrantInput,
   SecurePrivateFulfillmentInput,
+  SecurePrivateDestinationOption,
   SecureSessionAvailability,
   SecureSessionProjectContext,
   SecureSecretOption,
@@ -43,6 +44,7 @@ interface SecureSecretRequestCardProps {
     claimSecret: string,
   ) => Promise<SecureBrowserPairingClaimResponse>
   onBrowserPaired?: () => void | Promise<void>
+  loadPrivateDestinations?: () => Promise<SecurePrivateDestinationOption[]>
 }
 
 function matchesRequest(
@@ -74,6 +76,7 @@ export function SecureSecretRequestCard({
   onCreateBrowserPairing,
   onClaimBrowserPairing,
   onBrowserPaired,
+  loadPrivateDestinations,
 }: SecureSecretRequestCardProps) {
   const compatibleSecrets = useMemo(
     () => secrets.filter((secret) => matchesRequest(secret, request)),
@@ -166,6 +169,12 @@ export function SecureSecretRequestCard({
             <p className="mt-0.5 text-muted-foreground">{request.purpose}</p>
           </div>
           <dl className="grid gap-1 text-muted-foreground sm:grid-cols-2">
+            {request.username ? (
+              <div>
+                <dt className="inline font-medium text-foreground">Username: </dt>
+                <dd className="inline font-mono">{request.username}</dd>
+              </div>
+            ) : null}
             <div>
               <dt className="inline font-medium text-foreground">
                 {request.requestedBindings.length === 1 ? 'Binding: ' : 'Bindings: '}
@@ -209,6 +218,7 @@ export function SecureSecretRequestCard({
                   {secret.displayName
                     ? `${secret.displayName} (${secret.displayAlias})`
                     : secret.displayAlias}
+                  {secret.username ? ` — ${secret.username}` : ''}
                 </option>
               ))}
             </select>
@@ -279,9 +289,11 @@ export function SecureSecretRequestCard({
       {privateValueOpen && onPrivateFulfill && project ? (
         <PrivateSecretValueDialog
           alias={request.secretAlias}
+          username={request.username}
           project={project}
           requestedBindings={request.requestedBindings}
           requestedPolicy={request.requestedPolicy}
+          loadDestinations={loadPrivateDestinations}
           onFulfill={(input) => onPrivateFulfill(request.requestId, input)}
           onClose={() => setPrivateValueOpen(false)}
         />

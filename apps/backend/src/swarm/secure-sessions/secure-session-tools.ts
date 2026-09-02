@@ -24,6 +24,7 @@ const MAX_TIMESTAMP_LENGTH = 128;
 
 export type RequestSecureSecretAccessToolInput = {
   displayAlias: string;
+  username?: string;
   purposeSummary: string;
   exposures: SecureSecretBinding[];
 } & (
@@ -34,6 +35,7 @@ export type RequestSecureSecretAccessToolInput = {
 
 export interface SecureSessionAgentLeaseView {
   displayAlias: string;
+  username?: string;
   leaseKind: SecureSecretLeaseKind;
   exposures: SecureSecretBinding[];
   status: SecureSecretLeaseStatus;
@@ -44,6 +46,7 @@ export interface SecureSessionAgentLeaseView {
 
 export interface SecureSessionAgentPendingRequestView {
   displayAlias: string;
+  username?: string;
   requestedLeaseKind: SecureSecretLeaseKind;
   requestedDurationSeconds?: number;
   requestedExposures: SecureSecretBinding[];
@@ -54,6 +57,7 @@ export interface SecureSessionAgentPendingRequestView {
 
 export interface SecureSessionAvailableSecretView {
   displayAlias: string;
+  username?: string;
   bindings: SecureSecretBinding[];
 }
 
@@ -133,6 +137,7 @@ const bindingSchema = Type.Union([
 
 const requestBaseSchema = {
   displayAlias: Type.String({ minLength: 1, maxLength: MAX_ALIAS_LENGTH }),
+  username: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
   purposeSummary: Type.String({ minLength: 1, maxLength: MAX_PURPOSE_LENGTH }),
   exposures: Type.Array(bindingSchema, {
     minItems: 1,
@@ -243,12 +248,13 @@ function parseRequestInput(input: unknown): RequestSecureSecretAccessToolInput {
     lease.leaseKind === "timed"
       ? [
           "displayAlias",
+          "username",
           "purposeSummary",
           "exposures",
           "leaseKind",
           "durationSeconds",
         ]
-      : ["displayAlias", "purposeSummary", "exposures", "leaseKind"],
+      : ["displayAlias", "username", "purposeSummary", "exposures", "leaseKind"],
   );
 
   if (
@@ -261,6 +267,9 @@ function parseRequestInput(input: unknown): RequestSecureSecretAccessToolInput {
 
   return {
     displayAlias: boundedString(input.displayAlias, MAX_ALIAS_LENGTH),
+    ...(input.username === undefined
+      ? {}
+      : { username: boundedString(input.username, 512) }),
     purposeSummary: boundedString(input.purposeSummary, MAX_PURPOSE_LENGTH),
     exposures: input.exposures.map((exposure) =>
       projectBinding(parseSecureSecretBinding(exposure))
@@ -364,6 +373,9 @@ function projectAgentView(input: SecureSessionAgentView): SecureSessionAgentView
           : nonNegativeInteger(lease.remainingUses);
       return {
         displayAlias: boundedString(lease.displayAlias, MAX_ALIAS_LENGTH),
+        ...(lease.username === undefined
+          ? {}
+          : { username: boundedString(lease.username, 512) }),
         leaseKind: secureLeaseKind(lease.leaseKind),
         exposures: projectBindings(lease.exposures),
         status: secureLeaseStatus(lease.status),
@@ -389,6 +401,9 @@ function projectAgentView(input: SecureSessionAgentView): SecureSessionAgentView
       }
       return {
         displayAlias: boundedString(request.displayAlias, MAX_ALIAS_LENGTH),
+        ...(request.username === undefined
+          ? {}
+          : { username: boundedString(request.username, 512) }),
         requestedLeaseKind,
         ...(requestedDurationSeconds === undefined
           ? {}
@@ -408,6 +423,9 @@ function projectAgentView(input: SecureSessionAgentView): SecureSessionAgentView
       }
       return {
         displayAlias: boundedString(secret.displayAlias, MAX_ALIAS_LENGTH),
+        ...(secret.username === undefined
+          ? {}
+          : { username: boundedString(secret.username, 512) }),
         bindings: projectBindings(secret.bindings),
       };
     }),
@@ -512,7 +530,7 @@ function requestAccessTool(
     name: "request_secret_access",
     label: "Request Secret Access",
     description:
-      "Request user approval to use a secret display alias in this Builder session. First call secure_session_status and use an existing active lease or pending equivalent when one is listed. Forge also checks this atomically and returns already_granted or already_requested instead of creating a duplicate. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Use an ssh_agent exposure for a private SSH key that ordinary ssh, scp, or Git commands should use through SSH_AUTH_SOCK. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
+      "Request user approval to use a secret display alias in this Builder session. First call secure_session_status and use an existing active lease or pending equivalent when one is listed. Forge also checks this atomically and returns already_granted or already_requested instead of creating a duplicate. If the alias is not saved yet, this proposes a new secret for the user to provide privately. For a login, optionally include its non-secret username so Forge can prefill the user's form and retain it as agent-visible metadata. Use an ssh_agent exposure for a private SSH key that ordinary ssh, scp, or Git commands should use through SSH_AUTH_SOCK. Never put a password, token, private key, or other secret material in username or any tool argument.",
     parameters: requestSecretAccessSchema,
     async execute(toolCallId, params) {
       let input: RequestSecureSecretAccessToolInput;

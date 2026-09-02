@@ -43,8 +43,17 @@ export interface BitwardenPasswordManagerCollection {
 export interface BitwardenPasswordManagerItemMetadata {
   id: string;
   name: string;
+  username: string | null;
   collectionIds: string[];
   revisionDate: string | null;
+}
+
+export interface CreateBitwardenPasswordManagerItemInput {
+  name: string;
+  username?: string | null;
+  collectionId: string;
+  organizationId: string;
+  material: HostOnlySecret;
 }
 
 export interface BitwardenPasswordManagerClient {
@@ -54,6 +63,9 @@ export interface BitwardenPasswordManagerClient {
   sync(): Promise<void>;
   listCollections(): Promise<BitwardenPasswordManagerCollection[]>;
   listItems(collectionIds: readonly string[]): Promise<BitwardenPasswordManagerItemMetadata[]>;
+  createItem(
+    input: CreateBitwardenPasswordManagerItemInput,
+  ): Promise<BitwardenPasswordManagerItemMetadata>;
   getSecret(input: {
     itemId: string;
     allowedCollectionIds: readonly string[];
@@ -75,6 +87,9 @@ export interface BitwardenPasswordManagerSource {
   listItems(
     collectionIds: readonly string[],
   ): Promise<BitwardenPasswordManagerItemMetadata[]>;
+  createItem(
+    input: CreateBitwardenPasswordManagerItemInput,
+  ): Promise<BitwardenPasswordManagerItemMetadata>;
   resolve(input: {
     sourceLocator: string;
     allowedCollectionIds: readonly string[];
@@ -227,6 +242,44 @@ implements BitwardenPasswordManagerClient {
     return parseItemSecret(output, allowedCollectionIds);
   }
 
+  async createItem(
+    input: CreateBitwardenPasswordManagerItemInput,
+  ): Promise<BitwardenPasswordManagerItemMetadata> {
+    const collectionId = providerId(input.collectionId);
+    const organizationId = providerId(input.organizationId);
+    const name = requiredBoundedString(input.name, 256);
+    const username = optionalBoundedString(input.username, 512);
+    let encoded: Buffer | null = null;
+    try {
+      encoded = await input.material.withBytes((material) => {
+        const item = {
+          type: 1,
+          name,
+          organizationId,
+          collectionIds: [collectionId],
+          login: {
+            username,
+            password: material.toString("utf8"),
+          },
+        };
+        const serialized = Buffer.from(JSON.stringify(item), "utf8");
+        try {
+          return Buffer.from(serialized.toString("base64"), "utf8");
+        } finally {
+          serialized.fill(0);
+        }
+      });
+      const output = await this.runWithSession(["create", "item"], encoded);
+      try {
+        return parseCreatedItemMetadata(output, collectionId);
+      } finally {
+        output.fill(0);
+      }
+    } finally {
+      encoded?.fill(0);
+    }
+  }
+
   dispose(): void {
     this.clearSession();
   }
@@ -242,12 +295,13 @@ implements BitwardenPasswordManagerClient {
     return parseStatus(output, sessionKey !== null);
   }
 
-  private async runWithSession(args: string[]): Promise<Buffer> {
+  private async runWithSession(args: string[], stdin?: Buffer): Promise<Buffer> {
     if (!this.sessionKey) throw new SecureSourceError("SECURE_SOURCE_LOCKED");
     return await this.run(args, {
       captureStdout: true,
       errorCode: "SECURE_SOURCE_LOCKED",
       sessionKey: this.sessionKey,
+      ...(stdin ? { stdin } : {}),
     });
   }
 
@@ -265,6 +319,7 @@ implements BitwardenPasswordManagerClient {
         | "SECURE_SOURCE_UNAVAILABLE";
       sessionKey?: Buffer;
       extraEnvironment?: NodeJS.ProcessEnv;
+      stdin?: Buffer;
     },
   ): Promise<Buffer> {
     return await new Promise<Buffer>((resolve, reject) => {
@@ -274,11 +329,17 @@ implements BitwardenPasswordManagerClient {
         environment.BW_SESSION = options.sessionKey.toString("utf8");
       }
       Object.assign(environment, options.extraEnvironment);
-      const child = spawnBitwardenCli(this.invocation, args, {
-        env: environment,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      const child = options.stdin
+        ? spawnBitwardenCli(this.invocation, args, {
+            env: environment,
+            stdio: ["pipe", "pipe", "pipe"],
+            windowsHide: true,
+          })
+        : spawnBitwardenCli(this.invocation, args, {
+            env: environment,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+          });
       const stdout: Buffer[] = [];
       let outputBytes = 0;
       let settled = false;
@@ -306,6 +367,10 @@ implements BitwardenPasswordManagerClient {
         this.timeoutMs,
       );
       timeout.unref?.();
+      if (options.stdin && child.stdin) {
+        child.stdin.once("error", () => rejectSafe(options.errorCode));
+        child.stdin.end(options.stdin);
+      }
       const consume = (chunk: Buffer, capture: boolean) => {
         outputBytes += chunk.byteLength;
         if (outputBytes > MAX_RESPONSE_BYTES) {
@@ -387,6 +452,12 @@ export class BitwardenPasswordManagerSecretSource {
     collectionIds: readonly string[],
   ): Promise<BitwardenPasswordManagerItemMetadata[]> {
     return this.requireClient().listItems(collectionIds);
+  }
+
+  createItem(
+    input: CreateBitwardenPasswordManagerItemInput,
+  ): Promise<BitwardenPasswordManagerItemMetadata> {
+    return this.requireClient().createItem(input);
   }
 
   async unlock(
@@ -516,11 +587,35 @@ function parseItemMetadata(output: Buffer): BitwardenPasswordManagerItemMetadata
     items.push({
       id: providerId(record.id),
       name: requiredBoundedString(record.name, 256),
+      username: record.type === 1
+        ? optionalBoundedString(requireRecord(record.login).username, 512)
+        : null,
       collectionIds: providerIdArray(record.collectionIds),
       revisionDate: optionalBoundedString(record.revisionDate, 128),
     });
   }
   return items;
+}
+
+function parseCreatedItemMetadata(
+  output: Buffer,
+  expectedCollectionId: string,
+): BitwardenPasswordManagerItemMetadata {
+  const record = parseJsonObject(output);
+  if (record.type !== 1) {
+    throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
+  }
+  const collectionIds = providerIdArray(record.collectionIds);
+  if (!collectionIds.includes(expectedCollectionId)) {
+    throw new SecureSourceError("SECURE_SOURCE_RESPONSE_INVALID");
+  }
+  return {
+    id: providerId(record.id),
+    name: requiredBoundedString(record.name, 256),
+    username: optionalBoundedString(requireRecord(record.login).username, 512),
+    collectionIds,
+    revisionDate: optionalBoundedString(record.revisionDate, 128),
+  };
 }
 
 function parseItemSecret(

@@ -22,6 +22,10 @@ describe("secure session migrations", () => {
     expect(database.prepare(
       "SELECT revision FROM secure_session_catalog_state WHERE id = 1"
     ).get()).toEqual({ revision: 0 });
+    expect(database.pragma("table_info('secure_session_secret')"))
+      .toContainEqual(expect.objectContaining({ name: "username", notnull: 0 }));
+    expect(database.pragma("table_info('secure_session_request')"))
+      .toContainEqual(expect.objectContaining({ name: "username", notnull: 0 }));
     database.close();
   });
 

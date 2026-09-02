@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -16,7 +17,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select'
 import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
+import { PasswordGenerator } from '@/components/secure-session/PasswordGenerator'
 import {
   secureSessionUiErrorMessage,
   SecureSessionUiError,
@@ -29,12 +37,14 @@ import {
 import type {
   SecureLeasePolicyView,
   SecurePrivateFulfillmentInput,
+  SecurePrivateDestinationOption,
   SecureSecretBindingView,
   SecureSessionProjectContext,
 } from './types'
 
 interface PrivateSecretValueDialogProps {
   alias?: string
+  username?: string
   project: SecureSessionProjectContext
   requestedBindings: SecureSecretBindingView[]
   requestedPolicy: SecureLeasePolicyView
@@ -42,6 +52,7 @@ interface PrivateSecretValueDialogProps {
     input: SecurePrivateFulfillmentInput,
   ) => void | Promise<void>
   onClose: () => void
+  loadDestinations?: () => Promise<SecurePrivateDestinationOption[]>
 }
 
 type SavedScope = 'project' | 'instance'
@@ -49,14 +60,17 @@ type SubmitMode = 'saved' | 'session'
 
 export function PrivateSecretValueDialog({
   alias,
+  username: initialUsername,
   project,
   requestedBindings,
   requestedPolicy,
   onFulfill,
   onClose,
+  loadDestinations,
 }: PrivateSecretValueDialogProps) {
   const inputId = useId()
   const displayNameId = useId()
+  const usernameId = useId()
   const projectScopeId = useId()
   const instanceScopeId = useId()
   const projectDefaultId = useId()
@@ -64,13 +78,33 @@ export function PrivateSecretValueDialog({
   const [privateValue, setPrivateValue] = useState('')
   const [hasValue, setHasValue] = useState(false)
   const [displayName, setDisplayName] = useState(alias ?? '')
+  const [username, setUsername] = useState(initialUsername ?? '')
   const [savedScope, setSavedScope] = useState<SavedScope>('project')
   const [makeProjectDefault, setMakeProjectDefault] = useState(false)
   const [submitMode, setSubmitMode] = useState<SubmitMode | null>(null)
+  const [destinations, setDestinations] = useState<SecurePrivateDestinationOption[]>([])
+  const [destinationKey, setDestinationKey] = useState('local')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const selectedDestination = destinations.find(
+    (option) => destinationOptionKey(option) === destinationKey,
+  ) ?? (destinationKey === 'local' ? undefined : destinations[0])
   const projectDefaultLimitReached = project.projectDefaultLimitReached === true
   const maxProjectDefaults =
     project.maxProjectDefaults ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS
+
+  useEffect(() => {
+    let active = true
+    if (!loadDestinations) return () => { active = false }
+    void loadDestinations().then((options) => {
+      if (!active) return
+      setDestinations(options)
+      const preferred = options.find(
+        ({ destination }) => destination.kind === 'bitwarden_password_manager',
+      )
+      if (preferred) setDestinationKey(destinationOptionKey(preferred))
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [loadDestinations])
 
   const setPrivateInputRef = useCallback((input: HTMLTextAreaElement | null) => {
     if (!input && inputRef.current) inputRef.current.value = ''
@@ -109,6 +143,12 @@ export function PrivateSecretValueDialog({
         : onFulfill({
           value: valueForFulfillment,
           ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+          ...(username.trim() ? { username: username.trim() } : {}),
+          ...(destinationKey === 'local'
+            ? {}
+            : {
+                destination: selectedDestination?.destination ?? { kind: 'local' },
+              }),
           retention: 'saved',
           scope: savedScope === 'project'
             ? { kind: 'profile', profileId: project.profileId }
@@ -178,6 +218,24 @@ export function PrivateSecretValueDialog({
           </div>
 
           <div className="space-y-1.5">
+            <Label htmlFor={usernameId}>Username (optional)</Label>
+            <Input
+              id={usernameId}
+              value={username}
+              onChange={(event) => setUsername(event.currentTarget.value)}
+              maxLength={512}
+              autoComplete="username"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              disabled={Boolean(submitMode)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Visible to the agent as login metadata. The private value remains protected.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor={inputId}>{alias ? `Value for ${alias}` : 'Private value'}</Label>
             <PrivateValueTextarea
               id={inputId}
@@ -195,6 +253,13 @@ export function PrivateSecretValueDialog({
               autoFocus
             />
           </div>
+          <PasswordGenerator
+            disabled={Boolean(submitMode)}
+            onGenerate={(value) => {
+              setPrivateValue(value)
+              setHasValue(true)
+            }}
+          />
 
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium text-foreground">Save to</legend>
@@ -243,6 +308,36 @@ export function PrivateSecretValueDialog({
               </span>
             </label>
           </fieldset>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="private-secret-storage">Store in</Label>
+            <Select
+              value={destinationKey}
+              onValueChange={setDestinationKey}
+              disabled={Boolean(submitMode)}
+            >
+              <SelectTrigger id="private-secret-storage" className="w-full">
+                <span data-slot="select-value">
+                  {destinationKey === 'local'
+                    ? 'Local Forge vault'
+                    : selectedDestination?.label ?? 'Choose storage'}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local Forge vault</SelectItem>
+                {destinations.map((option) => (
+                  <SelectItem key={destinationOptionKey(option)} value={destinationOptionKey(option)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {destinationKey === 'local'
+                ? 'Stored in this computer’s operating-system credential vault.'
+                : selectedDestination?.description}
+            </p>
+          </div>
 
           <label
             htmlFor={projectDefaultId}
@@ -328,4 +423,11 @@ export function PrivateSecretValueDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function destinationOptionKey(option: SecurePrivateDestinationOption): string {
+  const destination = option.destination
+  return destination.kind === 'local'
+    ? 'local'
+    : `${destination.providerId}:${destination.collectionId}`
 }

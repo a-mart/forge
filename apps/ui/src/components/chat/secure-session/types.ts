@@ -38,6 +38,7 @@ export interface SecureSecretOption {
   secretId: string
   displayAlias: string
   displayName?: string
+  username?: string
   available: boolean
   bindings: SecureSecretBindingView[]
 }
@@ -46,6 +47,7 @@ export interface SecureLeaseView {
   leaseId: string
   secretId: string
   displayAlias: string
+  username?: string
   policy: SecureLeasePolicyView
   status: 'active' | 'consumed' | 'revoked' | 'expired'
   bindings: SecureSecretBindingView[]
@@ -69,6 +71,7 @@ export interface SecureAccessRequestView {
   requestedByLabel?: string
   secretId?: string
   secretAlias?: string
+  username?: string
   purpose: string
   requestedBindings: SecureSecretBindingView[]
   requestedPolicy: SecureLeasePolicyView
@@ -117,10 +120,17 @@ export interface SecureSessionProjectContext {
   maxProjectDefaults?: number
 }
 
+export interface SecurePrivateDestinationOption {
+  destination: import('@forge/protocol').SecureSecretSaveDestination
+  label: string
+  description: string
+}
+
 export type SecurePrivateFulfillmentInput =
   | {
       value: string | Uint8Array
       displayName?: string
+      username?: string
       retention: 'session'
       scope: Extract<SecureSecretScope, { kind: 'profile' }>
       makeProjectDefault?: false
@@ -128,6 +138,8 @@ export type SecurePrivateFulfillmentInput =
   | {
       value: string | Uint8Array
       displayName?: string
+      username?: string
+      destination?: import('@forge/protocol').SecureSecretSaveDestination
       retention: Extract<SecureSecretRetention, 'saved'>
       scope: SecureSecretScope
       makeProjectDefault?: boolean
@@ -179,6 +191,7 @@ export interface SecureSessionRequestConfig {
     claimSecret: string,
   ) => Promise<SecureBrowserPairingClaimResponse>
   onBrowserPaired?: () => void | Promise<void>
+  loadPrivateDestinations?: () => Promise<SecurePrivateDestinationOption[]>
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
   onGrant: (

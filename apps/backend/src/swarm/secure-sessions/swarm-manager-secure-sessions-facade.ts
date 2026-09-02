@@ -29,6 +29,7 @@ import type {
   ConnectBitwardenPasswordManagerInput,
   ApplySecureSessionProjectDefaultsInput,
   CreateLocalSecureSecretInput,
+  CreateBitwardenPasswordManagerSecretInput,
   CreateSecureSshTrustedHostInput,
   FulfillSecureAccessRequestInput,
   ImportBitwardenSecureSecretInput,
@@ -232,6 +233,13 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary> {
     return this.secureSessions.createLocalSecureSecret(input);
+  }
+
+  createBitwardenPasswordManagerSecret(
+    providerId: string,
+    input: CreateBitwardenPasswordManagerSecretInput,
+  ): Promise<SecureSecretSummary> {
+    return this.secureSessions.createBitwardenPasswordManagerSecret(providerId, input);
   }
 
   updateSecureSecret(

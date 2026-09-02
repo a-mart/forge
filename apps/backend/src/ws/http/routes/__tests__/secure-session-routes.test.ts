@@ -395,7 +395,13 @@ describe("secure session routes", () => {
       {
         baseRevision: 6,
         displayAlias: "DEPLOY_PASSWORD",
+        username: "deploy-user",
         encryptedMaterial,
+        destination: {
+          kind: "bitwarden_password_manager",
+          providerId: "password-manager-1",
+          collectionId: "11111111-1111-4111-8111-111111111111",
+        },
         leaseKind: "task",
         exposures: [{ deliveryKind: "askpass", targetName: "SSH_ASKPASS" }],
         retention: "saved",
@@ -411,7 +417,13 @@ describe("secure session routes", () => {
       {
         baseRevision: 6,
         displayAlias: "DEPLOY_PASSWORD",
+        username: "deploy-user",
         encryptedMaterial,
+        destination: {
+          kind: "bitwarden_password_manager",
+          providerId: "password-manager-1",
+          collectionId: "11111111-1111-4111-8111-111111111111",
+        },
         leaseKind: "task",
         exposures: [{ deliveryKind: "askpass", targetName: "SSH_ASKPASS" }],
         retention: "saved",

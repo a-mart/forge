@@ -27,6 +27,7 @@ describe("SecureSessionStore", () => {
         providerId: "local",
         displayAlias: "deploy-token",
         displayName: "Deploy token",
+        username: "deploy-user",
         note: "Used by the production deploy workflow.",
         scopeKind: "instance",
         retention: "saved",
@@ -45,6 +46,7 @@ describe("SecureSessionStore", () => {
       expect.objectContaining({
         secretId: "secret-1",
         displayAlias: "deploy-token",
+        username: "deploy-user",
         note: "Used by the production deploy workflow.",
         retention: "saved"
       })
@@ -52,6 +54,7 @@ describe("SecureSessionStore", () => {
     expect(store.listSecrets()[0]).not.toHaveProperty("encryptedMaterial");
     expect(store.getEncryptedSecret("secret-1")).toEqual(expect.objectContaining({
       sourceLocator: "local:secret-1",
+      username: "deploy-user",
       note: "Used by the production deploy workflow.",
       encryptedMaterial: Buffer.from("safe-storage-ciphertext")
     }));

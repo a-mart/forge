@@ -18,6 +18,7 @@ import {
   type SecureSecretLeaseKind,
   type SecureSecretRetention,
   type SecureSecretScope,
+  type SecureSecretSaveDestination,
   type SecureSessionReadiness,
   type SecureSessionSnapshot,
 } from "@forge/protocol";
@@ -65,11 +66,13 @@ export type FulfillSecureAccessRequestInput = {
   baseRevision: number;
   displayAlias: string;
   displayName?: string;
+  username?: string;
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];
   retention: SecureSecretRetention;
   scope?: SecureSecretScope;
   makeProjectDefault?: boolean;
+  destination?: SecureSecretSaveDestination;
 } & (
   | { leaseKind: Exclude<SecureSecretLeaseKind, "timed"> }
   | { leaseKind: "timed"; durationSeconds: number }
@@ -465,6 +468,7 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     "baseRevision",
     "displayAlias",
     "displayName",
+    "username",
     "encryptedMaterial",
     "leaseKind",
     "durationSeconds",
@@ -472,6 +476,7 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     "retention",
     "scope",
     "makeProjectDefault",
+    "destination",
   ]);
   const grant = parseGrantSecureSecretLeaseRequest({
     baseRevision: input.baseRevision,
@@ -486,6 +491,9 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
   const displayName = input.displayName === undefined
     ? undefined
     : parseDisplayAlias(input.displayName);
+  const username = input.username === undefined
+    ? undefined
+    : parseUsername(input.username);
   const encryptedMaterial = parseEncryptedMaterial(input.encryptedMaterial);
   const retention = parseRetention(input.retention);
   const scope = input.scope === undefined
@@ -495,6 +503,9 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     input.makeProjectDefault,
     "request.makeProjectDefault",
   );
+  const destination = input.destination === undefined
+    ? undefined
+    : parseSaveDestination(input.destination);
   if (retention === "saved" && scope === undefined) {
     throw new SecureSessionsContractError(
       "request.scope is required for saved secrets",
@@ -516,6 +527,7 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     baseRevision: grant.baseRevision,
     displayAlias,
     ...(displayName === undefined ? {} : { displayName }),
+    ...(username === undefined ? {} : { username }),
     encryptedMaterial,
     exposures: grant.exposures.map((exposure) =>
       parseSecureSecretBinding(exposure)
@@ -523,11 +535,41 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     retention,
     ...(scope === undefined ? {} : { scope }),
     ...(makeProjectDefault === undefined ? {} : { makeProjectDefault }),
+    ...(destination === undefined ? {} : { destination }),
     leaseKind: grant.leaseKind,
     ...(grant.leaseKind === "timed"
       ? { durationSeconds: grant.durationSeconds }
       : {}),
   } as FulfillSecureAccessRequestInput;
+}
+
+function parseSaveDestination(value: unknown): SecureSecretSaveDestination {
+  const input = requireObject(value);
+  if (input.kind === "local") {
+    assertKnownKeys(input, ["kind"]);
+    return { kind: "local" };
+  }
+  if (input.kind === "bitwarden_password_manager") {
+    assertKnownKeys(input, ["kind", "providerId", "collectionId"]);
+    return {
+      kind: "bitwarden_password_manager",
+      providerId: parseDisplayAlias(input.providerId),
+      collectionId: parseDisplayAlias(input.collectionId),
+    };
+  }
+  throw new SecureSessionsContractError("request.destination is invalid");
+}
+
+function parseUsername(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.trim().length < 1
+    || value.length > 512
+    || value.includes("\0")
+  ) {
+    throw new SecureSessionsContractError("request.username is invalid");
+  }
+  return value.trim();
 }
 
 function parseRetention(value: unknown): SecureSecretRetention {

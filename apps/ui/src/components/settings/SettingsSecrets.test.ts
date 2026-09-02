@@ -22,6 +22,7 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   fetchSecureSessionReadiness: vi.fn(),
   installSecureRunner: vi.fn(),
   createLocalSecret: vi.fn(),
+  createBitwardenPasswordManagerSecret: vi.fn(),
   updateSecureSecret: vi.fn(),
   updateSecureSecretAutomaticGrant: vi.fn(),
   updateSecureSecretProjectDefault: vi.fn(),
@@ -61,6 +62,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.installSecureRunner(...args),
     createLocalSecret: (...args: unknown[]) =>
       secureSecretsApiMock.createLocalSecret(...args),
+    createBitwardenPasswordManagerSecret: (...args: unknown[]) =>
+      secureSecretsApiMock.createBitwardenPasswordManagerSecret(...args),
     updateSecureSecret: (...args: unknown[]) =>
       secureSecretsApiMock.updateSecureSecret(...args),
     updateSecureSecretAutomaticGrant: (...args: unknown[]) =>
@@ -282,6 +285,7 @@ beforeEach(() => {
     affectedSecrets: [],
   })
   secureSecretsApiMock.exportSecureVaultTransfer.mockReset()
+  secureSecretsApiMock.createBitwardenPasswordManagerSecret.mockReset()
   secureSecretsApiMock.importSecureVaultTransfer.mockReset()
   secureSecretsApiMock.connectBitwardenPasswordManager.mockReset()
   secureSecretsApiMock.fetchBitwardenPasswordManagerSettings.mockReset()

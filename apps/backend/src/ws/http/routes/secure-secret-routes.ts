@@ -66,6 +66,7 @@ export type SecureRouteErrorCode = (typeof SECURE_ROUTE_ERROR_CODES)[number];
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;
+  username?: string;
   note?: string;
   encryptedMaterial: string;
   bindings?: SecureSecretBinding[];
@@ -73,9 +74,22 @@ export interface CreateLocalSecureSecretInput {
   retention?: SecureSecretRetention;
 }
 
+export interface CreateBitwardenPasswordManagerSecretInput {
+  collectionId: string;
+  displayAlias: string;
+  displayName?: string;
+  username?: string;
+  note?: string;
+  encryptedMaterial: string;
+  bindings?: SecureSecretBinding[];
+  scope?: SecureSecretScope;
+  retention?: Extract<SecureSecretRetention, "saved">;
+}
+
 export interface UpdateSecureSecretInput {
   displayAlias?: string;
   displayName?: string | null;
+  username?: string | null;
   note?: string | null;
   encryptedMaterial?: string;
   bindings?: SecureSecretBinding[];
@@ -176,6 +190,10 @@ export interface SecureSecretTransportService {
     policy: SecureSecretAutomaticGrantPolicy,
   ): Promise<SecureSecretSummary>;
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary>;
+  createBitwardenPasswordManagerSecret(
+    providerId: string,
+    input: CreateBitwardenPasswordManagerSecretInput,
+  ): Promise<SecureSecretSummary>;
   updateSecureSecret(
     secretId: string,
     input: UpdateSecureSecretInput,
@@ -377,6 +395,22 @@ export function createSecureSecretRoutes(options: {
             );
             return;
           }
+        }
+
+        const passwordManagerItemMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/items$/,
+        );
+        if (request.method === "POST" && passwordManagerItemMatch) {
+          const providerId = parsePathId(passwordManagerItemMatch[1], "providerId");
+          const input = parseCreateBitwardenPasswordManagerSecretInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            201,
+            await options.service.createBitwardenPasswordManagerSecret(providerId, input),
+          );
+          return;
         }
 
         const passwordManagerUnlockMatch = requestUrl.pathname.match(
@@ -731,6 +765,7 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
   assertKnownKeys(input, [
     "displayAlias",
     "displayName",
+    "username",
     "note",
     "encryptedMaterial",
     "bindings",
@@ -742,6 +777,9 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
     ...(input.displayName === undefined
       ? {}
       : { displayName: parseLabel(input.displayName, "displayName") }),
+    ...(input.username === undefined
+      ? {}
+      : { username: parseUsername(input.username) }),
     ...(input.note === undefined
       ? {}
       : { note: parseNote(input.note) }),
@@ -755,6 +793,39 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
     ...(input.retention === undefined
       ? {}
       : { retention: parseRetention(input.retention) }),
+  };
+}
+
+function parseCreateBitwardenPasswordManagerSecretInput(
+  value: unknown,
+): CreateBitwardenPasswordManagerSecretInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, [
+    "collectionId",
+    "displayAlias",
+    "displayName",
+    "username",
+    "note",
+    "encryptedMaterial",
+    "bindings",
+    "scope",
+    "retention",
+  ]);
+  if (input.retention !== undefined && input.retention !== "saved") {
+    throw new SecureSessionsContractError("request.retention is invalid");
+  }
+  return {
+    collectionId: parseLabel(input.collectionId, "collectionId"),
+    displayAlias: parseLabel(input.displayAlias, "displayAlias"),
+    ...(input.displayName === undefined
+      ? {}
+      : { displayName: parseLabel(input.displayName, "displayName") }),
+    ...(input.username === undefined ? {} : { username: parseUsername(input.username) }),
+    ...(input.note === undefined ? {} : { note: parseNote(input.note) }),
+    encryptedMaterial: parseEncryptedPayload(input.encryptedMaterial, "encryptedMaterial"),
+    ...(input.bindings === undefined ? {} : { bindings: parseBindings(input.bindings) }),
+    ...(input.scope === undefined ? {} : { scope: parseSecureSecretScope(input.scope) }),
+    ...(input.retention === undefined ? {} : { retention: "saved" }),
   };
 }
 
@@ -860,6 +931,7 @@ function parseUpdateSecretInput(value: unknown): UpdateSecureSecretInput {
   assertKnownKeys(input, [
     "displayAlias",
     "displayName",
+    "username",
     "note",
     "encryptedMaterial",
     "bindings",
@@ -881,6 +953,9 @@ function parseUpdateSecretInput(value: unknown): UpdateSecureSecretInput {
               ? null
               : parseLabel(input.displayName, "displayName"),
         }),
+    ...(input.username === undefined
+      ? {}
+      : { username: input.username === null ? null : parseUsername(input.username) }),
     ...(input.note === undefined
       ? {}
       : { note: input.note === null ? null : parseNote(input.note) }),
@@ -1048,6 +1123,18 @@ function parseLabel(value: unknown, field: string): string {
     || value.includes("\0")
   ) {
     throw new SecureSessionsContractError(`${field} is invalid`);
+  }
+  return value.trim();
+}
+
+function parseUsername(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value.trim().length === 0
+    || value.length > 512
+    || value.includes("\0")
+  ) {
+    throw new SecureSessionsContractError("username is invalid");
   }
   return value.trim();
 }

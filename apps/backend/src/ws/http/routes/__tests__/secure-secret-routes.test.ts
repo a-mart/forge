@@ -153,6 +153,7 @@ function fakeService(): SecureSecretTransportService {
     ),
     replaceSecureSecretAutomaticGrantPolicy: vi.fn(async () => secret),
     createLocalSecureSecret: vi.fn(async () => secret),
+    createBitwardenPasswordManagerSecret: vi.fn(async () => secret),
     updateSecureSecret: vi.fn(async () => secret),
     deleteSecureSecret: vi.fn(async () => undefined),
     listSecureSshTrustedHosts: vi.fn(() => [sshTrustedHost]),
@@ -218,6 +219,53 @@ describe("secure secret routes", () => {
     );
     expect(plaintextRejected.status).toBe(400);
     expect(service.unlockBitwardenPasswordManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a Bitwarden login as encrypted material plus safe username metadata", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+    const encryptedMaterial = Buffer.from("ciphertext-material").toString("base64");
+
+    const response = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/items`,
+      {
+        collectionId: passwordManagerSettings.collections[0]!.collectionId,
+        displayAlias: "deployment/login",
+        displayName: "Deployment login",
+        username: "deploy-user",
+        note: "Used for releases.",
+        encryptedMaterial,
+        scope: { kind: "profile", profileId: "profile-1" },
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(service.createBitwardenPasswordManagerSecret).toHaveBeenCalledWith(
+      "password-manager-1",
+      {
+        collectionId: passwordManagerSettings.collections[0]!.collectionId,
+        displayAlias: "deployment/login",
+        displayName: "Deployment login",
+        username: "deploy-user",
+        note: "Used for releases.",
+        encryptedMaterial,
+        scope: { kind: "profile", profileId: "profile-1" },
+      },
+    );
+    expect(JSON.stringify(await response.json())).not.toContain(encryptedMaterial);
+
+    const plaintext = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/password-manager-1/items`,
+      {
+        collectionId: passwordManagerSettings.collections[0]!.collectionId,
+        displayAlias: "deployment/login",
+        username: "deploy-user",
+        password: "must-not-pass",
+        scope: { kind: "profile", profileId: "profile-1" },
+      },
+    );
+    expect(plaintext.status).toBe(400);
+    expect(service.createBitwardenPasswordManagerSecret).toHaveBeenCalledTimes(1);
   });
 
   it("installs or selects a Bitwarden CLI through strict metadata-only inputs", async () => {

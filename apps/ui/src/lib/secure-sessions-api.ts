@@ -391,6 +391,10 @@ export async function fulfillSecureAccessRequestPrivately(
         baseRevision,
         displayAlias: request.displayAlias,
         ...(input.displayName ? { displayName: input.displayName } : {}),
+        ...(input.username ? { username: input.username } : {}),
+        ...(input.retention === 'saved' && input.destination
+          ? { destination: input.destination }
+          : {}),
         encryptedMaterial,
         retention: input.retention,
         scope: input.scope,
@@ -410,6 +414,7 @@ export function toSecureSecretOptions(secrets: SecureSecretSummary[]): SecureSec
     secretId: secret.secretId,
     displayAlias: secret.displayAlias,
     ...(secret.displayName ? { displayName: secret.displayName } : {}),
+    ...(secret.username ? { username: secret.username } : {}),
     available: secret.available,
     bindings: secret.bindings.map(toBindingView),
   }))
@@ -458,6 +463,7 @@ export function toSecureSessionSnapshotView(
       leaseId: lease.leaseId,
       secretId: lease.secretId,
       displayAlias: lease.displayAlias,
+      ...(lease.username ? { username: lease.username } : {}),
       policy: toLeasePolicy(lease.leaseKind, snapshot.updatedAt, lease.expiresAt),
       status: lease.status,
       bindings: lease.exposures.map(toBindingView),
@@ -474,6 +480,7 @@ export function toSecureSessionSnapshotView(
         ? { requestedByLabel: request.requestedByDisplayName }
         : {}),
       ...(request.displayAlias ? { secretAlias: request.displayAlias } : {}),
+      ...(request.username ? { username: request.username } : {}),
       ...(request.secretId ? { secretId: request.secretId } : {}),
       purpose: request.purposeSummary,
       requestedBindings: request.requestedExposures.map(toBindingView),

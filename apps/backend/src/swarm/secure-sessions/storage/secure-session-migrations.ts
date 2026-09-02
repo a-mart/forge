@@ -1069,6 +1069,24 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
           );
       `);
     }
+  },
+  {
+    version: 11,
+    name: "secret_username_metadata",
+    requiresForeignKeysOff: false,
+    up(database) {
+      database.exec(`
+        ALTER TABLE secure_session_secret
+        ADD COLUMN username TEXT CHECK (
+          username IS NULL OR length(username) BETWEEN 1 AND 512
+        );
+
+        ALTER TABLE secure_session_request
+        ADD COLUMN username TEXT CHECK (
+          username IS NULL OR length(username) BETWEEN 1 AND 512
+        );
+      `);
+    }
   }
 ];
 
