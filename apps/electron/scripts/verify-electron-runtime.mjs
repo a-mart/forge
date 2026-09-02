@@ -3,7 +3,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const TARGET_VERSIONS = Object.freeze({
+// Single source of truth for the Node runtime users receive inside Forge Desktop.
+export const ELECTRON_RUNTIME_VERSIONS = Object.freeze({
   electron: '43.2.0',
   node: '24.18.0',
   chrome: '150.0.7871.129',
@@ -16,7 +17,7 @@ const electronRequire = createRequire(path.join(electronDir, 'package.json'))
 
 export async function verifyElectronRuntime() {
   const packageVersion = electronRequire('electron/package.json').version
-  assertVersion('installed package', packageVersion, TARGET_VERSIONS.electron)
+  assertVersion('installed package', packageVersion, ELECTRON_RUNTIME_VERSIONS.electron)
 
   // Electron 42+ downloads the platform binary lazily. Invoking its CLI here makes
   // that network/materialization gate deterministic and early instead of deferring
@@ -29,7 +30,7 @@ export async function verifyElectronRuntime() {
     env: cliEnvironment,
   })).stdout.trim()
   const cliVersion = cliOutput.split(/\r?\n/).at(-1)?.replace(/^v/, '')
-  assertVersion('CLI', cliVersion, TARGET_VERSIONS.electron)
+  assertVersion('CLI', cliVersion, ELECTRON_RUNTIME_VERSIONS.electron)
 
   const electronExecutable = electronRequire('electron')
   const result = await run(electronExecutable, ['-p', 'JSON.stringify(process.versions)'], {
@@ -37,7 +38,7 @@ export async function verifyElectronRuntime() {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   })
   const runtimeVersions = JSON.parse(result.stdout.trim())
-  for (const [component, expectedVersion] of Object.entries(TARGET_VERSIONS)) {
+  for (const [component, expectedVersion] of Object.entries(ELECTRON_RUNTIME_VERSIONS)) {
     assertVersion(`embedded ${component}`, runtimeVersions[component], expectedVersion)
   }
 

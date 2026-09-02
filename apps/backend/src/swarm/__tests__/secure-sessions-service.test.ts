@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
+  SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   type AgentDescriptor,
   type SecureSessionSnapshotEvent,
@@ -2837,7 +2838,7 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
-  it("enforces the shared project-default limit without mutating the 17th selection", async () => {
+  it("enforces the shared project-default limit without mutating the overflow selection", async () => {
     const harness = createHarness();
     const secrets = [];
     for (let index = 0; index <= SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
@@ -2866,6 +2867,205 @@ describe("SecureSessionsService", () => {
     expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
       .toHaveLength(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
     await harness.close();
+  });
+
+  it("enforces a configured project-default limit below the default", async () => {
+    const harness = createHarness({ maxProjectDefaults: 2 });
+    const secrets = [];
+    for (let index = 0; index < 3; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `custom-limit-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `CUSTOM_LIMIT_${index}`,
+        }],
+      }));
+    }
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[0]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).resolves.toEqual(expect.objectContaining({ secretId: secrets[0]!.secretId }));
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[1]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).resolves.toEqual(expect.objectContaining({ secretId: secrets[1]!.secretId }));
+    await expect(harness.service.setSecureSecretProjectDefault(secrets[2]!.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).rejects.toMatchObject({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toHaveLength(2);
+    await harness.close();
+  });
+
+  it("reports occupied automatic grants and invalidates the catalog after a settings change", async () => {
+    const harness = createHarness({ maxProjectDefaults: 3 });
+    const secretA = await harness.service.createLocalSecureSecret({
+      displayAlias: "occupied-a",
+      encryptedMaterial: Buffer.from(`${ALPHA}-a`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "OCCUPIED_A" }],
+    });
+    const secretB = await harness.service.createLocalSecureSecret({
+      displayAlias: "occupied-b",
+      encryptedMaterial: Buffer.from(`${ALPHA}-b`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "OCCUPIED_B" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secretA.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(secretB.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    expect(await harness.service.getOccupiedProjectDefaultCount()).toBe(2);
+
+    const before = harness.store.getCatalogState().revision;
+    await harness.service.notifySecureSecretSettingsChanged();
+    expect(harness.store.getCatalogState().revision).toBe(before + 1);
+    expect(harness.catalogEvents.at(-1)).toEqual({
+      type: "secure_secret_catalog_changed",
+      revision: before + 1,
+    });
+    await harness.close();
+  });
+
+  it("enforces the configured grant limit for both automatic and manual batches", async () => {
+    const harness = createHarness({ maxProjectDefaults: 2 });
+    const secrets = [];
+    for (let index = 0; index < 3; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `shared-cap-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `SHARED_CAP_${index}`,
+        }],
+      }));
+    }
+    const started = await harness.service.startSecureSession("manager-a");
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: secrets.slice(0, 2).map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `SHARED_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).resolves.toEqual(expect.objectContaining({
+      leases: expect.arrayContaining([
+        expect.objectContaining({ secretId: secrets[0]!.secretId }),
+        expect.objectContaining({ secretId: secrets[1]!.secretId }),
+      ]),
+    }));
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: secrets.map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `SHARED_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).rejects.toMatchObject({ code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED" });
+    await harness.close();
+  });
+
+  it("applies a live grant-limit increase to a subsequent manual request", async () => {
+    let maxProjectDefaults = 1;
+    const harness = createHarness({
+      maxProjectDefaults: () => maxProjectDefaults,
+    });
+    const secrets = [];
+    for (let index = 0; index < 2; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `live-cap-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `LIVE_CAP_${index}`,
+        }],
+      }));
+    }
+    const started = await harness.service.startSecureSession("manager-a");
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: secrets.map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `LIVE_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).rejects.toMatchObject({ code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED" });
+    maxProjectDefaults = 2;
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: secrets.map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `LIVE_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).resolves.toEqual(expect.objectContaining({
+      leases: expect.arrayContaining([
+        expect.objectContaining({ secretId: secrets[0]!.secretId }),
+        expect.objectContaining({ secretId: secrets[1]!.secretId }),
+      ]),
+    }));
+    await harness.close();
+  });
+
+  it("defaults manual grant batches to 50 and accepts the absolute 256 grant max", async () => {
+    const defaultHarness = createHarness();
+    const overflowSecrets = [];
+    for (let index = 0; index < SECURE_SECRET_MAX_PROJECT_DEFAULTS + 1; index += 1) {
+      overflowSecrets.push(await defaultHarness.service.createLocalSecureSecret({
+        displayAlias: `default-cap-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `DEFAULT_CAP_${index}`,
+        }],
+      }));
+    }
+    const defaultStarted = await defaultHarness.service.startSecureSession("manager-a");
+    await expect(defaultHarness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: defaultStarted.revision,
+      grants: overflowSecrets.map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `DEFAULT_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).rejects.toMatchObject({ code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED" });
+    await defaultHarness.close();
+
+    const maxHarness = createHarness({
+      maxProjectDefaults: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
+    });
+    const maxSecrets = [];
+    for (let index = 0; index < 2; index += 1) {
+      maxSecrets.push(await maxHarness.service.createLocalSecureSecret({
+        displayAlias: `absolute-cap-${index}`,
+        encryptedMaterial: Buffer.from(`${BETA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `ABSOLUTE_CAP_${index}`,
+        }],
+      }));
+    }
+    const maxStarted = await maxHarness.service.startSecureSession("manager-a");
+    await expect(maxHarness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: maxStarted.revision,
+      grants: maxSecrets.map((secret, index) => ({
+        secretId: secret.secretId,
+        exposures: [{ deliveryKind: "environment", targetName: `ABSOLUTE_CAP_${index}` }],
+        leaseKind: "task" as const,
+      })),
+    })).resolves.toEqual(expect.objectContaining({
+      leases: expect.arrayContaining([
+        expect.objectContaining({ secretId: maxSecrets[0]!.secretId }),
+        expect.objectContaining({ secretId: maxSecrets[1]!.secretId }),
+      ]),
+    }));
+    await maxHarness.close();
   });
 
   it("applies a durable all-project policy to current and future projects", async () => {
@@ -5481,6 +5681,7 @@ async function grant(
 }
 
 function createHarness(options: {
+  maxProjectDefaults?: number | (() => number);
   blockProviderStatus?: boolean;
   blockSourceResolution?: boolean;
   blockEnsures?: readonly string[];
@@ -5669,6 +5870,7 @@ function createHarness(options: {
     dispose() {},
   };
   const snapshots: SecureSessionSnapshotEvent[] = [];
+  const catalogEvents: Array<{ type: string; revision: number }> = [];
   const recycles: string[] = [];
   let recycleDisposition = options.recycleDisposition;
   let nextId = 0;
@@ -5725,7 +5927,7 @@ function createHarness(options: {
       return value;
     },
     emitSnapshot: (event) => snapshots.push(event),
-    emitCatalogChanged: () => undefined,
+    emitCatalogChanged: (event) => catalogEvents.push(event),
     applyModeRuntimeRecycle: async (agentId) => {
       recycles.push(agentId);
       if (options.recycleThrows) throw new Error("recycle failed");
@@ -5742,6 +5944,12 @@ function createHarness(options: {
     },
     now,
     createId: () => `id-${++nextId}`,
+    getMaxProjectDefaults: () => {
+      const configured = typeof options.maxProjectDefaults === "function"
+        ? options.maxProjectDefaults()
+        : options.maxProjectDefaults;
+      return configured ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS;
+    },
   });
   return {
     service,
@@ -5758,6 +5966,7 @@ function createHarness(options: {
     passwordManagerCliInstalls,
     passwordManagerStatusPaths,
     snapshots,
+    catalogEvents,
     recycles,
     setRecycleDisposition(value: "recycled" | "deferred" | "none") {
       recycleDisposition = value;

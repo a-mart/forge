@@ -44,7 +44,7 @@ const ERROR_MESSAGES: Record<SecureSessionUiErrorCode, string> = {
   SECURE_BUILDER_ONLY: 'Secure Sessions are available only in the local Builder.',
   SECURE_PRIVATE_API_UNAVAILABLE: 'Private secret entry requires the Forge desktop app.',
   SECURE_PROJECT_DEFAULT_LIMIT_REACHED:
-    'This project already has the maximum number of automatic secrets.',
+    'This project already has the maximum number of secure grants.',
   SECURE_REQUEST_INVALID: 'The secure session request is no longer valid.',
   SECURE_SECRET_ALIAS_CONFLICT:
     'A secret with this name was saved elsewhere. Refresh and choose the saved secret.',

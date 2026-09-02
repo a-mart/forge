@@ -56,12 +56,13 @@ Compatible connected instances can accept an authenticated local payload reload 
 Run from the repository root:
 
 ```sh
-pnpm --filter @forge/protocol build
 pnpm --filter @forge/chrome-extension identity
 pnpm --filter @forge/chrome-extension typecheck
 pnpm --filter @forge/chrome-extension test
 pnpm --filter @forge/chrome-extension build
 ```
+
+Direct typecheck, test, and build commands compile `@forge/protocol` when `packages/protocol/dist` is absent, so a clean checkout does not depend on workspace execution order. `pnpm --filter @forge/protocol build` remains valid when you want to compile the contract first yourself.
 
 The focused tests cover pinned identity, the exact manifest ledger, declared-API use assertions, deterministic packaging, selector verification, native RPC bounds, per-tab compare-and-set rules, debugger routing, human interruption, navigation, snapshots, and interactions.
 

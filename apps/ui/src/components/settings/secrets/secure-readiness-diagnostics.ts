@@ -9,7 +9,6 @@ import {
 } from '@/lib/secure-secrets-api'
 
 const MAX_DIAGNOSTIC_SOURCES = 8
-const MAX_DIAGNOSTIC_PROJECT_DEFAULTS = 16
 
 const EXECUTION_CODES = new Set<SecureSessionReadinessCode>([
   'available',
@@ -73,10 +72,10 @@ export interface SafeSecureSessionsDiagnostics {
    * Configuration-only project defaults for the contextual project.
    * Runtime activation remains authoritative in the Secure Session picker.
    */
-  projectDefaults?: Array<{
-    state: 'configured'
-    statusCode: 'ok'
-  }>
+  projectDefaults?: {
+    configuredCount: number
+    truncated: boolean
+  }
 }
 
 export function buildSafeSecureSessionsDiagnostics({
@@ -84,12 +83,14 @@ export function buildSafeSecureSessionsDiagnostics({
   privateEntryAvailable,
   providers,
   configuredProjectDefaultCount,
+  maxProjectDefaults,
   checkedAt = new Date().toISOString(),
 }: {
   readiness: SecureSessionReadiness | null
   privateEntryAvailable: boolean
   providers: SecureSecretProviderSummary[]
   configuredProjectDefaultCount?: number
+  maxProjectDefaults?: number
   checkedAt?: string
 }): SafeSecureSessionsDiagnostics {
   const rawExecutionCode = readiness?.code
@@ -112,15 +113,12 @@ export function buildSafeSecureSessionsDiagnostics({
             : STATUS_CODE_BY_STATUS[provider.status],
       }]
     })
-  const boundedDefaultCount = configuredProjectDefaultCount === undefined
+  const exactDefaultCount = configuredProjectDefaultCount === undefined
     ? undefined
-    : Math.max(
-        0,
-        Math.min(
-          MAX_DIAGNOSTIC_PROJECT_DEFAULTS,
-          Math.floor(configuredProjectDefaultCount),
-        ),
-      )
+    : Math.max(0, Math.floor(configuredProjectDefaultCount))
+  const diagnosticBound = typeof maxProjectDefaults === 'number' && Number.isSafeInteger(maxProjectDefaults)
+    ? Math.max(0, maxProjectDefaults)
+    : exactDefaultCount
 
   return {
     schemaVersion: 1,
@@ -128,13 +126,13 @@ export function buildSafeSecureSessionsDiagnostics({
     execution: { code: executionCode },
     privateEntry: { available: privateEntryAvailable === true },
     sources,
-    ...(boundedDefaultCount === undefined
+    ...(exactDefaultCount === undefined
       ? {}
       : {
-          projectDefaults: Array.from(
-            { length: boundedDefaultCount },
-            () => ({ state: 'configured' as const, statusCode: 'ok' as const }),
-          ),
+          projectDefaults: {
+            configuredCount: exactDefaultCount,
+            truncated: diagnosticBound !== undefined && exactDefaultCount > diagnosticBound,
+          },
         }),
   }
 }

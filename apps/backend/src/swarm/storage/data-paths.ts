@@ -554,6 +554,10 @@ export function getCompactionSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "compaction-settings.json");
 }
 
+export function getSecureSecretSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "secure-secret-settings.json");
+}
+
 export function getModelCacheVisualizationSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "model-cache-visualization.json");
 }

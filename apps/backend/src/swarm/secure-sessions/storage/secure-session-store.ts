@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS } from "@forge/protocol";
 import {
   closeSecureSessionDb,
   getOrCreateSecureSessionDb,
@@ -78,6 +79,7 @@ const MAX_SOURCE_LOCATOR_LENGTH = 4096;
 const MAX_TARGET_LENGTH = 4096;
 const MAX_PURPOSE_LENGTH = 2000;
 const MAX_BINDINGS = 16;
+const MAX_LEASE_GRANTS = SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS;
 const MAX_ENCRYPTED_MATERIAL_BYTES = 1024 * 1024;
 const MAX_SSH_ALIAS_LENGTH = 128;
 const MAX_SSH_HOST_LENGTH = 512;
@@ -199,6 +201,10 @@ export class SecureSessionStore {
     `).get() as { revision: number; updated_at: string } | undefined;
     if (!row) throw new SecureSessionNotFoundError("catalog state");
     return { revision: row.revision, updatedAt: row.updated_at };
+  }
+
+  bumpCatalogRevision(): SecureSessionCatalogState {
+    return this.bumpCatalog(this.now().toISOString());
   }
 
   getProviderBackendConfig(providerId: string): SecureSessionProviderBackendConfig | null {
@@ -2019,9 +2025,9 @@ export class SecureSessionStore {
     if (
       !Array.isArray(input.grants)
       || input.grants.length < 1
-      || input.grants.length > MAX_BINDINGS
+      || input.grants.length > MAX_LEASE_GRANTS
     ) {
-      throw new Error(`Lease grants must contain between 1 and ${MAX_BINDINGS} entries`);
+      throw new Error(`Lease grants must contain between 1 and ${MAX_LEASE_GRANTS} entries`);
     }
     const normalized = input.grants.map((grant) => ({
       grant,

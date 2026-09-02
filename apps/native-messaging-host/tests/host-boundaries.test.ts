@@ -174,6 +174,27 @@ describe('native host trust and process boundaries', () => {
     expect(Buffer.concat(stdout.chunks)).toHaveLength(0)
   })
 
+  it('treats a Desktop-unavailable relay pump failure as a clean native-host exit', async () => {
+    const input = new PassThrough()
+    const relay = {
+      send: async () => undefined,
+      receive: async () => {
+        throw new DesktopUnavailableError('relay socket closed during epoch replacement')
+      },
+      close: () => undefined,
+    } as unknown as AuthenticatedRelayClient
+
+    await expect(runNativeHost({
+      input,
+      output: capture().stream,
+      diagnostic: capture().stream,
+      platform: 'linux',
+      launchArguments: [HOST_EXTENSION_ORIGIN],
+      connectRelay: async () => relay,
+    })).resolves.toBe(0)
+    expect(input.destroyed).toBe(true)
+  })
+
   it('writes no protocol bytes for a wrong origin', async () => {
     const stdout = capture()
     const stderr = capture()

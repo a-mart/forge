@@ -7,7 +7,9 @@
     "dev": "vite dev --port 47188 --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 47189 --strictPort",
-    "typecheck": "tsc --noEmit",
+    "generate:routes": "tsr generate",
+    "typecheck": "pnpm run generate:routes && tsc --noEmit",
+    "verify:clean-typecheck": "node scripts/verify-clean-typecheck.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -71,6 +73,7 @@
   },
   "devDependencies": {
     "@tanstack/devtools-vite": "^0.3.11",
+    "@tanstack/router-cli": "1.159.9",
     "@testing-library/dom": "^10.4.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",

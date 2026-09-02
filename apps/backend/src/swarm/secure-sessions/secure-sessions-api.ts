@@ -1,9 +1,6 @@
 import type {
   ApplySecureSessionProjectDefaultsRequest,
   CreateSecureSshTrustedHostRequest,
-  ExportSecureVaultTransferResult,
-  ImportSecureVaultTransferRequest,
-  ImportSecureVaultTransferResult,
   RequestSecureSshHostTrustRequest,
   SecureSecretBinding,
   SecureSecretLeaseKind,
@@ -12,11 +9,6 @@ import type {
   UpdateSecureSshTrustedHostRequest,
 } from "@forge/protocol";
 
-export type {
-  ExportSecureVaultTransferResult,
-  ImportSecureVaultTransferRequest,
-  ImportSecureVaultTransferResult,
-};
 import type {
   SecureSessionAgentView as ToolSecureSessionAgentView,
 } from "./secure-session-tools.js";

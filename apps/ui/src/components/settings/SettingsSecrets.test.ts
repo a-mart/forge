@@ -6,6 +6,7 @@ import {
   getByRole,
   getByText,
   queryByRole,
+  queryByText,
   waitFor,
 } from '@testing-library/dom'
 import { createElement } from 'react'
@@ -42,6 +43,7 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   createSecureSshTrustedHost: vi.fn(),
   updateSecureSshTrustedHost: vi.fn(),
   deleteSecureSshTrustedHost: vi.fn(),
+  updateSecureSecretSettings: vi.fn(),
   isSecureMaterialEntryAvailable: vi.fn(() => true),
   checkSecureMaterialEntryAvailability: vi.fn(async () => true),
   unlockSecureMaterialEntry: vi.fn(async () => true),
@@ -101,6 +103,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.updateSecureSshTrustedHost(...args),
     deleteSecureSshTrustedHost: (...args: unknown[]) =>
       secureSecretsApiMock.deleteSecureSshTrustedHost(...args),
+    updateSecureSecretSettings: (...args: unknown[]) =>
+      secureSecretsApiMock.updateSecureSecretSettings(...args),
     isSecureMaterialEntryAvailable: () =>
       secureSecretsApiMock.isSecureMaterialEntryAvailable(),
     checkSecureMaterialEntryAvailability: () =>
@@ -193,6 +197,12 @@ const VAULT_TRANSFER = {
   localSecretCount: 1,
   providerCredentialCount: 1,
 }
+
+const MULTILINE_PRIVATE_VALUE = [
+  '-----BEGIN OPENSSH PRIVATE KEY-----',
+  'not-a-real-private-key',
+  '-----END OPENSSH PRIVATE KEY-----',
+].join('\r\n')
 
 const PROFILES = [
   {
@@ -333,6 +343,14 @@ function render(
       profiles: PROFILES,
       ...(currentProfileId ? { currentProfileId } : {}),
     }))
+  })
+}
+
+function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
+  fireEvent.paste(control, {
+    clipboardData: {
+      getData: (format: string) => format === 'text/plain' ? value : '',
+    },
   })
 }
 
@@ -914,7 +932,7 @@ describe('SettingsSecrets', () => {
         status: 'auth_required',
         statusCode: 'provider_auth_required',
       }],
-      projectDefaults: [{ state: 'configured', statusCode: 'ok' }],
+      projectDefaults: { configuredCount: 1, truncated: false },
     })
     expect(Object.keys(diagnostics).sort()).toEqual([
       'checkedAt',
@@ -973,6 +991,43 @@ describe('SettingsSecrets', () => {
     })
   })
 
+  it('filters saved secrets immediately by their visible metadata', async () => {
+    const sshSecret = {
+      ...SECRET_SUMMARY,
+      secretId: 'secret-2',
+      displayAlias: 'ssh/production',
+      displayName: 'Production SSH key',
+      note: 'Break-glass server access.',
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [SECRET_SUMMARY, sshSecret],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    const search = getByLabelText(container, 'Search saved secrets')
+    expect(getByText(container, 'GitHub work token')).toBeTruthy()
+    expect(getByText(container, 'Production SSH key')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'ssh/production' } })
+    expect(queryByText(container, 'GitHub work token')).toBeNull()
+    expect(getByText(container, 'Production SSH key')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'release automation' } })
+    expect(getByText(container, 'GitHub work token')).toBeTruthy()
+    expect(queryByText(container, 'Production SSH key')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'no such secret' } })
+    expect(getByText(container, 'No matching secrets')).toBeTruthy()
+  })
+
   it('clears submitted local material immediately and leaves no secret value in the DOM', async () => {
     let resolveCreate: ((value: typeof SECRET_SUMMARY) => void) | undefined
     secureSecretsApiMock.createLocalSecret.mockImplementation(() => new Promise((resolve) => {
@@ -987,7 +1042,7 @@ describe('SettingsSecrets', () => {
 
     const aliasInput = getByLabelText(container, 'Alias') as HTMLInputElement
     const noteInput = getByLabelText(container, 'Note (optional)') as HTMLTextAreaElement
-    const materialInput = getByLabelText(container, 'Private value') as HTMLInputElement
+    const materialInput = getByLabelText(container, 'Private value') as HTMLTextAreaElement
     const rawSecret = 'dom-secret-canary-value'
     fireEvent.change(aliasInput, { target: { value: 'github/work' } })
     fireEvent.change(noteInput, {
@@ -1015,6 +1070,84 @@ describe('SettingsSecrets', () => {
     await waitFor(() => {
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
       expect(noteInput.value).toBe('')
+    })
+  })
+
+  it('preserves a multiline private value when creating a local secret', async () => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'ssh/deploy' },
+    })
+    const materialInput = getByLabelText(
+      container,
+      'Private value',
+    ) as HTMLTextAreaElement
+    expect(materialInput.className).not.toContain('text-security')
+    expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
+    flushSync(() => {
+      pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
+    })
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(container.textContent).not.toContain('not-a-real-private-key')
+
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          displayAlias: 'ssh/deploy',
+          material: MULTILINE_PRIVATE_VALUE,
+        }),
+      )
+      expect(materialInput.value).toBe('')
+    })
+  })
+
+  it('preserves a multiline private value when replacing a local secret', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [SECRET_SUMMARY],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    secureSecretsApiMock.updateSecureSecret.mockResolvedValue(SECRET_SUMMARY)
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
+
+    const materialInput = await waitFor(() => getByLabelText(
+      container,
+      'Replace private value (optional)',
+    ) as HTMLTextAreaElement)
+    expect(materialInput.className).not.toContain('text-security')
+    expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
+    flushSync(() => {
+      pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
+    })
+    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+
+    fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        SECRET_SUMMARY.secretId,
+        expect.objectContaining({ material: MULTILINE_PRIVATE_VALUE }),
+      )
+      expect(materialInput.value).toBe('')
     })
   })
 
@@ -1440,12 +1573,67 @@ describe('SettingsSecrets', () => {
     })
   })
 
-  it('prevents enabling a seventeenth automatic secret in one project', async () => {
+  it('defaults the automatic-grant limit to 50 and persists a custom override', async () => {
+    secureSecretsApiMock.updateSecureSecretSettings.mockResolvedValue({
+      ok: true,
+      settings: { maxProjectDefaults: 12, updatedAt: '2026-08-31T12:00:00.000Z' },
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByLabelText(container, 'Secure grants per project')).toBeTruthy()
+    })
+    const limitInput = getByLabelText(container, 'Secure grants per project') as HTMLInputElement
+    expect(limitInput.value).toBe(String(SECURE_SECRET_MAX_PROJECT_DEFAULTS))
+
+    fireEvent.change(limitInput, { target: { value: '12' } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecretSettings).toHaveBeenCalledWith(
+        expect.anything(),
+        { maxProjectDefaults: 12 },
+      )
+      expect(container.textContent).toContain('Secure-grant limit saved.')
+    })
+  })
+
+  it('rejects empty, decimal, and out-of-range automatic-grant limits without saving', async () => {
+    render()
+
+    await waitFor(() => {
+      expect(getByLabelText(container, 'Secure grants per project')).toBeTruthy()
+    })
+    const limitInput = getByLabelText(container, 'Secure grants per project') as HTMLInputElement
+    const save = () => fireEvent.click(getByRole(container, 'button', { name: 'Save' }))
+
+    fireEvent.change(limitInput, { target: { value: '' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+
+    fireEvent.change(limitInput, { target: { value: '12.5' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+
+    fireEvent.change(limitInput, { target: { value: '257' } })
+    save()
+    await waitFor(() => {
+      expect(container.textContent).toContain('Enter a whole number from 1 to 256.')
+    })
+    expect(secureSecretsApiMock.updateSecureSecretSettings).not.toHaveBeenCalled()
+  })
+
+  it('prevents enabling another automatic secret once the live limit is reached', async () => {
     secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
       providers: [LOCAL_PROVIDER],
       secrets: [],
+      maxProjectDefaults: 2,
       projectDefaults: Array.from(
-        { length: SECURE_SECRET_MAX_PROJECT_DEFAULTS },
+        { length: 2 },
         (_, index) => ({
           profileId: 'project-alpha',
           secretId: `existing-secret-${index + 1}`,
@@ -1466,7 +1654,7 @@ describe('SettingsSecrets', () => {
     }) as HTMLButtonElement
     expect(automaticGrantCheckbox.disabled).toBe(true)
     expect(container.textContent).toContain(
-      `A project with ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic grants cannot receive another until one is removed.`,
+      'A project with 2 automatic grants cannot receive another until one is removed.',
     )
   })
 

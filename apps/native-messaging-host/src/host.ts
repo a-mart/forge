@@ -10,6 +10,7 @@ import { validateChromeLaunchArguments } from './launch.js'
 import type { Platform } from './platform.js'
 import { configureBinaryStdio } from './platform.js'
 import type { AuthenticatedRelayClient } from './relay-client.js'
+import { DesktopUnavailableError } from './transport.js'
 
 export interface NativeHostDependencies {
   input: Readable
@@ -66,6 +67,7 @@ export async function runNativeHost(dependencies: NativeHostDependencies): Promi
     await Promise.race(pumps)
     return 0
   } catch (error) {
+    if (error instanceof DesktopUnavailableError) return 0
     diagnosticLine(dependencies.diagnostic, error instanceof Error ? error.message : String(error))
     return 1
   } finally {

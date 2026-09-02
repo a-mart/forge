@@ -22,6 +22,7 @@ export interface BootPreparationPort {
   reloadModelCatalog(): Promise<void>;
   loadSecrets(): Promise<void>;
   loadCompactionSettings(): Promise<void>;
+  loadSecureSecretSettings(): Promise<void>;
   reloadSkillMetadata(): Promise<void>;
   resolveDefaultCwd(cwd: string): Promise<string>;
   refreshDefaultMemoryTemplate(): Promise<unknown>;
@@ -109,6 +110,7 @@ export class SwarmBootCoordinator {
     await preparation.reloadModelCatalog();
     await preparation.loadSecrets();
     await preparation.loadCompactionSettings();
+    await preparation.loadSecureSecretSettings();
     await preparation.reloadSkillMetadata();
     try {
       config.defaultCwd = await preparation.resolveDefaultCwd(config.defaultCwd);

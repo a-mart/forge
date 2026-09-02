@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { createPackageManifest } from './package-manifest.mjs'
 import { hashTree, sha256, stableJson } from './deterministic.mjs'
+import { ensureProtocolDist } from './ensure-protocol.mjs'
 import { verifyIdentity } from './verify-identity.mjs'
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,6 +62,7 @@ async function bundleServiceWorkerBootstrap(payloadFile, outfile, define) {
   await rm(shellFile, { force: true })
 }
 
+await ensureProtocolDist()
 await rm(packageRoot, { recursive: true, force: true })
 await Promise.all([mkdir(path.join(extensionRoot, 'shell'), { recursive: true }), mkdir(temporaryPayload, { recursive: true })])
 await verifyIdentity(sourceRoot)

@@ -171,6 +171,13 @@ describe('local quality routing', () => {
     expect(selection.failureHints.join('\n')).toContain(reason)
   })
 
+  it('prepares generated routes before the full Knip gate', () => {
+    expect(selectChecks('full').checks.find((check) => check.id === 'knip')?.command).toEqual([
+      pnpm,
+      ['run', 'verify:clean-knip'],
+    ])
+  })
+
   it('keeps Docker verification in the full gate', () => {
     expect(checkIds('full')).toEqual(expect.arrayContaining([
       'test',

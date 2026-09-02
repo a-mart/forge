@@ -7,8 +7,8 @@
     "build": "node scripts/build.mjs",
     "fixture:chrome": "node scripts/isolated-chrome-fixture.mjs",
     "identity": "node scripts/verify-identity.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "node scripts/ensure-protocol.mjs && tsc --noEmit",
+    "test": "node scripts/ensure-protocol.mjs && vitest run"
   },
   "devDependencies": {
     "@forge/protocol": "workspace:*",

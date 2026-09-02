@@ -189,13 +189,25 @@ export type SecureSecretScope =
   | { kind: 'profiles'; profileIds: string[] }
 
 /**
- * One project may automatically grant at most this many saved secrets.
+ * One project may grant at most this many saved secrets by default, for both
+ * automatic grants and manual grant request batches. Operators can raise or
+ * lower the live limit in Secrets settings to an integer from
+ * `SECURE_SECRET_MIN_PROJECT_DEFAULTS` through
+ * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS`.
  *
- * This matches the bounded lease-grant operation accepted by the secure
- * runner. Keeping the policy public lets clients disable impossible default
- * selections before they reach the value-entry boundary.
+ * A live override cannot go below the highest number of effective automatic
+ * grants already assigned to any project. Keeping the default public lets
+ * clients disable impossible default selections before they reach the
+ * value-entry boundary when the live override is not yet loaded.
+ *
+ * Protocol parsing accepts grant batches up to
+ * `SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS`. Backend runtime enforcement
+ * uses the current configured limit. Per-secret exposure/binding counts remain
+ * capped at 16 and are independent of this grant-batch limit.
  */
-export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 16
+export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 50
+export const SECURE_SECRET_MIN_PROJECT_DEFAULTS = 1
+export const SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS = 256
 
 /**
  * Projects where a saved secret is granted automatically when Team Secure
@@ -576,7 +588,6 @@ const SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS = 4096
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
-const SECURE_SESSIONS_MAX_GRANTS = 16
 const SECURE_SESSIONS_MAX_SSH_ALIAS_LENGTH = 128
 const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
 const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256
@@ -869,10 +880,10 @@ export function parseGrantSecureSecretLeasesRequest(
   if (
     !Array.isArray(input.grants)
     || input.grants.length === 0
-    || input.grants.length > SECURE_SESSIONS_MAX_GRANTS
+    || input.grants.length > SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS
   ) {
     throw new SecureSessionsContractError(
-      `request.grants must contain 1 to ${SECURE_SESSIONS_MAX_GRANTS} grants`,
+      `request.grants must contain 1 to ${SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS} grants`,
     )
   }
   const grants = input.grants.map((grant, index) =>

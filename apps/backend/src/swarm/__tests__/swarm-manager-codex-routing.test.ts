@@ -371,7 +371,8 @@ function createFailingConnectCodexTestManager(config: Awaited<ReturnType<typeof 
 
 function createRecoveringConnectCodexTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
   let shouldFailConnect = true;
-  return new TestSwarmManager(config, {
+  let recoveringClient: FakeCodexAppServerClient | undefined;
+  const manager = new TestSwarmManager(config, {
     codexAppServerServiceOptions: {
       turnCompletionGraceMs: 25,
       createClient: (handlers) => {
@@ -379,10 +380,13 @@ function createRecoveringConnectCodexTestManager(config: Awaited<ReturnType<type
           shouldFailConnect = false;
           return new FailingConnectCodexAppServerClient(handlers);
         }
-        return new FakeCodexAppServerClient(handlers);
+        recoveringClient = new FakeCodexAppServerClient(handlers);
+        recoveringClient.autoCompleteTurn = false;
+        return recoveringClient;
       },
     },
   });
+  return { manager, getRecoveringClient: () => recoveringClient };
 }
 
 describe("SwarmManager Codex mention routing", () => {
@@ -478,7 +482,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("retries a selected Codex sidecar after setup failure instead of rejecting the error target", async () => {
     const { config } = await createTempConfig();
-    const manager = createRecoveringConnectCodexTestManager(config);
+    const { manager, getRecoveringClient } = createRecoveringConnectCodexTestManager(config);
     await bootWithDefaultManager(manager, config);
 
     await expect(
@@ -493,6 +497,9 @@ describe("SwarmManager Codex mention routing", () => {
       targetAgentId: "manager--codex",
       sourceContext: { channel: "web" },
     });
+    const recoveringClient = getRecoveringClient();
+    if (!recoveringClient) throw new Error("expected recovered Codex client");
+    await recoveringClient.completeTurn();
 
     await vi.waitFor(() => {
       expect(manager.getAgent("manager--codex")?.status).toBe("idle");

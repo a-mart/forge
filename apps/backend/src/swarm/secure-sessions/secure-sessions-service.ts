@@ -30,6 +30,7 @@ import type {
   UpdateBitwardenPasswordManagerCollectionsResult,
 } from "@forge/protocol";
 import {
+  SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
 } from "@forge/protocol";
@@ -158,6 +159,7 @@ interface SecureSessionsServiceOptions {
   createValueGuard?: (values: readonly Uint8Array[]) => SecureValueGuard;
   now?: () => string;
   createId?: () => string;
+  getMaxProjectDefaults?: () => number;
 }
 
 interface ActiveSession {
@@ -250,6 +252,39 @@ export class SecureSessionsService {
   private closed = false;
 
   constructor(private readonly options: SecureSessionsServiceOptions) {}
+
+  private maxProjectDefaults(): number {
+    const configured = this.options.getMaxProjectDefaults?.();
+    if (
+      typeof configured !== "number"
+      || !Number.isSafeInteger(configured)
+    ) {
+      return SECURE_SECRET_MAX_PROJECT_DEFAULTS;
+    }
+    return Math.min(
+      SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
+      Math.max(1, configured),
+    );
+  }
+
+  async getOccupiedProjectDefaultCount(): Promise<number> {
+    const store = await this.store();
+    let occupied = 0;
+    for (const { profileId, archivedAt, profileType } of this.options.listProfiles()) {
+      if (archivedAt || profileType === "system") continue;
+      occupied = Math.max(
+        occupied,
+        this.listEffectiveProjectDefaultsForProfile(store, profileId).length,
+      );
+    }
+    return occupied;
+  }
+
+  async notifySecureSecretSettingsChanged(): Promise<void> {
+    const store = await this.store();
+    store.bumpCatalogRevision();
+    this.emitCatalog(store);
+  }
 
   async isSecurePrivateEntryAvailable(): Promise<boolean> {
     try {
@@ -1581,7 +1616,7 @@ export class SecureSessionsService {
         store.listAllProjectDefaults()
           .filter((projectDefault) =>
             projectDefault.secretId !== normalizedSecretId
-          ).length >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+          ).length >= this.maxProjectDefaults()
       ) {
         throw new SecureSessionsServiceError(
           "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
@@ -1600,7 +1635,7 @@ export class SecureSessionsService {
         profileId,
       )
         .filter((projectDefault) => projectDefault.secretId !== normalizedSecretId);
-      if (effectiveWithoutSecret.length >= SECURE_SECRET_MAX_PROJECT_DEFAULTS) {
+      if (effectiveWithoutSecret.length >= this.maxProjectDefaults()) {
         throw new SecureSessionsServiceError(
           "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
         );
@@ -2514,11 +2549,13 @@ export class SecureSessionsService {
     if (
       !Array.isArray(input.grants)
       || input.grants.length < 1
-      || input.grants.length > 16
       || new Set(input.grants.map(({ secretId }) => secretId)).size
         !== input.grants.length
     ) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    if (input.grants.length > this.maxProjectDefaults()) {
+      throw new SecureSessionsServiceError("SECURE_PROJECT_DEFAULT_LIMIT_REACHED");
     }
     const initialState = store.listSessionStates().find(
       (state) => state.sessionAgentId === sessionAgentId,
@@ -2898,7 +2935,7 @@ export class SecureSessionsService {
     if (
       input.makeProjectDefault === true
       && this.listEffectiveProjectDefaultsForProfile(store, profileId).length
-        >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+        >= this.maxProjectDefaults()
     ) {
       throw new SecureSessionsServiceError(
         "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
@@ -3871,7 +3908,7 @@ export class SecureSessionsService {
     const statuses = new Map<string, SecureSessionProjectDefaultStatus>();
     this.projectDefaultStatuses.set(sessionAgentId, statuses);
     const prepared: PreparedProjectDefault[] = [];
-    if (configured.length > SECURE_SECRET_MAX_PROJECT_DEFAULTS) {
+    if (configured.length > this.maxProjectDefaults()) {
       for (const projectDefault of configured) {
         const secret = store.getSecret(projectDefault.secretId);
         statuses.set(projectDefault.secretId, {

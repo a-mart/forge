@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { ELECTRON_RUNTIME_VERSIONS } from '../../apps/electron/scripts/verify-electron-runtime.mjs'
 import {
   loadRuntimeModuleFromEntry,
   pickPackageEntryFromExports,
@@ -25,6 +26,19 @@ import {
 } from '../../apps/electron/scripts/staged-native-runtime-smoke.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
+
+// Electron-as-Node can exceed Vitest's generic 5s default on constrained Linux CI.
+// Bound the real subprocess so a stuck binary cannot hang the suite, and keep the
+// Vitest case slightly larger so ETIMEDOUT is reported instead of a generic timeout.
+const ELECTRON_NODE_PROBE_TIMEOUT_MS = 15_000
+const ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS = 20_000
+
+function electronNodeProbeFailureMessage(result) {
+  if (result.error?.code === 'ETIMEDOUT') {
+    return `electron -p process.versions.node timed out after ${ELECTRON_NODE_PROBE_TIMEOUT_MS}ms; stuck Electron-as-Node was killed`
+  }
+  return String(result.stderr || result.error || '')
+}
 
 function satisfiesNodeFloor(version, minimum = '22.19.0') {
   const parse = (value) => {
@@ -130,7 +144,15 @@ describe('Node engine floor for packaged Electron child', () => {
     expect(satisfiesNodeFloor(process.version)).toBe(true)
   })
 
-  it('asserts Electron bundled Node satisfies >=22.19.0 when electron is available', async () => {
+  it('reports a bounded Electron-as-Node probe timeout instead of hanging', () => {
+    expect(ELECTRON_NODE_PROBE_TIMEOUT_MS).toBeGreaterThan(5_000)
+    expect(ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS).toBeGreaterThan(ELECTRON_NODE_PROBE_TIMEOUT_MS)
+    expect(electronNodeProbeFailureMessage({ error: { code: 'ETIMEDOUT' } })).toBe(
+      `electron -p process.versions.node timed out after ${ELECTRON_NODE_PROBE_TIMEOUT_MS}ms; stuck Electron-as-Node was killed`,
+    )
+  })
+
+  it('asserts Electron bundled Node matches the authoritative packaged runtime when electron is available', async () => {
     const electronBin = join(repoRoot, 'apps/electron/node_modules/.bin/electron')
     try {
       await access(electronBin)
@@ -146,12 +168,15 @@ describe('Node engine floor for packaged Electron child', () => {
     const result = spawnSync(electronBin, ['-p', 'process.versions.node'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       encoding: 'utf8',
+      timeout: ELECTRON_NODE_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
     })
-    expect(result.status, `electron -p process.versions.node failed: ${result.stderr || result.error || ''}`).toBe(0)
-    const bundledNode = String(result.stdout || '').trim()
-    expect(bundledNode.length).toBeGreaterThan(0)
+    expect(result.status, `electron -p process.versions.node failed: ${electronNodeProbeFailureMessage(result)}`).toBe(0)
+    const bundledNode = String(result.stdout || '').trim().split(/\r?\n/).at(-1)
+    expect(bundledNode?.length).toBeGreaterThan(0)
+    expect(bundledNode).toBe(ELECTRON_RUNTIME_VERSIONS.node)
     expect(satisfiesNodeFloor(bundledNode)).toBe(true)
-  })
+  }, ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS)
 })
 
 describe('validateStagedPiCodingAgentPackageDir', () => {

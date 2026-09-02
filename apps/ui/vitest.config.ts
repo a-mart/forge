@@ -16,5 +16,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    setupFiles: [resolve(uiRootDir, 'src/test-support/vitest-test-environment.ts')],
   },
 })

@@ -158,7 +158,7 @@ function tabSnapshot(tabId = 'tab-1', sessionAgentId = 'session-1', profileId = 
 
 async function setup(
   created = false,
-  options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile' | 'sendToRenderer'> = {},
+  options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile' | 'sendToRenderer' | 'now'> = {},
 ): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-manager-'))
   const manager = new BrowserAutomationManager({ approvedDataRoot: root, sendToRenderer: vi.fn(), ...options })
@@ -584,22 +584,29 @@ describe('BrowserAutomationManager', () => {
   })
 
   it('aborts a recording write at its deadline and removes temporary/final artifacts', async () => {
+    let now = Date.now()
+    const writeStarted = Promise.withResolvers<void>()
     const writeArtifactFile = vi.fn((_path, _bytes, options) => new Promise<void>((_resolve, reject) => {
       const signal = (options as { signal?: AbortSignal } | undefined)?.signal
       signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+      writeStarted.resolve()
     })) as unknown as NonNullable<ConstructorParameters<typeof BrowserAutomationManager>[0]['writeArtifactFile']>
-    const { manager, root } = await setup(false, { writeArtifactFile })
+    const { manager, root } = await setup(false, { writeArtifactFile, now: () => now })
     const artifactDirectory = path.join(root, 'profiles', 'profile-1', 'artifacts', 'browser')
     const start = request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' }
     const prepared = await manager.prepareRecording(start)
     await manager.execute(start)
+    const deadlineAt = now + 50
     const stop = request('recordingStop', { recordingId: prepared.recordingId }, 'tab-1', {
       artifactDirectory,
       requestId: 'during-save',
-      deadlineAt: new Date(Date.now() + 50).toISOString(),
+      deadlineAt: new Date(deadlineAt).toISOString(),
     }) as BrowserAutomationRequest & { operation: 'recordingStop' }
     await manager.stopRecordingCapture(stop)
-    await expect(manager.saveRecording(stop, 'video/webm', new Uint8Array([1]))).resolves.toMatchObject({
+    const save = manager.saveRecording(stop, 'video/webm', new Uint8Array([1]))
+    await writeStarted.promise
+    now = deadlineAt
+    await expect(save).resolves.toMatchObject({
       requestId: 'during-save', ok: false, error: { code: 'timeout', retryable: true },
     })
     expect(writeArtifactFile).toHaveBeenCalledOnce()

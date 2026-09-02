@@ -105,9 +105,9 @@ class RecordingObservability implements ObservabilityFacade {
 describe('SwarmManager Phoenix observability dispatch correlation', () => {
   it('registers runtime input before a runtime synchronously emits turn_start during sendMessage', async () => {
     const handle = await createTempConfig({ prefix: 'forge-observability-dispatch-' })
+    const observability = new RecordingObservability()
+    const manager = new TestSwarmManager(handle.config, { observability })
     try {
-      const observability = new RecordingObservability()
-      const manager = new TestSwarmManager(handle.config, { observability })
       const descriptor = await bootWithDefaultManager(manager, handle.config)
       observability.calls.length = 0
       observability.runtimeInputs.length = 0
@@ -137,15 +137,15 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       expect(observability.sessionEvents[0]?.runtimeToken).toBeTypeOf('number')
       expect(observability.completions[0]).toMatchObject({ acceptedMode: 'prompt', deliveryId: 'delivery-1' })
     } finally {
-      await handle.cleanup()
+      await cleanupManagerTempConfig(handle, manager)
     }
   })
 
   it('records assistant_output as a user-visible observability message on the active root turn', async () => {
     const handle = await createTempConfig({ prefix: 'forge-observability-assistant-output-' })
+    const observability = new RecordingObservability()
+    const manager = new TestSwarmManager(handle.config, { observability })
     try {
-      const observability = new RecordingObservability()
-      const manager = new TestSwarmManager(handle.config, { observability })
       const descriptor = await bootWithDefaultManager(manager, handle.config)
       observability.calls.length = 0
       observability.runtimeInputs.length = 0
@@ -193,15 +193,15 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       })
       expect(observability.userVisibleMessages[0]?.messageId).toBeTypeOf('string')
     } finally {
-      await handle.cleanup()
+      await cleanupManagerTempConfig(handle, manager)
     }
   })
 
   it('records tool-correlated send-message delivery once with parent tool context', async () => {
     const handle = await createTempConfig({ prefix: 'forge-observability-tool-delivery-' })
+    const observability = new RecordingObservability()
+    const manager = new TestSwarmManager(handle.config, { observability })
     try {
-      const observability = new RecordingObservability()
-      const manager = new TestSwarmManager(handle.config, { observability })
       const descriptor = await bootWithDefaultManager(manager, handle.config)
       observability.deliveries.length = 0
 
@@ -223,15 +223,15 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       })
       expect(deliveries[0]?.parentTool).toBeDefined()
     } finally {
-      await handle.cleanup()
+      await cleanupManagerTempConfig(handle, manager)
     }
   })
 
   it('records direct manager-to-worker delivery spans with top-level parent root semantics', async () => {
     const handle = await createTempConfig({ prefix: 'forge-observability-delivery-' })
+    const observability = new RecordingObservability()
+    const manager = new TestSwarmManager(handle.config, { observability })
     try {
-      const observability = new RecordingObservability()
-      const manager = new TestSwarmManager(handle.config, { observability })
       const descriptor = await bootWithDefaultManager(manager, handle.config)
       observability.calls.length = 0
       observability.runtimeInputs.length = 0
@@ -260,7 +260,15 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       expect(delivery?.rootTurnId).not.toBe(userRoot)
       expect(delivery?.metadata?.parentRootSemantics).toBe('top_level_root_turn')
     } finally {
-      await handle.cleanup()
+      await cleanupManagerTempConfig(handle, manager)
     }
   })
 })
+
+async function cleanupManagerTempConfig(
+  handle: Awaited<ReturnType<typeof createTempConfig>>,
+  manager: TestSwarmManager,
+): Promise<void> {
+  await manager.flushPendingHistoryCacheWritesForTest()
+  await handle.cleanup()
+}
