@@ -64,7 +64,7 @@ const remoteUpdateSnapshot: RemoteUpdateAwarenessProjectSnapshot = {
 
 const branchData = {
   branches: [
-    { name: 'main', kind: 'current' as const, headSha: 'abc', ahead: 0, behind: 2 },
+    { name: 'main', kind: 'current' as const, headSha: 'abc', upstream: 'origin/main', ahead: 0, behind: 2 },
     { name: 'feature/demo', kind: 'local' as const, headSha: 'def' },
     { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
   ],
@@ -131,7 +131,7 @@ describe('SourceControlBranchActions', () => {
       branchData: {
         ...branchData,
         branches: [
-          { name: 'main', kind: 'current' as const, headSha: 'abc', ahead: 21, behind: 0 },
+          { name: 'main', kind: 'current' as const, headSha: 'abc', upstream: 'origin/main', ahead: 21, behind: 0 },
           { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
         ],
       },
@@ -154,6 +154,59 @@ describe('SourceControlBranchActions', () => {
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', { name: 'Push' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(pushGitUpstreamMock).toHaveBeenCalledWith('ws://127.0.0.1:47187', {
+        agentId: 'agent-1',
+        repoTarget: 'workspace',
+        worktreeId: undefined,
+        expectedHead: 'abc123',
+        expectedStatusHash: 'status123',
+        remote: 'origin',
+      })
+    })
+  })
+
+  it('publishes a local-only branch and sets origin as its upstream', async () => {
+    pushGitUpstreamMock.mockResolvedValue({
+      success: true,
+      warnings: [],
+      errors: [],
+    })
+
+    renderActions({
+      isDirty: false,
+      branchData: {
+        ...branchData,
+        currentBranch: 'task/agent-autonomy-reset',
+        branches: [
+          { name: 'task/agent-autonomy-reset', kind: 'current' as const, headSha: 'abc' },
+          { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
+        ],
+      },
+    })
+
+    const publishButton = getByRole(container, 'button', { name: 'Publish Branch' }) as HTMLButtonElement
+    expect(publishButton.disabled).toBe(false)
+
+    flushSync(() => {
+      fireEvent.click(publishButton)
+    })
+
+    expect(getByText(document.body, 'Publish task/agent-autonomy-reset?')).toBeTruthy()
+    await vi.waitFor(() => {
+      expect(fetchMutationPreflightMock).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        expect.objectContaining({
+          action: 'push',
+          remote: 'origin',
+        }),
+      )
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Publish Branch' }))
     })
 
     await vi.waitFor(() => {
@@ -551,7 +604,7 @@ describe('SourceControlBranchActions', () => {
       branchData: {
         ...branchData,
         branches: [
-          { name: 'main', kind: 'current' as const, headSha: 'abc', ahead: 2, behind: 0 },
+          { name: 'main', kind: 'current' as const, headSha: 'abc', upstream: 'origin/main', ahead: 2, behind: 0 },
           { name: 'origin/main', kind: 'remote' as const, headSha: 'ghi' },
         ],
       },

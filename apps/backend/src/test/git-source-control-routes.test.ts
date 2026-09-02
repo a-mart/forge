@@ -454,6 +454,77 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.remote).toBe("origin");
   });
 
+  it("publishes a local-only branch and sets origin as its upstream", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    await execGit(server.mainDir, ["switch", "-c", "task/publish-branch"]);
+    await writeFile(join(server.mainDir, "feature.txt"), "feature\n", "utf8");
+    await execGit(server.mainDir, ["add", "feature.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "local feature commit"]);
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const current = branches.branches.find((branch) => branch.kind === "current");
+    expect(current?.name).toBe("task/publish-branch");
+    expect(current?.upstream).toBeFalsy();
+
+    const preflightResponse = await fetch(
+      `${server.baseUrl}/api/git/mutation-preflight?agentId=alpha--s1&action=push&remote=origin`
+    );
+    expect(preflightResponse.status).toBe(200);
+    const preflight = (await preflightResponse.json()) as { allowed: boolean; issues: Array<{ code: string }> };
+    expect(preflight.allowed).toBe(true);
+    expect(preflight.issues.some((issue) => issue.code === "missing_upstream")).toBe(false);
+
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.pushed).toBe(true);
+    expect(mutation.payload.upstream).toBe("origin/task/publish-branch");
+    expect((await execGitCapture(server.mainDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])).stdout.trim()).toBe(
+      "origin/task/publish-branch"
+    );
+    expect((await execGitCapture(server.mainDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+      (await execGitCapture(server.mainDir, ["rev-parse", "origin/task/publish-branch"])).stdout.trim()
+    );
+  });
+
+  it("rejects publishing when the same remote branch already has extra commits", async () => {
+    const server = await createRemoteBackedTestServer();
+    const remoteCloneDir = join(server.root, "remote-publish-conflict");
+
+    await execGit(server.mainDir, ["switch", "-c", "task/publish-conflict"]);
+    await writeFile(join(server.mainDir, "local-feature.txt"), "local\n", "utf8");
+    await execGit(server.mainDir, ["add", "local-feature.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "local unpublished feature"]);
+
+    await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
+    await configureGitTestIdentity(remoteCloneDir);
+    await execGit(remoteCloneDir, ["switch", "-c", "task/publish-conflict"]);
+    await writeFile(join(remoteCloneDir, "remote-feature.txt"), "remote\n", "utf8");
+    await execGit(remoteCloneDir, ["add", "remote-feature.txt"]);
+    await execGit(remoteCloneDir, ["commit", "-m", "remote extra commit"]);
+    await execGit(remoteCloneDir, ["push", "-u", "origin", "task/publish-conflict"]);
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.pushed).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("Force push is never used");
+  });
+
   it("pushes unpublished commits to a local bare remote", async () => {
     const server = await createRemoteBackedTestServer({ aheadOnLocal: true });
 

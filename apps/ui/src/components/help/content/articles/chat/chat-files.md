@@ -34,7 +34,7 @@ Selecting another file, hiding Files, or opening Source Control preserves drafts
 - close a dirty tab;
 - navigate to another session or route;
 - rename or delete a path that affects a dirty tab; or
-- switch/create a branch or run a fast-forward-only pull in Source Control for the same worktree. Pushing unpublished commits does not trigger the guard.
+- switch/create a branch or run a fast-forward-only pull in Source Control for the same worktree. Publishing a branch or pushing unpublished commits does not trigger the guard.
 
 Unrelated rename/delete operations and read-only Source Control navigation do not trigger the guard.
 

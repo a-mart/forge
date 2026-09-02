@@ -435,14 +435,37 @@ export class GitSourceControlService {
     if (options.action === "pull-ff-only" || options.action === "push") {
       const upstream = await resolveUpstream(git);
       if (!upstream) {
-        issues.push({
-          code: "missing_upstream",
-          message:
-            options.action === "push"
-              ? "The current branch has no upstream configured for push."
-              : "The current branch has no upstream configured for pull.",
-          severity: "block"
-        });
+        if (options.action === "pull-ff-only") {
+          issues.push({
+            code: "missing_upstream",
+            message: "The current branch has no upstream configured for pull.",
+            severity: "block"
+          });
+        } else if (!currentBranch) {
+          issues.push({
+            code: "detached_head",
+            message: "Cannot publish a branch from a detached HEAD.",
+            severity: "block"
+          });
+        } else if (options.remote) {
+          const destinationRef = `${options.remote}/${currentBranch}`;
+          if (await verifyResolvableGitRef(git, destinationRef)) {
+            const aheadBehind = await resolveAheadBehind(git, destinationRef);
+            if (!aheadBehind) {
+              issues.push({
+                code: "upstream_unavailable",
+                message: `Could not compare HEAD with ${destinationRef}. Fetch origin and try again.`,
+                severity: "block"
+              });
+            } else if (aheadBehind.behind > 0) {
+              issues.push({
+                code: "branch_behind",
+                message: `Remote branch ${destinationRef} has ${aheadBehind.behind} commit${aheadBehind.behind === 1 ? "" : "s"} not on this branch. Update the local branch in a terminal, then publish. Force push is never used.`,
+                severity: "block"
+              });
+            }
+          }
+        }
       } else if (options.remote && upstream.remote !== options.remote) {
         issues.push({
           code: "remote_mismatch",
@@ -781,31 +804,8 @@ export class GitSourceControlService {
     }
 
     const git = new GitCli({ cwd: context.cwd });
-    const upstream = await resolveUpstream(git);
-    if (!upstream) {
-      const blocked = this.createBlockedMutationResult(
-        context,
-        {
-          ...preflight,
-          allowed: false,
-          issues: [
-            ...preflight.issues,
-            {
-              code: "missing_upstream",
-              message: "The current branch has no upstream configured for push.",
-              severity: "block"
-            }
-          ]
-        },
-        remote
-      );
-      return {
-        ...blocked,
-        remote,
-        upstream: "",
-        pushed: false
-      };
-    }
+    const currentBranch = await resolveCurrentBranch(git);
+    const existingUpstream = await resolveUpstream(git);
 
     const fetchResult = await git.run(["fetch", "--", remote], { allowFailure: true, timeoutMs: 120_000 });
     if (fetchResult.exitCode !== 0) {
@@ -817,7 +817,7 @@ export class GitSourceControlService {
       return {
         ...failed,
         remote,
-        upstream: upstream.ref,
+        upstream: existingUpstream?.ref ?? "",
         pushed: false
       };
     }
@@ -847,13 +847,212 @@ export class GitSourceControlService {
       return {
         ...blocked,
         remote,
-        upstream: upstream.ref,
+        upstream: existingUpstream?.ref ?? "",
         pushed: false
       };
     }
 
     const postFetchUpstream = await resolveUpstream(git);
-    if (!postFetchUpstream || postFetchUpstream.ref !== upstream.ref || postFetchUpstream.remote !== remote) {
+    if (!existingUpstream) {
+      if (!currentBranch) {
+        const blocked = this.createBlockedMutationResult(
+          context,
+          {
+            ...preflight,
+            allowed: false,
+            currentBranch,
+            currentHead,
+            statusHash: computeStatusHash(await readPorcelainStatus(git)),
+            issues: [
+              ...preflight.issues,
+              {
+                code: "detached_head",
+                message: "Cannot publish a branch from a detached HEAD.",
+                severity: "block"
+              }
+            ]
+          },
+          remote
+        );
+        return {
+          ...blocked,
+          remote,
+          upstream: "",
+          pushed: false
+        };
+      }
+
+      if (postFetchUpstream) {
+        const blocked = this.createBlockedMutationResult(
+          context,
+          {
+            ...preflight,
+            allowed: false,
+            currentBranch,
+            currentHead,
+            statusHash: computeStatusHash(await readPorcelainStatus(git)),
+            issues: [
+              ...preflight.issues,
+              {
+                code: "upstream_changed",
+                message: "The current branch upstream changed since you opened this confirmation. Refresh and try again.",
+                severity: "block"
+              }
+            ]
+          },
+          remote
+        );
+        return {
+          ...blocked,
+          remote,
+          upstream: postFetchUpstream.ref,
+          pushed: false
+        };
+      }
+
+      const destinationRef = `${remote}/${currentBranch}`;
+      if (await verifyResolvableGitRef(git, destinationRef)) {
+        const aheadBehind = await resolveAheadBehind(git, destinationRef);
+        if (!aheadBehind) {
+          const blocked = this.createBlockedMutationResult(
+            context,
+            {
+              ...preflight,
+              allowed: false,
+              currentBranch,
+              currentHead,
+              statusHash: computeStatusHash(await readPorcelainStatus(git)),
+              issues: [
+                ...preflight.issues,
+                {
+                  code: "upstream_unavailable",
+                  message: `Could not compare HEAD with ${destinationRef}. Fetch origin and try again.`,
+                  severity: "block"
+                }
+              ]
+            },
+            remote
+          );
+          return {
+            ...blocked,
+            remote,
+            upstream: destinationRef,
+            pushed: false
+          };
+        }
+        if (aheadBehind.behind > 0) {
+          const blocked = this.createBlockedMutationResult(
+            context,
+            {
+              ...preflight,
+              allowed: false,
+              currentBranch,
+              currentHead,
+              statusHash: computeStatusHash(await readPorcelainStatus(git)),
+              issues: [
+                ...preflight.issues,
+                {
+                  code: "branch_behind",
+                  message: `Remote branch ${destinationRef} has ${aheadBehind.behind} commit${aheadBehind.behind === 1 ? "" : "s"} not on this branch. Update the local branch in a terminal, then publish. Force push is never used.`,
+                  severity: "block"
+                }
+              ]
+            },
+            remote
+          );
+          return {
+            ...blocked,
+            remote,
+            upstream: destinationRef,
+            pushed: false
+          };
+        }
+      }
+
+      if (!(await validateBranchName(git, currentBranch))) {
+        const blocked = this.createBlockedMutationResult(
+          context,
+          {
+            ...preflight,
+            allowed: false,
+            currentBranch,
+            currentHead,
+            statusHash: computeStatusHash(await readPorcelainStatus(git)),
+            issues: [
+              ...preflight.issues,
+              {
+                code: "invalid_branch",
+                message: `Cannot publish invalid branch name "${currentBranch}".`,
+                severity: "block"
+              }
+            ]
+          },
+          remote
+        );
+        return {
+          ...blocked,
+          remote,
+          upstream: "",
+          pushed: false
+        };
+      }
+
+      const pushResult = await git.run(
+        ["push", "--", remote, `${confirmedHead}:refs/heads/${currentBranch}`],
+        {
+          allowFailure: true,
+          timeoutMs: 120_000
+        }
+      );
+      if (pushResult.exitCode !== 0) {
+        const failed = this.createFailedMutationResult(
+          context,
+          pushResult.stderr || pushResult.stdout,
+          remote
+        );
+        return {
+          ...failed,
+          remote,
+          upstream: "",
+          pushed: false
+        };
+      }
+
+      const trackResult = await git.run(
+        ["branch", `--set-upstream-to=${remote}/${currentBranch}`, "--", currentBranch],
+        { allowFailure: true }
+      );
+      if (trackResult.exitCode !== 0) {
+        const failed = this.createFailedMutationResult(
+          context,
+          trackResult.stderr || trackResult.stdout || `Published ${currentBranch}, but could not set upstream tracking.`,
+          remote
+        );
+        return {
+          ...failed,
+          remote,
+          upstream: "",
+          pushed: false
+        };
+      }
+
+      const publishedUpstream = await resolveUpstream(git);
+      const success = await this.createSuccessfulMutationResult(context, git, {
+        remote,
+        warnings: preflight.issues
+          .filter((issue) => issue.severity === "warn")
+          .map((issue) => issue.message)
+      });
+
+      return {
+        ...success,
+        remote,
+        upstream: publishedUpstream?.ref ?? `${remote}/${currentBranch}`,
+        pushed: true
+      };
+    }
+
+    if (!postFetchUpstream || postFetchUpstream.ref !== existingUpstream.ref || postFetchUpstream.remote !== remote) {
       const blocked = this.createBlockedMutationResult(
         context,
         {
@@ -876,7 +1075,7 @@ export class GitSourceControlService {
       return {
         ...blocked,
         remote,
-        upstream: postFetchUpstream?.ref ?? upstream.ref,
+        upstream: postFetchUpstream?.ref ?? existingUpstream.ref,
         pushed: false
       };
     }

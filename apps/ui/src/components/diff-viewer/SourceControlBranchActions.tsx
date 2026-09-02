@@ -81,13 +81,17 @@ export function SourceControlBranchActions({
   const mutationsDisabled = repoTarget === 'versioning' || !agentId || !branchData?.currentHead || !branchData.statusHash
 
   const currentBranch = branchData?.currentBranch ?? null
+  const currentBranchSummary = useMemo(
+    () => branchData?.branches.find((branch) => branch.kind === 'current') ?? null,
+    [branchData?.branches],
+  )
+  const hasUpstream = Boolean(currentBranchSummary?.upstream)
   const aheadBehind = useMemo(() => {
-    const current = branchData?.branches.find((branch) => branch.kind === 'current')
     return {
-      ahead: current?.ahead ?? 0,
-      behind: current?.behind ?? 0,
+      ahead: currentBranchSummary?.ahead ?? 0,
+      behind: currentBranchSummary?.behind ?? 0,
     }
-  }, [branchData?.branches])
+  }, [currentBranchSummary])
 
   const localBranches = useMemo(
     () => branchData?.branches.filter((branch) => branch.kind === 'local' || branch.kind === 'current') ?? [],
@@ -114,17 +118,22 @@ export function SourceControlBranchActions({
 
   const pushBlockedReasons = useMemo(() => {
     const reasons: string[] = []
-    if (aheadBehind.ahead === 0) {
-      reasons.push('The current branch has no unpublished commits.')
-    }
-    if (aheadBehind.behind > 0) {
-      reasons.push('The current branch is behind its upstream. Pull first, then push.')
-    }
     if (!branchData?.remotes.includes('origin')) {
       reasons.push('No origin remote is configured.')
     }
+    if (!currentBranch) {
+      reasons.push('Cannot publish a branch from a detached HEAD.')
+    }
+    if (hasUpstream) {
+      if (aheadBehind.ahead === 0) {
+        reasons.push('The current branch has no unpublished commits.')
+      }
+      if (aheadBehind.behind > 0) {
+        reasons.push('The current branch is behind its upstream. Pull first, then push.')
+      }
+    }
     return reasons
-  }, [aheadBehind.ahead, aheadBehind.behind, branchData?.remotes])
+  }, [aheadBehind.ahead, aheadBehind.behind, branchData?.remotes, currentBranch, hasUpstream])
 
   useEffect(() => {
     if (!pendingMutation || !agentId) {
@@ -468,6 +477,20 @@ export function SourceControlBranchActions({
     }
 
     if (pendingMutation.kind === 'push') {
+      if (!hasUpstream) {
+        return {
+          title: `Publish ${currentBranch ?? 'branch'}?`,
+          description: `${worktreeCopy} Forge will fetch origin, then publish this branch and set origin/${currentBranch ?? 'branch'} as its upstream. Force push is never used.`,
+          confirmLabel: 'Publish Branch',
+          blockedReasons: uniqueStrings([
+            ...pushBlockedReasons,
+            ...preflightBlockedReasons,
+            ...(actionError ? [actionError] : []),
+          ]),
+          warnings: preflightWarnings,
+        }
+      }
+
       return {
         title: `Push ${aheadBehind.ahead} unpublished commit${aheadBehind.ahead === 1 ? '' : 's'}?`,
         description: `${worktreeCopy} Forge will fetch origin, then push the current branch to its upstream. Force push is never used.`,
@@ -496,6 +519,8 @@ export function SourceControlBranchActions({
     actionError,
     aheadBehind.ahead,
     branchData,
+    currentBranch,
+    hasUpstream,
     isDirty,
     pendingMutation,
     preflightBlockedReasons,
@@ -606,7 +631,7 @@ export function SourceControlBranchActions({
         </Button>
 
         <Button
-          variant={aheadBehind.ahead > 0 ? 'default' : 'outline'}
+          variant={!hasUpstream || aheadBehind.ahead > 0 ? 'default' : 'outline'}
           size="sm"
           className="h-7 px-2 text-xs"
           onClick={() => {
@@ -617,10 +642,17 @@ export function SourceControlBranchActions({
             })
           }}
           disabled={pushBlockedReasons.length > 0}
-          title={pushBlockedReasons[0] ?? `Push ${aheadBehind.ahead} unpublished commit${aheadBehind.ahead === 1 ? '' : 's'} to origin`}
+          title={
+            pushBlockedReasons[0]
+              ?? (hasUpstream
+                ? `Push ${aheadBehind.ahead} unpublished commit${aheadBehind.ahead === 1 ? '' : 's'} to origin`
+                : `Publish ${currentBranch ?? 'this branch'} to origin`)
+          }
         >
           <ArrowUp className="mr-1 size-3.5" />
-          {aheadBehind.ahead > 0 ? `Sync Changes ${aheadBehind.ahead}↑` : 'Sync Changes'}
+          {hasUpstream
+            ? (aheadBehind.ahead > 0 ? `Sync Changes ${aheadBehind.ahead}↑` : 'Sync Changes')
+            : 'Publish Branch'}
         </Button>
 
         <Button
