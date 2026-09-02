@@ -234,7 +234,7 @@ Quick at-a-glance view of parallel work in progress. Codex app-server sidecars a
 
 ### Artifacts Panel
 
-When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. On desktop, the rail opens Artifacts or Schedules in the left activity-pane slot with one selected surface at a time, with no internal Artifacts/Schedules tab switcher on that path. Click any artifact to view it inline. This is where implementation plans, review documents, and other intermediate work products end up.
+When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. On desktop, the rail opens Artifacts or Schedules in the left activity-pane slot with one selected surface at a time, with no internal Artifacts/Schedules tab switcher on that path. Click any artifact to view it inline. Artifact PDFs use the same in-panel preview and **Open PDF** behavior as Files. This is where implementation plans, review documents, and other intermediate work products end up.
 
 ### Schedules
 
