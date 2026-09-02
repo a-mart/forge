@@ -4,6 +4,9 @@ export const CHAT_ARTIFACT_MAX_TEXT_BYTES = 2 * 1024 * 1024
 /** Maximum image artifact size accepted by the Forge preview reader. */
 export const CHAT_ARTIFACT_MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
+/** Maximum PDF artifact size accepted by the Forge in-panel preview reader. */
+export const CHAT_ARTIFACT_MAX_PDF_BYTES = 16 * 1024 * 1024
+
 /**
  * Transcript-authorized artifact request. `previewBytes` and `imageTransport` are
  * additive: omitting both preserves the legacy full-text/base64 response.
@@ -14,7 +17,7 @@ export interface ChatArtifactReadRequest {
   path: string
   /** Bounded UTF-8 text prefix requested by capable clients. */
   previewBytes?: number
-  /** Requests raw image bytes through a short-lived same-origin capability URL. */
+  /** Requests raw image or PDF bytes through a short-lived same-origin capability URL. */
   imageTransport?: 'http_ticket'
 }
 
@@ -55,6 +58,9 @@ export interface ChatArtifactTicketImageResponse {
   totalBytes: number
   ticket: ChatArtifactImageTicket
 }
+
+/** Same one-use ticket shape as images; `contentType` is `application/pdf`. */
+export type ChatArtifactTicketPdfResponse = ChatArtifactTicketImageResponse
 
 export type ChatArtifactReadResponse =
   | ChatArtifactTextResponse

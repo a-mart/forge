@@ -334,6 +334,7 @@ export const chatArticles: HelpArticle[] = [
       'markdown',
       'code',
       'image',
+      'pdf',
     ],
     relatedIds: ['chat-overview', 'chat-attachments'],
     contextKeys: ['chat.artifacts'],

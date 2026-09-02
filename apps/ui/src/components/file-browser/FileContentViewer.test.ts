@@ -457,10 +457,10 @@ describe('FileContentViewer PDF preview routing', () => {
     expect(container.querySelector('[data-testid="pdf-preview"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="codemirror-file-editor"]')).toBeNull()
     expect(pdfPreviewProps.at(-1)).toMatchObject({
-      wsUrl: 'ws://127.0.0.1:47187',
-      agentId: 'agent-a',
-      filePath: 'docs/spec.pdf',
-      worktreeId: null,
+      sourceUrl: expect.stringContaining('/api/files/raw?'),
+      fileName: 'spec.pdf',
+      nativeFilePath: '/repo/docs/spec.pdf',
+      openUrl: expect.stringContaining('/api/files/raw?'),
     })
   })
 })

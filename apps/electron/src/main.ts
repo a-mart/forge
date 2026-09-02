@@ -38,6 +38,9 @@ import {
   installSecureVaultRendererIpc,
 } from './secure-vault-ipc.js'
 import { applyElectronStartupOverrides } from './startup-overrides.js'
+import { validateAbsoluteLocalFilePath } from './open-path.js'
+import { installOpenPdfIpc } from './open-pdf.js'
+import { handleMainRendererWindowOpen, isUnsafeRendererWindowOpenUrl } from './window-open-policy.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
@@ -108,6 +111,7 @@ let appIsQuitting = false
 let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
 let disposeExternalChromeIpc: (() => void) | null = null
+let disposeOpenPdfIpc: (() => void) | null = null
 let externalChromeCoordinator: ExternalChromeHostCoordinator | null = null
 let externalChromeDeployer: ExternalChromeDeployer | null = null
 const browserSessions = new BrowserSessionRegistry()
@@ -579,6 +583,8 @@ async function prepareQuitForUpdate(): Promise<void> {
     disposeBrowserHost = null
     disposeExternalChromeIpc?.()
     disposeExternalChromeIpc = null
+    disposeOpenPdfIpc?.()
+    disposeOpenPdfIpc = null
     await externalChromeCoordinator?.quiesce('desktop-update')
     await stopPackagedRemoteUiServer()
     await backendSupervisor.stop()
@@ -688,22 +694,19 @@ if (!hasSingleInstanceLock) {
   ipcMain.on('update-title-bar-overlay', () => {})
 
   ipcMain.handle('reveal-in-folder', (_event, filePath: string): { success: boolean; error?: string } => {
-    if (typeof filePath !== 'string' || filePath.length === 0) {
-      return { success: false, error: 'Invalid file path' }
+    const validated = validateAbsoluteLocalFilePath(filePath)
+    if (!validated.ok) {
+      return { success: false, error: validated.error }
     }
 
-    const normalized = path.normalize(filePath)
-
-    if (!path.isAbsolute(normalized)) {
-      return { success: false, error: 'Path must be absolute' }
-    }
-
-    if (!existsSync(normalized)) {
-      return { success: false, error: 'File not found' }
-    }
-
-    shell.showItemInFolder(normalized)
+    shell.showItemInFolder(validated.path)
     return { success: true }
+  })
+
+  disposeOpenPdfIpc = installOpenPdfIpc({
+    ipcMain,
+    isTrustedSender: isTrustedMainRenderer,
+    openPath: (target) => shell.openPath(target),
   })
 
   ipcMain.handle('check-for-updates', async () => {
@@ -972,6 +975,8 @@ if (!hasSingleInstanceLock) {
     disposeBrowserHost = null
     disposeExternalChromeIpc?.()
     disposeExternalChromeIpc = null
+    disposeOpenPdfIpc?.()
+    disposeOpenPdfIpc = null
 
     void (externalChromeCoordinator?.quiesce('desktop-quit') ?? Promise.resolve()).catch((error) => {
       console.warn('[external-chrome] Quit quiesce failed', error instanceof Error ? error.message : String(error))
@@ -1049,14 +1054,13 @@ function createMainWindow(): BrowserWindow {
   })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (handlePotentialSkillImportDeepLink(url)) {
-      return { action: 'deny' }
-    }
-
-    shell.openExternal(url).catch((error) => {
-      console.error('Failed to open external URL', url, error)
+    return handleMainRendererWindowOpen(url, {
+      openExternal: (target) => shell.openExternal(target),
+      handleDeepLink: handlePotentialSkillImportDeepLink,
+      onExternalOpenError: (target, error) => {
+        console.error('Failed to open external URL', target, error)
+      },
     })
-    return { action: 'deny' }
   })
 
   window.webContents.on('will-navigate', (event, url) => {
@@ -1067,7 +1071,9 @@ function createMainWindow(): BrowserWindow {
 
     if (!isTrustedRendererUrl(url)) {
       event.preventDefault()
-      void shell.openExternal(url)
+      if (!isUnsafeRendererWindowOpenUrl(url)) {
+        void shell.openExternal(url)
+      }
     }
   })
 

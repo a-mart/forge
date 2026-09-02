@@ -129,6 +129,19 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('[artifact:/tmp/fenced.png]')
   })
 
+  it('renders PDF artifact links as clickable artifact cards', () => {
+    const content = '[artifact:/tmp/spec.pdf]'
+
+    const html = renderMarkdownMessage({
+      content,
+      onArtifactClick: () => {},
+    })
+
+    expect(html).toContain('data-artifact-card="true"')
+    expect(html).toContain('spec.pdf')
+    expect(html).toContain('/tmp/spec.pdf')
+  })
+
   it('renders local markdown file links as artifact cards using link text as title', () => {
     const content = '[Terminal Support Plan](docs/plans/terminal-support.md)'
 

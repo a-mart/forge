@@ -88,6 +88,14 @@ describe("WS chat artifact API proxy", () => {
     expect(JSON.parse(imageTicket.body)).toMatchObject({ transport: "http_ticket", totalBytes: 4 * 1024 * 1024 });
     expect(JSON.parse(imageTicket.body)).not.toHaveProperty("content");
 
+    const pdf = join(dataDir, "spec.pdf");
+    await writeFile(pdf, Buffer.from("%PDF-1.4\nproxy\n%%EOF\n"));
+    await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[image](swarm-file://${image}) [text](swarm-file://${escapableText}) [bounded](swarm-file://${boundedText}) [pdf](swarm-file://${pdf})`, timestamp: new Date().toISOString() } }) + "\n");
+    const pdfTicket = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId, method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: pdf, imageTransport: "http_ticket" }) } as any, agentId);
+    expect(pdfTicket.status).toBe(200);
+    expect(JSON.parse(pdfTicket.body)).toMatchObject({ transport: "http_ticket", contentType: "application/pdf" });
+    expect(JSON.parse(pdfTicket.body)).not.toHaveProperty("content");
+
     const fake = createSendableSocket();
     expect(sendWsEvent({ socket: fake.socket, event: imageOverflow, onDropSocket: vi.fn() })).not.toBeNull();
     expect(fake.send).toHaveBeenCalledTimes(1);
