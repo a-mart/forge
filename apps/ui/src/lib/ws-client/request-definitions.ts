@@ -428,7 +428,7 @@ export function buildUpdateProjectDelegationDefaultsCommand(
             ? null
             : requireTrimmedValue(
                 updates.delegationRosterId ?? '',
-                'Delegation preset id is required.',
+                'Roster id is required.',
               ),
         }
       : {}),
@@ -625,7 +625,7 @@ export function buildUpdateSessionDelegationCommand(
                 mode: 'override',
                 rosterId: requireTrimmedValue(
                   updates.delegationRoster.rosterId,
-                  'Delegation preset id is required.',
+                  'Roster id is required.',
                 ),
               },
         }

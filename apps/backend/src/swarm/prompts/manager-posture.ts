@@ -31,6 +31,15 @@ This posture changes preference, not authority: all safety, permission, validati
 - When delegation is materially justified, follow the attached roster and tool contract. Let the worker execute without polling or micromanagement.
 - Worker completion is evidence, not acceptance. Personally perform the smallest useful check, then converge.`;
 
+const ADAPTIVE_BLOCK = `# Work routing
+Your posture is **Adaptive**.
+
+Choose ownership outcome by outcome. Work directly when continuity of context, rapid iteration, or one cohesive implementation path matters. Delegate a bounded outcome when independent context, parallelism, specialized capability, model diversity, or meaningful efficiency outweighs coordination cost.
+
+Own final integration and accountability. Reuse a suitable worker, give delegated work one clear outcome, and perform the smallest useful acceptance check. Do not delegate ceremonially or keep expanding direct work by inertia.`;
+
 export function buildManagerPostureBlock(posture: ManagerPosture | undefined): string {
-  return posture === "hands_on" ? HANDS_ON_BLOCK : DELEGATION_FIRST_BLOCK;
+  if (posture === "hands_on") return HANDS_ON_BLOCK;
+  if (posture === "adaptive") return ADAPTIVE_BLOCK;
+  return DELEGATION_FIRST_BLOCK;
 }

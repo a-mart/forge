@@ -8,11 +8,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const testFile = fileURLToPath(import.meta.url);
 const backendSrcDir = resolve(dirname(testFile), "..", "..");
-const skillDir = join(backendSrcDir, "swarm", "skills", "builtins", "delegation-presets");
-const helperScript = join(skillDir, "manage-delegation-presets.mjs");
+const skillDir = join(backendSrcDir, "swarm", "skills", "builtins", "specialist-rosters");
+const helperScript = join(skillDir, "manage-rosters.mjs");
 
-type Preset = Record<string, unknown> & { rosterId: string; revision: number };
-type Settings = { version: 1; defaultRosterId: string; rosters: Preset[] };
+type Roster = Record<string, unknown> & { rosterId: string; revision: number };
+type Settings = { version: 1; defaultRosterId: string; rosters: Roster[] };
 type CliResult = {
   status: number | null;
   stderr: string;
@@ -27,7 +27,7 @@ afterEach(async () => {
   })));
 });
 
-function samplePreset(overrides: Partial<Preset> = {}): Preset {
+function sampleRoster(overrides: Partial<Roster> = {}): Roster {
   return {
     rosterId: "balanced",
     revision: 3,
@@ -113,10 +113,10 @@ async function readRequestJson(request: NodeJS.ReadableStream): Promise<unknown>
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-async function writePresetFile(preset: Record<string, unknown>): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "delegation-preset-skill-"));
-  const filePath = join(directory, "preset.json");
-  await writeFile(filePath, `${JSON.stringify(preset, null, 2)}\n`, "utf8");
+async function writeRosterFile(roster: Record<string, unknown>): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "specialist-roster-skill-"));
+  const filePath = join(directory, "roster.json");
+  await writeFile(filePath, `${JSON.stringify(roster, null, 2)}\n`, "utf8");
   return filePath;
 }
 
@@ -144,7 +144,7 @@ async function runHelper(args: string[]): Promise<CliResult> {
   });
 }
 
-describe("delegation-presets skill helper", () => {
+describe("specialist-rosters skill helper", () => {
   it("refuses to target a non-local Forge instance", async () => {
     const result = await runHelper(["list", "--url", "https://forge.example.com"]);
 
@@ -155,8 +155,8 @@ describe("delegation-presets skill helper", () => {
     });
   });
 
-  it("inspects the current presets and live model choices", async () => {
-    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [samplePreset()] });
+  it("inspects the current rosters and live model choices", async () => {
+    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [sampleRoster()] });
 
     const list = await runHelper(["list", "--url", api.url]);
     const models = await runHelper(["models", "--url", api.url]);
@@ -167,7 +167,7 @@ describe("delegation-presets skill helper", () => {
       ok: true,
       defaultRosterId: "balanced",
       storagePath: "/tmp/forge-skill-test-data/shared/config/delegation-rosters.json",
-      presets: [{ rosterId: "balanced", revision: 3 }],
+      rosters: [{ rosterId: "balanced", revision: 3 }],
     });
     expect(models.json).toMatchObject({
       ok: true,
@@ -180,9 +180,9 @@ describe("delegation-presets skill helper", () => {
   });
 
   it("previews creation without writing and applies through the Settings API on request", async () => {
-    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [samplePreset()] });
-    const proposalPath = await writePresetFile({
-      ...samplePreset({ rosterId: "focused", name: "Focused" }),
+    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [sampleRoster()] });
+    const proposalPath = await writeRosterFile({
+      ...sampleRoster({ rosterId: "focused", name: "Focused" }),
       revision: undefined,
     });
 
@@ -200,16 +200,16 @@ describe("delegation-presets skill helper", () => {
     expect(applied.json).toMatchObject({
       ok: true,
       action: "created",
-      preset: { rosterId: "focused", revision: 1 },
+      roster: { rosterId: "focused", revision: 1 },
     });
     expect(api.putCount()).toBe(1);
     expect(api.settings().rosters.map((preset) => preset.rosterId)).toEqual(["balanced", "focused"]);
   });
 
-  it("requires the current revision before updating and preserves the selected preset identity", async () => {
-    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [samplePreset()] });
-    const proposalPath = await writePresetFile({
-      ...samplePreset({ revision: 99, name: "Balanced development" }),
+  it("requires the current revision before updating and preserves the selected roster identity", async () => {
+    const api = await startApi({ version: 1, defaultRosterId: "balanced", rosters: [sampleRoster()] });
+    const proposalPath = await writeRosterFile({
+      ...sampleRoster({ revision: 99, name: "Balanced development" }),
     });
 
     const stale = await runHelper([
@@ -219,7 +219,7 @@ describe("delegation-presets skill helper", () => {
     expect(stale.status).toBe(1);
     expect(stale.json).toEqual({
       ok: false,
-      error: "Delegation preset balanced changed: expected revision 2, current revision is 3",
+      error: "Roster balanced changed: expected revision 2, current revision is 3",
     });
     expect(api.putCount()).toBe(0);
 
@@ -231,7 +231,7 @@ describe("delegation-presets skill helper", () => {
     expect(applied.json).toMatchObject({
       ok: true,
       action: "updated",
-      preset: { rosterId: "balanced", revision: 4, name: "Balanced development" },
+      roster: { rosterId: "balanced", revision: 4, name: "Balanced development" },
     });
     expect(api.settings().rosters[0]).toMatchObject({
       rosterId: "balanced",

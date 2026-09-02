@@ -1,8 +1,9 @@
-Delegation separates manager ownership from worker configuration. A delegation preset is a roster of complete specialists. Each specialist combines one task type and its instructions with the model, reasoning, use/avoid guidance, fallback, and escalation behavior used to run it.
+Delegation separates manager ownership from worker configuration. A roster is a reusable team of complete specialists. Each specialist combines one task type and its instructions with the model, reasoning, use/avoid guidance, fallback, and escalation behavior used to run it.
 
 ## Work mode
 
 - **Delegate first** — the default. The manager delegates substantial project work and keeps direct work to answers, bounded read-only orientation, and acceptance checks.
+- **Adaptive** — the manager chooses ownership outcome by outcome, keeping work where continuity matters and delegating when efficiency, independence, or capability materially improves.
 - **Hands-on** — the manager normally owns one cohesive bounded outcome itself, while retaining delegation for useful parallelism, isolation, model diversity, specialized behavior, independent review, or work-graph scheduling.
 
 Projects can set a default work mode. An eligible Builder manager session can inherit it or override it from the work-mode control beside Send. A mid-session work-mode change replaces the manager runtime before its next turn and may cause one prompt-cache miss. It does not stop workers or alter an active graph.
@@ -17,15 +18,15 @@ Projects can set a default work mode. An eligible Builder manager session can in
 
 Task type describes the specialist's job. A roster may contain more than one specialist for the same task type when different cost, capability, or provider choices are useful.
 
-## Delegation presets
+## Rosters
 
-A delegation preset is a team of complete roster specialists. Every specialist has one task type and a complete execution configuration. One specialist is the default for each task type; alternatives can provide cheaper, independent, or stronger execution when their guidance clearly fits.
+A roster is a reusable team of complete specialists. Every specialist has one task type and a complete execution configuration. One specialist is the default for each task type; alternatives can provide cheaper, independent, or stronger execution when their guidance clearly fits.
 
 Managers normally choose the work to delegate and let Forge use that task type's default specialist. They name another specialist only when its guidance clearly fits. Capability escalation is reserved for a later attempt after evidence that the selected specialist was inadequate. Graph size and fan-in are not reasons to select a stronger specialist.
 
-The preset selection order is global default → project default → session override. Preset changes affect future attempts; running attempts keep their pinned specialist and execution settings. Availability fallback swaps only the model when the primary is unavailable and keeps the same attempt. Capability escalation starts a fresh attempt on another specialist and never happens merely because a provider is rate-limited.
+The roster selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned specialist and execution settings. Availability fallback swaps only the model when the primary is unavailable and keeps the same attempt. Capability escalation starts a fresh attempt on another specialist and never happens merely because a provider is rate-limited.
 
-Configure this under **Delegation presets**. Select a roster specialist to edit both what it does and how it runs. Its task-type badge shows its job; the **Default** badge shows whether Forge chooses it automatically for that task. Use **Make default** to replace the current default without editing a separate routing table. Use the compact work menu beside Send to select a session preset, return to the project default, or make the current choice the project default.
+Configure this under **Rosters**. Select a specialist to edit both what it does and how it runs. Its task-type badge shows its job; the **Default** badge shows whether Forge chooses it automatically for that task. Use **Make default** to replace the current default without editing a separate routing table. Use the compact work menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
 
 ## Global, project, and Collaboration scopes
 
@@ -65,4 +66,4 @@ Codex Plugin is not a normal task type or custom specialist. When a user include
 
 ## Prompt preview
 
-In project or channel scope, use the prompt preview to inspect the compact instruction/custom-specialist block injected into the manager prompt. The active roster is supplied separately in a versioned runtime context so preset changes do not rewrite the stable system-prompt prefix.
+In project or channel scope, use the prompt preview to inspect the compact instruction/custom-specialist block injected into the manager prompt. The active roster is supplied separately in a versioned runtime context so roster changes do not rewrite the stable system-prompt prefix.

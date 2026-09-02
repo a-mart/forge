@@ -21,7 +21,7 @@ purpose and graph shape and ask before creating the graph.
 
 ## When not to use
 
-- for routine delegation that the active delegation preset already handles;
+- for routine delegation that the active roster already handles;
 - merely because work is large, important, or graph-shaped;
 - to create several workers that repeat the same prompt without a reason for independence;
 - when one focused worker plus manager acceptance is enough.

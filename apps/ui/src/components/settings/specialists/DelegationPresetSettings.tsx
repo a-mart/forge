@@ -224,7 +224,7 @@ export function DelegationPresetSettingsView({
     return (
       <div className="flex items-center py-8 text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        Loading delegation presets
+        Loading rosters
       </div>
     )
   }
@@ -232,21 +232,21 @@ export function DelegationPresetSettingsView({
   if (!settings || !selectedPreset || !selectedPolicy) {
     return (
       <p className="py-4 text-sm text-destructive">
-        {error ?? 'No delegation preset is available.'}
+        {error ?? 'No roster is available.'}
       </p>
     )
   }
 
   const createPreset = () => {
     const presetId = nextId(
-      'delegation-preset',
+      'roster',
       new Set(settings.rosters.map((preset) => preset.rosterId)),
     )
     const preset: DelegationRoster = {
       ...clonePreset(selectedPreset),
       rosterId: presetId,
       revision: 1,
-      name: `New preset ${settings.rosters.length + 1}`,
+      name: `New roster ${settings.rosters.length + 1}`,
     }
     setSettings({ ...settings, rosters: [...settings.rosters, preset] })
     setSelectedPresetId(presetId)
@@ -326,7 +326,7 @@ export function DelegationPresetSettingsView({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Preset
+            Roster
           </span>
           {settings.rosters.length === 1 ? (
             <div className="flex h-9 items-center rounded-md border border-border/70 bg-muted/25 px-3 text-sm font-medium">
@@ -360,21 +360,21 @@ export function DelegationPresetSettingsView({
         <div className="flex items-center gap-1.5">
           <Button type="button" variant="ghost" size="sm" onClick={createPreset}>
             <Plus className="size-3.5" />
-            New preset
+            New roster
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={duplicateSelectedPreset}>
             <Copy className="size-3.5" />
-            Duplicate preset
+            Duplicate roster
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Preset actions">
+              <Button type="button" variant="outline" size="icon" aria-label="Roster actions">
                 <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setPresetDetailsOpen((open) => !open)}>
-                Edit preset details
+                Edit roster details
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={selectedPreset.rosterId === settings.defaultRosterId}
@@ -392,7 +392,7 @@ export function DelegationPresetSettingsView({
                 onClick={deleteSelectedPreset}
               >
                 <Trash2 className="size-4" />
-                Delete preset
+                Delete roster
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -402,7 +402,7 @@ export function DelegationPresetSettingsView({
       {presetDetailsOpen && (
         <div className="mt-3 grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 md:grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)]">
           <div className="space-y-1.5">
-            <Label htmlFor={`preset-name-${selectedPreset.rosterId}`}>Preset name</Label>
+            <Label htmlFor={`preset-name-${selectedPreset.rosterId}`}>Roster name</Label>
             <Input
               id={`preset-name-${selectedPreset.rosterId}`}
               value={selectedPreset.name}
@@ -553,7 +553,7 @@ export function DelegationPresetSettingsView({
             </span>
             <span>
               <span className="block text-sm font-medium">
-                {dirty ? 'Unsaved changes' : 'Preset saved'}
+                {dirty ? 'Unsaved changes' : 'Roster saved'}
               </span>
               <span className="block text-[11px] text-muted-foreground">
                 {dirty
@@ -569,7 +569,7 @@ export function DelegationPresetSettingsView({
               </Button>
               <Button type="button" size="sm" disabled={saving} onClick={save}>
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                Save preset
+                Save roster
               </Button>
             </div>
           )}

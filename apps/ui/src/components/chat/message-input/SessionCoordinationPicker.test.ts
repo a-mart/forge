@@ -92,7 +92,7 @@ describe('SessionCoordinationPicker', () => {
     await openPicker()
 
     expect(getByRole(document.body, 'group', { name: 'Work mode' })).toBeTruthy()
-    expect(getByRole(document.body, 'group', { name: 'Delegation preset' })).toBeTruthy()
+    expect(getByRole(document.body, 'group', { name: 'Roster' })).toBeTruthy()
     expect(queryByRole(document.body, 'menu')).toBeNull()
     expect(queryByRole(document.body, 'button', { name: 'Apply' })).toBeNull()
     expect(document.body.textContent).not.toContain('prompt-cache miss')
@@ -100,6 +100,7 @@ describe('SessionCoordinationPicker', () => {
     expect(getAllByRole(document.body, 'radio', {
       name: /Delegate first/,
     })).toHaveLength(1)
+    expect(getByRole(document.body, 'radio', { name: 'Adaptive' })).toBeTruthy()
     expect(getByRole(document.body, 'radio', {
       name: /Delegate first.*Project default/,
     })).toBeTruthy()
@@ -122,7 +123,22 @@ describe('SessionCoordinationPicker', () => {
     expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
       managerPosture: { mode: 'override', value: 'hands_on' },
     })
-    expect(getByRole(document.body, 'group', { name: 'Delegation preset' })).toBeTruthy()
+    expect(getByRole(document.body, 'group', { name: 'Roster' })).toBeTruthy()
+  })
+
+  it('applies Adaptive as a session override', async () => {
+    const config = makeConfig()
+    renderPicker(config)
+    await openPicker()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'radio', { name: 'Adaptive' }))
+    })
+    await flushAsyncWork()
+
+    expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
+      managerPosture: { mode: 'override', value: 'adaptive' },
+    })
   })
 
   it('returns an overridden posture to inheritance by selecting the project-default value', async () => {
@@ -200,7 +216,7 @@ describe('SessionCoordinationPicker', () => {
     await openPicker()
 
     expect(queryByRole(document.body, 'radio', { name: /Balanced/ })).toBeNull()
-    expect(getByRole(document.body, 'group', { name: 'Delegation preset' }).textContent)
+    expect(getByRole(document.body, 'group', { name: 'Roster' }).textContent)
       .toContain('Balanced')
   })
 })

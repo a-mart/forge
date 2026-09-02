@@ -127,12 +127,12 @@ describe('delegation settings command builders', () => {
   it('serializes project defaults without inventing untouched fields', () => {
     expect(buildUpdateProjectDelegationDefaultsCommand(
       ' project-a ',
-      { managerPosture: 'hands_on' },
+      { managerPosture: 'adaptive' },
       'req-project-delegation',
     )).toEqual({
       type: 'update_project_delegation_defaults',
       profileId: 'project-a',
-      managerPosture: 'hands_on',
+      managerPosture: 'adaptive',
       requestId: 'req-project-delegation',
     })
     expect(buildUpdateProjectDelegationDefaultsCommand(

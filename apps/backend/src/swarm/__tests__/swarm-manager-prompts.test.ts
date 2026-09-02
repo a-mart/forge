@@ -861,12 +861,12 @@ describe('SwarmManager', () => {
     expect(slashCommandsSkill).toContain('name: slash-commands')
     expect(slashCommandsSkill).toContain('slash-commands.js create')
 
-    const delegationPresetsSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('delegation-presets', 'SKILL.md')))
-    expect(delegationPresetsSkillPath).toBeDefined()
-    const delegationPresetsSkill = await readFile(delegationPresetsSkillPath!, 'utf8')
-    expect(delegationPresetsSkill).toContain('name: delegation-presets')
-    expect(delegationPresetsSkill).toContain('manage-delegation-presets.mjs create')
-    expect(delegationPresetsSkill).toContain('Do not edit the storage file directly.')
+    const specialistRostersSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('specialist-rosters', 'SKILL.md')))
+    expect(specialistRostersSkillPath).toBeDefined()
+    const specialistRostersSkill = await readFile(specialistRostersSkillPath!, 'utf8')
+    expect(specialistRostersSkill).toContain('name: specialist-rosters')
+    expect(specialistRostersSkill).toContain('manage-rosters.mjs create')
+    expect(specialistRostersSkill).toContain('Do not edit the storage file directly.')
 
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(false)
 
