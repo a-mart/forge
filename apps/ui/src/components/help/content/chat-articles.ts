@@ -336,7 +336,7 @@ export const chatArticles: HelpArticle[] = [
       'image',
       'pdf',
     ],
-    relatedIds: ['chat-overview', 'chat-attachments'],
+    relatedIds: ['chat-overview', 'chat-attachments', 'chat-files'],
     contextKeys: ['chat.artifacts'],
   },
   {
@@ -350,6 +350,7 @@ export const chatArticles: HelpArticle[] = [
       'file browser',
       'tabs',
       'preview tab',
+      'pdf',
       'sticky tab',
       'CodeMirror',
       'markdown preview',
