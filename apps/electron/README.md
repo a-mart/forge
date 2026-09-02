@@ -275,9 +275,9 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
 - **Never publish beta assets to the stable channel.** A beta-tagged build must not be published as a normal GitHub Release.
 - **Stable promotion happens later.** After beta validation, publish a separate stable release flow using a stable version, not by treating the beta release as stable on day one.
 
-1. **Set, push, and preflight the release version**
+1. **Stage 1: update, push, and preflight the release version**
    - The release version must be identical in `version.json` and `apps/electron/package.json`.
-   - `release.sh --version VERSION` updates **both** version authorities, commits only `version.json` and `apps/electron/package.json`, and pushes that version commit to `origin/main`. From the repository root, invoke the project-scoped script with the canonical path:
+   - From the repository root, invoke the project-scoped script with the canonical path and `--version`:
 
      ```bash
      VERSION="0.23.2"
@@ -286,7 +286,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
        --version "$VERSION"
      ```
 
-   - The `--version` invocation proceeds toward packaging after it pushes. The operator MUST stop or interrupt it immediately after the version commit is pushed and **before packaging**. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against that new 40-character release commit. Do not package until every gate passes for that exact SHA.
+   - The `--version` stage updates both authority files, commits those two files, pushes the resulting commit to `main`, and automatically exits before packaging, Windows CI or `workflow_dispatch`, draft creation, tagging, asset upload, or publishing. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against the new 40-character release commit. Do not package until every gate passes for that exact SHA.
    - After preflight passes, invoke the same project-scoped release script **without `--version`** for packaging (add `--prerelease` for a prerelease version):
 
      ```bash
@@ -294,7 +294,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
        --repo /absolute/path/to/forge
      ```
 
-   - Commit and push the version authorities before triggering any release build. Do not rely on a tag-first flow.
+   - The `--version` stage does not package, dispatch CI, create a draft, tag, upload assets, or publish. Do not rely on a tag-first flow.
 
 2. **Build and validate macOS locally**
    - Install the official Node 26.5.0 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
