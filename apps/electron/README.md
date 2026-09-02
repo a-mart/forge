@@ -275,40 +275,26 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
 - **Never publish beta assets to the stable channel.** A beta-tagged build must not be published as a normal GitHub Release.
 - **Stable promotion happens later.** After beta validation, publish a separate stable release flow using a stable version, not by treating the beta release as stable on day one.
 
-1. **Set and verify both release version files first**
+1. **Set, push, and preflight the release version**
    - The release version must be identical in `version.json` and `apps/electron/package.json`.
-   - Do not use the release script's `--version` option: its current implementation updates only `apps/electron/package.json`, so it cannot keep the two release version files consistent. Set both files before committing. From the repository root, this Node command updates exactly those two files:
+   - `release.sh --version VERSION` updates **both** version authorities, commits only `version.json` and `apps/electron/package.json`, and pushes that version commit to `origin/main`. From the repository root, invoke the project-scoped script with the canonical path:
 
      ```bash
      VERSION="0.23.2"
-     node - "$VERSION" <<'NODE'
-     const fs = require('node:fs')
-     const version = process.argv[2]
-     if (!version) throw new Error('VERSION is required')
-
-     const packagePath = 'apps/electron/package.json'
-     const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
-     packageJson.version = version
-     fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`)
-     fs.writeFileSync('version.json', `{ "version": ${JSON.stringify(version)} }\n`)
-     NODE
+     bash ~/.forge/profiles/middleman-project/pi/skills/electron-release/release.sh \
+       --repo /absolute/path/to/forge \
+       --version "$VERSION"
      ```
 
-   - Run this consistency guard from the same repository root and stop if it fails:
+   - The `--version` invocation proceeds toward packaging after it pushes. The operator MUST stop or interrupt it immediately after the version commit is pushed and **before packaging**. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against that new 40-character release commit. Do not package until every gate passes for that exact SHA.
+   - After preflight passes, invoke the same project-scoped release script **without `--version`** for packaging (add `--prerelease` for a prerelease version):
 
      ```bash
-     node <<'NODE'
-     const fs = require('node:fs')
-     const versionFiles = ['version.json', 'apps/electron/package.json']
-     const versions = versionFiles.map((file) => JSON.parse(fs.readFileSync(file, 'utf8')).version)
-     if (versions.some((version) => typeof version !== 'string' || version.length === 0) || new Set(versions).size !== 1) {
-       throw new Error(`${versionFiles.join(' and ')} must contain the same non-empty version`)
-     }
-     console.log(`Release version: ${versions[0]}`)
-     NODE
+     bash ~/.forge/profiles/middleman-project/pi/skills/electron-release/release.sh \
+       --repo /absolute/path/to/forge
      ```
 
-   - Commit and push both version-file changes before triggering any release build. Do not rely on a tag-first flow. The guarded release script resolves the build version from `apps/electron/package.json`; after the equality check above passes, invoke it without a version flag (for example, `bash ~/.forge/skills/electron-release/release.sh --repo /absolute/path/to/forge`).
+   - Commit and push the version authorities before triggering any release build. Do not rely on a tag-first flow.
 
 2. **Build and validate macOS locally**
    - Install the official Node 26.5.0 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
