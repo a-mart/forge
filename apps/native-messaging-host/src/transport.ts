@@ -43,6 +43,14 @@ export class RelayBackpressureError extends DesktopUnavailableError {
   }
 }
 
+const RELAY_PEER_CLOSE_CODES = new Set(['ECONNRESET', 'EPIPE', 'ERR_SOCKET_CLOSED'])
+
+export function isRelayPeerClose(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = (error as NodeJS.ErrnoException).code
+  return typeof code === 'string' && RELAY_PEER_CLOSE_CODES.has(code)
+}
+
 const RENDEZVOUS_FIELDS = [
   'desktopInstanceId',
   'desktopPid',
@@ -148,7 +156,10 @@ export class FramedSocketTransport implements RelayRecordTransport {
     })
     socket.once('end', () => this.finish())
     socket.once('close', () => this.finish())
-    socket.once('error', (error) => this.fail(error))
+    socket.once('error', (error) => {
+      if (isRelayPeerClose(error)) this.finish()
+      else this.fail(error)
+    })
   }
 
   get queuedRecordCount(): number {
@@ -241,7 +252,11 @@ export class FramedSocketTransport implements RelayRecordTransport {
   }
 
   private fail(error: unknown): void {
-    if (this.failure !== undefined) return
+    if (isRelayPeerClose(error)) {
+      this.finish()
+      return
+    }
+    if (this.failure !== undefined || this.ended) return
     this.failure = error instanceof Error ? error : new Error(String(error))
     this.ended = true
     this.clearQueue()

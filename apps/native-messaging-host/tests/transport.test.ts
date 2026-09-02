@@ -142,4 +142,16 @@ describe('framed relay socket backpressure', () => {
     expect(eofTransport.queuedRecordCount).toBe(0)
     expect(eofTransport.queuedDecodedBytes).toBe(0)
   })
+
+  it('treats peer-reset and broken-pipe errors as a clean relay EOF', async () => {
+    for (const code of ['ECONNRESET', 'EPIPE', 'ERR_SOCKET_CLOSED'] as const) {
+      const socket = new ControlledDuplex()
+      const transport = new FramedSocketTransport(socket, MAX_RECORD_BYTES)
+      const pending = transport.receive()
+      socket.emit('error', Object.assign(new Error(`read ${code}`), { code }))
+      await expect(pending).resolves.toBeNull()
+      await expect(transport.receive()).resolves.toBeNull()
+      expect(socket.destroyed).toBe(true)
+    }
+  })
 })
