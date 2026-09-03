@@ -99,32 +99,25 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
 const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
-You are a Forge Project Agent: a promoted peer manager session. Answer direct web requests and accepted closeouts with normal final text. Use brief direct progress only when an action follows in the same turn. Use speak_to_user for routed or proactive publication. For peer context, honor the sender's stated response expectation: a no-reply-needed handoff is silent unless sender action is required; a requested result permits one terminal result or a focused question/blocker; invited coordination permits only work-advancing dialogue. If no expectation is stated, send at most one terminal result. Use send_message_to_agent only when a response is warranted, otherwise use NO_REPLY. Never send courtesy-only peer acknowledgments, duplicate one reply, or use NO_REPLY to skip an unanswered direct request.
-
-Treat messages beginning with [workerResult] as terminal evidence requiring same-turn disposition, not automatic user or peer updates: accept them, assign one focused follow-up, classify a blocker, or continue other work.
-
-\${MANAGER_POSTURE}
+You are a Forge Project Agent: a persistent peer manager session, not a disposable worker. Own outcomes, integration, acceptance, and final claims. Honor peer response expectations and send no receipts or courtesy acknowledgments.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
-<!-- forge:manager-coordination:start -->
+\${MANAGER_POSTURE}
+
+Use one accountable owner per outcome and the simplest adequate coordination lane: Direct for one cohesive outcome or bounded worker, Checklist for visible manager-owned sequencing, and Graph only for multiple independently acceptable outcomes with real scheduling value.
+
 \${SPECIALIST_ROSTER}
-<!-- forge:manager-coordination:end -->`;
+
+Give workers one bounded outcome and require a secure runtime for secret-dependent work. Treat [workerResult] as evidence requiring same-turn disposition, not an automatic update. Follow the planning, goal, and delivery tool contracts for mechanics.`;
 const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
-- Use a diagram only when it makes an important relationship materially easier to understand than prose or a short list.
-- Prefer the smallest diagram that answers the question. Keep one abstraction level, short labels, one dominant direction, and minimal cross-links.
-- As a default, keep one diagram to roughly 5-12 important nodes and no more than 3 subgraphs. If the subject needs substantially more detail, provide a high-level overview and separate focused diagrams.
-- Do not turn a request for a high-level view into an exhaustive implementation or dependency graph.
-- Before returning Mermaid, check whether long labels, distant cross-links, nested subgraphs, or excessive nodes will create a very wide or tall canvas. Simplify or split the diagram when labels would become unreadable at normal chat width.`;
-const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
+- Use a visualization only when it makes an important relationship materially clearer than prose or a short list.
+- Prefer one readable abstraction level, short labels, and the smallest useful view. Split dense subjects instead of returning an unreadable canvas.`;
+const FORGE_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Direct request or accepted closeout: normal final text. Direct progress: only when same-turn action follows.
 - Routed or proactive publication: \`speak_to_user\`, then exactly \`NO_REPLY\` unless distinct new closeout content remains.
 - Peer context: honor the sender's stated response expectation. Use \`send_message_to_agent\` only for the result, question, blocker, or coordination it warrants; otherwise exactly \`NO_REPLY\`. Never send courtesy-only acknowledgments or closure replies.
-- Worker results require disposition but are not automatic user or peer updates. Never duplicate a reply through two paths or use \`NO_REPLY\` to skip an unanswered direct request.`;
-const MANAGER_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
-- Direct request or accepted closeout: normal final text. Direct progress: only when same-turn action follows.
-- Routed or proactive publication: \`speak_to_user\`, then exactly \`NO_REPLY\` unless distinct new closeout content remains.
-- Peer context: honor the sender's stated response expectation. Use \`send_message_to_agent\` only for the result, question, blocker, or coordination it warrants; otherwise exactly \`NO_REPLY\`. Never send courtesy-only acknowledgments or closure replies.
+- Internal/background turn (including \`[workerResult]\`, \`[goalContinuation]\`, or \`SYSTEM:\` context) with nothing the user needs now: exactly \`NO_REPLY\`.
 - Worker results require disposition but are not automatic user or peer updates. Never duplicate a reply through two paths or use \`NO_REPLY\` to skip an unanswered direct request.`;
 
 export type ProjectAgentPromptSource =
@@ -319,11 +312,7 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
     const managerPostureBlock = buildManagerPostureBlock(descriptor.managerPosture);
-    prompt = composeManagerPosture(
-      prompt,
-      managerPostureBlock,
-      descriptor.managerPosture === "hands_on",
-    );
+    prompt = composeManagerPosture(prompt, managerPostureBlock);
 
     const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
     if (projectAgentReferenceDocs.length > 0) {
@@ -334,14 +323,6 @@ export class SwarmPromptService {
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
       // eslint-disable-next-line no-template-curly-in-string
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
-    } else if (descriptor.managerPosture === "hands_on") {
-      const projectAgentContext = [
-        projectAgentDirectoryEntries.length > 0 ? projectAgentDirectoryBlock : "",
-        createSessionCapabilityNote.trim(),
-      ].filter(Boolean).join("\n");
-      if (projectAgentContext) {
-        prompt = `${prompt.trimEnd()}\n\n${projectAgentContext}`;
-      }
     } else {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
@@ -374,10 +355,8 @@ export class SwarmPromptService {
       prompt = `${prompt.trimEnd()}\n\n${USER_FACING_VISUALIZATION_GUIDANCE}`;
     }
 
-    if (projectAgentComposition) {
-      prompt = `${prompt.trimEnd()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`;
-    } else if (managerArchetypeId === MANAGER_ARCHETYPE_ID) {
-      prompt = `${prompt.trimEnd()}\n\n${MANAGER_ROUTING_FOOTER}`;
+    if (projectAgentComposition || managerArchetypeId === MANAGER_ARCHETYPE_ID) {
+      prompt = `${prompt.trimEnd()}\n\n${FORGE_ROUTING_FOOTER}`;
     }
 
     return prompt;
@@ -1187,13 +1166,13 @@ export class SwarmPromptService {
   }
 }
 
+// Copied legacy prompts may still contain these wrappers; composition removes only the markers.
 const MANAGER_COORDINATION_START = "<!-- forge:manager-coordination:start -->";
 const MANAGER_COORDINATION_END = "<!-- forge:manager-coordination:end -->";
 
 function composeManagerPosture(
   prompt: string,
   managerPostureBlock: string,
-  handsOn: boolean,
 ): string {
   let composed: string;
   // eslint-disable-next-line no-template-curly-in-string
@@ -1223,26 +1202,9 @@ function composeManagerPosture(
     }
   }
 
-  const coordinationStart = composed.indexOf(MANAGER_COORDINATION_START);
-  const coordinationEnd = composed.indexOf(MANAGER_COORDINATION_END);
-  if (
-    coordinationStart < 0
-    || coordinationEnd < coordinationStart
-  ) {
-    return composed;
-  }
-
-  const before = composed.slice(0, coordinationStart).trimEnd();
-  const coordination = handsOn
-    ? ""
-    : composed.slice(
-        coordinationStart + MANAGER_COORDINATION_START.length,
-        coordinationEnd,
-      ).trim();
-  const after = composed.slice(
-    coordinationEnd + MANAGER_COORDINATION_END.length,
-  ).trimStart();
-  return [before, coordination, after].filter(Boolean).join("\n\n");
+  return composed
+    .replaceAll(MANAGER_COORDINATION_START, "")
+    .replaceAll(MANAGER_COORDINATION_END, "");
 }
 
 function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {

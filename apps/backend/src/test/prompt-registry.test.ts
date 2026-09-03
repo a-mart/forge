@@ -66,7 +66,7 @@ describe("FileBackedPromptRegistry", () => {
     });
 
     await expect(registry.resolve("archetype", "manager")).resolves.toContain(
-      "Direct web/session request or accepted closeout: answer with normal final assistant text."
+      "# Own the outcome"
     );
     await expect(registry.resolve("archetype", "manager")).resolves.not.toBe("stale manager prompt\n");
     await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(

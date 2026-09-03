@@ -111,6 +111,17 @@ function makeHostWithAgents(
 }
 
 describe('buildSwarmTools', () => {
+  it('keeps structured-choice guidance with the tool that uses it', () => {
+    const presentChoices = buildSwarmTools(
+      makeHost(async () => makeWorkerDescriptor('worker')),
+      makeManagerDescriptor(),
+    ).find((tool) => tool.name === 'present_choices')
+
+    expect(presentChoices?.description).toContain('specific decision')
+    expect(presentChoices?.description).toContain('include an Other or Custom option')
+    expect(presentChoices?.description).toContain('unless the user deliberately needs a closed choice')
+  })
+
   it('list_agents returns bounded default output with summary and pagination hint', async () => {
     const workers = Array.from({ length: 30 }, (_, index) => ({
       ...makeWorkerDescriptor(`worker-${String(index + 1).padStart(2, '0')}`),

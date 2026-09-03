@@ -1,6 +1,6 @@
 # Manager prompt simplification
 
-Status: design baseline for the next manager-prompt revision.
+Status: implementation contract for the compressed manager prompt.
 
 ## Goals
 
@@ -18,15 +18,17 @@ Forge does not ship default instruction blocks for any model family. The `${MODE
 
 Any behavior required across supported manager models belongs in the core manager prompt, tool descriptions, or deterministic runtime enforcement. Model-specific user instructions remain an optional escape hatch, not a Forge policy layer.
 
-### Manager direct-work boundary
+### Posture-relative ownership
 
-The manager may perform bounded read-only orientation when it can answer a simple question or make a routing decision without starting a sustained investigation. Examples include reading a directly relevant file, checking concise repository status, or resolving a single configuration fact.
+All postures share one outcome, coordination, acceptance, communication, and permission contract. A posture changes only the preferred owner for substantive execution:
 
-The manager should delegate when work requires project-file mutation, multiple dependent investigation steps, substantial analysis, or independent work that benefits from specialist context. If a bounded lookup exposes a real implementation or investigation task, the manager hands it off rather than continuing by inertia.
+- **Delegate first:** workers normally own substantive execution; manager direct project work is bounded read-only orientation and acceptance.
+- **Adaptive:** choose ownership outcome by outcome without a prior manager or worker bias.
+- **Hands-on:** the manager normally owns one cohesive outcome and delegates when a bounded handoff provides material value.
 
-Direct-work shell commands must be non-mutating, and shell or browser actions must not become an indirect way to perform implementation or other consequential mutations.
+Adaptive and Hands-on may use normal project tools for manager-owned outcomes. Delegate first must not use shell or browser actions as an indirect project-mutation path. In every posture, change ownership when evidence changes instead of continuing direct work or delegation by inertia.
 
-This boundary should be expressed as a decision rule, not a fragile action-count limit.
+These boundaries are decision rules, not fragile action-count limits.
 
 ### Manager acceptance role
 
@@ -46,27 +48,27 @@ A screenshot can establish appearance but cannot prove an interaction it does no
 
 Use one owner by default. Add workers when work can be divided into independent bounded lanes, requires distinct specialist context, or gains meaningful wall-clock or review coverage. Avoid overlapping implementation ownership and automatic reviewer waves.
 
-## Target prompt structure
+## Prompt structure
 
-1. Role and outcome ownership.
-2. Instruction and permission priority.
-3. Proceed, ask, delegate, or directly inspect decision rules.
-4. One delivery-routing table.
-5. Delegation and manager-acceptance policy.
-6. Completion, evidence, and stopping rules.
-7. Concise communication style.
-8. Dynamic specialist, project-agent, memory, skill, and repository context.
+1. Own the outcome.
+2. Choose ownership and coordination.
+3. Execute, accept, and converge.
+4. Understand dynamic runtime context.
+5. Communicate and deliver through one routing contract.
+6. Preserve permission and durable-state boundaries.
 
-Tool parameters and tool-local mechanics belong in tool descriptions. Source-specific routing overlays should be conditional where practical. Runtime guards remain responsible for deterministic delivery, permission, and silent-turn failure handling.
+The posture block owns only the manager-versus-worker preference. All postures receive the same compact Direct, Checklist, and Graph model and the same active roster. Tool parameters, graph state transitions, retry details, stable identifiers, and other invocation mechanics belong in tool descriptions and schemas. Runtime guards enforce deterministic delivery and missing required responses; the shared routing footer defines intentional silence with `NO_REPLY`.
 
-## Validation before adoption
+## Validation
 
-Compare the current and reduced prompts on representative cases covering:
+Automated coverage verifies source-size budgets, posture composition, roster availability, one routing footer, the intentional-silence sentinel, and the tool-local contracts. Backend typechecking and the focused prompt suites must pass. These structural checks do not replace behavioral calibration across supported models.
+
+Before broad adoption, compare the current and reduced prompts on representative sessions covering:
 
 - direct web turns and same-turn progress;
 - completed, partial, and blocked worker results;
 - intentional internal silence and duplicate-delivery prevention;
-- peer/project-agent and non-web routing;
+- peer/project-agent routing;
 - user-authored model-specific instructions and an empty default;
 - trivial read-only manager work versus tasks that must delegate;
 - artifact, screenshot, UI-interaction, and focused-command acceptance;

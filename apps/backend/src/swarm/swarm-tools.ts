@@ -712,10 +712,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       label: "Present Choices",
       description:
         "Present structured choices to the user and wait for their response. " +
-        "Use this when you want the user to select from specific options instead of typing freeform. " +
-        "The user sees an interactive card with clickable buttons. " +
-        "Returns the user's selections and any freeform text they provided. " +
-        "The tool blocks until the user responds or cancels.",
+        "Use it for a specific decision where clickable options are clearer than freeform input, not for an open-ended question. " +
+        "Keep labels concise and include an Other or Custom option unless the user deliberately needs a closed choice. " +
+        "The call blocks until the user responds or cancels and returns their selections and freeform text.",
       parameters: Type.Object({
         questions: Type.Array(
           Type.Object({

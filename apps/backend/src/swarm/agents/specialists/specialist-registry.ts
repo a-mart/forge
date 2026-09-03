@@ -465,7 +465,7 @@ export function generateTierLensRosterBlock(
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Delegate workers through the active roster of specialists.",
+    "When delegating, use the active roster of specialists.",
     "",
     "Forge appends `[delegationRoster]` to manager turns. A named `route` selects a complete specialist: task instructions, model, and recovery. Otherwise choose a task `mode` and omit `route` for that task's default specialist.",
   ];
