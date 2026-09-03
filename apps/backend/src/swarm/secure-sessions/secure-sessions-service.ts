@@ -45,6 +45,7 @@ import type {
   SecureExecutionTask,
 } from "./execution/secure-execution-backend.js";
 import { SecureExecutionError } from "./execution/secure-execution-error.js";
+import { normalizeSshAgentKeyMaterial } from "./execution/ssh-agent-key-material.js";
 import { SECURE_OUTPUT_QUARANTINE, SecureValueGuard } from "./redaction/secure-value-guard.js";
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
 import { supportsSecureRuntimeProvider } from "./runtime/secure-runtime-provider-policy.js";
@@ -3823,7 +3824,7 @@ export class SecureSessionsService {
       if (active.guardRequired && !active.guard) {
         await this.ensureGuardForActiveLeases(store, sessionAgentId);
       }
-      guard = await this.buildCachedLeaseGuard(sessionAgentId);
+      guard = await this.buildCachedLeaseGuard(sessionAgentId, resolved);
       if (
         guard.sanitizeString(request.command) === SECURE_OUTPUT_QUARANTINE
         || guard.sanitizeString(request.cwd) === SECURE_OUTPUT_QUARANTINE
@@ -4106,10 +4107,11 @@ export class SecureSessionsService {
           });
           continue;
         }
-        const hasActiveAliasConflict = snapshot.leases.some((lease) =>
-          lease.state === "active"
-          && store.getSecret(lease.secretId)?.displayAlias === secret.displayAlias
-        );
+        const hasActiveAliasConflict = activeLeasesForAlias(
+          store,
+          snapshot,
+          secret.displayAlias,
+        ).length > 0;
         const bindingKeys = publicBindings.flatMap((binding) => {
           const key = bindingCollisionKey(binding);
           return key === null ? [] : [key];
@@ -4563,6 +4565,7 @@ export class SecureSessionsService {
 
   private async buildCachedLeaseGuard(
     sessionAgentId: string,
+    resolved: readonly ResolvedSecureSecretBinding[] = [],
   ): Promise<SecureValueGuard> {
     const values: Buffer[] = [];
     try {
@@ -4571,6 +4574,15 @@ export class SecureSessionsService {
         if (!secret.released) {
           await secret.withBytes((bytes) => values.push(Buffer.from(bytes)));
         }
+      }
+      for (const item of resolved) {
+        if (item.binding.deliveryKind !== "ssh_agent") continue;
+        const normalized = normalizeSshAgentKeyMaterial(item.value);
+        if (normalized.equals(item.value)) {
+          normalized.fill(0);
+          continue;
+        }
+        values.push(normalized);
       }
       return this.createValueGuard(values);
     } finally {
@@ -5100,6 +5112,9 @@ export class SecureSessionsService {
           const bindings = secret
             ? store.listBindings(secret.secretId).map(toPublicBinding)
             : [];
+          const activeAliasLeases = secret
+            ? activeLeasesForAlias(store, snapshot, secret.displayAlias)
+            : [];
           const active = Boolean(
             secret
             && bindings.length > 0
@@ -5112,6 +5127,14 @@ export class SecureSessionsService {
               "task",
             )
           );
+          if (activeAliasLeases.length > 0 && !active) {
+            return {
+              secretId: projectDefault.secretId,
+              displayAlias: secret?.displayAlias ?? "unavailable",
+              state: "conflict",
+              statusCode: "binding_conflict",
+            };
+          }
           if (recorded && recorded.state !== "active") return recorded;
           if (recorded?.state === "active" && !active) {
             return {
@@ -6411,16 +6434,21 @@ function findActiveEquivalentLease(
   secretId?: string | null,
   leaseKind?: SecureSessionLease["leaseKind"],
 ): SecureSessionLease | null {
-  return snapshot.leases.find((lease) =>
-    lease.state === "active"
-    && (leaseKind === undefined || lease.leaseKind === leaseKind)
-    && (
-      lease.leaseKind !== "one_use"
-      || (lease.remainingUses === 1 && lease.oneUseOperationId === null)
+  const activeAliasLeases = activeLeasesForAlias(store, snapshot, displayAlias);
+  if (activeAliasLeases.length !== 1) return null;
+  const [lease] = activeAliasLeases;
+  if (
+    !lease
+    || (leaseKind !== undefined && lease.leaseKind !== leaseKind)
+    || (
+      lease.leaseKind === "one_use"
+      && (lease.remainingUses !== 1 || lease.oneUseOperationId !== null)
     )
-    && (secretId === undefined || secretId === null || lease.secretId === secretId)
-    && store.getSecret(lease.secretId)?.displayAlias === displayAlias
-    && sameBindingSets(
+    || (secretId !== undefined && secretId !== null && lease.secretId !== secretId)
+  ) {
+    return null;
+  }
+  return sameBindingSets(
       lease.bindingIds.map((bindingId) => {
         const binding = store.getBinding(bindingId);
         if (!binding) {
@@ -6430,7 +6458,19 @@ function findActiveEquivalentLease(
       }),
       bindings,
     )
-  ) ?? null;
+    ? lease
+    : null;
+}
+
+function activeLeasesForAlias(
+  store: SecureSessionStore,
+  snapshot: StoredSnapshot,
+  displayAlias: string,
+): SecureSessionLease[] {
+  return snapshot.leases.filter((lease) =>
+    lease.state === "active"
+    && store.getSecret(lease.secretId)?.displayAlias === displayAlias
+  );
 }
 
 function isVisibleTo(secret: SecureSessionSecret, profileId: string): boolean {
