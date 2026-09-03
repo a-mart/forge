@@ -12,6 +12,7 @@ import {
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 import { getSharedConfigDir } from "../data-paths.js";
+import { normalizePersistedSwarmModelDescriptor } from "../model-presets.js";
 import type { AgentDescriptor } from "../types.js";
 import { resolveTierConfigs } from "./specialist-registry.js";
 
@@ -356,6 +357,11 @@ function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
   const availabilityFallback = input.availabilityFallback === undefined
     ? undefined
     : normalizeFallback(input.availabilityFallback, `${prefix}.availabilityFallback`);
+  const model = normalizePersistedRouteModel({
+    provider: normalizeText(input.provider, `${prefix}.provider`, 100),
+    modelId: normalizeText(input.modelId, `${prefix}.modelId`, 180),
+    reasoningLevel: normalizeReasoning(input.reasoningLevel, `${prefix}.reasoningLevel`),
+  });
   return {
     routeId,
     label,
@@ -370,9 +376,7 @@ function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
     useWhen,
     ...(avoidWhen ? { avoidWhen } : {}),
     ...(color ? { color } : {}),
-    provider: normalizeText(input.provider, `${prefix}.provider`, 100),
-    modelId: normalizeText(input.modelId, `${prefix}.modelId`, 180),
-    reasoningLevel: normalizeReasoning(input.reasoningLevel, `${prefix}.reasoningLevel`),
+    ...model,
     ...(availabilityFallback ? { availabilityFallback } : {}),
     ...(input.capabilityEscalationRouteId === undefined
       ? {}
@@ -388,10 +392,38 @@ function normalizeRoute(input: unknown, prefix: string): DelegationRoute {
 
 function normalizeFallback(input: unknown, prefix: string): DelegationRoute["availabilityFallback"] {
   if (!isRecord(input)) throw new Error(`${prefix} must be an object.`);
-  return {
+  return normalizePersistedRouteModel({
     provider: normalizeText(input.provider, `${prefix}.provider`, 100),
     modelId: normalizeText(input.modelId, `${prefix}.modelId`, 180),
     reasoningLevel: normalizeReasoning(input.reasoningLevel, `${prefix}.reasoningLevel`),
+  });
+}
+
+function normalizePersistedRouteModel(model: {
+  provider: string;
+  modelId: string;
+  reasoningLevel: ManagerReasoningLevel;
+}): {
+  provider: string;
+  modelId: string;
+  reasoningLevel: ManagerReasoningLevel;
+} {
+  const normalized = normalizePersistedSwarmModelDescriptor({
+    provider: model.provider,
+    modelId: model.modelId,
+    thinkingLevel: model.reasoningLevel,
+  });
+  if (
+    !normalized
+    || (normalized.provider === model.provider && normalized.modelId === model.modelId)
+  ) {
+    return model;
+  }
+
+  return {
+    provider: normalized.provider,
+    modelId: normalized.modelId,
+    reasoningLevel: normalizeReasoning(normalized.thinkingLevel, "migrated reasoningLevel"),
   };
 }
 

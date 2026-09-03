@@ -105,7 +105,7 @@ describe("createSwarmManagerFoundation", () => {
     expect(getConfiguredManagerId).toHaveBeenCalledOnce();
     expect(getRuntimeToken).not.toHaveBeenCalled();
     expect(foundation.config).not.toBe(config);
-    expect(foundation.config.defaultModel.modelId).toBe("gpt-5.4");
+    expect(foundation.config.defaultModel.modelId).toBe("gpt-5.5");
     expect(foundation.promptRegistry).toBeDefined();
     expect(foundation.sessionDescriptorFactory).toBeDefined();
     expect(foundation.sessionPinCoordinator).toBeDefined();

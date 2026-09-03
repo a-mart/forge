@@ -127,6 +127,129 @@ describe("specialist-registry", () => {
     });
   });
 
+  it("migrates persisted GPT-5.4, GPT-5.4 Mini, xAI, and pi-5.4 specialist models at read time without rewriting files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    process.env.FORGE_DATA_DIR = dataDir;
+    await mkdir(sharedDir, { recursive: true });
+
+    const gpt54Path = join(sharedDir, "gpt54.md");
+    const miniPath = join(sharedDir, "gpt54-mini.md");
+    const grokPath = join(sharedDir, "legacy-grok.md");
+    const presetPath = join(sharedDir, "legacy-pi-54.md");
+    const gpt54Markdown = [
+      "---",
+      "displayName: GPT 5.4 Worker",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy GPT-5.4 work",
+      "provider: openai-codex",
+      "modelId: gpt-5.4",
+      "reasoningLevel: high",
+      "fallbackProvider: openai-codex",
+      "fallbackModelId: gpt-5.4-mini",
+      "fallbackReasoningLevel: low",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n");
+    const miniMarkdown = [
+      "---",
+      "displayName: GPT 5.4 Mini Worker",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy GPT-5.4 Mini work",
+      "provider: openai-codex",
+      "modelId: gpt-5.4-mini",
+      "reasoningLevel: low",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n");
+    const grokMarkdown = [
+      "---",
+      "displayName: Legacy Grok Worker",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy xAI work",
+      "provider: xai",
+      "modelId: grok-4",
+      "reasoningLevel: high",
+      "fallbackProvider: xai",
+      "fallbackModelId: grok-4-fast",
+      "fallbackReasoningLevel: medium",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n");
+    const presetMarkdown = [
+      "---",
+      "displayName: Legacy Pi 5.4 Worker",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy pi-5.4 work",
+      "model: pi-5.4",
+      "reasoningLevel: high",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n");
+
+    await writeFile(gpt54Path, gpt54Markdown, "utf8");
+    await writeFile(miniPath, miniMarkdown, "utf8");
+    await writeFile(grokPath, grokMarkdown, "utf8");
+    await writeFile(presetPath, presetMarkdown, "utf8");
+
+    expect((await parseSpecialistFile(gpt54Path))?.frontmatter).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "high",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "low",
+    });
+    expect((await parseSpecialistFile(miniPath))?.frontmatter).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "low",
+    });
+    expect((await parseSpecialistFile(grokPath))?.frontmatter).toMatchObject({
+      provider: "xai",
+      modelId: "grok-4.6",
+      reasoningLevel: "high",
+      fallbackProvider: "xai",
+      fallbackModelId: "grok-4.6",
+      fallbackReasoningLevel: "medium",
+    });
+    expect((await parseSpecialistFile(presetPath))?.frontmatter).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "high",
+    });
+
+    const roster = await resolveRoster("profile-a", dataDir);
+    expect(roster.find((entry) => entry.specialistId === "gpt54")).toMatchObject({
+      available: true,
+      availabilityCode: "ok",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+    });
+    expect(roster.find((entry) => entry.specialistId === "legacy-pi-54")).toMatchObject({
+      available: true,
+      availabilityCode: "ok",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+    });
+
+    expect(await readFile(gpt54Path, "utf8")).toBe(gpt54Markdown);
+    expect(await readFile(miniPath, "utf8")).toBe(miniMarkdown);
+    expect(await readFile(grokPath, "utf8")).toBe(grokMarkdown);
+    expect(await readFile(presetPath, "utf8")).toBe(presetMarkdown);
+  });
+
   it("resolves workspace specialists without overriding global entries unless explicitly requested", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
@@ -396,7 +519,7 @@ describe("specialist-registry", () => {
       color: "#123abc",
       enabled: true,
       whenToUse: "Dual tasks",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       targetSpace: ["builder", "collaboration"],
       promptBody: "Dual prompt body",
     });
@@ -419,7 +542,7 @@ describe("specialist-registry", () => {
       modelId: "grok-4",
       provider: "xai",
       reasoningLevel: "high",
-      fallbackModelId: "gpt-5.4",
+      fallbackModelId: "gpt-5.5",
       fallbackProvider: "openai-codex",
       fallbackReasoningLevel: "medium",
       pinned: true,
@@ -431,7 +554,7 @@ describe("specialist-registry", () => {
     const markdown = await readFile(specialistPath, "utf8");
     expect(markdown).toContain('provider: "xai"');
     expect(markdown).toContain('reasoningLevel: "high"');
-    expect(markdown).toContain('fallbackModelId: "gpt-5.4"');
+    expect(markdown).toContain('fallbackModelId: "gpt-5.5"');
     expect(markdown).toContain('fallbackProvider: "openai-codex"');
     expect(markdown).toContain('fallbackReasoningLevel: "medium"');
     expect(markdown).toContain("pinned: true");
@@ -442,7 +565,7 @@ describe("specialist-registry", () => {
     expect(parsed?.frontmatter).toMatchObject({
       provider: "xai",
       reasoningLevel: "high",
-      fallbackModelId: "gpt-5.4",
+      fallbackModelId: "gpt-5.5",
       fallbackProvider: "openai-codex",
       fallbackReasoningLevel: "medium",
       pinned: true,
@@ -567,7 +690,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Legacy explicit model tasks",
-        "model: gpt-5.4",
+        "model: gpt-5.5",
         "reasoningLevel: high",
         "---",
         "",
@@ -579,7 +702,7 @@ describe("specialist-registry", () => {
     const parsed = await parseSpecialistFile(filePath);
     expect(parsed).not.toBeNull();
     expect(parsed?.frontmatter).toMatchObject({
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       provider: "openai-codex",
       reasoningLevel: "high",
     });
@@ -639,7 +762,7 @@ describe("specialist-registry", () => {
       color: "#123abc",
       enabled: true,
       whenToUse: "Pinned tasks",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       pinned: true,
       promptBody: "Pinned prompt body",
     });
@@ -677,7 +800,7 @@ describe("specialist-registry", () => {
       color: "#123abc",
       enabled: true,
       whenToUse: "Standard tasks",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       webSearch: false,
       promptBody: "Standard prompt body",
     });
@@ -747,7 +870,7 @@ describe("specialist-registry", () => {
       color: "#123abc",
       enabled: true,
       whenToUse: "Standard tasks",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       webSearch: true,
       promptBody: "Standard prompt body",
     });
@@ -807,7 +930,7 @@ describe("specialist-registry", () => {
         "color: '#123456'",
         "enabled: true",
         "whenToUse: Profile backend",
-        "modelId: gpt-5.4",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Profile backend body.",
@@ -824,7 +947,7 @@ describe("specialist-registry", () => {
       displayName: "Profile Backend",
       sourceKind: "profile",
       shadowsGlobal: true,
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       availabilityCode: "ok",
       available: true,
     });
@@ -1217,7 +1340,7 @@ describe("specialist-registry", () => {
         "color: '#059669'",
         "enabled: true",
         "whenToUse: Backend B",
-        "modelId: gpt-5.4",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Backend B body.",
@@ -1234,7 +1357,7 @@ describe("specialist-registry", () => {
     });
     expect(rosterB[0]).toMatchObject({
       displayName: "Backend B",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
     });
   });
 
@@ -1440,7 +1563,7 @@ describe("specialist-registry", () => {
       color: "#123abc",
       enabled: true,
       whenToUse: "Shared tasks",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       reasoningLevel: "medium",
       promptBody: "Shared prompt body",
     });
@@ -1451,7 +1574,7 @@ describe("specialist-registry", () => {
         expect.objectContaining({
           specialistId: "global-worker",
           sourceKind: "global",
-          modelId: "gpt-5.4",
+          modelId: "gpt-5.5",
           reasoningLevel: "medium",
         }),
       ]),
@@ -1497,7 +1620,7 @@ describe("specialist-registry", () => {
         "color: '#123abc'",
         "enabled: true",
         "whenToUse: Standard tasks",
-        "modelId: gpt-5.4",
+        "modelId: gpt-5.5",
         "webSearch: true",
         "---",
         "",
@@ -1564,41 +1687,44 @@ describe("specialist-registry", () => {
   });
 
   it.each([
-    ["openai-codex", "gpt-5.3-codex-spark"],
-    ["anthropic", "claude-sonnet-4-5-20250929"],
-    ["claude-sdk", "claude-haiku-4-5-20251001"],
-  ])("marks specialist unavailable for retired exact model %s/%s", async (provider, modelId) => {
+    ["openai-codex", "gpt-5.3-codex-spark", "openai-codex", "gpt-5.5"],
+    ["anthropic", "claude-sonnet-4-5-20250929", "anthropic", "claude-sonnet-5"],
+    ["claude-sdk", "claude-haiku-4-5-20251001", "anthropic", "claude-sonnet-5"],
+  ])("migrates persisted retired exact model %s/%s on specialist load", async (
+    provider,
+    modelId,
+    nextProvider,
+    nextModelId,
+  ) => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
     const sharedDir = join(dataDir, "shared", "specialists");
     process.env.FORGE_DATA_DIR = dataDir;
     await mkdir(sharedDir, { recursive: true });
-    await writeFile(
-      join(sharedDir, "retired-worker.md"),
-      [
-        "---",
-        "displayName: Retired Worker",
-        "color: '#2563eb'",
-        "enabled: true",
-        "whenToUse: Legacy tasks",
-        `provider: ${provider}`,
-        `modelId: ${modelId}`,
-        "---",
-        "",
-        "Worker body.",
-      ].join("\n"),
-      "utf8",
-    );
+    const filePath = join(sharedDir, "retired-worker.md");
+    const markdown = [
+      "---",
+      "displayName: Retired Worker",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy tasks",
+      `provider: ${provider}`,
+      `modelId: ${modelId}`,
+      "---",
+      "",
+      "Worker body.",
+    ].join("\n");
+    await writeFile(filePath, markdown, "utf8");
 
     const roster = await resolveRoster("profile-a", dataDir);
 
     expect(roster[0]).toMatchObject({
-      available: false,
-      availabilityCode: "invalid_model",
-      availabilityMessage: provider === "claude-sdk"
-        ? expect.stringContaining("Claude SDK has been retired")
-        : `Unknown modelId: ${modelId}`,
+      available: true,
+      availabilityCode: "ok",
+      provider: nextProvider,
+      modelId: nextModelId,
     });
+    expect(await readFile(filePath, "utf8")).toBe(markdown);
   });
 
   it("keeps legacy tier model bindings out of current route guidance", () => {
@@ -1700,7 +1826,7 @@ describe("specialist-registry", () => {
         "color: '#16a34a'",
         "enabled: true",
         "whenToUse: Collaboration tasks",
-        "modelId: gpt-5.4",
+        "modelId: gpt-5.5",
         "TargetSpace: collaboration",
         "---",
         "",

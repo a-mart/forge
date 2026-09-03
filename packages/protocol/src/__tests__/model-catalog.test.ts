@@ -67,14 +67,6 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
-  'pi-5.4': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.4',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
   'pi-opus': {
     provider: 'anthropic',
     defaultModelId: 'claude-opus-5',
@@ -166,22 +158,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
-  'gpt-5.4': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.4',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'gpt-5.4-mini': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.4',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
   'claude-opus-5': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -254,38 +230,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
-  'grok-4': {
-    provider: 'xai',
-    familyId: 'pi-grok',
-    contextWindow: 256_000,
-    maxOutputTokens: 64_000,
-    supportsReasoning: true,
-    inputModes: ['text'],
-  },
-  'grok-4-fast': {
-    provider: 'xai',
-    familyId: 'pi-grok',
-    contextWindow: 2_000_000,
-    maxOutputTokens: 30_000,
-    supportsReasoning: true,
-    inputModes: ['text'],
-  },
-  'grok-4.20-0309-reasoning': {
-    provider: 'xai',
-    familyId: 'pi-grok',
-    contextWindow: 2_000_000,
-    maxOutputTokens: 30_000,
-    supportsReasoning: true,
-    inputModes: ['text'],
-  },
-  'grok-4.20-0309-non-reasoning': {
-    provider: 'xai',
-    familyId: 'pi-grok',
-    contextWindow: 2_000_000,
-    maxOutputTokens: 30_000,
-    supportsReasoning: false,
-    inputModes: ['text'],
-  },
   'cursor-sdk/composer-2.5': {
     provider: 'cursor-sdk',
     familyId: 'cursor-composer',
@@ -323,12 +267,16 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(23)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(17)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-haiku-4-5-20251001')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
+    expect(FORGE_MODEL_CATALOG.families).not.toHaveProperty('pi-5.4')
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'grok-4', 'grok-4-fast', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-non-reasoning']) {
+      expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty(modelId)
+    }
   })
 
   it('matches the approved family visibility matrix', () => {
@@ -454,7 +402,6 @@ describe('model-catalog', () => {
   it('documents intentional catalog divergences from Pi upstream', () => {
     expect(getCatalogModel('gpt-6-astra')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.6')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
-    expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
     for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
       expect(getCatalogModel(modelId)?.intentionalDivergenceNotes).toContain(
         '272k context window reported by Codex capability metadata',
@@ -465,12 +412,6 @@ describe('model-catalog', () => {
       'restricted to low, medium, and high reasoning levels',
     )
     expect(getCatalogModel('claude-sonnet-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
-    expect(getCatalogModel('grok-4.20-0309-reasoning')?.intentionalDivergenceNotes).toContain(
-      'text-only',
-    )
-    expect(getCatalogModel('grok-4.20-0309-non-reasoning')?.intentionalDivergenceNotes).toContain(
-      'text-only',
-    )
   })
 
   it('stores unique model IDs that match their record keys', () => {
@@ -621,10 +562,16 @@ describe('model-catalog', () => {
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-fable-5-1', 'anthropic')?.familyId).toBe('pi-fable')
     expect(getCatalogFamilyForModel('claude-fable-5', 'anthropic')?.familyId).toBe('pi-fable')
-    expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
+    expect(getCatalogContextWindow('grok-4.5')).toBe(500_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
     expect(getCatalogContextWindow('default', 'cursor-acp')).toBeUndefined()
     expect(isRetiredForgeModel('openai-codex', 'gpt-5.3-codex-spark')).toBe(true)
+    expect(isRetiredForgeModel('openai-codex', 'gpt-5.4')).toBe(true)
+    expect(isRetiredForgeModel('openai-codex', 'gpt-5.4-mini')).toBe(true)
+    expect(isRetiredForgeModel('xai', 'grok-4')).toBe(true)
+    expect(isRetiredForgeModel('xai', 'grok-4-fast')).toBe(true)
+    expect(isRetiredForgeModel('xai', 'grok-4.20-0309-reasoning')).toBe(true)
+    expect(isRetiredForgeModel('xai', 'grok-4.20-0309-non-reasoning')).toBe(true)
     expect(isRetiredForgeModel('anthropic', 'claude-sonnet-4.5')).toBe(true)
     expect(isRetiredForgeModel('openrouter', '~anthropic/claude-haiku-latest')).toBe(true)
     expect(isRetiredForgeModel('openrouter', 'openai/gpt-5.3-codex-spark')).toBe(true)
@@ -645,14 +592,14 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('cursor-sdk', 'composer-2.5')).toBe('cursor-composer')
     expect(inferCatalogFamily('cursor-sdk', 'grok-4.5')).toBe('cursor-grok-45')
     expect(inferCatalogProvider('gpt-6-astra')).toBe('openai-codex')
-    expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
+    expect(inferCatalogProvider('gpt-5.4')).toBeNull()
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.6-sol')).toBe('openai-codex')
     expect(inferCatalogProvider('grok-4.6')).toBe('xai')
     expect(inferCatalogFamily('xai', 'grok-4.6')).toBe('pi-grok')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
     expect(inferCatalogFamily('openai-codex', 'gpt-6-astra')).toBe('pi-6')
-    expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
+    expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBeUndefined()
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.6-sol')).toBe('pi-5.6')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
@@ -668,7 +615,7 @@ describe('model-catalog', () => {
 
   it('derives manager-selectable exact model availability from family support, global enabled, and managerEnabled overrides', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
-    const grok = getCatalogModel('grok-4', 'xai')
+    const grok = getCatalogModel('grok-4.5', 'xai')
 
     expect(anthropicOpus47).toBeDefined()
     expect(grok).toBeDefined()
@@ -746,7 +693,7 @@ describe('model-catalog', () => {
 
   it('derives compaction eligibility from the dedicated provider allowlist instead of manager visibility', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
-    const grok = getCatalogModel('grok-4', 'xai')
+    const grok = getCatalogModel('grok-4.5', 'xai')
 
     expect(anthropicOpus47).toBeDefined()
     expect(grok).toBeDefined()
@@ -758,7 +705,7 @@ describe('model-catalog', () => {
     expect(isCatalogModelCompactionSupported(anthropicOpus47)).toBe(true)
     expect(isCatalogModelCompactionSupported(grok)).toBe(false)
     expect(isCompactionModelSelectionSupported('claude-opus-4-7', 'anthropic')).toBe(true)
-    expect(isCompactionModelSelectionSupported('grok-4', 'xai')).toBe(false)
+    expect(isCompactionModelSelectionSupported('grok-4.5', 'xai')).toBe(false)
     expect(getEffectiveCompactionEnabled(anthropicOpus47, undefined)).toBe(true)
     expect(getEffectiveCompactionEnabled(grok, undefined)).toBe(false)
   })
@@ -768,7 +715,6 @@ describe('model-catalog', () => {
       'pi-5.5',
       'pi-6',
       'pi-5.6',
-      'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -781,7 +727,6 @@ describe('model-catalog', () => {
       'pi-5.5',
       'pi-6',
       'pi-5.6',
-      'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -794,7 +739,6 @@ describe('model-catalog', () => {
       'pi-5.5',
       'pi-6',
       'pi-5.6',
-      'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -807,7 +751,6 @@ describe('model-catalog', () => {
       'pi-5.5',
       'pi-6',
       'pi-5.6',
-      'pi-5.4',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',

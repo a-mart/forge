@@ -18,7 +18,7 @@ import {
 import { getCompactionSettingsPath } from "./data-paths.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
-import { mapLegacyClaudeSdkModel } from "./catalog/legacy-claude-sdk-model.js";
+import { normalizePersistedSwarmModelDescriptor } from "./catalog/model-presets.js";
 
 export { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
@@ -244,9 +244,9 @@ function normalizeLoadedModel(
     return fallback;
   }
 
-  const legacyMapping = mapLegacyClaudeSdkModel({ provider, modelId });
-  return legacyMapping.kind === "mapped"
-    ? { provider: legacyMapping.provider, modelId: legacyMapping.modelId }
+  const normalized = normalizePersistedSwarmModelDescriptor({ provider, modelId });
+  return normalized
+    ? { provider: normalized.provider, modelId: normalized.modelId }
     : { provider, modelId };
 }
 

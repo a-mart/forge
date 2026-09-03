@@ -273,7 +273,7 @@ describe('IndexPage create project model selection', () => {
       .map((r) => r.displayName)
 
     expect(optionValues).toContain('GPT-6 Astra')
-    expect(optionValues).toContain('GPT-5.4')
+    expect(optionValues).not.toContain('GPT-5.4')
     expect(optionValues).toContain('Claude Opus 4.7')
     expect(optionValues).toContain('Claude Opus 4.6')
     expect(optionValues).toContain('Claude Fable 5.1')

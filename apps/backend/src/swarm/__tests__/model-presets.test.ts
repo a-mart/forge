@@ -53,69 +53,30 @@ describe("model-presets", () => {
     expect(inferProviderFromModelId("/claude-3.5-sonnet")).toBeNull();
   });
 
-  it("maps Grok variants back to the pi-grok preset", () => {
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "xai",
-        modelId: "grok-4.6",
-      }),
-    ).toBe("pi-grok");
-
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "xai",
-        modelId: "grok-4-fast",
-      }),
-    ).toBe("pi-grok");
-
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "xai",
-        modelId: "grok-4.20-0309-reasoning",
-      }),
-    ).toBe("pi-grok");
-
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "xai",
-        modelId: "grok-4.20-0309-non-reasoning",
-      }),
-    ).toBe("pi-grok");
-
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "xai",
-        modelId: "grok-3",
-      }),
-    ).toBe("pi-grok");
+  it("maps supported Grok models back to the pi-grok preset", () => {
+    for (const modelId of ["grok-4.6", "grok-4.5", "grok-3"]) {
+      expect(
+        inferSwarmModelPresetFromDescriptor({
+          provider: "xai",
+          modelId,
+        }),
+      ).toBe("pi-grok");
+    }
   });
 
-  it("preserves selected Grok variants instead of collapsing them to a stale family default", () => {
+  it("preserves a selected supported Grok variant instead of collapsing it to the family default", () => {
     expect(
       normalizeSwarmModelDescriptor(
         {
           provider: "xai",
-          modelId: "grok-4-fast",
+          modelId: "grok-4.5",
+          thinkingLevel: "medium",
         },
         "pi-codex",
       ),
     ).toEqual({
       provider: "xai",
-      modelId: "grok-4-fast",
-      thinkingLevel: "medium",
-    });
-
-    expect(
-      normalizeSwarmModelDescriptor(
-        {
-          provider: "xai",
-          modelId: "grok-4.20-0309-reasoning",
-        },
-        "pi-codex",
-      ),
-    ).toEqual({
-      provider: "xai",
-      modelId: "grok-4.20-0309-reasoning",
+      modelId: "grok-4.5",
       thinkingLevel: "high",
     });
   });
@@ -128,13 +89,7 @@ describe("model-presets", () => {
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
       webSearch: true,
     });
-    expect(grokPreset?.variants?.map((variant) => variant.modelId)).toEqual([
-      "grok-4.5",
-      "grok-4",
-      "grok-4-fast",
-      "grok-4.20-0309-reasoning",
-      "grok-4.20-0309-non-reasoning",
-    ]);
+    expect(grokPreset?.variants?.map((variant) => variant.modelId)).toEqual(["grok-4.5"]);
     expect(resolveModelDescriptorFromPreset("pi-grok")).toEqual({
       provider: "xai",
       modelId: "grok-4.6",
@@ -151,7 +106,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-6", "pi-5.6", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-6", "pi-5.6", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -385,13 +340,25 @@ describe("model-presets", () => {
       defaultReasoningLevel: "xhigh",
     });
     expect(() => parseSwarmModelPreset("pi-codex-spark", "model")).toThrow("model must be one of");
+    expect(() => parseSwarmModelPreset("pi-5.4", "model")).toThrow("model must be one of");
     expect(normalizePersistedSwarmModelPresetValue("pi-codex-spark")).toBe("pi-5.5");
+    expect(normalizePersistedSwarmModelPresetValue("pi-5.4")).toBe("pi-5.5");
 
     expect([
       normalizePersistedSwarmModelDescriptor({
         provider: "openai-codex",
         modelId: "gpt-5.3-codex-spark",
         thinkingLevel: "high",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "openai-codex",
+        modelId: "gpt-5.4-mini",
+        thinkingLevel: "high",
+      }),
+      normalizePersistedSwarmModelDescriptor({
+        provider: "xai",
+        modelId: "grok-4-fast",
+        thinkingLevel: "medium",
       }),
       normalizePersistedSwarmModelDescriptor({
         provider: "anthropic",
@@ -415,11 +382,33 @@ describe("model-presets", () => {
       }),
     ]).toEqual([
       { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" },
+      { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" },
+      { provider: "xai", modelId: "grok-4.6", thinkingLevel: "medium" },
       { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "medium" },
       { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "low" },
       { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "medium" },
       { provider: "anthropic", modelId: "claude-sonnet-5", thinkingLevel: "low" },
     ]);
+
+    for (const modelId of ["gpt-5.4", "gpt-5.4-mini"]) {
+      expect(normalizePersistedSwarmModelDescriptor({
+        provider: "openai-codex",
+        modelId,
+        thinkingLevel: "high",
+      })).toEqual({ provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" });
+    }
+    for (const modelId of [
+      "grok-4",
+      "grok-4-fast",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-0309-non-reasoning",
+    ]) {
+      expect(normalizePersistedSwarmModelDescriptor({
+        provider: "xai",
+        modelId,
+        thinkingLevel: "high",
+      })).toEqual({ provider: "xai", modelId: "grok-4.6", thinkingLevel: "high" });
+    }
 
     expect(normalizePersistedSwarmModelDescriptor({
       provider: "openrouter",
@@ -433,6 +422,12 @@ describe("model-presets", () => {
 
     for (const [provider, modelId] of [
       ["openai-codex", "gpt-5.3-codex-spark"],
+      ["openai-codex", "gpt-5.4"],
+      ["openai-codex", "gpt-5.4-mini"],
+      ["xai", "grok-4"],
+      ["xai", "grok-4-fast"],
+      ["xai", "grok-4.20-0309-reasoning"],
+      ["xai", "grok-4.20-0309-non-reasoning"],
       ["anthropic", "claude-sonnet-4-5-20250929"],
       ["anthropic", "claude-haiku-4-5-20251001"],
       ["openrouter", "anthropic/claude-sonnet-4.5"],
@@ -538,8 +533,9 @@ describe("model-presets", () => {
     })).toBe("high");
   });
 
-  it("uses the catalog-backed known model list without Claude SDK duplicates", () => {
-    expect(modelCatalogService.isKnownModelId("gpt-5.4-mini")).toBe(true);
+  it("uses the catalog-backed known model list without retired models or Claude SDK duplicates", () => {
+    expect(modelCatalogService.isKnownModelId("gpt-5.6-luna")).toBe(true);
+    expect(modelCatalogService.isKnownModelId("gpt-5.4-mini")).toBe(false);
     expect(modelCatalogService.isKnownModelId("claude-opus-4-6", "anthropic")).toBe(true);
     expect(modelCatalogService.isKnownModelId("claude-opus-4-6", "claude-sdk")).toBe(false);
     expect(modelCatalogService.isKnownModelId("gpt-5.4-nano")).toBe(false);
@@ -547,7 +543,7 @@ describe("model-presets", () => {
 
   it("returns catalog-backed context window metadata", () => {
     expect(modelCatalogService.getContextWindow("gpt-5.5")).toBe(272_000);
-    expect(modelCatalogService.getContextWindow("grok-4-fast")).toBe(2_000_000);
+    expect(modelCatalogService.getContextWindow("grok-4.5")).toBe(500_000);
     expect(modelCatalogService.getContextWindow("claude-opus-4-6", "anthropic")).toBe(1_000_000);
   });
 
@@ -593,11 +589,11 @@ describe("model-presets", () => {
     expect(presets.find((preset) => preset.presetId === "pi-sonnet")?.variants).toBeUndefined();
   });
 
-  it("omits deprecated variants that are not present in the catalog", () => {
-    const fiveFourPreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-5.4");
-    const fiveFivePreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-5.5");
+  it("omits retired GPT-5.4 presets and variants from the catalog-backed list", () => {
+    const presets = getModelPresetInfoList();
+    const fiveFivePreset = presets.find((preset) => preset.presetId === "pi-5.5");
 
-    expect(fiveFourPreset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.4-mini"]);
+    expect(presets.find((preset) => preset.presetId === "pi-5.4")).toBeUndefined();
     expect(fiveFivePreset?.variants).toBeUndefined();
   });
 });

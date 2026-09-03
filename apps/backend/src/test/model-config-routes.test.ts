@@ -37,14 +37,14 @@ afterEach(async () => {
 describe("model config routes", () => {
   it("recycles affected managers when modelSpecificInstructions change", async () => {
     const harness = await createModelConfigRouteHarness();
-    const catalogModel = modelCatalogService.getModel("gpt-5.4");
+    const catalogModel = modelCatalogService.getModel("gpt-5.5");
     expect(catalogModel).toBeDefined();
 
     if (!catalogModel) {
-      throw new Error("Expected gpt-5.4 to exist in the model catalog");
+      throw new Error("Expected gpt-5.5 to exist in the model catalog");
     }
 
-    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides/gpt-5.4`, {
+    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides/gpt-5.5`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ modelSpecificInstructions: "Always output compact JSON." }),
@@ -96,7 +96,7 @@ describe("model config routes", () => {
   it("does not recycle managers when only non-prompt model override fields change", async () => {
     const harness = await createModelConfigRouteHarness();
 
-    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides/gpt-5.4`, {
+    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides/gpt-5.5`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled: false }),

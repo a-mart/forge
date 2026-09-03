@@ -1006,13 +1006,13 @@ describe("collaboration HTTP routes", () => {
           "content-type": "application/json",
           cookie: adminCookieHeader,
         },
-        body: JSON.stringify({ modelId: "pi-5.4" }),
+        body: JSON.stringify({ modelId: "pi-5.6" }),
       },
     );
     expect(updateChannelModelResponse.status).toBe(200);
 
     await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
-      modelId: resolveModelDescriptorFromPreset("pi-5.4").modelId,
+      modelId: resolveModelDescriptorFromPreset("pi-5.6").modelId,
     });
 
     const dbHelpers = await createCollaborationDbHelpers(config);
@@ -1030,8 +1030,8 @@ describe("collaboration HTTP routes", () => {
     await expect(channelResponse.json()).resolves.toMatchObject({
       channel: expect.objectContaining({
         channelId: createChannelBody.channel.channelId,
-        modelId: "pi-5.4",
-        reasoningLevel: resolveModelDescriptorFromPreset("pi-5.4").thinkingLevel,
+        modelId: "pi-5.6",
+        reasoningLevel: resolveModelDescriptorFromPreset("pi-5.6").thinkingLevel,
       }),
     });
   });
@@ -1072,7 +1072,7 @@ function createSpecialistBody(overrides: Partial<{
     color: "#3366ff",
     enabled: true,
     whenToUse: "Use for collaboration tasks",
-    modelId: "gpt-5.4",
+    modelId: "gpt-5.5",
     provider: "openai-codex",
     reasoningLevel: "medium",
     promptBody: "You are a collaboration specialist.",

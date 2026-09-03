@@ -204,7 +204,7 @@ describe("KnowledgeMemoryCoordinator", () => {
 
   it("runs the capture judge through candidate, auth, and response extraction paths", async () => {
     const harness = await createHarness();
-    const model = { provider: "openai-codex", id: "gpt-5.4-mini" };
+    const model = { provider: "openai-codex", id: "gpt-5.5" };
     const registry = {
       find: vi.fn()
         .mockReturnValueOnce(undefined)
@@ -218,8 +218,8 @@ describe("KnowledgeMemoryCoordinator", () => {
     } as never);
 
     await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt")).resolves.toBe("YES");
-    expect(registry.find).toHaveBeenNthCalledWith(1, "openai-codex", "gpt-5.4-mini");
-    expect(registry.find).toHaveBeenNthCalledWith(2, "openai-codex", "gpt-5.4");
+    expect(registry.find).toHaveBeenNthCalledWith(1, "openai-codex", "gpt-5.6-luna");
+    expect(registry.find).toHaveBeenNthCalledWith(2, "openai-codex", "gpt-5.5");
     expect(registry.getApiKeyAndHeaders).toHaveBeenCalledWith(model);
     expect(piAiCompat.complete).toHaveBeenCalledWith(
       model,
@@ -243,8 +243,8 @@ describe("KnowledgeMemoryCoordinator", () => {
 
   it("skips an unauthorized candidate and uses the next configured model", async () => {
     const harness = await createHarness();
-    const firstModel = { provider: "openai-codex", id: "gpt-5.4-mini" };
-    const secondModel = { provider: "openai-codex", id: "gpt-5.4" };
+    const firstModel = { provider: "openai-codex", id: "gpt-5.6-luna" };
+    const secondModel = { provider: "openai-codex", id: "gpt-5.5" };
     const registry = {
       find: vi.fn().mockReturnValueOnce(firstModel).mockReturnValueOnce(secondModel),
       getApiKeyAndHeaders: vi.fn()
@@ -255,7 +255,7 @@ describe("KnowledgeMemoryCoordinator", () => {
     vi.spyOn(piAiCompat, "getModel").mockReturnValue(undefined as never);
     vi.spyOn(piAiCompat, "complete").mockResolvedValue({ content: [{ type: "text", text: "NO" }] } as never);
     await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt")).resolves.toBe("NO");
-    expect(piAiCompat.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "gpt-5.4" }), expect.anything(), { headers: { Authorization: "Bearer test" } });
+    expect(piAiCompat.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "gpt-5.5" }), expect.anything(), { headers: { Authorization: "Bearer test" } });
   });
 
   it("loads Builder compaction settings once and attaches only the selected live provider", async () => {

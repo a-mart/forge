@@ -170,6 +170,58 @@ describe("ProfileBootReconciler", () => {
     });
   });
 
+  it("migrates persisted worker delegationFallbackModel selections on boot", () => {
+    const manager = makeManager("forge", "forge");
+    const gpt54Worker = makeWorker("gpt54-worker", "forge", {
+      model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "high" },
+      delegationFallbackModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+      },
+    });
+    const miniWorker = makeWorker("mini-worker", "forge", {
+      model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "low" },
+      delegationFallbackModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4-mini",
+        thinkingLevel: "low",
+      },
+    });
+    const grokWorker = makeWorker("grok-worker", "forge", {
+      model: { provider: "xai", modelId: "grok-4.6", thinkingLevel: "high" },
+      delegationFallbackModel: {
+        provider: "xai",
+        modelId: "grok-4",
+        thinkingLevel: "high",
+      },
+    });
+    const harness = createHarness({
+      descriptors: [manager, gpt54Worker, miniWorker, grokWorker],
+      profiles: [makeProfile("forge")],
+    });
+
+    expect(harness.reconciler.reconcileProfilesOnBoot()).toBe(true);
+    expect(gpt54Worker.delegationFallbackModel).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "high",
+    });
+    expect(miniWorker.delegationFallbackModel).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "low",
+    });
+    expect(grokWorker.delegationFallbackModel).toEqual({
+      provider: "xai",
+      modelId: "grok-4.6",
+      thinkingLevel: "high",
+    });
+    expect(harness.upsertedDescriptorIds).toEqual(
+      expect.arrayContaining(["gpt54-worker", "mini-worker", "grok-worker"]),
+    );
+  });
+
   it("deletes profiles that have neither their configured default nor a root manager", () => {
     const orphan = makeProfile("orphan", { defaultSessionAgentId: "missing" });
     const harness = createHarness({ profiles: [orphan] });

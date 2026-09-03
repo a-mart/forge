@@ -226,11 +226,11 @@ describe('SwarmManager archive gates', () => {
     await manager.setProjectAgentReference(created.sessionAgent.agentId, 'notes.md', 'reference content')
     await manager.archiveSession(created.sessionAgent.agentId)
 
-    await expect(manager.updateSessionModel(created.sessionAgent.agentId, 'override', 'pi-5.4')).rejects.toThrow(
+    await expect(manager.updateSessionModel(created.sessionAgent.agentId, 'override', 'pi-5.6')).rejects.toThrow(
       "Archived sessions can’t be used until restored.",
     )
     await expect(
-      manager.updateManagerModel(created.sessionAgent.agentId, 'pi-5.4'),
+      manager.updateManagerModel(created.sessionAgent.agentId, 'pi-5.6'),
     ).rejects.toThrow("Archived sessions can’t be used until restored.")
     await expect(
       manager.setSessionProjectAgent(created.sessionAgent.agentId, {
@@ -354,7 +354,7 @@ describe('SwarmManager archive gates', () => {
 
     await manager.archiveProfile('manager')
 
-    await expect(manager.updateProfileDefaultModel('manager', 'pi-5.4')).rejects.toThrow(
+    await expect(manager.updateProfileDefaultModel('manager', 'pi-5.6')).rejects.toThrow(
       "Archived projects can’t be used until restored.",
     )
     await expect(manager.updateManagerCwd('manager', config.defaultCwd)).rejects.toThrow(

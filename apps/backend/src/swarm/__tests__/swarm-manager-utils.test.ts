@@ -176,7 +176,7 @@ describe("buildModelCapacityBlockKey / resolveNextCapacityFallbackModelId", () =
     ["openai-codex", "gpt-6-astra", undefined],
     ["openai-codex", "gpt-5.3-codex-spark", undefined],
     ["openai-codex", "gpt-5.6-sol", "gpt-5.6-terra"],
-    ["openai-codex", "gpt-5.5", "gpt-5.4"],
+    ["openai-codex", "gpt-5.5", undefined],
     ["openai-codex", "gpt-5.4", undefined],
     ["anthropic", "gpt-5.5", undefined],
     ["openai-codex", "unknown-model", undefined]

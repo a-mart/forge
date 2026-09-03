@@ -45,6 +45,15 @@ export class ProfileBootReconciler {
         changed = true;
       }
 
+      if (descriptor.delegationFallbackModel) {
+        const normalizedFallbackModel = cloneModelDescriptor(descriptor.delegationFallbackModel);
+        if (!sameModelDescriptor(descriptor.delegationFallbackModel, normalizedFallbackModel)) {
+          descriptor.delegationFallbackModel = normalizedFallbackModel;
+          this.options.mutations.upsertDescriptor(descriptor);
+          changed = true;
+        }
+      }
+
       if (descriptor.role !== "manager") {
         continue;
       }

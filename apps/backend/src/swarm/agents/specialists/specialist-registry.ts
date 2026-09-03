@@ -15,8 +15,8 @@ import {
   isSwarmReasoningLevel,
   normalizeCursorSdkThinkingLevel,
   normalizePersistedSwarmModelDescriptor,
+  normalizePersistedSwarmModelPresetValue,
   resolveModelDescriptorFromPreset,
-  resolveRemovedSwarmModelPresetAlias,
 } from "../../model-presets.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import { sanitizePathSegment } from "../../data-paths.js";
@@ -62,7 +62,7 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     description: "Cheap lookups, quick reads, simple edits, and lightweight checks.",
     color: "#6b7280",
     provider: "openai-codex",
-    modelId: "gpt-5.4-mini",
+    modelId: "gpt-5.6-luna",
     reasoningLevel: "low",
     fallbackProvider: "openai-codex",
     fallbackModelId: "gpt-5.5",
@@ -77,7 +77,7 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     modelId: "composer-2.5",
     reasoningLevel: "none",
     fallbackProvider: "openai-codex",
-    fallbackModelId: "gpt-5.4",
+    fallbackModelId: "gpt-5.5",
     fallbackReasoningLevel: "high",
   },
   standard: {
@@ -914,7 +914,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     const effectiveDescriptor =
       modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset) ??
       (() => {
-        const replacementPreset = resolveRemovedSwarmModelPresetAlias(legacyModelPreset);
+        const replacementPreset = normalizePersistedSwarmModelPresetValue(legacyModelPreset);
         return replacementPreset ? resolveModelDescriptorFromPreset(replacementPreset) : undefined;
       })();
     if (effectiveDescriptor) {
@@ -1353,6 +1353,7 @@ function normalizeLegacyCursorAcpSpecialistModel(model: {
   const modelId = model.modelId?.trim();
   const normalizedProvider = provider?.toLowerCase();
   const normalizedModelId = modelId?.toLowerCase();
+  const reasoningLevel = normalizeLegacyReasoningLevel(model.reasoningLevel);
 
   if (normalizedProvider === "cursor-acp" && (!normalizedModelId || normalizedModelId === "default")) {
     return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
@@ -1366,10 +1367,29 @@ function normalizeLegacyCursorAcpSpecialistModel(model: {
     };
   }
 
+  const resolvedProvider = provider ?? (modelId ? inferProviderFromModelId(modelId) ?? undefined : undefined);
+  if (resolvedProvider && modelId) {
+    const normalized = normalizePersistedSwarmModelDescriptor({
+      provider: resolvedProvider,
+      modelId,
+      thinkingLevel: reasoningLevel,
+    });
+    if (
+      normalized &&
+      (normalized.provider !== resolvedProvider || normalized.modelId !== modelId)
+    ) {
+      return {
+        provider: normalized.provider,
+        modelId: normalized.modelId,
+        reasoningLevel: reasoningLevel ? normalized.thinkingLevel : undefined,
+      };
+    }
+  }
+
   return {
     provider,
     modelId,
-    reasoningLevel: normalizeLegacyReasoningLevel(model.reasoningLevel),
+    reasoningLevel,
   };
 }
 
