@@ -204,6 +204,45 @@ describe("CompactionSettingsService", () => {
     });
   });
 
+  it.each([
+    ["openai-codex", "gpt-5.4", "openai-codex", "gpt-5.5"],
+    ["openai-codex", "gpt-5.4-mini", "openai-codex", "gpt-5.5"],
+  ])("migrates persisted %s/%s compaction models on load without rewriting the file", async (
+    provider,
+    modelId,
+    nextProvider,
+    nextModelId,
+  ) => {
+    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-legacy-model-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => createAvailabilityMap(),
+    });
+
+    const settingsPath = getCompactionSettingsPath(dataDir);
+    await mkdir(dirname(settingsPath), { recursive: true });
+    const persisted = {
+      version: 1,
+      model: { provider, modelId },
+      reasoningLevel: "high",
+      timeoutMs: 300_000,
+      updatedAt: "2026-06-24T12:00:00.000Z",
+    };
+    const persistedJson = `${JSON.stringify(persisted, null, 2)}\n`;
+    await writeFile(settingsPath, persistedJson, "utf8");
+
+    await service.load();
+    const view = await service.getSettingsView();
+
+    expect(view.settings.model).toEqual({ provider: nextProvider, modelId: nextModelId });
+    expect(view.availability).toEqual({
+      providerConfigured: true,
+      modelValid: true,
+      reasoningSupported: true,
+    });
+    expect(await readFile(settingsPath, "utf8")).toBe(persistedJson);
+  });
+
   it("returns availability status without rewriting settings when provider credentials are unavailable", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-availability-"));
     const service = new CompactionSettingsService({

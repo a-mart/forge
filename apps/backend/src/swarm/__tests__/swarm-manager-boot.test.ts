@@ -2387,7 +2387,7 @@ describe('SwarmManager', () => {
 
   it('does not force the default session to inherited when an explicit profile default model differs', async () => {
     const config = await makeTempConfig()
-    const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-5.4')
+    const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-5.6')
 
     await writeFile(
       config.paths.agentsStoreFile,

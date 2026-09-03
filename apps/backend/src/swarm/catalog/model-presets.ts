@@ -21,6 +21,7 @@ const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
 
 const PERSISTED_ONLY_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "pi-codex-spark": "pi-5.5",
+  "pi-5.4": "pi-5.5",
   "sdk-opus": "pi-opus",
   "sdk-sonnet": "pi-sonnet",
 };
@@ -33,6 +34,12 @@ const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
 const REMOVED_MODEL_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex/gpt-5.3-codex": "pi-5.5",
   "openai-codex/gpt-5.3-codex-spark": "pi-5.5",
+  "openai-codex/gpt-5.4": "pi-5.5",
+  "openai-codex/gpt-5.4-mini": "pi-5.5",
+  "xai/grok-4": "pi-grok",
+  "xai/grok-4-fast": "pi-grok",
+  "xai/grok-4.20-0309-reasoning": "pi-grok",
+  "xai/grok-4.20-0309-non-reasoning": "pi-grok",
   "anthropic/claude-sonnet-4-5-20250929": "pi-sonnet",
   "anthropic/claude-haiku-4-5-20251001": "pi-sonnet",
   "anthropic/claude-sonnet-4.5": "pi-sonnet",

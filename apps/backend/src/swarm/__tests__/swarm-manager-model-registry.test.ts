@@ -43,7 +43,7 @@ async function makeTempConfig(port = 8791): Promise<SwarmConfig> {
     repoMemorySkillFile: join(repoRoot, "apps", "backend", "src", "swarm", "skills", "builtins", "memory", "SKILL.md"),
     defaultModel: {
       provider: "openai-codex",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium",
     },
   });
@@ -61,7 +61,7 @@ function buildDescriptor(config: SwarmConfig): AgentDescriptor {
     rootDir: config.defaultCwd,
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium",
     },
     sessionFile: join(config.paths.sessionsDir, "session-1.jsonl"),
@@ -122,8 +122,8 @@ describe("SwarmManager Pi model registry usage", () => {
         },
         {
           provider: "openai-codex",
-          id: "gpt-5.4",
-          label: "openai-codex/gpt-5.4",
+          id: "gpt-5.5",
+          label: "openai-codex/gpt-5.5",
         },
       ]).toContainEqual({
         provider: result.model.provider,
@@ -152,7 +152,7 @@ describe("SwarmManager Pi model registry usage", () => {
     const result = await (manager as any).executeSessionMemoryLLMMerge(descriptor, "# Profile", "# Session");
 
     expect(memoryMergeMockState.executeLLMMerge).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: "openai-codex", id: "gpt-5.4" }),
+      expect.objectContaining({ provider: "openai-codex", id: "gpt-5.5" }),
       "# Profile",
       "# Session",
       expect.objectContaining({
@@ -162,7 +162,7 @@ describe("SwarmManager Pi model registry usage", () => {
     );
     expect(result).toEqual({
       mergedContent: "# Swarm Memory\n\n## Decisions\n- merged\n",
-      model: "openai-codex/gpt-5.4",
+      model: "openai-codex/gpt-5.5",
     });
   });
 });
@@ -178,9 +178,9 @@ describe("SwarmManager spawn_agent preset routing", () => {
       model: 'pi-codex',
     })
 
-    const pi54Worker = await manager.spawnAgent('manager', {
-      agentId: 'GPT 5.4 Worker',
-      model: 'pi-5.4',
+    const pi56Worker = await manager.spawnAgent('manager', {
+      agentId: 'GPT 5.6 Worker',
+      model: 'pi-5.6',
     })
 
     const opusWorker = await manager.spawnAgent('manager', {
@@ -193,10 +193,10 @@ describe("SwarmManager spawn_agent preset routing", () => {
       modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
-    expect(pi54Worker.model).toEqual({
+    expect(pi56Worker.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'xhigh',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
     })
     expect(opusWorker.model).toEqual({
       provider: 'anthropic',
@@ -260,13 +260,13 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const overridden = await manager.spawnAgent('manager', {
       agentId: 'Fallback Override Worker',
-      modelId: 'gpt-5.4-mini',
+      modelId: 'gpt-5.6-luna',
       reasoningLevel: 'low',
     })
 
     expect(overridden.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4-mini',
+      modelId: 'gpt-5.6-luna',
       thinkingLevel: 'low',
     })
   })
@@ -420,7 +420,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-6|pi-5.6|pi-5.4|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
+      'spawn_agent.model must be one of pi-5.5|pi-6|pi-5.6|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
       )
   })
 

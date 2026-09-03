@@ -107,6 +107,7 @@ describe('buildManagerModelRows provider availability gating', () => {
       familyId: 'pi-5.5',
       modelId: 'gpt-5.5',
     })
+    expect(rows.some((row) => row.familyId === 'pi-5.4' || row.modelId.startsWith('gpt-5.4'))).toBe(false)
   })
 
   it('includes native xAI Grok 4.6 as the default and preserves Grok 4.5 as a variant', () => {
@@ -115,7 +116,7 @@ describe('buildManagerModelRows provider availability gating', () => {
     const grok46 = rows.find((row) => row.key === 'xai::grok-4.6')
     const grok45 = rows.find((row) => row.key === 'xai::grok-4.5')
 
-    expect(grokRows.length).toBeGreaterThan(1)
+    expect(grokRows.map((row) => row.modelId)).toEqual(['grok-4.6', 'grok-4.5'])
     for (const grok of [grok46, grok45]) {
       expect(grok).toMatchObject({
         provider: 'xai',

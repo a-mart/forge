@@ -1014,12 +1014,12 @@ Never use plain assistant text for user communication.`
     await bootWithDefaultManager(manager, config)
     const initialRootModel = manager.getAgent('manager')?.model
 
-    await manager.updateSessionModel('manager', 'override', 'pi-5.4')
+    await manager.updateSessionModel('manager', 'override', 'pi-5.6')
 
     const created = await manager.createSession('manager', { label: 'Inherited Child' })
 
     expect(manager.getAgent('manager')).toMatchObject({
-      model: resolveModelDescriptorFromPreset('pi-5.4'),
+      model: resolveModelDescriptorFromPreset('pi-5.6'),
       modelOrigin: 'session_override',
     })
     expect(created.sessionAgent).toMatchObject({
@@ -1060,7 +1060,7 @@ Never use plain assistant text for user communication.`
       systemPrompt: 'source-only prompt',
       messages: [],
       tools: [],
-      model: { provider: 'openai-codex', id: 'gpt-5.4' },
+      model: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
       requestMetadata: {},
     })
 
@@ -1331,10 +1331,10 @@ Never use plain assistant text for user communication.`
       model: 'pi-codex',
     })
 
-    const pi54Manager = await manager.createManager('manager', {
-      name: 'GPT 5.4 Manager',
+    const pi56Manager = await manager.createManager('manager', {
+      name: 'GPT 5.6 Manager',
       cwd: config.defaultCwd,
-      model: 'pi-5.4',
+      model: 'pi-5.6',
     })
 
     const opusManager = await manager.createManager('manager', {
@@ -1360,10 +1360,10 @@ Never use plain assistant text for user communication.`
       modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
-    expect(pi54Manager.model).toEqual({
+    expect(pi56Manager.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'xhigh',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
     })
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
@@ -1389,18 +1389,18 @@ Never use plain assistant text for user communication.`
     await bootWithDefaultManager(manager, config)
 
     const created = await manager.createManager('manager', {
-      name: 'Exact GPT-5.4 Manager',
+      name: 'Exact GPT-5.6 Manager',
       cwd: config.defaultCwd,
       modelSelection: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.6-sol',
       },
     })
 
     expect(created.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'xhigh',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
     })
     vi.unstubAllEnvs()
   })
@@ -1525,14 +1525,14 @@ Never use plain assistant text for user communication.`
       cwd: config.defaultCwd,
       modelSelection: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.6-sol',
       },
       reasoningLevel: 'medium',
     })
 
     expect(created.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
+      modelId: 'gpt-5.6-sol',
       thinkingLevel: 'medium',
     })
     vi.unstubAllEnvs()
@@ -1604,7 +1604,7 @@ Never use plain assistant text for user communication.`
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'create_manager.model must be one of pi-5.5|pi-6|pi-5.6|pi-5.4|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
+      'create_manager.model must be one of pi-5.5|pi-6|pi-5.6|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
     )
   })
 
@@ -1628,7 +1628,7 @@ Never use plain assistant text for user communication.`
     rootRuntime!.terminateMutatesDescriptorStatus = true
     sessionRuntime!.terminateMutatesDescriptorStatus = true
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
 
     expect(rootRuntime?.shutdownForReplacementCalls).toHaveLength(1)
     expect(sessionRuntime?.shutdownForReplacementCalls).toHaveLength(1)
@@ -1642,13 +1642,13 @@ Never use plain assistant text for user communication.`
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(rootSession.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'xhigh',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
     })
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'xhigh',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
     })
 
     const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
@@ -1739,7 +1739,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from Cursor.')
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(beforeState.requests).toHaveLength(1)
@@ -1811,7 +1811,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Deferred Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Most recent durable context.')
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
     await manager.updateManagerModel('manager', 'pi-opus')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
@@ -1846,7 +1846,7 @@ Never use plain assistant text for user communication.`
       }
     }
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
 
     await expect(
       manager.handleUserMessage('Try to recreate the failing session', { targetAgentId: sessionAgent.agentId }),
@@ -1868,7 +1868,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Ordered Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before ordered attach.')
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
 
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
@@ -1918,7 +1918,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Applied Write Failure Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before applied write failure.')
 
-    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-5.6')
 
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
@@ -2333,7 +2333,7 @@ Never use plain assistant text for user communication.`
       label: 'profile model changes',
       expectedReason: 'model_change' as const,
       invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
-        await manager.updateManagerModel('manager', 'pi-5.4')
+        await manager.updateManagerModel('manager', 'pi-5.6')
       },
     },
     {
@@ -3127,7 +3127,7 @@ Never use plain assistant text for user communication.`
     return manager.createSessionFromBaseDescriptor(
       '_collaboration',
       {
-        model: resolveModelDescriptorFromPreset('pi-5.4'),
+        model: resolveModelDescriptorFromPreset('pi-5.6'),
         cwd: join(config.paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
         archetypeId: 'collaboration-channel',
       },

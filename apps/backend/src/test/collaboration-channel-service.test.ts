@@ -206,7 +206,7 @@ describe("collaboration channel service", () => {
     expect(descriptor).toBeTruthy();
     descriptor!.model = {
       provider: "openai-codex",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       thinkingLevel: "xhigh",
     };
 
@@ -217,7 +217,7 @@ describe("collaboration channel service", () => {
     });
 
     const effective = attachEffectiveChannelModelSettings(manager, service.getChannel(channel.channelId));
-    expect(effective.modelId).toBe("pi-5.4");
+    expect(effective.modelId).toBe("pi-5.5");
     expect(effective.reasoningLevel).toBe("xhigh");
   });
 

@@ -82,10 +82,6 @@ describe("model-catalog-projection", () => {
     const projectedXaiModels = projection.providers.xai?.models ?? [];
 
     expect(projectedXaiModels.map((model) => model.id).sort()).toEqual([
-      "grok-4",
-      "grok-4-fast",
-      "grok-4.20-0309-non-reasoning",
-      "grok-4.20-0309-reasoning",
       "grok-4.5",
       "grok-4.6",
     ]);
@@ -97,8 +93,6 @@ describe("model-catalog-projection", () => {
     expect(projection.providers.xai?.api).toBe("openai-responses");
     expect(projection.providers.xai?.apiKey).toBe("$XAI_API_KEY");
 
-    const upstreamGrok4Fast = getModels("xai").find((model) => model.id === "grok-4-fast");
-    expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
     expect(projectedXaiModels.find((model) => model.id === "grok-4.6")).toMatchObject({
       id: "grok-4.6",
       name: "Grok 4.6",
@@ -118,6 +112,12 @@ describe("model-catalog-projection", () => {
     ]);
     for (const retiredModelId of [
       "gpt-5.3-codex-spark",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "grok-4",
+      "grok-4-fast",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-0309-non-reasoning",
       "claude-sonnet-4-5-20250929",
       "claude-haiku-4-5-20251001",
     ]) {

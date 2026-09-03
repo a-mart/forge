@@ -63,7 +63,7 @@ function createStatsSnapshot(): StatsSnapshot {
     },
     models: [
       {
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.5',
         displayName: 'GPT-5.4',
         percentage: 60,
         tokenCount: 600,
@@ -172,7 +172,7 @@ describe('telemetry payload helpers', () => {
       mobile_devices_enabled_count: 1,
       providers_used: 'anthropic,openai-codex',
       auth_providers: 'anthropic,xai',
-      top_model: 'gpt-5.4',
+      top_model: 'gpt-5.5',
     })
     expect(payload.locale.length).toBeGreaterThan(0)
   })
@@ -242,13 +242,13 @@ describe('telemetry payload helpers', () => {
     const stats = createStatsSnapshot()
     stats.models = [
       {
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.5',
         displayName: 'GPT-5.4',
         percentage: 25,
         tokenCount: 250,
       },
       {
-        modelId: 'openai/gpt-5.4',
+        modelId: 'openai/gpt-5.5',
         displayName: 'GPT-5.4 (prefixed)',
         percentage: 25,
         tokenCount: 250,
@@ -286,7 +286,7 @@ describe('telemetry payload helpers', () => {
     const stats = createStatsSnapshot()
     stats.models = [
       {
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.5',
         displayName: 'GPT-5.4',
         percentage: 100,
         tokenCount: 1000,

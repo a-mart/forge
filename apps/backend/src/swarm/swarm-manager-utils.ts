@@ -72,7 +72,7 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"];
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"];
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 

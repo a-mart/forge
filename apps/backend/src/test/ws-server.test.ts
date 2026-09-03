@@ -1917,7 +1917,7 @@ describe('SwarmWebSocketServer', () => {
 
       expect(updatedPresetIds).toContain('pi-5.5')
       expect(updatedPresetIds).not.toContain('pi-codex-spark')
-      expect(updatedPresetIds).toContain('pi-5.4')
+      expect(updatedPresetIds).toContain('pi-5.6')
       expect(updatedPresetIds).toContain('pi-grok')
       expect(updatedPresetIds).not.toContain('codex-app')
       expect(updatedPresetIds).not.toContain('pi-opus')
@@ -4454,7 +4454,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('creates pi-5.4 managers over websocket', async () => {
+  it('creates pi-5.6 managers over websocket', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -4483,9 +4483,9 @@ describe('SwarmWebSocketServer', () => {
     client.send(
       JSON.stringify({
         type: 'create_manager',
-        name: 'GPT 5.4 Manager',
+        name: 'GPT 5.6 Manager',
         cwd: config.defaultCwd,
-        model: 'pi-5.4',
+        model: 'pi-5.6',
       }),
     )
 
@@ -4494,8 +4494,8 @@ describe('SwarmWebSocketServer', () => {
     if (createdEvent.type === 'manager_created') {
       expect(createdEvent.manager.model).toEqual({
         provider: 'openai-codex',
-        modelId: 'gpt-5.4',
-        thinkingLevel: 'xhigh',
+        modelId: 'gpt-5.6-sol',
+        thinkingLevel: 'max',
       })
     }
 
@@ -4545,7 +4545,7 @@ describe('SwarmWebSocketServer', () => {
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
         event.message.includes(
-          'create_manager.model must be one of pi-5.5|pi-6|pi-5.6|pi-5.4|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
+          'create_manager.model must be one of pi-5.5|pi-6|pi-5.6|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
         ),
     )
 

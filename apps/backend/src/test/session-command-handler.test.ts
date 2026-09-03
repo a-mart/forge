@@ -485,7 +485,7 @@ describe("session command handler", () => {
         type: "update_session_model",
         sessionAgentId: "manager--s2",
         mode: "override",
-        model: "pi-5.4",
+        model: "pi-5.6",
         requestId: "req-session-model",
       } as never,
       socket: {} as never,
@@ -496,14 +496,14 @@ describe("session command handler", () => {
       handleDeletedAgentSubscriptions: vi.fn(),
     });
 
-    expect(swarmManager.updateSessionModel).toHaveBeenCalledWith("manager--s2", "override", "pi-5.4", undefined);
+    expect(swarmManager.updateSessionModel).toHaveBeenCalledWith("manager--s2", "override", "pi-5.6", undefined);
     expect(send).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         type: "session_model_updated",
         sessionAgentId: "manager--s2",
         mode: "override",
-        model: "pi-5.4",
+        model: "pi-5.6",
         requestId: "req-session-model",
       }),
     );

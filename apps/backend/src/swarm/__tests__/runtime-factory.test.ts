@@ -15,7 +15,7 @@ const piAiMockState = vi.hoisted(() => ({
     provider === "xai"
       ? [
           {
-            id: "grok-4",
+            id: "grok-4.5",
             name: "Grok 4",
             api: "openai-completions",
             provider: "xai",
@@ -227,7 +227,7 @@ function createDescriptor(
     cwd: rootDir,
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.4-mini",
+      modelId: "gpt-5.5",
       thinkingLevel: "high",
     },
     sessionFile: join(rootDir, "session.jsonl"),
@@ -411,7 +411,7 @@ function fakePiSkill(name: string, filePath: string, baseDir: string) {
   };
 }
 
-function setupPiModel(provider = "openai-codex", modelId = "gpt-5.4-mini") {
+function setupPiModel(provider = "openai-codex", modelId = "gpt-5.5") {
   const api =
     provider === "openai-codex"
       ? "openai-codex-responses"
@@ -580,7 +580,7 @@ describe("RuntimeFactory", () => {
     await writeFile(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill", "SKILL.md"), "# profile", "utf8");
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-      id: "gpt-5.4-mini",
+      id: "gpt-5.5",
       name: "GPT-5.4 mini",
       api: "openai-codex-responses",
       provider: "openai-codex",
@@ -646,7 +646,7 @@ describe("RuntimeFactory", () => {
     await mkdir(profileSkillRoot, { recursive: true });
     await writeFile(profileSkillPath, "# profile", "utf8");
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-      id: "gpt-5.4-mini",
+      id: "gpt-5.5",
       name: "GPT-5.4 mini",
       api: "openai-codex-responses",
       provider: "openai-codex",
@@ -855,7 +855,7 @@ describe("RuntimeFactory", () => {
       source: "forge_resolved",
       prompt: "resolved Forge prompt",
       modelProvider: "openai-codex",
-      modelId: "gpt-5.4-mini",
+      modelId: "gpt-5.5",
     }));
     expect(observability.recordPromptResolved).toHaveBeenCalledWith(expect.objectContaining({
       source: "runtime_final",
@@ -893,7 +893,7 @@ describe("RuntimeFactory", () => {
     });
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
@@ -938,7 +938,7 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir);
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
-      'Model "gpt-5.4-mini" not found for provider "openai-codex".',
+      'Model "gpt-5.5" not found for provider "openai-codex".',
     );
 
     expect(piCodingAgentMockState.modelRegistryCreateArgs).toHaveBeenCalledWith(
@@ -1033,7 +1033,7 @@ describe("RuntimeFactory", () => {
       await seedProjectionFile(rootDir);
 
       piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-        id: "gpt-5.4-mini",
+        id: "gpt-5.5",
         name: "GPT-5.4 mini",
         api: "openai-codex-responses",
         provider: "openai-codex",
@@ -1074,7 +1074,7 @@ describe("RuntimeFactory", () => {
     await seedProjectionFile(rootDir);
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-      id: "grok-4",
+      id: "grok-4.5",
       name: "Grok 4",
       api: "openai-responses",
       provider: "xai",
@@ -1094,7 +1094,7 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir);
     await factory.createRuntimeForDescriptor(
       createDescriptor(rootDir, {
-        model: { provider: "xai", modelId: "grok-4", thinkingLevel: "high" },
+        model: { provider: "xai", modelId: "grok-4.5", thinkingLevel: "high" },
       }),
       "system prompt",
     );
@@ -1124,7 +1124,7 @@ describe("RuntimeFactory", () => {
     await seedProjectionFile(rootDir);
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-      id: "gpt-5.4-mini",
+      id: "gpt-5.5",
       name: "GPT-5.4 mini",
       api: "openai-codex-responses",
       provider: "openai-codex",
@@ -1603,7 +1603,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
-        modelId: "grok-4",
+        modelId: "grok-4.5",
         thinkingLevel: "high",
       },
     });
@@ -1655,7 +1655,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
-        modelId: "grok-4",
+        modelId: "grok-4.5",
         thinkingLevel: "high",
       },
       webSearch: true,
@@ -1684,7 +1684,7 @@ describe("RuntimeFactory", () => {
         },
       },
       {
-        model: { provider: "xai", id: "grok-4" },
+        model: { provider: "xai", id: "grok-4.5" },
       },
     );
 
@@ -1703,7 +1703,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
-        modelId: "grok-4",
+        modelId: "grok-4.5",
         thinkingLevel: "high",
       },
       webSearch: false,
@@ -1740,7 +1740,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createManagerDescriptor(rootDir);
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
@@ -1801,7 +1801,7 @@ describe("RuntimeFactory", () => {
     });
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
@@ -1841,7 +1841,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createDescriptor(rootDir);
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockRejectedValue(new Error("createAgentSession failed"));
 
     const forgeExtensionHost = new ForgeExtensionHost({
@@ -1879,7 +1879,7 @@ describe("RuntimeFactory", () => {
     const telemetrySubscriber = piSession.subscribe.mock.calls[0]?.[0] as ((event: unknown) => void) | undefined;
     telemetrySubscriber?.({ type: "agent_start" });
     await piSession.agent.streamFn(
-      { provider: "openai-codex", id: "gpt-5.4-mini", api: "openai-codex-responses" },
+      { provider: "openai-codex", id: "gpt-5.5", api: "openai-codex-responses" },
       {
         systemPrompt: "Final prompt from before_agent_start",
         messages: [{
@@ -1948,7 +1948,7 @@ describe("RuntimeFactory", () => {
       }],
       model: {
         provider: "openai-codex",
-        id: "gpt-5.4-mini",
+        id: "gpt-5.5",
         api: "openai-codex-responses",
       },
       requestMetadata: {
@@ -1996,7 +1996,7 @@ describe("RuntimeFactory", () => {
         systemPrompt: "existing first request",
         messages: [],
         tools: [],
-        model: { provider: "openai-codex", id: "gpt-5.4-mini" },
+        model: { provider: "openai-codex", id: "gpt-5.5" },
         requestMetadata: {},
       },
     });
@@ -2005,7 +2005,7 @@ describe("RuntimeFactory", () => {
     const telemetrySubscriber = recreatedSession.subscribe.mock.calls[0]?.[0] as ((event: unknown) => void) | undefined;
     telemetrySubscriber?.({ type: "agent_start" });
     await recreatedSession.agent.streamFn(
-      { provider: "openai-codex", id: "gpt-5.4-mini" },
+      { provider: "openai-codex", id: "gpt-5.5" },
       { systemPrompt: "new request", messages: [], tools: [] },
       {},
     );
@@ -2021,7 +2021,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createManagerDescriptor(rootDir);
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
@@ -2353,7 +2353,7 @@ describe("RuntimeFactory", () => {
     const descriptor = createManagerDescriptor(rootDir);
     await writeFile(descriptor.sessionFile, "", "utf8");
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.5" });
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },

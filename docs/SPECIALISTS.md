@@ -99,8 +99,8 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 
 | Tier | Default Model | Reasoning | Fallback |
 |---|---|---|---|
-| `light` | `openai-codex/gpt-5.4-mini` | low | `openai-codex/gpt-5.5` low |
-| `fast` | `cursor-sdk/composer-2.5` | none | `openai-codex/gpt-5.4` high |
+| `light` | `openai-codex/gpt-5.6-luna` | low | `openai-codex/gpt-5.5` low |
+| `fast` | `cursor-sdk/composer-2.5` | none | `openai-codex/gpt-5.5` high |
 | `standard` | `openai-codex/gpt-5.5` | medium | `openai-codex/gpt-5.5` medium |
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
 | `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
@@ -129,8 +129,6 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 | `gpt-5.6-terra` | GPT-5.6 Terra | OpenAI Codex | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-luna` | GPT-5.6 Luna | OpenAI Codex | low, medium, high, xhigh, max |
 | `gpt-5.5` | GPT-5.5 | OpenAI Codex | none, low, medium, high, xhigh |
-| `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
-| `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
 | `claude-fable-5-1` | Claude Fable 5.1 (default) | Anthropic | low, medium, high, xhigh, max |
 | `claude-fable-5` | Claude Fable 5 | Anthropic | low, medium, high, xhigh, max |
 | `claude-opus-5` | Claude Opus 5 | Anthropic | none, low, medium, high, xhigh, max |
@@ -140,10 +138,6 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 | `composer-2.5` | Composer 2.5 | Cursor SDK | none |
 | `grok-4.5` | Grok 4.5 | Cursor SDK | low, medium, high |
 | `grok-4.5-fast` | Grok 4.5 Fast | Cursor SDK | low, medium, high |
-| `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
-| `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
-| `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
-| `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none |
 | `grok-4.6` | Grok 4.6 (native default) | xAI | API key: low, medium, high, xhigh; OAuth: authenticated metadata, or low, medium, high fallback |
 | `grok-4.5` | Grok 4.5 | xAI | API key: low, medium, high, xhigh; OAuth: authenticated metadata, or low, medium, high fallback |
 | `grok-build` | Grok Build (account entitlement) | xAI OAuth | authenticated account metadata |
@@ -221,7 +215,7 @@ Only exhausted fallback failures surface upward.
 
 **Availability fallback is not capability escalation.** A provider outage or rate limit may use the configured fallback at equivalent intended capability; it must not silently buy a stronger specialist. Capability escalation creates a new attempt with the specialist explicitly linked for that purpose.
 
-**Cross-provider fallback is supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
+**Cross-provider fallback is supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4.5`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
 Codex Plugin delegation is contextual. It is available only when a user turn includes an active `@Codex` plugin selector, and Forge binds the dedicated worker to the server-stored selector scope. Normal scoped plugin tools return bounded preview/metadata only. Full connector exports, such as Fireflies transcripts or summaries, must use the scoped export artifact tool, which writes redacted JSON artifacts under the session and returns only path/metadata plus a bounded preview. If that scoped worker is stopped or fails, Forge can authorize retry only for an explicit retry/continuation turn that refers to the same Codex/plugin context; unrelated turns require a fresh selector tag.
 

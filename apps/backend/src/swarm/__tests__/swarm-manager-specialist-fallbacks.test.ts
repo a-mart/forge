@@ -280,7 +280,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -371,7 +371,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -507,7 +507,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -559,7 +559,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -641,7 +641,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -730,7 +730,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -812,7 +812,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -886,7 +886,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -958,7 +958,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1035,7 +1035,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1105,7 +1105,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1174,7 +1174,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1238,7 +1238,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1315,7 +1315,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1396,7 +1396,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1477,7 +1477,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1557,7 +1557,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1629,7 +1629,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1713,7 +1713,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'
@@ -1799,7 +1799,7 @@ describe('SwarmManager', () => {
         'whenToUse: Planning work.',
         'modelId: claude-opus-4-6',
         'reasoningLevel: high',
-        'fallbackModelId: gpt-5.4',
+        'fallbackModelId: gpt-5.5',
         'fallbackReasoningLevel: high',
         '---',
         'You are the planner specialist.'

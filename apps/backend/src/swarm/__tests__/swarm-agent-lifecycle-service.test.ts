@@ -137,7 +137,7 @@ function baseLifecycleOptions(
     resolveAndValidateCwd: overrides.resolveAndValidateCwd ?? vi.fn(async (cwd: string) => cwd),
     resolveDefaultModelDescriptor:
       overrides.resolveDefaultModelDescriptor ??
-      (() => ({ provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" })),
+      (() => ({ provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" })),
     resolveSpawnWorkerArchetypeId: overrides.resolveSpawnWorkerArchetypeId ?? vi.fn(async () => "worker"),
     resolveSpecialistRosterForProfile: overrides.resolveSpecialistRosterForProfile ?? vi.fn(async () => []),
     normalizeSpecialistHandle: overrides.normalizeSpecialistHandle ?? vi.fn(async (h: string) => h),
@@ -238,13 +238,13 @@ describe("SwarmAgentLifecycleService", () => {
       {
         agentId: "w",
         model: "pi-codex",
-        modelId: "gpt-5.4",
+        modelId: "gpt-5.5",
         reasoningLevel: "high"
       } satisfies SpawnAgentInput,
       fallback
     );
     expect(resolved.provider).toBe("openai-codex");
-    expect(resolved.modelId).toBe("gpt-5.4");
+    expect(resolved.modelId).toBe("gpt-5.5");
     expect(resolved.thinkingLevel).toBe("high");
   });
 
@@ -391,7 +391,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
@@ -760,7 +760,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
     const attachRuntime = vi.fn();
@@ -821,7 +821,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {});
     const attachRuntime = vi.fn();
@@ -867,7 +867,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
     let runtimeToken: number | undefined;
@@ -925,7 +925,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const attachRuntime = vi.fn();
     let runtimeToken: number | undefined;
@@ -983,7 +983,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {
       descriptors.delete(manager.agentId);
@@ -1029,7 +1029,7 @@ describe("SwarmAgentLifecycleService", () => {
       createdAt: NOW,
       sessionAgentId: manager.agentId,
       sourceModel: { provider: "cursor-sdk", modelId: "cursor-agent", runtimeKind: "cursor-sdk" as const },
-      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.5", runtimeKind: "pi" as const }
     };
     const appendAppliedModelChangeContinuity = vi.fn(async () => {
       runtimes.set(manager.agentId, winningRuntime);
@@ -2787,7 +2787,7 @@ describe("SwarmAgentLifecycleService", () => {
               color: "#abc",
               enabled: true,
               whenToUse: "collaboration work",
-              modelId: "gpt-5.4",
+              modelId: "gpt-5.5",
               provider: "openai-codex",
               promptBody: "collab prompt",
               available: true
@@ -2813,7 +2813,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(resolveSpecialistRosterForProfile).toHaveBeenCalledWith("profile-1", "collaboration");
     expect(spawned.specialistId).toBe("collab-specialist");
     expect(spawned.specialistDisplayName).toBe("Collab Specialist");
-    expect(spawned.model.modelId).toBe("gpt-5.4");
+    expect(spawned.model.modelId).toBe("gpt-5.5");
   });
 
   it.each([
@@ -2995,7 +2995,7 @@ describe("SwarmAgentLifecycleService", () => {
 
     expect(spawned.model).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
       thinkingLevel: "high",
     });
     expect(sendMessage).toHaveBeenCalledOnce();
@@ -3682,7 +3682,7 @@ describe("SwarmAgentLifecycleService", () => {
       provider: "openai-codex",
       promptBody: "prompt",
       available: true,
-      fallbackModelId: "gpt-5.4",
+      fallbackModelId: "gpt-5.5",
       fallbackProvider: "openai-codex"
     };
 
@@ -3707,7 +3707,7 @@ describe("SwarmAgentLifecycleService", () => {
     });
 
     expect(createRuntimeForDescriptor).toHaveBeenCalledTimes(2);
-    expect(spawned.model.modelId).toBe("gpt-5.4");
+    expect(spawned.model.modelId).toBe("gpt-5.5");
   });
 
   it("stopWorker calls external-thread interrupt service when available", async () => {

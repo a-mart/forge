@@ -146,6 +146,12 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
 
 const RETIRED_FORGE_MODELS = new Set([
   'openai-codex/gpt-5.3-codex-spark',
+  'openai-codex/gpt-5.4',
+  'openai-codex/gpt-5.4-mini',
+  'xai/grok-4',
+  'xai/grok-4-fast',
+  'xai/grok-4.20-0309-reasoning',
+  'xai/grok-4.20-0309-non-reasoning',
   'anthropic/claude-sonnet-4-5-20250929',
   'anthropic/claude-haiku-4-5-20251001',
   'anthropic/claude-sonnet-4.5',

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   formatDelegationRosterModelContext,
@@ -101,6 +101,80 @@ describe("delegation roster settings", () => {
       "A balanced development team with a normal builder, focused alternatives, and evidence-based escalation.",
     );
     expect(custom.rosters[0]?.description).toBe("My own route terminology.");
+  });
+
+  it("migrates persisted GPT-5.4 and retired xAI route and fallback models on load without rewriting the file", async () => {
+    const dataDir = await makeDataDir();
+    const settings = await resolveDelegationRosterSettings(dataDir);
+    const roster = settings.rosters[0]!;
+    const persisted = {
+      ...settings,
+      rosters: [{
+        ...roster,
+        routes: roster.routes.map((route) => {
+          if (route.routeId === "fast-builder") {
+            return {
+              ...route,
+              label: "My Custom Builder",
+              provider: "openai-codex",
+              modelId: "gpt-5.4",
+              reasoningLevel: "high" as const,
+              availabilityFallback: {
+                provider: "openai-codex",
+                modelId: "gpt-5.4-mini",
+                reasoningLevel: "low" as const,
+              },
+            };
+          }
+          if (route.routeId === "research-analyst") {
+            return {
+              ...route,
+              label: "My Custom Researcher",
+              provider: "xai",
+              modelId: "grok-4",
+              reasoningLevel: "high" as const,
+              availabilityFallback: {
+                provider: "xai",
+                modelId: "grok-4-fast",
+                reasoningLevel: "medium" as const,
+              },
+            };
+          }
+          return route;
+        }),
+      }],
+    };
+    const rosterPath = getDelegationRostersPath(dataDir);
+    await mkdir(dirname(rosterPath), { recursive: true });
+    const persistedJson = `${JSON.stringify(persisted, null, 2)}\n`;
+    await writeFile(rosterPath, persistedJson, "utf8");
+
+    const loaded = await resolveDelegationRosterSettings(dataDir);
+    const loadedRoster = loaded.rosters[0]!;
+
+    expect(loadedRoster.routes.find((route) => route.routeId === "fast-builder")).toMatchObject({
+      label: "My Custom Builder",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "high",
+      availabilityFallback: {
+        provider: "openai-codex",
+        modelId: "gpt-5.5",
+        reasoningLevel: "low",
+      },
+    });
+    expect(loadedRoster.routes.find((route) => route.routeId === "research-analyst")).toMatchObject({
+      label: "My Custom Researcher",
+      provider: "xai",
+      modelId: "grok-4.6",
+      reasoningLevel: "high",
+      availabilityFallback: {
+        provider: "xai",
+        modelId: "grok-4.6",
+        reasoningLevel: "medium",
+      },
+    });
+    expect(await readFile(rosterPath, "utf8")).toBe(persistedJson);
   });
 
   it("updates canonical built-in specialist copy without changing custom copy", async () => {

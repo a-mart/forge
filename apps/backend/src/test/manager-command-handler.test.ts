@@ -458,7 +458,7 @@ describe("manager command handler", () => {
       command: {
         type: "update_profile_default_model",
         profileId: "alpha",
-        model: "pi-5.4",
+        model: "pi-5.6",
         requestId: "req-default-model",
       } as never,
       socket: {} as never,
@@ -470,11 +470,11 @@ describe("manager command handler", () => {
       handleDeletedAgentSubscriptions: vi.fn(),
     });
 
-    expect(swarmManager.updateProfileDefaultModel).toHaveBeenCalledWith("alpha", "pi-5.4", undefined);
+    expect(swarmManager.updateProfileDefaultModel).toHaveBeenCalledWith("alpha", "pi-5.6", undefined);
     expect(broadcastToSubscribed).toHaveBeenCalledWith({
       type: "profile_default_model_updated",
       profileId: "alpha",
-      model: "pi-5.4",
+      model: "pi-5.6",
       reasoningLevel: undefined,
       requestId: "req-default-model",
     });
