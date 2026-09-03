@@ -51,6 +51,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'pi-6': {
+    provider: 'openai-codex',
+    defaultModelId: 'gpt-6-astra',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
   'pi-5.6': {
     provider: 'openai-codex',
     defaultModelId: 'gpt-5.6-sol',
@@ -122,6 +130,14 @@ const EXPECTED_MODELS = {
     provider: 'openai-codex',
     familyId: 'pi-5.5',
     contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'gpt-6-astra': {
+    provider: 'openai-codex',
+    familyId: 'pi-6',
+    contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
@@ -307,7 +323,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(22)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(23)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -329,6 +345,37 @@ describe('model-catalog', () => {
     expect(getCatalogModel('gpt-5.3-codex-spark')).toBeUndefined()
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'anthropic')).toBeUndefined()
     expect(getCatalogModel('claude-haiku-4-5-20251001', 'anthropic')).toBeUndefined()
+    expect(getCatalogModel('gpt-6-astra')).toMatchObject({
+      isFamilyDefault: true,
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
+        xhigh: 'xhigh',
+        max: 'max',
+      },
+      piCompat: { supportsTemperature: false },
+      piCost: {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      },
+      enabledByDefault: true,
+      piUpstreamId: 'gpt-6-astra',
+      intentionalDivergenceNotes:
+        'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships gpt-6-astra.',
+    })
+    expect(getCatalogModel('gpt-6-astra')?.supportedReasoningLevels).not.toContain('none')
+    expect(getCatalogModel('gpt-6-astra')?.supportedReasoningLevels).not.toContain('ultra')
     expect(getCatalogModel('claude-opus-5')).toMatchObject({
       isFamilyDefault: true,
       supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -405,6 +452,7 @@ describe('model-catalog', () => {
   })
 
   it('documents intentional catalog divergences from Pi upstream', () => {
+    expect(getCatalogModel('gpt-6-astra')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.6')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
     for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
@@ -558,6 +606,8 @@ describe('model-catalog', () => {
   })
 
   it('provides working lookup helpers', () => {
+    expect(getCatalogModel('gpt-6-astra')?.displayName).toBe('GPT-6 Astra')
+    expect(getCatalogModel('gpt-6-astra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-5.6-sol')?.displayName).toBe('GPT-5.6 Sol')
     expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
     expect(getCatalogModel('gpt-5.6-terra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
@@ -594,12 +644,14 @@ describe('model-catalog', () => {
     })
     expect(inferCatalogFamily('cursor-sdk', 'composer-2.5')).toBe('cursor-composer')
     expect(inferCatalogFamily('cursor-sdk', 'grok-4.5')).toBe('cursor-grok-45')
+    expect(inferCatalogProvider('gpt-6-astra')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.6-sol')).toBe('openai-codex')
     expect(inferCatalogProvider('grok-4.6')).toBe('xai')
     expect(inferCatalogFamily('xai', 'grok-4.6')).toBe('pi-grok')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
+    expect(inferCatalogFamily('openai-codex', 'gpt-6-astra')).toBe('pi-6')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.6-sol')).toBe('pi-5.6')
@@ -714,6 +766,7 @@ describe('model-catalog', () => {
   it('returns the expected visibility subsets', () => {
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
+      'pi-6',
       'pi-5.6',
       'pi-5.4',
       'pi-opus',
@@ -726,6 +779,7 @@ describe('model-catalog', () => {
 
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
+      'pi-6',
       'pi-5.6',
       'pi-5.4',
       'pi-opus',
@@ -738,6 +792,7 @@ describe('model-catalog', () => {
 
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
+      'pi-6',
       'pi-5.6',
       'pi-5.4',
       'pi-opus',
@@ -750,6 +805,7 @@ describe('model-catalog', () => {
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
+      'pi-6',
       'pi-5.6',
       'pi-5.4',
       'pi-opus',

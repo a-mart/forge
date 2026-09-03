@@ -7,7 +7,7 @@ Forge keeps checked-in metadata for its supported catalog models in one source o
 The public `packages/protocol/src/model-catalog.ts` module exports that data and its helpers. `model-catalog-data.ts` defines the catalog in three layers:
 
 - **providers**: runtime/provider behavior
-- **families**: preset groupings like the visible full Codex families `pi-5.6` and `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
+- **families**: preset groupings like the visible full Codex families `pi-6`, `pi-5.6`, and `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
 - **models**: concrete model metadata used by runtime and UI
 
 ## Source of truth rules
@@ -55,6 +55,14 @@ The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@C
 ## Cursor SDK provider
 
 `cursor-sdk` is a native provider backed by `@cursor/sdk`. The curated models are `composer-2.5` (Composer 2.5) and provider-scoped Cursor Grok 4.5 variants (`grok-4.5`, `grok-4.5-fast`). The static Forge mapping was curated from live Cursor SDK discovery: Cursor Grok 4.5 uses SDK model id `grok-4.5`, Forge maps reasoning levels to Cursor's `effort` param (`low`/`medium`/`high`), and Forge represents the fast pool with `fast=true` via the `grok-4.5-fast` catalog variant. Composer 2.5 is marked non-reasoning because discovery exposed only a `fast` toggle, not controllable reasoning effort. Runtime containment is provider-local and fail-closed with a Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures may retry once before output, auth/permission/cancel/user-state failures are projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is recorded in session custom entries and rolls up into dashboard stats, token analytics, and telemetry provider inference.
+
+## OpenAI GPT-6 Astra catalog
+
+`openai-codex/gpt-6-astra` is the checked-in model for the visible `pi-6` family. It is selectable for managers, compaction, specialists, and worker spawns, but does not replace Forge's `pi-5.5` global default or any checked-in roster and is not added to the automatic Codex capacity fallback chain. Forge exposes low, medium, high, xhigh, and max reasoning with high as its catalog default; unsupported none and ultra selections clamp to low and max respectively.
+
+Astra has a 1.05M-token context window (922k maximum input plus 128k maximum output), text-and-image input, text output, tool calling, and structured output. Base Pi cost metadata is $10/MTok input, $1/MTok cached input, $12.50/MTok cache writes, and $50/MTok output. Requests above 272k total input use the request-wide $20/$2/$25/$75 tier. Temperature is disabled for the synthetic projection.
+
+The installed Pi catalog does not yet include Astra, so Forge projects the official ID and also keeps a narrow `gpt-5.4` runtime blueprint fallback for registry paths that cannot see the generated projection. OpenAI rolls Astra access out per account; Forge does not add a separate entitlement gate, so unavailable accounts receive the provider error at execution time.
 
 ## Anthropic Fable catalog
 
