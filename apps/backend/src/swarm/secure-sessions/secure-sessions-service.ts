@@ -4074,20 +4074,6 @@ export class SecureSessionsService {
     try {
       for (const projectDefault of configured) {
         const secret = store.getSecret(projectDefault.secretId);
-        const activeLease = snapshot.leases.find((lease) =>
-          lease.state === "active"
-          && lease.secretId === projectDefault.secretId
-          && lease.grantSource === "project_default"
-        );
-        if (activeLease && secret) {
-          statuses.set(projectDefault.secretId, {
-            secretId: projectDefault.secretId,
-            displayAlias: secret.displayAlias,
-            state: "active",
-            statusCode: "ok",
-          });
-          continue;
-        }
         if (
           !secret
           || secret.retention !== "saved"
@@ -4102,12 +4088,35 @@ export class SecureSessionsService {
           continue;
         }
         const bindings = store.listBindings(secret.secretId);
-        const bindingKeys = bindings.flatMap((binding) => {
-          const key = bindingCollisionKey(toPublicBinding(binding));
+        const publicBindings = bindings.map(toPublicBinding);
+        const activeEquivalentTaskLease = findActiveEquivalentLease(
+          store,
+          snapshot,
+          secret.displayAlias,
+          publicBindings,
+          secret.secretId,
+          "task",
+        );
+        if (activeEquivalentTaskLease) {
+          statuses.set(projectDefault.secretId, {
+            secretId: projectDefault.secretId,
+            displayAlias: secret.displayAlias,
+            state: "active",
+            statusCode: "ok",
+          });
+          continue;
+        }
+        const hasActiveAliasConflict = snapshot.leases.some((lease) =>
+          lease.state === "active"
+          && store.getSecret(lease.secretId)?.displayAlias === secret.displayAlias
+        );
+        const bindingKeys = publicBindings.flatMap((binding) => {
+          const key = bindingCollisionKey(binding);
           return key === null ? [] : [key];
         });
         if (
           bindings.length === 0
+          || hasActiveAliasConflict
           || new Set(bindingKeys).size !== bindingKeys.length
           || bindingKeys.some((key) => occupiedBindingKeys.has(key))
         ) {
@@ -5088,10 +5097,20 @@ export class SecureSessionsService {
           const recorded = this.projectDefaultStatuses
             .get(snapshot.state.sessionAgentId)
             ?.get(projectDefault.secretId);
-          const active = snapshot.leases.some((lease) =>
-            lease.state === "active"
-            && lease.secretId === projectDefault.secretId
-            && lease.grantSource === "project_default"
+          const bindings = secret
+            ? store.listBindings(secret.secretId).map(toPublicBinding)
+            : [];
+          const active = Boolean(
+            secret
+            && bindings.length > 0
+            && findActiveEquivalentLease(
+              store,
+              snapshot,
+              secret.displayAlias,
+              bindings,
+              secret.secretId,
+              "task",
+            )
           );
           if (recorded && recorded.state !== "active") return recorded;
           if (recorded?.state === "active" && !active) {
@@ -6390,9 +6409,11 @@ function findActiveEquivalentLease(
   displayAlias: string,
   bindings: readonly SecureSecretBinding[],
   secretId?: string | null,
+  leaseKind?: SecureSessionLease["leaseKind"],
 ): SecureSessionLease | null {
   return snapshot.leases.find((lease) =>
     lease.state === "active"
+    && (leaseKind === undefined || lease.leaseKind === leaseKind)
     && (
       lease.leaseKind !== "one_use"
       || (lease.remainingUses === 1 && lease.oneUseOperationId === null)

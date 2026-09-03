@@ -3632,6 +3632,120 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("coalesces a restart-time explicit SSH request with its automatic project grant", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "restart-race-key",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+
+    await harness.service.initializeSecureSessions();
+    await harness.service.startSecureSession("manager-a");
+    await harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-restart-race",
+      {
+        displayAlias: "restart-race-key",
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        leaseKind: "task",
+        purposeSummary: "Use the configured synthetic SSH identity",
+      },
+    );
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+
+    await Promise.all([
+      harness.service.resolveSecureAccessRequest("manager-a", requestId, {
+        baseRevision: pending.revision,
+        requestId,
+        decision: "approve",
+      }),
+      harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      }),
+    ]);
+    const beforeAutomaticGrant = await harness.service.getSecureSessionSnapshot(
+      "manager-a",
+    );
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: beforeAutomaticGrant.revision },
+    );
+
+    expect(harness.execution.recoveryCalls).toEqual([[]]);
+    expect(applied.pendingRequests).toEqual([]);
+    expect(applied.leases.filter(({ status }) => status === "active")).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "access_request",
+        leaseKind: "task",
+      }),
+    ]);
+    expect(applied.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "active",
+        statusCode: "ok",
+      }),
+    ]);
+
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    await expect(binding.executeBash({
+      secretAliases: ["restart-race-key"],
+      command: "true",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([ALPHA]);
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .leases.filter(({ status }) => status === "active")).toHaveLength(1);
+    await harness.close();
+  });
+
+  it("keeps exact SSH alias execution fail-closed for distinct active secrets", async () => {
+    const harness = createHarness();
+    const instanceSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "ambiguous-key",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+    });
+    const projectSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "ambiguous-key",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    let snapshot = await harness.service.startSecureSession("manager-a");
+    for (const secretId of [instanceSecret.secretId, projectSecret.secretId]) {
+      snapshot = await harness.service.grantSecureSessionLease("manager-a", {
+        baseRevision: snapshot.revision,
+        secretId,
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        leaseKind: "task",
+      });
+    }
+
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const executionsBefore = harness.execution.executed.length;
+    await expect(binding.executeBash({
+      secretAliases: ["ambiguous-key"],
+      command: "true",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.execution.executed).toHaveLength(executionsBefore);
+    expect(snapshot.leases.filter(({ status }) => status === "active"))
+      .toHaveLength(2);
+    await harness.close();
+  });
+
   it("keeps secure startup usable when one project default source is unavailable", async () => {
     const harness = createHarness({ failSourceResolutionAfter: 1 });
     const alpha = await harness.service.createLocalSecureSecret({
