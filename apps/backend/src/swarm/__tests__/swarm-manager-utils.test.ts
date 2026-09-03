@@ -173,6 +173,7 @@ describe("buildModelCapacityBlockKey / resolveNextCapacityFallbackModelId", () =
   });
 
   it.each([
+    ["openai-codex", "gpt-6-astra", undefined],
     ["openai-codex", "gpt-5.3-codex-spark", undefined],
     ["openai-codex", "gpt-5.6-sol", "gpt-5.6-terra"],
     ["openai-codex", "gpt-5.5", "gpt-5.4"],
@@ -711,6 +712,40 @@ describe("resolveModel", () => {
     });
     expect(model).toMatchObject({ id: "gpt-5.5" });
     expect(model).not.toBe(fallback);
+
+    const astra = resolveExactModel(registry, {
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "high"
+    });
+    expect(astra).toMatchObject({
+      provider: "openai-codex",
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_050_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max"
+      },
+      compat: expect.objectContaining({ supportsTemperature: false }),
+      cost: {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }]
+      }
+    });
   });
 
   it("rejects retired models before registry lookup or default fallback", () => {

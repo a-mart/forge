@@ -78,6 +78,28 @@ describe("manager model selection", () => {
     )).toThrow("Choose a native Anthropic model");
   });
 
+  it("resolves exact GPT-6 Astra selections and clamps unsupported efforts", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(resolveExactManagerModelSelection(
+      { provider: "openai-codex", modelId: "gpt-6-astra" },
+      { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "xhigh" },
+    )).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "xhigh",
+    });
+    expect(resolveExactManagerModelSelection(
+      { provider: "openai-codex", modelId: "gpt-6-astra" },
+      { surface: "change", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "ultra" },
+    )).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "max",
+    });
+  });
+
   it("preserves supported exact GPT-5.6 Terra/Luna reasoning and clamps Luna Ultra to Max", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
