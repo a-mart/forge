@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSwarmModelIdNotRetired,
+  DEFAULT_SWARM_MODEL_PRESET,
   getModelPresetInfoList,
   inferProviderFromModelId,
   inferSwarmModelPresetFromDescriptor,
@@ -150,9 +151,49 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-5.6", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-6", "pi-5.6", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
+  });
+
+  it("exposes GPT-6 Astra as a selectable preset without changing the global default", () => {
+    const preset = getModelPresetInfoList().find((entry) => entry.presetId === "pi-6");
+
+    expect(DEFAULT_SWARM_MODEL_PRESET).toBe("pi-5.5");
+    expect(preset).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      displayName: "GPT-6 Astra",
+      defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+    });
+    expect(preset?.variants).toBeUndefined();
+    expect(resolveModelDescriptorFromPreset("pi-6")).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "high",
+    });
+    expect(inferSwarmModelPresetFromDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+    })).toBe("pi-6");
+    for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "openai-codex",
+        modelId: "gpt-6-astra",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "none",
+    })).toBe("low");
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "ultra",
+    })).toBe("max");
   });
 
   it("exposes GPT-5.6 Sol/Terra/Luna as visible Codex presets and variants", () => {

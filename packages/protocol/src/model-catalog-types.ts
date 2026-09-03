@@ -9,11 +9,18 @@ export type ForgeInputMode = 'text' | 'image'
 export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type ForgeThinkingLevelMap = Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>
 /** Pi's per-million-token pricing fields for Forge-curated synthetic models. */
-export interface ForgePiModelCost {
+export interface ForgePiModelCostRates {
   input: number
   output: number
   cacheRead: number
   cacheWrite: number
+}
+export interface ForgePiModelCostTier extends ForgePiModelCostRates {
+  /** Apply these rates to the full request when total input usage exceeds this token count. */
+  inputTokensAbove: number
+}
+export interface ForgePiModelCost extends ForgePiModelCostRates {
+  tiers?: readonly ForgePiModelCostTier[]
 }
 export interface ForgePiModelCompat {
   forceAdaptiveThinking?: boolean

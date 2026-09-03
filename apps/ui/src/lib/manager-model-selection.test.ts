@@ -90,6 +90,25 @@ describe('buildManagerModelRows provider availability gating', () => {
     }
   })
 
+  it('includes GPT-6 Astra without changing existing OpenAI defaults', () => {
+    const rows = buildManagerModelRows('create', {}, { 'openai-codex': true })
+    const astra = rows.find((row) => row.key === 'openai-codex::gpt-6-astra')
+
+    expect(astra).toMatchObject({
+      provider: 'openai-codex',
+      familyId: 'pi-6',
+      modelId: 'gpt-6-astra',
+      displayName: 'GPT-6 Astra',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+    })
+    expect(astra?.unavailableReason).toBeUndefined()
+    expect(rows.find((row) => row.modelId === 'gpt-5.5')).toMatchObject({
+      familyId: 'pi-5.5',
+      modelId: 'gpt-5.5',
+    })
+  })
+
   it('includes native xAI Grok 4.6 as the default and preserves Grok 4.5 as a variant', () => {
     const rows = buildManagerModelRows('create', {}, { xai: true })
     const grokRows = rows.filter((row) => row.provider === 'xai')

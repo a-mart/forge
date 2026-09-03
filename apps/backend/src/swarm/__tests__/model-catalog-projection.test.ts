@@ -25,6 +25,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
               "grok-4.6": { api: "openai-responses", contextWindow: 500_000, maxTokens: 500_000 },
             },
             "openai-codex": {
+              "gpt-6-astra": { contextWindow: 1_050_000, maxTokens: 128_000 },
               "gpt-5.6-sol": { contextWindow: 272_000, maxTokens: 128_000 },
               "gpt-5.6-terra": { contextWindow: 272_000, maxTokens: 128_000 },
               "gpt-5.6-luna": { contextWindow: 272_000, maxTokens: 128_000 },
@@ -136,6 +137,10 @@ describe("model-catalog-projection", () => {
       contextWindow: 500_000,
       maxTokens: 500_000,
     });
+    expect(registry.find("openai-codex", "gpt-6-astra")).toMatchObject({
+      contextWindow: 1_050_000,
+      maxTokens: 128_000,
+    });
     for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
       expect(registry.find("openai-codex", modelId)?.contextWindow).toBe(272_000);
       expect(registry.find("openai-codex", modelId)?.maxTokens).toBe(128_000);
@@ -144,6 +149,92 @@ describe("model-catalog-projection", () => {
     expect(registry.find("openai-codex", "gpt-5.5")?.maxTokens).toBe(128_000);
     expect(registry.find("anthropic", "claude-opus-4-6")?.contextWindow).toBe(1_000_000);
     expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
+  });
+
+  it("projects pending GPT-6 Astra with reasoning compatibility and tiered pricing", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    expect(getModels("openai-codex").some((model) => model.id === "gpt-6-astra")).toBe(false);
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-astra-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        models?: Array<{
+          id: string;
+          contextWindow?: number;
+          maxTokens?: number;
+          thinkingLevelMap?: Record<string, string | null>;
+          cost?: {
+            input: number;
+            output: number;
+            cacheRead: number;
+            cacheWrite: number;
+            tiers?: Array<{
+              inputTokensAbove: number;
+              input: number;
+              output: number;
+              cacheRead: number;
+              cacheWrite: number;
+            }>;
+          };
+          compat?: Record<string, unknown>;
+        }>;
+      }>;
+    };
+    const projectedAstra = projection.providers["openai-codex"]?.models?.find(
+      (model) => model.id === "gpt-6-astra",
+    );
+
+    const expectedAstra = {
+      id: "gpt-6-astra",
+      contextWindow: 1_050_000,
+      maxTokens: 128_000,
+      cost: {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+      compat: { supportsTemperature: false },
+    };
+    expect(projectedAstra).toMatchObject(expectedAstra);
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => {
+        id: string;
+        provider: string;
+        api: string;
+        baseUrl: string;
+        contextWindow?: number;
+        maxTokens?: number;
+        thinkingLevelMap?: Record<string, string | null>;
+        cost?: unknown;
+        compat?: Record<string, unknown>;
+      } | undefined;
+    };
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("openai-codex", "gpt-6-astra")).toMatchObject({
+      ...expectedAstra,
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+    });
   });
 
   it("projects pending Fable 5.1 with adaptive-thinking compatibility and curated pricing", async () => {
