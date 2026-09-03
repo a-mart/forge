@@ -4,7 +4,7 @@ Forge connects to multiple AI providers and models. Each model has different str
 
 Three things affect the quality and speed of what you get back:
 
-- **The model itself.** GPT-5.5 and GPT-5.4 are the most capable models. Smaller variants like GPT-5.4 Mini or GPT-5.4 Nano are faster and cheaper but less thorough on complex tasks.
+- **The model itself.** GPT-6 Astra is the most capable Codex option. GPT-5.6, GPT-5.5, and GPT-5.4 remain selectable families, with GPT-5.5 unchanged as the Forge default. Smaller variants like GPT-5.4 Mini are faster and cheaper but less thorough on complex tasks.
 - **The reasoning level.** Higher reasoning means the model spends more time thinking before answering. This improves accuracy on hard problems but costs more and takes longer.
 - **The task.** A quick file read does not need the same model as a multi-file refactor. Match the model to the work.
 
