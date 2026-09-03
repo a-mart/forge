@@ -4,7 +4,7 @@ Every model choice is a tradeoff between cost, speed, and output quality. Here i
 
 Use these for high-volume or simple tasks where speed matters more than depth.
 
-- **GPT-5.4 Mini** — Fast with decent quality. The Scout specialist uses this by default for exploration and information gathering.
+- **GPT-5.6 Luna** — Fast with decent quality. The Scout specialist uses this by default for exploration and information gathering.
 - **GPT-5.5 at low reasoning** — A fast, cheaper Codex option for bulk formatting, simple code generation, and lightweight review. Good for doc-heavy and simple specialist work.
 
 ## Balanced
@@ -28,7 +28,7 @@ Reserve these for work where quality matters most.
 
 ## Reasoning level adds cost too
 
-Higher reasoning levels multiply both cost and latency on top of the base model cost. A GPT-5.4 task at "max" reasoning costs significantly more than the same task at "low." Adjust reasoning level alongside model choice — sometimes dropping from max to high saves time without noticeably affecting quality.
+Higher reasoning levels multiply both cost and latency on top of the base model cost. A GPT-5.5 task at "max" reasoning costs significantly more than the same task at "low." Adjust reasoning level alongside model choice — sometimes dropping from max to high saves time without noticeably affecting quality.
 
 ## General advice
 
