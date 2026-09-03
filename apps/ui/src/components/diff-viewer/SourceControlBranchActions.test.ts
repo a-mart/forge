@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
+import type { GitBranchListResult, RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
 import { createRemoteUpdateAwarenessMutationTarget } from './remote-update-awareness-mutation'
 import {
@@ -62,7 +62,7 @@ const remoteUpdateSnapshot: RemoteUpdateAwarenessProjectSnapshot = {
   dismissalTarget: { generation: 7 },
 }
 
-const branchData = {
+const branchData: GitBranchListResult = {
   branches: [
     { name: 'main', kind: 'current' as const, headSha: 'abc', upstream: 'origin/main', ahead: 0, behind: 2 },
     { name: 'feature/demo', kind: 'local' as const, headSha: 'def' },
