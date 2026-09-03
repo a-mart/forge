@@ -8,8 +8,6 @@ OpenAI offers GPT models through the Codex runtime. OpenAI/Codex can use local O
 - **GPT-5.6 Terra** — A GPT-5.6 variant selectable under the same family. Supports low, medium, high, xhigh (shown as Extra High), max, and ultra reasoning.
 - **GPT-5.6 Luna** — A GPT-5.6 variant selectable under the same family. Supports low, medium, high, xhigh (shown as Extra High), and max reasoning.
 - **GPT-5.5** — The standard full Codex coding model. Strong at implementation tasks, refactors, debugging, planning, architecture, and multi-step reasoning. Supports the legacy OpenAI Codex reasoning scale.
-- **GPT-5.4** — Prior full OpenAI coding model. Good for complex planning, architecture, and multi-step reasoning when 5.5 is unavailable or intentionally avoided.
-- **GPT-5.4 Mini** — A smaller, faster variant of 5.4. Good for lightweight tasks like reading files, quick edits, and exploration. Much cheaper than the full model.
 
 ## Anthropic
 
