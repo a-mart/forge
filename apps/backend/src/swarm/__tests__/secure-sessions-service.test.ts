@@ -13,6 +13,7 @@ import type {
   SecureExecutionTask,
 } from "../secure-sessions/execution/secure-execution-backend.js";
 import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
+import { normalizeSshAgentKeyMaterial } from "../secure-sessions/execution/ssh-agent-key-material.js";
 import {
   SECURE_OUTPUT_QUARANTINE,
   SecureValueGuard,
@@ -36,6 +37,25 @@ import { SecureSessionStore } from "../secure-sessions/storage/secure-session-st
 const NOW = "2026-07-23T12:00:00.000Z";
 const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
+
+function syntheticOpenSshEnvelope(newline: "\n" | "\r\n"): Buffer {
+  const decoded = Buffer.concat([
+    Buffer.from("openssh-key-v1\0", "ascii"),
+    Buffer.from("synthetic-test-key-material-only", "utf8"),
+  ]);
+  try {
+    const payload = decoded.toString("base64");
+    return Buffer.from([
+      "-----BEGIN OPENSSH PRIVATE KEY-----",
+      payload.slice(0, 32),
+      payload.slice(32),
+      "-----END OPENSSH PRIVATE KEY-----",
+      "",
+    ].join(newline), "utf8");
+  } finally {
+    decoded.fill(0);
+  }
+}
 
 function testBitwardenCliSummary() {
   return {
@@ -485,6 +505,45 @@ describe("SecureSessionsService", () => {
     });
     expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([ALPHA]);
     await harness.close();
+  });
+
+  it("guards the LF-normalized form of a CRLF SSH-agent key", async () => {
+    const harness = createHarness();
+    const key = syntheticOpenSshEnvelope("\r\n");
+    try {
+      const secret = await harness.service.createLocalSecureSecret({
+        displayAlias: "crlf-deployment-key",
+        encryptedMaterial: key.toString("base64"),
+        bindings: [{ deliveryKind: "ssh_agent" }],
+        scope: { kind: "profile", profileId: "profile-a" },
+      });
+      await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      });
+      await harness.service.startSecureSession("manager-a");
+
+      const output: string[] = [];
+      const binding = harness.service.getSecureRuntimeBinding(
+        harness.descriptors.get("manager-a")!,
+      )!;
+      await binding.executeBash({
+        secretAliases: ["crlf-deployment-key"],
+        command: "emit-normalized-ssh-agent-canary",
+        cwd: "/workspace-a",
+        onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
+      });
+
+      expect(output.join("")).toBe(SECURE_OUTPUT_QUARANTINE);
+      expect(await harness.service.getSecureSessionSnapshot("manager-a"))
+        .toEqual(expect.objectContaining({
+          outputState: "quarantined",
+          outputStateCode: "SECURE_OUTPUT_QUARANTINED",
+        }));
+    } finally {
+      key.fill(0);
+      await harness.close();
+    }
   });
 
   it("delivers only the selected automatic SSH keys for each command", async () => {
@@ -3632,6 +3691,146 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("coalesces a restart-time explicit SSH request with its automatic project grant", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "restart-race-key",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+
+    await harness.service.initializeSecureSessions();
+    await harness.service.startSecureSession("manager-a");
+    await harness.service.requestSecureSecretAccess(
+      "manager-a",
+      "tool-restart-race",
+      {
+        displayAlias: "restart-race-key",
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        leaseKind: "task",
+        purposeSummary: "Use the configured synthetic SSH identity",
+      },
+    );
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+
+    await Promise.all([
+      harness.service.resolveSecureAccessRequest("manager-a", requestId, {
+        baseRevision: pending.revision,
+        requestId,
+        decision: "approve",
+      }),
+      harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      }),
+    ]);
+    const beforeAutomaticGrant = await harness.service.getSecureSessionSnapshot(
+      "manager-a",
+    );
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: beforeAutomaticGrant.revision },
+    );
+
+    expect(harness.execution.recoveryCalls).toEqual([[]]);
+    expect(applied.pendingRequests).toEqual([]);
+    expect(applied.leases.filter(({ status }) => status === "active")).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "access_request",
+        leaseKind: "task",
+      }),
+    ]);
+    expect(applied.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "active",
+        statusCode: "ok",
+      }),
+    ]);
+
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    await expect(binding.executeBash({
+      secretAliases: ["restart-race-key"],
+      command: "true",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    expect(harness.execution.sshAgentDeliveryValues.at(-1)).toEqual([ALPHA]);
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .leases.filter(({ status }) => status === "active")).toHaveLength(1);
+    await harness.close();
+  });
+
+  it("keeps exact SSH alias execution fail-closed for distinct active secrets", async () => {
+    const harness = createHarness();
+    const instanceSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "ambiguous-key",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+    });
+    const projectSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "ambiguous-key",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "ssh_agent" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    let snapshot = await harness.service.startSecureSession("manager-a");
+    for (const secretId of [instanceSecret.secretId, projectSecret.secretId]) {
+      snapshot = await harness.service.grantSecureSessionLease("manager-a", {
+        baseRevision: snapshot.revision,
+        secretId,
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        leaseKind: "task",
+      });
+    }
+    await harness.service.setSecureSecretProjectDefault(projectSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const beforeDefaults = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(beforeDefaults.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: projectSecret.secretId,
+        state: "conflict",
+        statusCode: "binding_conflict",
+      }),
+    ]);
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: beforeDefaults.revision },
+    );
+
+    expect(applied.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: projectSecret.secretId,
+        state: "conflict",
+        statusCode: "binding_conflict",
+      }),
+    ]);
+    expect(applied.leases.filter(({ status }) => status === "active"))
+      .toHaveLength(2);
+
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const executionsBefore = harness.execution.executed.length;
+    await expect(binding.executeBash({
+      secretAliases: ["ambiguous-key"],
+      command: "true",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.execution.executed).toHaveLength(executionsBefore);
+    expect(snapshot.leases.filter(({ status }) => status === "active"))
+      .toHaveLength(2);
+    await harness.close();
+  });
+
   it("keeps secure startup usable when one project default source is unavailable", async () => {
     const harness = createHarness({ failSourceResolutionAfter: 1 });
     const alpha = await harness.service.createLocalSecureSecret({
@@ -6281,13 +6480,17 @@ class FakeExecutionBackend implements SecureExecutionBackend {
         for (const resolve of waiters ?? []) resolve();
       });
     }
-    const raw = Buffer.from(
-      command === "emit-alpha-canary" || command === "emit-own-canary"
-        ? ALPHA
-        : command === "emit-public-marker"
-          ? SECURE_OUTPUT_QUARANTINE
-        : "safe",
-    );
+    const raw = command === "emit-normalized-ssh-agent-canary"
+      ? normalizeSshAgentKeyMaterial(
+        request.delivery?.sshAgent?.[0]?.value ?? Buffer.alloc(0),
+      )
+      : Buffer.from(
+        command === "emit-alpha-canary" || command === "emit-own-canary"
+          ? ALPHA
+          : command === "emit-public-marker"
+            ? SECURE_OUTPUT_QUARANTINE
+          : "safe",
+      );
     const stdout = await request.guardOutput({
       stream: "stdout",
       bytes: raw,

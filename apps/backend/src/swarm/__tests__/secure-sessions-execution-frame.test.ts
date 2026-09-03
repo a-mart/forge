@@ -23,6 +23,15 @@ function readHeader(frame: Buffer): SecureExecutionFrameHeader {
   ) as SecureExecutionFrameHeader;
 }
 
+function readMaterial(frame: Buffer): Buffer {
+  const headerByteLength = frame.readUInt32BE(
+    secureExecutionFrameConstants.magic.length,
+  );
+  return frame.subarray(
+    secureExecutionFrameConstants.prefixBytes + headerByteLength,
+  );
+}
+
 describe("secure execution frame", () => {
   it("keeps material out of the metadata header and preserves the exact command", () => {
     const environmentValue = Buffer.from("environment-canary");
@@ -112,6 +121,44 @@ describe("secure execution frame", () => {
     expect(headerText).not.toContain(knownHosts.toString("utf8"));
 
     frame.fill(0);
+  });
+
+  it("normalizes a recognized CRLF OpenSSH envelope at the host frame boundary", () => {
+    const decoded = Buffer.concat([
+      Buffer.from("openssh-key-v1\0", "ascii"),
+      Buffer.from("synthetic-test-key-material-only", "utf8"),
+    ]);
+    const payload = decoded.toString("base64");
+    decoded.fill(0);
+    const sshAgentValue = Buffer.from([
+      "-----BEGIN OPENSSH PRIVATE KEY-----",
+      payload,
+      "-----END OPENSSH PRIVATE KEY-----",
+      "",
+    ].join("\r\n"), "utf8");
+    const expected = Buffer.from(
+      sshAgentValue.toString("utf8").replaceAll("\r\n", "\n"),
+      "utf8",
+    );
+
+    const frame = encodeSecureExecutionFrame({
+      executionId: "0123456789abcdef01234567",
+      command: { executable: "true", args: [] },
+      workspacePath: "/workspace",
+      delivery: { sshAgent: [{ value: sshAgentValue }] },
+    });
+    try {
+      expect(readHeader(frame).sshAgent).toEqual([{
+        index: 0,
+        byteLength: expected.byteLength,
+      }]);
+      expect(readMaterial(frame)).toEqual(expected);
+      expect(sshAgentValue.includes(Buffer.from("\r\n", "utf8"))).toBe(true);
+    } finally {
+      sshAgentValue.fill(0);
+      expected.fill(0);
+      frame.fill(0);
+    }
   });
 
   it("rejects ambiguous or escaping delivery metadata", () => {

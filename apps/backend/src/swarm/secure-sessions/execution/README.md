@@ -39,7 +39,9 @@ produce a nominally compatible image.
 
 An `ssh_agent` delivery uses the OpenSSH client already included in contract
 v6. The host streams each active private key in the binary execution frame;
-the guest loads the keys into one foreground `ssh-agent` through `ssh-add -`,
+recognized OpenSSH private-key envelopes have CRLF/CR newlines normalized to
+LF first so Linux `ssh-add` can load keys pasted from Windows. The guest then
+loads the keys into one foreground `ssh-agent` through `ssh-add -`,
 sets `SSH_AUTH_SOCK` only for that command, and terminates the agent before the
 executor returns. Private keys are never command arguments, environment values,
 Docker metadata, or guest files. Multiple active key grants share the same

@@ -5,6 +5,7 @@ import type {
   SecureExecutionDelivery,
 } from "./secure-execution-backend.js";
 import { SecureExecutionError } from "./secure-execution-error.js";
+import { normalizeSshAgentKeyMaterial } from "./ssh-agent-key-material.js";
 
 const FRAME_MAGIC = Buffer.from("FSEC0001", "ascii");
 const FRAME_PREFIX_BYTES = FRAME_MAGIC.byteLength + 4;
@@ -231,7 +232,10 @@ function buildSshAgentDescriptors(
   }
 
   return sshAgent.map((binding, index) => {
-    const value = copyMaterial(binding.value);
+    if (!(binding.value instanceof Uint8Array)) {
+      throw new SecureExecutionError("INVALID_DELIVERY");
+    }
+    const value = normalizeSshAgentKeyMaterial(binding.value);
     material.push(value);
     return { index, byteLength: value.byteLength };
   });
