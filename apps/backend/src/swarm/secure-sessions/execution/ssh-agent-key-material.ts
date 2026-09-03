@@ -12,9 +12,10 @@ const UTF8_DECODER = new TextDecoder("utf-8", {
 });
 
 /**
- * Copies host-side ssh-agent material and repairs only a structurally
- * recognizable OpenSSH private-key PEM envelope. Other formats and malformed
- * material remain byte-for-byte unchanged for ssh-add to accept or reject.
+ * Copies host-side ssh-agent material and canonicalizes line endings only for
+ * content with the exact OpenSSH envelope, canonical base64, and decoded
+ * openssh-key-v1 magic. Material outside that structural signature remains
+ * byte-for-byte unchanged for ssh-add to accept or reject.
  */
 export function normalizeSshAgentKeyMaterial(value: Uint8Array): Buffer {
   const copy = Buffer.from(value);

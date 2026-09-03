@@ -63,7 +63,7 @@ function renderCard(overrides: Record<string, unknown> = {}) {
 
 function privateValueInputs(): HTMLTextAreaElement[] {
   return Array.from(document.body.querySelectorAll<HTMLTextAreaElement>(
-    'textarea[data-slot="masked-textarea"]',
+    'textarea[data-slot="private-value-textarea"]',
   ))
 }
 
@@ -73,12 +73,6 @@ function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
       getData: (format: string) => format === 'text/plain' ? value : '',
     },
   })
-}
-
-function maskedPrivateValue(value: string): string {
-  return value.replace(/\r\n?|\n|[^\r\n]/g, (character) => (
-    character === '\r' || character === '\n' || character === '\r\n' ? '\n' : '•'
-  ))
 }
 
 beforeEach(() => {
@@ -159,7 +153,7 @@ describe('SecureSecretRequestCard', () => {
       fireEvent.change(input, { target: { value: 'private-value-123' } })
       fireEvent.change(nameInput, { target: { value: 'Production deploy token' } })
     })
-    expect(input.value).toBe('•'.repeat('private-value-123'.length))
+    expect(input.value).toBe('private-value-123')
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
@@ -238,7 +232,7 @@ describe('SecureSecretRequestCard', () => {
     expect(onPrivateFulfill.mock.calls[0]![1].value).toHaveLength(24)
   })
 
-  it('preserves a masked multiline private value byte-for-byte', () => {
+  it('preserves a visible multiline private value byte-for-byte', () => {
     const onPrivateFulfill = vi.fn()
     renderCard({
       request: { ...request, secretId: undefined },
@@ -254,12 +248,12 @@ describe('SecureSecretRequestCard', () => {
       'Value for deploy-token',
     ) as HTMLTextAreaElement
     expect(input.getAttribute('autocomplete')).toBe('off')
-    expect(input.className).toContain('[-webkit-text-security:disc]')
+    expect(input.className).not.toContain('text-security')
 
     flushSync(() => {
       pastePrivateValue(input, MULTILINE_PRIVATE_VALUE)
     })
-    expect(input.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
+    expect(input.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
     expect(document.body.textContent).not.toContain('not-a-real-private-key')
 
     flushSync(() => {

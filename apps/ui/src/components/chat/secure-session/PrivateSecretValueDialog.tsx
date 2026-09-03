@@ -23,7 +23,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from '@/components/ui/select'
-import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
+import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
 import { PasswordGenerator } from '@/components/secure-session/PasswordGenerator'
 import {
   secureSessionUiErrorMessage,
@@ -237,7 +237,7 @@ export function PrivateSecretValueDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor={inputId}>{alias ? `Value for ${alias}` : 'Private value'}</Label>
-            <MaskedTextarea
+            <PrivateValueTextarea
               id={inputId}
               ref={setPrivateInputRef}
               value={privateValue}

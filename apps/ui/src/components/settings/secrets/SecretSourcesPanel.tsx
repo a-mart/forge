@@ -10,7 +10,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
 import type { SettingsApiClient } from '../settings-api-client'
 import {
   connectBitwardenProvider,
@@ -337,10 +336,11 @@ export function SecretSourcesPanel({
                   label={`Private value for ${recovery.affectedSecrets[recovery.index]?.displayAlias ?? 'saved secret'}`}
                   htmlFor="local-secret-recovery-value"
                 >
-                  <MaskedTextarea
+                  <Input
                     id="local-secret-recovery-value"
+                    type="password"
                     value={recoveryValue}
-                    onValueChange={setRecoveryValue}
+                    onChange={(event) => setRecoveryValue(event.target.value)}
                     autoComplete="new-password"
                     placeholder="Re-enter value"
                     disabled={!materialEntryAvailable || busyKey !== null}
