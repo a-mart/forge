@@ -163,7 +163,7 @@ export function SessionCoordinationPicker({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50 sm:max-w-44',
           )}
-          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Delegation preset: ${currentRosterLabel}.`}
+          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Roster: ${currentRosterLabel}.`}
           title={`${formatPosture(config.managerPosture)} · ${currentRosterLabel}`}
         >
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
@@ -188,8 +188,8 @@ export function SessionCoordinationPicker({
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-1 rounded-md bg-muted/65 p-1">
-            {(['delegation_first', 'hands_on'] as const).map((posture) => {
+          <div className="grid grid-cols-3 gap-1 rounded-md bg-muted/65 p-1">
+            {(['delegation_first', 'adaptive', 'hands_on'] as const).map((posture) => {
               const selected = selectedPosture === posture
               const isProjectDefault = posture === projectPosture
               return (
@@ -243,10 +243,10 @@ export function SessionCoordinationPicker({
         <div className="h-px bg-border/75" />
 
         <fieldset className="space-y-1.5" disabled={loading || saving || !!error}>
-          <legend className="sr-only">Delegation preset</legend>
+          <legend className="sr-only">Roster</legend>
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] font-medium text-muted-foreground">
-              Delegation preset
+              Roster
             </span>
             {loading && (
               <span className="text-[10px] text-muted-foreground" aria-live="polite">
@@ -381,11 +381,13 @@ function DefaultSuffix({ compact = false }: { compact?: boolean }) {
 }
 
 function formatPosture(posture: ManagerPosture): string {
-  return posture === 'hands_on' ? 'Hands-on' : 'Delegate first'
+  if (posture === 'hands_on') return 'Hands-on'
+  if (posture === 'adaptive') return 'Adaptive'
+  return 'Delegate first'
 }
 
 function rosterLabel(rosters: RosterOption[], rosterId: string): string {
   return rosters.find((roster) => roster.rosterId === rosterId)?.name
     ?? rosterId
-    ?? 'Default preset'
+    ?? 'Default roster'
 }

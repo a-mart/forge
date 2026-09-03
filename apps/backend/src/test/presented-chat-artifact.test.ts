@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import {
   ChatArtifactError,
   MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES,
+  MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES,
   MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES,
   PresentedChatArtifactTicketStore,
   chatArtifactStatus,
@@ -139,6 +140,58 @@ describe("presented chat artifact authorization", () => {
     expect((await securelyReadPresentedArtifact(text)).content).toHaveLength(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES - 1);
     await writeFile(text, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61));
     expect(await errorCode(() => securelyReadPresentedArtifact(text))).toBe("file_too_large");
+
+    const pdf = join(f.dataDir, "preview.pdf");
+    const pdfHeader = Buffer.from("%PDF-1.4\n");
+    await writeFile(pdf, Buffer.concat([pdfHeader, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES - pdfHeader.length, 0x61)]));
+    expect(await securelyReadPresentedArtifact(pdf)).toMatchObject({
+      path: pdf,
+      binary: true,
+      encoding: "base64",
+      contentType: "application/pdf",
+    });
+    await writeFile(pdf, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x25));
+    expect(await errorCode(() => securelyReadPresentedArtifact(pdf))).toBe("file_too_large");
+  });
+
+  it("issues one-use PDF tickets at the larger in-panel budget without widening JSON/base64 reads", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture();
+    const pdf = join(f.dataDir, "ticket.pdf");
+    const pdfBytes = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61)]);
+    await writeFile(pdf, pdfBytes);
+    await writeFile(f.sessionFile, line(message("pdf-ticket", `[pdf](swarm-file://${pdf})`)));
+    const store = new PresentedChatArtifactTicketStore({
+      createToken: () => "pdf_ticket_token_0001",
+    });
+
+    expect(await errorCode(() => securelyReadPresentedArtifact(pdf))).toBe("file_too_large");
+    const issued: any = await readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "pdf-ticket",
+      path: pdf,
+      imageTransport: "http_ticket",
+    }, { ticketStore: store });
+    expect(issued).toMatchObject({
+      binary: true,
+      transport: "http_ticket",
+      contentType: "application/pdf",
+      totalBytes: pdfBytes.length,
+    });
+    expect(issued).not.toHaveProperty("content");
+    const token = issued.ticket.url.split("/").at(-1)!;
+    const redeemed = await store.redeem(token);
+    expect(redeemed.contentType).toBe("application/pdf");
+    expect(redeemed.totalBytes).toBe(pdfBytes.length);
+    expect(Buffer.from(redeemed.content)).toEqual(pdfBytes);
+
+    await writeFile(pdf, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES + 1, 0x25));
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "pdf-ticket",
+      path: pdf,
+      imageTransport: "http_ticket",
+    }, { ticketStore: store }))).toBe("file_too_large");
   });
 
   it("returns a UTF-8-safe bounded prefix with stable total-byte metadata", async () => {

@@ -238,7 +238,7 @@ function renderSpecialists(
   })
   const sectionLabel = {
     instructions: 'Instruction library',
-    presets: 'Delegation presets',
+    presets: 'Rosters',
     compatibility: 'System & compatibility',
   }[section]
   const trigger = Array.from(container.querySelectorAll('button')).find(
@@ -305,7 +305,7 @@ describe('SettingsSpecialists', () => {
 
       expect(specialistsApiMock.fetchDelegationRosterSettings)
         .toHaveBeenCalledWith('ws://127.0.0.1:47187')
-      expect(container.textContent).toContain('Delegation presets')
+      expect(container.textContent).toContain('Rosters')
       expect(container.textContent).toContain('Roster specialists')
       expect(container.textContent).toContain('Build & execute')
       expect(container.textContent).toContain('Research')
@@ -378,7 +378,7 @@ describe('SettingsSpecialists', () => {
       await flush()
 
       const saveButton = Array.from(container.querySelectorAll('button'))
-        .find((button) => button.textContent?.includes('Save preset'))
+        .find((button) => button.textContent?.includes('Save roster'))
       expect(saveButton).toBeTruthy()
       flushSync(() => {
         fireEvent.click(saveButton!)

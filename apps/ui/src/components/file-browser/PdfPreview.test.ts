@@ -165,18 +165,28 @@ afterEach(async () => {
   observerCallbacks.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  Reflect.deleteProperty(window, 'electronBridge')
 })
 
-async function renderPreview(worktreeId?: string | null) {
+const FILES_PDF_URL = 'http://127.0.0.1:47187/api/files/raw?path=docs%2Fspec.pdf&agentId=session-a'
+const WORKTREE_PDF_URL = `${FILES_PDF_URL}&worktreeId=feature-linked`
+
+async function renderPreview(options?: {
+  sourceUrl?: string
+  nativeFilePath?: string | null
+  openUrl?: string | null
+}) {
   root ??= createRoot(container)
   await act(async () => {
     flushSync(() => {
       root?.render(
         createElement(PdfPreview, {
-          wsUrl: 'ws://127.0.0.1:47187',
-          filePath: 'docs/spec.pdf',
-          agentId: 'session-a',
-          worktreeId,
+          sourceUrl: options?.sourceUrl ?? FILES_PDF_URL,
+          fileName: 'spec.pdf',
+          nativeFilePath: options && 'nativeFilePath' in options
+            ? options.nativeFilePath
+            : '/repo/docs/spec.pdf',
+          openUrl: options?.openUrl ?? options?.sourceUrl ?? FILES_PDF_URL,
         }),
       )
     })
@@ -200,23 +210,23 @@ async function setPageIntersection(pageNumber: number, intersecting: boolean) {
   })
 }
 
-describe('PdfPreview raw route URL', () => {
-  it('includes worktreeId in the raw file URL when browsing a linked worktree', async () => {
-    await renderPreview('feature-linked')
+describe('PdfPreview source URL', () => {
+  it('renders from an explicit source URL, including worktree-scoped Files URLs', async () => {
+    await renderPreview({ sourceUrl: WORKTREE_PDF_URL, openUrl: WORKTREE_PDF_URL })
 
     const preview = container.querySelector('[data-testid="pdf-preview"]')
     expect(preview).not.toBeNull()
+    expect(preview?.getAttribute('data-pdf-url')).toBe(WORKTREE_PDF_URL)
     expect(preview?.getAttribute('data-pdf-url')).toContain('/api/files/raw?')
     expect(preview?.getAttribute('data-pdf-url')).toContain('worktreeId=feature-linked')
-    expect(preview?.getAttribute('data-pdf-url')).toContain('path=docs%2Fspec.pdf')
-    expect(preview?.getAttribute('data-pdf-url')).toContain('agentId=session-a')
   })
 
-  it('omits worktreeId from the raw file URL for session browsing', async () => {
-    await renderPreview(null)
+  it('omits worktreeId from the Files raw URL for session browsing', async () => {
+    await renderPreview()
 
     const preview = container.querySelector('[data-testid="pdf-preview"]')
     expect(preview).not.toBeNull()
+    expect(preview?.getAttribute('data-pdf-url')).toBe(FILES_PDF_URL)
     expect(preview?.getAttribute('data-pdf-url')).not.toContain('worktreeId=')
   })
 })
@@ -406,10 +416,9 @@ describe('PdfPreview PDF.js rendering', () => {
 
     expect(container.textContent).toContain('Failed to load PDF')
     expect(container.textContent).toContain('Network failure')
-    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLAnchorElement
-    expect(openRaw.href).toContain('/api/files/raw?')
-    expect(openRaw.getAttribute('target')).toBe('_blank')
-    expect(openRaw.getAttribute('rel')).toBe('noreferrer')
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLButtonElement
+    expect(openRaw).not.toBeNull()
+    expect(openRaw.tagName).toBe('BUTTON')
   })
 
   it('keeps zoom controls available when canvas output exceeds safe limits', async () => {
@@ -439,10 +448,9 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(container.textContent).not.toContain('Failed to load PDF')
     expect(mockRender).not.toHaveBeenCalled()
 
-    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLAnchorElement
-    expect(openRaw.href).toContain('/api/files/raw?')
-    expect(openRaw.getAttribute('target')).toBe('_blank')
-    expect(openRaw.getAttribute('rel')).toBe('noreferrer')
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLButtonElement
+    expect(openRaw).not.toBeNull()
+    expect(openRaw.tagName).toBe('BUTTON')
 
     const zoomOutButton = container.querySelector('[aria-label="Zoom out"]') as HTMLButtonElement
     await act(async () => {
@@ -453,6 +461,90 @@ describe('PdfPreview PDF.js rendering', () => {
 
     expect(container.querySelector('[data-testid="pdf-preview-render-error"]')).toBeNull()
     expect(mockRender).toHaveBeenCalled()
+  })
+
+  it('opens an absolute Files path through the native PDF bridge', async () => {
+    const openPdfInDefaultApp = vi.fn(async () => ({ success: true as const }))
+    const windowOpen = vi.fn()
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        windowRole: 'main',
+        backendWsUrl: 'ws://127.0.0.1/socket',
+        openPdfInDefaultApp,
+      },
+    })
+    vi.stubGlobal('open', windowOpen)
+
+    await renderPreview()
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLButtonElement
+    await act(async () => {
+      openRaw.click()
+      await Promise.resolve()
+    })
+
+    expect(openPdfInDefaultApp).toHaveBeenCalledWith({ filePath: '/repo/docs/spec.pdf' })
+    expect(windowOpen).not.toHaveBeenCalled()
+  })
+
+  it('materializes a transcript blob PDF through the native PDF bridge instead of window.open', async () => {
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])
+    const openPdfInDefaultApp = vi.fn(async () => ({ success: true as const }))
+    const windowOpen = vi.fn()
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        windowRole: 'main',
+        backendWsUrl: 'ws://127.0.0.1/socket',
+        openPdfInDefaultApp,
+      },
+    })
+    vi.stubGlobal('open', windowOpen)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(pdfBytes, { status: 200 })))
+
+    await renderPreview({
+      sourceUrl: 'blob:https://forge.example.test/pdf',
+      nativeFilePath: null,
+      openUrl: 'blob:https://forge.example.test/pdf',
+    })
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLButtonElement
+    await act(async () => {
+      openRaw.click()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(openPdfInDefaultApp).toHaveBeenCalledWith({
+      bytes: pdfBytes,
+      fileName: 'spec.pdf',
+    })
+    expect(windowOpen).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a native PDF open failure instead of claiming success', async () => {
+    const openPdfInDefaultApp = vi.fn(async () => ({ success: false as const, error: 'No application found' }))
+    const windowOpen = vi.fn()
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        windowRole: 'main',
+        backendWsUrl: 'ws://127.0.0.1/socket',
+        openPdfInDefaultApp,
+      },
+    })
+    vi.stubGlobal('open', windowOpen)
+
+    await renderPreview({ nativeFilePath: '/repo/docs/spec.pdf', openUrl: '' })
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLButtonElement
+    await act(async () => {
+      openRaw.click()
+      await Promise.resolve()
+    })
+
+    expect(windowOpen).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="pdf-preview-open-error"]')?.textContent).toBe('No application found')
   })
 
   it('cancels render tasks on unmount', async () => {

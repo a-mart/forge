@@ -21,6 +21,7 @@ import type { FileEditSessionController } from './use-file-edit-sessions'
 import { formatFileSize, isImageFile, isPdfFile } from './file-browser-utils'
 import { ImagePreview } from './ImagePreview'
 import { PdfPreview } from './PdfPreview'
+import { buildPdfRawUrl } from './pdf-preview-utils'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { FileContentResult } from './use-file-browser-queries'
 import type { FileContentScrollSnapshot } from './use-file-browser-workspace-state'
@@ -56,6 +57,39 @@ const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx'])
 function isMarkdownFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
   return MARKDOWN_EXTENSIONS.has(ext)
+}
+
+function joinWorkspaceAbsolutePath(cwd: string, filePath: string): string {
+  return [cwd.replace(/[\\/]+$/, ''), filePath].join('/')
+}
+
+function FileBrowserPdfPreview({
+  wsUrl,
+  filePath,
+  cwd,
+  agentId,
+  worktreeId = null,
+}: {
+  wsUrl: string
+  filePath: string
+  cwd: string
+  agentId: string
+  worktreeId?: string | null
+}) {
+  const sourceUrl = useMemo(
+    () => buildPdfRawUrl(wsUrl, filePath, agentId, worktreeId),
+    [wsUrl, filePath, agentId, worktreeId],
+  )
+  const fileName = filePath.split('/').pop() ?? 'Document.pdf'
+  const nativeFilePath = joinWorkspaceAbsolutePath(cwd, filePath)
+  return (
+    <PdfPreview
+      sourceUrl={sourceUrl}
+      fileName={fileName}
+      nativeFilePath={nativeFilePath}
+      openUrl={sourceUrl}
+    />
+  )
 }
 
 function readWordWrapPreference(): boolean {
@@ -251,10 +285,11 @@ export function FileContentViewer({
           onNavigateToDirectory={onNavigateToDirectory}
         />
         <div className="flex min-h-0 flex-1 flex-col">
-          <PdfPreview
+          <FileBrowserPdfPreview
             key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
             wsUrl={wsUrl}
             filePath={filePath}
+            cwd={cwd}
             agentId={agentId}
             worktreeId={worktreeId}
           />

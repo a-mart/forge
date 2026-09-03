@@ -433,6 +433,9 @@ Custom project instruction: always mention the release train when summarizing de
   it("composes exactly one concise manager posture block", async () => {
     const { config } = await makeConfig();
     const delegationFirst = createManagerDescriptor(config, repoRoot);
+    const adaptive = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "adaptive",
+    });
     const handsOn = createManagerDescriptor(config, repoRoot, {
       managerPosture: "hands_on",
     });
@@ -440,6 +443,10 @@ Custom project instruction: always mention the release train when summarizing de
       config,
       delegationFirst,
     ).buildResolvedManagerPrompt(delegationFirst);
+    const adaptivePrompt = await createPromptServiceForDescriptor(
+      config,
+      adaptive,
+    ).buildResolvedManagerPrompt(adaptive);
     const handsOnPrompt = await createPromptServiceForDescriptor(
       config,
       handsOn,
@@ -452,6 +459,11 @@ Custom project instruction: always mention the release train when summarizing de
     );
     expect(delegationPrompt).toContain("# Delegation protocol")
     expect(delegationPrompt).toContain("## Working plans")
+    expect(adaptivePrompt).toContain("Your posture is **Adaptive**.")
+    expect(adaptivePrompt).toContain("Choose ownership outcome by outcome")
+    expect(adaptivePrompt).toContain("Own final integration and accountability")
+    expect(adaptivePrompt).toContain("# Delegation protocol")
+    expect(adaptivePrompt).toContain("## Working plans")
     expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
     expect(handsOnPrompt).toContain("Normally own one cohesive outcome directly")
     expect(handsOnPrompt).toContain("This posture changes preference, not authority")
@@ -464,10 +476,13 @@ Custom project instruction: always mention the release train when summarizing de
       "Workers should own substantial implementation and investigation",
     );
     expect(delegationPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
+    expect(adaptivePrompt.match(/^# Work routing$/gm)).toHaveLength(1)
     expect(handsOnPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
     expect(delegationPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
+    expect(adaptivePrompt).not.toContain("$" + "{MANAGER_POSTURE}")
     expect(handsOnPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
     expect(delegationPrompt).not.toContain("forge:manager-coordination")
+    expect(adaptivePrompt).not.toContain("forge:manager-coordination")
     expect(handsOnPrompt).not.toContain("forge:manager-coordination")
     expect(delegationPrompt.length - handsOnPrompt.length).toBeGreaterThan(2_000)
   });
@@ -506,15 +521,24 @@ Always preserve the user's release notes.`,
     const handsOnDescriptor = createManagerDescriptor(config, repoRoot, {
       managerPosture: "hands_on",
     });
+    const adaptiveDescriptor = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "adaptive",
+    });
     const handsOnService = createPromptServiceForDescriptor(config, handsOnDescriptor);
+    const adaptiveService = createPromptServiceForDescriptor(config, adaptiveDescriptor);
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    const adaptive = await adaptiveService.buildResolvedManagerPrompt(adaptiveDescriptor);
     const handsOn = await handsOnService.buildResolvedManagerPrompt(handsOnDescriptor);
 
     expect(resolved).toContain("bounded read-only orientation");
     expect(resolved).toContain("If a direct lookup exposes material implementation or investigation");
     expect(resolved).toContain("Manager direct project work is read-only");
     expect(resolved).toContain("In Delegation-first, direct project work is read-only");
+    expect(adaptive).toContain(
+      "In Adaptive, use normal project tools for manager-owned outcomes and delegate when the benefit exceeds coordination cost.",
+    );
+    expect(adaptive).not.toContain("Do not use `edit`/`write` for project work");
     expect(handsOn).toContain("In Hands-on, you may use normal project tools");
     expect(handsOn).toContain("one bounded manager-owned outcome");
     expect(handsOn).not.toContain("Do not use `edit`/`write` for project work");

@@ -554,7 +554,7 @@ const requestIdCommands = [
   },
   { type: 'delete_manager', managerId: agent.agentId, requestId: 'request-4' },
   { type: 'update_profile_default_model', profileId: profile.profileId, model: 'pi-5.4', requestId: 'request-5' },
-  { type: 'update_project_delegation_defaults', profileId: profile.profileId, managerPosture: 'hands_on', delegationRosterId: 'balanced', requestId: 'request-5a' },
+  { type: 'update_project_delegation_defaults', profileId: profile.profileId, managerPosture: 'adaptive', delegationRosterId: 'balanced', requestId: 'request-5a' },
   { type: 'update_manager_model', managerId: agent.agentId, model: 'pi-5.4', requestId: 'request-6' },
   { type: 'update_manager_cwd', managerId: agent.agentId, cwd: '/tmp', requestId: 'request-7' },
   { type: 'update_session_model', sessionAgentId: agent.agentId, mode: 'inherit', requestId: 'request-8' },

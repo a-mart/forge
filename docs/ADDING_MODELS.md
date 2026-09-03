@@ -24,7 +24,7 @@ A catalog entry makes a model selectable only where its visibility and provider 
 - [`apps/backend/src/swarm/catalog/`](../apps/backend/src/swarm/catalog/) for catalog merging, projection, request behavior, and local overrides;
 - [`apps/backend/src/swarm/swarm-manager-utils.ts`](../apps/backend/src/swarm/swarm-manager-utils.ts) for the synthetic Pi bridge and OpenAI Codex capacity fallback chain;
 - [`apps/backend/src/swarm/project-agent-coordinator.ts`](../apps/backend/src/swarm/project-agent-coordinator.ts) for the bounded project-agent-analysis candidate policy; and
-- [`apps/backend/src/swarm/agents/specialists/`](../apps/backend/src/swarm/agents/specialists/) and delegation presets for explicit model/fallback choices.
+- [`apps/backend/src/swarm/agents/specialists/`](../apps/backend/src/swarm/agents/specialists/) and rosters for explicit model/fallback choices.
 
 Do not retune all specialists simply because a stronger model exists. A roster specialist is an explicit execution policy; change its primary, availability fallback, or escalation route only when the product decision calls for it. Preserve existing persisted descriptors and compatibility aliases unless the migration explicitly replaces them.
 
@@ -62,5 +62,5 @@ Also verify selector behavior with the relevant provider credentials or entitlem
 ## Related references
 
 - [Model Catalog](MODEL_CATALOG.md) — catalog architecture, override semantics, and audit output
-- [Specialists](SPECIALISTS.md) — delegation presets, roster specialists, and fallback policy
+- [Specialists](SPECIALISTS.md) — rosters, specialists, and fallback policy
 - [Quality](QUALITY.md) — supported validation tiers

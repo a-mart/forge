@@ -388,7 +388,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-specialists',
     title: 'Delegation',
     category: 'settings',
-    summary: 'Configure work mode, delegation presets, task instructions, model policies, custom specialists, and fallback models.',
+    summary: 'Configure work mode, rosters, task instructions, model policies, custom specialists, and fallback models.',
     content: settingsSpecialistsContent,
     keywords: [
       'specialists',
@@ -399,7 +399,7 @@ export const settingsArticles: HelpArticle[] = [
       'worker profile',
       'worker roster',
       'model policy',
-      'delegation preset',
+      'specialist roster',
       'work mode',
       'multi-model',
       'panel',

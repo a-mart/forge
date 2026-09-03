@@ -57,7 +57,7 @@ const PRESET: DelegationRoster = {
   ],
 }
 
-describe('delegation preset utilities', () => {
+describe('roster utilities', () => {
   it('resolves task defaults and reports every task using a specialist', () => {
     expect(selectedPolicyIdForTask(PRESET, 'general')).toBe('fast-builder')
     expect(tasksUsingPolicy(PRESET, 'balanced')).toEqual(['plan', 'research'])

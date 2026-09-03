@@ -92,7 +92,7 @@ export const updateWorkGraphToolSchema = Type.Object({
       minLength: 1,
       maxLength: 64,
       pattern: '^(auto|[a-z0-9][a-z0-9-]{0,63})$',
-      description: 'Named specialist from the active delegation preset. Omit for the node kind default; name one only when its guidance clearly fits. Graph size and fan-in do not justify a stronger specialist.',
+      description: 'Named specialist from the active roster. Omit for the node kind default; name one only when its guidance clearly fits. Graph size and fan-in do not justify a stronger specialist.',
     })),
   }, { additionalProperties: false }), {
     minItems: 1,
@@ -115,7 +115,7 @@ export function buildUpdateWorkGraphTool(
       'When risk warrants a distinct implement-then-independent-review handoff, encode that dependency here instead of combining update_plan with manual spawn_agent calls.',
       'For simple requests use no coordination tool; for a short visible checklist use update_plan.',
       'If one bounded planning investigation must happen before the graph is knowable, run and accept that delegation first; do not create speculative downstream nodes.',
-      'Forge automatically dispatches ready non-decision nodes. Follow the active delegation preset when selecting roster specialists; graph size and fan-in do not justify a stronger executor.',
+      'Forge automatically dispatches ready non-decision nodes. Follow the active roster when selecting specialists; graph size and fan-in do not justify a stronger executor.',
       'Worker success moves a node to awaiting_review; personally verify its result, then use accept_work_graph_node to complete only that node and release dependents.',
       'Use waiting decision nodes for user gates. Re-submit a blocked node as pending to retry it; Forge uses the prior route capability-escalation target when one was configured.',
     ].join(' '),

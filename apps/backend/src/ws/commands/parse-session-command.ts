@@ -1,3 +1,4 @@
+import { MANAGER_POSTURES, type ManagerPosture } from "@forge/protocol";
 import {
   describeSwarmModelPresets,
   describeSwarmReasoningLevels,
@@ -443,7 +444,7 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
 function parseManagerPostureUpdate(value: unknown): {
   value?: { mode: "inherit" } | {
     mode: "override";
-    value: "delegation_first" | "hands_on";
+    value: ManagerPosture;
   };
   error?: string;
 } {
@@ -455,12 +456,12 @@ function parseManagerPostureUpdate(value: unknown): {
   if (record.mode === "inherit") return { value: { mode: "inherit" } };
   if (
     record.mode === "override"
-    && (record.value === "delegation_first" || record.value === "hands_on")
+    && MANAGER_POSTURES.includes(record.value as ManagerPosture)
   ) {
     return {
       value: {
         mode: "override",
-        value: record.value,
+        value: record.value as ManagerPosture,
       },
     };
   }

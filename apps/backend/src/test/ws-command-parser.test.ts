@@ -135,7 +135,7 @@ describe('ws command parser session commands', () => {
       update_project_delegation_defaults: {
         type: 'update_project_delegation_defaults',
         profileId: 'profile-a',
-        managerPosture: 'hands_on',
+        managerPosture: 'adaptive',
         delegationRosterId: 'balanced',
       },
       update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined },

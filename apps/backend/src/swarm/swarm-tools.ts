@@ -480,7 +480,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           minLength: 1,
           maxLength: 64,
           pattern: "^(auto|[a-z0-9][a-z0-9-]{0,63})$",
-          description: "Named specialist from the active delegation preset. Omit to use the selected task mode's default specialist.",
+          description: "Named specialist from the active roster. Omit to use the selected task mode's default specialist.",
         })),
         customSpecialist: Type.Optional(
           Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and route." })

@@ -378,7 +378,7 @@ export function SettingsSpecialists({
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
             {isCollab
               ? 'Configure task instructions and custom specialists shared across collaboration channels.'
-              : 'A delegation preset is a roster of complete specialists. Each specialist combines task instructions with its model, reasoning, and recovery behavior.'}
+              : 'A roster is a reusable team of complete specialists. Each specialist combines task instructions with its model, reasoning, and recovery behavior.'}
           </p>
         </div>
         <div className="flex flex-col gap-1.5">
@@ -419,7 +419,7 @@ export function SettingsSpecialists({
         >
           <TabsList variant="line" aria-label="Delegation settings sections">
             <TabsTrigger value="presets">
-              Delegation presets
+              Rosters
             </TabsTrigger>
             <TabsTrigger value="instructions">
               Instruction library

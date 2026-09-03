@@ -20,11 +20,11 @@ function printJson(payload) {
 function usage() {
   return [
     "Usage:",
-    "  manage-delegation-presets.mjs list [--url <forge-base-url>]",
-    "  manage-delegation-presets.mjs show --id <preset-id> [--url <forge-base-url>]",
-    "  manage-delegation-presets.mjs models [--url <forge-base-url>]",
-    "  manage-delegation-presets.mjs create --file <preset.json|-> [--apply] [--url <forge-base-url>]",
-    "  manage-delegation-presets.mjs update --id <preset-id> --expected-revision <n> --file <preset.json|-> [--apply] [--url <forge-base-url>]",
+    "  manage-rosters.mjs list [--url <forge-base-url>]",
+    "  manage-rosters.mjs show --id <roster-id> [--url <forge-base-url>]",
+    "  manage-rosters.mjs models [--url <forge-base-url>]",
+    "  manage-rosters.mjs create --file <roster.json|-> [--apply] [--url <forge-base-url>]",
+    "  manage-rosters.mjs update --id <roster-id> --expected-revision <n> --file <roster.json|-> [--apply] [--url <forge-base-url>]",
   ].join("\n");
 }
 
@@ -126,7 +126,7 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
-async function readPresetFile(filePath) {
+async function readRosterFile(filePath) {
   const raw = filePath === "-"
     ? await readStdin()
     : await readFile(resolve(filePath), "utf8");
@@ -134,10 +134,10 @@ async function readPresetFile(filePath) {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`Preset file is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Roster file is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Preset file must contain one JSON object");
+    throw new Error("Roster file must contain one JSON object");
   }
   return parsed;
 }
@@ -157,20 +157,20 @@ function storagePath() {
 
 function assertSettings(payload) {
   if (!payload || typeof payload !== "object" || !Array.isArray(payload.rosters)) {
-    throw new Error("Forge returned invalid delegation preset settings");
+    throw new Error("Forge returned invalid roster settings");
   }
   return payload;
 }
 
-function findPreset(settings, presetId) {
-  const preset = settings.rosters.find((candidate) => candidate?.rosterId === presetId);
-  if (!preset) throw new Error(`Unknown delegation preset: ${presetId}`);
-  return preset;
+function findRoster(settings, rosterId) {
+  const roster = settings.rosters.find((candidate) => candidate?.rosterId === rosterId);
+  if (!roster) throw new Error(`Unknown roster: ${rosterId}`);
+  return roster;
 }
 
 function proposalForCreate(input) {
   const rosterId = typeof input.rosterId === "string" ? input.rosterId.trim() : "";
-  if (!rosterId) throw new Error("Preset proposal must include rosterId");
+  if (!rosterId) throw new Error("Roster proposal must include rosterId");
   return { ...input, rosterId, revision: 1 };
 }
 
@@ -179,7 +179,7 @@ function proposalForUpdate(input, current) {
     input.rosterId !== undefined
     && (typeof input.rosterId !== "string" || input.rosterId.trim() !== current.rosterId)
   ) {
-    throw new Error(`Preset proposal rosterId must remain ${current.rosterId} for this update`);
+    throw new Error(`Roster proposal rosterId must remain ${current.rosterId} for this update`);
   }
   return {
     ...input,
@@ -196,13 +196,13 @@ async function saveSettings(baseUrl, settings) {
   }));
 }
 
-function presetSummary(preset) {
+function rosterSummary(roster) {
   return {
-    rosterId: preset.rosterId,
-    name: preset.name,
-    revision: preset.revision,
-    specialists: Array.isArray(preset.routes)
-      ? preset.routes.map((route) => ({
+    rosterId: roster.rosterId,
+    name: roster.name,
+    revision: roster.revision,
+    specialists: Array.isArray(roster.routes)
+      ? roster.routes.map((route) => ({
           routeId: route.routeId,
           label: route.label,
           behaviorMode: route.behaviorMode,
@@ -242,24 +242,24 @@ async function main() {
       ok: true,
       defaultRosterId: settings.defaultRosterId,
       storagePath: storagePath(),
-      presets: settings.rosters.map(presetSummary),
+      rosters: settings.rosters.map(rosterSummary),
     });
     return;
   }
 
   if (command === "show") {
-    const preset = findPreset(settings, requiredString(flags, "id"));
-    printJson({ ok: true, storagePath: storagePath(), preset });
+    const roster = findRoster(settings, requiredString(flags, "id"));
+    printJson({ ok: true, storagePath: storagePath(), roster });
     return;
   }
 
-  const input = await readPresetFile(requiredString(flags, "file"));
+  const input = await readRosterFile(requiredString(flags, "file"));
   const apply = flags.get("apply") === true;
 
   if (command === "create") {
     const proposal = proposalForCreate(input);
     if (settings.rosters.some((preset) => preset?.rosterId === proposal.rosterId)) {
-      throw new Error(`Delegation preset already exists: ${proposal.rosterId}`);
+      throw new Error(`Roster already exists: ${proposal.rosterId}`);
     }
     if (!apply) {
       printJson({ ok: true, action: "preview_create", storagePath: storagePath(), proposal });
@@ -273,17 +273,17 @@ async function main() {
       ok: true,
       action: "created",
       storagePath: storagePath(),
-      preset: findPreset(saved, proposal.rosterId),
+      roster: findRoster(saved, proposal.rosterId),
     });
     return;
   }
 
-  const presetId = requiredString(flags, "id");
+  const rosterId = requiredString(flags, "id");
   const expectedRevision = parseExpectedRevision(flags);
-  const current = findPreset(settings, presetId);
+  const current = findRoster(settings, rosterId);
   if (current.revision !== expectedRevision) {
     throw new Error(
-      `Delegation preset ${presetId} changed: expected revision ${expectedRevision}, current revision is ${current.revision}`,
+      `Roster ${rosterId} changed: expected revision ${expectedRevision}, current revision is ${current.revision}`,
     );
   }
   const proposal = proposalForUpdate(input, current);
@@ -299,13 +299,13 @@ async function main() {
   }
   const saved = await saveSettings(baseUrl, {
     ...settings,
-    rosters: settings.rosters.map((preset) => preset.rosterId === presetId ? proposal : preset),
+    rosters: settings.rosters.map((roster) => roster.rosterId === rosterId ? proposal : roster),
   });
   printJson({
     ok: true,
     action: "updated",
     storagePath: storagePath(),
-    preset: findPreset(saved, presetId),
+    roster: findRoster(saved, rosterId),
   });
 }
 

@@ -1,6 +1,6 @@
 import type { ManagerReasoningLevel } from './agents.js'
 
-export const MANAGER_POSTURES = ['delegation_first', 'hands_on'] as const
+export const MANAGER_POSTURES = ['delegation_first', 'adaptive', 'hands_on'] as const
 export type ManagerPosture = (typeof MANAGER_POSTURES)[number]
 
 export const MANAGER_POSTURE_ORIGINS = [

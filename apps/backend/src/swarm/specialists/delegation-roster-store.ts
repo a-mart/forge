@@ -193,15 +193,15 @@ export async function resolveDelegationRosterForManager(
   if (roster) return cloneRoster(roster);
 
   if (manager.delegationRosterOrigin === "session_override") {
-    throw new Error(`Session delegation preset "${rosterId}" no longer exists.`);
+    throw new Error(`Session roster "${rosterId}" no longer exists.`);
   }
   if (manager.delegationRosterOrigin === "project_default") {
-    throw new Error(`Project delegation preset "${rosterId}" no longer exists.`);
+    throw new Error(`Project roster "${rosterId}" no longer exists.`);
   }
 
   const fallback = settings.rosters.find((entry) => entry.rosterId === settings.defaultRosterId);
   if (!fallback) {
-    throw new Error(`Global delegation preset "${settings.defaultRosterId}" does not exist.`);
+    throw new Error(`Global roster "${settings.defaultRosterId}" does not exist.`);
   }
   return cloneRoster(fallback);
 }
@@ -258,19 +258,19 @@ export function formatDelegationRosterModelContext(roster: DelegationRoster): st
 }
 
 export function normalizeDelegationRosterSettings(input: unknown): DelegationRosterSettings {
-  if (!isRecord(input)) throw new Error("Delegation preset settings must be an object.");
-  if (input.version !== 1) throw new Error("Delegation preset settings version must be 1.");
+  if (!isRecord(input)) throw new Error("Roster settings must be an object.");
+  if (input.version !== 1) throw new Error("Roster settings version must be 1.");
   const defaultRosterId = normalizeId(input.defaultRosterId, "defaultRosterId", ROSTER_ID_PATTERN);
   if (!Array.isArray(input.rosters) || input.rosters.length === 0) {
-    throw new Error("Delegation preset settings must contain at least one preset.");
+    throw new Error("Roster settings must contain at least one roster.");
   }
   if (input.rosters.length > MAX_ROSTERS) {
-    throw new Error(`Delegation preset settings may contain at most ${MAX_ROSTERS} presets.`);
+    throw new Error(`Roster settings may contain at most ${MAX_ROSTERS} rosters.`);
   }
   const rosters = input.rosters.map((value, index) => normalizeRoster(value, index));
   assertUnique(rosters.map((roster) => roster.rosterId), "roster id");
   if (!rosters.some((roster) => roster.rosterId === defaultRosterId)) {
-    throw new Error(`Default delegation preset "${defaultRosterId}" does not exist.`);
+    throw new Error(`Default roster "${defaultRosterId}" does not exist.`);
   }
   return { version: 1, defaultRosterId, rosters };
 }
@@ -475,7 +475,7 @@ function migrateBuiltinRosterSpecialists(roster: DelegationRoster): DelegationRo
   }
 
   if (routes.length > MAX_ROUTES) {
-    throw new Error(`Delegation preset settings may contain at most ${MAX_ROUTES} specialists.`);
+    throw new Error(`A roster may contain at most ${MAX_ROUTES} specialists.`);
   }
   return { ...roster, modeRoutes, routes };
 }

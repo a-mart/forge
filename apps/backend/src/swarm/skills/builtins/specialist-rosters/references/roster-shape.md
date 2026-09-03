@@ -1,6 +1,6 @@
-# Delegation preset shape
+# Specialist roster shape
 
-Proposal files contain one complete preset. The helper adds and maintains `revision`.
+Proposal files contain one complete roster. The helper adds and maintains `revision`.
 
 ```json
 {
@@ -39,7 +39,7 @@ Proposal files contain one complete preset. The helper adds and maintains `revis
 ## Fields
 
 - `rosterId`: stable lowercase identifier using letters, digits, and hyphens.
-- `name`: user-facing preset name.
+- `name`: user-facing roster name.
 - `description`: optional concise purpose or tradeoff.
 - `defaultRouteId`: fallback specialist when a task has no explicit mapping.
 - `modeRoutes`: optional defaults for the five task types. Every referenced route must exist.

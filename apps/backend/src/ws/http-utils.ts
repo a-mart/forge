@@ -144,6 +144,8 @@ export function resolveReadFileContentType(path: string): string {
       return "image/webp";
     case ".svg":
       return "image/svg+xml; charset=utf-8";
+    case ".pdf":
+      return "application/pdf";
     default:
       return "application/octet-stream";
   }

@@ -3,16 +3,18 @@
 Forge keeps manager ownership separate from worker configuration:
 
 - **Work mode** decides whether the manager normally delegates or owns bounded work itself.
-- **Delegation preset** chooses the active team of roster specialists.
-- **Roster specialist** combines a task type and output contract with model, reasoning, use/avoid guidance, fallback, and escalation behavior.
+- **Roster** chooses the active team of specialists.
+- **Specialist** combines a task type and output contract with model, reasoning, use/avoid guidance, fallback, and escalation behavior.
 
 The manager-facing `spawn_agent` tool accepts a required concrete `initialMessage`. It normally chooses a task type and lets Forge use that task's default roster specialist. It may name another specialist when its current `useWhen` guidance clearly fits a cheaper, independent, or stronger executor. Saved standalone custom specialists remain available through `customSpecialist`. The persisted `mode`, `route`, tier, effort, and execution-policy inputs remain internal compatibility paths for existing work.
 
-Work-graph nodes use the same optional named-specialist override. Forge pins the preset revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a preset is edited or a session selects another preset. Graph size, fan-in, planning, research, or review alone never selects the strongest specialist.
+Work-graph nodes use the same optional named-specialist override. Forge pins the roster revision, requested and resolved route, concrete model, reasoning, fallback, and escalation target when an attempt starts. Running attempts therefore do not change when a roster is edited or a session selects another roster. Graph size, fan-in, planning, research, or review alone never selects the strongest specialist.
 
 ## Work Mode
 
 **Delegate first** is the product default. The manager delegates project mutations, sustained investigation, multi-step analysis, and substantial implementation while retaining small read-only orientation and acceptance checks.
+
+**Adaptive** chooses ownership outcome by outcome. The manager works directly when continuity of context or one cohesive implementation path matters, and delegates when independent context, parallelism, specialized capability, diversity, or meaningful efficiency outweighs coordination cost.
 
 **Hands-on** asks the manager to own one cohesive bounded outcome directly, including focused changes and validation. It still delegates when parallelism, isolation, model diversity, specialized behavior, independent review, or scheduler-owned readiness adds material value.
 
@@ -28,9 +30,9 @@ A project can set its default work mode. A session can inherit that default or o
 | `design-review` | Maintainability, API design, architecture fit, and consistency |
 | `research` | Fact-checking, documentation, and source-backed investigation |
 
-## Delegation Presets and Roster Specialists
+## Rosters and Specialists
 
-A delegation preset is a team of complete roster specialists. It is not a set of live workers, a permissions bundle, or graph topology. Each specialist is stored internally as a delegation route and contains:
+A roster is a reusable team of complete specialists. It is not a set of live workers, a permissions bundle, or graph topology. Each specialist is stored internally as a delegation route and contains:
 
 - a stable ID and label;
 - one task type and its shared instruction prompt;
@@ -39,13 +41,13 @@ A delegation preset is a team of complete roster specialists. It is not a set of
 - an optional availability fallback; and
 - an optional capability-escalation route for a later attempt.
 
-Each preset names one default specialist per task type and may contain alternatives for the same task. Build & execute supplies the compatibility fallback for an incomplete mapping, but Forge does not expose that fallback as a separate user choice. The manager normally uses the task default. It names an alternative up front only when its guidance clearly matches a cheaper, independent, or stronger executor; capability escalation is reserved for a later attempt after evidence that the selected specialist was inadequate.
+Each roster names one default specialist per task type and may contain alternatives for the same task. Build & execute supplies the compatibility fallback for an incomplete mapping, but Forge does not expose that fallback as a separate user choice. The manager normally uses the task default. It names an alternative up front only when its guidance clearly matches a cheaper, independent, or stronger executor; capability escalation is reserved for a later attempt after evidence that the selected specialist was inadequate.
 
-The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Preset changes affect only pending or future attempts.
+The selection order is global default → project default → session override. New sessions inherit their project. A session override stays local to that session and is not remembered for later sessions. Roster changes affect only pending or future attempts.
 
-Forge supplies the manager a compact versioned `[delegationRoster]` context. The roster is intentionally outside the stable system-prompt prefix so switching presets does not rewrite the cached prompt. Work mode is different: it is part of the system prompt because it changes the manager's operating policy.
+Forge supplies the manager a compact versioned `[delegationRoster]` context. The roster is intentionally outside the stable system-prompt prefix so switching rosters does not rewrite the cached prompt. Work mode is different: it is part of the system prompt because it changes the manager's operating policy.
 
-Configure presets under **Settings → Delegation → Delegation presets**. The default Balanced preset is derived from existing tier bindings until delegation settings are first saved.
+Configure rosters under **Settings → Delegation → Rosters**. The default Balanced roster is derived from existing tier bindings until roster settings are first saved.
 
 ## Multi-model Coordination Skill
 
@@ -103,7 +105,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
 | `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
 
-Tier settings remain global at `~/.forge/shared/specialists/tier-configs.json` for persisted workers and compatibility. When `~/.forge/shared/config/delegation-rosters.json` does not exist, Forge derives the Balanced preset from the stored tier bindings. Saving delegation presets writes that compatibility file; normal manager delegation then uses roster specialists rather than tier names.
+Tier settings remain global at `~/.forge/shared/specialists/tier-configs.json` for persisted workers and compatibility. When `~/.forge/shared/config/delegation-rosters.json` does not exist, Forge derives the Balanced roster from the stored tier bindings. Saving rosters writes that compatibility file; normal manager delegation then uses specialists rather than tier names.
 
 ## Shipped Task Instructions and Dedicated Capabilities
 
@@ -198,7 +200,7 @@ You are not user-facing. Return status, summary, changed files, verification, an
 
 Go to **Settings → Delegation** to manage worker delegation:
 
-- **Delegation presets**: Manage complete roster specialists and their task instructions, model, reasoning, availability fallback, capability escalation, and the global default preset.
+- **Rosters**: Manage complete specialists and their task instructions, model, reasoning, availability fallback, capability escalation, and the global default roster.
 - **Global scope**: View and edit shared specialists. Create new global specialists. Builtins are editable but cannot be deleted.
 - **Project scope**: View inherited specialists and create project-specific overrides or new project-only specialists.
 
