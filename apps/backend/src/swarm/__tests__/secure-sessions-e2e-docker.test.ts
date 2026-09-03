@@ -717,7 +717,7 @@ dockerSuite(
       expect(markerCheck.exitCode).toBe(0);
     }, 90_000);
 
-    it("loads multiple private keys into one execution-local SSH agent and removes it afterward", async () => {
+    it("normalizes a CRLF private key, loads multiple keys into one execution-local SSH agent, and removes it afterward", async () => {
       const password = makeCanary();
       const temporaryRoot = await mkdtemp(
         join(tmpdir(), "forge-secure-e2e-ssh-agent-"),
@@ -727,6 +727,10 @@ dockerSuite(
       const target = await startFixtureTarget(targetImage, targetName, password);
       cleanups.push(async () => await removeManagedContainer(targetName));
       const firstKey = await createFixtureSshKey(targetName);
+      const firstKeyWithCrLf = Buffer.from(
+        firstKey.toString("utf8").replaceAll("\n", "\r\n"),
+        "utf8",
+      );
       const secondKey = await createFixtureSshKey(targetName);
       const invocations: string[][] = [];
       const backend = new DockerSecureExecutionBackend({
@@ -739,6 +743,7 @@ dockerSuite(
         async () => {
           password.fill(0);
           firstKey.fill(0);
+          firstKeyWithCrLf.fill(0);
           secondKey.fill(0);
         },
         async () => await rm(temporaryRoot, { recursive: true, force: true }),
@@ -750,7 +755,11 @@ dockerSuite(
       );
       const sandbox = await backend.ensureTask(task);
       const originalContainerId = await inspectContainerId(sandbox.sandboxId);
-      const guard = new SecureValueGuard([firstKey, secondKey]);
+      const guard = new SecureValueGuard([
+        firstKey,
+        firstKeyWithCrLf,
+        secondKey,
+      ]);
       const result = await (async () => {
         try {
           return await backend.execute({
@@ -770,7 +779,7 @@ dockerSuite(
               "fixture-server",
               target.ipAddress,
               hostKey,
-              [firstKey, secondKey],
+              [firstKeyWithCrLf, secondKey],
             ),
             guardOutput: guard.createOutputGuard(),
           });
@@ -817,22 +826,35 @@ dockerSuite(
       expect(secondConcurrent.exitCode).toBe(0);
       expect(secondConcurrent.stdout.toString("utf8")).toBe("concurrent-two");
 
-      const invalidKey = Buffer.from("synthetic-invalid-private-key", "utf8");
-      const invalidGuard = new SecureValueGuard([invalidKey]);
+      const rejectedKeys = [
+        Buffer.from("synthetic-invalid-private-key", "utf8"),
+        Buffer.from([
+          "-----BEGIN OPENSSH PRIVATE KEY-----",
+          "not_base64",
+          "-----END OPENSSH PRIVATE KEY-----",
+          "",
+        ].join("\r\n"), "utf8"),
+      ];
       try {
-        const invalid = await backend.execute({
-          task,
-          command: { executable: "true", args: [] },
-          delivery: { sshAgent: [{ value: invalidKey }] },
-          guardOutput: invalidGuard.createOutputGuard(),
-        });
-        expect(invalid.exitCode).toBe(126);
-        expect(invalid.stderr.toString("utf8")).toBe(
-          "forge-secure-executor:ssh-agent-key-rejected\n",
-        );
+        for (const rejectedKey of rejectedKeys) {
+          const invalidGuard = new SecureValueGuard([rejectedKey]);
+          try {
+            const invalid = await backend.execute({
+              task,
+              command: { executable: "true", args: [] },
+              delivery: { sshAgent: [{ value: rejectedKey }] },
+              guardOutput: invalidGuard.createOutputGuard(),
+            });
+            expect(invalid.exitCode).toBe(126);
+            expect(invalid.stderr.toString("utf8")).toBe(
+              "forge-secure-executor:ssh-agent-key-rejected\n",
+            );
+          } finally {
+            invalidGuard.dispose();
+          }
+        }
       } finally {
-        invalidGuard.dispose();
-        invalidKey.fill(0);
+        for (const rejectedKey of rejectedKeys) rejectedKey.fill(0);
       }
       expect(await inspectContainerId(sandbox.sandboxId)).toBe(
         originalContainerId,
@@ -859,6 +881,7 @@ dockerSuite(
 
       const needles = [
         ...canaryNeedles(firstKey),
+        ...canaryNeedles(firstKeyWithCrLf),
         ...canaryNeedles(secondKey),
       ];
       try {

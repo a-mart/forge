@@ -10,7 +10,8 @@
     "generate:routes": "tsr generate",
     "typecheck": "pnpm run generate:routes && tsc --noEmit",
     "verify:clean-typecheck": "node scripts/verify-clean-typecheck.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:masked-textarea-chromium": "node ./scripts/test-masked-textarea-chromium.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.3",

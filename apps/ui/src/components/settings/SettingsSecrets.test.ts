@@ -358,6 +358,12 @@ function pastePrivateValue(control: HTMLTextAreaElement, value: string): void {
   })
 }
 
+function maskedPrivateValue(value: string): string {
+  return value.replace(/\r\n?|\n|[^\r\n]/g, (character) => (
+    character === '\r' || character === '\n' || character === '\r\n' ? '\n' : '•'
+  ))
+}
+
 describe('SettingsSecrets', () => {
   it('never loads secure settings for a remote origin', () => {
     render(makeClient('collab'))
@@ -1093,12 +1099,12 @@ describe('SettingsSecrets', () => {
       container,
       'Private value',
     ) as HTMLTextAreaElement
-    expect(materialInput.className).not.toContain('text-security')
+    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
     expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
     expect(container.textContent).not.toContain('not-a-real-private-key')
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
@@ -1136,12 +1142,12 @@ describe('SettingsSecrets', () => {
       container,
       'Replace private value (optional)',
     ) as HTMLTextAreaElement)
-    expect(materialInput.className).not.toContain('text-security')
+    expect(materialInput.className).toContain('[-webkit-text-security:disc]')
     expect(materialInput.getAttribute('autocomplete')).toBe('new-password')
     flushSync(() => {
       pastePrivateValue(materialInput, MULTILINE_PRIVATE_VALUE)
     })
-    expect(materialInput.value).toBe(MULTILINE_PRIVATE_VALUE.replace(/\r\n/g, '\n'))
+    expect(materialInput.value).toBe(maskedPrivateValue(MULTILINE_PRIVATE_VALUE))
 
     fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
 
@@ -1228,9 +1234,12 @@ describe('SettingsSecrets', () => {
       name: 'Re-enter values on this machine',
     }))
     const firstValue = await waitFor(() =>
-      getByLabelText(container, 'Private value for github/work') as HTMLInputElement)
-    const rawValue = 'local-recovery-value-canary'
-    fireEvent.change(firstValue, { target: { value: rawValue } })
+      getByLabelText(container, 'Private value for github/work') as HTMLTextAreaElement)
+    const rawValue = MULTILINE_PRIVATE_VALUE
+    flushSync(() => {
+      pastePrivateValue(firstValue, rawValue)
+    })
+    expect(firstValue.value).toBe(maskedPrivateValue(rawValue))
     fireEvent.click(getByRole(container, 'button', { name: 'Save and continue' }))
 
     await waitFor(() => {

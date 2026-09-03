@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { PrivateValueTextarea } from '@/components/secure-session/PrivateValueTextarea'
+import { MaskedTextarea } from '@/components/secure-session/MaskedTextarea'
 import { PasswordGenerator } from '@/components/secure-session/PasswordGenerator'
 import {
   Select,
@@ -761,7 +761,7 @@ export function SecretCatalogPanel({
                           label="Replace private value (optional)"
                           htmlFor={`replace-material-${secret.secretId}`}
                         >
-                          <PrivateValueTextarea
+                          <MaskedTextarea
                             id={`replace-material-${secret.secretId}`}
                             value={replacementMaterial}
                             onValueChange={setReplacementMaterial}
@@ -1022,8 +1022,8 @@ export function SecretCatalogPanel({
             {saveDestination === 'local' ? 'Add local secret' : 'Add Bitwarden login'}
           </h3>
           <p className="text-sm text-muted-foreground">
-            The private value stays visible while you enter it and is cleared from this form as soon
-            as you submit. Saved values cannot be revealed later.
+            The private value is masked while you enter it and cleared from this form as soon as
+            you submit. Saved values cannot be revealed later.
           </p>
         </div>
 
@@ -1107,7 +1107,7 @@ export function SecretCatalogPanel({
             </p>
           </Field>
           <Field label="Private value" htmlFor="local-secret-material">
-            <PrivateValueTextarea
+            <MaskedTextarea
               id="local-secret-material"
               name="localSecretMaterial"
               value={material}
