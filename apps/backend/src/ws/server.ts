@@ -164,6 +164,7 @@ function isSecureBuilderControlPath(pathname: string): boolean {
   return (
     pathname === "/api/secure-secrets"
     || pathname.startsWith("/api/secure-secrets/")
+    || pathname === "/api/settings/secure-secrets"
     || pathname === "/api/secure-sessions"
     || pathname.startsWith("/api/secure-sessions/")
     || isSecureBrowserControlPath(pathname)

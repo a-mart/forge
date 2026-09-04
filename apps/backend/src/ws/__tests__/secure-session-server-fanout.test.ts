@@ -42,6 +42,9 @@ describe("secure session server transport", () => {
     expect(server.listRegisteredHttpRoutes().some((route) =>
       route.matches("/api/secure-sessions/manager")
     )).toBe(true);
+    expect(server.listRegisteredHttpRoutes().some((route) =>
+      route.matches("/api/settings/secure-secrets")
+    )).toBe(true);
 
     await server.start();
     const hostileHttpResponse = await fetch(
@@ -64,6 +67,34 @@ describe("secure session server transport", () => {
       error: "SECURE_PRIVATE_API_UNAVAILABLE",
     });
 
+    const unauthorizedSettingsMutation = await fetch(
+      `http://${config.host}:${config.port}/api/settings/secure-secrets`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ maxProjectDefaults: 12 }),
+      },
+    );
+    expect(unauthorizedSettingsMutation.status).toBe(403);
+    expect(await unauthorizedSettingsMutation.json()).toEqual({
+      code: "SECURE_PRIVATE_API_UNAVAILABLE",
+      error: "SECURE_PRIVATE_API_UNAVAILABLE",
+    });
+
+    const hostileSettingsMutation = await fetch(
+      `http://${config.host}:${config.port}/api/settings/secure-secrets`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          Origin: "https://evil.example",
+          "x-forge-secure-control": secureControlToken,
+        },
+        body: JSON.stringify({ maxProjectDefaults: 12 }),
+      },
+    );
+    expect(hostileSettingsMutation.status).toBe(403);
+
     const authorizedMissingSecretMutation = await fetch(
       `http://${config.host}:${config.port}/api/secure-secrets/project-defaults/manager/secret-1`,
       {
@@ -76,6 +107,19 @@ describe("secure session server transport", () => {
       },
     );
     expect(authorizedMissingSecretMutation.status).not.toBe(403);
+
+    const authorizedSettingsMutation = await fetch(
+      `http://${config.host}:${config.port}/api/settings/secure-secrets`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-forge-secure-control": secureControlToken,
+        },
+        body: JSON.stringify({ maxProjectDefaults: 12 }),
+      },
+    );
+    expect(authorizedSettingsMutation.status).toBe(200);
 
     const browserOrigin = `http://${config.host}:${config.port}`;
     const pairingCreated = await fetch(
@@ -139,6 +183,19 @@ describe("secure session server transport", () => {
       },
     );
     expect(pairedBrowserMutation.status).not.toBe(403);
+    const pairedBrowserSecretSettingsMutation = await fetch(
+      `${browserOrigin}/api/settings/secure-secrets`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: pairedCookie ?? "",
+          Origin: browserOrigin,
+        },
+        body: JSON.stringify({ maxProjectDefaults: 13 }),
+      },
+    );
+    expect(pairedBrowserSecretSettingsMutation.status).toBe(200);
     const pairedBrowserSettings = await fetch(
       `${browserOrigin}/api/settings/secure-browsers`,
       {
