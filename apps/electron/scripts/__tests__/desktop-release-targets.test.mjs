@@ -27,6 +27,6 @@ describe('desktop release and Secure Sessions container policy', () => {
     expect(workflow).toContain('not Linux Desktop packaging')
     expect(workflow).toContain('FORGE_REQUIRE_SECURE_DOCKER_E2E: "1"')
     expect(workflow).toContain('pull_request:')
-    expect(workflow).toContain('branches:\n      - main')
+    expect(workflow).toContain("branches:\n      - main\n      - 'release/v*'")
   })
 })

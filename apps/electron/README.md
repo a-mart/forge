@@ -286,12 +286,18 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
        --version "$VERSION"
      ```
 
-   - The `--version` stage updates both authority files, commits those two files, pushes the resulting commit to `main`, and automatically exits before packaging, Windows CI or `workflow_dispatch`, draft creation, tagging, asset upload, or publishing. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against the new 40-character release commit. Do not package until every gate passes for that exact SHA.
-   - After preflight passes, invoke the same project-scoped release script **without `--version`** for packaging (add `--prerelease` for a prerelease version):
+   - The `--version` stage updates both authority files, commits those two files, pushes the resulting commit to the selected release branch, and automatically exits before packaging, Windows CI or `workflow_dispatch`, draft creation, tagging, asset upload, or publishing. The default remains `main`. A frozen-source hotfix may instead use a clean `release/vMAJOR.MINOR.PATCH` branch plus mandatory `--expected-sha <40-hex>`; the version must belong to that branch, and the branch must already be exactly synchronized with its remote. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and a matching Secure Sessions push run—against the new 40-character release commit. Do not package until every gate passes for that exact SHA.
+   - After preflight passes, invoke the same project-scoped release script **without `--version`** for packaging (add `--prerelease` for a prerelease version). Pass the same frozen branch and the new exact SHA when using the isolated path:
 
      ```bash
      bash ~/.forge/profiles/middleman-project/pi/skills/electron-release/release.sh \
        --repo /absolute/path/to/forge
+
+     # Frozen-source example (use the post-bump SHA, not the pre-bump SHA)
+     bash ~/.forge/profiles/middleman-project/pi/skills/electron-release/release.sh \
+       --repo /absolute/path/to/forge \
+       --release-branch release/v0.25.1 \
+       --expected-sha 0123456789abcdef0123456789abcdef01234567
      ```
 
    - The `--version` stage does not package, dispatch CI, create a draft, tag, upload assets, or publish. Do not rely on a tag-first flow.
@@ -302,12 +308,13 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
    - Confirm the expected macOS assets exist in `apps/electron/release/`
 
 3. **Build Windows through GitHub Actions**
-   - Use `.github/workflows/electron-build.yml` via `workflow_dispatch` for release Windows artifacts
-   - Pushes to `electron/*` branches are for validation only
+   - Use `.github/workflows/electron-build.yml` via `workflow_dispatch` for release Windows artifacts; dispatch the exact selected release branch and accept only a matching `headSha`
+   - Pushes to `electron/*` branches are for validation only. Pushes to `release/v*` run the mandatory Secure Sessions gate but do not auto-start Electron packaging.
    - Do not use tag pushes as the release trigger
 
 4. **Create the GitHub Release as a draft**
    - Keep the release unpublished until every required asset is attached and validated
+   - Use `--draft-only` when a packaged runtime smoke must run against the uploaded bytes before publication. After that smoke succeeds, use `--publish-draft` with the same branch and exact SHA; this rechecks local-to-draft hashes and publishes without rebuilding.
    - If this is a beta build, the draft must also remain marked as a GitHub **prerelease** before and after publishing
 
 5. **Upload the full updater asset set**
@@ -328,6 +335,7 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 - `workflow_dispatch` is the credential-free unsigned Windows release build path: all `WIN_CSC_*` / `CSC_*` values and signer metadata are blanked and identity auto-discovery is disabled
 - `electron/*` branch pushes are validation-only builds with the same credential isolation; the optional Chrome adapter package is deliberately non-deployable
+- `release/v*` pushes run Secure Sessions only. Publishable Windows packaging still requires explicit `workflow_dispatch` on that exact branch and a matching run `headSha`
 - The workflow does not publish a GitHub Release on its own
 - Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable
