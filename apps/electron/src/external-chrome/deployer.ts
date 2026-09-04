@@ -221,7 +221,8 @@ export class ExternalChromeDeployer {
     const release = await this.lock.acquire(this.paths.lock)
     try {
       await this.recoverUnlocked()
-      const manifest = await this.readPackageManifest(path.join(this.options.resourcesRoot, 'package-manifest.json'))
+      const packagedManifestPath = path.join(this.options.resourcesRoot, 'package-manifest.json')
+      const manifest = await this.readPackageManifest(packagedManifestPath)
       this.assertCompatible(manifest)
       await this.validatePackagedResources(manifest, this.options.resourcesRoot)
       await this.assertSameVersionContentPolicy(manifest)
@@ -245,7 +246,7 @@ export class ExternalChromeDeployer {
             nativeDirectory,
             { [manifest.nativeHost.executable]: manifest.nativeHost.sha256 },
           )
-          await this.fs.copyFile(path.join(this.options.resourcesRoot, 'package-manifest.json'), path.join(temporary, 'package-manifest.json'))
+          await this.fs.copyFile(packagedManifestPath, path.join(temporary, 'package-manifest.json'))
           await this.fs.chmod(path.join(temporary, 'package-manifest.json'), 0o600)
           await this.syncTree(temporary)
           await this.renameWithRetry(temporary, destination)
@@ -253,6 +254,10 @@ export class ExternalChromeDeployer {
           await this.fs.rm(temporary, { recursive: true, force: true })
           throw error
         }
+      } else {
+        // Content-hash directories are reused across Desktop version bumps.
+        // Refresh package identity so pending activation is not rejected as incompatible.
+        await this.refreshStagedPackageIdentity(destination, packagedManifestPath, manifest)
       }
       await this.validatePackagedResources(manifest, destination)
       await this.atomicJson(path.join(this.paths.state, 'staged-deployment.json'), {
@@ -878,6 +883,33 @@ export class ExternalChromeDeployer {
     await this.syncDirectory(path.dirname(destination))
   }
 
+  private async refreshStagedPackageIdentity(
+    destination: string,
+    packagedManifestPath: string,
+    expected: ExternalChromePackageManifest,
+  ): Promise<void> {
+    const stagedManifestPath = path.join(destination, 'package-manifest.json')
+    let staged: ExternalChromePackageManifest | null = null
+    try {
+      staged = await this.readPackageManifest(stagedManifestPath)
+    } catch {
+      staged = null
+    }
+    if (staged && packageIdentityEquals(staged, expected)) return
+    if (staged && !deploymentContentEquals(
+      installRecordFromManifest(staged),
+      installRecordFromManifest(expected),
+    )) {
+      throw new Error('External Chrome staged package content does not match the packaged identity')
+    }
+    const temporary = `${stagedManifestPath}.new-${randomUUID()}`
+    await this.fs.copyFile(packagedManifestPath, temporary)
+    await this.fs.chmod(temporary, 0o600)
+    await this.syncFile(temporary)
+    await this.renameReplace(temporary, stagedManifestPath)
+    await this.syncDirectory(destination)
+  }
+
   private async renameReplace(source: string, destination: string): Promise<void> {
     try {
       await this.renameWithRetry(source, destination)
@@ -1100,6 +1132,13 @@ export function deploymentContentEquals(
   return left.shellSha256 === right.shellSha256
     && left.payloadSha256 === right.payloadSha256
     && left.nativeSha256 === right.nativeSha256
+}
+
+function packageIdentityEquals(
+  left: ExternalChromePackageManifest,
+  right: ExternalChromePackageManifest,
+): boolean {
+  return stableJson(left) === stableJson(right)
 }
 
 function selectorFromInstall(install: ExternalChromeInstallRecord): ExternalChromeSelector {

@@ -269,6 +269,51 @@ describe('ExternalChromeDeployer', () => {
     expect(await fs.readFile(updating.paths.nativeHostExecutable, 'utf8')).toBe('ready-native-old')
   })
 
+  it('restages same-content Desktop version identity and activates the proven incompatible install at startup', async () => {
+    const old = await fixture('1.0.0', 'same-payload', 'linux', 'x64', 'same-shell', 'same-native')
+    const installed = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: old.resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64',
+    })
+    await installed.deploy()
+    const stagedDirectory = `staged-${old.manifest.extension.shellSha256.slice(0, 16)}-${old.manifest.extension.payloadSha256.slice(0, 16)}-${old.manifest.nativeHost.sha256.slice(0, 16)}`
+    const stagedRoot = path.join(installed.paths.deployment, stagedDirectory)
+    expect(JSON.parse(await fs.readFile(path.join(stagedRoot, 'package-manifest.json'), 'utf8'))).toMatchObject({
+      packageVersion: '1.0.0',
+      compatibility: { desktop: { min: '0.22.0', max: '0.22.999' } },
+    })
+
+    const update = await fixture('1.0.0', 'same-payload', 'linux', 'x64', 'same-shell', 'same-native')
+    update.manifest.packageVersion = '0.25.0'
+    update.manifest.compatibility.desktop = { min: '0.25.0', max: '0.25.999' }
+    await fs.writeFile(path.join(update.resourcesRoot, 'package-manifest.json'), `${JSON.stringify(update.manifest)}\n`)
+    const upgrading = new ExternalChromeDeployer({
+      dataRoot: old.dataRoot, resourcesRoot: update.resourcesRoot, desktopVersion: '0.25.0', platform: 'linux', architecture: 'x64',
+    })
+
+    expect(await upgrading.verifyDeploymentForStartup()).toMatchObject({
+      state: 'desktop-incompatible', install: { packageVersion: '1.0.0', desktopCompatibility: { min: '0.22.0', max: '0.22.999' } },
+    })
+    await upgrading.stage()
+    expect(await upgrading.pendingDeployment()).toMatchObject({
+      packageVersion: '0.25.0',
+      desktopCompatibility: { min: '0.25.0', max: '0.25.999' },
+    })
+    await expect(new ExternalChromeDeploymentRecovery(upgrading).deployAtStartup({ development: true }))
+      .resolves.toMatchObject({
+        packageVersion: '0.25.0',
+        desktopCompatibility: { min: '0.25.0', max: '0.25.999' },
+      })
+    expect(JSON.parse(await fs.readFile(path.join(stagedRoot, 'package-manifest.json'), 'utf8'))).toMatchObject({
+      packageVersion: '0.25.0',
+      compatibility: { desktop: { min: '0.25.0', max: '0.25.999' } },
+    })
+    expect(await upgrading.verifyDeployment()).toMatchObject({
+      state: 'ready',
+      install: { packageVersion: '0.25.0', desktopCompatibility: { min: '0.25.0', max: '0.25.999' } },
+    })
+    expect(await fs.readFile(upgrading.paths.nativeHostExecutable, 'utf8')).toBe('same-native')
+  })
+
   it('activates a staged release at startup only after proving the old deployment is Desktop-incompatible', async () => {
     const old = await fixture('1.0.0', 'old-payload', 'linux', 'x64', 'old-shell', 'old-native')
     const installed = new ExternalChromeDeployer({
