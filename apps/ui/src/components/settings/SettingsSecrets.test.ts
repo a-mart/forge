@@ -391,7 +391,7 @@ describe('SettingsSecrets', () => {
     })
   })
 
-  it('configures several Password Manager collections with one save-and-sync action', async () => {
+  it('makes collection edits explicit and saves them with one action', async () => {
     secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
       providers: [LOCAL_PROVIDER, BITWARDEN_PASSWORD_MANAGER_PROVIDER],
       secrets: [],
@@ -418,11 +418,18 @@ describe('SettingsSecrets', () => {
     ))
     expect(getByRole(container, 'checkbox', { name: 'Infrastructure' })
       .getAttribute('data-state')).toBe('checked')
+    const save = getByRole(container, 'button', { name: 'Save collection changes' })
+    expect(save.hasAttribute('disabled')).toBe(true)
+    expect(container.textContent).toContain(
+      'Collection selections are saved and the Forge catalog is synced.',
+    )
     fireEvent.click(development)
     await waitFor(() => {
       expect(development.getAttribute('data-state')).toBe('checked')
+      expect(save.hasAttribute('disabled')).toBe(false)
+      expect(container.textContent).toContain('Collection changes are not saved yet.')
     })
-    fireEvent.click(getByRole(container, 'button', { name: 'Save and sync' }))
+    fireEvent.click(save)
 
     await waitFor(() => {
       expect(
@@ -438,6 +445,41 @@ describe('SettingsSecrets', () => {
       expect(container.textContent).toContain(
         'Bitwarden collections saved. 2 added, 0 removed.',
       )
+      expect(save.hasAttribute('disabled')).toBe(true)
+    })
+  })
+
+  it('keeps collection editing visible while settings reload and supports an explicit refresh', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER, BITWARDEN_PASSWORD_MANAGER_PROVIDER],
+      secrets: [],
+      projectDefaults: [],
+      sshTrustedHosts: [],
+    })
+    let finishInitialLoad!: () => void
+    secureSecretsApiMock.fetchBitwardenPasswordManagerSettings
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishInitialLoad = () => resolve(BITWARDEN_PASSWORD_MANAGER_SETTINGS)
+      }))
+      .mockResolvedValue(BITWARDEN_PASSWORD_MANAGER_SETTINGS)
+    render()
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Loading Bitwarden settings and collections…')
+    })
+    finishInitialLoad()
+
+    const refresh = await waitFor(() => getByRole(
+      container,
+      'button',
+      { name: 'Refresh collections' },
+    ))
+    fireEvent.click(refresh)
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.fetchBitwardenPasswordManagerSettings)
+        .toHaveBeenCalledTimes(2)
+      expect(getByRole(container, 'checkbox', { name: 'Infrastructure' })).toBeTruthy()
     })
   })
 

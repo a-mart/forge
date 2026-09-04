@@ -147,6 +147,9 @@ describe('SecureSecretRequestCard', () => {
     flushSync(() => {
       fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
     })
+    const dialog = getByRole(document.body, 'dialog')
+    expect(dialog.className).toContain('max-h-[calc(100dvh-2rem)]')
+    expect(dialog.className).toContain('overflow-y-auto')
     const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
     const nameInput = getByLabelText(document.body, 'Secret name') as HTMLInputElement
     flushSync(() => {
@@ -174,7 +177,7 @@ describe('SecureSecretRequestCard', () => {
     )).toBe(false)
   })
 
-  it('prefills an agent-proposed username and can generate a new Bitwarden login', async () => {
+  it('keeps the storage choice stable while loading and can generate a new Bitwarden login', async () => {
     const onPrivateFulfill = vi.fn()
     const loadPrivateDestinations = vi.fn(async () => [{
       destination: {
@@ -206,7 +209,7 @@ describe('SecureSecretRequestCard', () => {
     const destination = getByRole(document.body, 'combobox', { name: 'Store in' })
     await waitFor(() => {
       expect(loadPrivateDestinations).toHaveBeenCalledTimes(1)
-      expect(destination.textContent).toContain('Team Bitwarden / Infrastructure')
+      expect(destination.textContent).toContain('Local Forge vault')
     })
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Generate / refresh' }))
@@ -215,6 +218,18 @@ describe('SecureSecretRequestCard', () => {
       'Value for deploy-token',
     ) as HTMLTextAreaElement
     await waitFor(() => expect(privateValue.value).toHaveLength(24))
+    expect(destination.textContent).toContain('Local Forge vault')
+
+    fireEvent.keyDown(destination, { key: 'ArrowDown' })
+    const bitwardenOption = await waitFor(() => getByRole(
+      document.body,
+      'option',
+      { name: 'Team Bitwarden / Infrastructure' },
+    ))
+    fireEvent.click(bitwardenOption)
+    await waitFor(() => {
+      expect(destination.textContent).toContain('Team Bitwarden / Infrastructure')
+    })
     fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
 
     expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {

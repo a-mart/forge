@@ -46,6 +46,7 @@ import {
 } from '@/components/diff-viewer/remote-update-awareness-mutation'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { CortexV2OnboardingModal } from '@/components/settings/CortexV2OnboardingModal'
+import { BitwardenUnlockDialog } from '@/components/chat/secure-session/BitwardenUnlockDialog'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
 import { defaultMessageSourceViewForAgentRole } from '@/components/index-page/message-source-view'
@@ -90,8 +91,10 @@ import {
 import {
   fetchBitwardenPasswordManagerSettings,
   resolveMaxProjectDefaults,
+  unlockBitwardenPasswordManager,
   type SecureSecretsCatalog,
 } from '@/lib/secure-secrets-api'
+import { useBitwardenUnlockPrompt } from './use-bitwarden-unlock-prompt'
 import {
   claimSecureBrowserPairing,
   createSecureBrowserPairingRequest,
@@ -485,6 +488,49 @@ export function BuilderSurface({
   useEffect(() => {
     void refreshSecureBrowserControl()
   }, [refreshSecureBrowserControl])
+
+  const handleUnlockBitwardenPasswordManager = useCallback(async (
+    providerId: string,
+    masterPassword: string,
+  ) => {
+    const apiClient = httpClientRef.current
+    if (!apiClient || isRemoteOriginActive) {
+      throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
+    }
+
+    await unlockBitwardenPasswordManager(apiClient, providerId, masterPassword)
+    setSecureCatalog((current) => current
+      ? {
+          ...current,
+          providers: current.providers.map((provider) => provider.providerId === providerId
+            ? { ...provider, status: 'available' }
+            : provider),
+        }
+      : current)
+
+    try {
+      setSecureCatalog(await fetchSecureSessionCatalog(apiClient))
+      setSecureCatalogUnavailable(false)
+    } catch {
+      // Unlock succeeded. The catalog revision event will retry the refresh.
+    }
+  }, [httpClientRef, isRemoteOriginActive])
+
+  const {
+    prompt: bitwardenUnlockPrompt,
+    ensureUnlocked: ensureBitwardenUnlocked,
+    unlockPrompt: unlockBitwardenPrompt,
+    dismissPrompt: dismissBitwardenPrompt,
+  } = useBitwardenUnlockPrompt({
+    catalog: secureCatalog,
+    active: state.connected && !isRemoteOriginActive,
+    canUnlock:
+      isSecureControlAvailable(secureBrowserControl?.authorized === true)
+      && isPrivateSecureFulfillmentAvailable(
+        secureBrowserControl?.privateEntryAvailable === true,
+      ),
+    unlock: handleUnlockBitwardenPasswordManager,
+  })
 
   useEffect(() => {
     if (
@@ -1067,6 +1113,7 @@ export function BuilderSurface({
     if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return false
     const transitioningWorkerCount = activeManagerAgent?.activeWorkerCount ?? 0
     try {
+      if (!(await ensureBitwardenUnlocked())) return false
       const localVaultReady = await unlockLocalProjectDefaultsIfNeeded(
         secureCatalog,
         secureSessionSnapshot?.profileId ?? activeAgent?.profileId,
@@ -1101,6 +1148,7 @@ export function BuilderSurface({
     activeManagerAgent?.activeWorkerCount,
     applySecureMutationResult,
     clientRef,
+    ensureBitwardenUnlocked,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
@@ -2708,6 +2756,16 @@ export function BuilderSurface({
           initialQuickFilter: panels.diffViewerInitialState?.initialQuickFilter,
         }}
       />
+
+      {bitwardenUnlockPrompt ? (
+        <BitwardenUnlockDialog
+          open
+          providerName={bitwardenUnlockPrompt.providerName}
+          reason={bitwardenUnlockPrompt.reason}
+          onUnlock={unlockBitwardenPrompt}
+          onDismiss={dismissBitwardenPrompt}
+        />
+      ) : null}
 
       <CortexV2OnboardingModal source={localWsUrl} />
     </WorkGraphWorkerHighlightProvider>

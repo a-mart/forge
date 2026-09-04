@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
 } from 'react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -75,6 +76,7 @@ export function PrivateSecretValueDialog({
   const instanceScopeId = useId()
   const projectDefaultId = useId()
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const destinationLoadIdRef = useRef(0)
   const [privateValue, setPrivateValue] = useState('')
   const [hasValue, setHasValue] = useState(false)
   const [displayName, setDisplayName] = useState(alias ?? '')
@@ -83,28 +85,49 @@ export function PrivateSecretValueDialog({
   const [makeProjectDefault, setMakeProjectDefault] = useState(false)
   const [submitMode, setSubmitMode] = useState<SubmitMode | null>(null)
   const [destinations, setDestinations] = useState<SecurePrivateDestinationOption[]>([])
+  const [destinationsLoading, setDestinationsLoading] = useState(Boolean(loadDestinations))
+  const [destinationsError, setDestinationsError] = useState<string | null>(null)
   const [destinationKey, setDestinationKey] = useState('local')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const selectedDestination = destinations.find(
     (option) => destinationOptionKey(option) === destinationKey,
-  ) ?? (destinationKey === 'local' ? undefined : destinations[0])
+  )
   const projectDefaultLimitReached = project.projectDefaultLimitReached === true
   const maxProjectDefaults =
     project.maxProjectDefaults ?? SECURE_SECRET_MAX_PROJECT_DEFAULTS
 
-  useEffect(() => {
-    let active = true
-    if (!loadDestinations) return () => { active = false }
-    void loadDestinations().then((options) => {
-      if (!active) return
+  const refreshDestinations = useCallback(async () => {
+    const loadId = destinationLoadIdRef.current + 1
+    destinationLoadIdRef.current = loadId
+    if (!loadDestinations) {
+      setDestinationsLoading(false)
+      return
+    }
+    setDestinationsLoading(true)
+    setDestinationsError(null)
+    try {
+      const options = await loadDestinations()
+      if (destinationLoadIdRef.current !== loadId) return
       setDestinations(options)
-      const preferred = options.find(
-        ({ destination }) => destination.kind === 'bitwarden_password_manager',
-      )
-      if (preferred) setDestinationKey(destinationOptionKey(preferred))
-    }).catch(() => undefined)
-    return () => { active = false }
+      setDestinationKey((current) => current === 'local'
+        || options.some((option) => destinationOptionKey(option) === current)
+        ? current
+        : 'local')
+    } catch (error) {
+      if (destinationLoadIdRef.current === loadId) {
+        setDestinationsError(secureSessionUiErrorMessage(error))
+      }
+    } finally {
+      if (destinationLoadIdRef.current === loadId) setDestinationsLoading(false)
+    }
   }, [loadDestinations])
+
+  useEffect(() => {
+    void refreshDestinations()
+    return () => {
+      destinationLoadIdRef.current += 1
+    }
+  }, [refreshDestinations])
 
   const setPrivateInputRef = useCallback((input: HTMLTextAreaElement | null) => {
     if (!input && inputRef.current) inputRef.current.value = ''
@@ -189,7 +212,7 @@ export function PrivateSecretValueDialog({
       }}
     >
       <DialogContent
-        className="max-w-lg"
+        className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto"
         hideClose
         onKeyDown={(event) => event.stopPropagation()}
       >
@@ -332,6 +355,28 @@ export function PrivateSecretValueDialog({
                 ))}
               </SelectContent>
             </Select>
+            {destinationsLoading ? (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                Loading additional storage choices…
+              </p>
+            ) : null}
+            {destinationsError ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+                <span>Bitwarden choices could not be loaded. {destinationsError}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2"
+                  disabled={Boolean(submitMode)}
+                  onClick={() => void refreshDestinations()}
+                >
+                  <RefreshCw className="size-3" aria-hidden="true" />
+                  Try again
+                </Button>
+              </div>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {destinationKey === 'local'
                 ? 'Stored in this computer’s operating-system credential vault.'

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Download,
   KeyRound,
@@ -20,6 +20,7 @@ import {
   installBitwardenPasswordManagerCli,
   lockBitwardenPasswordManager,
   replaceBitwardenPasswordManagerCollections,
+  secureSecretsErrorMessage,
   testSecureSecretProvider,
   updateBitwardenPasswordManagerCli,
   unlockBitwardenPasswordManager,
@@ -48,8 +49,34 @@ export function BitwardenPasswordManagerPanel({
   const [masterPassword, setMasterPassword] = useState('')
   const [cliPath, setCliPath] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const settingsLoadIdRef = useRef(0)
   const providerId = provider?.providerId
   const providerStatus = provider?.status
+
+  const loadSettings = useCallback(async () => {
+    if (!providerId) return null
+    const loadId = settingsLoadIdRef.current + 1
+    settingsLoadIdRef.current = loadId
+    setSettingsLoading(true)
+    setSettingsError(null)
+    try {
+      const next = await fetchBitwardenPasswordManagerSettings(apiClient, providerId)
+      if (settingsLoadIdRef.current !== loadId) return null
+      setSettings(next)
+      setSelectedIds(selectedCollectionIds(next))
+      setCliPath(next.cli.configuredExecutablePath ?? '')
+      return next
+    } catch (error) {
+      if (settingsLoadIdRef.current === loadId) {
+        setSettingsError(secureSecretsErrorMessage(error))
+      }
+      throw error
+    } finally {
+      if (settingsLoadIdRef.current === loadId) setSettingsLoading(false)
+    }
+  }, [apiClient, providerId])
 
   useEffect(() => {
     let cancelled = false
@@ -57,24 +84,26 @@ export function BitwardenPasswordManagerPanel({
       setSettings(null)
       setSelectedIds(new Set())
       setCliPath('')
+      setSettingsLoading(false)
+      setSettingsError(null)
       return () => {
         cancelled = true
       }
     }
-    void fetchBitwardenPasswordManagerSettings(apiClient, providerId)
-      .then((next) => {
-        if (cancelled) return
-        setSettings(next)
-        setSelectedIds(selectedCollectionIds(next))
-        setCliPath(next.cli.configuredExecutablePath ?? '')
-      })
-      .catch((error) => {
-        if (!cancelled && providerStatus === 'available') onError(error)
-      })
+    void loadSettings().catch((error) => {
+      if (!cancelled && providerStatus === 'available') onError(error)
+    })
     return () => {
       cancelled = true
+      settingsLoadIdRef.current += 1
     }
-  }, [apiClient, onError, providerId, providerStatus])
+  }, [loadSettings, onError, providerId, providerStatus])
+
+  const savedSelectedIds = useMemo(
+    () => settings ? selectedCollectionIds(settings) : new Set<string>(),
+    [settings],
+  )
+  const collectionsDirty = !setsMatch(selectedIds, savedSelectedIds)
 
   const connect = async () => {
     setBusy('connect')
@@ -93,9 +122,22 @@ export function BitwardenPasswordManagerPanel({
     setBusy('test')
     try {
       const result = await testSecureSecretProvider(apiClient, provider.providerId)
+      if (result.code === 'ok') await loadSettings()
       await onChanged(result.code === 'ok'
         ? 'Bitwarden Password Manager is ready.'
         : 'Bitwarden Password Manager still needs attention.')
+    } catch (error) {
+      onError(error)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const refreshCollections = async () => {
+    setBusy('refresh-collections')
+    try {
+      await loadSettings()
+      await onChanged('Bitwarden collections refreshed.')
     } catch (error) {
       onError(error)
     } finally {
@@ -379,6 +421,29 @@ export function BitwardenPasswordManagerPanel({
         </div>
       ) : null}
 
+      {!settings && !settingsError ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-border/70 p-3 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          Loading Bitwarden settings and collections…
+        </div>
+      ) : null}
+
+      {settingsError && !settingsLoading ? (
+        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs">
+          <p className="text-destructive">Could not load Bitwarden settings. {settingsError}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            disabled={busy !== null}
+            onClick={() => void loadSettings().catch(onError)}
+          >
+            Try again
+          </Button>
+        </div>
+      ) : null}
+
       {provider.status === 'auth_required' ? (
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
           <p className="font-medium text-amber-700 dark:text-amber-300">
@@ -508,11 +573,11 @@ export function BitwardenPasswordManagerPanel({
             <Button
               type="button"
               size="sm"
-              disabled={busy !== null}
+              disabled={busy !== null || !collectionsDirty}
               onClick={() => void saveCollections()}
             >
               {busy === 'collections' ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Save and sync
+              Save collection changes
             </Button>
             <Button
               type="button"
@@ -520,10 +585,12 @@ export function BitwardenPasswordManagerPanel({
               size="sm"
               className="gap-1.5"
               disabled={busy !== null}
-              onClick={() => void testConnection()}
+              onClick={() => void refreshCollections()}
             >
-              <RefreshCw className="size-3.5" />
-              Sync status
+              {busy === 'refresh-collections'
+                ? <Loader2 className="size-3.5 animate-spin" />
+                : <RefreshCw className="size-3.5" />}
+              Refresh collections
             </Button>
             <Button
               type="button"
@@ -537,6 +604,14 @@ export function BitwardenPasswordManagerPanel({
               Lock
             </Button>
           </div>
+          <p className={collectionsDirty
+            ? 'text-xs text-amber-700 dark:text-amber-300'
+            : 'text-xs text-muted-foreground'}
+          >
+            {collectionsDirty
+              ? 'Collection changes are not saved yet.'
+              : 'Collection selections are saved and the Forge catalog is synced.'}
+          </p>
         </div>
       ) : null}
 
@@ -580,6 +655,11 @@ function selectedCollectionIds(settings: BitwardenPasswordManagerSettings): Set<
       .filter((collection) => collection.selected)
       .map((collection) => collection.collectionId),
   )
+}
+
+function setsMatch(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false
+  return [...left].every((value) => right.has(value))
 }
 
 function cliSourceLabel(source: BitwardenPasswordManagerSettings['cli']['source']): string {
