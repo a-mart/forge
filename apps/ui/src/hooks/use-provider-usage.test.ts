@@ -135,6 +135,29 @@ describe('useProviderUsage', () => {
     })
   })
 
+  it('normalizes xai as a single object (old format) into an array', async () => {
+    const oldFormatSnapshot = {
+      xai: { provider: 'xai', available: true, plan: 'SuperGrok' } as unknown,
+    }
+
+    globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      json: async () => oldFormatSnapshot,
+    } as Response)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(TestHarness, { enabled: true }))
+    })
+
+    await vi.waitFor(() => {
+      const parsed = JSON.parse(container.textContent ?? 'null')
+      expect(Array.isArray(parsed.xai)).toBe(true)
+      expect(parsed.xai).toHaveLength(1)
+      expect(parsed.xai[0].plan).toBe('SuperGrok')
+    })
+  })
+
   it('keeps anthropic as an empty array when response has an empty array', async () => {
     const emptyArraySnapshot: ProviderUsageStats = {
       openai: [{ provider: 'openai', available: true }],

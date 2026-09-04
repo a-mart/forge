@@ -10,6 +10,7 @@ import {
   ProviderUsageHistoryStore,
   type ProviderUsageHistoryProvider
 } from "./provider-usage-history.js";
+import { fetchXaiOAuthUsage } from "./xai-oauth-usage.js";
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -65,9 +66,22 @@ interface CachedProviderUsageEntry {
   lastAttemptMs: number;
 }
 
+interface XaiOAuthIdentity {
+  type: "oauth";
+  access: string;
+  refresh?: string;
+  expires?: number;
+}
+
+interface ResolvedXaiOAuthToken {
+  accessToken: string;
+  identity: XaiOAuthIdentity;
+}
+
 interface CachedProviderUsage {
   openai?: CachedProviderUsageEntry[];
   anthropic?: CachedProviderUsageEntry[];
+  xai?: CachedProviderUsageEntry[];
 }
 
 interface PersistedProviderUsageCache {
@@ -77,7 +91,8 @@ interface PersistedProviderUsageCache {
 
 const TEST_PROVIDER_USAGE_SNAPSHOT: ProviderUsageStats = {
   openai: [unavailableProviderUsage("openai")],
-  anthropic: [unavailableProviderUsage("anthropic")]
+  anthropic: [unavailableProviderUsage("anthropic")],
+  xai: [unavailableProviderUsage("xai")]
 };
 
 const PERSISTED_CACHE_VERSION = 3;
@@ -93,6 +108,8 @@ export class ProviderUsageService {
   private credentialPoolGetter?: () => CredentialPoolService;
   private openAIAuthBrokerUsageGetter?: () => Promise<ProviderAccountUsage[] | null>;
   private inFlightSnapshot: Promise<ProviderUsageStats> | null = null;
+  private xaiUsageGeneration = 0;
+  private xaiUsageAbort: AbortController | null = null;
 
   constructor(
     private readonly sharedAuthFilePath: string,
@@ -120,6 +137,11 @@ export class ProviderUsageService {
 
   async invalidateProvider(provider: ProviderUsageProvider): Promise<void> {
     await this.ensurePersistentCacheLoaded();
+    if (provider === "xai") {
+      this.xaiUsageGeneration += 1;
+      this.xaiUsageAbort?.abort();
+      this.xaiUsageAbort = null;
+    }
     delete this.cache[provider];
     this.queuePersistCacheWrite();
   }
@@ -151,12 +173,14 @@ export class ProviderUsageService {
 
     await Promise.all([
       this.refreshOpenAIIfStale(nowMs),
-      this.refreshAnthropicIfStale(nowMs)
+      this.refreshAnthropicIfStale(nowMs),
+      this.refreshXaiIfStale(nowMs)
     ]);
 
     return {
       openai: this.cache.openai?.map(e => e.data),
-      anthropic: this.cache.anthropic?.map(e => e.data)
+      anthropic: this.cache.anthropic?.map(e => e.data),
+      xai: this.cache.xai?.map(e => e.data)
     };
   }
 
@@ -404,6 +428,80 @@ export class ProviderUsageService {
     }
   }
 
+  private async refreshXaiIfStale(nowMs: number): Promise<void> {
+    if (this.cache.xai?.length && this.cache.xai.every(e => isFresh(e, nowMs))) {
+      return;
+    }
+
+    const generation = this.xaiUsageGeneration;
+    const storedCredential = await this.readXaiAuth();
+    if (!this.isCurrentXaiGeneration(generation)) {
+      return;
+    }
+    if (!storedCredential || storedCredential.type !== "oauth") {
+      if (storedCredential) {
+        this.markProviderUnavailable("xai", nowMs);
+      } else {
+        this.recordFailedAttempt("xai", nowMs);
+      }
+      return;
+    }
+
+    let usageAbort: AbortController | null = null;
+    try {
+      const resolved = await this.resolveXaiOAuthAccessToken();
+      if (!this.isCurrentXaiGeneration(generation)) {
+        return;
+      }
+      if (!resolved) {
+        this.markProviderUnavailable("xai", nowMs);
+        return;
+      }
+      if (!await this.hasMatchingXaiOAuthIdentity(resolved.identity, generation)) {
+        return;
+      }
+
+      usageAbort = new AbortController();
+      this.xaiUsageAbort = usageAbort;
+      const result = await fetchXaiOAuthUsage({
+        accessToken: resolved.accessToken,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        signal: usageAbort.signal,
+      });
+      if (!this.isCurrentXaiGeneration(generation)) {
+        return;
+      }
+      if (!await this.hasMatchingXaiOAuthIdentity(resolved.identity, generation)) {
+        return;
+      }
+
+      if (result.status === "unavailable") {
+        this.markProviderUnavailable("xai", nowMs);
+        return;
+      }
+      if (result.status !== "ok") {
+        this.recordFailedAttempt("xai", nowMs);
+        return;
+      }
+
+      this.setCached("xai", [result.usage], nowMs);
+    } catch (error) {
+      if (!this.isCurrentXaiGeneration(generation)) {
+        return;
+      }
+      console.warn(`[provider-usage] xAI usage fetch failed: ${toErrorMessage(error)}`);
+      this.recordFailedAttempt("xai", nowMs);
+    } finally {
+      if (usageAbort && this.xaiUsageAbort === usageAbort) {
+        this.xaiUsageAbort = null;
+      }
+    }
+  }
+
+  private isCurrentXaiGeneration(generation: number): boolean {
+    return generation === this.xaiUsageGeneration;
+  }
+
   private async readOpenAIAuth(): Promise<CodexAuthFile | null> {
     try {
       const raw = await readFile(CODEX_AUTH_FILE_PATH, "utf8");
@@ -420,21 +518,48 @@ export class ProviderUsageService {
   }
 
   private async readAnthropicAuth(): Promise<AuthCredential | null> {
+    return this.readSharedAuthCredential("anthropic");
+  }
+
+  private async readXaiAuth(): Promise<AuthCredential | null> {
+    return this.readSharedAuthCredential("xai");
+  }
+
+  private async resolveXaiOAuthAccessToken(): Promise<ResolvedXaiOAuthToken | null> {
+    const authStorage = AuthStorage.create(this.sharedAuthFilePath);
+    const accessToken = await authStorage.getApiKey("xai");
+    const refreshedCredential = authStorage.get("xai") as AuthCredential | undefined;
+    const identity = snapshotXaiOAuthIdentity(refreshedCredential);
+    if (!accessToken || !identity || identity.access !== accessToken) {
+      return null;
+    }
+    return { accessToken, identity };
+  }
+
+  private async hasMatchingXaiOAuthIdentity(expected: XaiOAuthIdentity, generation: number): Promise<boolean> {
+    if (!this.isCurrentXaiGeneration(generation)) {
+      return false;
+    }
+    const current = snapshotXaiOAuthIdentity(await this.readXaiAuth());
+    return this.isCurrentXaiGeneration(generation) && xaiOAuthIdentitiesEqual(expected, current);
+  }
+
+  private async readSharedAuthCredential(provider: "anthropic" | "xai"): Promise<AuthCredential | null> {
     try {
       const authStorage = AuthStorage.create(this.sharedAuthFilePath);
-      return (authStorage.get("anthropic") as AuthCredential | undefined) ?? null;
+      return (authStorage.get(provider) as AuthCredential | undefined) ?? null;
     } catch (error) {
       if (isEnoentError(error)) {
-        console.debug(`[provider-usage] Anthropic auth file not found at ${this.sharedAuthFilePath}`);
+        console.debug(`[provider-usage] ${provider} auth file not found at ${this.sharedAuthFilePath}`);
       } else {
-        console.warn(`[provider-usage] Failed to read Anthropic auth file: ${toErrorMessage(error)}`);
+        console.warn(`[provider-usage] Failed to read ${provider} auth file: ${toErrorMessage(error)}`);
       }
 
       return null;
     }
   }
 
-  private setCached(provider: "anthropic", data: ProviderAccountUsage[], fetchedAtMs: number): void {
+  private setCached(provider: "anthropic" | "xai", data: ProviderAccountUsage[], fetchedAtMs: number): void {
     this.cache[provider] = data.map(entry => makeCachedEntry(entry, fetchedAtMs));
     this.queuePersistCacheWrite();
   }
@@ -485,7 +610,7 @@ export class ProviderUsageService {
     };
   }
 
-  private recordFailedAttempt(provider: "anthropic", nowMs: number): void {
+  private recordFailedAttempt(provider: "anthropic" | "xai", nowMs: number): void {
     const existing = this.cache[provider];
 
     if (existing?.length && existing.some(entry => entry.data.available)) {
@@ -501,7 +626,7 @@ export class ProviderUsageService {
     this.queuePersistCacheWrite();
   }
 
-  private markProviderUnavailable(provider: "anthropic", nowMs: number): void {
+  private markProviderUnavailable(provider: "anthropic" | "xai", nowMs: number): void {
     this.cache[provider] = [makeCachedEntry(unavailableProviderUsage(provider), nowMs)];
     this.queuePersistCacheWrite();
   }
@@ -547,6 +672,19 @@ export class ProviderUsageService {
         const single = parseCachedProviderUsageEntry(anthropicRaw);
         if (single) {
           this.cache.anthropic = [single];
+        }
+      }
+
+      const xaiRaw = parsed.entries.xai;
+      if (Array.isArray(xaiRaw)) {
+        const xaiEntries = xaiRaw.map(parseCachedProviderUsageEntry).filter((e): e is CachedProviderUsageEntry => e !== null);
+        if (xaiEntries.length > 0) {
+          this.cache.xai = xaiEntries;
+        }
+      } else if (xaiRaw) {
+        const single = parseCachedProviderUsageEntry(xaiRaw);
+        if (single) {
+          this.cache.xai = [single];
         }
       }
     } catch (error) {
@@ -715,6 +853,38 @@ function normalizeString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function snapshotXaiOAuthIdentity(credential: AuthCredential | null | undefined): XaiOAuthIdentity | null {
+  if (!credential || typeof credential !== "object" || credential.type !== "oauth") {
+    return null;
+  }
+
+  const access = normalizeString((credential as { access?: unknown }).access)
+    ?? normalizeString((credential as { accessToken?: unknown }).accessToken);
+  if (!access) {
+    return null;
+  }
+
+  const refresh = normalizeString((credential as { refresh?: unknown }).refresh)
+    ?? normalizeString((credential as { refreshToken?: unknown }).refreshToken);
+  const expires = normalizeExpiryTimestamp((credential as { expires?: unknown }).expires);
+  return {
+    type: "oauth",
+    access,
+    ...(refresh ? { refresh } : {}),
+    ...(expires !== undefined ? { expires } : {}),
+  };
+}
+
+function xaiOAuthIdentitiesEqual(left: XaiOAuthIdentity, right: XaiOAuthIdentity | null): boolean {
+  return Boolean(
+    right
+    && left.type === right.type
+    && left.access === right.access
+    && left.refresh === right.refresh
+    && left.expires === right.expires
+  );
 }
 
 function resolveAnthropicUsageCredential(

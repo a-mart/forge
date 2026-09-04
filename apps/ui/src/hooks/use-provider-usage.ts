@@ -35,6 +35,9 @@ export function useProviderUsage(enabled: boolean): ProviderUsageResult {
         if (data.anthropic && !Array.isArray(data.anthropic)) {
           data.anthropic = [data.anthropic as ProviderAccountUsage]
         }
+        if (data.xai && !Array.isArray(data.xai)) {
+          data.xai = [data.xai as ProviderAccountUsage]
+        }
         if (!signal.aborted) {
           setProviders(data)
         }

@@ -163,6 +163,45 @@ describe('settings routes', () => {
     })
   })
 
+  it('invalidates xAI usage after xAI auth save and removal', async () => {
+    const swarmManager = {
+      updateSettingsAuth: vi.fn(async () => undefined),
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      reloadModelCatalogOverridesAndProjection: vi.fn(async () => undefined),
+      listSettingsAuth: vi.fn(async () => [{ provider: 'xai', type: 'api_key', connected: true }]),
+      listCredentialPool: vi.fn(async () => {
+        throw new Error("Credential pooling is only supported for 'openai-codex', 'anthropic', got 'xai'")
+      }),
+    }
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
+    const putResponse = await fetch(`${server.baseUrl}/api/settings/auth`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ xai: '  xai-api-key  ' }),
+    })
+
+    expect(putResponse.status).toBe(200)
+    expect(swarmManager.updateSettingsAuth).toHaveBeenCalledWith({ xai: 'xai-api-key' })
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith('xai')
+    expect(statsService.invalidateProviderUsage.mock.invocationCallOrder[0]).toBeLessThan(
+      swarmManager.reloadModelCatalogOverridesAndProjection.mock.invocationCallOrder[0],
+    )
+
+    swarmManager.listSettingsAuth.mockResolvedValueOnce([])
+    const deleteResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai`, { method: 'DELETE' })
+    expect(deleteResponse.status).toBe(200)
+    expect(swarmManager.deleteSettingsAuth).toHaveBeenCalledWith('xai')
+    expect(swarmManager.reloadModelCatalogOverridesAndProjection).toHaveBeenCalledTimes(2)
+    expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(2, 'xai')
+    expect(statsService.invalidateProviderUsage.mock.invocationCallOrder[1]).toBeLessThan(
+      swarmManager.reloadModelCatalogOverridesAndProjection.mock.invocationCallOrder[1],
+    )
+  })
+
   it('rejects legacy OpenAI Codex auth deletion in favor of pool management', async () => {
     const swarmManager = {
       deleteSettingsAuth: vi.fn(async () => undefined),
@@ -683,7 +722,10 @@ describe('settings routes', () => {
       reloadModelCatalogOverridesAndProjection: vi.fn(async () => undefined),
       listCredentialPool: vi.fn(async () => ({ strategy: 'fill_first', credentials: [] })),
     }
-    const server = await createSettingsRouteTestServer(swarmManager)
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
 
     const response = await fetch(`${server.baseUrl}/api/settings/auth/login/xai`, { method: 'POST' })
     expect(response.status).toBe(200)
@@ -695,7 +737,10 @@ describe('settings routes', () => {
       refresh: 'xai-refresh-token',
       expires: 4_000_000_000_000,
     })
-    expect(swarmManager.reloadModelCatalogOverridesAndProjection).toHaveBeenCalledOnce()
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith('xai')
+    expect(statsService.invalidateProviderUsage.mock.invocationCallOrder[0]).toBeLessThan(
+      swarmManager.reloadModelCatalogOverridesAndProjection.mock.invocationCallOrder[0],
+    )
 
     const accountsResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai/accounts`)
     expect(accountsResponse.status).toBe(400)
@@ -1453,7 +1498,7 @@ function makeCredential(overrides?: Partial<{
 
 async function createSettingsRouteTestServer(
   swarmManager: Record<string, unknown>,
-  statsService?: { invalidateProviderUsage: (provider: 'openai' | 'anthropic') => Promise<void> },
+  statsService?: { invalidateProviderUsage: (provider: 'openai' | 'anthropic' | 'xai') => Promise<void> },
 ): Promise<TestServer> {
   const bundle = createSettingsRoutes({
     swarmManager: swarmManager as never,

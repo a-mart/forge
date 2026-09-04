@@ -135,6 +135,7 @@ describe("ProviderUsageService", () => {
       }
     });
     vi.spyOn(firstService, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(firstService, "readXaiAuth").mockResolvedValue(null);
 
     const firstSnapshot = await firstService.getSnapshot();
     await firstService.persistQueue;
@@ -161,6 +162,7 @@ describe("ProviderUsageService", () => {
       }
     });
     vi.spyOn(secondService, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(secondService, "readXaiAuth").mockResolvedValue(null);
 
     const secondSnapshot = await secondService.getSnapshot();
 
@@ -209,6 +211,7 @@ describe("ProviderUsageService", () => {
       access: "anthropic-token",
       expires: nowMs - 1
     });
+    vi.spyOn(secondService, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await secondService.getSnapshot();
 
@@ -297,6 +300,7 @@ describe("ProviderUsageService", () => {
       access: "anthropic-token",
       expires: nowMs + 60_000
     });
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -416,6 +420,7 @@ describe("ProviderUsageService", () => {
     service.setCredentialPoolGetter(() => pool as any);
     vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
     const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -491,6 +496,7 @@ describe("ProviderUsageService", () => {
       }
     });
     vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -546,6 +552,7 @@ describe("ProviderUsageService", () => {
       access: "single-anthropic-token",
       expires: Date.now() + 60_000
     });
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -624,6 +631,7 @@ describe("ProviderUsageService", () => {
       access: "ignored-single-account-token",
       expires: nowMs + 60_000
     });
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -680,6 +688,7 @@ describe("ProviderUsageService", () => {
     service.setCredentialPoolGetter(() => pool as any);
     vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
     const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -707,6 +716,7 @@ describe("ProviderUsageService", () => {
       key: "sk-ant-api-key",
       access: "sk-ant-api-key"
     });
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -734,6 +744,7 @@ describe("ProviderUsageService", () => {
       type: "oauth",
       refreshToken: "refresh-only-token"
     });
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -780,6 +791,7 @@ describe("ProviderUsageService", () => {
 
     vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
     vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
 
     const snapshot = await service.getSnapshot();
 
@@ -801,6 +813,412 @@ describe("ProviderUsageService", () => {
     };
     expect(persisted.version).toBe(3);
     expect(Array.isArray(persisted.entries.anthropic)).toBe(true);
+  });
+
+  it("maps xAI OAuth credits into a weekly-only usage window", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-08-10T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/v1/billing?format=credits")) {
+        return new Response(JSON.stringify({
+          config: {
+            creditUsagePercent: 12.5,
+            currentPeriod: {
+              start: "2026-08-06T00:00:00.000Z",
+              end: "2026-08-13T00:00:00.000Z"
+            },
+            billingPeriodEnd: "2026-08-13T00:00:00.000Z"
+          }
+        }), { status: 200 });
+      }
+      if (url.includes("/v1/settings")) {
+        return new Response(JSON.stringify({ subscription_tier_display: "supergrok_heavy" }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    const oauthA = {
+      type: "oauth" as const,
+      access: "xai-oauth-token",
+      refresh: "xai-refresh",
+      expires: nowMs + 60_000
+    };
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(oauthA);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockResolvedValue({
+      accessToken: oauthA.access,
+      identity: oauthA,
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.xai).toEqual([
+      expect.objectContaining({
+        provider: "xai",
+        available: true,
+        plan: "SuperGrok Heavy",
+        weeklyUsage: expect.objectContaining({
+          percent: 12.5,
+          resetAtMs: Date.parse("2026-08-13T00:00:00.000Z"),
+          windowSeconds: 7 * 24 * 60 * 60
+        })
+      })
+    ]);
+    expect(snapshot.xai?.[0].sessionUsage).toBeUndefined();
+    expect(snapshot.xai?.[0].weeklyUsage?.pace).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not probe the xAI credits proxy for API-key auth", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue({
+      type: "api_key",
+      key: "xai-api-key"
+    });
+    const resolveSpy = vi.spyOn(service, "resolveXaiOAuthAccessToken");
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.xai).toEqual([{ provider: "xai", available: false }]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps last-good xAI usage through a transient refresh failure", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-08-10T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    service.cache.xai = [{
+      data: {
+        provider: "xai",
+        available: true,
+        plan: "SuperGrok",
+        weeklyUsage: { percent: 18, resetInfo: "3.0d" }
+      },
+      fetchedAtMs: nowMs - 4 * 60 * 1000,
+      lastAttemptMs: nowMs - 4 * 60 * 1000
+    }];
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    const oauthA = {
+      type: "oauth" as const,
+      access: "xai-oauth-token",
+      refresh: "xai-refresh",
+      expires: nowMs + 60_000
+    };
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(oauthA);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockResolvedValue({
+      accessToken: oauthA.access,
+      identity: oauthA,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("temporary outage", { status: 502 })));
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.xai).toEqual([
+      expect.objectContaining({
+        provider: "xai",
+        available: true,
+        plan: "SuperGrok",
+        weeklyUsage: expect.objectContaining({ percent: 18 })
+      })
+    ]);
+  });
+
+  it("marks xAI unavailable on 401 without sending API keys", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    const oauthA = {
+      type: "oauth" as const,
+      access: "xai-oauth-token",
+      refresh: "xai-refresh",
+      expires: Date.now() + 60_000
+    };
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(oauthA);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockResolvedValue({
+      accessToken: oauthA.access,
+      identity: oauthA,
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.xai).toEqual([{ provider: "xai", available: false }]);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("clears persisted xAI cache entries when explicitly invalidated", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const cacheFilePath = makeCacheFilePath();
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath(), cacheFilePath) as any;
+    service.cache.xai = [{
+      data: { provider: "xai", available: true, plan: "SuperGrok" },
+      fetchedAtMs: 1_000,
+      lastAttemptMs: 1_000,
+    }];
+    await service.invalidateProvider("xai");
+    await service.persistQueue;
+
+    expect(service.cache.xai).toBeUndefined();
+    const persisted = JSON.parse(await readFile(cacheFilePath, "utf8"));
+    expect(persisted.entries.xai).toBeUndefined();
+  });
+
+  it("does not start an xAI proxy request when invalidated during token resolution", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    let releaseToken: (() => void) | undefined;
+    const tokenGate = new Promise<void>((resolve) => {
+      releaseToken = resolve;
+    });
+
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue({
+      type: "oauth",
+      access: "stale-oauth-token",
+      refresh: "stale-refresh",
+      expires: Date.now() + 60_000,
+    });
+    let tokenResolutionStarted: (() => void) | undefined;
+    const tokenStarted = new Promise<void>((resolve) => {
+      tokenResolutionStarted = resolve;
+    });
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockImplementation(async () => {
+      tokenResolutionStarted?.();
+      await tokenGate;
+      return {
+        accessToken: "stale-oauth-token",
+        identity: {
+          type: "oauth",
+          access: "stale-oauth-token",
+          refresh: "stale-refresh",
+          expires: Date.now() + 60_000,
+        },
+      };
+    });
+
+    const snapshotPromise = service.getSnapshot();
+    await tokenStarted;
+    await service.invalidateProvider("xai");
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue({
+      type: "api_key",
+      key: "xai-api-key",
+    });
+    releaseToken?.();
+    const snapshot = await snapshotPromise;
+
+    expect(snapshot.xai).toBeUndefined();
+    expect(service.cache.xai).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts an in-flight xAI fetch and does not commit after OAuth removal", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    let releaseFetch: ((response: Response) => void) | undefined;
+    let abortSeen = false;
+    const fetchStarted = new Promise<void>((resolveStarted) => {
+      vi.stubGlobal("fetch", vi.fn(async (_input: string | URL, init?: RequestInit) => {
+        resolveStarted();
+        init?.signal?.addEventListener("abort", () => {
+          abortSeen = true;
+        }, { once: true });
+        return new Promise<Response>((resolve) => {
+          releaseFetch = resolve;
+        });
+      }));
+    });
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const historyFilePath = makeHistoryFilePath();
+    const service = new ProviderUsageService("/tmp/shared-auth.json", historyFilePath) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    const oauthA = {
+      type: "oauth" as const,
+      access: "stale-oauth-token",
+      refresh: "stale-refresh",
+      expires: Date.now() + 60_000,
+    };
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(oauthA);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockResolvedValue({
+      accessToken: oauthA.access,
+      identity: oauthA,
+    });
+
+    const snapshotPromise = service.getSnapshot();
+    await fetchStarted;
+    await service.invalidateProvider("xai");
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
+    releaseFetch?.(new Response(JSON.stringify({
+      config: {
+        creditUsagePercent: 77,
+        currentPeriod: {
+          start: "2026-08-06T00:00:00.000Z",
+          end: "2026-08-13T00:00:00.000Z",
+        },
+      },
+    }), { status: 200 }));
+    const snapshot = await snapshotPromise;
+
+    expect(abortSeen).toBe(true);
+    expect(snapshot.xai).toBeUndefined();
+    expect(service.cache.xai).toBeUndefined();
+    await expect(readFile(historyFilePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not start an xAI proxy request when OAuth A is replaced by OAuth B during token resolution", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const oauthA = {
+      type: "oauth" as const,
+      access: "oauth-a-token",
+      refresh: "oauth-a-refresh",
+      expires: Date.now() + 60_000,
+    };
+    const oauthB = {
+      type: "oauth" as const,
+      access: "oauth-b-token",
+      refresh: "oauth-b-refresh",
+      expires: Date.now() + 120_000,
+    };
+    let currentCredential: typeof oauthA | typeof oauthB = oauthA;
+    let releaseToken: (() => void) | undefined;
+    const tokenGate = new Promise<void>((resolve) => {
+      releaseToken = resolve;
+    });
+    let tokenResolutionStarted: (() => void) | undefined;
+    const tokenStarted = new Promise<void>((resolve) => {
+      tokenResolutionStarted = resolve;
+    });
+
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockImplementation(async () => currentCredential);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockImplementation(async () => {
+      tokenResolutionStarted?.();
+      await tokenGate;
+      return { accessToken: oauthA.access, identity: oauthA };
+    });
+
+    const snapshotPromise = service.getSnapshot();
+    await tokenStarted;
+    currentCredential = oauthB;
+    releaseToken?.();
+    const snapshot = await snapshotPromise;
+
+    expect(snapshot.xai).toBeUndefined();
+    expect(service.cache.xai).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not commit xAI usage when OAuth A is replaced by OAuth B during fetch", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const oauthA = {
+      type: "oauth" as const,
+      access: "oauth-a-token",
+      refresh: "oauth-a-refresh",
+      expires: Date.now() + 60_000,
+    };
+    const oauthB = {
+      type: "oauth" as const,
+      access: "oauth-b-token",
+      refresh: "oauth-b-refresh",
+      expires: Date.now() + 120_000,
+    };
+    let currentCredential: typeof oauthA | typeof oauthB = oauthA;
+    let releaseBilling: ((response: Response) => void) | undefined;
+    const billingStarted = new Promise<void>((resolveStarted) => {
+      vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/settings")) {
+          return new Response("{}", { status: 200 });
+        }
+        if (url.includes("/v1/billing?format=credits")) {
+          resolveStarted();
+          return new Promise<Response>((resolve) => {
+            releaseBilling = resolve;
+          });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      }));
+    });
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockImplementation(async () => currentCredential);
+    vi.spyOn(service, "resolveXaiOAuthAccessToken").mockResolvedValue({
+      accessToken: oauthA.access,
+      identity: oauthA,
+    });
+
+    const snapshotPromise = service.getSnapshot();
+    await billingStarted;
+    currentCredential = oauthB;
+    releaseBilling?.(new Response(JSON.stringify({
+      config: {
+        creditUsagePercent: 77,
+        currentPeriod: {
+          start: "2026-08-06T00:00:00.000Z",
+          end: "2026-08-13T00:00:00.000Z",
+        },
+      },
+    }), { status: 200 }));
+    const snapshot = await snapshotPromise;
+
+    expect(snapshot.xai).toBeUndefined();
+    expect(service.cache.xai).toBeUndefined();
   });
 
   it("keeps 07:45 and 07:46 weekly resets as separate historical weeks", async () => {
@@ -899,5 +1317,49 @@ describe("ProviderUsageService", () => {
     }, earlyNowMs, dataset);
 
     expect(earlyPace).toBeUndefined();
+  });
+
+  it("skips persisted history lines whose percent is missing or non-finite", async () => {
+    const historyFilePath = makeHistoryFilePath();
+    const windowSeconds = 7 * 24 * 60 * 60;
+    const accountKey = "test-account";
+    const nowMs = Date.now();
+    const resetAtMs = nowMs + windowSeconds * 1000;
+    await writeFile(historyFilePath, [
+      JSON.stringify({
+        v: 1,
+        provider: "openai",
+        windowKind: "weekly",
+        accountKey,
+        sampledAtMs: nowMs,
+        resetAtMs,
+        windowSeconds,
+      }),
+      JSON.stringify({
+        v: 1,
+        provider: "openai",
+        windowKind: "weekly",
+        accountKey,
+        sampledAtMs: nowMs + 1,
+        percent: Number.NaN,
+        resetAtMs,
+        windowSeconds,
+      }),
+      JSON.stringify({
+        v: 1,
+        provider: "openai",
+        windowKind: "weekly",
+        accountKey,
+        sampledAtMs: nowMs + 2,
+        percent: "12",
+        resetAtMs,
+        windowSeconds,
+      }),
+    ].join("\n") + "\n", "utf8");
+
+    const { ProviderUsageHistoryStore } = await import("../stats/provider-usage-history.js");
+    const store = new ProviderUsageHistoryStore(historyFilePath);
+    await expect(store.loadDataset("openai", accountKey)).resolves.toBeNull();
+    expect((store as any).records).toEqual([]);
   });
 });

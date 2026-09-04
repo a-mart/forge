@@ -11,7 +11,8 @@ interface ProviderRowConfig {
   iconSrc: string
   iconClassName?: string
   usage?: ProviderAccountUsage
-  provider: 'anthropic' | 'openai'
+  provider: 'anthropic' | 'openai' | 'xai'
+  showSession?: boolean
 }
 
 type PaceStage =
@@ -198,6 +199,7 @@ export function getUsageMetrics(window: ProviderUsageWindow | null | undefined, 
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#D97757',
   openai: '#10A37F',
+  xai: '#000000',
 }
 
 /* ─── Mini vertical gauge (one bar per account) ─── */
@@ -211,7 +213,7 @@ const INDICATOR_HEIGHT = 4
 const WARNING_THRESHOLD = 80
 
 interface MiniVerticalGaugeProps {
-  sessionPercent: number | null
+  sessionPercent?: number | null
   weeklyPercent: number | null
   weeklyDeltaPercent: number | null
   providerColor: string
@@ -219,7 +221,8 @@ interface MiniVerticalGaugeProps {
   roomsV2?: boolean
 }
 
-function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, providerColor, label, roomsV2 = false }: MiniVerticalGaugeProps) {
+export function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, providerColor, label, roomsV2 = false }: MiniVerticalGaugeProps) {
+  const weeklyUnknown = sessionPercent === undefined && (weeklyPercent === null || weeklyPercent === undefined)
   const wp = typeof weeklyPercent === 'number' ? clamp(weeklyPercent, 0, 100) : 0
   // Weekly bar: use pace deficit status when available, fall back to raw % threshold
   const weeklyWarn = typeof weeklyDeltaPercent === 'number'
@@ -234,14 +237,23 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
           <div
             className={cn('relative overflow-hidden rounded-sm', weeklyWarn ? 'bg-red-400/15' : 'bg-blue-400/15')}
             style={{ width: VBAR_WIDTH, height: roomsV2 ? 15 : VBAR_HEIGHT }}
+            {...(weeklyUnknown ? { 'aria-label': `${label} weekly usage unknown` } : {})}
           >
-            <div
-              className={cn(
-                'absolute bottom-0 left-0 right-0 rounded-sm transition-all duration-700',
-                weeklyWarn ? 'bg-red-400/70' : 'bg-blue-400/60',
-              )}
-              style={{ height: `${wp}%` }}
-            />
+            {weeklyUnknown ? (
+              <div
+                data-testid="usage-gauge-unknown"
+                aria-hidden="true"
+                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-muted-foreground/55"
+              />
+            ) : (
+              <div
+                className={cn(
+                  'absolute bottom-0 left-0 right-0 rounded-sm transition-all duration-700',
+                  weeklyWarn ? 'bg-red-400/70' : 'bg-blue-400/60',
+                )}
+                style={{ height: `${wp}%` }}
+              />
+            )}
           </div>
           {/* Provider color indicator dot */}
           <div
@@ -252,7 +264,11 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="bg-popover text-popover-foreground border border-border shadow-md text-[10px]">
         <p className="font-medium">{label}</p>
-        <p className="text-muted-foreground">Session: {sessionPercent ?? '—'}% · Weekly: {weeklyPercent ?? '—'}%</p>
+        <p className="text-muted-foreground">
+          {sessionPercent === undefined
+            ? `Weekly: ${weeklyPercent ?? '—'}%`
+            : `Session: ${sessionPercent ?? '—'}% · Weekly: ${weeklyPercent ?? '—'}%`}
+        </p>
       </TooltipContent>
     </Tooltip>
   )
@@ -291,7 +307,7 @@ export function SidebarUsageRings({ providers, onToggle, roomsV2 = false }: { pr
             return (
               <MiniVerticalGauge
                 key={row.key}
-                sessionPercent={row.usage?.sessionUsage?.percent ?? null}
+                sessionPercent={row.showSession === false ? undefined : (row.usage?.sessionUsage?.percent ?? null)}
                 weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
                 weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
                 providerColor={PROVIDER_COLORS[row.provider] ?? '#6b7280'}
@@ -351,7 +367,7 @@ function DetailRow({ label, usageWindow, showPace = true, nowMs }: { label: stri
 
 /* ─── Provider detail section ─── */
 
-function ProviderDetail({ usage, label, iconSrc, iconClassName, nowMs }: { usage: ProviderAccountUsage; label: string; iconSrc: string; iconClassName?: string; nowMs: number }) {
+function ProviderDetail({ usage, label, iconSrc, iconClassName, showSession = true, nowMs }: { usage: ProviderAccountUsage; label: string; iconSrc: string; iconClassName?: string; showSession?: boolean; nowMs: number }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
@@ -359,7 +375,9 @@ function ProviderDetail({ usage, label, iconSrc, iconClassName, nowMs }: { usage
         <span className="text-[11px] font-medium text-foreground">{label}</span>
       </div>
       <div className="space-y-1.5">
-        <DetailRow label="Session" usageWindow={usage.sessionUsage} showPace={false} nowMs={nowMs} />
+        {showSession ? (
+          <DetailRow label="Session" usageWindow={usage.sessionUsage} showPace={false} nowMs={nowMs} />
+        ) : null}
         <DetailRow label="Weekly" usageWindow={usage.weeklyUsage} nowMs={nowMs} />
       </div>
     </div>
@@ -416,7 +434,7 @@ export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh
         )}
         {availableRows.map((row) =>
           row.usage ? (
-            <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} nowMs={nowMs} />
+            <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} showSession={row.showSession !== false} nowMs={nowMs} />
           ) : null,
         )}
       </div>
@@ -430,7 +448,7 @@ export function getAccountLabel(providerName: string, account: ProviderAccountUs
   return `${providerName} — ${suffix}`
 }
 
-function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
+export function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
   const rows: ProviderRowConfig[] = []
 
   const anthropicAccounts = providers?.anthropic
@@ -456,6 +474,21 @@ function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
         iconClassName: 'dark:invert',
         usage: openaiAccounts[i],
         provider: 'openai',
+      })
+    }
+  }
+
+  const xaiAccounts = providers?.xai
+  if (xaiAccounts && xaiAccounts.length > 0) {
+    for (let i = 0; i < xaiAccounts.length; i++) {
+      rows.push({
+        key: `xai-${xaiAccounts[i].accountId ?? i}`,
+        label: getAccountLabel('xAI', xaiAccounts[i], i, xaiAccounts.length),
+        iconSrc: '/agents/xai-logo.svg',
+        iconClassName: 'dark:invert',
+        usage: xaiAccounts[i],
+        provider: 'xai',
+        showSession: false,
       })
     }
   }

@@ -73,7 +73,8 @@ export class ProviderUsageHistoryStore {
       const accountKey = normalizeAccountKey(input.accountKey);
       const resetAtMs = normalizeResetAtMs(input.window.resetAtMs);
       const windowSeconds = resolveWeeklyWindowSeconds(input.window.windowSeconds);
-      if (resetAtMs === null || windowSeconds === null) {
+      const percent = normalizeHistoryPercent(input.window.percent);
+      if (resetAtMs === null || windowSeconds === null || percent === null) {
         return this.buildDataset(input.provider, accountKey);
       }
 
@@ -83,7 +84,7 @@ export class ProviderUsageHistoryStore {
         windowKind: "weekly",
         accountKey,
         sampledAtMs: normalizeTimestampMs(input.sampledAtMs),
-        percent: clamp(input.window.percent, 0, 100),
+        percent,
         resetAtMs,
         windowSeconds
       };
@@ -134,8 +135,9 @@ export class ProviderUsageHistoryStore {
           const resetAtMs = normalizeResetAtMs(parsed.resetAtMs);
           const windowSeconds = resolveWeeklyWindowSeconds(parsed.windowSeconds);
           const sampledAtMs = normalizeTimestampMs(parsed.sampledAtMs);
+          const percent = normalizeHistoryPercent(parsed.percent);
 
-          if (!provider || parsed.windowKind !== "weekly" || resetAtMs === null || windowSeconds === null) {
+          if (!provider || parsed.windowKind !== "weekly" || resetAtMs === null || windowSeconds === null || percent === null) {
             continue;
           }
 
@@ -145,7 +147,7 @@ export class ProviderUsageHistoryStore {
             windowKind: "weekly",
             accountKey: normalizeAccountKey(parsed.accountKey),
             sampledAtMs,
-            percent: clamp(parsed.percent ?? 0, 0, 100),
+            percent,
             resetAtMs,
             windowSeconds
           });
@@ -620,6 +622,14 @@ function normalizeWindowSeconds(value: unknown): number | null {
   }
 
   return Math.round(value);
+}
+
+function normalizeHistoryPercent(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return clamp(value, 0, 100);
 }
 
 function normalizeTimestampMs(value: unknown): number {

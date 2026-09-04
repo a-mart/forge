@@ -196,7 +196,8 @@ export class StatsService {
     const tokensChanged = Boolean(latestTokens && latestTokens !== snapshot.tokens);
     const providersChanged =
       snapshot.providers.openai !== latestProviders.openai ||
-      snapshot.providers.anthropic !== latestProviders.anthropic;
+      snapshot.providers.anthropic !== latestProviders.anthropic ||
+      snapshot.providers.xai !== latestProviders.xai;
 
     if (!tokensChanged && !providersChanged) {
       return snapshot;

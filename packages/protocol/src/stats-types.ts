@@ -95,6 +95,7 @@ export interface DailyUsageBucket {
 export interface ProviderUsageStats {
   anthropic?: ProviderAccountUsage[];
   openai?: ProviderAccountUsage[];
+  xai?: ProviderAccountUsage[];
 }
 
 export interface ProviderUsagePace {

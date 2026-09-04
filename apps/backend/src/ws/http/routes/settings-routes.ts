@@ -90,7 +90,7 @@ export function createSettingsRoutes(options: {
       return;
     }
 
-    const usageProviders = new Set<"openai" | "anthropic">();
+    const usageProviders = new Set<"openai" | "anthropic" | "xai">();
     for (const provider of providers) {
       const usageProvider = mapSettingsAuthProviderToUsageProvider(provider);
       if (usageProvider) {
@@ -336,9 +336,10 @@ async function handleSettingsAuthHttpRequest(
     }
     await swarmManager.updateSettingsAuth(payload);
     if (Object.prototype.hasOwnProperty.call(payload, "xai")) {
+      await invalidateProviderUsage("xai");
       await swarmManager.reloadModelCatalogOverridesAndProjection();
     }
-    await invalidateProviderUsage(...Object.keys(payload));
+    await invalidateProviderUsage(...Object.keys(payload).filter((provider) => provider !== "xai"));
     const providers = await swarmManager.listSettingsAuth();
     const responsePayload: SettingsAuthMutationResponse = { ok: true, providers };
     sendJson(response, 200, responsePayload as unknown as Record<string, unknown>);
@@ -365,9 +366,11 @@ async function handleSettingsAuthHttpRequest(
 
     await swarmManager.deleteSettingsAuth(provider);
     if (provider.trim().toLowerCase() === "xai") {
+      await invalidateProviderUsage("xai");
       await swarmManager.reloadModelCatalogOverridesAndProjection();
+    } else {
+      await invalidateProviderUsage(provider);
     }
-    await invalidateProviderUsage(provider);
     const providers = await swarmManager.listSettingsAuth();
     const payload: SettingsAuthMutationResponse = { ok: true, providers };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -1054,9 +1057,11 @@ async function handleSettingsAuthLoginHttpRequest(
       ...credentials
     });
     if (providerId === "xai") {
+      await invalidateProviderUsage("xai");
       await swarmManager.reloadModelCatalogOverridesAndProjection();
+    } else {
+      await invalidateProviderUsage(providerId);
     }
-    await invalidateProviderUsage(providerId);
 
     sendSseEvent("complete", {
       provider: flow.providerId,
@@ -1164,13 +1169,15 @@ function getSettingsAuthProviderLabel(provider: string): string {
   }
 }
 
-function mapSettingsAuthProviderToUsageProvider(provider: string): "openai" | "anthropic" | undefined {
+function mapSettingsAuthProviderToUsageProvider(provider: string): "openai" | "anthropic" | "xai" | undefined {
   const providerId = resolveSettingsAuthLoginProviderId(provider);
   switch (providerId) {
     case "anthropic":
       return "anthropic";
     case "openai-codex":
       return "openai";
+    case "xai":
+      return "xai";
     default:
       return undefined;
   }

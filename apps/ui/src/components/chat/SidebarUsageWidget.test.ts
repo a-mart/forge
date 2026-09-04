@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+/** @vitest-environment jsdom */
+
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { flushSync } from 'react-dom'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { ProviderAccountUsage, ProviderUsageWindow } from '@forge/protocol'
-import { getAccountLabel, getUsageMetrics } from './SidebarUsageWidget'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { buildRows, getAccountLabel, getUsageMetrics, MiniVerticalGauge } from './SidebarUsageWidget'
 
 const WEEK_SECONDS = 7 * 24 * 60 * 60
 
@@ -80,5 +86,99 @@ describe('getAccountLabel', () => {
     expect(getAccountLabel('Anthropic', withId, 1, 3)).toBe('Anthropic — acct_123')
 
     expect(getAccountLabel('Anthropic', base, 2, 3)).toBe('Anthropic — Account 3')
+  })
+})
+
+describe('buildRows', () => {
+  it('renders xAI as a weekly-only provider with the xAI brand asset', () => {
+    const rows = buildRows({
+      xai: [
+        {
+          provider: 'xai',
+          available: true,
+          plan: 'SuperGrok',
+          weeklyUsage: {
+            percent: 12.5,
+            resetInfo: '3.0d',
+            resetAtMs: WEEK_SECONDS * 1000,
+            windowSeconds: WEEK_SECONDS,
+          },
+        },
+      ],
+    })
+
+    expect(rows).toEqual([
+      {
+        key: 'xai-0',
+        label: 'xAI',
+        iconSrc: '/agents/xai-logo.svg',
+        iconClassName: 'dark:invert',
+        provider: 'xai',
+        showSession: false,
+        usage: expect.objectContaining({
+          provider: 'xai',
+          plan: 'SuperGrok',
+          weeklyUsage: expect.objectContaining({ percent: 12.5 }),
+        }),
+      },
+    ])
+    expect(rows[0]?.usage?.sessionUsage).toBeUndefined()
+  })
+})
+
+describe('MiniVerticalGauge', () => {
+  let container: HTMLDivElement
+  let root: Root | null = null
+
+  afterEach(() => {
+    if (root) {
+      flushSync(() => {
+        root?.unmount()
+      })
+    }
+    root = null
+    container.remove()
+  })
+
+  it('renders an accessible unknown marker for weekly-only xAI usage without a percent', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(
+        TooltipProvider,
+        null,
+        createElement(MiniVerticalGauge, {
+          weeklyPercent: null,
+          weeklyDeltaPercent: null,
+          providerColor: '#000000',
+          label: 'xAI',
+        }),
+      ))
+    })
+
+    expect(container.querySelector('[data-testid="usage-gauge-unknown"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="xAI weekly usage unknown"]')).not.toBeNull()
+  })
+
+  it('does not mark a real 0% weekly window as unknown', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(
+        TooltipProvider,
+        null,
+        createElement(MiniVerticalGauge, {
+          weeklyPercent: 0,
+          weeklyDeltaPercent: null,
+          providerColor: '#000000',
+          label: 'xAI',
+        }),
+      ))
+    })
+
+    expect(container.querySelector('[data-testid="usage-gauge-unknown"]')).toBeNull()
+    expect(container.querySelector('[aria-label="xAI weekly usage unknown"]')).toBeNull()
   })
 })
