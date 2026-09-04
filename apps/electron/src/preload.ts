@@ -8,7 +8,7 @@ import {
 } from './secure-vault-ipc.js'
 import { createTrustedExternalChromeBridge } from './external-chrome/ipc.js'
 import { MAIN_RENDERER_READY_CHANNEL } from './main-renderer-recovery.js'
-import { OPEN_PDF_IN_DEFAULT_APP_CHANNEL } from './open-pdf-ipc.js'
+import { OPEN_PDF_IN_DEFAULT_APP_CHANNEL, type OpenPdfIpcRequest, type OpenPdfIpcResult } from './open-pdf-ipc.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -68,7 +68,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       getSleepBlockerSettings: (): Promise<SleepBlockerStatus> => ipcRenderer.invoke('get-sleep-blocker-settings'),
       setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> => ipcRenderer.invoke('set-sleep-blocker-settings', patch),
       revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
-      openPdfInDefaultApp: (request: { filePath?: string; bytes?: Uint8Array; fileName?: string }): Promise<{ success: boolean; error?: string }> =>
+      openPdfInDefaultApp: (request: OpenPdfIpcRequest): Promise<OpenPdfIpcResult> =>
         ipcRenderer.invoke(OPEN_PDF_IN_DEFAULT_APP_CHANNEL, request),
       installCli: (): Promise<{
         success: boolean

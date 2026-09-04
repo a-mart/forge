@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter as pathDelimiter, join } from "node:path";
 import { promisify } from "node:util";
 import type {
   AgentDescriptor,
@@ -492,6 +492,40 @@ describe("git-source-control-routes", () => {
     expect((await execGitCapture(server.mainDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
       (await execGitCapture(server.mainDir, ["rev-parse", "origin/task/publish-branch"])).stdout.trim()
     );
+  });
+
+  it("keeps pushed true when a local-only branch is published but upstream tracking fails", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    await execGit(server.mainDir, ["switch", "-c", "task/publish-tracking-failure"]);
+    await writeFile(join(server.mainDir, "feature.txt"), "feature\n", "utf8");
+    await execGit(server.mainDir, ["add", "feature.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "local feature commit"]);
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const gitShimDir = await createGitUpstreamTrackingFailureShim(server.root);
+    const previousPath = process.env.PATH ?? "";
+    process.env.PATH = `${gitShimDir}${pathDelimiter}${previousPath}`;
+    try {
+      const mutation = await postMutation<GitPushResult>(server, "/api/git/push", {
+        agentId: "alpha--s1",
+        remote: "origin",
+        expectedHead: branches.currentHead!,
+        expectedStatusHash: branches.statusHash!
+      });
+
+      expect(mutation.status).toBe(200);
+      expect(mutation.payload.success).toBe(true);
+      expect(mutation.payload.pushed).toBe(true);
+      expect(mutation.payload.upstream).toBe("origin/task/publish-tracking-failure");
+      expect(mutation.payload.warnings.join(" ")).toMatch(/upstream tracking/i);
+      expect((await execGitCapture(server.mainDir, ["rev-parse", "origin/task/publish-tracking-failure"])).stdout.trim()).toBe(
+        (await execGitCapture(server.mainDir, ["rev-parse", "HEAD"])).stdout.trim()
+      );
+      await expect(execGitCapture(server.mainDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])).rejects.toThrow();
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 
   it("rejects publishing when the same remote branch already has extra commits", async () => {
@@ -1564,6 +1598,35 @@ async function postMutation<T>(
     status: response.status,
     payload: (await response.json()) as T
   };
+}
+
+async function createGitUpstreamTrackingFailureShim(root: string): Promise<string> {
+  const binDir = join(root, "git-shim");
+  await mkdir(binDir, { recursive: true });
+  const realGit = (await execFileAsync("which", ["git"], { encoding: "utf8" })).stdout.trim();
+  if (!realGit) {
+    throw new Error("Unable to locate the real git binary for the tracking-failure shim.");
+  }
+  const shimPath = join(binDir, "git");
+  await writeFile(
+    shimPath,
+    `#!/bin/sh
+if [ "$1" = "branch" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      --set-upstream-to=*)
+        echo "Published branch, but could not set upstream tracking." >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+    "utf8"
+  );
+  await chmod(shimPath, 0o755);
+  return binDir;
 }
 
 async function execGitCapture(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {

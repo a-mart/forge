@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { CHAT_ARTIFACT_MAX_PDF_BYTES } from '@forge/protocol'
-import { OPEN_PDF_IN_DEFAULT_APP_CHANNEL, type OpenPdfIpcResult } from './open-pdf-ipc.js'
+import { OPEN_PDF_IN_DEFAULT_APP_CHANNEL, type OpenPdfIpcRequest, type OpenPdfIpcResult } from './open-pdf-ipc.js'
 
 export { OPEN_PDF_IN_DEFAULT_APP_CHANNEL } from './open-pdf-ipc.js'
 export type { OpenPdfIpcRequest, OpenPdfIpcResult } from './open-pdf-ipc.js'
@@ -204,7 +204,7 @@ function parseOpenPdfIpcRequest(
     return { ok: false, error: 'Invalid PDF open request' }
   }
 
-  const record = request as { filePath?: unknown; bytes?: unknown; fileName?: unknown }
+  const record = request as OpenPdfIpcRequest & { filePath?: unknown; bytes?: unknown; fileName?: unknown }
   if (record.bytes !== undefined) {
     const bytes = asPdfBytes(record.bytes)
     if (!bytes) {
@@ -247,15 +247,18 @@ function hasPdfExtension(filePath: string): boolean {
 }
 
 function fileStartsWithPdfMagic(filePath: string): boolean {
-  const fd = openSync(filePath, 'r')
+  let fd: number | undefined
   try {
+    fd = openSync(filePath, 'r')
     const header = Buffer.alloc(PDF_MAGIC.length)
     const bytesRead = readSync(fd, header, 0, PDF_MAGIC.length, 0)
     return bytesRead >= PDF_MAGIC.length && header.equals(PDF_MAGIC)
   } catch {
     return false
   } finally {
-    closeSync(fd)
+    if (fd !== undefined) {
+      closeSync(fd)
+    }
   }
 }
 

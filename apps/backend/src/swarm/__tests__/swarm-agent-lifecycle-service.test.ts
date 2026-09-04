@@ -3328,12 +3328,12 @@ describe("SwarmAgentLifecycleService", () => {
       const route = roster.routes.find((candidate) => candidate.routeId === "fast-builder")!;
       const primary = {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex-spark",
+        modelId: "gpt-5.6-sol",
         reasoningLevel: "medium" as const,
       };
       const configuredFallback = {
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-5",
         reasoningLevel: "high" as const,
       };
       await saveDelegationRosterSettings(dataDir, {
@@ -3349,6 +3349,13 @@ describe("SwarmAgentLifecycleService", () => {
             capabilityEscalationRouteId: undefined,
           }],
         }],
+      });
+      const persisted = await resolveDelegationRosterSettings(dataDir);
+      const persistedRoute = persisted.rosters[0]!.routes.find((candidate) => candidate.routeId === route.routeId)!;
+      expect(persistedRoute).toMatchObject({
+        provider: primary.provider,
+        modelId: primary.modelId,
+        availabilityFallback: configuredFallback,
       });
 
       const manager = createAgentDescriptor({
@@ -3368,10 +3375,10 @@ describe("SwarmAgentLifecycleService", () => {
         blockedUntilMs: number;
       }>();
       modelCapacityBlocks.set(
-        buildModelCapacityBlockKey(primary.provider, primary.modelId)!,
+        buildModelCapacityBlockKey(persistedRoute.provider, persistedRoute.modelId)!,
         {
-          provider: primary.provider,
-          modelId: primary.modelId,
+          provider: persistedRoute.provider,
+          modelId: persistedRoute.modelId,
           blockedUntilMs: Date.now() + 60_000,
         },
       );

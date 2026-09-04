@@ -90,10 +90,19 @@ for (const [key, patchFile] of expectedPatchFiles) {
   const absolutePatch = path.join(repoRoot, patchFile)
   if (!existsSync(absolutePatch)) fail(`patch file missing: ${patchFile}`)
   const patchHash = sha256File(absolutePatch)
+  const lockHashMarker = `  '${key}':\n    hash: `
+  const lockHashIndex = lockText.indexOf(lockHashMarker)
+  const lockHash = lockHashIndex >= 0
+    ? lockText.slice(lockHashIndex + lockHashMarker.length, lockHashIndex + lockHashMarker.length + 64)
+    : undefined
+  if (!lockHash || !/^[a-f0-9]{64}$/.test(lockHash)) fail(`${key} missing patchedDependencies hash in lockfile`)
+  if (lockHash !== patchHash) {
+    fail(`${key} lockfile hash ${lockHash} does not match patch file sha256 ${patchHash}`)
+  }
   const lockBlock = lockPackageBlocks(key.replace(/@0\.80\.6$/, ''))
-  const patchedInstances = lockBlock.filter((block) => block.includes('patch_hash='))
-  if (patchedInstances.length === 0) fail(`${key} has no pnpm patched lock instance`)
-  patches.push({ key, patchFile, sha256: patchHash, patchedInstances })
+  const patchedInstances = lockBlock.filter((block) => block.includes(`patch_hash=${patchHash}`))
+  if (patchedInstances.length === 0) fail(`${key} has no pnpm patched lock instance for sha256 ${patchHash}`)
+  patches.push({ key, patchFile, sha256: patchHash, lockHash, patchedInstances })
 }
 
 const result = {

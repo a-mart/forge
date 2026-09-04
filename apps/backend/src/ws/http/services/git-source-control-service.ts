@@ -1018,36 +1018,29 @@ export class GitSourceControlService {
         };
       }
 
+      const publishedRef = `${remote}/${currentBranch}`;
       const trackResult = await git.run(
-        ["branch", `--set-upstream-to=${remote}/${currentBranch}`, "--", currentBranch],
+        ["branch", `--set-upstream-to=${publishedRef}`, "--", currentBranch],
         { allowFailure: true }
       );
-      if (trackResult.exitCode !== 0) {
-        const failed = this.createFailedMutationResult(
-          context,
-          trackResult.stderr || trackResult.stdout || `Published ${currentBranch}, but could not set upstream tracking.`,
-          remote
-        );
-        return {
-          ...failed,
-          remote,
-          upstream: "",
-          pushed: false
-        };
-      }
-
       const publishedUpstream = await resolveUpstream(git);
+      const trackingWarning = trackResult.exitCode !== 0 && !publishedUpstream
+        ? trackResult.stderr.trim() || trackResult.stdout.trim() || `Published ${currentBranch}, but could not set upstream tracking.`
+        : undefined;
       const success = await this.createSuccessfulMutationResult(context, git, {
         remote,
-        warnings: preflight.issues
-          .filter((issue) => issue.severity === "warn")
-          .map((issue) => issue.message)
+        warnings: [
+          ...preflight.issues
+            .filter((issue) => issue.severity === "warn")
+            .map((issue) => issue.message),
+          ...(trackingWarning ? [trackingWarning] : []),
+        ]
       });
 
       return {
         ...success,
         remote,
-        upstream: publishedUpstream?.ref ?? `${remote}/${currentBranch}`,
+        upstream: publishedUpstream?.ref ?? publishedRef,
         pushed: true
       };
     }

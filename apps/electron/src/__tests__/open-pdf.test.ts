@@ -71,6 +71,17 @@ describe('validateAbsoluteLocalPdfFilePath', () => {
     symlinkSync(root, directoryAlias)
     expect(validateAbsoluteLocalPdfFilePath(directoryAlias)).toEqual({ ok: false, error: 'Not a PDF file' })
   })
+
+  it('returns a structured failure when PDF header inspection races with deletion or permission errors', () => {
+    const root = tempRoot()
+    const pdfPath = writePdf(root)
+    chmodSync(pdfPath, 0o000)
+    try {
+      expect(validateAbsoluteLocalPdfFilePath(pdfPath)).toEqual({ ok: false, error: 'Not a PDF file' })
+    } finally {
+      chmodSync(pdfPath, 0o644)
+    }
+  })
 })
 
 describe('openValidatedPdfPath', () => {
