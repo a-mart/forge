@@ -585,19 +585,20 @@ describe('MessageList Secure Session attention', () => {
 
   it('renders redacted output outside the transcript with dismiss and optional stop actions', () => {
     const onRevoke = vi.fn()
-    render([], {
-      secureSessionRequests: {
-        sessionAgentId: 'manager-1',
-        availability: { state: 'available' },
-        requests: [],
-        secrets: [],
-        outputState: 'quarantined',
-        outputStateReason: 'Potential protected material was withheld.',
-        onGrant: vi.fn(),
-        onDeny: vi.fn(),
-        onRevoke,
-      },
-    })
+    const onDismissOutputQuarantine = vi.fn()
+    const requests = {
+      sessionAgentId: 'manager-1',
+      availability: { state: 'available' as const },
+      requests: [],
+      secrets: [],
+      outputState: 'quarantined' as const,
+      outputStateReason: 'Potential protected material was withheld.',
+      onGrant: vi.fn(),
+      onDeny: vi.fn(),
+      onRevoke,
+      onDismissOutputQuarantine,
+    }
+    render([], { secureSessionRequests: requests })
 
     expect(container.textContent).toContain('Protected output redacted')
     expect(container.textContent).toContain('Potential protected material was withheld.')
@@ -608,6 +609,26 @@ describe('MessageList Secure Session attention', () => {
     flushSync(() => {
       fireEvent.click(getByRole(container, 'button', { name: 'Dismiss' }))
     })
+    expect(onDismissOutputQuarantine).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Protected output redacted')
+
+    render([], {
+      secureSessionRequests: {
+        ...requests,
+        outputState: 'clear',
+      },
+    })
     expect(container.textContent).not.toContain('Protected output redacted')
+    expect(container.querySelector('[data-testid="secure-session-attention"]')).toBeNull()
+
+    render([], {
+      secureSessionRequests: {
+        ...requests,
+        outputState: 'quarantined',
+        outputStateReason: 'A later command was redacted.',
+      },
+    })
+    expect(container.textContent).toContain('Protected output redacted')
+    expect(container.textContent).toContain('A later command was redacted.')
   })
 })
