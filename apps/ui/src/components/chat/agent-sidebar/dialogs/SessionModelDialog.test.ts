@@ -5,29 +5,26 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ModelOverridesResponse, OpenRouterModelEntry } from '@forge/protocol'
+import type { ManagerSelectionCatalogResponse } from '@forge/protocol'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
+import {
+  OPENROUTER_GLM,
+  makeManagerSelectionCatalog,
+} from '@/lib/manager-selection-catalog.fixture'
 
-const modelsApiMock = vi.hoisted(() => ({
-  fetchModelOverrides: vi.fn<(client?: SettingsApiClient) => Promise<ModelOverridesResponse>>(() => Promise.resolve({
-    version: 1,
-    overrides: {},
-    providerAvailability: {
-      'openai-codex': true,
-      anthropic: true,
-      xai: true,
-    },
-    providerCredentials: {},
-    discoveredModels: [],
-    openRouterModels: [],
-  })),
+const catalogApiMock = vi.hoisted(() => ({
+  fetchManagerSelectionCatalog: vi.fn(),
 }))
 
 // Mock availability while retaining the exact client argument for origin-target tests.
-vi.mock('@/components/settings/models-api', () => modelsApiMock)
+vi.mock('@/lib/manager-selection-catalog-api', () => ({
+  fetchManagerSelectionCatalog: (...args: unknown[]) =>
+    catalogApiMock.fetchManagerSelectionCatalog(...args),
+}))
 
 // Must import after mock setup
 const { SessionModelDialog } = await import('./SessionModelDialog')
+const { invalidateManagerSelectionCatalog } = await import('@/lib/use-manager-selection-catalog')
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -35,9 +32,11 @@ let root: Root | null = null
 const dialogApiClient = { target: { kind: 'collab' } } as unknown as SettingsApiClient
 
 beforeEach(() => {
+  invalidateManagerSelectionCatalog()
+  catalogApiMock.fetchManagerSelectionCatalog.mockReset()
+  catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
   container = document.createElement('div')
   document.body.appendChild(container)
-  modelsApiMock.fetchModelOverrides.mockClear()
 })
 
 afterEach(() => {
@@ -48,6 +47,7 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  invalidateManagerSelectionCatalog()
 })
 
 async function renderDialog(overrides: Record<string, unknown> = {}) {
@@ -112,7 +112,7 @@ describe('SessionModelDialog', () => {
     it('loads availability through the supplied target-aware API client', async () => {
       await renderDialog()
 
-      expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(dialogApiClient)
+      expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledWith(dialogApiClient)
     })
 
     it('shows model and reasoning selectors immediately without a mode dropdown', async () => {
@@ -329,55 +329,26 @@ describe('SessionModelDialog', () => {
 
   describe('availability loading/error', () => {
     it('disables selectors and submit while availability is loading, then enables them after resolution', async () => {
-      let resolveAvailability!: (value: ModelOverridesResponse) => void
-      const pending = new Promise<ModelOverridesResponse>((resolve) => { resolveAvailability = resolve })
-      modelsApiMock.fetchModelOverrides.mockReturnValueOnce(pending)
+      let resolveAvailability!: (value: ManagerSelectionCatalogResponse) => void
+      const pending = new Promise<ManagerSelectionCatalogResponse>((resolve) => { resolveAvailability = resolve })
+      catalogApiMock.fetchManagerSelectionCatalog.mockReturnValueOnce(pending)
 
       await renderDialog({ modelOrigin: 'profile_default' })
 
       expect(findModelTrigger()?.disabled).toBe(true)
       expect(findReasoningTrigger()?.disabled).toBe(true)
       expect(findSubmitButton()?.disabled).toBe(true)
-      await act(async () => resolveAvailability({
-        version: 1,
-        overrides: {},
-        providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
-        providerCredentials: {},
-        discoveredModels: [],
-        openRouterModels: [],
-      }))
+      await act(async () => resolveAvailability(makeManagerSelectionCatalog()))
       expect(findModelTrigger()?.disabled).toBe(false)
       expect(findReasoningTrigger()?.disabled).toBe(false)
     })
   })
 
   describe('OpenRouter manager models', () => {
-    const glm: OpenRouterModelEntry = {
-      modelId: 'z-ai/glm-5.1',
-      displayName: 'Z.ai: GLM 5.1',
-      contextWindow: 202_752,
-      maxOutputTokens: 202_752,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-      inputModes: ['text'],
-      addedAt: '2026-04-03T00:00:00.000Z',
-      supportsTools: true,
-    }
-
     it('includes an enabled OpenRouter model in the session selector', async () => {
-      modelsApiMock.fetchModelOverrides.mockResolvedValue({
-        version: 1,
-        overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
-        providerAvailability: {
-          'openai-codex': true,
-          anthropic: true,
-          xai: true,
-          openrouter: true,
-        },
-        providerCredentials: {},
-        discoveredModels: [],
-        openRouterModels: [glm],
-      })
+      catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+        models: [...makeManagerSelectionCatalog().models, OPENROUTER_GLM],
+      }))
 
       await renderDialog({ modelOrigin: 'profile_default' })
       const dialog = document.body.querySelector('[role="dialog"]')
@@ -385,24 +356,23 @@ describe('SessionModelDialog', () => {
     })
 
     it('preserves an unavailable current OpenRouter model as a disabled current option', async () => {
-      modelsApiMock.fetchModelOverrides.mockResolvedValue({
-        version: 1,
-        overrides: {},
-        providerAvailability: {
-          'openai-codex': true,
-          anthropic: true,
-          xai: true,
-          openrouter: true,
-        },
-        providerCredentials: {},
-        discoveredModels: [],
-        openRouterModels: [glm],
-      })
+      catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+        models: [
+          ...makeManagerSelectionCatalog().models,
+          {
+            ...OPENROUTER_GLM,
+            surfaces: {
+              create: { selectable: false, unavailableReason: 'disabled' },
+              change: { selectable: false, unavailableReason: 'disabled' },
+            },
+          },
+        ],
+      }))
 
       await renderDialog({
         currentModel: {
           provider: 'openrouter',
-          modelId: glm.modelId,
+          modelId: OPENROUTER_GLM.modelId,
           thinkingLevel: 'medium',
         },
         currentReasoningLevel: 'medium',

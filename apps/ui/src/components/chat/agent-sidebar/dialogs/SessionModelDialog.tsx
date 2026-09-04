@@ -11,7 +11,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
   MANAGER_REASONING_LEVELS,
@@ -21,17 +20,24 @@ import {
   type ManagerReasoningLevel,
 } from '@forge/protocol'
 import {
-  buildCurrentModelFallbackRow,
-  buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
 } from '@/lib/manager-model-selection'
+import {
+  buildCatalogCurrentModelFallbackRow,
+  projectSelectableManagerModelRows,
+} from '@/lib/manager-selection-catalog'
+import { useManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
+import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
 import { formatManagerReasoningLevel } from '@/lib/reasoning-level-labels'
 
 export function SessionModelDialog({
   apiClient,
   wsUrl,
+  originId = LOCAL_ORIGIN_ID,
+  modelConfigChangeKey,
+  connectionEpoch,
   sessionAgentId,
   sessionLabel,
   currentModel,
@@ -46,6 +52,9 @@ export function SessionModelDialog({
   apiClient?: SettingsApiClient
   /** Legacy local-sidebar compatibility path. */
   wsUrl?: string
+  originId?: string
+  modelConfigChangeKey?: number
+  connectionEpoch?: number
   sessionAgentId: string
   sessionLabel: string
   currentModel: AgentModelDescriptor | undefined
@@ -62,25 +71,18 @@ export function SessionModelDialog({
   returnFocusRef?: RefObject<HTMLElement | null>
 }) {
   const isCurrentlyOverridden = modelOrigin === 'session_override'
-  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
-  const [availabilityLoading, setAvailabilityLoading] = useState(true)
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
-
-  const loadAvailability = useCallback(() => {
-    setAvailabilityLoading(true)
-    setAvailabilityError(null)
-    void fetchModelOverrides(apiClient ?? wsUrl).then((data) => {
-      setOverridesData(data)
-      setAvailabilityLoading(false)
-    }).catch((err) => {
-      setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
-      setAvailabilityLoading(false)
-    })
-  }, [apiClient, wsUrl])
-
-  useEffect(() => {
-    loadAvailability()
-  }, [loadAvailability])
+  const {
+    catalog,
+    loading: availabilityLoading,
+    error: availabilityError,
+    refetch: loadAvailability,
+  } = useManagerSelectionCatalog({
+    originId,
+    client: apiClient ?? wsUrl,
+    modelConfigChangeKey,
+    connectionEpoch,
+    forceOnEnabled: true,
+  })
 
   const currentKey = currentModel
     ? encodeManagerModelValue(currentModel.provider, currentModel.modelId)
@@ -90,29 +92,22 @@ export function SessionModelDialog({
   // change-manager list, inject it as a disabled "current" entry so the dialog never
   // silently switches the model.
   const { selectableRows, groups } = useMemo(() => {
-    if (!overridesData) {
+    if (!catalog) {
       return { selectableRows: [], groups: [] }
     }
 
-    const rows = buildManagerModelRows(
-      'change',
-      overridesData.overrides,
-      overridesData.providerAvailability,
-      overridesData.openRouterModels,
-    )
-
-    const availableRows = rows.filter((r) => !r.unavailableReason)
+    const availableRows = projectSelectableManagerModelRows(catalog, 'change')
     const isCurrentInList = !currentKey || availableRows.some((r) => r.key === currentKey)
 
     const selectableRows = isCurrentInList
       ? availableRows
       : [
           ...(currentModel
-            ? [buildCurrentModelFallbackRow(
+            ? [buildCatalogCurrentModelFallbackRow(
+                catalog,
                 currentModel.provider,
                 currentModel.modelId,
                 currentModel.thinkingLevel,
-                overridesData.openRouterModels,
               )]
             : []),
           ...availableRows,
@@ -122,7 +117,7 @@ export function SessionModelDialog({
       selectableRows,
       groups: groupManagerModelRows(selectableRows),
     }
-  }, [overridesData, currentKey, currentModel])
+  }, [catalog, currentKey, currentModel])
 
   const [selectedKey, setSelectedKey] = useState<string>(currentKey ?? '')
   const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
@@ -255,7 +250,7 @@ export function SessionModelDialog({
           {availabilityError ? (
             <div className="flex items-center gap-2">
               <p className="text-xs text-destructive">Failed to load models.</p>
-              <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={loadAvailability}>
+              <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => loadAvailability(true)}>
                 Retry
               </Button>
             </div>

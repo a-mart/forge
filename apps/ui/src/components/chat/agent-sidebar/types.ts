@@ -38,6 +38,8 @@ export interface RemoteSidebarOrigin {
 export interface AgentSidebarProps {
   connected: boolean
   wsUrl?: string
+  modelConfigChangeKey?: number
+  connectionEpoch?: number
   agents: AgentDescriptor[]
   profiles: ManagerProfile[]
   /** Prebuilt structural rows supplied by AgentSidebarConnected. */

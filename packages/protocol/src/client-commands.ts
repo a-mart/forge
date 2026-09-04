@@ -23,11 +23,11 @@ import type {
 import type {
   AgentSessionPurpose,
   ChoiceAnswer,
-  ManagerPosture,
   DeliveryMode,
   ManagerExactModelSelection,
   ManagerModelPreset,
   ManagerReasoningLevel,
+  WorkModeId,
 } from './shared-types.js'
 
 export interface ApiProxyCommand {
@@ -98,7 +98,7 @@ export type ClientCommand =
   | {
       type: 'update_project_delegation_defaults'
       profileId: string
-      managerPosture?: ManagerPosture | null
+      managerPosture?: WorkModeId | null
       delegationRosterId?: string | null
       requestId?: string
     }
@@ -120,7 +120,7 @@ export type ClientCommand =
   | {
       type: 'update_session_delegation'
       sessionAgentId: string
-      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: ManagerPosture }
+      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: WorkModeId }
       delegationRoster?: { mode: 'inherit' } | { mode: 'override'; rosterId: string }
       requestId?: string
     }

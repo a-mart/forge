@@ -101,6 +101,7 @@ import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createKnowledgeV2SettingsRoutes } from "./http/routes/knowledge-v2-settings-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
 import { createMobileRoutes } from "./http/routes/mobile-routes.js";
+import { createManagerSelectionCatalogRoutes } from "./http/routes/manager-selection-catalog-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
 import { createProjectResourceRoutes } from "./http/routes/project-resource-routes.js";
@@ -879,6 +880,7 @@ export class SwarmWebSocketServer {
       }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
+      ...createManagerSelectionCatalogRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...createSessionAuditRoutes({ swarmManager: this.swarmManager }),
       ...createCodexCatalogRoutes({ swarmManager: this.swarmManager }),

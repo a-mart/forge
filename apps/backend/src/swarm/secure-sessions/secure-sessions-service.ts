@@ -2,7 +2,6 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
 import path from "node:path";
 import type {
-  AgentDescriptor,
   BitwardenPasswordManagerSettings,
   GrantSecureSecretLeaseInput,
   GrantSecureSecretLeaseRequest,
@@ -49,6 +48,7 @@ import { normalizeSshAgentKeyMaterial } from "./execution/ssh-agent-key-material
 import { SECURE_OUTPUT_QUARANTINE, SecureValueGuard } from "./redaction/secure-value-guard.js";
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
 import { supportsSecureRuntimeProvider } from "./runtime/secure-runtime-provider-policy.js";
+import type { AgentDescriptor } from "../types.js";
 import type {
   FulfillSecureAccessRequestInput,
   ApplySecureSessionProjectDefaultsInput,

@@ -35,17 +35,19 @@ export class ModelCatalogService {
   private xaiOAuthActive = false;
   private xaiOAuthModels = new Map<string, ForgeModelDefinition>();
   private loadedDataDir: string | null = null;
+  private overrideGeneration = 0;
 
   constructor(catalog: ForgeModelCatalog = FORGE_MODEL_CATALOG) {
     this.catalog = catalog;
   }
 
   async loadOverrides(dataDir: string): Promise<void> {
+    const generation = ++this.overrideGeneration;
     const [overrideFile, openRouterFile] = await Promise.all([
       readModelOverrides(dataDir),
       readOpenRouterModels(dataDir),
     ]);
-
+    if (generation !== this.overrideGeneration) return;
     this.loadedDataDir = dataDir;
     this.overrides = normalizeLoadedOverrides(overrideFile.overrides);
     this.openRouterModels = { ...openRouterFile.models };

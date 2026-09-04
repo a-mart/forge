@@ -14,7 +14,6 @@ import {
   type CollaborationAuthor,
   type ConversationReplyTarget,
   type PersistedMessageChannel as ProtocolPersistedMessageChannel,
-  type ManagerProfile,
   type ManagerPosture,
   type ManagerPostureOrigin,
   type ExternalThreadInfo,
@@ -41,7 +40,6 @@ export type {
   DelegationRosterOrigin,
   ManagerPosture,
   ManagerPostureOrigin,
-  ManagerProfile,
 };
 export type { ExternalThreadInfo, ExternalThreadMessageContext, ProjectAgentMessageContext };
 export type { PlanSummaryEvent } from "@forge/protocol";
@@ -81,6 +79,21 @@ export interface AgentContextUsage {
 export type AgentSessionPurpose = "cortex_review" | "agent_creator" | "capture_check";
 
 export type InternalWorkerKind = "codex_plugin";
+
+/** Closed persistence/domain profile. Wire snapshots use protocol WorkModeId. */
+export interface ManagerProfile {
+  profileId: string;
+  displayName: string;
+  defaultSessionAgentId: string;
+  defaultModel: AgentModelDescriptor;
+  defaultManagerPosture?: ManagerPosture;
+  defaultDelegationRosterId?: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
+  profileType?: "user" | "system";
+  sortOrder?: number;
+}
 
 export interface AgentDescriptor {
   agentId: string;

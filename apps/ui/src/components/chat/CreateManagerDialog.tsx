@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
   MANAGER_REASONING_LEVELS,
   type ManagerExactModelSelection,
@@ -27,12 +27,17 @@ import {
   type RepositoryProjectCreationStage,
 } from '@forge/protocol'
 import {
-  buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
   type ManagerModelSelectRow,
 } from '@/lib/manager-model-selection'
+import {
+  projectSelectableManagerModelRows,
+  resolveCreateManagerDefault,
+} from '@/lib/manager-selection-catalog'
+import { useManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
+import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
 import {
   ServerDirectoryBrowserDialog,
   type ServerDirectoryBrowserClient,
@@ -49,6 +54,10 @@ export type CreateProjectSourceMode = 'local_folder' | 'clone_repository'
 interface CreateManagerDialogProps {
   open: boolean
   wsUrl?: string
+  apiClient?: SettingsApiClient
+  originId?: string
+  modelConfigChangeKey?: number
+  connectionEpoch?: number
   isCreatingManager: boolean
   isValidatingDirectory: boolean
   isPickingDirectory: boolean
@@ -94,6 +103,10 @@ interface CreateManagerDialogProps {
 export function CreateManagerDialog({
   open,
   wsUrl,
+  apiClient,
+  originId = LOCAL_ORIGIN_ID,
+  modelConfigChangeKey,
+  connectionEpoch,
   isCreatingManager,
   isValidatingDirectory,
   isPickingDirectory,
@@ -129,33 +142,26 @@ export function CreateManagerDialog({
   serverDirectoryBrowser,
   onSubmit,
 }: CreateManagerDialogProps) {
-  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
-  const [availabilityLoading, setAvailabilityLoading] = useState(false)
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false)
   const [basePathBrowserOpen, setBasePathBrowserOpen] = useState(false)
+  const {
+    catalog,
+    loading: availabilityLoading,
+    error: availabilityError,
+    refetch: loadAvailability,
+  } = useManagerSelectionCatalog({
+    originId,
+    enabled: open,
+    client: apiClient ?? wsUrl,
+    modelConfigChangeKey,
+    connectionEpoch,
+    forceOnEnabled: true,
+  })
 
   const isCloneMode = cloneRepositoryEnabled && sourceMode === 'clone_repository'
   const destinationPreview = isCloneMode
     ? joinRepositoryDestination(repositoryBasePath, repositoryFolder)
     : ''
-
-  const loadAvailability = useCallback(() => {
-    setAvailabilityLoading(true)
-    setAvailabilityError(null)
-    void fetchModelOverrides(wsUrl).then((data) => {
-      setOverridesData(data)
-      setAvailabilityLoading(false)
-    }).catch((err) => {
-      setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
-      setAvailabilityLoading(false)
-    })
-  }, [wsUrl])
-
-  useEffect(() => {
-    if (!open) return
-    loadAvailability()
-  }, [open, loadAvailability])
 
   useEffect(() => {
     if (!open) {
@@ -164,17 +170,10 @@ export function CreateManagerDialog({
     }
   }, [open])
 
-  const rows = useMemo(() => {
-    if (!overridesData) return []
-    return buildManagerModelRows(
-      'create',
-      overridesData.overrides,
-      overridesData.providerAvailability,
-      overridesData.openRouterModels,
-    )
-  }, [overridesData])
-
-  const availableRows = useMemo(() => rows.filter((r) => !r.unavailableReason), [rows])
+  const availableRows = useMemo(
+    () => catalog ? projectSelectableManagerModelRows(catalog, 'create') : [],
+    [catalog],
+  )
   const groups = useMemo(() => groupManagerModelRows(availableRows), [availableRows])
 
   const selectedValue = newManagerModelSelection
@@ -182,14 +181,15 @@ export function CreateManagerDialog({
     : undefined
 
   useEffect(() => {
-    if (!open || availableRows.length === 0 || availabilityLoading) return
+    if (!open || !catalog || availableRows.length === 0 || availabilityLoading) return
 
     if (selectedValue && availableRows.some((r) => r.key === selectedValue)) return
 
-    const first = availableRows[0]
-    onModelSelectionChange({ provider: first.provider, modelId: first.modelId })
-    onReasoningLevelChange(first.defaultReasoningLevel)
-  }, [availableRows, selectedValue, onModelSelectionChange, onReasoningLevelChange, open, availabilityLoading])
+    const next = resolveCreateManagerDefault(catalog, availableRows)
+    if (!next) return
+    onModelSelectionChange({ provider: next.provider, modelId: next.modelId })
+    onReasoningLevelChange(next.reasoningLevel)
+  }, [availableRows, catalog, selectedValue, onModelSelectionChange, onReasoningLevelChange, open, availabilityLoading])
 
   const handleModelChange = useCallback((value: string) => {
     const decoded = decodeManagerModelValue(value)
@@ -216,7 +216,7 @@ export function CreateManagerDialog({
     }
   }, [availableReasoningLevels, newManagerReasoningLevel, onReasoningLevelChange, selectedRow?.defaultReasoningLevel])
 
-  const availabilityLoaded = !!overridesData && !availabilityLoading
+  const availabilityLoaded = !!catalog && !availabilityLoading
   const noModelsAvailable = availabilityLoaded && availableRows.length === 0
   const isModelSelectorDisabled = isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable
   const dismissBlocked = isCreatingManager || isCancellingClone
@@ -456,7 +456,7 @@ export function CreateManagerDialog({
             {availabilityError ? (
               <div className="flex items-center gap-2">
                 <p className="text-xs text-destructive">Failed to load models.</p>
-                <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={loadAvailability}>
+                <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => loadAvailability(true)}>
                   Retry
                 </Button>
               </div>
@@ -541,7 +541,7 @@ export function CreateManagerDialog({
                 Cancel
               </Button>
             )}
-            <Button type="submit" disabled={isCreatingManager || isCancellingClone || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable}>
+            <Button type="submit" disabled={isCreatingManager || isCancellingClone || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable || !selectedValue}>
               {submitLabel}
             </Button>
           </div>

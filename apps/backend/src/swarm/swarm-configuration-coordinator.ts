@@ -3,6 +3,7 @@ import type {
   CredentialPoolState,
   CredentialPoolStrategy,
   ManagerExactModelSelection,
+  ManagerSelectionCatalogResponse,
   OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
   OpenAIBrokerTestResponse,
@@ -29,6 +30,7 @@ import {
   type DirectoryValidationResult,
 } from "./cwd-policy.js";
 import { generatePiProjection } from "./model-catalog-projection.js";
+import { buildManagerSelectionCatalog } from "./catalog/manager-selection-catalog.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
 import { resolveModelDescriptorFromPreset } from "./model-presets.js";
@@ -41,7 +43,10 @@ import {
 import { normalizeArchetypeId, type PromptRegistry } from "./prompt-registry.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { RuntimeErrorEvent } from "./runtime-contracts.js";
-import type { SecretsEnvService } from "./secrets-env-service.js";
+import {
+  getManagedModelProviderCredentialAvailability,
+  type SecretsEnvService,
+} from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
@@ -376,6 +381,14 @@ export class SwarmConfigurationCoordinator {
   async reloadModelCatalogOverridesAndProjection(): Promise<void> {
     await modelCatalogService.loadOverrides(this.options.config.paths.dataDir);
     await this.refreshPiModelsJsonProjection();
+  }
+
+  async getManagerSelectionCatalog(): Promise<ManagerSelectionCatalogResponse> {
+    const providerAvailability = await getManagedModelProviderCredentialAvailability(
+      this.options.config,
+      { credentialPoolService: this.settings.getCredentialPoolService() },
+    );
+    return buildManagerSelectionCatalog(providerAvailability);
   }
 
   async reloadOpenRouterModelsAndProjection(): Promise<void> {

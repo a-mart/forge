@@ -7,9 +7,14 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SessionCoordinationPickerConfig } from './types'
+import {
+  FUTURE_WORK_MODE,
+  makeManagerSelectionCatalog,
+} from '@/lib/manager-selection-catalog.fixture'
 
 const apiMock = vi.hoisted(() => ({
   fetchDelegationRosterSettings: vi.fn(),
+  fetchManagerSelectionCatalog: vi.fn(),
 }))
 
 vi.mock('@/components/settings/specialists-api', () => ({
@@ -17,7 +22,13 @@ vi.mock('@/components/settings/specialists-api', () => ({
     apiMock.fetchDelegationRosterSettings(...args),
 }))
 
+vi.mock('@/lib/manager-selection-catalog-api', () => ({
+  fetchManagerSelectionCatalog: (...args: unknown[]) =>
+    apiMock.fetchManagerSelectionCatalog(...args),
+}))
+
 const { SessionCoordinationPicker } = await import('./SessionCoordinationPicker')
+const { invalidateManagerSelectionCatalog } = await import('@/lib/use-manager-selection-catalog')
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -29,6 +40,9 @@ beforeEach(() => {
   Element.prototype.setPointerCapture ??= vi.fn()
   Element.prototype.releasePointerCapture ??= vi.fn()
   Element.prototype.scrollIntoView ??= vi.fn()
+  invalidateManagerSelectionCatalog()
+  apiMock.fetchManagerSelectionCatalog.mockReset()
+  apiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
   apiMock.fetchDelegationRosterSettings.mockResolvedValue({
     version: 1,
     defaultRosterId: 'balanced',
@@ -43,6 +57,7 @@ afterEach(() => {
   if (root) flushSync(() => root?.unmount())
   root = null
   container.remove()
+  invalidateManagerSelectionCatalog()
   vi.clearAllMocks()
 })
 
@@ -126,6 +141,36 @@ describe('SessionCoordinationPicker', () => {
     expect(getByRole(document.body, 'group', { name: 'Roster' })).toBeTruthy()
   })
 
+  it('forwards an advertised future Work Mode ID exactly', async () => {
+    apiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      workModes: [...makeManagerSelectionCatalog().workModes, FUTURE_WORK_MODE],
+    }))
+    const config = makeConfig()
+    renderPicker(config)
+    await openPicker()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'radio', { name: 'Review led' }))
+    })
+    await flushAsyncWork()
+
+    expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
+      managerPosture: { mode: 'override', value: 'review_led' },
+    })
+  })
+
+  it('renders an unknown current Work Mode honestly and read-only', async () => {
+    const config = makeConfig({ managerPosture: 'server_removed' })
+    renderPicker(config)
+    await openPicker()
+
+    expect(getByRole(container, 'button', { name: /Work mode: Server Removed/ })).toBeTruthy()
+    const current = getByRole(document.body, 'radio', { name: /Server Removed.*Current/ })
+    expect((current as HTMLInputElement).disabled).toBe(true)
+    fireEvent.click(current)
+    expect(config.onUpdateSession).not.toHaveBeenCalled()
+  })
+
   it('applies Adaptive as a session override', async () => {
     const config = makeConfig()
     renderPicker(config)
@@ -145,6 +190,27 @@ describe('SessionCoordinationPicker', () => {
     const config = makeConfig({
       managerPosture: 'hands_on',
       managerPostureOrigin: 'session_override',
+    })
+    renderPicker(config)
+    await openPicker()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'radio', {
+        name: /Delegate first.*Project default/,
+      }))
+    })
+    await flushAsyncWork()
+
+    expect(config.onUpdateSession).toHaveBeenCalledWith('manager-1', {
+      managerPosture: { mode: 'inherit' },
+    })
+  })
+
+  it('uses the catalog default for inheritance when the project has no override', async () => {
+    const config = makeConfig({
+      managerPosture: 'hands_on',
+      managerPostureOrigin: 'session_override',
+      projectDefaultManagerPosture: undefined,
     })
     renderPicker(config)
     await openPicker()

@@ -182,6 +182,7 @@ describe("collaboration HTTP auth middleware", () => {
       ["/api/v1/profiles/prof-1/sessions/sess-1/feedback", "GET"],
       ["/api/v1/profiles/prof-1/sessions/sess-1/feedback/state", "GET"],
       ["/api/settings/project-resources", "GET"],
+      ["/api/settings/manager-selection-catalog", "GET"],
       ["/api/settings/delegation-rosters", "GET"],
       ["/api/terminals", "GET"],
       ["/api/terminals/available-shells", "GET"],
@@ -249,6 +250,7 @@ describe("collaboration HTTP auth middleware", () => {
     expect(classifyCollaborationHttpRequest("/api/settings/remote-build", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/remote-build", "PUT", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/model-overrides", "PUT", REMOTE_BUILD_ON)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/manager-selection-catalog", "POST", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/delegation-rosters", "PUT", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/extensions", "GET", REMOTE_BUILD_ON)).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/cli-access/keys", "GET", REMOTE_BUILD_ON)).toBe("admin");

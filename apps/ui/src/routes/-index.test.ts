@@ -15,7 +15,8 @@ globalThis.ResizeObserver ??= class ResizeObserver {
 
 import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession, parseWindowRouteSearch } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
-import { buildManagerModelRows } from '@/lib/manager-model-selection'
+import { makeManagerSelectionCatalog } from '@/lib/manager-selection-catalog.fixture'
+import { projectSelectableManagerModelRows } from '@/lib/manager-selection-catalog'
 import {
   installVirtualizationHarness,
   type VirtualizationHarness,
@@ -125,14 +126,21 @@ const originalWebSocket = globalThis.WebSocket
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 const originalMatchMedia = window.matchMedia
 const originalFetch = globalThis.fetch
+const managerSelectionCatalog = makeManagerSelectionCatalog()
 
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.useFakeTimers()
   window.history.replaceState(null, '', '/')
   ;(globalThis as any).WebSocket = FakeWebSocket
-  // Mock fetch for model-overrides endpoint used by CreateManagerDialog
+  // Mock the server-owned catalog used by CreateManagerDialog.
   globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('manager-selection-catalog')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(managerSelectionCatalog),
+      })
+    }
     if (typeof url === 'string' && url.includes('model-overrides')) {
       return Promise.resolve({
         ok: true,
@@ -255,7 +263,7 @@ describe('IndexPage create project model selection', () => {
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
-    // Let the fetch mock for model-overrides resolve and React state update
+    // Let the catalog fetch resolve and React state update
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -267,9 +275,7 @@ describe('IndexPage create project model selection', () => {
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
 
     // Exact model names from the catalog (not family display names)
-    const allProvidersAvailable = { 'openai-codex': true, 'anthropic': true, 'xai': true }
-    const expectedRows = buildManagerModelRows('create', {}, allProvidersAvailable)
-      .filter((r) => !r.unavailableReason)
+    const expectedRows = projectSelectableManagerModelRows(managerSelectionCatalog, 'create')
       .map((r) => r.displayName)
 
     expect(optionValues).toContain('GPT-6 Astra')
@@ -287,7 +293,7 @@ describe('IndexPage create project model selection', () => {
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
-    // Let the fetch mock for model-overrides resolve and React state update
+    // Let the catalog fetch resolve and React state update
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(0)
 

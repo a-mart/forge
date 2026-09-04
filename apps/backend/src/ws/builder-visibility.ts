@@ -1,5 +1,4 @@
-import { isSystemProfile } from "@forge/protocol";
-import type { AgentDescriptor, ManagerProfile } from "../swarm/types.js";
+import { isSystemProfile, type AgentDescriptor, type ManagerProfile } from "@forge/protocol";
 
 const CORTEX_PROFILE_ID = "cortex";
 

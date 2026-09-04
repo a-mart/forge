@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { modelCatalogService } from "../model-catalog-service.js";
 import { resolveModelDescriptorFromPreset } from "../model-presets.js";
 import type { PromptRegistry } from "../prompt-registry.js";
 import { SecretsEnvService } from "../secrets-env-service.js";
@@ -231,5 +232,19 @@ describe("SwarmConfigurationCoordinator", () => {
 
     expect(() => coordinator.getPiModelsJsonPathOrThrow())
       .toThrow("Pi model projection path is unavailable before SwarmManager boot completes.");
+  });
+
+  it("projects the manager selection catalog without reloading overrides", async () => {
+    const { coordinator } = await setup();
+    const loadOverrides = vi.spyOn(modelCatalogService, "loadOverrides");
+    try {
+      const catalog = await coordinator.getManagerSelectionCatalog();
+
+      expect(loadOverrides).not.toHaveBeenCalled();
+      expect(catalog.version).toBe(1);
+      expect(catalog.workModes.some((mode) => mode.id === "adaptive")).toBe(true);
+    } finally {
+      loadOverrides.mockRestore();
+    }
   });
 });

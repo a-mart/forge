@@ -4,11 +4,11 @@ import type {
   ConversationAttachment,
   ConversationReplyTargetInput,
   ManagerExactModelSelection,
-  ManagerPosture,
   ManagerPostureOrigin,
   ManagerReasoningLevel,
   DelegationRosterOrigin,
   SessionModelUpdateMode,
+  WorkModeId,
 } from '@forge/protocol'
 import type { RefObject } from 'react'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
@@ -34,6 +34,8 @@ export interface SessionModelPickerConfig {
   disabled?: boolean
   /** Bump from `model_config_changed` so the existing model-config fetch refreshes. */
   modelConfigChangeKey?: number
+  /** Bump from transport reconnect so a new server projection is fetched. */
+  connectionEpoch?: number
   onUpdate: (
     sessionAgentId: string,
     mode: SessionModelUpdateMode,
@@ -47,24 +49,28 @@ export interface SessionCoordinationPickerConfig {
   httpClientRef: RefObject<SettingsApiClient | null>
   sessionAgentId: string
   profileId: string
-  managerPosture: ManagerPosture
+  managerPosture?: WorkModeId
   managerPostureOrigin?: ManagerPostureOrigin
-  projectDefaultManagerPosture?: ManagerPosture
+  projectDefaultManagerPosture?: WorkModeId
   delegationRosterId?: string
   delegationRosterOrigin?: DelegationRosterOrigin
   projectDefaultDelegationRosterId?: string
   disabled?: boolean
+  /** Bump from `model_config_changed` so the catalog fetch refreshes. */
+  modelConfigChangeKey?: number
+  /** Bump from transport reconnect so a new server projection is fetched. */
+  connectionEpoch?: number
   onUpdateProjectDefaults: (
     profileId: string,
     updates: {
-      managerPosture?: ManagerPosture | null
+      managerPosture?: WorkModeId | null
       delegationRosterId?: string | null
     },
   ) => void | Promise<void>
   onUpdateSession: (
     sessionAgentId: string,
     updates: {
-      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: ManagerPosture }
+      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: WorkModeId }
       delegationRoster?: { mode: 'inherit' } | { mode: 'override'; rosterId: string }
     },
   ) => void | Promise<void>

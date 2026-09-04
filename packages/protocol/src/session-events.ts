@@ -8,8 +8,8 @@ import type {
   SessionMemoryMergeStrategy,
   SessionModelUpdateMode,
   DelegationRosterOrigin,
-  ManagerPosture,
   ManagerPostureOrigin,
+  WorkModeId,
 } from './shared-types.js'
 
 export interface SessionCreatedEvent {
@@ -98,7 +98,7 @@ export interface SessionModelUpdatedEvent {
 export interface SessionDelegationUpdatedEvent {
   type: 'session_delegation_updated'
   sessionAgentId: string
-  managerPosture: ManagerPosture
+  managerPosture: WorkModeId
   managerPostureOrigin: ManagerPostureOrigin
   delegationRosterId: string
   delegationRosterOrigin: DelegationRosterOrigin

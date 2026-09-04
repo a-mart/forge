@@ -14,6 +14,8 @@ import {
   isCatalogModelId,
   isConversationMessageSource,
   isUserVisibleAssistantConversationMessage,
+  MANAGER_SELECTION_CATALOG_VERSION,
+  WORK_MODE_DEFINITIONS,
   SESSION_ATTENTION_MAX_DISMISS_IDS,
   SESSION_ATTENTION_MAX_ID_LENGTH,
   SESSION_ATTENTION_REASONS,
@@ -40,6 +42,7 @@ import type {
   GenerationMeasurementRecordV1,
   GenerationThroughputEvent,
   ManagerProfile,
+  ManagerSelectionCatalogResponse,
   MessageChannel,
   ResolvedSpecialistDefinition,
   ServerEvent,
@@ -609,6 +612,19 @@ describe('protocol root barrel contract', () => {
     expect(getSpecialistFamilies().some((family) => family.familyId === 'pi-opus')).toBe(true)
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4')).toBeUndefined()
     expect(isCatalogModelId('gpt-5.4')).toBe(false)
+    const managerSelectionCatalog = {
+      version: MANAGER_SELECTION_CATALOG_VERSION,
+      revision: 'msc-v1-root-contract',
+      models: [],
+      workModes: WORK_MODE_DEFINITIONS.map(({ id, label, description, selectable }) => ({
+        id,
+        label,
+        description,
+        selectable,
+      })),
+      defaults: { workModeId: 'delegation_first' },
+    } satisfies ManagerSelectionCatalogResponse
+    expect(managerSelectionCatalog.workModes.some((mode) => mode.id === 'adaptive')).toBe(true)
     expect(isConversationMessageSource('assistant_output')).toBe(true)
     expect(isUserVisibleAssistantConversationMessage({
       type: 'conversation_message',

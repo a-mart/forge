@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { DEFAULT_MANAGER_POSTURE } from "@forge/protocol";
 import { assertBuilderSession, assertCollabSession, cloneDescriptor } from "./swarm-manager-utils.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
@@ -363,7 +364,7 @@ export class SwarmSessionService {
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
     forkedDescriptor.model = { ...sourceDescriptor.model };
     forkedDescriptor.modelOrigin = sourceDescriptor.modelOrigin;
-    forkedDescriptor.managerPosture = sourceDescriptor.managerPosture ?? "delegation_first";
+    forkedDescriptor.managerPosture = sourceDescriptor.managerPosture ?? DEFAULT_MANAGER_POSTURE;
     forkedDescriptor.managerPostureOrigin =
       sourceDescriptor.managerPostureOrigin ?? "product_default";
     forkedDescriptor.delegationRosterId = sourceDescriptor.delegationRosterId;

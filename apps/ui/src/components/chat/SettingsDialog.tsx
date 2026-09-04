@@ -40,6 +40,7 @@ interface SettingsPanelProps {
   promptChangeKey: number
   specialistChangeKey: number
   modelConfigChangeKey: number
+  connectionEpoch?: number
   onBack?: () => void
   /** Optional active session context for session-specific runtime prompt previews. */
   previewSession?: {
@@ -85,6 +86,7 @@ export function SettingsPanel({
   promptChangeKey,
   specialistChangeKey,
   modelConfigChangeKey,
+  connectionEpoch,
   onBack,
   previewSession,
   contextProfileId,
@@ -238,6 +240,8 @@ export function SettingsPanel({
           profile={selectedProject}
           manager={selectedProjectManager}
           apiClient={apiClient}
+          modelConfigChangeKey={modelConfigChangeKey}
+          connectionEpoch={connectionEpoch}
           actions={projectSettingsActions}
         />
       ) : null}

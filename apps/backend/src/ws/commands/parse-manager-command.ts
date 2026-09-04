@@ -1,4 +1,4 @@
-import { MANAGER_POSTURES, type ManagerPosture } from "@forge/protocol";
+import { isManagerPosture, type ManagerPosture } from "@forge/protocol";
 import {
   describeSwarmModelPresets,
   describeSwarmReasoningLevels,
@@ -188,10 +188,14 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     if (!hasPosture && !hasRoster) {
       return fail("update_project_delegation_defaults requires managerPosture or delegationRosterId");
     }
-    if (hasPosture && managerPosture !== null && !isManagerPosture(managerPosture)) {
-      return fail(
-        'update_project_delegation_defaults.managerPosture must be "delegation_first", "adaptive", "hands_on", or null',
-      );
+    let parsedPosture: ManagerPosture | null | undefined;
+    if (hasPosture) {
+      if (managerPosture !== null && !isManagerPosture(managerPosture)) {
+        return fail(
+          'update_project_delegation_defaults.managerPosture must be "delegation_first", "adaptive", "hands_on", or null',
+        );
+      }
+      parsedPosture = managerPosture === null ? null : managerPosture;
     }
     if (
       hasRoster
@@ -211,7 +215,7 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     return ok({
       type: "update_project_delegation_defaults",
       profileId: profileId.trim(),
-      ...(hasPosture ? { managerPosture: managerPosture as ManagerPosture | null } : {}),
+      ...(parsedPosture !== undefined ? { managerPosture: parsedPosture } : {}),
       ...(hasRoster
         ? {
             delegationRosterId:
@@ -376,8 +380,4 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
   }
 
   return undefined;
-}
-
-function isManagerPosture(value: unknown): value is ManagerPosture {
-  return MANAGER_POSTURES.includes(value as ManagerPosture);
 }

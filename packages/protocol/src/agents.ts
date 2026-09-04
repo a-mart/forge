@@ -1,8 +1,8 @@
 import type { CliSessionMetadata } from './cli.js'
 import type {
   DelegationRosterOrigin,
-  ManagerPosture,
   ManagerPostureOrigin,
+  WorkModeId,
 } from './delegation.js'
 import { CATALOG_FAMILY_IDS } from './model-catalog.js'
 
@@ -162,7 +162,8 @@ export interface ManagerProfile {
   displayName: string
   defaultSessionAgentId: string
   defaultModel: AgentModelDescriptor
-  defaultManagerPosture?: ManagerPosture
+  /** Bounded transport identity. Backend persistence still stores closed ManagerPosture. */
+  defaultManagerPosture?: WorkModeId
   defaultDelegationRosterId?: string
   createdAt: string
   updatedAt: string
@@ -207,7 +208,8 @@ export interface AgentDescriptor {
   cwd: string
   model: AgentModelDescriptor
   modelOrigin?: AgentModelOrigin
-  managerPosture?: ManagerPosture
+  /** Bounded transport identity. Backend persistence still stores closed ManagerPosture. */
+  managerPosture?: WorkModeId
   managerPostureOrigin?: ManagerPostureOrigin
   delegationRosterId?: string
   delegationRosterOrigin?: DelegationRosterOrigin

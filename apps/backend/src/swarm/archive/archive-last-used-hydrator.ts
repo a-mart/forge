@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { access } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import type { AgentDescriptor, ManagerProfile } from "@forge/protocol";
+import type { AgentDescriptor, ManagerProfile } from "../types.js";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 
 export interface ArchiveLastUsedHydratorDeps {

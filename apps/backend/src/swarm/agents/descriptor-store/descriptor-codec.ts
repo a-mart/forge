@@ -4,6 +4,7 @@ import {
   isRecord,
   validateAgentDescriptor
 } from "../../swarm-manager-utils.js";
+import { isManagerPosture } from "@forge/protocol";
 import { cloneDescriptorForPersistence, cloneProfile } from "./descriptor-clone.js";
 import { normalizeDescriptorPaths } from "./descriptor-path-resolver.js";
 
@@ -63,11 +64,39 @@ export function decodeAgentsStoreFile(raw: string, options: DecodeStoreOptions):
   return {
     store: {
       agents: validAgents,
-      profiles: Array.isArray(parsed.profiles) ? (parsed.profiles as ManagerProfile[]).map(cloneProfile) : []
+      profiles: decodePersistedProfiles(parsed.profiles, options.storeFilePath, warn)
     },
     normalizedPathCount,
     skippedDescriptorCount
   };
+}
+
+function decodePersistedProfiles(
+  candidates: unknown,
+  storeFilePath: string,
+  warn: (message: string) => void
+): ManagerProfile[] {
+  if (!Array.isArray(candidates)) {
+    return [];
+  }
+
+  const profiles: ManagerProfile[] = [];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+    const { defaultManagerPosture, ...rest } = candidate as ManagerProfile & Record<string, unknown>;
+    if (defaultManagerPosture !== undefined && !isManagerPosture(defaultManagerPosture)) {
+      const profileHint = typeof rest.profileId === "string" ? `profileId=${rest.profileId}` : "profileId=<unknown>";
+      warn(
+        `[swarm] Dropping unknown defaultManagerPosture (${profileHint}) in ${storeFilePath}; keeping the profile without a persisted default.`
+      );
+      profiles.push(cloneProfile(rest as unknown as ManagerProfile));
+      continue;
+    }
+    profiles.push(cloneProfile(candidate as unknown as ManagerProfile));
+  }
+  return profiles;
 }
 
 export function encodeAgentsStoreFile(store: AgentsStoreFile): string {

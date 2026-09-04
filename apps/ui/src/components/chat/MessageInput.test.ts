@@ -11,6 +11,8 @@ import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ConversationAttachment } from '@forge/protocol'
 import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
 import { clearCodexCatalogCache } from '@/lib/codex-catalog-cache'
+import { makeManagerSelectionCatalog } from '@/lib/manager-selection-catalog.fixture'
+import { invalidateManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
 
 const fetchCodexCatalogMock = vi.mocked(fetchCodexCatalog)
 const pickerApiClient = { target: { kind: 'collab' } } as unknown as SettingsApiClient
@@ -54,21 +56,14 @@ vi.mock('@/lib/codex-catalog-api', () => ({
   fetchCodexCatalog: vi.fn(),
 }))
 
-const modelsApiMock = vi.hoisted(() => ({
-  fetchModelOverrides: vi.fn(async () => ({
-    version: 1,
-    overrides: {},
-    providerAvailability: {
-      'openai-codex': true,
-      anthropic: true,
-      'cursor-sdk': true,
-      xai: true,
-    },
-    providerCredentials: {},
-  })),
+const catalogApiMock = vi.hoisted(() => ({
+  fetchManagerSelectionCatalog: vi.fn(),
 }))
 
-vi.mock('@/components/settings/models-api', () => modelsApiMock)
+vi.mock('@/lib/manager-selection-catalog-api', () => ({
+  fetchManagerSelectionCatalog: (...args: unknown[]) =>
+    catalogApiMock.fetchManagerSelectionCatalog(...args),
+}))
 
 const voiceInputMockState: {
   transcribedText: string | null
@@ -148,7 +143,9 @@ beforeEach(() => {
   voiceInputMockState.transcribedText = null
   fetchCodexCatalogMock.mockReset()
   clearCodexCatalogCache()
+  invalidateManagerSelectionCatalog()
   vi.clearAllMocks()
+  catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
 })
 
 afterEach(() => {
@@ -157,6 +154,7 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  invalidateManagerSelectionCatalog()
 })
 
 async function flush(): Promise<void> {
@@ -507,7 +505,7 @@ describe('MessageInput', () => {
       expect(getByRole(document.body, 'menuitem', { name: /Model.*GPT-5.5/ })).toBeTruthy()
       expect(getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })).toBeTruthy()
       expect(trigger.getAttribute('aria-expanded')).toBe('true')
-      expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(pickerApiClient)
+      expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledWith(pickerApiClient)
     })
 
     it('does not submit a non-empty draft when saving a session model change', async () => {

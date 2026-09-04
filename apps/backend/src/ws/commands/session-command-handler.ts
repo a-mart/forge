@@ -1,8 +1,10 @@
-import type {
-  ClientCommand,
-  ServerEvent,
-  SessionMemoryMergeFailureStage,
-  SessionMemoryMergeStrategy
+import {
+  isManagerPosture,
+  type ClientCommand,
+  type ManagerPosture,
+  type ServerEvent,
+  type SessionMemoryMergeFailureStage,
+  type SessionMemoryMergeStrategy,
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
@@ -455,10 +457,23 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         swarmManager.listProfiles(),
         (agentId) => swarmManager.getAgent(agentId),
       );
+      let postureUpdate: { mode: "inherit" } | { mode: "override"; value: ManagerPosture } | undefined;
+      if (command.managerPosture?.mode === "inherit") {
+        postureUpdate = command.managerPosture;
+      } else if (command.managerPosture?.mode === "override") {
+        if (!isManagerPosture(command.managerPosture.value)) {
+          send(socket, {
+            type: "error",
+            code: "UPDATE_SESSION_DELEGATION_FAILED",
+            message: 'managerPosture override must be "delegation_first", "adaptive", or "hands_on"',
+            requestId: command.requestId,
+          });
+          return true;
+        }
+        postureUpdate = { mode: "override", value: command.managerPosture.value };
+      }
       await swarmManager.updateSessionDelegation(command.sessionAgentId, {
-        ...(command.managerPosture
-          ? { managerPosture: command.managerPosture }
-          : {}),
+        ...(postureUpdate ? { managerPosture: postureUpdate } : {}),
         ...(command.delegationRoster
           ? { delegationRoster: command.delegationRoster }
           : {}),

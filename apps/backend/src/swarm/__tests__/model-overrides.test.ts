@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getSharedModelOverridesPath } from "../data-paths.js";
 import { ModelCatalogService } from "../model-catalog-service.js";
+import * as modelOverrides from "../catalog/model-overrides.js";
+import * as openRouterModels from "../catalog/openrouter-models.js";
 import { readModelOverrides, writeModelOverrides } from "../model-overrides.js";
 
 const tempDirs: string[] = [];
@@ -15,6 +17,7 @@ async function makeTempDataDir(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -217,5 +220,41 @@ describe("model-overrides", () => {
     expect(service.getEffectiveModelSpecificInstructions("grok-4")).toBeUndefined();
     expect(service.getEffectiveModelSpecificInstructions("gpt-5.5")).toBe("Custom GPT instructions");
     expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6")).toBeUndefined();
+  });
+
+  it("does not let an older overlapping loadOverrides replace a newer mutation", async () => {
+    const dataDir = await makeTempDataDir();
+    let releaseStale!: () => void;
+    let resolveStaleStarted!: () => void;
+    const staleStarted = new Promise<void>((resolve) => {
+      resolveStaleStarted = resolve;
+    });
+    const staleGate = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
+    let overrideReads = 0;
+
+    vi.spyOn(modelOverrides, "readModelOverrides").mockImplementation(async () => {
+      overrideReads += 1;
+      if (overrideReads === 1) {
+        resolveStaleStarted();
+        await staleGate;
+        return { version: 1, overrides: { "claude-fable-5-1": { managerEnabled: false } } };
+      }
+      return { version: 1, overrides: { "claude-fable-5-1": { managerEnabled: true } } };
+    });
+    vi.spyOn(openRouterModels, "readOpenRouterModels").mockResolvedValue({
+      version: 1,
+      models: {},
+    });
+
+    const service = new ModelCatalogService();
+    const staleLoad = service.loadOverrides(dataDir);
+    await staleStarted.promise;
+    await service.loadOverrides(dataDir);
+    releaseStale();
+    await staleLoad;
+
+    expect(service.getOverrides()["claude-fable-5-1"]).toEqual({ managerEnabled: true });
   });
 });

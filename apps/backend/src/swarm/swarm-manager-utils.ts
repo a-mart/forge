@@ -5,8 +5,8 @@ import { isEnoentError } from "../utils/fs-errors.js";
 import { getModel, getModels, type Api, type Model } from "./pi/pi-ai-compat.js";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
-  MANAGER_POSTURES,
   PROJECT_AGENT_CAPABILITIES,
+  isManagerPosture,
   isTerminalAssistantConversationMessage,
   type AgentRuntimeExtensionSnapshot,
   type CollaborationAuthor,
@@ -341,10 +341,7 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'modelOrigin must be "profile_default" or "session_override" when provided';
   }
 
-  if (
-    value.managerPosture !== undefined &&
-    !MANAGER_POSTURES.includes(value.managerPosture as (typeof MANAGER_POSTURES)[number])
-  ) {
+  if (value.managerPosture !== undefined && !isManagerPosture(value.managerPosture)) {
     return 'managerPosture must be "delegation_first", "adaptive", or "hands_on" when provided';
   }
 

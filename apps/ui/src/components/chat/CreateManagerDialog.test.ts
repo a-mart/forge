@@ -6,6 +6,11 @@ import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { waitFor } from '@testing-library/dom'
+import {
+  FUTURE_MODEL,
+  OPENROUTER_GLM,
+  makeManagerSelectionCatalog,
+} from '@/lib/manager-selection-catalog.fixture'
 
 // Radix UI components require ResizeObserver in jsdom
 globalThis.ResizeObserver ??= class ResizeObserver {
@@ -14,30 +19,28 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
-const modelsApiMock = vi.hoisted(() => ({
-  fetchModelOverrides: vi.fn().mockResolvedValue({
-    version: 1,
-    overrides: {},
-    providerAvailability: {
-      // All managed-auth providers explicitly unavailable
-      'openai-codex': false,
-      'anthropic': false,
-      'xai': false,
-    },
-    openRouterModels: [],
-  }),
+const catalogApiMock = vi.hoisted(() => ({
+  fetchManagerSelectionCatalog: vi.fn(),
 }))
 
-vi.mock('@/components/settings/models-api', () => ({
-  fetchModelOverrides: (...args: unknown[]) => modelsApiMock.fetchModelOverrides(...args),
+vi.mock('@/lib/manager-selection-catalog-api', () => ({
+  fetchManagerSelectionCatalog: (...args: unknown[]) =>
+    catalogApiMock.fetchManagerSelectionCatalog(...args),
 }))
 
 const { CreateManagerDialog } = await import('./CreateManagerDialog')
+const { invalidateManagerSelectionCatalog } = await import('@/lib/use-manager-selection-catalog')
 
 let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  invalidateManagerSelectionCatalog()
+  catalogApiMock.fetchManagerSelectionCatalog.mockReset()
+  catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+    models: [],
+    defaults: { workModeId: 'delegation_first' },
+  }))
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -50,17 +53,8 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  invalidateManagerSelectionCatalog()
   vi.clearAllMocks()
-  modelsApiMock.fetchModelOverrides.mockResolvedValue({
-    version: 1,
-    overrides: {},
-    providerAvailability: {
-      'openai-codex': false,
-      anthropic: false,
-      xai: false,
-    },
-    openRouterModels: [],
-  })
 })
 
 function findSubmitButton(): HTMLButtonElement | null {
@@ -352,33 +346,73 @@ describe('CreateManagerDialog', () => {
     })
   })
 
+  it('uses the server-advertised synthetic model and reasoning default exactly', async () => {
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      models: [FUTURE_MODEL],
+      defaults: {
+        createManagerModel: {
+          provider: FUTURE_MODEL.provider,
+          modelId: FUTURE_MODEL.modelId,
+          reasoningId: 'low',
+        },
+        workModeId: 'delegation_first',
+      },
+    }))
+    const onModelSelectionChange = vi.fn()
+    const onReasoningLevelChange = vi.fn()
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(CreateManagerDialog, defaultProps({
+        onModelSelectionChange,
+        onReasoningLevelChange,
+      })))
+    })
+
+    expect(onModelSelectionChange).toHaveBeenCalledWith({
+      provider: 'future-labs',
+      modelId: 'oracle-9',
+    })
+    expect(onReasoningLevelChange).toHaveBeenCalledWith('low')
+  })
+
+  it('leaves the model unset when the server omits a create default', async () => {
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      defaults: { workModeId: 'delegation_first' },
+    }))
+    const onModelSelectionChange = vi.fn()
+    const onReasoningLevelChange = vi.fn()
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(CreateManagerDialog, defaultProps({
+        onModelSelectionChange,
+        onReasoningLevelChange,
+      })))
+    })
+
+    expect(onModelSelectionChange).not.toHaveBeenCalled()
+    expect(onReasoningLevelChange).not.toHaveBeenCalled()
+    expect(findSubmitButton()?.disabled).toBe(true)
+    expect(document.body.querySelector('[role="dialog"]')?.textContent)
+      .not.toContain('No manager models are currently available')
+  })
+
   describe('OpenRouter manager models', () => {
     it('includes an enabled tool-capable OpenRouter model in the create selector', async () => {
       const onModelSelectionChange = vi.fn()
       const onReasoningLevelChange = vi.fn()
-      modelsApiMock.fetchModelOverrides.mockResolvedValue({
-        version: 1,
-        overrides: {
-          'openrouter:z-ai/glm-5.1': { managerEnabled: true },
+      catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+        models: [OPENROUTER_GLM],
+        defaults: {
+          createManagerModel: {
+            provider: OPENROUTER_GLM.provider,
+            modelId: OPENROUTER_GLM.modelId,
+            reasoningId: OPENROUTER_GLM.defaultReasoningId,
+          },
+          workModeId: 'delegation_first',
         },
-        providerAvailability: {
-          'openai-codex': false,
-          anthropic: false,
-          xai: false,
-          openrouter: true,
-        },
-        openRouterModels: [{
-          modelId: 'z-ai/glm-5.1',
-          displayName: 'Z.ai: GLM 5.1',
-          contextWindow: 202_752,
-          maxOutputTokens: 202_752,
-          supportsReasoning: true,
-          supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-          inputModes: ['text'],
-          addedAt: '2026-04-03T00:00:00.000Z',
-          supportsTools: true,
-        }],
-      })
+      }))
 
       await act(async () => {
         root = createRoot(container)
@@ -388,38 +422,31 @@ describe('CreateManagerDialog', () => {
         })))
       })
 
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).not.toContain('No manager models are currently available')
-      expect(findSubmitButton()?.disabled).toBe(false)
       expect(onModelSelectionChange).toHaveBeenCalledWith({
         provider: 'openrouter',
         modelId: 'z-ai/glm-5.1',
       })
       expect(onReasoningLevelChange).toHaveBeenCalledWith('medium')
+
+      await act(async () => {
+        root?.render(createElement(CreateManagerDialog, defaultProps({
+          onModelSelectionChange,
+          onReasoningLevelChange,
+          newManagerModelSelection: { provider: 'openrouter', modelId: 'z-ai/glm-5.1' },
+          newManagerReasoningLevel: 'medium',
+        })))
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).not.toContain('No manager models are currently available')
+      expect(findSubmitButton()?.disabled).toBe(false)
     })
 
     it('keeps OpenRouter models out of the create selector until managerEnabled is true', async () => {
-      modelsApiMock.fetchModelOverrides.mockResolvedValue({
-        version: 1,
-        overrides: {},
-        providerAvailability: {
-          'openai-codex': false,
-          anthropic: false,
-          xai: false,
-          openrouter: true,
-        },
-        openRouterModels: [{
-          modelId: 'z-ai/glm-5.1',
-          displayName: 'Z.ai: GLM 5.1',
-          contextWindow: 202_752,
-          maxOutputTokens: 202_752,
-          supportsReasoning: true,
-          supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-          inputModes: ['text'],
-          addedAt: '2026-04-03T00:00:00.000Z',
-          supportsTools: true,
-        }],
-      })
+      catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+        models: [],
+        defaults: { workModeId: 'delegation_first' },
+      }))
 
       await act(async () => {
         root = createRoot(container)

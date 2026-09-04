@@ -1,5 +1,5 @@
 import { BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR } from '@forge/protocol'
-import type { CodexElicitationDecision, CodexElicitationPersistScope, ManagerPosture, SessionGoalControlAction, SessionProjectAgentInput } from '@forge/protocol'
+import type { CodexElicitationDecision, CodexElicitationPersistScope, SessionGoalControlAction, SessionProjectAgentInput, WorkModeId } from '@forge/protocol'
 import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import {
   conversationBootstrapMetrics,
@@ -972,7 +972,7 @@ export class ManagerWsClient {
   async updateProjectDelegationDefaults(
     profileId: string,
     updates: {
-      managerPosture?: ManagerPosture | null
+      managerPosture?: WorkModeId | null
       delegationRosterId?: string | null
     },
   ): Promise<{ profileId: string }> {
@@ -1075,7 +1075,7 @@ export class ManagerWsClient {
     updates: {
       managerPosture?: { mode: 'inherit' } | {
         mode: 'override'
-        value: ManagerPosture
+        value: WorkModeId
       }
       delegationRoster?: { mode: 'inherit' } | {
         mode: 'override'

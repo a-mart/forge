@@ -34,8 +34,8 @@ import type {
   ConversationEntry,
   ConversationReplyTargetInput,
   ManagerExactModelSelection,
-  ManagerPosture,
   ManagerReasoningLevel,
+  WorkModeId,
   SessionProjectAgentInput,
 } from '@forge/protocol'
 import type { ManagerWsClient } from '@/lib/ws-client'
@@ -580,7 +580,7 @@ export function useSessionActions({
   const handleUpdateProjectDelegationDefaults = useCallback(async (
     profileId: string,
     updates: {
-      managerPosture?: ManagerPosture | null
+      managerPosture?: WorkModeId | null
       delegationRosterId?: string | null
     },
   ) => {

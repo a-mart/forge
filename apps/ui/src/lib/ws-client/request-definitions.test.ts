@@ -147,6 +147,29 @@ describe('delegation settings command builders', () => {
     })
   })
 
+  it('preserves future Work Mode IDs and request correlation exactly', () => {
+    expect(buildUpdateProjectDelegationDefaultsCommand(
+      'project-a',
+      { managerPosture: 'review_led' },
+      'req-future-project-mode',
+    )).toEqual({
+      type: 'update_project_delegation_defaults',
+      profileId: 'project-a',
+      managerPosture: 'review_led',
+      requestId: 'req-future-project-mode',
+    })
+    expect(buildUpdateSessionDelegationCommand(
+      'session-a',
+      { managerPosture: { mode: 'override', value: 'review_led' } },
+      'req-future-session-mode',
+    )).toEqual({
+      type: 'update_session_delegation',
+      sessionAgentId: 'session-a',
+      managerPosture: { mode: 'override', value: 'review_led' },
+      requestId: 'req-future-session-mode',
+    })
+  })
+
   it('serializes session inheritance and trims explicit roster ids', () => {
     expect(buildUpdateSessionDelegationCommand(
       ' session-a ',

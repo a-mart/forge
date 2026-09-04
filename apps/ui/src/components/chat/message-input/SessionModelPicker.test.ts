@@ -8,17 +8,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SessionModelPickerConfig } from './types'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
+import {
+  FUTURE_MODEL,
+  OPENROUTER_GLM,
+  makeManagerSelectionCatalog,
+} from '@/lib/manager-selection-catalog.fixture'
 
-const modelsApiMock = vi.hoisted(() => ({
-  fetchModelOverrides: vi.fn(),
+const catalogApiMock = vi.hoisted(() => ({
+  fetchManagerSelectionCatalog: vi.fn(),
 }))
 
-vi.mock('@/components/settings/models-api', () => ({
-  fetchModelOverrides: (...args: unknown[]) => modelsApiMock.fetchModelOverrides(...args),
+vi.mock('@/lib/manager-selection-catalog-api', () => ({
+  fetchManagerSelectionCatalog: (...args: unknown[]) =>
+    catalogApiMock.fetchManagerSelectionCatalog(...args),
 }))
 
 const { SessionModelPicker } = await import('./SessionModelPicker')
 const { isSessionModelPickerEligible } = await import('./session-model-picker-eligibility')
+const { invalidateManagerSelectionCatalog } = await import('@/lib/use-manager-selection-catalog')
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -30,18 +37,9 @@ beforeEach(() => {
   Element.prototype.setPointerCapture ??= vi.fn()
   Element.prototype.releasePointerCapture ??= vi.fn()
   Element.prototype.scrollIntoView ??= vi.fn()
-  modelsApiMock.fetchModelOverrides.mockResolvedValue({
-    version: 1,
-    overrides: {},
-    providerAvailability: {
-      'openai-codex': true,
-      anthropic: true,
-      'claude-sdk': true,
-      'cursor-sdk': true,
-      xai: true,
-    },
-    providerCredentials: {},
-  })
+  invalidateManagerSelectionCatalog()
+  catalogApiMock.fetchManagerSelectionCatalog.mockReset()
+  catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
 })
 
 afterEach(() => {
@@ -50,6 +48,7 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  invalidateManagerSelectionCatalog()
   vi.clearAllMocks()
 })
 
@@ -154,27 +153,27 @@ describe('SessionModelPicker compact menu', () => {
     renderPicker(onUpdate)
     await openPicker()
 
-    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(pickerApiClient)
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledWith(pickerApiClient)
     expect(queryByRole(document.body, 'dialog')).toBeNull()
     expect(getByRole(document.body, 'menuitem', { name: /Model.*GPT-5.5/ })).toBeTruthy()
     expect(getByRole(document.body, 'menuitem', { name: /Reasoning.*Max/ })).toBeTruthy()
   })
 
-  it('reuses cached model availability when the picker is reopened', async () => {
+  it('forces a validated catalog fetch when the picker is reopened', async () => {
     const onUpdate = vi.fn()
     renderPicker(onUpdate)
     await flushAsyncWork()
 
-    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledTimes(1)
 
     await openPicker()
-    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledTimes(2)
 
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await flushAsyncWork()
     await openPicker()
 
-    expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledTimes(1)
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledTimes(3)
   })
 
   it('distinguishes Opus 5 xhigh from max while keeping legacy GPT xhigh as Max', async () => {
@@ -182,6 +181,7 @@ describe('SessionModelPicker compact menu', () => {
     renderPicker(onUpdate, {
       currentModel: { provider: 'anthropic', modelId: 'claude-opus-5', thinkingLevel: 'xhigh' },
     })
+    await flushAsyncWork()
 
     expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
     await openPicker()
@@ -195,6 +195,7 @@ describe('SessionModelPicker compact menu', () => {
     renderPicker(onUpdate, {
       currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'xhigh' },
     })
+    await flushAsyncWork()
 
     expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
     await openPicker()
@@ -212,6 +213,7 @@ describe('SessionModelPicker compact menu', () => {
     renderPicker(onUpdate, {
       currentModel: { provider: 'openai-codex', modelId, thinkingLevel: 'xhigh' },
     })
+    await flushAsyncWork()
 
     expect(getByRole(container, 'button', { name: /Extra High/ })).toBeTruthy()
     await openPicker()
@@ -326,29 +328,31 @@ describe('SessionModelPicker compact menu', () => {
     expect(queryByRole(document.body, 'menu')).toBeNull()
   })
 
-  it('includes an enabled OpenRouter model and refreshes after model_config_changed', async () => {
-    const glm = {
-      modelId: 'z-ai/glm-5.1',
-      displayName: 'Z.ai: GLM 5.1',
-      contextWindow: 202_752,
-      maxOutputTokens: 202_752,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-      inputModes: ['text'],
-      addedAt: '2026-04-03T00:00:00.000Z',
-      supportsTools: true,
-    }
-    modelsApiMock.fetchModelOverrides.mockResolvedValue({
-      version: 1,
-      overrides: {},
-      providerAvailability: {
-        'openai-codex': true,
-        anthropic: true,
-        xai: true,
-        openrouter: true,
-      },
-      openRouterModels: [glm],
+  it('uses synthetic future models and Fable 5.1 from the server snapshot', async () => {
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      models: [...makeManagerSelectionCatalog().models, FUTURE_MODEL],
+    }))
+    const onUpdate = vi.fn(async () => {})
+    renderPicker(onUpdate)
+    await openPicker()
+    await openSubmenu(/Model/)
+
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Claude Fable 5.1' })).toBeTruthy()
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'Oracle 9' }))
     })
+    await flushAsyncWork()
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      'manager-1',
+      'override',
+      { provider: 'future-labs', modelId: 'oracle-9' },
+      'high',
+    )
+  })
+
+  it('includes an enabled OpenRouter model and refreshes after model_config_changed', async () => {
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
 
     const onUpdate = vi.fn()
     renderPicker(onUpdate, { modelConfigChangeKey: 0 })
@@ -358,52 +362,68 @@ describe('SessionModelPicker compact menu', () => {
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await flushAsyncWork()
 
-    modelsApiMock.fetchModelOverrides.mockResolvedValue({
-      version: 1,
-      overrides: { 'openrouter:z-ai/glm-5.1': { managerEnabled: true } },
-      providerAvailability: {
-        'openai-codex': true,
-        anthropic: true,
-        xai: true,
-        openrouter: true,
-      },
-      openRouterModels: [glm],
-    })
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      models: [...makeManagerSelectionCatalog().models, OPENROUTER_GLM],
+    }))
     rerenderPicker(onUpdate, { modelConfigChangeKey: 1 })
     await flushAsyncWork()
     await openPicker()
     await openSubmenu(/Model/)
     expect(getByRole(document.body, 'menuitemradio', { name: 'Z.ai: GLM 5.1' })).toBeTruthy()
-    expect(modelsApiMock.fetchModelOverrides.mock.calls.length).toBeGreaterThan(1)
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledTimes(4)
+  })
+
+  it('refreshes enable and disable state on reopen without reconnect', async () => {
+    const enabled = makeManagerSelectionCatalog()
+    const disabled = makeManagerSelectionCatalog({
+      models: enabled.models.map((model) => (
+        model.modelId === 'claude-fable-5-1'
+          ? {
+              ...model,
+              surfaces: {
+                create: { selectable: false as const, unavailableReason: 'provider_not_configured' as const },
+                change: { selectable: false as const, unavailableReason: 'provider_not_configured' as const },
+              },
+            }
+          : model
+      )),
+    })
+    catalogApiMock.fetchManagerSelectionCatalog
+      .mockResolvedValueOnce(enabled)
+      .mockResolvedValueOnce(enabled)
+      .mockResolvedValueOnce(disabled)
+
+    const onUpdate = vi.fn()
+    renderPicker(onUpdate, { modelConfigChangeKey: 0, connectionEpoch: 1 })
+    await openPicker()
+    await openSubmenu(/Model/)
+    expect(getByRole(document.body, 'menuitemradio', { name: 'Claude Fable 5.1' })).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    await flushAsyncWork()
+
+    await openPicker()
+    await openSubmenu(/Model/)
+    expect(queryByRole(document.body, 'menuitemradio', { name: 'Claude Fable 5.1' })).toBeNull()
+    expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledTimes(3)
   })
 
   it('keeps an unavailable current OpenRouter model as a disabled current option', async () => {
-    const glm = {
-      modelId: 'z-ai/glm-5.1',
-      displayName: 'Z.ai: GLM 5.1',
-      contextWindow: 202_752,
-      maxOutputTokens: 202_752,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-      inputModes: ['text'],
-      addedAt: '2026-04-03T00:00:00.000Z',
-      supportsTools: true,
-    }
-    modelsApiMock.fetchModelOverrides.mockResolvedValue({
-      version: 1,
-      overrides: {},
-      providerAvailability: {
-        'openai-codex': true,
-        anthropic: true,
-        xai: true,
-        openrouter: true,
-      },
-      openRouterModels: [glm],
-    })
+    catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+      models: [
+        ...makeManagerSelectionCatalog().models,
+        {
+          ...OPENROUTER_GLM,
+          surfaces: {
+            create: { selectable: false, unavailableReason: 'disabled' },
+            change: { selectable: false, unavailableReason: 'disabled' },
+          },
+        },
+      ],
+    }))
 
     const onUpdate = vi.fn()
     renderPicker(onUpdate, {
-      currentModel: { provider: 'openrouter', modelId: glm.modelId, thinkingLevel: 'medium' },
+      currentModel: { provider: 'openrouter', modelId: OPENROUTER_GLM.modelId, thinkingLevel: 'medium' },
     })
     await openPicker()
     await openSubmenu(/Model/)

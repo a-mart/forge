@@ -1,6 +1,6 @@
 import type { ManagerPosture } from "@forge/protocol";
 
-export const DEFAULT_MANAGER_POSTURE: ManagerPosture = "delegation_first";
+export { DEFAULT_MANAGER_POSTURE } from "@forge/protocol";
 
 const DELEGATION_FIRST_BLOCK = `## Work routing
 Your posture is **Delegation-first**.

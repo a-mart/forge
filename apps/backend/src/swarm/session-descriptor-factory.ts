@@ -7,7 +7,7 @@ import {
   slugifySessionName,
 } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile } from "./types.js";
-import type { ManagerPosture } from "@forge/protocol";
+import { DEFAULT_MANAGER_POSTURE, type ManagerPosture } from "@forge/protocol";
 
 const CORTEX_PROFILE_ID = "cortex";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
@@ -93,7 +93,7 @@ export class SessionDescriptorFactory {
         ...(templateDescriptor.sessionSystemPrompt !== undefined
           ? { sessionSystemPrompt: templateDescriptor.sessionSystemPrompt }
           : {}),
-        managerPosture: profile.defaultManagerPosture ?? "delegation_first",
+        managerPosture: profile.defaultManagerPosture ?? DEFAULT_MANAGER_POSTURE,
         managerPostureOrigin: profile.defaultManagerPosture
           ? "project_default"
           : "product_default",
@@ -137,7 +137,7 @@ export class SessionDescriptorFactory {
         identity.profile.profileId,
         identity.sessionAgentId,
       ),
-      managerPosture: options?.managerPosture ?? base.managerPosture ?? "delegation_first",
+      managerPosture: options?.managerPosture ?? base.managerPosture ?? DEFAULT_MANAGER_POSTURE,
       managerPostureOrigin: options?.managerPosture
         ? "session_override"
         : base.managerPostureOrigin ?? "product_default",

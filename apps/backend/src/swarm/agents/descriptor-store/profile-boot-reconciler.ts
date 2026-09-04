@@ -1,6 +1,7 @@
 import { normalizePersistedSwarmModelDescriptor } from "../../model-presets.js";
 import { normalizeOptionalAgentId } from "../../swarm-manager-utils.js";
 import { DEFAULT_MANAGER_POSTURE } from "../../prompts/manager-posture.js";
+import { isManagerPosture } from "@forge/protocol";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -147,8 +148,13 @@ export class ProfileBootReconciler {
   reconcileDelegationStateOnBoot(defaultDelegationRosterId: string): boolean {
     let changed = false;
     for (const profile of this.options.profiles.values()) {
-      const inheritedPosture = profile.defaultManagerPosture ?? DEFAULT_MANAGER_POSTURE;
-      const inheritedPostureOrigin = profile.defaultManagerPosture
+      // Defense in depth: decode already omits unknown persisted postures, but
+      // never propagate a future/unknown value into booted sessions here either.
+      const persistedPosture = isManagerPosture(profile.defaultManagerPosture)
+        ? profile.defaultManagerPosture
+        : undefined;
+      const inheritedPosture = persistedPosture ?? DEFAULT_MANAGER_POSTURE;
+      const inheritedPostureOrigin = persistedPosture
         ? "project_default" as const
         : "product_default" as const;
       const inheritedRosterId = profile.defaultDelegationRosterId ?? defaultDelegationRosterId;

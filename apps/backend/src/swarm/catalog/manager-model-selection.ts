@@ -1,12 +1,17 @@
 import {
+  MANAGER_REASONING_LEVELS,
+  getCatalogFamily,
+  getCatalogModel,
   getEffectiveManagerEnabled,
   getEffectiveOpenRouterManagerEnabled,
-  getCatalogModel,
   getOpenRouterManagerDefaultReasoningLevel,
   isCatalogModelManagerSupported,
   isOpenRouterModelManagerSupported,
+  type ForgeModelDefinition,
   type ManagerExactModelSelection,
   type ManagerModelSurface,
+  type ManagerReasoningLevel,
+  type OpenRouterModelEntry,
 } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../types.js";
 import {
@@ -16,106 +21,288 @@ import {
 } from "./model-presets.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
-export function resolveExactManagerModelSelection(
+export type ManagerModelEligibilityFailureCode =
+  | "invalid_selection"
+  | "retired"
+  | "unknown"
+  | "globally_disabled"
+  | "unsupported_surface"
+  | "manager_disabled"
+  | "provider_not_configured";
+
+export interface ManagerModelEligibilityMetadata {
+  source: "catalog" | "openrouter";
+  provider: string;
+  providerLabel: string;
+  modelId: string;
+  label: string;
+  familyId?: string;
+  familyLabel?: string;
+  supportedReasoningLevels: readonly ManagerReasoningLevel[];
+  defaultReasoningLevel: ManagerReasoningLevel;
+}
+
+export interface ManagerModelEligibilityChecks {
+  globallyEnabled: boolean;
+  surfaceSupported: boolean;
+  managerEnabled: boolean;
+  providerAvailable: boolean;
+}
+
+export type ManagerModelEligibilityResult =
+  | {
+      eligible: true;
+      metadata: ManagerModelEligibilityMetadata;
+      checks: ManagerModelEligibilityChecks;
+      descriptor: AgentModelDescriptor;
+    }
+  | {
+      eligible: false;
+      code: ManagerModelEligibilityFailureCode;
+      message: string;
+      metadata?: ManagerModelEligibilityMetadata;
+      checks?: ManagerModelEligibilityChecks;
+    };
+
+interface ManagerModelEligibilityOptions {
+  surface: ManagerModelSurface;
+  providerAvailability: ReadonlyMap<string, boolean>;
+  reasoningLevel?: SwarmReasoningLevel;
+}
+
+/**
+ * Authoritative structured policy evaluation for exact manager selections.
+ * Command resolution and the manager-selection catalog are adapters over this
+ * result so eligibility predicates cannot drift between read and write paths.
+ */
+export function evaluateExactManagerModelSelection(
   selection: ManagerExactModelSelection,
-  options: {
-    surface: ManagerModelSurface;
-    providerAvailability: ReadonlyMap<string, boolean>;
-    reasoningLevel?: SwarmReasoningLevel;
-  }
-): AgentModelDescriptor {
+  options: ManagerModelEligibilityOptions,
+): ManagerModelEligibilityResult {
   const provider = selection.provider.trim().toLowerCase();
   const modelId = selection.modelId.trim();
 
   if (!provider) {
-    throw new Error("modelSelection.provider must be a non-empty string");
+    return reject("invalid_selection", "modelSelection.provider must be a non-empty string");
   }
 
   if (!modelId) {
-    throw new Error("modelSelection.modelId must be a non-empty string");
+    return reject("invalid_selection", "modelSelection.modelId must be a non-empty string");
   }
 
-  assertSwarmModelIdNotRetired(provider, modelId, "modelSelection.modelId");
+  try {
+    assertSwarmModelIdNotRetired(provider, modelId, "modelSelection.modelId");
+  } catch (error) {
+    return reject("retired", error instanceof Error ? error.message : String(error));
+  }
 
   if (provider === "openrouter") {
-    return resolveExactOpenRouterManagerModelSelection(modelId, options);
+    return evaluateExactOpenRouterManagerModelSelection(modelId, options);
   }
 
-  const catalogModel = getCatalogModel(modelId, provider);
-  if (!catalogModel || catalogModel.provider !== provider) {
-    throw new Error(`Unknown manager model selection: ${provider}/${modelId}`);
+  // Eligibility intentionally comes from the checked-in policy row. Effective
+  // metadata may be overlaid for that same exact ID (for example xAI OAuth),
+  // but discovered-only IDs remain worker/specialist-only and fail closed.
+  const policyModel = getCatalogModel(modelId, provider);
+  if (!policyModel || policyModel.provider !== provider) {
+    const discoveredModel = modelCatalogService.getModel(modelId, provider);
+    if (discoveredModel?.discovered) {
+      const metadata = catalogMetadata(discoveredModel);
+      return reject(
+        "unknown",
+        `Unknown manager model selection: ${provider}/${modelId}`,
+        metadata,
+        {
+          globallyEnabled: modelCatalogService.isModelEnabled(modelId, provider),
+          surfaceSupported: false,
+          managerEnabled: false,
+          providerAvailable: options.providerAvailability.get(provider) !== false,
+        },
+      );
+    }
+    return reject("unknown", `Unknown manager model selection: ${provider}/${modelId}`);
   }
 
-  if (!modelCatalogService.isModelEnabled(catalogModel.modelId, catalogModel.provider)) {
-    throw new Error(`Model ${catalogModel.displayName} is globally disabled`);
-  }
+  const effectiveModel = modelCatalogService.getModel(modelId, provider) ?? policyModel;
+  const metadata = catalogMetadata(effectiveModel, policyModel);
+  const globallyEnabled = modelCatalogService.isModelEnabled(policyModel.modelId, policyModel.provider);
+  const surfaceSupported = isCatalogModelManagerSupported(policyModel, options.surface);
+  const override = modelCatalogService.getOverride(policyModel.modelId, policyModel.provider);
+  const managerEnabled = getEffectiveManagerEnabled(policyModel, override, options.surface);
+  // Preserve the existing exact-command rule: an absent availability entry is
+  // accepted for catalog providers; an explicit false is rejected.
+  const providerAvailable = options.providerAvailability.get(policyModel.provider) !== false;
+  const checks = { globallyEnabled, surfaceSupported, managerEnabled, providerAvailable };
 
-  if (!isCatalogModelManagerSupported(catalogModel, options.surface)) {
-    throw new Error(`Model ${catalogModel.displayName} is not available for manager ${options.surface}`);
+  if (!globallyEnabled) {
+    return reject("globally_disabled", `Model ${policyModel.displayName} is globally disabled`, metadata, checks);
   }
-
-  const override = modelCatalogService.getOverride(catalogModel.modelId, catalogModel.provider);
-  if (!getEffectiveManagerEnabled(catalogModel, override, options.surface)) {
-    throw new Error(`Model ${catalogModel.displayName} is disabled for manager agents`);
+  if (!surfaceSupported) {
+    return reject(
+      "unsupported_surface",
+      `Model ${policyModel.displayName} is not available for manager ${options.surface}`,
+      metadata,
+      checks,
+    );
   }
-
-  const providerAvailable = options.providerAvailability.get(catalogModel.provider);
-  if (providerAvailable === false) {
-    throw new Error(`Provider ${catalogModel.provider} is not configured for manager model selection`);
+  if (!managerEnabled) {
+    return reject("manager_disabled", `Model ${policyModel.displayName} is disabled for manager agents`, metadata, checks);
+  }
+  if (!providerAvailable) {
+    return reject(
+      "provider_not_configured",
+      `Provider ${policyModel.provider} is not configured for manager model selection`,
+      metadata,
+      checks,
+    );
   }
 
   const reasoningLevel = normalizeThinkingLevelForModelDescriptor(
     {
-      provider: catalogModel.provider,
-      modelId: catalogModel.modelId,
-      thinkingLevel: catalogModel.defaultReasoningLevel,
+      provider: effectiveModel.provider,
+      modelId: effectiveModel.modelId,
+      thinkingLevel: effectiveModel.defaultReasoningLevel,
     },
     options.reasoningLevel,
   );
 
   return {
-    provider: catalogModel.provider,
-    modelId: catalogModel.modelId,
-    thinkingLevel: reasoningLevel,
+    eligible: true,
+    metadata,
+    checks,
+    descriptor: {
+      provider: effectiveModel.provider,
+      modelId: effectiveModel.modelId,
+      thinkingLevel: reasoningLevel,
+    },
   };
 }
 
-function resolveExactOpenRouterManagerModelSelection(
-  modelId: string,
-  options: {
-    surface: ManagerModelSurface;
-    providerAvailability: ReadonlyMap<string, boolean>;
-    reasoningLevel?: SwarmReasoningLevel;
-  },
+export function resolveExactManagerModelSelection(
+  selection: ManagerExactModelSelection,
+  options: ManagerModelEligibilityOptions,
 ): AgentModelDescriptor {
+  const result = evaluateExactManagerModelSelection(selection, options);
+  if (!result.eligible) {
+    throw new Error(result.message);
+  }
+  return result.descriptor;
+}
+
+function evaluateExactOpenRouterManagerModelSelection(
+  modelId: string,
+  options: ManagerModelEligibilityOptions,
+): ManagerModelEligibilityResult {
   const openRouterModel = modelCatalogService.getOpenRouterModel(modelId);
   if (!openRouterModel) {
-    throw new Error(`Unknown manager model selection: openrouter/${modelId}`);
+    return reject("unknown", `Unknown manager model selection: openrouter/${modelId}`);
   }
 
-  if (!isOpenRouterModelManagerSupported(openRouterModel)) {
-    throw new Error(`Model ${openRouterModel.displayName} is not available for manager ${options.surface}`);
-  }
-
+  const metadata = openRouterMetadata(openRouterModel);
+  const globallyEnabled = true;
+  const surfaceSupported = isOpenRouterModelManagerSupported(openRouterModel);
   const override = modelCatalogService.getOverride(openRouterModel.modelId, "openrouter");
-  if (!getEffectiveOpenRouterManagerEnabled(openRouterModel, override, options.surface)) {
-    throw new Error(`Model ${openRouterModel.displayName} is disabled for manager agents`);
-  }
+  const managerEnabled = getEffectiveOpenRouterManagerEnabled(openRouterModel, override, options.surface);
+  // OpenRouter has always required affirmative credential availability.
+  const providerAvailable = options.providerAvailability.get("openrouter") === true;
+  const checks = { globallyEnabled, surfaceSupported, managerEnabled, providerAvailable };
 
-  if (options.providerAvailability.get("openrouter") !== true) {
-    throw new Error("Provider openrouter is not configured for manager model selection");
+  if (!surfaceSupported) {
+    return reject(
+      "unsupported_surface",
+      `Model ${openRouterModel.displayName} is not available for manager ${options.surface}`,
+      metadata,
+      checks,
+    );
+  }
+  if (!managerEnabled) {
+    return reject("manager_disabled", `Model ${openRouterModel.displayName} is disabled for manager agents`, metadata, checks);
+  }
+  if (!providerAvailable) {
+    return reject(
+      "provider_not_configured",
+      "Provider openrouter is not configured for manager model selection",
+      metadata,
+      checks,
+    );
   }
 
   const defaultReasoningLevel = getOpenRouterManagerDefaultReasoningLevel(openRouterModel);
-  const reasoningLevel = clampThinkingLevelToSupportedMetadata(options.reasoningLevel ?? defaultReasoningLevel, {
-    supportsReasoning: openRouterModel.supportsReasoning,
-    supportedReasoningLevels: openRouterModel.supportedReasoningLevels,
-    defaultReasoningLevel,
-  });
+  const reasoningLevel = clampThinkingLevelToSupportedMetadata(
+    options.reasoningLevel ?? defaultReasoningLevel,
+    {
+      supportsReasoning: openRouterModel.supportsReasoning,
+      supportedReasoningLevels: openRouterModel.supportedReasoningLevels,
+      defaultReasoningLevel,
+    },
+  );
 
   return {
+    eligible: true,
+    metadata,
+    checks,
+    descriptor: {
+      provider: "openrouter",
+      modelId: openRouterModel.modelId,
+      thinkingLevel: reasoningLevel,
+    },
+  };
+}
+
+function catalogMetadata(
+  effectiveModel: ForgeModelDefinition,
+  policyModel: ForgeModelDefinition = effectiveModel,
+): ManagerModelEligibilityMetadata {
+  const family = getCatalogFamily(policyModel.familyId);
+  const provider = modelCatalogService.getProvider(policyModel.provider);
+  return {
+    source: "catalog",
+    provider: policyModel.provider,
+    providerLabel: provider?.displayName ?? policyModel.provider,
+    modelId: policyModel.modelId,
+    label: effectiveModel.displayName,
+    familyId: policyModel.familyId,
+    ...(family ? { familyLabel: family.displayName } : {}),
+    supportedReasoningLevels: normalizeReasoningLevels(effectiveModel.supportedReasoningLevels),
+    defaultReasoningLevel: normalizeReasoningLevel(effectiveModel.defaultReasoningLevel),
+  };
+}
+
+function openRouterMetadata(model: OpenRouterModelEntry): ManagerModelEligibilityMetadata {
+  return {
+    source: "openrouter",
     provider: "openrouter",
-    modelId: openRouterModel.modelId,
-    thinkingLevel: reasoningLevel,
+    providerLabel: modelCatalogService.getProvider("openrouter")?.displayName ?? "OpenRouter",
+    modelId: model.modelId,
+    label: model.displayName,
+    supportedReasoningLevels: normalizeReasoningLevels(model.supportedReasoningLevels),
+    defaultReasoningLevel: normalizeReasoningLevel(getOpenRouterManagerDefaultReasoningLevel(model)),
+  };
+}
+
+function normalizeReasoningLevels(levels: readonly string[]): ManagerReasoningLevel[] {
+  return levels.filter((level): level is ManagerReasoningLevel =>
+    MANAGER_REASONING_LEVELS.includes(level as ManagerReasoningLevel),
+  );
+}
+
+function normalizeReasoningLevel(level: string): ManagerReasoningLevel {
+  return MANAGER_REASONING_LEVELS.includes(level as ManagerReasoningLevel)
+    ? level as ManagerReasoningLevel
+    : "none";
+}
+
+function reject(
+  code: ManagerModelEligibilityFailureCode,
+  message: string,
+  metadata?: ManagerModelEligibilityMetadata,
+  checks?: ManagerModelEligibilityChecks,
+): ManagerModelEligibilityResult {
+  return {
+    eligible: false,
+    code,
+    message,
+    ...(metadata ? { metadata } : {}),
+    ...(checks ? { checks } : {}),
   };
 }

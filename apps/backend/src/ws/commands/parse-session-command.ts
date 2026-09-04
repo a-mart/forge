@@ -1,4 +1,4 @@
-import { MANAGER_POSTURES, type ManagerPosture } from "@forge/protocol";
+import { isManagerPosture, type ManagerPosture } from "@forge/protocol";
 import {
   describeSwarmModelPresets,
   describeSwarmReasoningLevels,
@@ -454,14 +454,11 @@ function parseManagerPostureUpdate(value: unknown): {
   }
   const record = value as Record<string, unknown>;
   if (record.mode === "inherit") return { value: { mode: "inherit" } };
-  if (
-    record.mode === "override"
-    && MANAGER_POSTURES.includes(record.value as ManagerPosture)
-  ) {
+  if (record.mode === "override" && isManagerPosture(record.value)) {
     return {
       value: {
         mode: "override",
-        value: record.value as ManagerPosture,
+        value: record.value,
       },
     };
   }

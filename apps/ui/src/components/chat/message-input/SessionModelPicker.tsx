@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, Loader2, Zap } from 'lucide-react'
 import {
-  getCatalogModel,
   MANAGER_REASONING_LEVELS,
   type ManagerReasoningLevel,
 } from '@forge/protocol'
@@ -18,17 +17,20 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
 import {
-  buildCurrentModelFallbackRow,
-  buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
 } from '@/lib/manager-model-selection'
+import {
+  buildCatalogCurrentModelFallbackRow,
+  catalogModelLabel,
+  catalogReasoningLevels,
+  projectSelectableManagerModelRows,
+} from '@/lib/manager-selection-catalog'
+import { useManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
 import { cn } from '@/lib/utils'
 import { formatReasoningLevel } from '@/lib/reasoning-level-labels'
-import { resolveSessionModelPickerApiClient } from './session-model-picker-target'
 import type { SessionModelPickerConfig } from './types'
 
 function asManagerReasoningLevel(level: string): ManagerReasoningLevel {
@@ -40,108 +42,61 @@ function asManagerReasoningLevel(level: string): ManagerReasoningLevel {
 
 export function SessionModelPicker({ config }: { config: SessionModelPickerConfig }) {
   const [open, setOpen] = useState(false)
-  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
-  const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const loadRevisionRef = useRef(0)
-  const overridesCacheRef = useRef(new Map<string, ModelOverridesResponse>())
-
-  const lastConfigKeyRef = useRef(config.modelConfigChangeKey)
-
-  const loadModels = useCallback((force = false) => {
-    const cached = overridesCacheRef.current.get(config.originId)
-    if (cached && !force) {
-      setOverridesData(cached)
-      setLoading(false)
-      return
-    }
-
-    const revision = ++loadRevisionRef.current
-    const apiClient = resolveSessionModelPickerApiClient(config.httpClientRef)
-    if (!apiClient) {
-      setLoading(false)
-      setError('Model settings are unavailable.')
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    void fetchModelOverrides(apiClient)
-      .then((data) => {
-        overridesCacheRef.current.set(config.originId, data)
-        if (loadRevisionRef.current !== revision) return
-        setOverridesData(data)
-      })
-      .catch((loadError) => {
-        if (loadRevisionRef.current !== revision) return
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load models.')
-      })
-      .finally(() => {
-        if (loadRevisionRef.current === revision) setLoading(false)
-      })
-  }, [config.httpClientRef, config.originId])
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const { catalog, loading, error: loadError, refetch } = useManagerSelectionCatalog({
+    originId: config.originId,
+    httpClientRef: config.httpClientRef,
+    modelConfigChangeKey: config.modelConfigChangeKey,
+    connectionEpoch: config.connectionEpoch,
+  })
+  const error = updateError ?? loadError
 
   useEffect(() => {
-    loadRevisionRef.current += 1
     setOpen(false)
-    setOverridesData(overridesCacheRef.current.get(config.originId) ?? null)
-    setError(null)
-    loadModels()
-  }, [config.originId, config.sessionAgentId, loadModels])
-
-  useEffect(() => {
-    if (config.modelConfigChangeKey === undefined) return
-    if (lastConfigKeyRef.current === config.modelConfigChangeKey) return
-    lastConfigKeyRef.current = config.modelConfigChangeKey
-    overridesCacheRef.current.delete(config.originId)
-    loadModels(true)
-  }, [config.modelConfigChangeKey, config.originId, loadModels])
+    setUpdateError(null)
+  }, [config.originId, config.sessionAgentId])
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
-    if (nextOpen) loadModels()
+    if (nextOpen) refetch(true)
   }
 
   const currentKey = encodeManagerModelValue(
     config.currentModel.provider,
     config.currentModel.modelId,
   )
-  const catalogModel = useMemo(
-    () => getCatalogModel(config.currentModel.modelId, config.currentModel.provider),
-    [config.currentModel.modelId, config.currentModel.provider],
+  const modelLabel = catalogModelLabel(
+    catalog,
+    config.currentModel.provider,
+    config.currentModel.modelId,
   )
-  const openRouterModel = useMemo(() => {
-    if (config.currentModel.provider !== 'openrouter') return undefined
-    return overridesData?.openRouterModels?.find((entry) => entry.modelId === config.currentModel.modelId)
-  }, [config.currentModel.modelId, config.currentModel.provider, overridesData?.openRouterModels])
-  const modelLabel = catalogModel?.displayName ?? openRouterModel?.displayName ?? config.currentModel.modelId
+  const currentReasoningLevels = catalogReasoningLevels(
+    catalog,
+    config.currentModel.provider,
+    config.currentModel.modelId,
+  )
   const reasoning = asManagerReasoningLevel(config.currentModel.thinkingLevel)
   const reasoningLabel = formatReasoningLevel(
     config.currentModel.thinkingLevel,
-    catalogModel?.supportedReasoningLevels ?? openRouterModel?.supportedReasoningLevels,
+    currentReasoningLevels,
   )
   const effectiveLabel = `${modelLabel} · ${reasoningLabel}`
   const originLabel = config.modelOrigin === 'session_override' ? 'session override' : 'project default'
 
   const { selectableRows, groups } = useMemo(() => {
-    if (!overridesData) return { selectableRows: [], groups: [] }
+    if (!catalog) return { selectableRows: [], groups: [] }
 
-    const availableRows = buildManagerModelRows(
-      'change',
-      overridesData.overrides,
-      overridesData.providerAvailability,
-      overridesData.openRouterModels,
-    ).filter((row) => !row.unavailableReason)
+    const availableRows = projectSelectableManagerModelRows(catalog, 'change')
     const currentIsSelectable = availableRows.some((row) => row.key === currentKey)
     const rows = currentIsSelectable
       ? availableRows
       : [
-          buildCurrentModelFallbackRow(
+          buildCatalogCurrentModelFallbackRow(
+            catalog,
             config.currentModel.provider,
             config.currentModel.modelId,
             config.currentModel.thinkingLevel,
-            overridesData.openRouterModels,
           ),
           ...availableRows,
         ]
@@ -150,23 +105,25 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
       groups: groupManagerModelRows(rows),
     }
   }, [
+    catalog,
     config.currentModel.modelId,
     config.currentModel.provider,
     config.currentModel.thinkingLevel,
     currentKey,
-    overridesData,
   ])
 
   const currentRow = selectableRows.find((row) => row.key === currentKey)
-  const reasoningLevels = currentRow?.supportedReasoningLevels ?? [...MANAGER_REASONING_LEVELS]
+  const reasoningLevels = currentRow?.supportedReasoningLevels
+    ?? currentReasoningLevels
+    ?? [...MANAGER_REASONING_LEVELS]
 
   const runUpdate = async (update: () => void | Promise<void>) => {
     setSaving(true)
-    setError(null)
+    setUpdateError(null)
     try {
       await update()
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : String(updateError))
+    } catch (caught) {
+      setUpdateError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSaving(false)
     }
@@ -198,10 +155,11 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
   }
 
   const profileDefaultLabel = config.profileDefaultModel
-    ? getCatalogModel(
-        config.profileDefaultModel.modelId,
+    ? catalogModelLabel(
+        catalog,
         config.profileDefaultModel.provider,
-      )?.displayName ?? config.profileDefaultModel.modelId
+        config.profileDefaultModel.modelId,
+      )
     : 'Project default'
 
   return (
@@ -323,7 +281,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
               variant="destructive"
               onSelect={(event) => {
                 event.preventDefault()
-                loadModels(true)
+                refetch(true)
               }}
             >
               Could not load models · Retry

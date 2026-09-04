@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
   MANAGER_REASONING_LEVELS,
   type AgentModelDescriptor,
@@ -18,16 +18,24 @@ import {
   type ManagerReasoningLevel,
 } from '@forge/protocol'
 import {
-  buildCurrentModelFallbackRow,
-  buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
 } from '@/lib/manager-model-selection'
+import {
+  buildCatalogCurrentModelFallbackRow,
+  projectSelectableManagerModelRows,
+} from '@/lib/manager-selection-catalog'
+import { useManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
+import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
 import { formatManagerReasoningLevel } from '@/lib/reasoning-level-labels'
 
 export function ChangeModelDialog({
   wsUrl,
+  apiClient,
+  originId = LOCAL_ORIGIN_ID,
+  modelConfigChangeKey,
+  connectionEpoch,
   profileId,
   profileLabel,
   currentModel,
@@ -36,6 +44,10 @@ export function ChangeModelDialog({
   onClose,
 }: {
   wsUrl?: string
+  apiClient?: SettingsApiClient
+  originId?: string
+  modelConfigChangeKey?: number
+  connectionEpoch?: number
   profileId: string
   profileLabel: string
   currentModel: AgentModelDescriptor | undefined
@@ -43,43 +55,29 @@ export function ChangeModelDialog({
   onConfirm: (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => void
   onClose: () => void
 }) {
-  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
-  const [availabilityLoading, setAvailabilityLoading] = useState(true)
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
-
-  const loadAvailability = useCallback(() => {
-    setAvailabilityLoading(true)
-    setAvailabilityError(null)
-    void fetchModelOverrides(wsUrl).then((data) => {
-      setOverridesData(data)
-      setAvailabilityLoading(false)
-    }).catch((err) => {
-      setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
-      setAvailabilityLoading(false)
-    })
-  }, [wsUrl])
-
-  useEffect(() => {
-    loadAvailability()
-  }, [loadAvailability])
+  const {
+    catalog,
+    loading: availabilityLoading,
+    error: availabilityError,
+    refetch: loadAvailability,
+  } = useManagerSelectionCatalog({
+    originId,
+    client: apiClient ?? wsUrl,
+    modelConfigChangeKey,
+    connectionEpoch,
+    forceOnEnabled: true,
+  })
 
   const currentKey = currentModel
     ? encodeManagerModelValue(currentModel.provider, currentModel.modelId)
     : undefined
 
   const { selectableRows, groups } = useMemo(() => {
-    if (!overridesData) {
+    if (!catalog) {
       return { selectableRows: [], groups: [] }
     }
 
-    const rows = buildManagerModelRows(
-      'change',
-      overridesData.overrides,
-      overridesData.providerAvailability,
-      overridesData.openRouterModels,
-    )
-
-    const availableRows = rows.filter((r) => !r.unavailableReason)
+    const availableRows = projectSelectableManagerModelRows(catalog, 'change')
 
     // If the current model is not in the list, inject a fallback row
     const isCurrentInList = !currentKey || availableRows.some((r) => r.key === currentKey)
@@ -87,11 +85,11 @@ export function ChangeModelDialog({
       ? availableRows
       : [
           ...(currentModel
-            ? [buildCurrentModelFallbackRow(
+            ? [buildCatalogCurrentModelFallbackRow(
+                catalog,
                 currentModel.provider,
                 currentModel.modelId,
                 currentModel.thinkingLevel,
-                overridesData.openRouterModels,
               )]
             : []),
           ...availableRows,
@@ -101,17 +99,16 @@ export function ChangeModelDialog({
       selectableRows,
       groups: groupManagerModelRows(selectableRows),
     }
-  }, [overridesData, currentKey, currentModel])
+  }, [catalog, currentKey, currentModel])
 
   const [selectedKey, setSelectedKey] = useState<string>(currentKey ?? '')
   const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
 
-  // Update selected key when data loads and current is initially empty
+  // The descriptor snapshot remains authoritative while the dialog is open.
   useEffect(() => {
-    if (currentKey && selectableRows.some((r) => r.key === currentKey)) {
-      setSelectedKey(currentKey)
-    }
-  }, [currentKey, selectableRows])
+    setSelectedKey(currentKey ?? '')
+    setReasoning(currentReasoningLevel ?? 'xhigh')
+  }, [currentKey, currentReasoningLevel, profileId])
 
   // Get reasoning levels for selected model
   const selectedRow = selectableRows.find((r) => r.key === selectedKey)
@@ -213,7 +210,7 @@ export function ChangeModelDialog({
           {availabilityError ? (
             <div className="flex items-center gap-2">
               <p className="text-xs text-destructive">Failed to load models.</p>
-              <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={loadAvailability}>
+              <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => loadAvailability(true)}>
                 Retry
               </Button>
             </div>

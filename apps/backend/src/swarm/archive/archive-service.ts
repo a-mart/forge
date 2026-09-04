@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ManagerProfile } from "@forge/protocol";
+import type { AgentDescriptor, ManagerProfile } from "../types.js";
 import {
   ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED,
   ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED_MESSAGE,

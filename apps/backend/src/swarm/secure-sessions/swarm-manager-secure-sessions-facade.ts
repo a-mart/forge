@@ -1,5 +1,4 @@
 import type {
-  AgentDescriptor,
   BitwardenPasswordManagerSettings,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
@@ -20,6 +19,7 @@ import type {
   ImportSecureVaultTransferResult,
   UpdateBitwardenPasswordManagerCollectionsResult,
 } from "@forge/protocol";
+import type { AgentDescriptor } from "../types.js";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";

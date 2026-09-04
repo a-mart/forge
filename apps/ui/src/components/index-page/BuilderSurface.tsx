@@ -1857,6 +1857,7 @@ export function BuilderSurface({
           profileDefaultModel: activeAgentProfile?.defaultModel,
           disabled: !state.connected,
           modelConfigChangeKey: state.modelConfigChangeKey,
+          connectionEpoch: state.connectionEpoch,
           onUpdate: session.handleUpdateSessionModel,
         }
       : undefined
@@ -1871,13 +1872,15 @@ export function BuilderSurface({
           httpClientRef,
           sessionAgentId: activeAgent.agentId,
           profileId: activeAgentProfile.profileId,
-          managerPosture: activeAgent.managerPosture ?? 'delegation_first' as const,
+          managerPosture: activeAgent.managerPosture,
           managerPostureOrigin: activeAgent.managerPostureOrigin,
           projectDefaultManagerPosture: activeAgentProfile.defaultManagerPosture,
           delegationRosterId: activeAgent.delegationRosterId,
           delegationRosterOrigin: activeAgent.delegationRosterOrigin,
           projectDefaultDelegationRosterId: activeAgentProfile.defaultDelegationRosterId,
           disabled: !state.connected,
+          modelConfigChangeKey: state.modelConfigChangeKey,
+          connectionEpoch: state.connectionEpoch,
           onUpdateProjectDefaults: session.handleUpdateProjectDelegationDefaults,
           onUpdateSession: session.handleUpdateSessionDelegation,
         }
@@ -2083,6 +2086,8 @@ export function BuilderSurface({
 
       <AgentSidebarConnected
         wsUrl={localWsUrl}
+        modelConfigChangeKey={localState.modelConfigChangeKey}
+        connectionEpoch={localState.connectionEpoch}
         builderSidebarOrderApi={builderSidebarOrderApi}
         activityRailItems={showActivityRail ? panels.activityRailItems : undefined}
         collaborationModeSwitch={collaborationModeSwitch}
@@ -2251,6 +2256,7 @@ export function BuilderSurface({
                 promptChangeKey={state.promptChangeKey}
                 specialistChangeKey={state.specialistChangeKey}
                 modelConfigChangeKey={state.modelConfigChangeKey}
+                connectionEpoch={state.connectionEpoch}
                 repositoryCloneAvailable={cloneRepositoryEnabled}
                 onBack={() =>
                   navigateToRoute({
@@ -2663,6 +2669,9 @@ export function BuilderSurface({
         createManagerDialogProps={{
           open: isCreateManagerDialogOpen,
           wsUrl,
+          originId: activeOriginId,
+          modelConfigChangeKey: state.modelConfigChangeKey,
+          connectionEpoch: state.connectionEpoch,
           isCreatingManager,
           isValidatingDirectory,
           isPickingDirectory,

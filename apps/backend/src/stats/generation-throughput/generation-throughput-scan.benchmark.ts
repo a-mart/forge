@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { join } from "node:path";
-import type { GenerationMeasurementRecordV1, ManagerProfile } from "@forge/protocol";
-import type { SwarmConfig } from "../../swarm/types.js";
+import type { GenerationMeasurementRecordV1 } from "@forge/protocol";
+import type { ManagerProfile, SwarmConfig } from "../../swarm/types.js";
 import { buildGenerationMetrics, buildGenerationModelSummaries, buildGenerationRoleSummaries } from "./generation-throughput-aggregate.js";
 import { scanGenerationThroughputProfiles } from "./generation-throughput-scan.js";
 

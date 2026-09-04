@@ -38,6 +38,8 @@ interface SettingsProjectSettingsProps {
   profile: ManagerProfile
   manager?: AgentDescriptor
   apiClient: SettingsApiClient
+  modelConfigChangeKey?: number
+  connectionEpoch?: number
   actions?: ProjectSettingsActions
 }
 
@@ -51,6 +53,8 @@ export function SettingsProjectSettings({
   profile,
   manager,
   apiClient,
+  modelConfigChangeKey,
+  connectionEpoch,
   actions,
 }: SettingsProjectSettingsProps) {
   const [renaming, setRenaming] = useState(false)
@@ -163,6 +167,9 @@ export function SettingsProjectSettings({
       {changingModel && actions?.onUpdateManagerModel ? (
         <ChangeModelDialog
           wsUrl={wsUrl}
+          apiClient={apiClient}
+          modelConfigChangeKey={modelConfigChangeKey}
+          connectionEpoch={connectionEpoch}
           profileId={profile.profileId}
           profileLabel={profile.displayName}
           currentModel={model}

@@ -6,6 +6,7 @@ import {
   type OpenAIBrokerTestResponse,
   type RedeemOpenAIBrokerInviteRequest,
   type UpdateOpenAIBrokerSettingsRequest,
+  DEFAULT_MANAGER_POSTURE,
   getCatalogModelKey,
   type CredentialPoolState,
   type DelegationRosterSettings,
@@ -307,7 +308,7 @@ export class SwarmSettingsService {
         .map((mutation) => mutation.session)
         .filter(
           (session) =>
-            session.managerPosture !== (updates.managerPosture ?? "delegation_first"),
+            session.managerPosture !== (updates.managerPosture ?? DEFAULT_MANAGER_POSTURE),
         )
       : [];
 
@@ -326,7 +327,7 @@ export class SwarmSettingsService {
         store.patchDescriptor(session.agentId, {
           ...(mutation.updatePosture
             ? {
-                managerPosture: updates.managerPosture ?? "delegation_first",
+                managerPosture: updates.managerPosture ?? DEFAULT_MANAGER_POSTURE,
                 managerPostureOrigin: updates.managerPosture
                   ? "project_default"
                   : "product_default",
@@ -350,7 +351,7 @@ export class SwarmSettingsService {
         for (const mutation of sessionMutations) {
           const { session } = mutation;
           if (mutation.updatePosture) {
-            session.managerPosture = updates.managerPosture ?? "delegation_first";
+            session.managerPosture = updates.managerPosture ?? DEFAULT_MANAGER_POSTURE;
             session.managerPostureOrigin = updates.managerPosture
               ? "project_default"
               : "product_default";
@@ -429,7 +430,7 @@ export class SwarmSettingsService {
       throw new Error(`Unknown roster: ${requestedRosterId}`);
     }
 
-    const inheritedPosture = profile.defaultManagerPosture ?? "delegation_first";
+    const inheritedPosture = profile.defaultManagerPosture ?? DEFAULT_MANAGER_POSTURE;
     const inheritedPostureOrigin = profile.defaultManagerPosture
       ? "project_default" as const
       : "product_default" as const;

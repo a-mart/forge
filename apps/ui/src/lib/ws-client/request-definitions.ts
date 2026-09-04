@@ -16,8 +16,8 @@ import {
   type DeliveryMode,
   type ManagerExactModelSelection,
   type ManagerModelPreset,
-  type ManagerPosture,
   type ManagerReasoningLevel,
+  type WorkModeId,
   type SessionProjectAgentInput,
   type SessionModelUpdateMode,
   type SessionGoalControlAction,
@@ -405,7 +405,7 @@ export function buildUpdateProfileDefaultModelCommand(
 export function buildUpdateProjectDelegationDefaultsCommand(
   profileId: string,
   updates: {
-    managerPosture?: ManagerPosture | null
+    managerPosture?: WorkModeId | null
     delegationRosterId?: string | null
   },
   requestId: string,
@@ -601,7 +601,7 @@ export function buildUpdateSessionDelegationCommand(
   updates: {
     managerPosture?: { mode: 'inherit' } | {
       mode: 'override'
-      value: ManagerPosture
+      value: WorkModeId
     }
     delegationRoster?: { mode: 'inherit' } | {
       mode: 'override'
@@ -616,7 +616,11 @@ export function buildUpdateSessionDelegationCommand(
   return {
     type: 'update_session_delegation',
     sessionAgentId: requireTrimmedValue(sessionAgentId, 'Session agent id is required.'),
-    ...(updates.managerPosture ? { managerPosture: updates.managerPosture } : {}),
+    ...(updates.managerPosture ? {
+      managerPosture: updates.managerPosture.mode === 'inherit'
+        ? updates.managerPosture
+        : { mode: 'override' as const, value: updates.managerPosture.value },
+    } : {}),
     ...(updates.delegationRoster
       ? {
           delegationRoster: updates.delegationRoster.mode === 'inherit'

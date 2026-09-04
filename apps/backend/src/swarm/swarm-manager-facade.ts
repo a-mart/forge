@@ -10,6 +10,7 @@ import type {
   GenerationThroughputSnapshotEvent,
   CredentialPoolStrategy,
   ManagerExactModelSelection,
+  ManagerSelectionCatalogResponse,
   ModelCacheObservationEvent,
   OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
@@ -809,6 +810,10 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
 
   reloadModelCatalogOverridesAndProjection(): Promise<void> {
     return this.services.configuration.reloadModelCatalogOverridesAndProjection();
+  }
+
+  getManagerSelectionCatalog(): Promise<ManagerSelectionCatalogResponse> {
+    return this.services.configuration.getManagerSelectionCatalog();
   }
 
   reloadOpenRouterModelsAndProjection(): Promise<void> {

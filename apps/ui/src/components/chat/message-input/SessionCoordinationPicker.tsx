@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, GitBranch } from 'lucide-react'
-import type { ManagerPosture } from '@forge/protocol'
+import type { WorkModeId } from '@forge/protocol'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { fetchDelegationRosterSettings } from '@/components/settings/specialists-api'
 import { cn } from '@/lib/utils'
+import { projectWorkModeOptions, workModeLabel } from '@/lib/manager-selection-catalog'
+import { useManagerSelectionCatalog } from '@/lib/use-manager-selection-catalog'
 import { resolveSessionModelPickerApiClient } from './session-model-picker-target'
 import type { SessionCoordinationPickerConfig } from './types'
 
@@ -24,6 +26,12 @@ export function SessionCoordinationPicker({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadRevisionRef = useRef(0)
+  const { catalog, error: catalogError, refetch: refetchCatalog } = useManagerSelectionCatalog({
+    originId: config.originId,
+    httpClientRef: config.httpClientRef,
+    modelConfigChangeKey: config.modelConfigChangeKey,
+    connectionEpoch: config.connectionEpoch,
+  })
 
   useEffect(() => {
     loadRevisionRef.current += 1
@@ -63,23 +71,33 @@ export function SessionCoordinationPicker({
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
-    if (nextOpen) loadRosters()
+    if (nextOpen) {
+      loadRosters()
+      refetchCatalog(true)
+    }
   }
 
-  const projectPosture = config.projectDefaultManagerPosture ?? 'delegation_first'
+  const currentWorkModeId = config.managerPosture
+  const projectPosture = config.projectDefaultManagerPosture ?? catalog?.defaults.workModeId
+  const workModes = useMemo(
+    () => projectWorkModeOptions(catalog, currentWorkModeId),
+    [catalog, currentWorkModeId],
+  )
   const projectRosterId = config.projectDefaultDelegationRosterId ?? globalRosterId
   const currentRosterId = config.delegationRosterId ?? projectRosterId
   const currentRosterLabel = useMemo(
     () => rosterLabel(rosters, currentRosterId),
     [currentRosterId, rosters],
   )
-  const [selectedPosture, setSelectedPosture] = useState<ManagerPosture>(config.managerPosture)
+  const [selectedPosture, setSelectedPosture] = useState<WorkModeId | undefined>(currentWorkModeId)
   const [selectedRosterId, setSelectedRosterId] = useState(currentRosterId)
-  const postureLabel = formatPosture(selectedPosture)
+  const postureLabel = workModeLabel(catalog, selectedPosture)
+  const currentPostureLabel = workModeLabel(catalog, currentWorkModeId)
+  const pickerError = error ?? catalogError
 
   useEffect(() => {
-    setSelectedPosture(config.managerPosture)
-  }, [config.managerPosture])
+    setSelectedPosture(currentWorkModeId)
+  }, [currentWorkModeId])
 
   useEffect(() => {
     setSelectedRosterId(currentRosterId)
@@ -103,7 +121,9 @@ export function SessionCoordinationPicker({
   }
 
   const selectPosture = (value: string) => {
-    const posture = value as ManagerPosture
+    const posture = value as WorkModeId
+    const option = workModes.find((workMode) => workMode.id === posture)
+    if (!option?.selectable) return
     const previousPosture = selectedPosture
     setSelectedPosture(posture)
     void runUpdate(
@@ -131,6 +151,9 @@ export function SessionCoordinationPicker({
 
   const makePostureProjectDefault = () => {
     const posture = selectedPosture
+    if (!posture) return
+    const option = workModes.find((workMode) => workMode.id === posture)
+    if (!option?.selectable) return
     void runUpdate(async () => {
       await config.onUpdateProjectDefaults(config.profileId, { managerPosture: posture })
       await config.onUpdateSession(config.sessionAgentId, {
@@ -163,11 +186,11 @@ export function SessionCoordinationPicker({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50 sm:max-w-44',
           )}
-          aria-label={`Work mode: ${formatPosture(config.managerPosture)}. Roster: ${currentRosterLabel}.`}
-          title={`${formatPosture(config.managerPosture)} · ${currentRosterLabel}`}
+          aria-label={`Work mode: ${currentPostureLabel}. Roster: ${currentRosterLabel}.`}
+          title={`${currentPostureLabel} · ${currentRosterLabel}`}
         >
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">{formatPosture(config.managerPosture)}</span>
+          <span className="truncate">{currentPostureLabel}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
         </button>
       </PopoverTrigger>
@@ -188,16 +211,20 @@ export function SessionCoordinationPicker({
               </span>
             )}
           </div>
-          <div className="grid grid-cols-3 gap-1 rounded-md bg-muted/65 p-1">
-            {(['delegation_first', 'adaptive', 'hands_on'] as const).map((posture) => {
-              const selected = selectedPosture === posture
-              const isProjectDefault = posture === projectPosture
+          <div className={cn(
+            'grid gap-1 rounded-md bg-muted/65 p-1',
+            workModes.length <= 3 ? 'grid-cols-3' : 'grid-cols-2',
+          )}>
+            {workModes.map((workMode) => {
+              const selected = selectedPosture === workMode.id
+              const isProjectDefault = workMode.id === projectPosture
+              const disabled = saving || !workMode.selectable
               return (
                 <label
-                  key={posture}
+                  key={workMode.id}
                   className={cn(
-                    'flex min-h-10 cursor-pointer flex-col items-center justify-center rounded-sm px-2 py-1 text-center transition-colors',
-                    'hover:bg-background/65',
+                    'flex min-h-10 flex-col items-center justify-center rounded-sm px-2 py-1 text-center transition-colors',
+                    workMode.selectable ? 'cursor-pointer hover:bg-background/65' : 'cursor-not-allowed opacity-60',
                     'has-[:focus-visible]:outline-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
                     selected
                       ? 'bg-background text-foreground shadow-sm ring-1 ring-emerald-500/45'
@@ -208,26 +235,29 @@ export function SessionCoordinationPicker({
                   <input
                     type="radio"
                     name={`work-mode-${config.sessionAgentId}`}
-                    value={posture}
+                    value={workMode.id}
                     checked={selected}
-                    disabled={saving}
+                    disabled={disabled}
                     onChange={(event) => selectPosture(event.currentTarget.value)}
                     className="sr-only"
                   />
-                  <span className="text-xs font-medium">{formatPosture(posture)}</span>
+                  <span className="text-xs font-medium">{workMode.label}</span>
                   {isProjectDefault && <DefaultSuffix compact />}
+                  {!workMode.selectable && selected && (
+                    <span className="text-[10px] leading-tight text-muted-foreground">Current</span>
+                  )}
                 </label>
               )
             })}
           </div>
-          {selectedPosture !== projectPosture ? (
+          {selectedPosture && selectedPosture !== projectPosture && workModes.find((workMode) => workMode.id === selectedPosture)?.selectable ? (
             <InlineAction
               disabled={saving}
               onClick={makePostureProjectDefault}
             >
               Make {postureLabel} project default
             </InlineAction>
-          ) : config.managerPostureOrigin === 'session_override' ? (
+          ) : config.managerPostureOrigin === 'session_override' && selectedPosture === projectPosture ? (
             <InlineAction
               disabled={saving}
               onClick={() => void runUpdate(() => config.onUpdateSession(
@@ -326,16 +356,19 @@ export function SessionCoordinationPicker({
           ) : null}
         </fieldset>
 
-        {error && (
+        {pickerError && (
           <div
             role="alert"
             className="flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
           >
-            <span className="min-w-0 flex-1 truncate">{error}</span>
+            <span className="min-w-0 flex-1 truncate">{pickerError}</span>
             <button
               type="button"
               className="shrink-0 font-medium underline-offset-2 hover:underline"
-              onClick={loadRosters}
+              onClick={() => {
+                loadRosters()
+                refetchCatalog(true)
+              }}
             >
               Reload choices
             </button>
@@ -378,12 +411,6 @@ function DefaultSuffix({ compact = false }: { compact?: boolean }) {
       Project default
     </span>
   )
-}
-
-function formatPosture(posture: ManagerPosture): string {
-  if (posture === 'hands_on') return 'Hands-on'
-  if (posture === 'adaptive') return 'Adaptive'
-  return 'Delegate first'
 }
 
 function rosterLabel(rosters: RosterOption[], rosterId: string): string {

@@ -81,6 +81,8 @@ injectGlowPulseStyle()
 export const AgentSidebar = React.memo(function AgentSidebar({
   connected,
   wsUrl,
+  modelConfigChangeKey,
+  connectionEpoch,
   agents,
   profiles,
   treeRows: providedTreeRows,
@@ -1459,6 +1461,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       {changeModelTarget && onUpdateManagerModel ? (
         <ChangeModelDialog
           wsUrl={wsUrl}
+          originId={LOCAL_ORIGIN_ID}
+          modelConfigChangeKey={modelConfigChangeKey}
+          connectionEpoch={connectionEpoch}
           profileId={changeModelTarget.profileId}
           profileLabel={changeModelTarget.profileLabel}
           currentModel={changeModelTarget.currentModel}
@@ -1472,6 +1477,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       {sessionModelTarget && onUpdateSessionModel ? (
         <SessionModelDialog
           wsUrl={wsUrl}
+          originId={LOCAL_ORIGIN_ID}
+          modelConfigChangeKey={modelConfigChangeKey}
+          connectionEpoch={connectionEpoch}
           sessionAgentId={sessionModelTarget.sessionAgentId}
           sessionLabel={sessionModelTarget.sessionLabel}
           currentModel={sessionModelTarget.currentModel}

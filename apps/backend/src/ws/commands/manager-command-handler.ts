@@ -1,4 +1,4 @@
-import { type ClientCommand, type ServerEvent } from "@forge/protocol";
+import { isManagerPosture, type ClientCommand, type ManagerPosture, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
@@ -284,10 +284,21 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
     try {
       requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+      let requestedPosture: ManagerPosture | null | undefined;
+      if (Object.prototype.hasOwnProperty.call(command, "managerPosture")) {
+        if (command.managerPosture !== null && !isManagerPosture(command.managerPosture)) {
+          send(socket, {
+            type: "error",
+            code: "UPDATE_PROJECT_DELEGATION_DEFAULTS_FAILED",
+            message: 'managerPosture must be "delegation_first", "adaptive", "hands_on", or null',
+            requestId: command.requestId,
+          });
+          return true;
+        }
+        requestedPosture = command.managerPosture;
+      }
       await swarmManager.updateProjectDelegationDefaults(command.profileId, {
-        ...(Object.prototype.hasOwnProperty.call(command, "managerPosture")
-          ? { managerPosture: command.managerPosture }
-          : {}),
+        ...(requestedPosture !== undefined ? { managerPosture: requestedPosture } : {}),
         ...(Object.prototype.hasOwnProperty.call(command, "delegationRosterId")
           ? { delegationRosterId: command.delegationRosterId }
           : {}),
