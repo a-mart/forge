@@ -9,6 +9,7 @@ import {
   type ArtifactReference,
 } from '@/lib/artifacts'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { MermaidBlock } from './message-list/MermaidBlock'
 import { ContentZoomDialog } from './ContentZoomDialog'
@@ -411,7 +412,8 @@ function CodeBlockCopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(code).then(() => {
+    void copyTextToClipboard(code).then((ok) => {
+      if (!ok) return
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -450,7 +452,8 @@ function ArtifactReferenceCard({
   const handleCopyPath = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      void navigator.clipboard.writeText(artifact.path).then(() => {
+      void copyTextToClipboard(artifact.path).then((ok) => {
+        if (!ok) return
         setPathCopied(true)
         setTimeout(() => setPathCopied(false), 1500)
       })

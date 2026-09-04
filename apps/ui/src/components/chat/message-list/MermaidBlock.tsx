@@ -28,6 +28,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { highlightCode } from '@/lib/syntax-highlight'
 import { cn } from '@/lib/utils'
 import {
@@ -516,16 +517,15 @@ export const MermaidBlock = memo(function MermaidBlock({
   }, [])
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(code).then(
-      () => {
+    void copyTextToClipboard(code).then((ok) => {
+      if (ok) {
         setCopied(true)
         setTimeout(() => setCopied(false), 1500)
-      },
-      () => {
-        setCopyFailed(true)
-        setTimeout(() => setCopyFailed(false), 1500)
-      },
-    )
+        return
+      }
+      setCopyFailed(true)
+      setTimeout(() => setCopyFailed(false), 1500)
+    })
   }, [code])
 
   const handleDownloadSvg = useCallback(() => {

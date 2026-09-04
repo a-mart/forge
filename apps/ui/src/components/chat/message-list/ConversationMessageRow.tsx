@@ -3,6 +3,7 @@ import { isUserVisibleAssistantConversationMessage } from '@forge/protocol'
 import { Copy, Check, GitFork, Pin, Reply } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { MessageAttachments } from './MessageAttachments'
 import { MessageFeedback } from './MessageFeedback'
@@ -17,7 +18,8 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(text).then(() => {
+    void copyTextToClipboard(text).then((ok) => {
+      if (!ok) return
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
