@@ -706,6 +706,57 @@ describe('SecureSessionPicker', () => {
     expect(onReviewProjectSecrets).not.toHaveBeenCalled()
   })
 
+  it('returns to the normal secure pill after the current quarantine is acknowledged', () => {
+    const quarantinedSnapshot = {
+      sessionAgentId: 'manager-1',
+      principalKind: 'manager' as const,
+      revision: 6,
+      executionMode: 'secure' as const,
+      environmentStatus: 'ready' as const,
+      outputState: 'quarantined' as const,
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:00.000Z',
+    }
+
+    renderPicker(makeConfig({
+      outputState: 'quarantined',
+      outputStateReason: 'Potential secret material was withheld.',
+      snapshot: quarantinedSnapshot,
+    }))
+    expect(getByRole(container, 'button', {
+      name: /protected output redacted/i,
+    })).toBeTruthy()
+
+    renderPicker(makeConfig({
+      outputState: 'clear',
+      snapshot: quarantinedSnapshot,
+    }))
+    expect(getByRole(container, 'button', {
+      name: /secure session ready/i,
+    })).toBeTruthy()
+    openPicker(/secure session ready/i)
+    const popover = Array.from(
+      document.body.querySelectorAll('[data-slot="popover-content"]'),
+    ).find((candidate) => candidate.textContent?.includes('Team Secure Mode'))
+    expect(popover).not.toBeNull()
+    expect(popover?.textContent).not.toContain('Protected output redacted')
+
+    renderPicker(makeConfig({
+      outputState: 'quarantined',
+      outputStateReason: 'Potential secret material was withheld.',
+      snapshot: {
+        ...quarantinedSnapshot,
+        revision: 7,
+        updatedAt: '2026-07-23T12:05:00.000Z',
+      },
+    }))
+    expect(getByRole(container, 'button', {
+      name: /protected output redacted/i,
+    })).toBeTruthy()
+    expect(document.body.textContent).toContain('Protected output redacted')
+  })
+
   it('attributes quarantined output to the shared session and stops manager authority', () => {
     const onRevoke = vi.fn()
     renderPicker(makeConfig({

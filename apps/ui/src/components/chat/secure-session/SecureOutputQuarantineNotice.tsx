@@ -5,17 +5,16 @@ import { StopProcessesAndRevokeDialog } from './StopProcessesAndRevokeDialog'
 
 interface SecureOutputQuarantineNoticeProps {
   reason?: string
+  onDismiss?: () => void
   onStopProcessesAndRevoke?: () => void | Promise<void>
 }
 
 export function SecureOutputQuarantineNotice({
   reason,
+  onDismiss,
   onStopProcessesAndRevoke,
 }: SecureOutputQuarantineNoticeProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
-
-  if (dismissed) return null
 
   return (
     <>
@@ -35,7 +34,7 @@ export function SecureOutputQuarantineNotice({
             type="button"
             size="sm"
             variant="secondary"
-            onClick={() => setDismissed(true)}
+            onClick={() => onDismiss?.()}
           >
             Dismiss
           </Button>

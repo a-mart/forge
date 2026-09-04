@@ -28,6 +28,10 @@ import type {
   SecureSessionPickerConfig,
   SecureSessionRequestConfig,
 } from '@/components/chat/secure-session/types'
+import {
+  resolveSecureOutputQuarantineUi,
+  secureOutputQuarantineConfigFields,
+} from '@/components/chat/secure-session/output-quarantine'
 import { isSessionModelPickerEligible } from '@/components/chat/message-input/session-model-picker-eligibility'
 import { isSecureSessionRuntimeSupported } from '@/components/index-page/secure-session-runtime-eligibility'
 import { shouldShowSecureSessionPicker } from '@/components/index-page/secure-session-picker-visibility'
@@ -365,6 +369,8 @@ export function BuilderSurface({
   const [secureRuntimeUnsupported, setSecureRuntimeUnsupported] = useState(false)
   const [secureBrowserControl, setSecureBrowserControl] =
     useState<SecureBrowserControlStatus | null>(null)
+  const [acknowledgedSecureOutputQuarantineKey, setAcknowledgedSecureOutputQuarantineKey] =
+    useState<string | null>(null)
 
   // ── Active-agent derivation + route→subscription sync ──
   const {
@@ -613,6 +619,33 @@ export function BuilderSurface({
       : null,
     [secureSessionSnapshot],
   )
+  const secureOutputQuarantineUi = useMemo(
+    () => resolveSecureOutputQuarantineUi({
+      snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
+      originId: activeOriginId,
+      acknowledgedKey: acknowledgedSecureOutputQuarantineKey,
+    }),
+    [
+      acknowledgedSecureOutputQuarantineKey,
+      activeOriginId,
+      isRemoteOriginActive,
+      secureSessionSnapshotView,
+    ],
+  )
+  const handleDismissSecureOutputQuarantine = useCallback(() => {
+    if (secureOutputQuarantineUi.eventKey) {
+      setAcknowledgedSecureOutputQuarantineKey(secureOutputQuarantineUi.eventKey)
+    }
+  }, [secureOutputQuarantineUi.eventKey])
+  useEffect(() => {
+    if (
+      secureSessionSnapshotView
+      && secureSessionSnapshotView.outputState !== 'quarantined'
+      && acknowledgedSecureOutputQuarantineKey !== null
+    ) {
+      setAcknowledgedSecureOutputQuarantineKey(null)
+    }
+  }, [acknowledgedSecureOutputQuarantineKey, secureSessionSnapshotView])
   const securePendingRequestViews = useMemo(
     () => secureSessionSnapshotView?.pendingRequests ?? [],
     [secureSessionSnapshotView],
@@ -895,13 +928,13 @@ export function BuilderSurface({
       && secureSessionSnapshotView.environmentStatus === 'ready'
     return {
       active,
-      label: secureSessionSnapshotView.outputState === 'quarantined'
+      label: secureOutputQuarantineUi.outputState === 'quarantined'
         ? 'Protected output redacted'
         : active
           ? `Team Secure Bash · ${activeGrantCount} ${activeGrantCount === 1 ? 'grant' : 'grants'}`
           : `Secure Bash ${secureSessionSnapshotView.environmentStatus}`,
     }
-  }, [activeAgent?.role, secureSessionSnapshotView])
+  }, [activeAgent?.role, secureOutputQuarantineUi.outputState, secureSessionSnapshotView])
 
   // For settings, only show profile-level managers (default sessions or legacy managers without profileId)
   const settingsManagers = useMemo(() => {
@@ -1677,15 +1710,7 @@ export function BuilderSurface({
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
-        : {
-            outputState: secureSessionSnapshotView.outputState ?? 'clear',
-            ...(secureSessionSnapshotView.outputState === 'quarantined'
-              ? {
-                  outputStateReason:
-                    'Forge removed protected material before it reached the agent. The Secure Session remains active.',
-                }
-              : {}),
-          }),
+        : secureOutputQuarantineConfigFields(secureOutputQuarantineUi)),
       disabled:
         !state.connected
         || (!isRemoteOriginActive && (
@@ -1714,6 +1739,7 @@ export function BuilderSurface({
     isActiveManager,
     isRemoteOriginActive,
     secureCatalogLoading,
+    secureOutputQuarantineUi,
     secureSecretOptions,
     secureSessionAvailability,
     secureSessionSnapshotView,
@@ -1756,13 +1782,8 @@ export function BuilderSurface({
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
         : {
-            outputState: secureSessionSnapshotView.outputState ?? 'clear',
-            ...(secureSessionSnapshotView.outputState === 'quarantined'
-              ? {
-                  outputStateReason:
-                    'Forge removed protected material before it reached the agent. The Secure Session remains active.',
-                }
-              : {}),
+            ...secureOutputQuarantineConfigFields(secureOutputQuarantineUi),
+            onDismissOutputQuarantine: handleDismissSecureOutputQuarantine,
           }),
       disabled: !state.connected || secureCatalogLoading,
       canApprove:
@@ -1806,11 +1827,13 @@ export function BuilderSurface({
     handleCreateSecureBrowserPairing,
     handleClaimSecureBrowserPairing,
     handleSecureBrowserPaired,
+    handleDismissSecureOutputQuarantine,
     handleRevokeSecureSession,
     isActiveManager,
     isRemoteOriginActive,
     secureCatalogLoading,
     secureCatalog,
+    secureOutputQuarantineUi,
     secureSecretOptions,
     securePendingRequestViews,
     securePendingSshTrustRequestViews,

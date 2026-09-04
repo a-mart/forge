@@ -14,7 +14,6 @@ import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { normalizeArchetypeId } from "../prompt-registry.js";
 import type { OpenAIAuthBrokerRuntimeService } from "../openai-auth/openai-auth-broker-runtime-service.js";
-import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { buildSwarmTools } from "../swarm-tools.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -108,7 +107,6 @@ interface PlanPiExtensionFactoriesOptions {
   getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   forgePiToolBridgeFactory?: ExtensionFactory;
   compactionFailureScopeKey?: string;
-  secureRuntimeBinding?: SecureRuntimeBinding;
   toolOutputBudgetExtensionFactory: ExtensionFactory;
 }
 
@@ -132,7 +130,6 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
           })
         : undefined,
       failureScopeKey: options.compactionFailureScopeKey,
-      secureRuntimeBinding: options.secureRuntimeBinding,
     }));
   }
 

@@ -400,7 +400,6 @@ export class PiRuntimeCreator {
         descriptor
       }),
       compactionFailureScopeKey,
-      secureRuntimeBinding,
       toolOutputBudgetExtensionFactory: toolOutputBudget.extensionFactory,
     });
     const resourcePlan = planPiResourceLoaderOptions({

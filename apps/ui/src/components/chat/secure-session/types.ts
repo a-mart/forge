@@ -194,6 +194,7 @@ export interface SecureSessionRequestConfig {
   loadPrivateDestinations?: () => Promise<SecurePrivateDestinationOption[]>
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
+  onDismissOutputQuarantine?: () => void
   onGrant: (
     sessionAgentId: string,
     grant: SecureGrantInput,

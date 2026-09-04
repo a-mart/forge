@@ -1361,6 +1361,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           {secureSessionRequests.outputState === 'quarantined' ? (
             <SecureOutputQuarantineNotice
               reason={secureSessionRequests.outputStateReason}
+              onDismiss={secureSessionRequests.onDismissOutputQuarantine}
               onStopProcessesAndRevoke={
                 secureSessionRequests.onRevoke && secureSessionRequests.sessionAgentId
                   ? () => secureSessionRequests.onRevoke?.(
