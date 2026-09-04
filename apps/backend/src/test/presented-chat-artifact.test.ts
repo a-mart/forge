@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rename, symlink, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, open, rename, symlink, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -42,6 +42,16 @@ async function fixture() {
 function line(data: any, id = data.id) { return JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id, data }) + "\n"; }
 function message(id: string | undefined, text: string, source = "speak_to_user", role = "assistant") { return { type: "conversation_message", id, agentId: "some-other-actor", role, source, text, timestamp: new Date().toISOString() }; }
 async function errorCode(fn: () => Promise<unknown>) { try { await fn(); } catch (error) { expect(error).toBeInstanceOf(ChatArtifactError); return (error as ChatArtifactError).code; } throw new Error("expected failure"); }
+async function writeSizedFile(target: string, totalBytes: number, prefix = Buffer.from("%PDF-1.4\n")) {
+  const handle = await open(target, "w");
+  try {
+    const head = prefix.subarray(0, Math.min(prefix.length, totalBytes));
+    if (head.length) await handle.write(head, 0, head.length, 0);
+    await handle.truncate(totalBytes);
+  } finally {
+    await handle.close();
+  }
+}
 
 describe("presented chat artifact authorization", () => {
   it("uses the wrapper ID without mutating canonical JSONL", async () => {
@@ -158,40 +168,42 @@ describe("presented chat artifact authorization", () => {
     if (process.platform === "win32") return;
     const f = await fixture();
     const pdf = join(f.dataDir, "ticket.pdf");
-    const pdfBytes = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61)]);
-    await writeFile(pdf, pdfBytes);
+    const pdfHeader = Buffer.from("%PDF-1.4\n");
+    const inPanelBytes = MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1;
+    await writeSizedFile(pdf, inPanelBytes, pdfHeader);
     await writeFile(f.sessionFile, line(message("pdf-ticket", `[pdf](swarm-file://${pdf})`)));
+    let sequence = 0;
     const store = new PresentedChatArtifactTicketStore({
-      createToken: () => "pdf_ticket_token_0001",
+      createToken: () => `pdf_ticket_token_${String(sequence++).padStart(4, "0")}`,
     });
-
-    expect(await errorCode(() => securelyReadPresentedArtifact(pdf))).toBe("file_too_large");
-    const issued: any = await readPresentedChatArtifact(f.source, {
+    const issueTicket = () => readPresentedChatArtifact(f.source, {
       transcriptAgentId: f.agentId,
       messageId: "pdf-ticket",
       path: pdf,
       imageTransport: "http_ticket",
     }, { ticketStore: store });
+
+    expect(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES).toBe(16 * 1024 * 1024);
+    expect(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES).toBeGreaterThan(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES);
+    expect(await errorCode(() => securelyReadPresentedArtifact(pdf))).toBe("file_too_large");
+    const issued: any = await issueTicket();
     expect(issued).toMatchObject({
       binary: true,
       transport: "http_ticket",
       contentType: "application/pdf",
-      totalBytes: pdfBytes.length,
+      totalBytes: inPanelBytes,
     });
     expect(issued).not.toHaveProperty("content");
     const token = issued.ticket.url.split("/").at(-1)!;
     const redeemed = await store.redeem(token);
     expect(redeemed.contentType).toBe("application/pdf");
-    expect(redeemed.totalBytes).toBe(pdfBytes.length);
-    expect(Buffer.from(redeemed.content)).toEqual(pdfBytes);
+    expect(redeemed.totalBytes).toBe(inPanelBytes);
+    expect(redeemed.content.subarray(0, pdfHeader.length)).toEqual(pdfHeader);
+    expect(redeemed.content).toHaveLength(inPanelBytes);
+    expect(await errorCode(() => store.redeem(token))).toBe("ticket_not_found");
 
-    await writeFile(pdf, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES + 1, 0x25));
-    expect(await errorCode(() => readPresentedChatArtifact(f.source, {
-      transcriptAgentId: f.agentId,
-      messageId: "pdf-ticket",
-      path: pdf,
-      imageTransport: "http_ticket",
-    }, { ticketStore: store }))).toBe("file_too_large");
+    await writeSizedFile(pdf, MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES + 1);
+    expect(await errorCode(() => issueTicket())).toBe("file_too_large");
   });
 
   it("returns a UTF-8-safe bounded prefix with stable total-byte metadata", async () => {
