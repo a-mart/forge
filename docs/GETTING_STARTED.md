@@ -102,6 +102,8 @@ A session is a conversation thread within a manager. Your first session is creat
 
 In eligible Builder manager sessions, a compact pill beside **Send** shows the effective model and reasoning level. Click it to open **Session Model**, choose a session override, or select **Use Project Default** to clear an existing override and resume tracking the project default. The pill is not shown in worker views, Collaboration channels, or system profiles such as Cortex.
 
+The Send-adjacent work-mode control chooses Delegate first, Adaptive, or Hands-on for subsequent turns; see the Specialists and delegation docs for details.
+
 Sessions are where work actually happens. The manager is just the container.
 
 ### The Manager–Worker Relationship

@@ -135,17 +135,11 @@ runtimes fail closed instead of receiving the work outside Team Secure Mode.
 
 If the requested alias does not exist, the agent can propose its alias, purpose,
 delivery, and lease. The tool cannot include or receive protected material. Choose
-**Add secret and approve** to enter the value privately and save it to the local
-vault. The requested alias, delivery, and lease remain fixed; the prefilled display
-name is editable. The dialog defaults to the current project and can instead save to
+**Add secret and approve** to enter the value privately. The private entry dialog supports an optional visible username for login construction, a password/passphrase generator, and **Store in** either the Forge local vault or a selected unlocked Bitwarden Password Manager collection. Saving as a Login/reference then continues the same approval. The requested alias, delivery, and lease remain fixed; the display name and username stay editable. The dialog defaults to the current project and can instead save to
 all projects or make the secret automatic in the current project. Choose **Use for
 this task only** when you do not want a reusable saved secret. A paired browser uses
 the same dialog and continues automatically after Desktop approves the pairing; the
-browser clearly labels the trusted-network HTTP path when it is active.
-
-The missing-secret dialog currently saves local-vault material. Import a Bitwarden
-reference under **Settings → Secrets** first when the source should be Bitwarden; the
-agent can then request that saved alias normally.
+browser clearly labels the trusted-network HTTP path when it is active. A locked source must be unlocked before its collection appears as a destination, and saving still requires explicit user approval.
 
 ## Know the boundary
 
