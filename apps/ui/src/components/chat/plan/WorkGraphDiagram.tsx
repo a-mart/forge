@@ -205,10 +205,13 @@ export function WorkGraphDiagram({
                 className={cn(
                   'h-auto min-h-16 w-full min-w-0 flex-col items-stretch gap-1.5 overflow-hidden bg-background px-2.5 py-2 text-left shadow-none',
                   'aria-pressed:border-ring aria-pressed:ring-1 aria-pressed:ring-ring',
-                  node.status === 'completed' && 'bg-emerald-500/[0.06]',
-                  (node.status === 'running' || node.status === 'awaiting_review') && 'bg-violet-500/[0.07]',
-                  node.status === 'waiting' && 'bg-sky-500/[0.07]',
-                  node.status === 'blocked' && 'bg-destructive/[0.06]',
+                  // Status tints use an inset shadow wash so the opaque bg-background
+                  // base is never replaced by a translucent bg color, which let
+                  // connector lines show through the cards.
+                  node.status === 'completed' && 'shadow-[inset_0_0_0_999px_color-mix(in_srgb,var(--color-emerald-500)_6%,transparent)]',
+                  (node.status === 'running' || node.status === 'awaiting_review') && 'shadow-[inset_0_0_0_999px_color-mix(in_srgb,var(--color-violet-500)_7%,transparent)]',
+                  node.status === 'waiting' && 'shadow-[inset_0_0_0_999px_color-mix(in_srgb,var(--color-sky-500)_7%,transparent)]',
+                  node.status === 'blocked' && 'shadow-[inset_0_0_0_999px_color-mix(in_srgb,var(--color-destructive)_6%,transparent)]',
                   (node.status === 'pending' || node.status === 'cancelled') && 'opacity-70',
                 )}
                 style={style}

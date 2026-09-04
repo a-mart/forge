@@ -77,6 +77,39 @@ describe('WorkGraphView', () => {
     expect(container.textContent).toContain('After: Research current behavior')
   })
 
+  it('keeps graph node cards opaque so connector lines cannot show through', () => {
+    const statuses = ['completed', 'running', 'awaiting_review', 'waiting', 'blocked', 'pending'] as const
+    act(() => root.render(createElement(WorkGraphView, {
+      graph: {
+        ...graph,
+        nodes: statuses.map((status, index) => ({
+          ...graph.nodes[0],
+          id: `node-${status}`,
+          title: `Node ${status}`,
+          status,
+          dependsOn: index === 0 ? [] : ['node-completed'],
+        })),
+      },
+    })))
+
+    const cards = [...container.querySelectorAll('[data-work-graph-view="graph"] button[aria-label]')]
+    expect(cards.length).toBe(statuses.length)
+    for (const card of cards) {
+      const classes = (card.getAttribute('class') ?? '').split(/\s+/)
+      // Opaque base must survive on every card.
+      expect(classes).toContain('bg-background')
+      // No translucent bg-* status tint may replace the opaque base.
+      expect(classes.filter((cls) => /^bg-(emerald|violet|sky|destructive)-/.test(cls))).toEqual([])
+      // Status tint is an inset shadow wash painted over the opaque base.
+      const status = statuses.find((s) => card.getAttribute('aria-label')?.startsWith(`Node ${s},`))
+      if (status === 'pending') {
+        expect(classes.filter((cls) => cls.startsWith('shadow-['))).toEqual([])
+      } else {
+        expect(classes.some((cls) => cls.startsWith('shadow-[inset_'))).toBe(true)
+      }
+    }
+  })
+
   it('keeps compact rendering denser without long acceptance copy', () => {
     act(() => root.render(createElement(WorkGraphView, { graph, compact: true })))
     expect(container.textContent).toContain('Research current behavior')
