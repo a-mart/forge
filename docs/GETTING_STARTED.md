@@ -246,12 +246,11 @@ If you've set up scheduled tasks (including the managed daily Cortex consolidati
 
 ### Provider Usage
 
-If the backend detects real provider credentials for OpenAI, Anthropic, or Cursor SDK, Forge can display subscription rate-limit monitoring in two places:
+If the backend detects real provider credentials for OpenAI or Anthropic OAuth pools, or stored xAI OAuth, Forge shows subscription rate-limit monitoring in the sidebar widget:
 
-- **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
-- **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
+- **Sidebar widget** — Compact stacked gauges. OpenAI Codex and Anthropic Claude gauges show 5-hour rolling and weekly windows with reset timers; a stored xAI OAuth credential adds a weekly-only `xAI` SuperGrok credits gauge. Click to expand for detailed metrics (deficit/reserve pace and runout estimates where available), and use the manual refresh button in the detail panel to re-poll immediately.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Cursor SDK usage is included in the same stats, analytics, and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. Broker-backed OpenAI/Codex auth can provide broker status and usage when the broker reports it. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache. OpenAI and Anthropic weekly pace estimates reflect historical usage curves rather than simple linear interpolation; the xAI weekly gauge has no historical pace curve. Cursor SDK usage is not part of this widget — it appears in Stats token analytics and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. Broker-backed OpenAI/Codex auth can provide broker status and usage when the broker reports it. If auth is API-key-based or malformed — including xAI API-key-only or env-only `XAI_API_KEY` setups, or missing/unauthorized xAI OAuth — the xAI gauge stays absent without extra noise; transient fetch failures keep the last good reading. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ### Response throughput
 
