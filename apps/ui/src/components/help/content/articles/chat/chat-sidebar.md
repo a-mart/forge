@@ -34,7 +34,7 @@ The search bar at the top filters local and connected remote sessions and worker
 
 ## Profile actions
 
-For a local Builder project, right-click its header and choose **Project Settings**. You can also hover the header, or focus its actions button, then open the **…** menu. The page stays scoped to that selected project and provides its name, working directory, default model and reasoning level, Project secrets, and Repository resources `.forge` controls. Cortex and Remote Projects do not offer Project Settings.
+For a local Builder project, right-click its header and choose **Project Settings**. You can also hover the header, or focus its actions button, then open the **…** menu. The page stays scoped to that selected project and provides its name, working directory, default model and reasoning level, Context management, Project secrets, and Repository resources `.forge` controls. Context management is the project default for Summary vs experimental Fresh windows. Cortex and Remote Projects do not offer Project Settings.
 
 The direct header context-menu shortcuts remain: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Project Secrets, Mark All as Read, Mute/Unmute All Sessions, Archive Project, and Delete Manager. Changing the default model updates only sessions that still inherit the project default; sessions with an explicit session override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path. Archiving a project marks only the profile as archived, not each session individually, but the whole project becomes read-only and unusable until restored.
 

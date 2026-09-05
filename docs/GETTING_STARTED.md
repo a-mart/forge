@@ -135,7 +135,7 @@ Agents can include Mermaid diagrams in their responses using standard markdown c
 
 You can reply to visible user or assistant messages in normal Builder chat. Hover a message and click **Reply** to attach it as the reply target. The composer shows a compact quote preview so you can confirm the target before sending; clear it if you changed your mind, or choose Reply on another message to change targets. Sent replies render a compact quoted preview above the message, and clicking the quote jumps to the original message when that message is loaded in the current transcript.
 
-You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and are guaranteed to survive when the context window is summarized. See [Smart Compaction](#8-reliability--continuity) for details.
+You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and survive both Summary and Fresh context transitions. See [Reliability & Continuity](#8-reliability--continuity) for details.
 
 ### Workspace Rail and File Browser
 
@@ -228,7 +228,7 @@ In Projects, click a project header to expand or collapse its nested sessions; t
 
 On desktop, Cortex lives in the activity-rail popover. On mobile, and in Classic, it remains a pinned sidebar row.
 
-For a local Builder project, right-click the project header or open its hover/focus **…** menu and choose **Project Settings**. This page remains scoped to that project and lets you rename it, change its working directory, change its default model and reasoning, open its Project secrets, and manage **Project Settings → Repository resources**. Repository resources shows the repo-root `.forge` inventory, executable trust controls, and an existing-`.forge` directory override. The direct Rename, Change Default Model, Change Working Directory, and Project Secrets context-menu shortcuts remain. Cortex and Remote Projects do not have Project Settings.
+For a local Builder project, right-click the project header or open its hover/focus **…** menu and choose **Project Settings**. This page remains scoped to that project and lets you rename it, change its working directory, change its default model and reasoning, choose **Context management** (Summary remains the default; Fresh windows is experimental), open its Project secrets, and manage **Project Settings → Repository resources**. Repository resources shows the repo-root `.forge` inventory, executable trust controls, and an existing-`.forge` directory override. Eligible local Builder managers can also override or inherit that project default from a compact **Context management** control beside Send. Saving a mode does not clear the current conversation; it applies at the next context transition. The direct Rename, Change Default Model, Change Working Directory, and Project Secrets context-menu shortcuts remain. Cortex and Remote Projects do not have Project Settings.
 
 **Pinning sessions:** Right-click any session and select "Pin" to keep it at the top of the sidebar. Pinned sessions appear below project agents but above regular sessions and are never hidden by the "Show N more" pagination. Click "Unpin" to return a session to regular sorting. Sessions are pinned per profile — forked sessions don't inherit pin state.
 
@@ -519,7 +519,9 @@ Forge is designed to run unsupervised. Here's how it handles failure cases.
 
 If you've used Claude Code, you know the pain: the context window fills up, it compacts, and suddenly the agent has amnesia. It doesn't know what it was doing, what's been tried, or what the plan was.
 
-Forge's smart compaction works differently:
+Forge continues according to the session's effective context policy. **Summary** remains the default. Compact and Smart compact both follow that policy; there is no separate intent switch on the Compact actions.
+
+On **Summary**, Smart compaction works as before:
 
 1. **Early trigger** — When context usage hits ~84–88% (visible on the context meter dial in the chat), the system auto-stops the session agent.
 2. **Handoff file** — Before compaction, the agent writes a markdown handoff file capturing current state, in-progress work, decisions made, and next steps.
@@ -528,13 +530,23 @@ Forge's smart compaction works differently:
 5. **Pinned messages** — Any messages you've pinned (up to 10 per session) are preserved verbatim in the summary under a dedicated "Preserved Messages (Pinned)" section.
 6. **Resume** — If compaction happened while the session was active, interrupted, or waiting on dispatch, the agent comes back with the detailed recent context, a high-level summary of older work, pinned messages, and the handoff file.
 
-If you trigger Smart compact manually while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction. While compaction or context recovery is active, the session row shows a violet pulsing `C` badge in the sidebar. **Settings → General → Compaction** controls the compaction model, reasoning, and timeout for supported Pi-backed OpenAI/Codex and Anthropic manager compaction runtimes only, not Cursor SDK, xAI/Grok, or user-added OpenRouter manager models; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices.
+On **Fresh windows**, Compact and Smart compact skip that Smart LLM handoff and instead write a deterministic checkpoint: current goal/plan, pins, and unconsumed tool-result references. Older transcript remains on disk and is recoverable with the agent-only `history` tool. Fresh is experimental and executable only by supported ordinary Pi Builder managers (OpenAI/Codex or Anthropic). Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot run it; workers inherit the owning manager. A project can still save Fresh as a preference even when the current runtime cannot execute it.
+
+If you trigger Smart compact manually on **Summary** while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction. On **Fresh**, a busy manual Compact or Smart compact is rejected until streaming, tools, and prompt dispatch settle; retry when idle. An idle Fresh manager stays idle after a successful manual transition. Saving Summary or Fresh does not reset the current window; it applies at the next context transition. While compaction or context recovery is active, the session row shows a violet pulsing `C` badge in the sidebar. **Settings → General → Compaction** still controls the compaction model, reasoning, and timeout for supported Pi-backed OpenAI/Codex and Anthropic manager compaction runtimes only, not Cursor SDK, xAI/Grok, or user-added OpenRouter manager models; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices. Context continuation itself lives in **Project Settings → Context management**, with an optional session inherit/override beside Send.
 
 Sessions can compact 50+ times and still maintain full continuity. You can just keep going indefinitely.
 
+### History Recall
+
+Local Builder managers and ordinary workers can recover compacted or older conversation evidence with the agent-only `history` tool (`search` then `read`). There is no human history drawer and no embedding index. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Search the current session first, including associated workers. If that is not enough, search the current project explicitly. Search outside the project only with `all_local` plus a nonempty reason; that reason documents intent and does not create an approval prompt.
+
+Hits return source-qualified references, not bare entry IDs. Historical evidence is not current authority or proof of current state. Incomplete catch-up warnings mean a no-match is not proof of absence. Canonical `session.jsonl` remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index. See [Configuration](CONFIGURATION.md#history-recall) for index and read limits.
+
+Collaboration, Cortex/system, plugin, and external-thread runtimes do not get this tool. Workers inherit the owning manager's context policy and can search the same local Builder history.
+
 ### Pinning Messages
 
-Hover over any user or assistant message and click the pin icon to mark it as important. Pinned messages show an amber indicator. When compaction happens, these messages are preserved verbatim regardless of age. This is useful for:
+Hover over any user or assistant message and click the pin icon to mark it as important. Pinned messages show an amber indicator. When compaction happens, these messages are preserved regardless of age: Summary injects them into the compaction summary, and Fresh includes them in the checkpoint. This is useful for:
 
 - Key architectural decisions that need to stay visible
 - Critical requirements or constraints
@@ -547,9 +559,9 @@ While a runtime is live, the context meter follows runtime status rather than a 
 
 ### Context Window Indicator
 
-The small dial icon in the chat header shows current context utilization. When the runtime is live, that live status is authoritative for the meter. Watch it creep up during long sessions. When smart compaction triggers during active work, you'll see a brief pause while the handoff and summary are generated, a violet pulsing `C` appears on the session row, then work resumes.
+The small dial icon in the chat header shows current context utilization. When the runtime is live, that live status is authoritative for the meter. Watch it creep up during long sessions. When Summary Smart compact triggers during active work, you'll see a brief pause while the handoff and summary are generated, a violet pulsing `C` appears on the session row, then work resumes. Fresh automatic transitions happen at native threshold or overflow points and skip that Smart LLM handoff.
 
-You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space. Pinned messages are preserved during manual compaction the same way they are during automatic compaction. If the manager is already idle, a manual Smart compact leaves it idle afterward on Pi-backed managers.
+You can also trigger compaction manually from the three-dot menu (**⋯ → Compact context** or **⋯ → Smart compact**) if you want to proactively clear space. Both actions follow the session's effective context policy. Pinned messages are preserved during manual compaction the same way they are during automatic compaction. On Summary, if the manager is already idle, a manual Smart compact leaves it idle afterward on Pi-backed managers. On Fresh, retry Compact when idle; an idle manager stays idle.
 
 ### Worker Results
 
@@ -626,6 +638,10 @@ You can see exactly what Forge is telling your agents to do, and you can edit th
 **Settings → Slash Commands** lets you create auto-expander shortcuts. Type `/` in the chat, pick a command, press Tab, and the shortcut expands to your predefined text.
 
 Right now these are text snippets for commonly used prompts. Functional slash commands (that execute actions rather than expand text) are coming.
+
+### Context management
+
+**Project Settings → Context management** is the project default for Summary vs experimental Fresh windows. Eligible local Builder managers can inherit or override that default from the compact control beside Send. Saving a mode applies at the next context transition. **Settings → General → Compaction** still chooses only the compaction model, reasoning, and timeout; it is not the home for this policy.
 
 ### Remote Projects
 
@@ -749,7 +765,7 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
 │   │   ├── secrets.json           # Shared secret values
 │   │   ├── knowledge-v2.json      # Default-off Knowledge v2 mode settings
 │   │   └── terminal-settings.json # Saved terminal default shell
-│   ├── cache/                     # Regenerable stats/model/provider caches
+│   ├── cache/                     # Regenerable stats/model/provider caches plus history-recall.db
 │   ├── state/                     # Devices, project-agent shares, migration markers
 │   └── knowledge/
 │       ├── common.md              # Legacy common knowledge (prompt source only with v2 OFF)
@@ -785,7 +801,7 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
         └── workers/               # Worker JSONL logs and worker Cursor SDK state
 ```
 
-Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh.
+Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh. The history-recall FTS cache under `shared/cache/history-recall.db` is also rebuildable; canonical JSONL remains the source of truth.
 
 Cortex is architecturally just another manager agent. It lives in the same profile structure with its own sessions and workers.
 
