@@ -1009,11 +1009,35 @@ export class SecureSessionsService {
     providerId: string,
   ): Promise<BitwardenPasswordManagerSettings> {
     try {
+      const store = await this.store();
+      const provider = store.getProvider(providerId);
+      if (!provider || provider.kind !== "bitwarden_password_manager") {
+        throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+      }
+      const cached = this.options.bitwardenPasswordManagerSource.getCachedMetadata(
+        provider.cliExecutablePath,
+      );
+      if (provider.status === "available" && cached) {
+        // Display metadata is not an authorization decision. Read current
+        // selections from the store without queuing CLI work ahead of starts.
+        return await this.buildBitwardenPasswordManagerSettings(
+          store, providerId, cached.status, cached.collections,
+        );
+      }
       return await this.withAuthorityMutation(async () => {
         const store = await this.store();
         const provider = store.getProvider(providerId);
         if (!provider || provider.kind !== "bitwarden_password_manager") {
           throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+        // Another reader or unlock may have populated metadata while queued.
+        const cached = this.options.bitwardenPasswordManagerSource.getCachedMetadata(
+          provider.cliExecutablePath,
+        );
+        if (provider.status === "available" && cached) {
+          return await this.buildBitwardenPasswordManagerSettings(
+            store, providerId, cached.status, cached.collections,
+          );
         }
         const status = await this.options.bitwardenPasswordManagerSource.status(
           provider.cliExecutablePath,

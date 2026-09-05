@@ -491,6 +491,7 @@ async function createDockerHarness() {
   let nextId = 0;
   const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
     kind: "bitwarden_password_manager",
+    getCachedMetadata() { return null; },
     async status() {
       return {
         state: "locked",

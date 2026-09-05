@@ -75,6 +75,10 @@ export interface BitwardenPasswordManagerClient {
 
 export interface BitwardenPasswordManagerSource {
   readonly kind: "bitwarden_password_manager";
+  getCachedMetadata(configuredExecutablePath: string | null): {
+    status: BitwardenPasswordManagerStatus;
+    collections: BitwardenPasswordManagerCollection[];
+  } | null;
   status(configuredExecutablePath: string | null): Promise<BitwardenPasswordManagerStatus>;
   installCli(): Promise<BitwardenPasswordManagerStatus>;
   unlock(
@@ -110,7 +114,7 @@ implements BitwardenPasswordManagerClient {
   private sessionKey: Buffer | null = null;
   private readonly invocation: BitwardenCliInvocation;
   // Names and IDs only. Never cache item payloads or use this for authorization.
-  private collections: { expiresAt: number; value: BitwardenPasswordManagerCollection[] } | null = null;
+  private collections: BitwardenPasswordManagerCollection[] | null = null;
 
   constructor(
     executable: string | BitwardenCliInvocation = "bw",
@@ -207,17 +211,24 @@ implements BitwardenPasswordManagerClient {
 
   async listCollections(): Promise<BitwardenPasswordManagerCollection[]> {
     if (!this.sessionKey) throw new SecureSourceError("SECURE_SOURCE_LOCKED");
-    if (this.collections && this.collections.expiresAt > Date.now()) {
-      return this.collections.value.map((collection) => ({ ...collection }));
-    }
+    const cached = this.getCachedCollections();
+    if (cached) return cached;
     const session = this.sessionKey;
     const output = await this.runWithSession(["list", "collections"]);
     const value = parseCollections(output);
     // A concurrent lock/re-unlock must not repopulate the previous session's cache.
     if (this.sessionKey === session) {
-      this.collections = { expiresAt: Date.now() + 60_000, value };
+      this.collections = value;
     }
     return value.map((collection) => ({ ...collection }));
+  }
+
+  getCachedCollections(): BitwardenPasswordManagerCollection[] | null {
+    // CLI collection data changes on sync, not on a timer. Lock and sync clear
+    // this display-only snapshot; every secret read still validates membership.
+    return this.sessionKey && this.collections
+      ? this.collections.map((collection) => ({ ...collection }))
+      : null;
   }
 
   async listItems(
@@ -418,11 +429,23 @@ export class BitwardenPasswordManagerSecretSource {
   readonly kind = "bitwarden_password_manager" as const;
   private client: BitwardenPasswordManagerCommandClient | null = null;
   private executablePath: string | null = null;
+  private metadataStatus: { path: string | null; status: BitwardenPasswordManagerStatus } | null = null;
 
   constructor(
     private readonly cipher: SecureVaultCipher,
     private readonly cliManager: BitwardenCliManager,
   ) {}
+
+  getCachedMetadata(configuredExecutablePath: string | null) {
+    const collections = this.client?.getCachedCollections();
+    if (!collections || !this.metadataStatus
+      || this.metadataStatus.path !== configuredExecutablePath
+      || this.metadataStatus.status.state !== "available") return null;
+    return {
+      status: { ...this.metadataStatus.status, cli: { ...this.metadataStatus.status.cli } },
+      collections,
+    };
+  }
 
   async status(
     configuredExecutablePath: string | null,
@@ -437,7 +460,9 @@ export class BitwardenPasswordManagerSecretSource {
       };
     }
     const status = await this.client.status();
-    return { ...status, cli: resolution.summary };
+    const result = { ...status, cli: resolution.summary };
+    this.metadataStatus = { path: configuredExecutablePath, status: result };
+    return result;
   }
 
   async installCli(): Promise<BitwardenPasswordManagerStatus> {
@@ -490,7 +515,9 @@ export class BitwardenPasswordManagerSecretSource {
       const status = await decrypted.material.withBytes(async (password) =>
         await this.requireClient().unlock(password)
       );
-      return { ...status, cli: resolution.summary };
+      const result = { ...status, cli: resolution.summary };
+      this.metadataStatus = { path: configuredExecutablePath, status: result };
+      return result;
     } finally {
       decrypted.reEncryptedCiphertext?.fill(0);
       decrypted.material.release();
@@ -521,6 +548,7 @@ export class BitwardenPasswordManagerSecretSource {
   }
 
   dispose(): void {
+    this.metadataStatus = null;
     this.client?.dispose();
     this.client = null;
     this.executablePath = null;
@@ -540,6 +568,7 @@ export class BitwardenPasswordManagerSecretSource {
 
   private setClient(invocation: BitwardenCliInvocation): void {
     if (this.client && this.executablePath === invocation.executablePath) return;
+    this.metadataStatus = null;
     this.client?.dispose();
     this.client = new BitwardenPasswordManagerCommandClient(invocation);
     this.executablePath = invocation.executablePath;

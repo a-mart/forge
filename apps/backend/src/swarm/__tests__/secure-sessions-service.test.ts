@@ -205,6 +205,41 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("reads warm display metadata without CLI calls or waiting for session startup", async () => {
+    const status = {
+      state: "available" as const, accountEmail: null, serverUrl: null,
+      cli: testBitwardenCliSummary(),
+    };
+    const harness = createHarness({ passwordManagerStatus: status });
+    await harness.service.initializeSecureSessions();
+    const provider = await harness.service.connectBitwardenPasswordManager({ displayName: "Team" });
+    vi.spyOn(harness.bitwardenPasswordManagerSource, "getCachedMetadata").mockReturnValue({
+      status, collections: [],
+    });
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(harness.execution, "ensureTask").mockImplementation(async () => {
+      entered();
+      await blocked;
+      return { backend: "fake", sandboxId: "manager-a" };
+    });
+    const start = harness.service.startSecureSession("manager-a");
+    try {
+      await started;
+      const calls = harness.passwordManagerStatusPaths.length;
+      const settings = await harness.service.getBitwardenPasswordManagerSettings(provider.providerId);
+      expect(settings.providerId).toBe(provider.providerId);
+      expect(harness.passwordManagerStatusPaths).toHaveLength(calls);
+      expect(harness.passwordManagerSyncs).toHaveLength(0);
+    } finally {
+      release();
+      await start;
+      await harness.close();
+    }
+  });
+
   it("installs a managed Password Manager CLI or persists a custom executable path", async () => {
     const harness = createHarness();
     const provider = await harness.service.connectBitwardenPasswordManager({
@@ -6186,6 +6221,7 @@ function createHarness(options: {
   };
   const bitwardenPasswordManagerSource: BitwardenPasswordManagerSource = {
     kind: "bitwarden_password_manager",
+    getCachedMetadata() { return null; },
     async status(configuredExecutablePath) {
       passwordManagerStatusPaths.push(configuredExecutablePath);
       if (options.passwordManagerStatus) return options.passwordManagerStatus;
@@ -6341,6 +6377,7 @@ function createHarness(options: {
   });
   return {
     service,
+    bitwardenPasswordManagerSource,
     store,
     descriptors,
     archivedProfiles,
