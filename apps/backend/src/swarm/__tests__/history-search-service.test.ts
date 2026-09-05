@@ -1,11 +1,11 @@
 import { locateCheckpointEvidence } from "../history-recall/checkpoint-references.js";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { appendFile, readFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
-import { getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
+import { getHistoryRecallIndexPath, getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
 import { HistorySearchService } from "../history-recall/history-search-service.js";
 import { HistoryRecallError } from "../history-recall/source-catalog.js";
 import { FORGE_CONTEXT_BOUNDARY_TYPE } from "../history-recall/types.js";
@@ -76,7 +76,7 @@ describe("HistorySearchService", () => {
       nativeMessage("native-old-user", {
         role: "user",
         content: [{ type: "text", text: "the exact old failure happened in billing" }],
-      }),
+      }, "2026-01-01T00:00:01.000Z"),
       nativeMessage("tool-call", {
         role: "assistant",
         content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "src/auth/getUserId.ts" } }],
@@ -432,6 +432,94 @@ describe("HistorySearchService", () => {
     expect(result.complete).toBe(false);
     expect(result.warnings.join(" ")).toMatch(/oversized|incomplete/i);
   });
+  it("resumes oversized skipping after restart, retrieves trailing evidence, and retains coverage warnings", async () => {
+    const fx = await createFixture();
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("first", { role: "user", content: "stable first row" }),
+      nativeMessage("huge", { role: "user", content: "x".repeat(3_200_000) }),
+      nativeMessage("target", { role: "user", content: "trailingneedle" }),
+    ]);
+    let service = fx.service;
+    let found = false;
+    let previousOffset = 0;
+    for (let i = 0; i < 8; i++) {
+      await appendFile(path, nativeMessage(`append-${i}`, { role: "user", content: `active ${i}` }) + "\n");
+      const response = await service.search(fx.session.agentId, { query: "trailingneedle" });
+      const db = new Database(getHistoryRecallIndexPath(fx.dataDir), { readonly: true });
+      const state = db.prepare("SELECT indexed_bytes, oversized_state FROM sources").get() as { indexed_bytes: number; oversized_state: number };
+      db.close();
+      expect(state.indexed_bytes).toBeGreaterThan(previousOffset);
+      previousOffset = state.indexed_bytes;
+      if (response.results.length) {
+        expect((await service.read(fx.session.agentId, { ref: response.results[0].ref })).entry.text).toBe("trailingneedle");
+        found = true;
+        break;
+      }
+      await service.dispose();
+      service = createService(fx);
+    }
+    expect(found).toBe(true);
+    await service.dispose();
+    service = createService(fx);
+    const warm = await service.search(fx.session.agentId, { query: "trailingneedle" });
+    expect(warm.results).toHaveLength(1);
+    expect(warm.complete).toBe(false);
+    expect(warm.warnings.join(" ")).toMatch(/skipped oversized/);
+  });
+
+  it("keeps repeated messages and identical checkpoints searchable across windows and restarts", async () => {
+    const fx = await createFixture();
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("old", { role: "user", content: "repeatedneedle" }),
+      compaction("fresh1", "anchor1", "repeated checkpoint", { forgeContext: { mode: "fresh" } }),
+    ]);
+    await fx.service.search(fx.session.agentId, { query: "repeatedneedle" });
+    await fx.service.dispose();
+    const service = createService(fx);
+    await appendFile(path, [
+      nativeMessage("new", { role: "user", content: "repeatedneedle" }, "2026-01-02T00:00:00.000Z"),
+      compaction("fresh2", "anchor2", "repeated checkpoint", { forgeContext: { mode: "fresh" } }),
+      nativeMessage("newest", { role: "user", content: "repeatedneedle" }, "2026-01-03T00:00:00.000Z"),
+    ].join("\n") + "\n");
+    const all = await service.search(fx.session.agentId, { query: "repeatedneedle" });
+    expect(all.results.map(hit => hit.ref.entryId).sort()).toEqual(["new", "newest", "old"]);
+    const current = await service.search(fx.session.agentId, { query: "repeatedneedle", window: "current" });
+    expect(current.results.map(hit => hit.ref.entryId)).toEqual(["newest"]);
+    const dated = await service.search(fx.session.agentId, { query: "repeatedneedle", since: "2026-01-02T00:00:00.000Z" });
+    expect(dated.results).toHaveLength(2);
+    const checkpoints = await service.search(fx.session.agentId, { query: '"repeated checkpoint"', kinds: ["checkpoint"] });
+    expect(checkpoints.results.map(hit => hit.ref.entryId).sort()).toEqual(["fresh1", "fresh2"]);
+    for (const hit of [...all.results, ...checkpoints.results]) {
+      expect((await service.read(fx.session.agentId, { ref: hit.ref })).entry.ref.entryId).toBe(hit.ref.entryId);
+    }
+  });
+
+  it("rebuilds legacy derived projections once without modifying canonical history or invalidating refs", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("old", { role: "user", content: "migrationneedle" }),
+      nativeMessage("later", { role: "user", content: "migrationneedle" }),
+    ]);
+    const first = await fx.service.search(fx.session.agentId, { query: "migrationneedle" });
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    const canonical = await readFile(path, "utf8");
+    await fx.service.dispose();
+    const db = new Database(getHistoryRecallIndexPath(fx.dataDir));
+    // Model the old cache: no version/oversized state and later occurrence omitted.
+    db.exec("DELETE FROM meta; DELETE FROM entries WHERE entry_id='later'; DELETE FROM entries_fts WHERE entry_id='later'; ALTER TABLE sources DROP COLUMN oversized_state;");
+    db.close();
+    const service = createService(fx);
+    const restored = await service.search(fx.session.agentId, { query: "migrationneedle" });
+    expect(restored.results).toHaveLength(2);
+    expect((await service.read(fx.session.agentId, { ref: first.results.find(hit => hit.ref.entryId === "old")!.ref })).entry.text).toBe("migrationneedle");
+    expect(await readFile(path, "utf8")).toBe(canonical);
+    await service.dispose();
+    const reopened = createService(fx);
+    expect((await reopened.search(fx.session.agentId, { query: "migrationneedle" })).results).toHaveLength(2);
+  });
+
 });
 
 async function createFixture() {
@@ -566,8 +654,8 @@ function conversation(id: string, data: Record<string, unknown>): string {
   });
 }
 
-function nativeMessage(id: string, message: Record<string, unknown>): string {
-  return JSON.stringify({ type: "message", id, parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message });
+function nativeMessage(id: string, message: Record<string, unknown>, timestamp = "2026-01-01T00:00:00.000Z"): string {
+  return JSON.stringify({ type: "message", id, parentId: null, timestamp, message });
 }
 
 function custom(customType: string, id: string, data: unknown): string {

@@ -122,6 +122,9 @@ export function contentKeyForRecord(kind: HistoryEntryKind, role: string | undef
   if ((kind === "tool_call" || kind === "tool_result") && toolCallId) {
     return `${kind}:${toolCallId}`;
   }
+  if (kind === "checkpoint" && toolCallId) {
+    return `${kind}:${toolCallId}`;
+  }
   const normalized = normalizeSearchText(text).toLowerCase();
   return `${kind}:${role ?? ""}:${toolName ?? ""}:${hash32(normalized)}`;
 }
