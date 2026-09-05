@@ -418,17 +418,20 @@ function acceptProjected(
     return entry;
   }
   const existing = state.seenContentKeys.get(entry.contentKey);
-  if (existing) {
-    if (existing.origin === "forge_custom" && entry.origin === "native") {
-      return undefined;
-    }
-    if (existing.origin === "native" && entry.origin === "forge_custom") {
-      state.seenContentKeys.set(entry.contentKey, { entryId: entry.entryId, origin: entry.origin });
-      return { ...entry, replacesEntryId: existing.entryId };
-    }
-    return undefined;
+  // Only pair adjacent projected mirror occurrences. Repeated text is not an
+  // identity: preserve later messages, other windows, and every checkpoint.
+  state.seenContentKeys.clear();
+  if (entry.kind === "checkpoint") return entry;
+  const sameOccurrence = existing && existing.origin !== entry.origin
+    && existing.windowId === entry.windowId && existing.text === entry.text
+    && (entry.kind !== "message" || (entry.timestamp !== undefined && entry.timestamp === existing.timestamp));
+  if (sameOccurrence) {
+    return entry.origin === "native" ? undefined : { ...entry, replacesEntryId: existing.entryId };
   }
-  state.seenContentKeys.set(entry.contentKey, { entryId: entry.entryId, origin: entry.origin });
+  state.seenContentKeys.set(entry.contentKey, {
+    entryId: entry.entryId, origin: entry.origin, text: entry.text,
+    windowId: entry.windowId, timestamp: entry.timestamp,
+  });
   return entry;
 }
 

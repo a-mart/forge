@@ -34,10 +34,18 @@ export interface ProjectedHistoryEntry {
   retainsFromEntryId?: string;
 }
 
+export interface ContentKeyOccurrences {
+  entryId: string;
+  origin: HistoryEntryOrigin;
+  text: string;
+  windowId: string;
+  timestamp?: string;
+}
+
 export interface ProjectorState {
   windowId: string;
   pendingBoundaryId?: string;
-  seenContentKeys: Map<string, { entryId: string; origin: HistoryEntryOrigin }>;
+  seenContentKeys: Map<string, ContentKeyOccurrences>;
 }
 
 export interface HistorySourceDescriptor {
@@ -63,6 +71,7 @@ export interface JsonlScanResult {
   incomplete: boolean;
   scannedBytes: number;
   skippedOversized: boolean;
+  skippingOversized: boolean;
 }
 
 export const INITIAL_WINDOW_ID = "window:initial";

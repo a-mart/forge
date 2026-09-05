@@ -95,18 +95,27 @@ export function* iterateCompleteLines(
   startOffset: number,
   endOffset: number,
   maxBytes: number,
+  options?: { resumeSkippingOversized?: boolean },
 ): Generator<JsonlCompleteLine, Omit<JsonlScanResult, "lines">> {
   const descriptor = openSync(path, "r");
   let offset = Math.max(0, startOffset);
   let scannedBytes = 0;
   let remainder = Buffer.alloc(0);
   let incomplete = false;
-  let skippedOversized = false;
-  let skippingOversized = false;
+  let skippingOversized = Boolean(options?.resumeSkippingOversized);
+  let skippedOversized = skippingOversized;
   try {
-    while (offset < endOffset && (scannedBytes < maxBytes || skippingOversized)) {
-      const budget = skippingOversized ? MAX_JSONL_CHUNK_BYTES : Math.min(MAX_JSONL_CHUNK_BYTES, maxBytes - scannedBytes);
-      const toRead = Math.min(budget, endOffset - offset);
+    while (offset < endOffset) {
+      const remainingBudget = maxBytes - scannedBytes;
+      const probeExactCap = !skippingOversized && remainingBudget <= 0 && remainder.length === MAX_LINE_BYTES;
+      if (remainingBudget <= 0 && !probeExactCap) {
+        break;
+      }
+      const toRead = Math.min(
+        MAX_JSONL_CHUNK_BYTES,
+        endOffset - offset,
+        probeExactCap ? 1 : remainingBudget,
+      );
       if (toRead <= 0) {
         break;
       }
@@ -115,11 +124,9 @@ export function* iterateCompleteLines(
       if (bytesRead <= 0) {
         break;
       }
-      if (!skippingOversized) {
-        scannedBytes += bytesRead;
-      }
-      const data = bytesRead === toRead ? chunk : chunk.subarray(0, bytesRead);
+      scannedBytes += bytesRead;
       offset += bytesRead;
+      const data = bytesRead === toRead ? chunk : chunk.subarray(0, bytesRead);
 
       if (skippingOversized) {
         const newline = data.indexOf(0x0a);
@@ -129,18 +136,18 @@ export function* iterateCompleteLines(
         }
         skippingOversized = false;
         remainder = data.subarray(newline + 1);
-        continue;
+      } else {
+        remainder = remainder.length > 0 ? Buffer.concat([remainder, data]) : data;
       }
 
-      const combined = remainder.length > 0 ? Buffer.concat([remainder, data]) : data;
       let start = 0;
-      while (start < combined.length) {
-        const newline = combined.indexOf(0x0a, start);
+      while (start < remainder.length) {
+        const newline = remainder.indexOf(0x0a, start);
         if (newline < 0) {
           break;
         }
-        const lineBytes = combined.subarray(start, newline);
-        const byteOffset = offset - (combined.length - start);
+        const lineBytes = remainder.subarray(start, newline);
+        const byteOffset = offset - (remainder.length - start);
         if (lineBytes.length > MAX_LINE_BYTES) {
           skippedOversized = true;
           incomplete = true;
@@ -153,18 +160,12 @@ export function* iterateCompleteLines(
         }
         start = newline + 1;
       }
+      remainder = remainder.subarray(start);
 
-      if (start < combined.length) {
-        const leftover = combined.subarray(start);
-        if (leftover.length > MAX_LINE_BYTES) {
-          skippedOversized = true;
-          incomplete = true;
-          skippingOversized = true;
-          remainder = Buffer.alloc(0);
-        } else {
-          remainder = leftover;
-        }
-      } else {
+      if (remainder.length > MAX_LINE_BYTES) {
+        skippedOversized = true;
+        incomplete = true;
+        skippingOversized = true;
         remainder = Buffer.alloc(0);
       }
     }
@@ -180,6 +181,7 @@ export function* iterateCompleteLines(
     incomplete,
     scannedBytes,
     skippedOversized,
+    skippingOversized,
   };
 }
 
@@ -188,9 +190,10 @@ export function readCompleteLines(
   startOffset: number,
   endOffset: number,
   maxBytes: number,
+  options?: { resumeSkippingOversized?: boolean },
 ): JsonlScanResult {
   const lines: JsonlCompleteLine[] = [];
-  const iterator = iterateCompleteLines(path, startOffset, endOffset, maxBytes);
+  const iterator = iterateCompleteLines(path, startOffset, endOffset, maxBytes, options);
   let result = iterator.next();
   while (!result.done) {
     lines.push(result.value);

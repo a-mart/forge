@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS sources (
   source_size INTEGER NOT NULL DEFAULT 0,
   current_window_id TEXT NOT NULL DEFAULT 'window:initial',
   indexed_tail_hash TEXT NOT NULL DEFAULT '',
+  oversized_state INTEGER NOT NULL DEFAULT 0,
   projector_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -80,6 +81,7 @@ export interface SourceRow {
   source_size: number;
   current_window_id: string;
   indexed_tail_hash: string;
+  oversized_state: number;
   projector_json: string;
   updated_at: string;
 }
@@ -133,11 +135,11 @@ export class HistoryRecallIndexStore {
       INSERT INTO sources (
         source_id, profile_id, session_agent_id, actor_agent_id, path, archived,
         session_label, actor_label, generation, inode, indexed_bytes, source_size,
-        current_window_id, indexed_tail_hash, projector_json, updated_at
+        current_window_id, indexed_tail_hash, oversized_state, projector_json, updated_at
       ) VALUES (
         @source_id, @profile_id, @session_agent_id, @actor_agent_id, @path, @archived,
         @session_label, @actor_label, @generation, @inode, @indexed_bytes, @source_size,
-        @current_window_id, @indexed_tail_hash, @projector_json, @updated_at
+        @current_window_id, @indexed_tail_hash, @oversized_state, @projector_json, @updated_at
       )
     `);
     this.updateSource = database.prepare(`
@@ -146,7 +148,7 @@ export class HistoryRecallIndexStore {
         path=@path, archived=@archived, session_label=@session_label, actor_label=@actor_label,
         generation=@generation, inode=@inode, indexed_bytes=@indexed_bytes, source_size=@source_size,
         current_window_id=@current_window_id, indexed_tail_hash=@indexed_tail_hash,
-        projector_json=@projector_json, updated_at=@updated_at
+        oversized_state=@oversized_state, projector_json=@projector_json, updated_at=@updated_at
       WHERE source_id=@source_id
     `);
     this.getSource = database.prepare("SELECT * FROM sources WHERE source_id = ?");
@@ -196,6 +198,7 @@ export class HistoryRecallIndexStore {
       database.pragma("foreign_keys = ON");
       database.exec(SCHEMA_SQL);
       ensureSourceColumns(database);
+      ensureIndexSchemaVersion(database);
       return new HistoryRecallIndexStore(database);
     } catch (error) {
       if (database.open) {
@@ -402,13 +405,15 @@ export class HistoryRecallIndexStore {
         current?.current_window_id ?? INITIAL_WINDOW_ID,
         current?.indexed_tail_hash ?? readPrefixTailHash(source.path, startOffset),
         current?.projector_json ?? serializeProjector(createProjectorState()),
+        current?.oversized_state ?? 0,
       );
+      if (current?.oversized_state) warnings.push(`Indexing of ${source.sessionLabel}/${source.actorLabel} skipped oversized JSONL rows.`);
       return {
         sourceId: source.sourceId,
         generation,
         indexedBytes: startOffset,
         sourceSize: stat.size,
-        incomplete: false,
+        incomplete: Boolean(current?.oversized_state),
         scannedBytes: 0,
         warnings,
       };
@@ -417,34 +422,38 @@ export class HistoryRecallIndexStore {
     const projector = current?.projector_json
       ? deserializeProjector(current.projector_json)
       : createProjectorState();
-    const { lines, nextOffset, incomplete, scannedBytes, skippedOversized } = readCompleteLines(
+    const { lines, nextOffset, incomplete, scannedBytes, skippedOversized, skippingOversized } = readCompleteLines(
       source.path,
       startOffset,
       stat.size,
       maxBytes,
+      { resumeSkippingOversized: current?.oversized_state === 1 },
     );
+    const oversizedState = skippingOversized ? 1 : (skippedOversized || current?.oversized_state ? 2 : 0);
     const insertBatch = this.database.transaction((entries: ProjectedHistoryEntry[]) => {
       for (const entry of entries) {
         this.writeProjected(source.sourceId, entry);
       }
+      this.upsertSource(
+        source,
+        generation,
+        stat,
+        nextOffset,
+        projector.windowId,
+        readPrefixTailHash(source.path, nextOffset),
+        serializeProjector(projector),
+        oversizedState,
+      );
     });
     insertBatch(lines.flatMap((line) => {
       const projected = projectCanonicalLine(line.line, line.byteOffset, projector, "index");
       return projected ? [projected] : [];
     }));
-    this.upsertSource(
-      source,
-      generation,
-      stat,
-      nextOffset,
-      projector.windowId,
-      readPrefixTailHash(source.path, nextOffset),
-      serializeProjector(projector),
-    );
+
     if (incomplete) {
       warnings.push(`Indexing of ${source.sessionLabel}/${source.actorLabel} is incomplete.`);
     }
-    if (skippedOversized) {
+    if (oversizedState) {
       warnings.push(`Indexing of ${source.sessionLabel}/${source.actorLabel} skipped oversized JSONL rows.`);
     }
     return {
@@ -452,7 +461,7 @@ export class HistoryRecallIndexStore {
       generation,
       indexedBytes: nextOffset,
       sourceSize: stat.size,
-      incomplete,
+      incomplete: incomplete || oversizedState !== 0,
       scannedBytes,
       warnings,
     };
@@ -503,6 +512,7 @@ export class HistoryRecallIndexStore {
     currentWindowId: string,
     indexedTailHash: string,
     projectorJson: string,
+    oversizedState: number,
   ): void {
     const row = {
       source_id: source.sourceId,
@@ -520,6 +530,7 @@ export class HistoryRecallIndexStore {
       current_window_id: currentWindowId,
       indexed_tail_hash: indexedTailHash,
       projector_json: projectorJson,
+      oversized_state: oversizedState,
       updated_at: new Date().toISOString(),
     };
     const existing = this.getSource.get(source.sourceId);
@@ -544,12 +555,26 @@ function ensureSourceColumns(database: Database.Database): void {
   const columns = new Set(
     (database.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).map((column) => column.name),
   );
+  if (!columns.has("oversized_state")) {
+    database.exec("ALTER TABLE sources ADD COLUMN oversized_state INTEGER NOT NULL DEFAULT 0");
+  }
   if (!columns.has("current_window_id")) {
     database.exec("ALTER TABLE sources ADD COLUMN current_window_id TEXT NOT NULL DEFAULT 'window:initial'");
   }
   if (!columns.has("indexed_tail_hash")) {
     database.exec("ALTER TABLE sources ADD COLUMN indexed_tail_hash TEXT NOT NULL DEFAULT ''");
   }
+}
+
+// The index is derived. Rebuild old projections once so previously omitted
+// occurrences are recovered without changing canonical history or source refs.
+function ensureIndexSchemaVersion(database: Database.Database): void {
+  const version = database.prepare("SELECT value FROM meta WHERE key = 'projection_version'").get() as { value: string } | undefined;
+  if (version?.value === "2") return;
+  database.transaction(() => {
+    database.exec("DELETE FROM entries_fts; DELETE FROM entries; DELETE FROM sources;");
+    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('projection_version', '2')").run();
+  })();
 }
 
 function prefixReplaced(path: string, existing: SourceRow): boolean {
@@ -591,10 +616,14 @@ function deserializeProjector(raw: string): ReturnType<typeof createProjectorSta
           continue;
         }
         const value = entry[1];
-        if (typeof value.entryId !== "string" || (value.origin !== "forge_custom" && value.origin !== "native")) {
+        if (typeof value.entryId !== "string" || typeof value.text !== "string" || typeof value.windowId !== "string"
+          || (value.origin !== "forge_custom" && value.origin !== "native")) {
           continue;
         }
-        state.seenContentKeys.set(entry[0], { entryId: value.entryId, origin: value.origin });
+        state.seenContentKeys.set(entry[0], {
+          entryId: value.entryId, origin: value.origin, text: value.text, windowId: value.windowId,
+          timestamp: typeof value.timestamp === "string" ? value.timestamp : undefined,
+        });
       }
     }
   } catch {

@@ -153,4 +153,41 @@ describe("history recall canonical projector", () => {
     expect(read?.text).toBe(long);
     expect(read?.text.startsWith("line one\n\nline two ")).toBe(true);
   });
+  it("keeps repeated same-origin occurrences and only pairs adjacent timestamp-matched mirrors", () => {
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const native = (id: string, time = timestamp) => JSON.stringify({
+      type: "message", id, timestamp: time, message: { role: "user", content: "repeat" },
+    });
+    const forge = (id: string, time = timestamp) => JSON.stringify({
+      type: "custom", customType: CONVERSATION_ENTRY_TYPE, id, timestamp: time,
+      data: { type: "conversation_message", role: "user", text: "repeat", timestamp: time },
+    });
+    const result = projectAll([
+      native("n1"), forge("f1"), native("n2"), forge("f2"),
+      native("n3"), native("n4"),
+      forge("later", "2026-01-02T00:00:00.000Z"),
+    ]);
+    expect(result.map(entry => [entry.entryId, entry.replacesEntryId])).toEqual([
+      ["n1", undefined], ["f1", "n1"], ["n2", undefined], ["f2", "n2"],
+      ["n3", undefined], ["n4", undefined], ["later", undefined],
+    ]);
+    expect(projectAll([forge("f1"), native("n1"), forge("f2"), native("n2")]).map(entry => entry.entryId)).toEqual(["f1", "f2"]);
+  });
+
+  it("does not pair identical text across a context boundary or retain unbounded dedup state", () => {
+    const state = createProjectorState();
+    const project = (row: unknown) => projectCanonicalLine(JSON.stringify(row), 0, state);
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    project({ type: "message", id: "old", timestamp, message: { role: "user", content: "repeat" } });
+    project({ type: "compaction", id: "fresh", firstKeptEntryId: "anchor", summary: "checkpoint", details: { forgeContext: { mode: "fresh" } } });
+    const later = project({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "new", timestamp,
+      data: { type: "conversation_message", role: "user", text: "repeat", timestamp } });
+    expect(later?.entryId).toBe("new");
+    expect(later?.replacesEntryId).toBeUndefined();
+    for (let i = 0; i < 100; i++) {
+      project({ type: "message", id: `next-${i}`, message: { role: "user", content: `unique ${i}` } });
+      expect(state.seenContentKeys.size).toBeLessThanOrEqual(1);
+    }
+  });
+
 });
