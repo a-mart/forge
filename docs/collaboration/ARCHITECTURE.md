@@ -19,6 +19,7 @@ Core invariants:
 - Remote origins are managed independently for browser connections with `remoteProjectsEnabled`; the selected origin owns supported project-scoped surfaces.
 - Builder-only surfaces stay out of Collaboration channels unless explicitly designed for them. Remote Projects expose only their reviewed Builder allowlists.
 - The Automatic Browser Host is a local Forge Desktop capability, not a Skill or active-origin transport. Its embedded views, optional Chrome relay/registration, private per-tab affinity and authority, and IPC stay on the local Builder connection and are never forwarded to Remote Projects or Collaboration channels.
+- Opt-in `subscribe_inventory` is a local Builder WebSocket capability. Collaboration-server and Remote Projects sockets, including authenticated admins, reject it with `INVENTORY_NOT_SUPPORTED`. It is not a viewed conversation, not channel state, and not stored in `collab_*` tables.
 
 ## Local Builder, Remote Projects, and Collaboration channels
 
@@ -34,6 +35,7 @@ Core invariants:
 | Non-chat Settings/Stats/Archive/onboarding/Cortex | Local | Still local | Separate Collaboration settings where designed |
 | Specialists/skills | Builder target space and normal loading | Builder target space on the remote server | Collaboration target space and selected global state |
 | Data movement | Local | No clone or sync; state and execution remain remote | Channel history/content remain remote |
+| Passive inventory | Opt-in `subscribe_inventory` on the local Builder socket; correlated `inventory_snapshot` is the baseline and positive capability ack; `inventory_pong` is liveness only | Rejected with `INVENTORY_NOT_SUPPORTED` | Rejected with `INVENTORY_NOT_SUPPORTED` |
 
 Remote Projects has a dedicated canonical guide: [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md).
 
@@ -92,7 +94,7 @@ FORGE_DATA_DIR=/var/lib/forge
 
 ## Domain model and protocol map
 
-The Collaboration-channel protocol source of truth is `packages/protocol/src/collaboration.ts`. Remote Projects adds `builder-protocol.ts`, `presence.ts`, conversation attribution/`clientRequestId`, and `builder-sidebar-order.ts` on the shared Builder surface.
+The Collaboration-channel protocol source of truth is `packages/protocol/src/collaboration.ts`. Remote Projects adds `builder-protocol.ts`, `presence.ts`, conversation attribution/`clientRequestId`, and `builder-sidebar-order.ts` on the shared Builder surface. Opt-in Builder inventory lives in `builder-inventory.ts` and is local-Builder only; do not add it to the collaboration or Remote Projects protocol families.
 
 | Protocol family | Examples |
 |-----------------|----------|
@@ -102,8 +104,9 @@ The Collaboration-channel protocol source of truth is `packages/protocol/src/col
 | Client commands | `collab_bootstrap`, `collab_subscribe_channel`, `collab_user_message`, `collab_mark_channel_read`, `collab_choice_response`, `collab_choice_cancel`, `collab_pin_message` |
 | Server events | `collab_channel_message`, `collab_channel_status`, `collab_session_activity`, `collab_session_agent_status`, `collab_session_workers_snapshot`, `collab_choice_request`, category/channel reorder/update events |
 | Selection state | `CollaborationSkillSelectionState`, selected global specialist handles on categories/channels |
+| Local Builder inventory (not collaboration) | `subscribe_inventory`, `inventory_snapshot`, `inventory_pong`; collaboration-server/Remote Projects return `INVENTORY_NOT_SUPPORTED`; old servers fail closed with `INVALID_COMMAND` and must not fall back to `subscribe` |
 
-Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend route/WS handlers and UI clients are updated to match.
+Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend route/WS handlers and UI clients are updated to match. Inventory contract changes start in `builder-inventory.ts` and remain local-Builder only.
 
 ## Storage model
 
@@ -123,6 +126,7 @@ Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend
 | Specialist definitions | Files | Shared markdown in `shared/specialists/`; channel-local markdown under session `specialists/`. |
 | Forge skill definitions | Files | User-created global Forge skills live under `${FORGE_DATA_DIR}/skills/`; repository project skills live under repo-root `.forge/skills/`. |
 | Pi agent skill definitions | Files | Pi-discovered global worker/manager skills live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`; profile/project Pi skills live under `${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/`. V1 channel skill selection is global-handle based with always-on `memory`; no channel-local skill authoring. |
+| Builder inventory | None | Transient per-socket local-Builder state. Do not add inventory to `collab_*` tables or persist it as collaboration domain rows. |
 
 Structured collaboration domain state is SQLite-backed, but session identity still depends on Forge's normal agent registry. Back up `swarm/agents.json` with the collaboration database and `_collaboration` profile data or channel rows can become unresolved.
 
@@ -177,7 +181,7 @@ Remote origin flow is separate:
 2. The client records `instanceName`, Forge version, Builder protocol version, and capabilities. A newer unsupported protocol blocks attachment.
 3. The client probes `/api/collaboration/me`; an unauthenticated connection stays visible as sign-in required.
 4. When `capabilities.remoteBuild` is true, the client opens a Builder WebSocket and creates an origin store keyed by the connection ID.
-5. Selecting a remote profile/session routes chat and supported project HTTP/WS surfaces through that origin. Non-chat local-only surfaces continue to use the local backend. The Automatic Browser Host is not routed: embedded views/partitions and optional Chrome registration/relay/authority/IPC stay on the local Builder connection.
+5. Selecting a remote profile/session routes chat and supported project HTTP/WS surfaces through that origin. Non-chat local-only surfaces continue to use the local backend. The Automatic Browser Host is not routed: embedded views/partitions and optional Chrome registration/relay/authority/IPC stay on the local Builder connection. Opt-in `subscribe_inventory` is also not routed: remote and collaboration sockets reject it with `INVENTORY_NOT_SUPPORTED`. Explicit conversation `subscribe` and ordinary `{ type: "ping" }` / `ready` remain the Remote Projects and Collaboration heartbeat/view contracts.
 
 The current UI emits a 25 second `{ type: "ping" }` heartbeat on the collaboration WebSocket. Reverse proxies still need a sane tunnel timeout; HTTP health checks do not keep WebSocket tunnels alive.
 
@@ -266,7 +270,8 @@ Treat these as excluded from **Collaboration channels** unless a task explicitly
 - repo-root project resource mutation/trust flows
 - Builder terminal, archive, Source Control, and Files UI assumptions
 - the Automatic Browser Host and its tools, Electron views/partitions, optional Chrome registration/relay/private authority, and IPC
+- opt-in Builder inventory (`subscribe_inventory` / `inventory_snapshot` / `inventory_pong`)
 
-Do not apply that channel list wholesale to Remote Projects. Remote Projects deliberately exposes active-origin chat, Files, Git/Source Control, terminals, attachments, Session Audit, and model-availability surfaces through reviewed allowlists. Non-chat Settings, Stats, Archive, onboarding, Cortex, sidebar usage, sidebar ordering, and the local Browser workspace/host remain local. Remote normal managers can still have structurally planned browser tools; absent a Desktop host connected directly to the remote backend, those calls return `unavailable-host` rather than being forwarded to the viewing machine.
+Do not apply that channel list wholesale to Remote Projects. Remote Projects deliberately exposes active-origin chat, Files, Git/Source Control, terminals, attachments, Session Audit, and model-availability surfaces through reviewed allowlists. Non-chat Settings, Stats, Archive, onboarding, Cortex, sidebar usage, sidebar ordering, and the local Browser workspace/host remain local. Passive Builder inventory is also local-only: Remote Projects reject `subscribe_inventory` with `INVENTORY_NOT_SUPPORTED` rather than treating it as an allowlisted remote command. Explicit conversation `subscribe` remains the viewed-session contract on every origin. Remote normal managers can still have structurally planned browser tools; absent a Desktop host connected directly to the remote backend, those calls return `unavailable-host` rather than being forwarded to the viewing machine.
 
 Backend routes for Builder-only systems may still exist in a collaboration process. Route presence is not product support. Member access is allowlist-only behind server policy, while unclassified routes remain admin-only. See [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md#5-supported-and-local-only-surfaces) for the product boundary and its live-revocation caveats.
