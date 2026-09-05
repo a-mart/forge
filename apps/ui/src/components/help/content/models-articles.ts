@@ -80,7 +80,7 @@ const modelsProviders: HelpArticle = {
     'Sonnet',
     'Haiku',
   ],
-  relatedIds: ['models-overview', 'models-cost', 'models-reasoning', 'settings-auth', 'settings-oauth', 'getting-started-configuration'],
+  relatedIds: ['models-overview', 'models-cost', 'models-reasoning', 'settings-auth', 'settings-oauth', 'getting-started-configuration', 'chat-compaction'],
   contextKeys: ['settings.general', 'settings.models', 'settings.auth', 'settings.specialists'],
 }
 

@@ -31,6 +31,8 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `restart-recovery-coordinator.ts` - boot recovery snapshot creation, single-claim resume delivery, and dismissal.
 - `swarm-observability-coordinator.ts` - runtime/input/tool/lifecycle trace coordination with bounded fail-open projection.
 - `swarm-compaction-coordinator.ts` - runtime compaction orchestration, retry/recovery state, and capture/plan lifecycle hooks.
+- `context-mode.ts` - Summary/Fresh policy resolution, Fresh runtime support, and session snapshots; workers inherit the owning manager.
+- `history-recall/` / `history-recall-tool.ts` - rebuildable lexical history index and the agent-only `history` search/read tool; canonical JSONL remains authoritative.
 - `prompt-resource-coordinator.ts` - prompt, specialist, reference, skill, extension, and executable-resource resolution for runtime creation.
 - `collaboration-storage-provisioner.ts` - Collaboration-specific profile/session storage provisioning and system prompt persistence.
 - `session-pin-coordinator.ts` - message-pin indexes, persistence/runtime synchronization, fork filtering, disposal, and sidebar pin mutations.
@@ -114,3 +116,10 @@ When changing this area, check the related coverage in:
 - `apps/backend/src/swarm/__tests__/project-agent-coordinator.test.ts`
 - `apps/backend/src/swarm/__tests__/session-manifest.test.ts`
 - `apps/backend/src/swarm/__tests__/worker-stall-detector.test.ts`
+- `apps/backend/src/swarm/__tests__/context-mode-persistence.test.ts`
+- `apps/backend/src/swarm/__tests__/history-recall-tool.test.ts`
+- `apps/backend/src/swarm/__tests__/history-search-service.test.ts`
+- `apps/backend/src/swarm/__tests__/history-recall-query-parser.test.ts`
+- `apps/backend/src/swarm/__tests__/history-recall-projector.test.ts`
+- `apps/backend/src/swarm/__tests__/swarm-manager-history-recall.test.ts`
+- `apps/backend/src/swarm/__tests__/pi-fresh-context-runtime.test.ts`

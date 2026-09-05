@@ -19,7 +19,7 @@ Remote profiles remain authoritative on their Forge server. Their project header
 
 ## Project Settings
 
-For a local Builder project, right-click its header and choose **Project Settings**, or use the header's hover/focus **…** menu. The page stays scoped to that project even if another conversation is selected. It groups project name, working directory, default model and reasoning, Project secrets, and Repository resources `.forge` controls. It is unavailable for Cortex and Remote Projects.
+For a local Builder project, right-click its header and choose **Project Settings**, or use the header's hover/focus **…** menu. The page stays scoped to that project even if another conversation is selected. It groups project name, working directory, default model and reasoning, Context management, Project secrets, and Repository resources `.forge` controls. Context management is the project default for Summary vs experimental Fresh windows; it is not a Settings → General control. It is unavailable for Cortex and Remote Projects.
 
 ## Rename a profile
 

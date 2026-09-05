@@ -162,7 +162,38 @@ The embedded Git service versions Forge's allowlisted knowledge, profile-memory,
 
 ### Compaction
 
-Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not controlled by these settings; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices.
+Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not controlled by these settings; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices. These controls do not choose Summary vs Fresh; that policy lives in Project Settings, not Settings → General.
+
+### Context management
+
+Local Builder projects persist a project default context mode (`summary` | `fresh`) on the profile as `defaultContextMode`. Sessions may persist an optional `contextModeOverride`; absence means inherit the project default. Summary remains the default when neither value is set. Effective mode is `sessionOverride ?? projectDefault ?? summary` and survives restart. Saving a mode does not reset the current conversation; it applies at the next context transition.
+
+Builder-only HTTP routes:
+
+| Method | Path | Body | Result |
+|--------|------|------|--------|
+| `GET` | `/api/profiles/:profileId/context-mode` | — | `{ profileId, mode }` |
+| `PUT` | `/api/profiles/:profileId/context-mode` | `{ mode: "summary" \| "fresh" }` | same snapshot |
+| `GET` | `/api/agents/:agentId/context-mode` | — | session snapshot including `projectDefault`, optional `sessionOverride`, `effectiveMode`, and `freshSupported` |
+| `PUT` | `/api/agents/:agentId/context-mode` | `{ mode: "summary" \| "fresh" \| null }` | same snapshot; `null` restores inheritance |
+
+These routes are registered only on Builder. Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot execute Fresh. Workers inherit the owning manager. A session PUT of `fresh` on an unsupported runtime is rejected; a project can still save Fresh as a preference.
+
+Fresh is experimental and executable only by supported ordinary Pi Builder managers whose provider is already compaction-eligible (OpenAI/Codex or Anthropic). Compact and Smart compact follow the frozen effective policy for that attempt. Summary keeps the current handoff/resume path. Fresh writes a deterministic checkpoint, skips the Smart LLM handoff, rejects busy manual attempts until idle, and leaves an idle manager idle.
+
+### History recall
+
+Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable derived FTS index, not a second source of truth. Local Builder managers and ordinary workers use the agent-only `history` tool (`search` / `read`). Search is lexical (ranked terms, quoted phrases, prefixes, and code/path tokens), defaults to the current session including associated workers, and widens to an explicit project only when requested. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty `reason` and has no approval workflow; `all_local` is a deliberate broad search, not the only cross-project path. Reads use source-qualified references. Historical evidence is not current authority. Incomplete catch-up warnings mean a no-match is not proof of absence.
+
+Bounded limits:
+
+| Limit | Value |
+|-------|-------|
+| Indexed text per entry | 32,768 characters |
+| Readable JSONL row | 1 MiB |
+| `history` read total (entry plus neighbors) | 20,000 characters |
+
+There is no embedding index and no human/global history drawer. The existing dispatcher acknowledgement-before-durable-queue gap is unchanged.
 
 ### Cortex and Knowledge v2
 
@@ -362,7 +393,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── provider-usage-history.jsonl
 │   │   ├── stats-cache.json
 │   │   ├── token-analytics-cache.json
-│   │   └── generation-throughput-cache.json # Regenerable Pi response-throughput cache; v1 entries rebuild as v2
+│   │   ├── generation-throughput-cache.json # Regenerable Pi response-throughput cache; v1 entries rebuild as v2
+│   │   └── history-recall.db              # Rebuildable FTS index; canonical JSONL remains authoritative
 │   ├── state/
 │   │   ├── mobile-devices.json
 │   │   ├── project-agent-shares.json
