@@ -332,6 +332,26 @@ export class SwarmConfigurationCoordinator {
     return this.settings.updateSessionDelegation(sessionAgentId, updates);
   }
 
+  updateProjectContextMode(
+    profileId: string,
+    mode: Parameters<SwarmSettingsService["updateProjectContextMode"]>[1],
+  ): ReturnType<SwarmSettingsService["updateProjectContextMode"]> {
+    this.options.access.assertProfileNotArchived(profileId);
+    return this.settings.updateProjectContextMode(profileId, mode);
+  }
+
+  updateSessionContextMode(
+    sessionAgentId: string,
+    mode: Parameters<SwarmSettingsService["updateSessionContextMode"]>[1],
+  ): ReturnType<SwarmSettingsService["updateSessionContextMode"]> {
+    const descriptor = this.options.access.getRequiredBuilderSessionDescriptor(
+      sessionAgentId,
+      "update Builder session context mode",
+    );
+    this.options.access.assertDescriptorNotEffectivelyArchived(descriptor);
+    return this.settings.updateSessionContextMode(sessionAgentId, mode);
+  }
+
   async updateSessionExactModel(
     sessionAgentId: string,
     modelSelection: ManagerExactModelSelection,

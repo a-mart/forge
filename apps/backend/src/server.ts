@@ -514,6 +514,7 @@ class BackendServer implements StartedServer {
       await Promise.allSettled([
         this.queueSchedulerSync(new Set<string>()),
         this.swarmManager.closeSecureSessions(),
+        this.swarmManager.disposeHistoryRecall(),
         this.terminalService?.shutdown(),
         this.observabilityService.shutdown({ timeoutMs: 3000 }),
         this.versioningService.stop(),

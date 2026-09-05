@@ -13,6 +13,7 @@ import type { ServerDirectoryBrowserClient } from '@/components/chat/ServerDirec
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
+import { ContextManagementSettings } from './ContextManagementSettings'
 import type { SettingsApiClient } from './settings-api-client'
 import { SettingsProjectResources } from './SettingsProjectResources'
 
@@ -137,6 +138,13 @@ export function SettingsProjectSettings({
           </CardHeader>
         </Card>
       </div>
+
+      <ContextManagementSettings
+        apiClient={apiClient}
+        profileId={profile.profileId}
+        connectionEpoch={connectionEpoch}
+        liveMode={profile.defaultContextMode}
+      />
 
       {projectContext ? (
         <SettingsProjectResources

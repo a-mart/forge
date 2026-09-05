@@ -437,6 +437,39 @@ describe("SwarmSettingsService delegation settings", () => {
     expect(saveStore).toHaveBeenCalledOnce();
   });
 
+  it("persists project and session context mode without recycling live runtimes", async () => {
+    const root = await createTempRoot();
+    const inherited = createSession(root, "manager");
+    const override = createSession(root, "manager--override");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const profiles = new Map([["manager", createProfile()]]);
+    const saveStore = vi.fn(async () => undefined);
+    const service = createService({
+      rootDir: root,
+      sessions: [inherited, override],
+      profiles,
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+    });
+
+    await service.updateProjectContextMode("manager", "fresh");
+    expect(profiles.get("manager")?.defaultContextMode).toBe("fresh");
+    expect(inherited.contextModeOverride).toBeUndefined();
+    expect(override.contextModeOverride).toBeUndefined();
+
+    await service.updateSessionContextMode(override.agentId, "summary");
+    expect(override.contextModeOverride).toBe("summary");
+    expect(inherited.contextModeOverride).toBeUndefined();
+
+    await service.updateSessionContextMode(override.agentId, null);
+    expect(override.contextModeOverride).toBeUndefined();
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+    expect(saveStore).toHaveBeenCalledTimes(3);
+    await expect(service.updateProjectContextMode("manager", "window" as never)).rejects.toThrow(
+      'mode must be "summary" or "fresh"',
+    );
+  });
+
   it("rejects unavailable models and removal of referenced rosters before writing", async () => {
     const root = await createTempRoot();
     const profile = createProfile();

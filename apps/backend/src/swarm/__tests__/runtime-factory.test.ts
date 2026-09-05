@@ -287,6 +287,7 @@ function createFactory(
 
   const host = {
     listAgents: () => [],
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     spawnAgent: async () => {
       throw new Error("not implemented");
@@ -366,6 +367,7 @@ function createMockPiSession() {
     getAllTools: vi.fn(() => []),
     getToolDefinition: vi.fn(() => undefined),
     setActiveToolsByName: vi.fn(),
+    setFreshContextHandler: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
     prompt: vi.fn(async () => undefined),
     steer: vi.fn(async () => undefined),
@@ -531,6 +533,43 @@ describe("RuntimeFactory", () => {
     expect(sessionOptions.customTools?.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["spawn_agent", "send_message_to_agent", "speak_to_user"]),
     );
+  });
+
+  it("attaches a live getContextMode fresh handler on the created Pi session", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    const createdSession = createMockPiSession();
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createdSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir, {
+      hostOverrides: { getContextMode: () => "fresh" },
+    });
+    await factory.createRuntimeForDescriptor(createManagerDescriptor(rootDir), "system prompt");
+    expect(createdSession.setFreshContextHandler).toHaveBeenCalledTimes(1);
+    expect(createdSession.setFreshContextHandler).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("keeps unsupported worker and special-purpose Pi descriptors on summary despite a fresh host setting", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    const createdSession = createMockPiSession();
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createdSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir, {
+      hostOverrides: { getContextMode: () => "fresh" },
+    });
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "worker prompt");
+    const workerHandler = createdSession.setFreshContextHandler.mock.calls.at(-1)?.[0] as ((request: unknown) => Promise<unknown>);
+    await expect(workerHandler({ reason: "manual", willRetry: false, branchEntries: [] })).resolves.toBeUndefined();
+    await factory.createRuntimeForDescriptor(createManagerDescriptor(rootDir, { sessionPurpose: "cortex_review" }), "special prompt");
+    const specialHandler = createdSession.setFreshContextHandler.mock.calls.at(-1)?.[0] as ((request: unknown) => Promise<unknown>);
+    await expect(specialHandler({ reason: "manual", willRetry: false, branchEntries: [] })).resolves.toBeUndefined();
   });
 
   it.each([

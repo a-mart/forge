@@ -13,6 +13,7 @@ import { ComposerTextarea } from './message-input/ComposerTextarea'
 import { SecureSessionPicker } from './message-input/SecureSessionPicker'
 import { SessionModelPicker } from './message-input/SessionModelPicker'
 import { SessionCoordinationPicker } from './message-input/SessionCoordinationPicker'
+import { SessionContextModePicker } from './message-input/SessionContextModePicker'
 import { useDraft } from './message-input/hooks/use-draft'
 import { useSlashCommands } from './message-input/hooks/use-slash-commands'
 import { useMentions } from './message-input/hooks/use-mentions'
@@ -28,6 +29,7 @@ export type {
   MessageInputProps,
   SecureSessionPickerConfig,
   SessionCoordinationPickerConfig,
+  SessionContextModePickerConfig,
   SessionModelPickerConfig,
 } from './message-input/types'
 import type { MessageInputHandle, MessageInputProps } from './message-input/types'
@@ -52,6 +54,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     onClearReplyTarget,
     sessionModelPicker,
     sessionCoordinationPicker,
+    sessionContextModePicker,
     secureSessionPicker,
   },
   ref,
@@ -499,6 +502,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               {secureSessionPicker ? <SecureSessionPicker config={secureSessionPicker} /> : null}
               {sessionCoordinationPicker
                 ? <SessionCoordinationPicker config={sessionCoordinationPicker} />
+                : null}
+              {sessionContextModePicker
+                ? <SessionContextModePicker config={sessionContextModePicker} />
                 : null}
               {sessionModelPicker ? <SessionModelPicker config={sessionModelPicker} /> : null}
 

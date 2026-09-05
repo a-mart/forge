@@ -4,7 +4,7 @@ import {
   isRecord,
   validateAgentDescriptor
 } from "../../swarm-manager-utils.js";
-import { isManagerPosture } from "@forge/protocol";
+import { isContextMode, isManagerPosture } from "@forge/protocol";
 import { cloneDescriptorForPersistence, cloneProfile } from "./descriptor-clone.js";
 import { normalizeDescriptorPaths } from "./descriptor-path-resolver.js";
 
@@ -85,13 +85,32 @@ function decodePersistedProfiles(
     if (!isRecord(candidate)) {
       continue;
     }
-    const { defaultManagerPosture, ...rest } = candidate as ManagerProfile & Record<string, unknown>;
+    const {
+      defaultManagerPosture,
+      defaultContextMode,
+      ...rest
+    } = candidate as ManagerProfile & Record<string, unknown>;
+    const profileHint = typeof rest.profileId === "string" ? `profileId=${rest.profileId}` : "profileId=<unknown>";
+    const normalized: ManagerProfile & Record<string, unknown> = { ...rest };
+    let droppedUnknown = false;
     if (defaultManagerPosture !== undefined && !isManagerPosture(defaultManagerPosture)) {
-      const profileHint = typeof rest.profileId === "string" ? `profileId=${rest.profileId}` : "profileId=<unknown>";
+      droppedUnknown = true;
       warn(
         `[swarm] Dropping unknown defaultManagerPosture (${profileHint}) in ${storeFilePath}; keeping the profile without a persisted default.`
       );
-      profiles.push(cloneProfile(rest as unknown as ManagerProfile));
+    } else if (defaultManagerPosture !== undefined) {
+      normalized.defaultManagerPosture = defaultManagerPosture;
+    }
+    if (defaultContextMode !== undefined && !isContextMode(defaultContextMode)) {
+      droppedUnknown = true;
+      warn(
+        `[swarm] Dropping unknown defaultContextMode (${profileHint}) in ${storeFilePath}; keeping the profile without a persisted default.`
+      );
+    } else if (defaultContextMode !== undefined) {
+      normalized.defaultContextMode = defaultContextMode;
+    }
+    if (droppedUnknown) {
+      profiles.push(cloneProfile(normalized as unknown as ManagerProfile));
       continue;
     }
     profiles.push(cloneProfile(candidate as unknown as ManagerProfile));

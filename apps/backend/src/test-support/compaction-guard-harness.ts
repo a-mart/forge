@@ -61,6 +61,8 @@ export class CompactionGuardFakeSession {
     this.abortCompactionCalls += 1;
   }
 
+  setFreshContextHandler(_handler?: unknown): void {}
+
   async compact(): Promise<unknown> {
     this.compactCalls += 1;
     if (this.compactImpl) {

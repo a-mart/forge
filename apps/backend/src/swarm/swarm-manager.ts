@@ -1,3 +1,4 @@
+import type { HistorySearchService } from "./history-recall/index.js";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
@@ -202,6 +203,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly observabilityCoordinator: SwarmObservabilityCoordinator;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService;
   private readonly knowledgeService: KnowledgeService;
+  private readonly historySearchService: HistorySearchService;
   private readonly captureCascadeCoordinator: CaptureCascadeCoordinator;
   private readonly browserAutomationService: BrowserAutomationService;
   readonly invokeBrowserAutomation = createBrowserAutomationManagerInvoker({ getDescriptor: (id) => this.descriptors.get(id), getService: () => this.browserAutomationService });
@@ -249,6 +251,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.config = foundation.config; this.defaultModelPreset = foundation.defaultModelPreset;
     this.knowledgeV2SettingsService = foundation.knowledgeV2SettingsService;
     this.knowledgeService = foundation.knowledgeService;
+    this.historySearchService = foundation.historySearchService;
     this.promptRegistry = foundation.promptRegistry;
     this.forgeExtensionHost = foundation.forgeExtensionHost;
     this.sidebarPerfRecorder = foundation.sidebarPerfRecorder;
@@ -475,6 +478,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       events: this.eventCoordinator,
       conversation: {
+        history: this.historySearchService,
         projector: this.conversationProjector,
         sidebarPerf: this.sidebarPerfRecorder,
       },
@@ -495,9 +499,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     };
     this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
   }
-  protected getFacadeServices(): SwarmManagerFacadeServices {
-    return this.facadeServices;
-  }
+  protected getFacadeServices(): SwarmManagerFacadeServices { return this.facadeServices; }
   private createChoiceService(): SwarmChoiceService {
     return new SwarmChoiceService({
       now: this.now,
@@ -977,6 +979,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         descriptorFactory: this.sessionDescriptorFactory,
         pins: this.sessionPinCoordinator,
         conversations: this.conversationProjector,
+        history: this.historySearchService,
       },
       provisioner: {
         descriptorMutations: {
@@ -1307,9 +1310,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   ): Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }> {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
-  getSecureSecretSettingsService(): SecureSecretSettingsService {
-    return this.secureSecretSettingsService;
-  }
+  getSecureSecretSettingsService(): SecureSecretSettingsService { return this.secureSecretSettingsService; }
 
   private logDebug(message: string, details?: unknown, config = this.config): void {
     if (!config.debug) return;

@@ -117,4 +117,37 @@ describe("persisted profile posture boundary", () => {
     expect(session.managerPosture).toBe(DEFAULT_MANAGER_POSTURE);
     expect(session.managerPostureOrigin).toBe("product_default");
   });
+
+  it("omits an unknown persisted defaultContextMode but keeps the profile", () => {
+    const options = storeOptions();
+    const decoded = decodeAgentsStoreFile(
+      JSON.stringify({
+        agents: [],
+        profiles: [
+          {
+            ...profile("forge"),
+            defaultContextMode: "window",
+          },
+        ],
+      }),
+      options,
+    );
+
+    expect(decoded.store.profiles).toHaveLength(1);
+    expect(decoded.store.profiles?.[0]).not.toHaveProperty("defaultContextMode");
+    expect(options.warn).toHaveBeenCalled();
+  });
+
+  it("keeps valid persisted context-mode defaults", () => {
+    for (const mode of ["summary", "fresh"] as const) {
+      const decoded = decodeAgentsStoreFile(
+        JSON.stringify({
+          agents: [],
+          profiles: [{ ...profile("forge"), defaultContextMode: mode }],
+        }),
+        storeOptions(),
+      );
+      expect(decoded.store.profiles?.[0]?.defaultContextMode).toBe(mode);
+    }
+  });
 });

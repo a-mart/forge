@@ -11,6 +11,11 @@ import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TerminalServiceError, type TerminalService } from "../terminal/terminal-service.js";
 import { classifyCompactionErrorMessage } from "./compaction-error-utils.js";
+import {
+  ContextModeValidationError,
+  parseSessionContextModeWrite,
+  requireContextMode,
+} from "../swarm/context-mode.js";
 import { resolveTerminalServiceStatusCode } from "./http/routes/terminal-routes.js";
 import {
   decodeApiProxyPathSegment,
@@ -36,6 +41,8 @@ import {
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 
 const API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
+const API_PROXY_PROFILE_CONTEXT_MODE_PATTERN = /^\/api\/profiles\/([^/]+)\/context-mode$/;
+const API_PROXY_AGENT_CONTEXT_MODE_PATTERN = /^\/api\/agents\/([^/]+)\/context-mode$/;
 const API_PROXY_READ_FILE_PATH = "/api/read-file";
 const API_PROXY_CHAT_ARTIFACT_READ_PATH = "/api/chat-artifacts/read";
 const API_PROXY_NOTIFICATION_PREFERENCES_PATH = "/api/mobile/notification-preferences";
@@ -163,6 +170,24 @@ export class WsApiProxy {
       const smartCompactMatch = pathname.match(API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN);
       if (smartCompactMatch) {
         return await this.handleApiProxySmartCompact(command, smartCompactMatch[1] ?? "", payload);
+      }
+
+      const profileContextModeMatch = pathname.match(API_PROXY_PROFILE_CONTEXT_MODE_PATTERN);
+      if (profileContextModeMatch) {
+        return await this.handleApiProxyProfileContextMode(
+          command,
+          profileContextModeMatch[1] ?? "",
+          payload,
+        );
+      }
+
+      const agentContextModeMatch = pathname.match(API_PROXY_AGENT_CONTEXT_MODE_PATTERN);
+      if (agentContextModeMatch) {
+        return await this.handleApiProxyAgentContextMode(
+          command,
+          agentContextModeMatch[1] ?? "",
+          payload,
+        );
       }
 
       return this.createApiProxyJsonResponse(command.requestId, 404, {
@@ -480,6 +505,50 @@ export class WsApiProxy {
     }
   }
 
+  private async handleApiProxyProfileContextMode(
+    command: ApiProxyCommand,
+    rawProfileId: string,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    const profileId = decodeApiProxyPathSegment(rawProfileId);
+    if (!profileId) {
+      return this.createApiProxyJsonResponse(command.requestId, 400, { error: "Missing profile id" });
+    }
+    if (command.method === "GET") {
+      const snapshot = this.swarmManager.getProjectContextMode(profileId);
+      return this.createApiProxyJsonResponse(command.requestId, 200, snapshot as unknown as Record<string, unknown>);
+    }
+    if (command.method !== "PUT") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "GET, PUT");
+    }
+    const mode = requireContextMode(readContextModeField(payload), "mode");
+    await this.swarmManager.updateProjectContextMode(profileId, mode);
+    const snapshot = this.swarmManager.getProjectContextMode(profileId);
+    return this.createApiProxyJsonResponse(command.requestId, 200, snapshot as unknown as Record<string, unknown>);
+  }
+
+  private async handleApiProxyAgentContextMode(
+    command: ApiProxyCommand,
+    rawAgentId: string,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    const agentId = decodeApiProxyPathSegment(rawAgentId);
+    if (!agentId) {
+      return this.createApiProxyJsonResponse(command.requestId, 400, { error: "Missing agent id" });
+    }
+    if (command.method === "GET") {
+      const snapshot = this.swarmManager.getSessionContextMode(agentId);
+      return this.createApiProxyJsonResponse(command.requestId, 200, snapshot as unknown as Record<string, unknown>);
+    }
+    if (command.method !== "PUT") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "GET, PUT");
+    }
+    const mode = parseSessionContextModeWrite(readContextModeField(payload, { allowNull: true }));
+    await this.swarmManager.updateSessionContextMode(agentId, mode);
+    const snapshot = this.swarmManager.getSessionContextMode(agentId);
+    return this.createApiProxyJsonResponse(command.requestId, 200, snapshot as unknown as Record<string, unknown>);
+  }
+
   private async handleApiProxySmartCompact(
     command: ApiProxyCommand,
     rawAgentId: string,
@@ -737,6 +806,20 @@ export class WsApiProxy {
   }
 }
 
+function readContextModeField(value: unknown, options?: { allowNull?: boolean }): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ContextModeValidationError("Request body must be a JSON object");
+  }
+  if (!Object.prototype.hasOwnProperty.call(value, "mode")) {
+    throw new ContextModeValidationError("mode is required");
+  }
+  const mode = (value as { mode?: unknown }).mode;
+  if (mode === null && options?.allowNull) {
+    return null;
+  }
+  return mode;
+}
+
 function resolveApiProxyErrorStatusCode(message: string): number {
   if (message.includes("Path is outside allowed roots")) {
     return 403;
@@ -745,7 +828,9 @@ function resolveApiProxyErrorStatusCode(message: string): number {
   if (
     message.includes("Unknown session") ||
     message.includes("Unknown target agent") ||
-    message.includes("Unknown agent")
+    message.includes("Unknown agent") ||
+    message.includes("Unknown manager profile") ||
+    message.includes("Unknown manager:")
   ) {
     return 404;
   }
@@ -764,7 +849,8 @@ function resolveApiProxyErrorStatusCode(message: string): number {
     message.includes("Invalid") ||
     message.includes("Missing") ||
     message.includes("required") ||
-    message.includes("too large")
+    message.includes("too large") ||
+    message.includes("mode is required")
   ) {
     return 400;
   }

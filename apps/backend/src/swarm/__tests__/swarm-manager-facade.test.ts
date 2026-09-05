@@ -177,6 +177,89 @@ describe("SwarmManagerFacade", () => {
     expect(services.host.setTerminalArchiveHooks).toHaveBeenCalledWith(hooks);
   });
 
+  it("resolves live manager and worker context mode from the current store", () => {
+    const services = createServices();
+    const facade = new TestFacade(services);
+    const directory = services.registry.directory as unknown as {
+      getAgentForInternalUse: ReturnType<typeof vi.fn>;
+      getProfile: ReturnType<typeof vi.fn>;
+    };
+    const manager: AgentDescriptor = { ...MANAGER };
+    const worker: AgentDescriptor = {
+      ...MANAGER,
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager",
+    };
+    const profile = {
+      profileId: "profile",
+      displayName: "Profile",
+      defaultSessionAgentId: "manager",
+      defaultModel: MANAGER.model,
+      defaultContextMode: "fresh" as const,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    directory.getAgentForInternalUse = vi.fn((agentId: string) => {
+      if (agentId === "manager") return manager;
+      if (agentId === "worker-1") return worker;
+      return undefined;
+    });
+    directory.getProfile = vi.fn(() => profile);
+
+    expect(facade.getContextMode("manager")).toBe("fresh");
+    expect(facade.getContextMode("worker-1")).toBe("fresh");
+    expect(facade.getSessionContextMode("worker-1")).toMatchObject({
+      sessionAgentId: "manager",
+      profileId: "profile",
+      projectDefault: "fresh",
+      effectiveMode: "fresh",
+      freshSupported: true,
+    });
+
+    manager.contextModeOverride = "summary";
+    expect(facade.getContextMode("worker-1")).toBe("summary");
+    expect(facade.getSessionContextMode("manager").sessionOverride).toBe("summary");
+  });
+
+  it("rejects session context-mode writes that target a worker", async () => {
+    const services = createServices();
+    const facade = new TestFacade(services);
+    const directory = services.registry.directory as unknown as {
+      getAgentForInternalUse: ReturnType<typeof vi.fn>;
+      getProfile: ReturnType<typeof vi.fn>;
+    };
+    const manager: AgentDescriptor = { ...MANAGER };
+    const worker: AgentDescriptor = {
+      ...MANAGER,
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager",
+    };
+    directory.getAgentForInternalUse = vi.fn((agentId: string) => {
+      if (agentId === "manager") return manager;
+      if (agentId === "worker-1") return worker;
+      return undefined;
+    });
+    directory.getProfile = vi.fn(() => ({
+      profileId: "profile",
+      displayName: "Profile",
+      defaultSessionAgentId: "manager",
+      defaultModel: MANAGER.model,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }));
+    const updateSessionContextMode = vi.fn(async () => manager);
+    (services.configuration as { updateSessionContextMode: typeof updateSessionContextMode }).updateSessionContextMode =
+      updateSessionContextMode;
+
+    await expect(facade.updateSessionContextMode("worker-1", "fresh")).rejects.toThrow(
+      "Context mode can only be updated on manager sessions.",
+    );
+    expect(updateSessionContextMode).not.toHaveBeenCalled();
+    expect(manager.contextModeOverride).toBeUndefined();
+  });
+
   it("projects Codex transport diagnostics without exposing raw agent ids", () => {
     const services = createServices();
     const facade = new TestFacade(services);
@@ -256,6 +339,9 @@ function createServices(): SwarmManagerFacadeServices {
     registry: {
       directory: {
         listAgents: vi.fn(() => [MANAGER]),
+        getAgent: vi.fn((agentId: string) => agentId === MANAGER.agentId ? MANAGER : undefined),
+        getAgentForInternalUse: vi.fn((agentId: string) => agentId === MANAGER.agentId ? MANAGER : undefined),
+        getProfile: vi.fn(),
         sortedDescriptors: vi.fn(() => [MANAGER]),
         resolvePreferredManagerId: vi.fn(() => "manager"),
       },

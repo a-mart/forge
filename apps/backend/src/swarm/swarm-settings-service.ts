@@ -8,6 +8,7 @@ import {
   type UpdateOpenAIBrokerSettingsRequest,
   DEFAULT_MANAGER_POSTURE,
   getCatalogModelKey,
+  type ContextMode,
   type CredentialPoolState,
   type DelegationRosterSettings,
   type ManagerExactModelSelection,
@@ -59,6 +60,7 @@ import {
   SkillSharingService,
   type ImportSkillOptions
 } from "./skills/skill-sharing-service.js";
+import { requireContextMode } from "./context-mode.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import {
@@ -517,6 +519,89 @@ export class SwarmSettingsService {
       );
     }
     this.options.emitAgentsSnapshot();
+  }
+
+  async updateProjectContextMode(profileId: string, mode: ContextMode): Promise<ManagerProfile> {
+    const profile = this.options.profiles.get(profileId);
+    if (!profile) throw new Error(`Unknown manager profile: ${profileId}`);
+    const nextMode = requireContextMode(mode, "mode");
+    if (profile.defaultContextMode === nextMode) {
+      return { ...profile };
+    }
+    const now = getNow(this.options.now)();
+    const previous = {
+      defaultContextMode: profile.defaultContextMode,
+      updatedAt: profile.updatedAt,
+    };
+    await this.runDescriptorTransaction(async (store) => {
+      store.patchProfile(profileId, {
+        defaultContextMode: nextMode,
+        updatedAt: now,
+      });
+    }, async () => {
+      try {
+        profile.defaultContextMode = nextMode;
+        profile.updatedAt = now;
+        await this.options.saveStore();
+      } catch (error) {
+        profile.defaultContextMode = previous.defaultContextMode;
+        profile.updatedAt = previous.updatedAt;
+        throw error;
+      }
+    });
+    this.options.emitProfilesSnapshot();
+    return { ...profile };
+  }
+
+  async updateSessionContextMode(
+    sessionAgentId: string,
+    mode: ContextMode | null,
+  ): Promise<AgentDescriptor> {
+    const session = this.options.getSessionById(sessionAgentId);
+    if (!session) throw new Error(`Unknown session: ${sessionAgentId}`);
+    if (mode !== null) {
+      requireContextMode(mode, "mode");
+    }
+    const previousOverride = session.contextModeOverride;
+    if (mode === null) {
+      if (previousOverride === undefined) {
+        return { ...session };
+      }
+    } else if (previousOverride === mode) {
+      return { ...session };
+    }
+    await this.runDescriptorTransaction(
+      async (store) => {
+        await store.patchDescriptor(session.agentId, (current) => {
+          const next = { ...current };
+          if (mode === null) {
+            delete next.contextModeOverride;
+          } else {
+            next.contextModeOverride = mode;
+          }
+          return next;
+        });
+      },
+      async () => {
+        try {
+          if (mode === null) {
+            delete session.contextModeOverride;
+          } else {
+            session.contextModeOverride = mode;
+          }
+          await this.options.saveStore();
+        } catch (error) {
+          if (previousOverride === undefined) {
+            delete session.contextModeOverride;
+          } else {
+            session.contextModeOverride = previousOverride;
+          }
+          throw error;
+        }
+      },
+    );
+    this.options.emitAgentsSnapshot();
+    return { ...session };
   }
 
   async applyGlobalDelegationRosterDefault(rosterId: string): Promise<void> {

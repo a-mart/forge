@@ -1,7 +1,7 @@
 import { normalizePersistedSwarmModelDescriptor } from "../../model-presets.js";
 import { normalizeOptionalAgentId } from "../../swarm-manager-utils.js";
 import { DEFAULT_MANAGER_POSTURE } from "../../prompts/manager-posture.js";
-import { isManagerPosture } from "@forge/protocol";
+import { isContextMode, isManagerPosture } from "@forge/protocol";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -190,6 +190,25 @@ export class ProfileBootReconciler {
           this.options.mutations.upsertDescriptor(session);
           changed = true;
         }
+      }
+    }
+    return changed;
+  }
+
+  normalizeContextModeStateOnBoot(): boolean {
+    let changed = false;
+    for (const profile of this.options.profiles.values()) {
+      if (profile.defaultContextMode !== undefined && !isContextMode(profile.defaultContextMode)) {
+        delete profile.defaultContextMode;
+        this.options.mutations.upsertProfile(profile);
+        changed = true;
+      }
+    }
+    for (const descriptor of this.options.descriptors.values()) {
+      if (descriptor.contextModeOverride !== undefined && !isContextMode(descriptor.contextModeOverride)) {
+        delete descriptor.contextModeOverride;
+        this.options.mutations.upsertDescriptor(descriptor);
+        changed = true;
       }
     }
     return changed;

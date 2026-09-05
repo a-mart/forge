@@ -2,12 +2,10 @@
  * WP-4 behavioral characterization for the pi-coding-agent auto-compaction
  * reentrancy patch on @earendil-works/pi-coding-agent@0.80.6.
  */
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import {
   AuthStorage,
@@ -19,6 +17,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProjectSafePiProjectSettingsStorage } from "../project-executable-trust.js";
+import {
+  expectInstalledPiCodingAgentPatchIdentity,
+  findInstalledPiCodingAgentFile,
+} from "./pi-coding-agent-patch-identity.js";
 
 const tempDirs: string[] = [];
 const fauxRegistrations: Array<{ unregister: () => void }> = [];
@@ -29,28 +31,6 @@ afterEach(async () => {
   }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
-
-function findInstalledAgentSessionJs(): string {
-  let current = dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 12; i++) {
-    const candidate = join(
-      current,
-      "node_modules",
-      "@earendil-works",
-      "pi-coding-agent",
-      "dist",
-      "core",
-      "agent-session.js",
-    );
-    try {
-      readFileSync(candidate, "utf8");
-      return candidate;
-    } catch {
-      current = dirname(current);
-    }
-  }
-  throw new Error("Unable to locate installed pi-coding-agent agent-session.js");
-}
 
 async function createCompactionSession() {
   const root = await mkdtemp(join(tmpdir(), "forge-pi-compact-race-"));
@@ -106,16 +86,12 @@ async function createCompactionSession() {
 
 describe("pi auto-compaction reentrancy characterization (0.80.6 patch)", () => {
   it("keeps the installed agent-session reentrancy guard text and patch identity", () => {
-    const agentSessionPath = findInstalledAgentSessionJs();
+    const agentSessionPath = findInstalledPiCodingAgentFile(import.meta.url, "dist/core/agent-session.js");
     const source = readFileSync(agentSessionPath, "utf8");
     expect(source).toContain("Reentrancy guard: if compaction is already in progress, bail out.");
     expect(source).toContain("localAbortController = new AbortController();");
     expect(source).toContain("if (this._autoCompactionAbortController === localAbortController)");
-
-    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
-    const patchPath = join(repoRoot, "patches/@earendil-works__pi-coding-agent@0.80.6.patch");
-    const digest = createHash("sha256").update(readFileSync(patchPath)).digest("hex");
-    expect(digest).toBe("39f5f02939e5b9eed7ccf6892f263051c9d56587c5933645f555f70dc344ab84");
+    expectInstalledPiCodingAgentPatchIdentity(import.meta.url, source);
   });
 
   it("second concurrent _runAutoCompaction is a no-op while the first owns the controller", async () => {

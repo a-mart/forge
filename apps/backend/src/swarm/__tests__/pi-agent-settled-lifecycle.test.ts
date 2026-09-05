@@ -59,6 +59,7 @@ class FakeSession {
   async compact(): Promise<{ ok: true }> {
     return { ok: true };
   }
+  setFreshContextHandler(_handler?: unknown): void {}
   clearQueue(): { steering: string[]; followUp: string[] } {
     this.clearQueueCalls += 1;
     return { steering: this.queuedSteers.splice(0), followUp: [] };

@@ -149,6 +149,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
 
   const host: SwarmRuntimeControllerHost = {
     listAgents: () => Array.from(descriptors.values()),
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     spawnAgent: vi.fn(),
     killAgent: vi.fn(),

@@ -140,6 +140,7 @@ function host(
 ): SwarmToolHost {
   return {
     listAgents: () => [manager()],
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     getSecureSessionAgentView: () => safeView(),
     requestSecureSecretAccess: async () => "requested",

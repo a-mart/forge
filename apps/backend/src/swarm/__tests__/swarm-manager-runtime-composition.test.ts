@@ -58,6 +58,7 @@ function toolHost(): SwarmToolHost {
   const noResult = vi.fn();
   return {
     listAgents: vi.fn(() => []),
+    getContextMode: () => "summary",
     getWorkerActivity: vi.fn(() => undefined),
     spawnAgent: noResult,
     killAgent: noResult,

@@ -68,6 +68,7 @@ import {
   getSharedAuthFilePath,
   getSharedCacheDir,
   getSharedCacheGeneratedDir,
+  getHistoryRecallIndexPath,
   getSharedConfigDir,
   getSharedDir,
   getSharedKnowledgeDir,
@@ -208,6 +209,7 @@ describe("data-paths", () => {
     expect(getCompactionSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "compaction-settings.json"));
     expect(getSecureSecretSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "secure-secret-settings.json"));
     expect(getSharedCacheGeneratedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "generated"));
+    expect(getHistoryRecallIndexPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "history-recall.db"));
     expect(getSharedStatsCachePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "stats-cache.json"));
     expect(getTelemetryConfigPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "telemetry.json"));
 

@@ -115,6 +115,8 @@ class FakeSession {
     this.abortCompactionImpl?.();
   }
 
+  setFreshContextHandler(_handler?: unknown): void {}
+
   async compact(): Promise<unknown> {
     this.compactCalls += 1;
     if (this.compactImpl) {

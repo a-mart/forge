@@ -1,3 +1,4 @@
+import type { HistorySearchService } from "./history-recall/index.js";
 import type { AgentMessageDispatcher } from "./agent-message-dispatcher.js";
 import type { AgentDirectory } from "./agent-directory.js";
 import type { SessionAttentionCoordinator } from "./session/session-attention-coordinator.js";
@@ -116,6 +117,7 @@ export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeSer
     "emitModelCacheObservation" | "getAgentsSnapshotVersion" | "getProfilesSnapshotVersion"
   >;
   conversation: {
+    history: Pick<HistorySearchService, "search" | "read" | "dispose">;
     projector: Pick<
       ConversationProjector,
       "getConversationHistory" | "getConversationHistoryWithDiagnostics" | "getConversationHistoryPage"

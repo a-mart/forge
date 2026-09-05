@@ -52,6 +52,14 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "../types.js";
+import type { ContextMode } from "@forge/protocol";
+import { evaluateFreshContextSupport } from "../context-mode.js";
+import {
+  FRESH_CONTEXT_BUSY_ERROR,
+  buildFreshContextHandlerResult,
+  isFreshContextBusy,
+  type FreshContextHandlerRequest,
+} from "./fresh-context-checkpoint.js";
 import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "../image-utils.js";
 import {
   createDefaultCompactionRuntimeSettingsProvider,
@@ -212,6 +220,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
   private readonly compactionFailureScopeKey: string;
   private readonly generationTelemetry: PiGenerationTelemetryAdapter | undefined;
+  private readonly resolveContextMode: () => ContextMode;
+  private readonly dataDir: string | undefined;
   private pendingDeliveries: PendingDelivery[] = [];
   private promotedPendingDeliveryId: string | undefined;
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
@@ -230,6 +240,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private contextRecoveryGraceTimer: NodeJS.Timeout | undefined;
   private manualCompactionInProgress = false;
   private autoCompactionRecoveryInProgress = false;
+  private frozenContextMode: ContextMode | undefined;
+  private contextModeAttemptId: string | undefined;
+  private autoFreshRecoveryClaimedBeforeStart = false;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
@@ -277,6 +290,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
     compactionFailureScopeKey?: string;
     generationTelemetry?: PiGenerationTelemetryAdapter;
+    getContextMode?: () => ContextMode;
+    dataDir?: string;
   }) {
     this.descriptor = options.descriptor;
     this.session = options.session;
@@ -287,9 +302,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
       options.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
     this.compactionFailureScopeKey = options.compactionFailureScopeKey ?? options.descriptor.agentId;
     this.generationTelemetry = options.generationTelemetry;
+    this.resolveContextMode = options.getContextMode ?? (() => "summary");
+    this.dataDir = options.dataDir;
     this.status = options.descriptor.status;
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
+    this.session.setFreshContextHandler?.((request) => this.handleFreshContextRequest(request));
     this.unsubscribe = this.session.subscribe((event) => {
       this.sessionEventQueue = this.sessionEventQueue
         .then(() => this.handleEvent(event))
@@ -432,7 +450,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       const deliveryId = randomUUID();
       const message = await prepareRuntimeUserMessageForDispatch(input);
 
-      if (this.contextRecoveryInProgress) {
+      if (this.contextRecoveryInProgress || this.manualCompactionInProgress) {
         this.bufferMessageDuringRecovery(deliveryId, message);
         this.noteActivity();
         await this.emitStatus();
@@ -876,6 +894,26 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   async smartCompact(customInstructions?: string, options?: SmartCompactOptions): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
+    const liveMode = this.resolveEffectiveContextMode();
+    if (liveMode === "fresh") {
+      this.assertFreshManualIdle();
+      if (this.isContextRecoveryActive() || this.manualCompactionInProgress) {
+        throw new Error("Context recovery is already in progress");
+      }
+      const attempt = this.beginContextModeAttempt();
+      this.beginContextRecovery();
+      try {
+        await this.compact(customInstructions);
+        return { compacted: true };
+      } finally {
+        this.endContextRecovery();
+        this.guardAbortController = undefined;
+        if (attempt.owner) {
+          this.releaseContextModeAttempt(attempt.id);
+        }
+        await this.flushRecoveryBufferedMessages();
+      }
+    }
 
     if (this.isContextRecoveryActive()) {
       throw new Error("Context recovery is already in progress");
@@ -978,7 +1016,20 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   async compact(customInstructions?: string): Promise<unknown> {
     this.ensureNotTerminated();
+    const liveMode = this.resolveEffectiveContextMode();
+    if (liveMode === "fresh") {
+      this.assertFreshManualIdle();
+    }
+    if (this.manualCompactionInProgress || this.session.isCompacting) {
+      throw new Error("Context recovery is already in progress");
+    }
+    const attempt = liveMode === "fresh" ? this.beginContextModeAttempt() : undefined;
     this.manualCompactionInProgress = true;
+    let claimedRecovery = false;
+    if (attempt?.mode === "fresh" && !this.contextRecoveryInProgress) {
+      this.beginContextRecovery();
+      claimedRecovery = true;
+    }
     try {
       await this.emitCompactionStatusSafely("compact_start_status_emit");
       clearForgePiCompactionFailure(this.compactionFailureScopeKey);
@@ -994,6 +1045,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
       throw enhancedError;
     } finally {
       this.manualCompactionInProgress = false;
+      if (claimedRecovery) {
+        this.endContextRecovery();
+        await this.flushRecoveryBufferedMessages();
+      }
+      if (attempt?.owner) {
+        this.releaseContextModeAttempt(attempt.id);
+      }
       await this.emitCompactionStatusSafely("compact_end_status_emit");
     }
   }
@@ -1032,6 +1090,146 @@ export class AgentRuntime implements SwarmAgentRuntime {
     } catch (error) {
       this.logRuntimeError("compaction", error, { stage });
     }
+  }
+
+  private getAttemptContextMode(): ContextMode {
+    return this.frozenContextMode ?? this.resolveEffectiveContextMode();
+  }
+
+  private resolveEffectiveContextMode(): ContextMode {
+    const requested = this.resolveContextMode();
+    if (requested !== "fresh") {
+      return "summary";
+    }
+    return evaluateFreshContextSupport({
+      manager: this.descriptor,
+      runtime: this,
+    }).freshSupported ? "fresh" : "summary";
+  }
+
+  private beginContextModeAttempt(): { id: string; mode: ContextMode; owner: boolean } {
+    if (this.contextModeAttemptId && this.frozenContextMode) {
+      return { id: this.contextModeAttemptId, mode: this.frozenContextMode, owner: false };
+    }
+    const id = randomUUID();
+    this.contextModeAttemptId = id;
+    this.frozenContextMode = this.resolveEffectiveContextMode();
+    return { id, mode: this.frozenContextMode, owner: true };
+  }
+
+  private releaseContextModeAttempt(attemptId?: string): void {
+    if (attemptId && this.contextModeAttemptId !== attemptId) {
+      return;
+    }
+    if (!this.contextModeAttemptId) {
+      this.frozenContextMode = undefined;
+      return;
+    }
+    this.contextModeAttemptId = undefined;
+    this.frozenContextMode = undefined;
+  }
+
+  private claimFreshAutoRecovery(reason: FreshContextHandlerRequest["reason"]): void {
+    if (this.autoFreshRecoveryClaimedBeforeStart) {
+      return;
+    }
+    this.autoFreshRecoveryClaimedBeforeStart = true;
+    this.latestAutoCompactionReason ??= reason === "manual" ? undefined : reason;
+    this.autoCompactionEntryKeysBefore ??= this.getCompactionEntryKeys();
+    if (!this.autoCompactionRecoveryInProgress) {
+      this.beginAutoCompactionRecovery();
+    }
+  }
+
+  private assertFreshManualIdle(): void {
+    if (
+      isFreshContextBusy({
+        isStreaming: this.session.isStreaming || this.status === "streaming",
+        promptDispatchPending: this.promptDispatchPending,
+        awaitingAgentSettlement: this.awaitingAgentSettlement,
+        hasInFlightTools: this.hasInFlightTools(),
+      })
+    ) {
+      throw new Error(FRESH_CONTEXT_BUSY_ERROR);
+    }
+  }
+
+  private hasInFlightTools(): boolean {
+    const messages = this.getSessionAgentMessages();
+    const pendingToolCallIds = new Set<string>();
+    for (const message of messages) {
+      const role = (message as { role?: unknown }).role;
+      if (role === "assistant") {
+        const content = (message as { content?: unknown }).content;
+        if (!Array.isArray(content)) {
+          continue;
+        }
+        for (const block of content) {
+          if (!block || typeof block !== "object" || Array.isArray(block)) {
+            continue;
+          }
+          const record = block as { type?: unknown; id?: unknown; toolCallId?: unknown };
+          if (record.type !== "toolCall") {
+            continue;
+          }
+          const toolCallId = typeof record.id === "string"
+            ? record.id
+            : typeof record.toolCallId === "string"
+              ? record.toolCallId
+              : undefined;
+          if (toolCallId) {
+            pendingToolCallIds.add(toolCallId);
+          }
+        }
+        continue;
+      }
+      if (role === "toolResult") {
+        const toolCallId = (message as { toolCallId?: unknown }).toolCallId;
+        if (typeof toolCallId === "string") {
+          pendingToolCallIds.delete(toolCallId);
+        }
+      }
+    }
+    return pendingToolCallIds.size > 0;
+  }
+
+  private async handleFreshContextRequest(
+    request: FreshContextHandlerRequest,
+  ): Promise<{ summary: string; tokensBefore: number; details: unknown } | undefined> {
+    const liveMode = this.resolveEffectiveContextMode();
+    if (liveMode !== "fresh" && this.getAttemptContextMode() !== "fresh") {
+      return undefined;
+    }
+    const attempt = this.contextModeAttemptId
+      ? { id: this.contextModeAttemptId, mode: this.getAttemptContextMode(), owner: false }
+      : this.beginContextModeAttempt();
+    if (attempt.mode !== "fresh") {
+      return undefined;
+    }
+    if (request.reason !== "manual") {
+      this.claimFreshAutoRecovery(request.reason);
+    }
+    if (!this.dataDir) {
+      throw new Error("Fresh context checkpoint requires a data directory");
+    }
+    const model = this.session.model as { contextWindow?: number; maxTokens?: number } | undefined;
+    return buildFreshContextHandlerResult({
+      dataDir: this.dataDir,
+      descriptor: this.descriptor,
+      request,
+      sessionFile: this.descriptor.sessionFile,
+      budget: {
+        contextWindow: model?.contextWindow,
+        maxOutputTokens: model?.maxTokens,
+        retainedContextTokens: Math.ceil((
+          this.systemPrompt.length
+          + JSON.stringify((this.session.getAllTools?.() ?? []).filter((tool) =>
+            (this.session.getActiveToolNames?.() ?? []).includes(tool.name))).length
+          + (this.session.getSteeringMessages?.() ?? []).join("\n").length
+          + (this.session.getFollowUpMessages?.() ?? []).join("\n").length
+        ) / 4),
+      },
+    });
   }
 
   isContextRecoveryActive(): boolean {
@@ -1073,6 +1271,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.autoCompactionRecoveryInProgress = false;
+    this.autoFreshRecoveryClaimedBeforeStart = false;
     this.clearAutoCompactionTimeout();
     this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
   }
@@ -1436,10 +1635,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "compaction_start" && event.reason !== "manual") {
+      if (!this.autoFreshRecoveryClaimedBeforeStart) {
+        this.beginContextModeAttempt();
+        this.autoCompactionEntryKeysBefore = this.getCompactionEntryKeys();
+      }
       clearForgePiCompactionFailure(this.compactionFailureScopeKey);
       this.latestAutoCompactionReason = event.reason;
-      this.autoCompactionEntryKeysBefore = this.getCompactionEntryKeys();
-      if (!this.isContextRecoveryActive()) {
+      if (!this.autoCompactionRecoveryInProgress) {
         this.beginAutoCompactionRecovery();
       }
       await this.reportRuntimeError({
@@ -1694,6 +1896,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private checkContextBudget(): void {
+    if (this.getAttemptContextMode() === "fresh") {
+      return;
+    }
     if (this.isContextRecoveryActive() || this.status === "terminated" || !this.session.isStreaming) {
       return;
     }
@@ -2410,6 +2615,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         this.latestAutoCompactionReason = undefined;
         this.autoCompactionEntryKeysBefore = undefined;
         this.endAutoCompactionRecovery();
+        this.releaseContextModeAttempt();
         this.noteAutoCompactionFailureCooldown();
         await this.flushRecoveryBufferedMessages();
         return;
@@ -2432,6 +2638,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         this.latestAutoCompactionReason = undefined;
         this.autoCompactionEntryKeysBefore = undefined;
         this.endAutoCompactionRecovery();
+        this.releaseContextModeAttempt();
         this.noteAutoCompactionFailureCooldown();
         await this.flushRecoveryBufferedMessages();
         return;
@@ -2453,6 +2660,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         this.latestAutoCompactionReason = undefined;
         this.autoCompactionEntryKeysBefore = undefined;
         this.endAutoCompactionRecovery();
+        this.releaseContextModeAttempt();
         this.noteAutoCompactionFailureCooldown();
         await this.flushRecoveryBufferedMessages();
         return;
@@ -2470,6 +2678,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.latestAutoCompactionReason = undefined;
       this.autoCompactionEntryKeysBefore = undefined;
       this.endAutoCompactionRecovery();
+      this.releaseContextModeAttempt();
       await this.flushRecoveryBufferedMessages();
       return;
     }
@@ -2482,6 +2691,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
       this.latestAutoCompactionReason = undefined;
       this.endAutoCompactionRecovery();
+      this.releaseContextModeAttempt();
       return;
     }
 
@@ -2512,38 +2722,41 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       });
 
-      const manualRetry = await this.retryCompactionOnceAfterAutoFailure(autoCompactionError, baseDetails);
-      if (manualRetry.recovered) {
-        this.dropTrailingOverflowErrorIfPresent(compactionReason);
-        return;
-      }
-
-      const emergencyTrim = await this.runEmergencyContextTrim({
-        autoCompactionError,
-        manualRetryError: manualRetry.errorMessage
-      });
-      if (emergencyTrim.recovered) {
-        this.dropTrailingOverflowErrorIfPresent(compactionReason);
-        return;
-      }
-
-      await this.reportRuntimeError({
-        phase: "compaction",
-        message:
-          "Context recovery failed after auto-compaction retry and emergency trim. Start a new session or manually trim conversation history.",
-        details: {
-          ...baseDetails,
-          recoveryStage: "recovery_failed",
-          autoCompactionError,
-          manualRetryError: manualRetry.errorMessage,
-          emergencyTrimError: emergencyTrim.errorMessage
+      if (this.getAttemptContextMode() !== "fresh") {
+        const manualRetry = await this.retryCompactionOnceAfterAutoFailure(autoCompactionError, baseDetails);
+        if (manualRetry.recovered) {
+          this.dropTrailingOverflowErrorIfPresent(compactionReason);
+          return;
         }
-      });
+
+        const emergencyTrim = await this.runEmergencyContextTrim({
+          autoCompactionError,
+          manualRetryError: manualRetry.errorMessage
+        });
+        if (emergencyTrim.recovered) {
+          this.dropTrailingOverflowErrorIfPresent(compactionReason);
+          return;
+        }
+
+        await this.reportRuntimeError({
+          phase: "compaction",
+          message:
+            "Context recovery failed after auto-compaction retry and emergency trim. Start a new session or manually trim conversation history.",
+          details: {
+            ...baseDetails,
+            recoveryStage: "recovery_failed",
+            autoCompactionError,
+            manualRetryError: manualRetry.errorMessage,
+            emergencyTrimError: emergencyTrim.errorMessage
+          }
+        });
+      }
       this.noteAutoCompactionFailureCooldown();
     } finally {
       this.latestAutoCompactionReason = undefined;
       this.autoCompactionEntryKeysBefore = undefined;
       this.endAutoCompactionRecovery();
+      this.releaseContextModeAttempt();
       await this.flushRecoveryBufferedMessages();
     }
   }
@@ -2555,38 +2768,46 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.autoCompactionTimeout = undefined;
     this.abortCompactionSafely("auto_compaction_timeout_abort");
-    this.queueCurrentManagerMessageForRecovery();
+    const freshAttempt = this.getAttemptContextMode() === "fresh";
+    if (!freshAttempt) {
+      this.queueCurrentManagerMessageForRecovery();
+    }
     await this.reportRuntimeError({
       phase: "compaction",
       message: "Automatic compaction timed out",
       details: {
         recoveryStage: "auto_compaction_timeout",
-        compactionRetryPlanned: true,
-        preserveActiveTurn: true,
-        userFacingMessage: "Automatic compaction timed out; Forge is retrying the current work.",
+        compactionRetryPlanned: !freshAttempt,
+        preserveActiveTurn: !freshAttempt,
+        userFacingMessage: freshAttempt
+          ? "Automatic fresh-window compaction timed out. Pre-boundary context was preserved."
+          : "Automatic compaction timed out; Forge is retrying the current work.",
         receipt: "auto_compaction_timeout_force_cleared"
       }
     });
 
     let abortSettled = false;
-    try {
-      await this.abortSessionAndWaitForIdle(
-        CONTEXT_GUARD_ABORT_TIMEOUT_MS,
-        "auto_compaction_timeout_session_abort",
-      );
-      abortSettled = true;
-    } catch (error) {
-      this.closeStaleOpenAICodexWebSocketSession("auto_compaction_timeout_session_abort_failed");
-      this.logRuntimeError("compaction", error, {
-        stage: "auto_compaction_timeout_session_abort_failed",
-      });
+    if (!freshAttempt) {
+      try {
+        await this.abortSessionAndWaitForIdle(
+          CONTEXT_GUARD_ABORT_TIMEOUT_MS,
+          "auto_compaction_timeout_session_abort",
+        );
+        abortSettled = true;
+      } catch (error) {
+        this.closeStaleOpenAICodexWebSocketSession("auto_compaction_timeout_session_abort_failed");
+        this.logRuntimeError("compaction", error, {
+          stage: "auto_compaction_timeout_session_abort_failed",
+        });
+      }
     }
 
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionEntryKeysBefore = undefined;
     this.endAutoCompactionRecovery();
+    this.releaseContextModeAttempt();
     this.noteAutoCompactionFailureCooldown();
-    if (this.awaitingAgentSettlement && (abortSettled || !this.session.isStreaming)) {
+    if (!freshAttempt && this.awaitingAgentSettlement && (abortSettled || !this.session.isStreaming)) {
       await this.finalizeAgentRunSettlement();
     }
     await this.flushRecoveryBufferedMessages();

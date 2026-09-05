@@ -76,6 +76,15 @@ export interface SessionCoordinationPickerConfig {
   ) => void | Promise<void>
 }
 
+export interface SessionContextModePickerConfig {
+  originId: string
+  httpClientRef: RefObject<SettingsApiClient | null>
+  sessionAgentId: string
+  disabled?: boolean
+  /** Bump from transport reconnect so a new server projection is fetched. */
+  connectionEpoch?: number
+}
+
 export interface MessageInputProps {
   onSend: (message: string, attachments?: ConversationAttachment[], options?: MessageInputSendOptions) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
@@ -100,6 +109,8 @@ export interface MessageInputProps {
   sessionModelPicker?: SessionModelPickerConfig
   /** Builder manager sessions only: work mode and roster controls. */
   sessionCoordinationPicker?: SessionCoordinationPickerConfig
+  /** Local eligible Builder managers only: project/session context-mode control. */
+  sessionContextModePicker?: SessionContextModePickerConfig
   /** Builder-local Secure Session controls. Transport and secret values stay outside the composer. */
   secureSessionPicker?: SecureSessionPickerConfig
 }
