@@ -108,6 +108,7 @@ export class BitwardenCliManager {
   private readonly fetchImpl: typeof fetch;
   private readonly extractZipImpl: typeof extractZip;
   private readonly probeTimeoutMs: number;
+  private versionProbe: { identity: string; version: string; expiresAt: number } | null = null;
 
   constructor(private readonly options: BitwardenCliManagerOptions) {
     this.platform = options.platform ?? process.platform;
@@ -267,12 +268,22 @@ export class BitwardenCliManager {
       this.environment.ComSpec,
     );
     if (!invocation) return null;
-    const version = await probeVersion(
-      invocation,
-      this.environment,
-      this.probeTimeoutMs,
-    );
+    const info = await stat(normalized).catch(() => null);
+    if (!info) return null;
+    const identity = `${normalized}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    const cached = this.versionProbe;
+    const version = cached?.identity === identity && cached.expiresAt > Date.now()
+      ? cached.version
+      : await probeVersion(
+          invocation,
+          this.environment,
+          this.probeTimeoutMs,
+        );
     if (!version) return null;
+    // Avoid booting the entire CLI just to ask its version on every status read.
+    if (cached?.identity !== identity || cached.expiresAt <= Date.now()) {
+      this.versionProbe = { identity, version, expiresAt: Date.now() + 60_000 };
+    }
     return {
       invocation,
       summary: {

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BitwardenCliManager,
   FORGE_MANAGED_BITWARDEN_CLI_VERSION,
@@ -11,12 +11,35 @@ import {
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryDirectories.splice(0).map(async (directory) => {
     await rm(directory, { recursive: true, force: true });
   }));
 });
 
 describe("BitwardenCliManager", () => {
+  it("reuses version probes but rechecks changed executables and expired probes", async () => {
+    const root = await temporaryRoot();
+    const executable = await fakeCli(path.join(root, "bw"));
+    const counter = path.join(root, "probes");
+    const script = (version: string) => `#!/bin/sh\nprintf x >> '${counter}'\nprintf '${version}\\n'\n`;
+    await writeFile(executable, script("2026.8.0"));
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const manager = new BitwardenCliManager({ dataDir: root, environment: { PATH: "" } });
+    await manager.resolve(executable);
+    await manager.resolve(executable);
+    expect(await readFile(counter, "utf8")).toBe("x");
+    now += 60_001;
+    await manager.resolve(executable);
+    expect(await readFile(counter, "utf8")).toBe("xx");
+    await writeFile(executable, script("2026.10.0"));
+    expect((await manager.resolve(executable)).summary.version).toBe("2026.10.0");
+    expect(await readFile(counter, "utf8")).toBe("xxx");
+    await rm(executable);
+    expect((await manager.resolve(executable)).invocation).toBeNull();
+  });
+
   it("prefers a working configured executable and reports safe diagnostics", async () => {
     const root = await temporaryRoot();
     const executable = await fakeCli(path.join(root, "custom", "bw"));

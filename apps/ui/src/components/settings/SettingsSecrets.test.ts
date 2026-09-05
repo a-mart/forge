@@ -477,6 +477,8 @@ describe('SettingsSecrets', () => {
     fireEvent.click(refresh)
 
     await waitFor(() => {
+      expect(secureSecretsApiMock.testSecureSecretProvider)
+        .toHaveBeenCalledWith(expect.anything(), BITWARDEN_PASSWORD_MANAGER_PROVIDER.providerId)
       expect(secureSecretsApiMock.fetchBitwardenPasswordManagerSettings)
         .toHaveBeenCalledTimes(2)
       expect(getByRole(container, 'checkbox', { name: 'Infrastructure' })).toBeTruthy()
