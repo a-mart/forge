@@ -91,9 +91,12 @@
   --app-font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --radius: 0.5rem;
+  /* Native Chromium/Electron/Firefox chrome follows Forge's class theme, not OS. */
+  color-scheme: light;
 }
 
 .dark {
+  color-scheme: dark;
   --background: #1a1a1a;
   --foreground: #f0ebe5;
   --card: #242424;
@@ -235,6 +238,15 @@ body {
 
 body {
   @apply m-0 bg-background text-foreground antialiased;
+}
+
+/* Firefox-only native scrollbar colors. Chromium/Electron/Safari follow
+   color-scheme for overlay and classic chrome; inherited scrollbar-color on
+   :root would make Chromium ignore more specific ::-webkit-scrollbar rules. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-color: var(--border) transparent;
+  }
 }
 
 /* Pin navigator: scroll-to highlight flash */
