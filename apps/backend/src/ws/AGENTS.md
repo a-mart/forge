@@ -24,9 +24,11 @@ Keep parsing and execution separated so the handler layer stays thin and the per
 `subscribe_inventory` is parsed by the utility domain parser. It requires a nonempty bounded
 `requestId` (128 characters) and rejects extra fields such as a conversation target or options.
 
-- Capability is local Builder only. A `collaboration-server` runtime, including Remote Projects and
-  an authenticated admin, rejects the command with `INVENTORY_NOT_SUPPORTED` before inventory state
-  is installed.
+- Capability is local Builder only. On a `collaboration-server` runtime, including Remote Projects,
+  Builder authorization runs first. Requests denied by that gate may receive
+  `COLLABORATION_COMMAND_NOT_ALLOWED`. Only authorized requests that reach the local-runtime
+  capability check receive `INVENTORY_NOT_SUPPORTED` before inventory state is installed, including
+  authenticated admins.
 - An old server without the command fails closed with `INVALID_COMMAND` (`Unknown command type`).
   Do not recover that rejection, a timeout, or a malformed inventory command by sending ordinary
   `subscribe`.

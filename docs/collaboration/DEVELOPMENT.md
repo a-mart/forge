@@ -79,7 +79,7 @@ Never duplicate shared DTOs in app-local files when they belong in protocol.
 - The public status handshake exposes instance name/version/protocol/capabilities; never put sensitive server metadata in an example `instanceName`.
 - `clientRequestId` correlates optimistic sends with echoed persisted events; it is not an exactly-once or idempotency contract.
 - Project presence means subscribed viewer identities only—never typing, editing, cursors, or locks.
-- Opt-in `subscribe_inventory` is local Builder only. Collaboration-server and Remote Projects sockets, including authenticated admins, reject it with `INVENTORY_NOT_SUPPORTED` before inventory state is installed. Old servers that do not know the command fail closed with `INVALID_COMMAND`; clients must not recover that rejection by sending ordinary `subscribe`. Explicit conversation `subscribe` and ordinary `ping`/`ready` remain supported and unchanged. Inventory is not a viewed conversation: it must not read transcript, mark read, record last-seen/viewer presence, or suppress unattended unread. Do not store inventory in `collab_*` tables.
+- Opt-in `subscribe_inventory` is local Builder only. It is classified as `read` for command-map totality but is not a supported Collaboration/Remote Projects capability. On a collaboration-server runtime, Builder authorization runs first: requests denied by that gate may receive `COLLABORATION_COMMAND_NOT_ALLOWED`. Only authorized requests that reach the local-runtime capability check, including authenticated admins, receive `INVENTORY_NOT_SUPPORTED` before inventory state is installed. Old servers that do not know the command fail closed with `INVALID_COMMAND`; clients must not recover those rejections by sending ordinary `subscribe`. Remote Projects keep explicit conversation `subscribe` as the viewed-session contract. Ordinary `ping`/`ready` remain transport compatibility on non-inventory sockets and are not a view contract. Inventory is not a viewed conversation: it must not read transcript, mark read, record last-seen/viewer presence, or suppress unattended unread. Do not store inventory in `collab_*` tables.
 - Origin-scoped events must mutate only their `(originId, id)` store. Non-chat local-only surfaces must not silently derive endpoints from the active remote origin.
 - Unified order is local-instance-owned and retains offline/hidden remote anchors.
 
@@ -157,7 +157,7 @@ Do not run service restarts, Docker commands, builds, or production-data mutatio
 - Keep HTTP route handlers thin and delegate to services.
 - Classify collaboration HTTP routes deliberately. In the collaboration runtime, admin access is the default unless a route is intentionally public, channel-member, or Remote-Projects-member.
 - Keep the Remote Projects member HTTP allowlist and Builder WS tier map explicit and total. Test policy-disabled behavior separately from admin behavior.
-- Keep WebSocket command parsing strict. `collab_*` channel commands and allowlisted remote Builder commands follow separate authorization paths. `subscribe_inventory` is not an allowlisted remote Builder command; collaboration-server runtimes reject it with `INVENTORY_NOT_SUPPORTED`.
+- Keep WebSocket command parsing strict. `collab_*` channel commands and allowlisted remote Builder commands follow separate authorization paths. `subscribe_inventory` is classified as `read` for command-map totality but is not a supported Collaboration/Remote Projects capability. Requests denied by Builder authorization may receive `COLLABORATION_COMMAND_NOT_ALLOWED`; only authorized requests that reach the local-runtime capability check receive `INVENTORY_NOT_SUPPORTED`.
 - Route channel sends through `collab_user_message` and channel services so author/read-state metadata stays consistent.
 - Keep `_collaboration` system profile hidden from normal Builder lists and snapshots.
 - Preserve session-backed channel behavior so history/replay and existing manager runtime infrastructure continue to work.
@@ -234,5 +234,5 @@ Do not run full builds, Docker validation, service restarts, or live backend che
 - Opening channel detail subscriptions to every configured backend.
 - Dropping offline/hidden remote anchors from the local unified sidebar order.
 - Forgetting that cookies are not port-scoped or mixing `localhost` and `127.0.0.1` in local split deployments.
-- Treating `subscribe_inventory` as a Collaboration or Remote Projects surface, storing it in `collab_*` tables, or recovering `INVENTORY_NOT_SUPPORTED` / `INVALID_COMMAND` by sending ordinary `subscribe`.
+- Treating `subscribe_inventory` as a Collaboration or Remote Projects surface, storing it in `collab_*` tables, or recovering `COLLABORATION_COMMAND_NOT_ALLOWED` / `INVENTORY_NOT_SUPPORTED` / `INVALID_COMMAND` by sending ordinary `subscribe`.
 - Treating `inventory_pong` as a capability acknowledgement or a viewed conversation target.
