@@ -27,7 +27,7 @@ When the context window fills up during an active conversation, Forge triggers c
 
 ## History recall
 
-There is no human history drawer. Local Builder managers and ordinary workers recover compacted or older evidence with the agent-only `history` tool: search the current session first (including associated workers), then the current project if needed, then `all_local` only with a nonempty reason and no approval prompt. Search is lexical (ranked terms, quoted phrases, prefixes, and code or path tokens), not embeddings. Reads use source-qualified references. Historical evidence is not current authority; incomplete catch-up warnings mean a no-match is not proof of absence.
+There is no human history drawer. Local Builder managers and ordinary workers recover compacted or older evidence with the agent-only `history` tool: search the current session first (including associated workers), then the current project if needed. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and no approval prompt; `all_local` is a deliberate broad search, not the only cross-project path. Search is lexical (ranked terms, quoted phrases, prefixes, and code or path tokens), not embeddings. Reads use source-qualified references. Historical evidence is not current authority; incomplete catch-up warnings mean a no-match is not proof of absence.
 
 Canonical JSONL remains the source of truth. `shared/cache/history-recall.db` is a rebuildable derived index. Indexing clips each entry to 32,768 characters, readable JSONL rows stop at 1 MiB, and a `history` read is bounded to 20,000 characters across the entry and neighbors.
 
