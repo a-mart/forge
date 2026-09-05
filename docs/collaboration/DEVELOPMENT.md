@@ -21,7 +21,7 @@ Keep Collaboration-channel changes isolated from Builder behavior unless the tas
 | HTTP routes | `apps/backend/src/ws/http/routes/collaboration-routes.ts`, `apps/backend/src/ws/http/routes/collaboration/*` |
 | WS handler/commands | `apps/backend/src/ws/ws-handler.ts`, `apps/backend/src/ws/commands/parse-collab-command.ts`, `collab-command-handler.ts` |
 | WS fanout | `apps/backend/src/ws/collab-subscription-manager.ts` |
-| Protocol | `packages/protocol/src/collaboration.ts`, `builder-protocol.ts`, `presence.ts`, `builder-sidebar-order.ts` |
+| Protocol | `packages/protocol/src/collaboration.ts`, `builder-protocol.ts`, `presence.ts`, `builder-sidebar-order.ts`. Local-Builder inventory is `builder-inventory.ts`; it is not a channel or Remote Projects protocol. |
 | UI surface | `apps/ui/src/components/index-page/CollabSurface.tsx`, `CollabWorkspace.tsx` |
 | UI Collaboration connection manager | `apps/ui/src/lib/collaboration/connection-manager.ts` |
 | UI endpoint targeting / browser registry | `apps/ui/src/lib/collaboration-endpoints.ts`, `collaboration-connections.ts` |
@@ -48,7 +48,7 @@ Keep Collaboration-channel changes isolated from Builder behavior unless the tas
 | Project surfaces | Local | Active-origin chat, Files, Git, terminals, attachments, audit/model availability | Only explicitly designed channel surfaces |
 | Local-only surfaces | N/A | Non-chat Settings, Stats, Archive, onboarding, Cortex, usage/order API | Not projected into channels |
 | Persistence | Local data dir | Server data/workspaces; no clone/sync | Server SQLite plus `_collaboration` files |
-| Subscription model | Selected local session | Enabled origins may connect; one route-selected active origin | Metadata-first; one active channel detail subscription |
+| Subscription model | Selected local session; opt-in `subscribe_inventory` is local-only and is not a viewed session | Enabled origins may connect; one route-selected active origin; no inventory | Metadata-first; one active channel detail subscription; no inventory |
 
 Keep the two Remote Projects controls independent: server `enabled` is authorization policy, while browser `remoteProjectsEnabled` only decides whether that connection is managed/rendered. Never treat the client preference as security.
 
@@ -56,7 +56,7 @@ Do not treat mounted backend routes as product support. Collaboration channels a
 
 ## Protocol and API change workflow
 
-1. Update the owning protocol module first: `collaboration.ts` for channels, or `builder-protocol.ts`/`presence.ts`/`builder-sidebar-order.ts` for Remote Projects.
+1. Update the owning protocol module first: `collaboration.ts` for channels, or `builder-protocol.ts`/`presence.ts`/`builder-sidebar-order.ts` for Remote Projects. Opt-in Builder inventory lives in `builder-inventory.ts` and is local-Builder only; do not add it to collaboration or Remote Projects contracts.
 2. Update backend HTTP route DTOs and WebSocket command/event handling.
 3. Update UI API clients, connection/origin state, and components.
 4. Add or update tests on both sides of the boundary.
@@ -79,6 +79,7 @@ Never duplicate shared DTOs in app-local files when they belong in protocol.
 - The public status handshake exposes instance name/version/protocol/capabilities; never put sensitive server metadata in an example `instanceName`.
 - `clientRequestId` correlates optimistic sends with echoed persisted events; it is not an exactly-once or idempotency contract.
 - Project presence means subscribed viewer identities only—never typing, editing, cursors, or locks.
+- Opt-in `subscribe_inventory` is local Builder only. It is classified as `read` for command-map totality but is not a supported Collaboration/Remote Projects capability. On a collaboration-server runtime, Builder authorization runs first: requests denied by that gate may receive `COLLABORATION_COMMAND_NOT_ALLOWED`. Only authorized requests that reach the local-runtime capability check, including authenticated admins, receive `INVENTORY_NOT_SUPPORTED` before inventory state is installed. Old servers that do not know the command fail closed with `INVALID_COMMAND`; clients must not recover those rejections by sending ordinary `subscribe`. Remote Projects keep explicit conversation `subscribe` as the viewed-session contract. Ordinary `ping`/`ready` remain transport compatibility on non-inventory sockets and are not a view contract. Inventory is not a viewed conversation: it must not read transcript, mark read, record last-seen/viewer presence, or suppress unattended unread. Do not store inventory in `collab_*` tables.
 - Origin-scoped events must mutate only their `(originId, id)` store. Non-chat local-only surfaces must not silently derive endpoints from the active remote origin.
 - Unified order is local-instance-owned and retains offline/hidden remote anchors.
 
@@ -97,7 +98,7 @@ Both routes are explicitly classified Remote Projects member surfaces behind the
 
 ## SQLite migration policy
 
-SQLite is for structured collaboration domain state: users, auth sessions, invites, workspace/category/channel metadata, membership/read state, selected specialist handles, and selected skill handles. Forge profile/session descriptors are separate: the `_collaboration` profile/root descriptors and channel backing manager descriptors remain in `${FORGE_DATA_DIR}/swarm/agents.json`.
+SQLite is for structured collaboration domain state: users, auth sessions, invites, workspace/category/channel metadata, membership/read state, selected specialist handles, and selected skill handles. Forge profile/session descriptors are separate: the `_collaboration` profile/root descriptors and channel backing manager descriptors remain in `${FORGE_DATA_DIR}/swarm/agents.json`. Opt-in Builder inventory is transient local-Builder socket state. Do not add it to `collab_*` tables.
 
 Migration rules:
 
@@ -156,7 +157,7 @@ Do not run service restarts, Docker commands, builds, or production-data mutatio
 - Keep HTTP route handlers thin and delegate to services.
 - Classify collaboration HTTP routes deliberately. In the collaboration runtime, admin access is the default unless a route is intentionally public, channel-member, or Remote-Projects-member.
 - Keep the Remote Projects member HTTP allowlist and Builder WS tier map explicit and total. Test policy-disabled behavior separately from admin behavior.
-- Keep WebSocket command parsing strict. `collab_*` channel commands and allowlisted remote Builder commands follow separate authorization paths.
+- Keep WebSocket command parsing strict. `collab_*` channel commands and allowlisted remote Builder commands follow separate authorization paths. `subscribe_inventory` is classified as `read` for command-map totality but is not a supported Collaboration/Remote Projects capability. Requests denied by Builder authorization may receive `COLLABORATION_COMMAND_NOT_ALLOWED`; only authorized requests that reach the local-runtime capability check receive `INVENTORY_NOT_SUPPORTED`.
 - Route channel sends through `collab_user_message` and channel services so author/read-state metadata stays consistent.
 - Keep `_collaboration` system profile hidden from normal Builder lists and snapshots.
 - Preserve session-backed channel behavior so history/replay and existing manager runtime infrastructure continue to work.
@@ -233,3 +234,5 @@ Do not run full builds, Docker validation, service restarts, or live backend che
 - Opening channel detail subscriptions to every configured backend.
 - Dropping offline/hidden remote anchors from the local unified sidebar order.
 - Forgetting that cookies are not port-scoped or mixing `localhost` and `127.0.0.1` in local split deployments.
+- Treating `subscribe_inventory` as a Collaboration or Remote Projects surface, storing it in `collab_*` tables, or recovering `COLLABORATION_COMMAND_NOT_ALLOWED` / `INVENTORY_NOT_SUPPORTED` / `INVALID_COMMAND` by sending ordinary `subscribe`.
+- Treating `inventory_pong` as a capability acknowledgement or a viewed conversation target.
