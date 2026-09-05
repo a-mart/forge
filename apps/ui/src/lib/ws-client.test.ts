@@ -148,6 +148,7 @@ describe('ManagerWsClient', () => {
     const requestTypeSet = new Set(WS_REQUEST_TYPES)
 
     expect(contractTypes).toEqual([
+      'subscribe_inventory',
       'browser_host_register',
       'browser_host_hydrate',
       'browser_panel_reveal_acknowledge',
@@ -219,6 +220,19 @@ describe('ManagerWsClient', () => {
         ),
       ),
     ).toBe(true)
+  })
+
+  it('does not adopt unsolicited inventory baselines or inventory heartbeat as a viewed conversation', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances[0]!
+    socket.emit('open')
+    const before = client.getState()
+    socket.emit('message', { data: JSON.stringify({ type: 'inventory_snapshot', requestId: 'not-requested', agents: [], profiles: [], counts: { other: 9 }, revision: 1, attentions: [] }) })
+    socket.emit('message', { data: JSON.stringify({ type: 'inventory_pong', serverTime: '2026-09-01T00:00:00.000Z' }) })
+    expect(client.getState()).toBe(before)
+    client.destroy()
   })
 
   it('projects bounded Builder order invalidations and ignores stale revisions', () => {

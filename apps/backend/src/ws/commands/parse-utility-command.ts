@@ -23,6 +23,17 @@ export const MAX_SUBSCRIPTION_ID_LENGTH = 128;
 export const MAX_SESSION_ATTENTION_REQUEST_ID_LENGTH = 1024;
 
 export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
+  if (maybe.type === "subscribe_inventory") {
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (typeof requestId !== "string" || !requestId.trim() || requestId.length > MAX_SUBSCRIPTION_ID_LENGTH) {
+      return fail("subscribe_inventory.requestId must be a nonempty bounded string");
+    }
+    if (Object.keys(maybe).some((key) => key !== "type" && key !== "requestId")) {
+      return fail("subscribe_inventory does not accept a conversation target or options", requestId);
+    }
+    return ok({ type: "subscribe_inventory", requestId });
+  }
+
   if (maybe.type === "ping") {
     return ok({ type: "ping" });
   }

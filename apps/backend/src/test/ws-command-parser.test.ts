@@ -101,6 +101,7 @@ describe('ws command parser session commands', () => {
 
   it('parses request contracts while preserving optional wire requestId', () => {
     const payloadByType = {
+      subscribe_inventory: { type: 'subscribe_inventory' },
       browser_host_register: { type: 'browser_host_register', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(), capabilities: { protocolVersions: { minimum: 2, maximum: 2 }, supportedOperations: BROWSER_AUTOMATION_OPERATIONS, features: { resize: true, recording: true, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false }, runtimeVersions: { electron: '1', chromium: '1', playwright: '1' }, maxResponseBytes: 1024 } } },
       browser_host_hydrate: { type: 'browser_host_hydrate', hostId: 'host-1', hostGeneration: 1 },
       browser_tab_open: { type: 'browser_tab_open', sessionAgentId: 'session-a', profileId: 'profile-a' },

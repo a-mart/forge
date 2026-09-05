@@ -6,6 +6,14 @@ export function handleSystemEvent(
   context: ManagerWsSystemEventContext,
 ): boolean {
   switch (event.type) {
+    case 'inventory_snapshot':
+      // Resolve only a matching opt-in request; never replace the web client's
+      // selected transcript, readiness or global origin state with this baseline.
+      context.requestTracker.resolve('subscribe_inventory', event.requestId, event)
+      return true
+    case 'inventory_pong':
+      return true
+
     case 'error':
       // Directory browser commands are request-scoped utilities, not agent
       // failures. Their errors belong to the initiating dialog only.

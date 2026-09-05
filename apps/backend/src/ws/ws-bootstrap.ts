@@ -86,6 +86,29 @@ export function normalizeSubscribeMessageCount(messageCount: number | undefined)
   return rounded;
 }
 
+/** Canonical origin inventory only: no conversation resolution, hydration or read side effects. */
+export function buildInventorySnapshot(
+  swarmManager: SwarmManager,
+  unreadTracker: UnreadTracker | null,
+  requestId: string,
+): Extract<ServerEvent, { type: "inventory_snapshot" }> {
+  const allProfiles = swarmManager.listProfiles();
+  const systemProfileIds = new Set(allProfiles.filter(isSystemProfile).map((profile) => profile.profileId));
+  const agents = filterBuilderVisibleAgents(swarmManager.listBootstrapAgents(), systemProfileIds)
+    .filter((agent) => agent.role === "manager");
+  const visibleIds = new Set(agents.map((agent) => agent.agentId));
+  const attention = swarmManager.getSessionAttentionSnapshot();
+  return {
+    type: "inventory_snapshot",
+    requestId,
+    agents,
+    profiles: filterBuilderVisibleProfiles(allProfiles),
+    counts: Object.fromEntries(Object.entries(unreadTracker?.getSnapshot() ?? {}).filter(([id]) => visibleIds.has(id))),
+    revision: attention.revision,
+    attentions: attention.attentions.filter((entry) => visibleIds.has(entry.sessionAgentId)),
+  };
+}
+
 export async function sendSubscriptionBootstrap(options: {
   socket: WebSocket;
   targetAgentId: string;

@@ -1810,6 +1810,7 @@ export class ManagerWsClient {
     }
 
     handleSystemEvent(event, {
+      requestTracker: this.requestDispatcher.tracker,
       updateState: (patch) => this.updateState(patch),
       pushSystemMessage: (text) => this.pushSystemMessage(text),
       isPendingDirectoryRequest: (requestId) =>

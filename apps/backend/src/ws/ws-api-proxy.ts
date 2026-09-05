@@ -105,6 +105,16 @@ export class WsApiProxy {
     const pathname = parsedPath.pathname;
 
     try {
+      if (pathname === "/api/settings/manager-selection-catalog") {
+        if (command.method !== "GET") return this.createApiProxyMethodNotAllowedResponse(command.requestId, "GET");
+        try {
+          const catalog = await this.swarmManager.getManagerSelectionCatalog();
+          return this.createApiProxyJsonResponse(command.requestId, 200, { ...catalog });
+        } catch {
+          return this.createApiProxyJsonResponse(command.requestId, 500, { error: "Unable to load manager selection catalog" });
+        }
+      }
+
       if (pathname === API_PROXY_NOTIFICATION_PREFERENCES_PATH) {
         return await this.handleApiProxyNotificationPreferences(command, payload);
       }

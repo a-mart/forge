@@ -166,6 +166,8 @@ export * from './remote-update-awareness.js'
 export * from './secure-sessions.js'
 
 export type ServerEvent =
+  | import('./builder-inventory.js').InventorySnapshotEvent
+  | import('./builder-inventory.js').InventoryPongEvent
   | BuilderSidebarOrderUpdatedEvent
   | BrowserServerEvent
   | CliServerEvent

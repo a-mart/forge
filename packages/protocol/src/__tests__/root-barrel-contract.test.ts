@@ -638,6 +638,7 @@ describe('protocol root barrel contract', () => {
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'subscribe_inventory',
       'browser_host_register',
       'browser_host_hydrate',
       'browser_panel_reveal_acknowledge',
@@ -700,6 +701,7 @@ describe('protocol root barrel contract', () => {
         contract.commandType === 'create_repository_project' ||
         contract.commandType === 'get_conversation_page' ||
         contract.commandType === 'dismiss_session_attention' ||
+        contract.commandType === 'subscribe_inventory' ||
         contract.commandType.startsWith('browser_')
           ? contract.requestId.wire === 'required'
           : contract.requestId.wire === 'optional',

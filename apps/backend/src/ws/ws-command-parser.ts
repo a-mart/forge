@@ -49,6 +49,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
 
 export function extractRequestId(command: ClientCommand): string | undefined {
   switch (command.type) {
+    case "subscribe_inventory":
     case "api_proxy":
     case "create_manager":
     case "create_repository_project":

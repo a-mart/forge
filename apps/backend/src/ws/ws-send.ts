@@ -20,6 +20,7 @@ export const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
  */
 export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "ready",
+  "inventory_snapshot",
   "conversation_history",
   "pending_choices_snapshot",
   "bootstrap_failed",
@@ -112,7 +113,7 @@ export function sendWsEvent(options: {
 
   const eventBytes = Buffer.byteLength(serialized, "utf8");
   const maxEventBytes =
-    event.type === "agents_snapshot" || event.type === "profiles_snapshot"
+    event.type === "agents_snapshot" || event.type === "profiles_snapshot" || event.type === "inventory_snapshot"
       ? MAX_WS_CATALOG_SNAPSHOT_BYTES
       : MAX_WS_EVENT_BYTES;
   if (eventBytes > maxEventBytes) {
@@ -160,6 +161,8 @@ export async function sendWsEventWithBackpressure(options: {
   event: ServerEvent | CollaborationServerEvent;
   onDropSocket: (socket: WebSocket) => void;
   timeoutMs?: number;
+  /** Rechecked after a drain wait so a superseded bootstrap cannot leak its next frame. */
+  shouldSend?: () => boolean;
 }): Promise<number | null> {
   const { socket, event, onDropSocket, timeoutMs = BOOTSTRAP_DRAIN_TIMEOUT_MS } = options;
 
@@ -184,6 +187,7 @@ export async function sendWsEventWithBackpressure(options: {
     }
   }
 
+  if (options.shouldSend?.() === false) return null;
   return sendWsEvent({ socket, event, onDropSocket });
 }
 

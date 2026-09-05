@@ -77,6 +77,20 @@ describe('sendWsEventWithBackpressure', () => {
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agent_message')).toBe(false)
   })
 
+  it('rechecks bootstrap supersession after a drain wait, before any stale frame is sent', async () => {
+    vi.useFakeTimers()
+    try {
+      const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 1 })
+      let current = true
+      const pending = sendWsEventWithBackpressure({ socket: fake.socket, event: readyEvent(), onDropSocket: vi.fn(), shouldSend: () => current })
+      current = false
+      fake.setBufferedAmount(0)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(await pending).toBeNull()
+      expect(fake.sendMock).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
+
   it('awaits drain and then sends a bootstrap-critical event instead of dropping it', async () => {
     resetWsLogThrottleForTest()
     const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 500_000 })

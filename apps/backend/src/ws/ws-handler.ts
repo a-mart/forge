@@ -39,7 +39,7 @@ import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
-import { evaluateApiProxyMemberAccess, evaluateBuilderCommandAccess } from "./builder-command-access.js";
+import { evaluateApiProxyMemberAccess, evaluateBuilderCommandAccess, isInventoryCommandAllowed } from "./builder-command-access.js";
 import { handleAgentCommand } from "./commands/agent-command-handler.js";
 import { handleBrowserCommand } from "./commands/browser-command-handler.js";
 import {
@@ -121,7 +121,7 @@ export class WsHandler {
       browserAutomationService: this.browserAutomationService,
       perf,
       send: (socket, event) => this.send(socket, event),
-      sendBootstrapCritical: (socket, event) => this.sendWithBackpressure(socket, event),
+      sendBootstrapCritical: (socket, event, shouldSend) => this.sendWithBackpressure(socket, event, shouldSend),
       getServer: () => this.wss,
       getRemoteUpdateAwarenessBootstrapEvent: options.getRemoteUpdateAwarenessBootstrapEvent,
     });
@@ -305,6 +305,13 @@ export class WsHandler {
     }
 
     const command = parsed.command;
+    // A command admitted while viewing a conversation may finish after demotion.
+    // Recheck at actual send (including after backpressure), without weakening the
+    // explicit origin-safe response paths or retaining a second request registry.
+    const sendForCommand = (targetSocket: WebSocket, event: ServerEvent): void => {
+      this.send(targetSocket, event, () =>
+        !this.subscriptionManager.isInventorySubscription(targetSocket) || isInventoryCommandAllowed(command));
+    };
     const collaborationEnabled = !isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget);
     const authContext = collaborationEnabled ? getCollaborationSocketAuthContext(socket) : null;
     this.logDebug("command:received", {
@@ -313,6 +320,10 @@ export class WsHandler {
     });
 
     if (command.type === "ping") {
+      if (this.subscriptionManager.isInventorySubscription(socket)) {
+        this.send(socket, { type: "inventory_pong", serverTime: new Date().toISOString() });
+        return;
+      }
       // Members may hold builder subscriptions (remote projects); prefer the
       // builder subscription when present, else fall back to the collab one.
       const builderSubscribedAgentId = this.subscriptionManager.getSubscribedAgentId(socket);
@@ -373,6 +384,24 @@ export class WsHandler {
       }
     }
 
+    if (command.type === "subscribe_inventory") {
+      if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+        this.send(socket, { type: "error", code: "INVENTORY_NOT_SUPPORTED", message: "Inventory subscriptions require a local Builder server.", requestId: command.requestId });
+        return;
+      }
+      try {
+        await this.subscriptionManager.handleSubscribeInventory(socket, command.requestId);
+      } catch {
+        this.send(socket, { type: "error", code: "INVENTORY_BOOTSTRAP_FAILED", message: "Unable to load Builder inventory.", requestId: command.requestId });
+      }
+      return;
+    }
+
+    if (this.subscriptionManager.isInventorySubscription(socket) && !isInventoryCommandAllowed(command)) {
+      this.send(socket, { type: "error", code: "NOT_SUBSCRIBED", message: "This command requires an explicit conversation subscription.", requestId: extractRequestId(command) });
+      return;
+    }
+
     if (isBrowserClientCommand(command)) {
       const subscribedAgentId = this.subscriptionManager.getSubscribedAgentId(socket);
       await handleBrowserCommand({
@@ -387,8 +416,9 @@ export class WsHandler {
           const descriptor = this.swarmManager.getAgent(agentId);
           return !!descriptor && isEligibleLocalBuilderManager(descriptor);
         },
-        send: (targetSocket, event) => this.send(targetSocket, event),
-        sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event),
+        send: sendForCommand,
+        sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event, () =>
+          !this.subscriptionManager.isInventorySubscription(targetSocket) || isInventoryCommandAllowed(command)),
         broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
         hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
         logDebug: (message, details) => this.logDebug(message, details),
@@ -494,7 +524,10 @@ export class WsHandler {
       return;
     }
 
-    const subscribedAgentId = this.resolveSubscribedAgentId(socket);
+    // An inventoried socket may invoke the bounded origin-safe command set above.
+    // This is caller authority only: never record the actor as subscribed/viewing.
+    const subscribedAgentId = this.resolveSubscribedAgentId(socket)
+      ?? (this.subscriptionManager.isInventorySubscription(socket) ? this.subscriptionManager.resolveInventoryCommandActor() : undefined);
     if (!subscribedAgentId) {
       this.logDebug("command:rejected:not_subscribed", {
         type: command.type,
@@ -632,7 +665,7 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      send: (targetSocket, event) => this.send(targetSocket, event),
+      send: sendForCommand,
       broadcastToSubscribed: (event) => this.broadcastToSubscribed(event),
       handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
       unreadTracker: this.unreadTracker ?? undefined,
@@ -648,7 +681,7 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      send: (targetSocket, event) => this.send(targetSocket, event),
+      send: sendForCommand,
       handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
       unreadTracker: this.unreadTracker ?? undefined,
       broadcastUnreadCountUpdate: (sessionAgentId, count) => this.broadcastUnreadCountUpdate(sessionAgentId, count),
@@ -664,7 +697,7 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      send: (targetSocket, event) => this.send(targetSocket, event),
+      send: sendForCommand,
     });
     if (agentHandled) {
       return;
@@ -676,7 +709,7 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       allowNonManagerSubscriptions: this.allowNonManagerSubscriptions,
-      send: (targetSocket, event) => this.send(targetSocket, event),
+      send: sendForCommand,
       logDebug: (message, details) => this.logDebug(message, details),
       resolveConfiguredManagerId: () => this.resolveConfiguredManagerId(),
       dispatchCollaborationUserMessage: async (params) => {
@@ -702,7 +735,8 @@ export class WsHandler {
     artifactTicketAuthBinding?: string,
   ): Promise<void> {
     const response = await this.routeApiProxyCommand(command, subscribedAgentId, artifactTicketAuthBinding);
-    this.send(socket, response);
+    this.send(socket, response, () =>
+      !this.subscriptionManager.isInventorySubscription(socket) || isInventoryCommandAllowed(command));
   }
 
   private async routeApiProxyCommand(
@@ -857,7 +891,8 @@ export class WsHandler {
     console.log(prefix, details);
   }
 
-  private send(socket: WebSocket, event: ServerEvent | CollaborationServerEvent): number | null {
+  private send(socket: WebSocket, event: ServerEvent | CollaborationServerEvent, shouldSend?: () => boolean): number | null {
+    if (shouldSend?.() === false) return null;
     // Request/response events (requestId present) must not be silently dropped
     // under transient backpressure — the requesting client would hang on its
     // pending promise until timeout, de-duplicating every retry onto the dead
@@ -874,7 +909,7 @@ export class WsHandler {
     // snapshot is self-healing, dropping the last one in a quiet period would
     // leave a stale row (or a missed raise) visible until the next change.
     if (hasRequestId(event) || event.type === "session_attention_snapshot") {
-      void this.sendWithBackpressure(socket, event);
+      void this.sendWithBackpressure(socket, event, shouldSend);
       return null;
     }
 
@@ -888,10 +923,12 @@ export class WsHandler {
   private sendWithBackpressure(
     socket: WebSocket,
     event: ServerEvent | CollaborationServerEvent,
+    shouldSend?: () => boolean,
   ): Promise<number | null> {
     return sendWsEventWithBackpressure({
       socket,
       event,
+      shouldSend,
       onDropSocket: (targetSocket) => this.dropSocket(targetSocket),
     });
   }

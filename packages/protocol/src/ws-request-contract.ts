@@ -26,6 +26,7 @@ type ContractCommandType = Extract<
   | 'get_session_workers'
   | 'get_conversation_page'
   | 'dismiss_session_attention'
+  | 'subscribe_inventory'
   | 'rename_profile'
   | 'archive_profile'
   | 'restore_profile'
@@ -84,6 +85,7 @@ type ContractSuccessEventType = Extract<
   | 'conversation_history'
   | 'conversation_page'
   | 'session_attention_update'
+  | 'inventory_snapshot'
   | 'profile_renamed'
   | 'profile_archived'
   | 'profile_restored'
@@ -130,6 +132,13 @@ type ContractSuccessEventType = Extract<
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'subscribe_inventory',
+    resultFamily: 'inventory_snapshot',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['inventory_snapshot'],
+    errorCodeFragments: ['inventory'],
+  },
   {
     commandType: 'browser_host_register',
     resultFamily: 'browser_host_register',

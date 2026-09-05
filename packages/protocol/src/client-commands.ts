@@ -1,3 +1,4 @@
+import type { SubscribeInventoryCommand } from './builder-inventory.js'
 import type { ConversationAttachment } from './attachments.js'
 import type { BrowserClientCommand } from './browser-automation.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
@@ -44,6 +45,7 @@ type ManagerModelSelectionInput = {
 }
 
 export type ClientCommand =
+  | SubscribeInventoryCommand
   | {
       type: 'subscribe'
       agentId?: string

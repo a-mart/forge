@@ -13,6 +13,7 @@ import type {
   ConversationEntry,
   ConversationHistoryPageMetadata,
   SessionAttentionUpdateEvent,
+  InventorySnapshotEvent,
 } from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 
@@ -121,6 +122,7 @@ export type WsRequestResultMap = {
   delete_session: SessionActionResult
   clear_session: SessionActionResult
   dismiss_session_attention: SessionAttentionUpdateEvent
+  subscribe_inventory: InventorySnapshotEvent
   session_goal_control: SessionGoalSnapshot
   rename_session: SessionActionResult
   pin_session: { pinnedAt: string | null }
@@ -226,6 +228,7 @@ export interface ManagerWsDirectoryEventContext {
 }
 
 export interface ManagerWsSystemEventContext {
+  requestTracker: Pick<RequestTrackerAdapter, 'resolve'>
   updateState: (patch: Partial<ManagerWsState>) => void
   pushSystemMessage: (text: string) => void
   /** Utility browser command errors reject their caller but are not chat events. */

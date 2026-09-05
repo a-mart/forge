@@ -23,11 +23,13 @@ import {
   projectConversationEntryForSubscriptionWire,
 } from "./conversation-subscription-projection.js";
 import {
+  buildInventorySnapshot,
   DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
   normalizeSubscribeMessageCount,
   sendSubscriptionBootstrap,
 } from "./ws-bootstrap.js";
 import { WebSocket, WebSocketServer } from "ws";
+import { MAX_WS_CATALOG_SNAPSHOT_BYTES } from "./ws-send.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 
@@ -55,8 +57,18 @@ interface SocketBootstrapControllerState {
   cancelled: boolean;
 }
 
+interface InventorySubscription {
+  kind: "inventory";
+  queue: Array<{ event: ServerEvent; bytes: number }>;
+  queuedBytes: number;
+  sending: boolean;
+}
+
+// Bound retained live events during a backpressured baseline; fail the socket on overflow.
+const MAX_PENDING_INVENTORY_EVENTS = 1024;
+
 export class WsSubscriptions {
-  readonly subscriptions = new Map<WebSocket, string>();
+  readonly subscriptions = new Map<WebSocket, string | InventorySubscription>();
   private readonly deliveredSnapshotVersions = new Map<WebSocket, DeliveredSnapshotVersions>();
   private readonly bootstrapControllers = new Map<WebSocket, SocketBootstrapControllerState>();
   private readonly conversationViews = new Map<WebSocket, BuilderTimelineChannelView>();
@@ -75,6 +87,7 @@ export class WsSubscriptions {
   private readonly sendBootstrapCritical: (
     socket: WebSocket,
     event: ServerEvent,
+    shouldSend?: () => boolean,
   ) => Promise<number | null>;
   private readonly getServer: () => WebSocketServer | null;
   private readonly getRemoteUpdateAwarenessBootstrapEvent?: (
@@ -90,7 +103,7 @@ export class WsSubscriptions {
     browserAutomationService?: BrowserAutomationService | null;
     perf: SidebarPerfRecorder;
     send: (socket: WebSocket, event: ServerEvent) => number | null;
-    sendBootstrapCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
+    sendBootstrapCritical?: (socket: WebSocket, event: ServerEvent, shouldSend?: () => boolean) => Promise<number | null>;
     getServer: () => WebSocketServer | null;
     getRemoteUpdateAwarenessBootstrapEvent?: (
       projectId: string
@@ -137,7 +150,7 @@ export class WsSubscriptions {
 
     const viewersByUserId = new Map<string, ProjectPresenceViewer>();
     const subscribers: WebSocket[] = [];
-    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+    for (const [socket, subscribedAgentId] of this.conversationSubscriptions()) {
       if (subscribedAgentId !== sessionAgentId || socket.readyState !== WebSocket.OPEN) {
         continue;
       }
@@ -166,7 +179,7 @@ export class WsSubscriptions {
   }
 
   remove(socket: WebSocket): void {
-    const previousAgentId = this.subscriptions.get(socket);
+    const previousAgentId = this.getSubscribedAgentId(socket);
     this.removeInternal(socket);
     if (previousAgentId) {
       this.emitProjectPresence(previousAgentId);
@@ -174,6 +187,11 @@ export class WsSubscriptions {
   }
 
   private removeInternal(socket: WebSocket): void {
+    const target = this.subscriptions.get(socket);
+    if (target && typeof target !== "string") {
+      target.queue.length = 0;
+      target.queuedBytes = 0;
+    }
     this.subscriptions.delete(socket);
     this.conversationViews.delete(socket);
     this.conversationPagingCapabilities.delete(socket);
@@ -184,7 +202,107 @@ export class WsSubscriptions {
   }
 
   getSubscribedAgentId(socket: WebSocket): string | undefined {
-    return this.subscriptions.get(socket);
+    const target = this.subscriptions.get(socket);
+    return typeof target === "string" ? target : undefined;
+  }
+
+  isInventorySubscription(socket: WebSocket): boolean {
+    const target = this.subscriptions.get(socket);
+    return target !== undefined && typeof target !== "string";
+  }
+
+  private *conversationSubscriptions(): IterableIterator<[WebSocket, string]> {
+    for (const [socket, target] of this.subscriptions) {
+      if (typeof target === "string") yield [socket, target];
+    }
+  }
+
+  /** Resolve command authority without recording a viewed conversation. */
+  resolveInventoryCommandActor(): string {
+    return this.resolvePreferredManagerSubscriptionId() ?? this.resolveDefaultSubscriptionAgentId();
+  }
+
+  async handleSubscribeInventory(socket: WebSocket, requestId: string): Promise<void> {
+    this.remove(socket);
+    const event = buildInventorySnapshot(this.swarmManager, this.unreadTracker, requestId);
+    const bytes = Buffer.byteLength(JSON.stringify(event));
+    const target: InventorySubscription = {
+      kind: "inventory",
+      queue: [{ event, bytes }],
+      queuedBytes: bytes,
+      sending: false,
+    };
+    this.subscriptions.set(socket, target);
+    await this.drainInventory(socket, target);
+  }
+
+  private inventoryEvent(event: ServerEvent): ServerEvent | null {
+    // Explicit allowlist: never transcript, choices, plans, terminal/browser or secure metadata.
+    if (event.type === "profiles_snapshot") return this.filterBuilderSnapshotEvent(event);
+    const profiles = this.swarmManager.listProfiles();
+    const systemIds = new Set(profiles.filter(isSystemProfile).map((profile) => profile.profileId));
+    const visible = (id: string): boolean => {
+      const agent = this.swarmManager.getAgent(id);
+      return !!agent && agent.role === "manager" && filterBuilderVisibleAgents([agent], systemIds).length > 0;
+    };
+    switch (event.type) {
+      case "agents_snapshot":
+        return { ...event, agents: filterBuilderVisibleAgents(event.agents, systemIds).filter((agent) => agent.role === "manager") };
+      case "agent_status":
+      case "unread_count_update":
+        return visible(event.agentId) ? event : null;
+      case "unread_counts_snapshot":
+        return { ...event, counts: Object.fromEntries(Object.entries(event.counts).filter(([id]) => visible(id))) };
+      case "session_attention_snapshot":
+        return { ...event, attentions: event.attentions.filter((attention) => visible(attention.sessionAgentId)) };
+      case "model_config_changed":
+        return event;
+      default:
+        return null;
+    }
+  }
+
+  private enqueueInventory(socket: WebSocket, target: InventorySubscription, event: ServerEvent): void {
+    let filtered: ServerEvent | null;
+    let bytes: number;
+    try {
+      filtered = this.inventoryEvent(event);
+      if (!filtered) return;
+      bytes = Buffer.byteLength(JSON.stringify(filtered));
+    } catch {
+      this.remove(socket);
+      socket.close(1013, "Inventory delivery unavailable; reconnect for a fresh baseline");
+      return;
+    }
+    if (target.queue.length >= MAX_PENDING_INVENTORY_EVENTS || target.queuedBytes + bytes > 2 * MAX_WS_CATALOG_SNAPSHOT_BYTES) {
+      this.remove(socket);
+      socket.close(1013, "Inventory delivery unavailable; reconnect for a fresh baseline");
+      return;
+    }
+    target.queue.push({ event: filtered, bytes });
+    target.queuedBytes += bytes;
+    void this.drainInventory(socket, target);
+  }
+
+  private async drainInventory(socket: WebSocket, target: InventorySubscription): Promise<void> {
+    if (target.sending) return;
+    target.sending = true;
+    const current = (): boolean => this.subscriptions.get(socket) === target;
+    try {
+      while (current() && target.queue.length > 0) {
+        const { event, bytes } = target.queue.shift()!;
+        target.queuedBytes -= bytes;
+        const sent = await this.sendBootstrapCritical(socket, event, current);
+        if (sent === null && current()) throw new Error("Inventory delivery unavailable");
+      }
+    } catch {
+      if (current()) {
+        this.remove(socket);
+        socket.close(1013, "Inventory delivery unavailable; reconnect for a fresh baseline");
+      }
+    } finally {
+      target.sending = false;
+    }
   }
 
   supportsGoalControlRequestId(socket: WebSocket): boolean {
@@ -204,7 +322,12 @@ export class WsSubscriptions {
         continue;
       }
 
-      const subscribedAgent = this.subscriptions.get(client);
+      const target = this.subscriptions.get(client);
+      if (target && typeof target !== "string") {
+        this.enqueueInventory(client, target, event);
+        continue;
+      }
+      const subscribedAgent = this.getSubscribedAgentId(client);
       if (!subscribedAgent) {
         continue;
       }
@@ -260,7 +383,7 @@ export class WsSubscriptions {
     if (!wss) return;
     for (const client of wss.clients) {
       if (client.readyState !== WebSocket.OPEN) continue;
-      const subscribedAgentId = this.subscriptions.get(client);
+      const subscribedAgentId = this.getSubscribedAgentId(client);
       if (!subscribedAgentId || this.resolveProfileIdForAgent(subscribedAgentId) !== profileId) continue;
       this.send(client, event);
     }
@@ -277,7 +400,7 @@ export class WsSubscriptions {
         continue;
       }
 
-      const subscribedAgent = this.subscriptions.get(client);
+      const subscribedAgent = this.getSubscribedAgentId(client);
       if (!subscribedAgent) {
         continue;
       }
@@ -301,7 +424,7 @@ export class WsSubscriptions {
 
     for (const client of wss.clients) {
       if (client.readyState !== WebSocket.OPEN) continue;
-      const subscribedAgent = this.subscriptions.get(client);
+      const subscribedAgent = this.getSubscribedAgentId(client);
       if (!subscribedAgent) continue;
       const managerSessionAgentId = this.resolveManagerContextAgentId(subscribedAgent) ?? subscribedAgent;
       if (managerSessionAgentId !== sessionAgentId) continue;
@@ -325,7 +448,7 @@ export class WsSubscriptions {
     if (!wss) return;
     for (const client of wss.clients) {
       if (client.readyState !== WebSocket.OPEN) continue;
-      const subscribedAgentId = this.subscriptions.get(client);
+      const subscribedAgentId = this.getSubscribedAgentId(client);
       if (!subscribedAgentId || this.resolveManagerContextAgentId(subscribedAgentId) !== sessionAgentId) {
         continue;
       }
@@ -363,7 +486,7 @@ export class WsSubscriptions {
         continue;
       }
 
-      const subscribedAgentId = this.subscriptions.get(client);
+      const subscribedAgentId = this.getSubscribedAgentId(client);
       const subscribedAgent = subscribedAgentId
         ? this.swarmManager.getAgent(subscribedAgentId)
         : undefined;
@@ -392,7 +515,7 @@ export class WsSubscriptions {
         continue;
       }
 
-      if (this.subscriptions.get(client) !== agentId) {
+      if (this.getSubscribedAgentId(client) !== agentId) {
         continue;
       }
 
@@ -428,12 +551,14 @@ export class WsSubscriptions {
         continue;
       }
 
-      this.send(client, event);
+      const target = this.subscriptions.get(client);
+      if (target && typeof target !== "string") this.enqueueInventory(client, target, event);
+      else this.send(client, event);
     }
   }
 
   hasActiveSubscription(agentId: string): boolean {
-    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+    for (const [socket, subscribedAgentId] of this.conversationSubscriptions()) {
       if (socket.readyState !== WebSocket.OPEN) {
         continue;
       }
@@ -447,7 +572,7 @@ export class WsSubscriptions {
   }
 
   hasActiveSubscriptionForSession(sessionAgentId: string): boolean {
-    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+    for (const [socket, subscribedAgentId] of this.conversationSubscriptions()) {
       if (socket.readyState !== WebSocket.OPEN) {
         continue;
       }
@@ -533,7 +658,9 @@ export class WsSubscriptions {
       return;
     }
 
-    const previousAgentId = this.subscriptions.get(socket);
+    // Invalidate inventory delivery without changing legacy conversation refresh/coalescing.
+    if (this.isInventorySubscription(socket)) this.removeInternal(socket);
+    const previousAgentId = this.getSubscribedAgentId(socket);
     const previousProjectId = previousAgentId ? this.resolveProfileIdForAgent(previousAgentId) : undefined;
     const nextProjectId = this.resolveProfileIdForAgent(targetAgentId) ?? targetAgentId;
     if (
@@ -575,7 +702,7 @@ export class WsSubscriptions {
   }
 
   resolveSubscribedAgentId(socket: WebSocket): string | undefined {
-    const subscribedAgentId = this.subscriptions.get(socket);
+    const subscribedAgentId = this.getSubscribedAgentId(socket);
     if (!subscribedAgentId) {
       return undefined;
     }
@@ -668,7 +795,7 @@ export class WsSubscriptions {
   }
 
   handleDeletedAgentSubscriptions(deletedAgentIds: Set<string>): void {
-    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+    for (const [socket, subscribedAgentId] of this.conversationSubscriptions()) {
       if (!deletedAgentIds.has(subscribedAgentId)) {
         continue;
       }
@@ -879,7 +1006,7 @@ export class WsSubscriptions {
       browserAutomationService: this.browserAutomationService,
       perf: this.perf,
       // Bootstrap-critical events flow-control (await drain) instead of dropping under backpressure.
-      send: this.sendBootstrapCritical,
+      send: (targetSocket, event) => this.sendBootstrapCritical(targetSocket, event, shouldContinue),
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
       resolveGenerationThroughputSessionAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
