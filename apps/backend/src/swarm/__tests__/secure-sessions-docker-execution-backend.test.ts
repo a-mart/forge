@@ -353,6 +353,49 @@ dockerSuite(
       releaseDockerTestLock = undefined;
     });
 
+    it("preserves command exit 125 without revoking a shared sandbox", async () => {
+      const backend = new DockerSecureExecutionBackend({ scope: uniqueScope("command-125") });
+      const secureTask = task("command-125");
+      cleanupOperations.push(async () => await backend.destroyTask(secureTask));
+      const sandbox = await backend.ensureTask(secureTask);
+      const sibling = backend.execute({
+        task: secureTask,
+        command: { executable: "sh", args: ["-c", "sleep 2; printf sibling-survived"] },
+        guardOutput: passThroughGuard(),
+      });
+      const result = await backend.execute({
+        task: secureTask,
+        command: { executable: "sh", args: ["-c", "printf 'unknown flag: --no-trunc\\n' >&2; exit 125"] },
+        // Control classification must not depend on the text surviving redaction.
+        guardOutput: ({ bytes }) => Buffer.from(bytes).toString().includes("forge-secure-executor")
+          ? Buffer.alloc(0) : Buffer.from(bytes),
+      });
+      expect(result.exitCode).toBe(125);
+      expect((await sibling).stdout.toString()).toBe("sibling-survived");
+      expect(await dockerContainerExists(sandbox.sandboxId)).toBe(true);
+      await expect(backend.execute({
+        task: secureTask,
+        command: { executable: "true", args: [] },
+        guardOutput: passThroughGuard(),
+      })).resolves.toEqual(expect.objectContaining({ exitCode: 0 }));
+    }, 30_000);
+
+    it("does not accept a command exit marker when credential cleanup fails", async () => {
+      const backend = new DockerSecureExecutionBackend({ scope: uniqueScope("cleanup-125") });
+      const secureTask = task("cleanup-125");
+      cleanupOperations.push(async () => await backend.destroyTask(secureTask));
+      const sandbox = await backend.ensureTask(secureTask);
+      await expect(backend.execute({
+        task: secureTask,
+        command: {
+          executable: "sh",
+          args: ["-c", "printf 'forge-secure-executor:command-exit-125\\n' >&2; mkdir \"$TMPDIR/locked\"; touch \"$TMPDIR/locked/file\"; chmod 000 \"$TMPDIR/locked\"; exit 125"],
+        },
+        guardOutput: () => Buffer.alloc(0),
+      })).rejects.toEqual(expect.objectContaining({ code: "EXECUTION_FAILED" }));
+      expect(await dockerContainerExists(sandbox.sandboxId)).toBe(false);
+    }, 30_000);
+
     it("resolves an arbitrary mapped UID and GID for common tools", async () => {
       const backend = new DockerSecureExecutionBackend({
         scope: uniqueScope("mapped-identity"),

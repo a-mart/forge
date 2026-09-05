@@ -72,6 +72,14 @@ const GUEST_CLEANUP_FAILURE_MARKER = Buffer.from(
   "forge-secure-executor:cleanup-failed\n",
   "utf8",
 );
+const GUEST_COMMAND_EXIT_125_MARKER = Buffer.from(
+  "forge-secure-executor:command-exit-125\n",
+  "utf8",
+);
+const GUEST_INVALID_REQUEST_MARKER = Buffer.from(
+  "forge-secure-executor:invalid-request\n",
+  "utf8",
+);
 const RUNNER_RESOURCE_FILES = [
   "Dockerfile.secure-runner",
   "forge-env-askpass",
@@ -1245,6 +1253,9 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     let targetedTermination: Promise<boolean> | undefined;
     let terminationWatchdog: NodeJS.Timeout | undefined;
     let childClosed = false;
+    let commandExited125 = false;
+    let guestIntegrityFailed = false;
+    let stderrMarkerTail = Buffer.alloc(0);
     const failClosed = (error: SecureExecutionError): void => {
       if (fatalError) {
         return;
@@ -1291,6 +1302,17 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       stream: "stdout" | "stderr",
       chunk: Buffer,
     ): void => {
+      if (stream === "stderr") {
+        // Classify fixed control markers before redaction, which may withhold
+        // or redact them. Retain only a bounded suffix and erase it below.
+        const scan = Buffer.concat([stderrMarkerTail, chunk]);
+        commandExited125 ||= scan.includes(GUEST_COMMAND_EXIT_125_MARKER);
+        guestIntegrityFailed ||= scan.includes(GUEST_CLEANUP_FAILURE_MARKER)
+          || scan.includes(GUEST_INVALID_REQUEST_MARKER);
+        stderrMarkerTail.fill(0);
+        stderrMarkerTail = Buffer.from(scan.subarray(-GUEST_COMMAND_EXIT_125_MARKER.length));
+        scan.fill(0);
+      }
       const source = stream === "stdout" ? child.stdout : child.stderr;
       source.pause();
       void collector.accept(stream, chunk).finally(() => {
@@ -1354,7 +1376,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       if (fatalError) {
         throw fatalError;
       }
-      if (guarded.stderr.includes(GUEST_CLEANUP_FAILURE_MARKER)) {
+      if (guestIntegrityFailed) {
         await this.destroyIdentity(identity);
         throw new SecureExecutionError("EXECUTION_FAILED");
       }
@@ -1367,10 +1389,10 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       if (this.revoked.has(identity.name)) {
         throw new SecureExecutionError("TASK_REVOKED");
       }
-      // Exit 125 is reserved for malformed frames and guest cleanup failures.
-      // A command that deliberately chooses it is conservatively treated as
-      // an executor integrity failure in secure mode.
-      if (processOutcome.exitCode === 125) {
+      // Preserve ordinary command failures (including Docker CLI exit 125).
+      // Without the guest's post-cleanup confirmation, 125 still means an
+      // executor or Docker transport failure and must retire the sandbox.
+      if (processOutcome.exitCode === 125 && !commandExited125) {
         await this.destroyIdentity(identity);
         throw new SecureExecutionError("EXECUTION_FAILED");
       }
@@ -1381,6 +1403,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
         stderr: guarded.stderr,
       };
     } finally {
+      stderrMarkerTail.fill(0);
       frame.fill(0);
       if (timeout) {
         clearTimeout(timeout);
