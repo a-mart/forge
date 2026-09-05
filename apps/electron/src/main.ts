@@ -1702,7 +1702,6 @@ async function deployExternalChrome(resources: ExternalChromeResourceLocation): 
   const deployer = new ExternalChromeDeployer({
     dataRoot,
     resourcesRoot: resources.root,
-    desktopVersion: app.getVersion(),
     ...(resources.development ? { allowDevelopmentHost: true } : {}),
   })
   try {

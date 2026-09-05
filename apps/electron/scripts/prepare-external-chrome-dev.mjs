@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'n
 import path from 'node:path'
 import { endianness } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { desktopCompatibilityFromVersion } from './external-chrome-desktop-compatibility.mjs'
+import { unusedDesktopCompatibilityMetadata } from './external-chrome-desktop-compatibility.mjs'
 import { stageExternalChromeResources } from './stage-external-chrome.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
@@ -128,7 +128,8 @@ export async function prepareExternalChromeDevelopmentResources({
       signature: { scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null },
     },
     compatibility: {
-      desktop: desktopCompatibilityFromVersion(electronManifest.version),
+      // Unused persisted field required by the existing exact-key parser.
+      desktop: unusedDesktopCompatibilityMetadata(),
       shellAbi: { min: extensionManifest.extension.shellAbi, max: extensionManifest.extension.shellAbi },
     },
   }
@@ -155,10 +156,8 @@ async function reuseWindowsDevelopmentResources({
     const nativeHost = manifest?.nativeHost
     const extension = manifest?.extension
     const sourceExtension = extensionManifest.extension
-    const desktopCompatibility = desktopCompatibilityFromVersion(electronManifest.version)
     if (
       manifest?.schemaVersion !== 1 || manifest.packageVersion !== electronManifest.version ||
-      stableJson(manifest.compatibility?.desktop) !== stableJson(desktopCompatibility) ||
       extension?.extensionId !== sourceExtension.extensionId || extension.publicKeySha256 !== sourceExtension.publicKeySha256 ||
       extension.minimumChromeVersion !== sourceExtension.minimumChromeVersion || extension.shellAbi !== sourceExtension.shellAbi ||
       extension.shellSha256 !== sourceExtension.shellSha256 || extension.payloadVersion !== sourceExtension.payloadVersion ||

@@ -44,6 +44,7 @@ export interface ExternalChromePackageManifest {
     }
   }
   compatibility: {
+    /** Persisted unused metadata. Runtime compatibility is protocol, shell ABI, platform, and hashes. */
     desktop: { min: string; max: string }
     shellAbi: { min: number; max: number }
   }
@@ -160,6 +161,7 @@ export function parseExternalChromePackageManifest(
   exactKeys(desktop, ['min', 'max'], 'compatibility.desktop')
   string(desktop.min, 'compatibility.desktop.min')
   string(desktop.max, 'compatibility.desktop.max')
+  // `compatibility.desktop` is unused persisted metadata. Runtime compatibility is protocol, shell ABI, platform, and hashes.
   const shellAbi = object(compatibility.shellAbi, 'compatibility.shellAbi')
   exactKeys(shellAbi, ['min', 'max'], 'compatibility.shellAbi')
   positiveInteger(shellAbi.min, 'compatibility.shellAbi.min')

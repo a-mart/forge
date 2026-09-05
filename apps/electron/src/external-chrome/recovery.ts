@@ -6,7 +6,7 @@ import {
 
 type StartupExternalChromeDeployer = Pick<
   ExternalChromeDeployer,
-  'recover' | 'verifyDeploymentForStartup' | 'stage' | 'pendingDeployment' | 'activateStaged'
+  'recover' | 'verifyDeployment' | 'stage' | 'pendingDeployment' | 'activateStaged'
 >
 
 export interface ExternalChromeStartupDeploymentOptions {
@@ -29,29 +29,27 @@ export class ExternalChromeDeploymentRecovery {
    */
   async repair(): Promise<ExternalChromeInstallRecord | null> {
     await this.deployer.stage()
-    const installed = await this.deployer.verifyDeploymentForStartup()
+    const installed = await this.deployer.verifyDeployment()
     return installed.state === 'ready' ? null : this.deployer.activateStaged()
   }
 
   /**
    * Validate and stage the bundled package at Desktop startup. A development
-   * rebuild may intentionally reuse the app/package version, so an exact
-   * selector-bound content change is activated while no coordinator endpoint is
-   * running. A release is also activated when the old installation is fully
-   * integrity-proven and only its Desktop-version range is incompatible; ready
-   * release installations retain the normal immutable staged-update path.
+   * rebuild may change selector-bound content with or without a package-version
+   * bump, so that exact inventory is activated while no coordinator endpoint is
+   * running. Ready compatible installations retain the immutable staged-update
+   * path; protocol, shell ABI, platform, and hash mismatches stay fail-closed.
    */
   async deployAtStartup(options: ExternalChromeStartupDeploymentOptions): Promise<ExternalChromeInstallRecord | null> {
     await this.run()
-    const installed = await this.deployer.verifyDeploymentForStartup()
+    const installed = await this.deployer.verifyDeployment()
     await this.deployer.stage()
     const staged = await this.deployer.pendingDeployment()
     const developmentContentRebuild = options.development
       && installed.state === 'ready'
       && staged !== null
-      && staged.packageVersion === installed.install.packageVersion
       && !deploymentContentEquals(staged, installed.install)
-    if (installed.state === 'missing' || installed.state === 'desktop-incompatible' || developmentContentRebuild) {
+    if (installed.state === 'missing' || developmentContentRebuild) {
       return this.deployer.activateStaged()
     }
     return null
