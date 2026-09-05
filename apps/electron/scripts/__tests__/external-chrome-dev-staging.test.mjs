@@ -116,19 +116,16 @@ describe('External Chrome development resource staging', () => {
     expect(result.manifest.nativeHost.signature).toEqual({
       scheme: 'node-shebang', mode: 'development', verified: false, signer: null, teamId: null,
     })
-    expect(result.manifest.compatibility.desktop).toEqual({ min: '0.23.0', max: '0.23.999' })
+    expect(result.manifest.compatibility.desktop).toEqual({ min: '0.0.0', max: '999.999.999' })
+    expect(result.manifest.compatibility.shellAbi).toEqual({ min: 1, max: 1 })
     expect(JSON.parse(await readFile(path.join(outputRoot, 'package-manifest.json'), 'utf8'))).toEqual(result.manifest)
 
     const dataRoot = path.join(root, 'forge-data')
     await expect(new ExternalChromeDeployer({
-      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.23.0', platform: 'darwin', architecture: 'arm64',
+      dataRoot, resourcesRoot: outputRoot, platform: 'darwin', architecture: 'arm64',
     }).deploy()).rejects.toThrow('not release-verified')
-    await expect(new ExternalChromeDeployer({
-      dataRoot: path.join(root, 'forge-data-old'), resourcesRoot: outputRoot, desktopVersion: '0.22.9',
-      platform: 'darwin', architecture: 'arm64', allowDevelopmentHost: true,
-    }).deploy()).rejects.toThrow('incompatible with Desktop 0.22.9')
     const deployer = new ExternalChromeDeployer({
-      dataRoot, resourcesRoot: outputRoot, desktopVersion: '0.23.0', platform: 'darwin', architecture: 'arm64',
+      dataRoot, resourcesRoot: outputRoot, platform: 'darwin', architecture: 'arm64',
       allowDevelopmentHost: true,
     })
     await deployer.deploy()
@@ -172,7 +169,7 @@ describe('External Chrome development resource staging', () => {
     })
     expect(await readFile(path.join(outputRoot, 'native-host', 'win32-x64', executable))).toEqual(await readFile(executablePath))
     const deployer = new ExternalChromeDeployer({
-      dataRoot: path.join(root, 'forge-data'), resourcesRoot: outputRoot, desktopVersion: '0.23.0',
+      dataRoot: path.join(root, 'forge-data'), resourcesRoot: outputRoot,
       platform: 'win32', architecture: 'x64', allowDevelopmentHost: true,
     })
     await deployer.deploy()

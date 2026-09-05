@@ -39,6 +39,7 @@ export interface ExternalChromeInstallRecord {
   nativeProtocolCompatibility: { min: number; max: number }
   platform: string
   architecture: string
+  /** Unused persisted metadata from package manifests; not a runtime gate. */
   desktopCompatibility: { min: string; max: string }
   shellAbiCompatibility: { min: number; max: number }
 }
@@ -46,10 +47,6 @@ export interface ExternalChromeInstallRecord {
 export type ExternalChromeDeploymentVerification =
   | { state: 'ready'; install: ExternalChromeInstallRecord }
   | { state: 'missing' | 'mismatch' }
-
-export type ExternalChromeStartupDeploymentVerification =
-  | ExternalChromeDeploymentVerification
-  | { state: 'desktop-incompatible'; install: ExternalChromeInstallRecord }
 
 export interface ExternalChromeDeploymentVerifier {
   verifyDeployment(): Promise<ExternalChromeDeploymentVerification>
@@ -86,7 +83,6 @@ export interface DeployerFileSystem {
 export interface ExternalChromeDeployerOptions {
   dataRoot: string
   resourcesRoot: string
-  desktopVersion: string
   platform?: NodeJS.Platform
   architecture?: string
   fs?: DeployerFileSystem
@@ -255,8 +251,8 @@ export class ExternalChromeDeployer {
           throw error
         }
       } else {
-        // Content-hash directories are reused across Desktop version bumps.
-        // Refresh package identity so pending activation is not rejected as incompatible.
+        // Content-hash directories are reused when payload/shell/native bytes are unchanged.
+        // Refresh package identity and contract metadata so pending activation is not stale.
         await this.refreshStagedPackageIdentity(destination, packagedManifestPath, manifest)
       }
       await this.validatePackagedResources(manifest, destination)
@@ -357,17 +353,6 @@ export class ExternalChromeDeployer {
   }
 
   async verifyDeployment(): Promise<ExternalChromeDeploymentVerification> {
-    const verification = await this.verifyDeploymentForStartup()
-    return verification.state === 'desktop-incompatible' ? { state: 'mismatch' } : verification
-  }
-
-  /**
-   * Startup may replace an old deployment only after its complete installed
-   * inventory is proven and only when Desktop-version compatibility is the
-   * remaining failure. The public setup surface continues to project this as a
-   * generic mismatch.
-   */
-  async verifyDeploymentForStartup(): Promise<ExternalChromeStartupDeploymentVerification> {
     try {
       const selector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
       const install = await this.readInstall(this.paths.installState)
@@ -384,8 +369,7 @@ export class ExternalChromeDeployer {
       if (!(await this.hasExpectedExtensionIdentityAt(this.paths.extension, install))) return { state: 'mismatch' }
       const nativeHash = sha256(await this.fs.readFile(this.safeInside(this.paths.nativeHost, path.basename(this.paths.nativeHostExecutable))))
       if (nativeHash !== install.nativeSha256) return { state: 'mismatch' }
-      this.assertInstallNonDesktopCompatible(install)
-      if (!this.isInstallDesktopCompatible(install)) return { state: 'desktop-incompatible', install }
+      this.assertInstallCompatible(install)
       return { state: 'ready', install }
     } catch {
       return { state: 'mismatch' }
@@ -842,7 +826,7 @@ export class ExternalChromeDeployer {
 
   private async isValidRecoveryAt(install: ExternalChromeInstallRecord, shellRoot: string): Promise<boolean> {
     try {
-      this.assertInstallNonDesktopCompatible(install)
+      this.assertInstallCompatible(install)
       await this.validateShellAt(shellRoot, install.shellFiles, install.shellSha256)
       if (!(await this.hasExpectedExtensionIdentityAt(shellRoot, install))) return false
       return await this.isValidPayloadAt(selectorFromInstall(install), path.join(shellRoot, 'payloads'))
@@ -1053,13 +1037,6 @@ export class ExternalChromeDeployer {
   }
 
   private assertInstallCompatible(install: ExternalChromeInstallRecord): void {
-    this.assertInstallNonDesktopCompatible(install)
-    if (!this.isInstallDesktopCompatible(install)) {
-      throw new Error('External Chrome deployment is incompatible with this Desktop version')
-    }
-  }
-
-  private assertInstallNonDesktopCompatible(install: ExternalChromeInstallRecord): void {
     if (install.platform !== this.platform || install.architecture !== this.architecture) {
       throw new Error('External Chrome deployed native host targets another platform')
     }
@@ -1071,16 +1048,9 @@ export class ExternalChromeDeployer {
     }
   }
 
-  private isInstallDesktopCompatible(install: ExternalChromeInstallRecord): boolean {
-    return versionInRange(this.options.desktopVersion, install.desktopCompatibility.min, install.desktopCompatibility.max)
-  }
-
   private assertCompatible(manifest: ExternalChromePackageManifest): void {
     if (manifest.nativeHost.platform !== this.platform || manifest.nativeHost.architecture !== this.architecture) {
       throw new Error(`External Chrome native host targets ${manifest.nativeHost.platform}/${manifest.nativeHost.architecture}, not ${this.platform}/${this.architecture}`)
-    }
-    if (!versionInRange(this.options.desktopVersion, manifest.compatibility.desktop.min, manifest.compatibility.desktop.max)) {
-      throw new Error(`External Chrome package is incompatible with Desktop ${this.options.desktopVersion}`)
     }
     if (manifest.extension.shellAbi < manifest.compatibility.shellAbi.min || manifest.extension.shellAbi > manifest.compatibility.shellAbi.max) {
       throw new Error('External Chrome shell ABI is outside its declared compatibility range')
@@ -1293,10 +1263,6 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   const record = value as Record<string, unknown>
   return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
-}
-
-function versionInRange(version: string, min: string, max: string): boolean {
-  return compareVersion(version, min) >= 0 && compareVersion(version, max) <= 0
 }
 
 function compareVersion(left: string, right: string): number {

@@ -69,7 +69,7 @@ async function root(): Promise<{ dataRoot: string; deployer: ExternalChromeDeplo
     compatibility: { desktop: { min: '0.22.0', max: '0.22.999' }, shellAbi: { min: 1, max: 1 } },
   }
   await writeFile(path.join(resourcesRoot, 'package-manifest.json'), JSON.stringify(manifest))
-  const deployer = new ExternalChromeDeployer({ dataRoot: path.resolve(dataRoot), resourcesRoot, desktopVersion: '0.22.5', platform: 'linux', architecture: 'x64' })
+  const deployer = new ExternalChromeDeployer({ dataRoot: path.resolve(dataRoot), resourcesRoot, platform: 'linux', architecture: 'x64' })
   await deployer.deploy()
   return { dataRoot, deployer }
 }

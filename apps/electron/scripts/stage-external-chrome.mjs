@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { externalChromeBuildMode, verifyReleaseSignature } from '../../native-messaging-host/scripts/release-signing.mjs'
-import { desktopCompatibilityFromVersion } from './external-chrome-desktop-compatibility.mjs'
+import { unusedDesktopCompatibilityMetadata } from './external-chrome-desktop-compatibility.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const electronDir = path.resolve(scriptDir, '..')
@@ -94,7 +94,8 @@ export async function stageExternalChromeResources({
       ...(developmentHost ? { development: developmentSeaProvenance(nativeManifest) } : {}),
     },
     compatibility: {
-      desktop: desktopCompatibilityFromVersion(electronManifest.version),
+      // Unused persisted field required by the existing exact-key parser.
+      desktop: unusedDesktopCompatibilityMetadata(),
       shellAbi: { min: extensionManifest.extension.shellAbi, max: extensionManifest.extension.shellAbi },
     },
   }
