@@ -74,7 +74,7 @@ const conceptsMemory: HelpArticle = {
   id: 'concepts-memory',
   title: 'Memory System',
   category: 'concepts',
-  summary: 'How session memory, profile memory, legacy common knowledge, and Knowledge v2 prompt sources differ.',
+  summary: 'How session memory, profile memory, Knowledge v2, and agent-only history recall differ.',
   content: conceptsMemoryContent,
   keywords: [
     'memory',
@@ -87,8 +87,11 @@ const conceptsMemory: HelpArticle = {
     'remember',
     'persistence',
     'cortex',
+    'history',
+    'history recall',
+    'fresh windows',
   ],
-  relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge'],
+  relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge', 'chat-compaction'],
   contextKeys: ['chat.main'],
 }
 
@@ -146,7 +149,7 @@ const conceptsSessions: HelpArticle = {
   id: 'concepts-sessions',
   title: 'Sessions and Profiles',
   category: 'concepts',
-  summary: 'How profiles group settings and memory, and how sessions track individual conversations.',
+  summary: 'How profiles group settings and memory, and how sessions track conversations and context policy.',
   content: conceptsSessionsContent,
   keywords: [
     'session',
@@ -159,8 +162,11 @@ const conceptsSessions: HelpArticle = {
     'memory',
     'idle',
     'running',
+    'context management',
+    'fresh windows',
+    'summary',
   ],
-  relatedIds: ['concepts-memory', 'concepts-multi-agent', 'chat-fork-session'],
+  relatedIds: ['concepts-memory', 'concepts-multi-agent', 'chat-fork-session', 'chat-compaction', 'settings-project-settings'],
   contextKeys: ['chat.sidebar', 'chat.main'],
 }
 

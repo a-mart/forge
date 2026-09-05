@@ -22,6 +22,8 @@ Working plans and explicit session goals are always available to Builder manager
 
 Use **Settings > General > Compaction** to choose the model, reasoning level, and timeout Forge uses for automatic compaction and manual Smart compact runs. These controls apply only to supported Pi-backed manager compaction runtimes: OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not eligible here; OpenRouter manager eligibility is a separate policy. The default is **GPT-5.5**, **Low** reasoning, and a **5 minute** timeout. If the configured provider or model is unavailable, Forge shows a warning here so you can fix auth or pick a different model before automatic compaction needs it.
 
+This pane does not choose Summary vs Fresh. That project default lives in **Project Settings → Context management**, with an optional session inherit/override beside Send. Compact and Smart compact still follow the effective policy: Summary keeps the current handoff/resume path, while Fresh uses a deterministic checkpoint and skips the Smart LLM handoff.
+
 ## Conversation Response Throughput
 
 **Show response throughput in conversations** is off by default. Turn it on to show final Pi response throughput in manager headers, worker pills, and Worker Quick Look in Builder and Collaboration conversations. The rate uses provider-final output across the complete request duration. This browser setting applies immediately. Turning it off hides only those conversation controls: **Stats → Response throughput** continues collecting and showing historical response throughput.
