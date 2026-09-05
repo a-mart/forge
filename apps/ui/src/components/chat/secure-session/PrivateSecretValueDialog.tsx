@@ -346,7 +346,7 @@ export function PrivateSecretValueDialog({
                     : selectedDestination?.label ?? 'Choose storage'}
                 </span>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper">
                 <SelectItem value="local">Local Forge vault</SelectItem>
                 {destinations.map((option) => (
                   <SelectItem key={destinationOptionKey(option)} value={destinationOptionKey(option)}>
