@@ -19,6 +19,28 @@ package barrel. Preserve the root-barrel contract when moving or splitting modul
 - Request identifiers used for optimistic reconciliation are not automatically exactly-once or
   idempotency guarantees.
 
+## Opt-in local Builder inventory
+
+Local Builder clients may opt into a distinct `subscribe_inventory` command. It is not a
+conversation subscription and must not be treated as a compatible alias of `subscribe`.
+
+- Wire types live in `src/builder-inventory.ts` and are re-exported through the package barrel.
+- `requestId` is required and bounded. The command accepts no conversation target or options.
+- The correlated `inventory_snapshot` is the complete origin baseline and the positive capability
+  acknowledgement. It is not transcript data, does not select a conversation, and does not mark
+  anything read.
+- `inventory_pong` is transport liveness only. It is not a capability acknowledgement, a viewed
+  target, or a substitute for `ready`.
+- These events are transient per-socket control/inventory state. They are not recorded conversation
+  events and do not participate in JSONL history or replay.
+- Older servers reject the distinct command as unknown (`INVALID_COMMAND`). Clients must fail closed
+  and must not recover that rejection or a timeout by sending ordinary `subscribe`.
+- On collaboration-server and Remote Projects runtimes, Builder authorization runs first. Requests
+  denied by that gate may receive `COLLABORATION_COMMAND_NOT_ALLOWED`. Only authorized requests that
+  reach the local-runtime capability check receive `INVENTORY_NOT_SUPPORTED`.
+- Legacy conversation `subscribe` remains the viewed-session contract on Builder sockets. Ordinary
+  `ping`/`ready` remain transport compatibility on non-inventory sockets.
+
 ## Downstream validation
 
 For every contract change, audit the relevant consumers in:
