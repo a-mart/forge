@@ -226,6 +226,10 @@ describe('SecureSecretRequestCard', () => {
       'option',
       { name: 'Team Bitwarden / Infrastructure' },
     ))
+    // The custom storage label has no Radix Value node. Item-aligned positioning
+    // leaves its portal offscreen; this menu must anchor to the trigger instead.
+    expect(bitwardenOption.closest('[data-slot="select-content"]')?.getAttribute('data-side'))
+      .toBe('bottom')
     fireEvent.click(bitwardenOption)
     await waitFor(() => {
       expect(destination.textContent).toContain('Team Bitwarden / Infrastructure')

@@ -1043,7 +1043,7 @@ export function SecretCatalogPanel({
                       : 'Choose storage'}
                 </span>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper">
                 <SelectItem value="local">Local Forge vault</SelectItem>
                 {passwordManagerCollections.map((candidate) => (
                   <SelectItem
