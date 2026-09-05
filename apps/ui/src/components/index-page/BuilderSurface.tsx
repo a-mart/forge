@@ -1862,6 +1862,19 @@ export function BuilderSurface({
         }
       : undefined
 
+  const sessionContextModePicker =
+    isActiveManager
+    && !isRemoteOriginActive
+    && isSessionModelPickerEligible(activeAgent, activeAgentProfile)
+      ? {
+          originId: activeOriginId,
+          httpClientRef,
+          sessionAgentId: activeAgent.agentId,
+          disabled: !state.connected,
+          connectionEpoch: state.connectionEpoch,
+        }
+      : undefined
+
   const sessionCoordinationPicker =
     isActiveManager
     && activeAgent
@@ -2580,6 +2593,7 @@ export function BuilderSurface({
                   onClearReplyTarget: () => setReplyTarget(null),
                   sessionModelPicker,
                   sessionCoordinationPicker,
+                  sessionContextModePicker,
                   secureSessionPicker,
                 }}
               />

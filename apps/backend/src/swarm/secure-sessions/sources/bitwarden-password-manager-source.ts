@@ -109,6 +109,8 @@ export class BitwardenPasswordManagerCommandClient
 implements BitwardenPasswordManagerClient {
   private sessionKey: Buffer | null = null;
   private readonly invocation: BitwardenCliInvocation;
+  // Names and IDs only. Never cache item payloads or use this for authorization.
+  private collections: { expiresAt: number; value: BitwardenPasswordManagerCollection[] } | null = null;
 
   constructor(
     executable: string | BitwardenCliInvocation = "bw",
@@ -194,6 +196,7 @@ implements BitwardenPasswordManagerClient {
   }
 
   async sync(): Promise<void> {
+    this.collections = null;
     if (!this.sessionKey) throw new SecureSourceError("SECURE_SOURCE_LOCKED");
     await this.run(["sync"], {
       captureStdout: false,
@@ -203,8 +206,18 @@ implements BitwardenPasswordManagerClient {
   }
 
   async listCollections(): Promise<BitwardenPasswordManagerCollection[]> {
+    if (!this.sessionKey) throw new SecureSourceError("SECURE_SOURCE_LOCKED");
+    if (this.collections && this.collections.expiresAt > Date.now()) {
+      return this.collections.value.map((collection) => ({ ...collection }));
+    }
+    const session = this.sessionKey;
     const output = await this.runWithSession(["list", "collections"]);
-    return parseCollections(output);
+    const value = parseCollections(output);
+    // A concurrent lock/re-unlock must not repopulate the previous session's cache.
+    if (this.sessionKey === session) {
+      this.collections = { expiresAt: Date.now() + 60_000, value };
+    }
+    return value.map((collection) => ({ ...collection }));
   }
 
   async listItems(
@@ -306,6 +319,7 @@ implements BitwardenPasswordManagerClient {
   }
 
   private clearSession(): void {
+    this.collections = null;
     this.sessionKey?.fill(0);
     this.sessionKey = null;
   }

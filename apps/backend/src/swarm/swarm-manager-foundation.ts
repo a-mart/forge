@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { HistorySearchService } from "./history-recall/index.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { loadConfiguredSqliteDatabaseConstructor } from "../sqlite-database-loader.js";
 import { backendSidebarPerfMetricManifest } from "../stats/sidebar-perf-metrics.js";
@@ -84,6 +85,7 @@ export interface SwarmManagerFoundation {
   liveCompactionRuntimeSettingsProvider: LiveCompactionRuntimeSettingsProvider;
   knowledgeV2SettingsService: KnowledgeV2SettingsService;
   knowledgeService: KnowledgeService;
+  historySearchService: HistorySearchService;
   promptRegistry: PromptRegistry;
   forgeExtensionHost: ForgeExtensionHost;
   sidebarPerfRecorder: SidebarPerfRecorder;
@@ -229,6 +231,13 @@ export function createSwarmManagerFoundation(
     liveCompactionRuntimeSettingsProvider,
     knowledgeV2SettingsService,
     knowledgeService,
+    historySearchService: new HistorySearchService({
+      config,
+      getAgent: (id) => options.descriptors.get(id),
+      listAgents: () => [...options.descriptors.values()],
+      listProfiles: () => [...options.profiles.values()],
+      loadDatabaseModule: config.remoteUpdateAwarenessModules?.loadDatabaseModule ?? loadConfiguredSqliteDatabaseConstructor,
+    }),
     promptRegistry,
     forgeExtensionHost,
     sidebarPerfRecorder,

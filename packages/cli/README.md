@@ -73,7 +73,7 @@ forge wait <agentId> [--timeout <duration>] [--stop-on-timeout]
 
 Durations accept milliseconds by default, or `ms`, `s`, and `m` suffixes.
 
-Compaction commands use first-class CLI WebSocket mutations. They do not wrap slash commands. `sessions compact` waits for manual compaction to finish or fail. `sessions smart-compact` waits for the runtime smart-compaction decision and returns `outcome: "compacted"`, `"skipped"`, or `"not_reduced"`. Both commands require a Builder runtime that advertises `sessionCompaction`; old servers and runtime providers without compaction support return exit code 23, while invalid or unsupported session targets return typed usage errors.
+Compaction commands use first-class CLI WebSocket mutations. They do not wrap slash commands. `sessions compact` waits for manual compaction to finish or fail. `sessions smart-compact` waits for the runtime smart-compaction decision and returns `outcome: "compacted"`, `"skipped"`, or `"not_reduced"`. Both follow the session's effective context policy (Summary handoff/resume, or Fresh checkpoint with no Smart LLM handoff). Both commands require a Builder runtime that advertises `sessionCompaction`; old servers and runtime providers without compaction support return exit code 23, while invalid or unsupported session targets return typed usage errors.
 
 ## Automation notes
 

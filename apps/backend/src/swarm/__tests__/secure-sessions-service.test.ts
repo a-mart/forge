@@ -181,10 +181,27 @@ describe("SecureSessionsService", () => {
       }],
     });
     expect(harness.passwordManagerUnlocks).toEqual(["synthetic-master-password"]);
+    expect(harness.passwordManagerSyncs).toHaveLength(0);
     expect(harness.store.getProviderBackendConfig(provider.providerId)).toBeNull();
     expect(JSON.stringify(harness.store.listProviders())).not.toContain(
       "synthetic-master-password",
     );
+    await harness.close();
+  });
+
+  it("reads available Bitwarden settings without synchronizing the vault", async () => {
+    const harness = createHarness({
+      passwordManagerStatus: {
+        state: "available", accountEmail: null, serverUrl: null,
+        cli: testBitwardenCliSummary(),
+      },
+    });
+    const provider = await harness.service.connectBitwardenPasswordManager({ displayName: "Team" });
+    await harness.service.getBitwardenPasswordManagerSettings(provider.providerId);
+    await harness.service.getBitwardenPasswordManagerSettings(provider.providerId);
+    expect(harness.passwordManagerSyncs).toHaveLength(0);
+    await harness.service.testSecureSecretProvider(provider.providerId);
+    expect(harness.passwordManagerSyncs).toHaveLength(1);
     await harness.close();
   });
 

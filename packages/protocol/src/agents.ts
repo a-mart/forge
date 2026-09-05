@@ -1,4 +1,5 @@
 import type { CliSessionMetadata } from './cli.js'
+import type { ContextMode } from './context-mode.js'
 import type {
   DelegationRosterOrigin,
   ManagerPostureOrigin,
@@ -165,6 +166,8 @@ export interface ManagerProfile {
   /** Bounded transport identity. Backend persistence still stores closed ManagerPosture. */
   defaultManagerPosture?: WorkModeId
   defaultDelegationRosterId?: string
+  /** Absent means inherit the product summary default. */
+  defaultContextMode?: ContextMode
   createdAt: string
   updatedAt: string
   archivedAt?: string
@@ -213,6 +216,8 @@ export interface AgentDescriptor {
   managerPostureOrigin?: ManagerPostureOrigin
   delegationRosterId?: string
   delegationRosterOrigin?: DelegationRosterOrigin
+  /** Manager-session override. Absent means inherit the project default. */
+  contextModeOverride?: ContextMode
   sessionFile: string
   contextUsage?: AgentContextUsage
   profileId?: string

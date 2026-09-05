@@ -87,6 +87,7 @@ import { createStreamDeckPairingRoutes } from "./http/routes/stream-deck-pairing
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCompactionSettingsRoutes } from "./http/routes/compaction-settings-routes.js";
+import { createContextModeRoutes } from "./http/routes/context-mode-routes.js";
 import { createSecureSecretSettingsRoutes } from "./http/routes/secure-secret-settings-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
 import { createDebugRoutes } from "./http/routes/debug-routes.js";
@@ -882,6 +883,10 @@ export class SwarmWebSocketServer {
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createManagerSelectionCatalogRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget) ? createContextModeRoutes({
+        swarmManager: this.swarmManager,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+      }) : []),
       ...createSessionAuditRoutes({ swarmManager: this.swarmManager }),
       ...createCodexCatalogRoutes({ swarmManager: this.swarmManager }),
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService, settingsService: this.terminalSettingsService }) : []),

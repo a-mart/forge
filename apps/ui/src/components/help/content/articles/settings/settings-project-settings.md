@@ -17,6 +17,18 @@ default manager model and supported reasoning level. Sessions that inherit the
 project default follow a later model change; a session with its own override does
 not.
 
+**Context management** chooses how this project continues when context fills:
+**Summary (default)** or **Fresh windows (experimental)**. Summary generates a
+summary; Fresh starts from a checkpoint and retrieves older history with lexical
+`history` search. Saving this setting does not clear the current conversation; it
+applies at the next context transition. Eligible local Builder managers can
+inherit this default or override it from the compact **Context management**
+control beside Send. Fresh is executable only by supported ordinary Pi Builder
+managers (OpenAI/Codex or Anthropic). Collaboration, Cortex/system, Cursor SDK,
+plugin/external threads, and workers cannot run it; workers inherit the owning
+manager. **Settings → General** still holds compaction model, reasoning, and
+timeout, not this policy.
+
 Choose **Project secrets** to open **Settings → Secrets** with this project
 preselected. Use **Repository resources** to inspect the selected project's
 repo-root `.forge` directory: its detected Git root and effective `.forge` path,

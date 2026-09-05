@@ -89,6 +89,11 @@ export class AgentDirectory {
     return this.sortedProfiles().map((profile) => cloneProfile(profile));
   }
 
+  getProfile(profileId: string): ManagerProfile | undefined {
+    const profile = this.options.profiles.get(profileId);
+    return profile ? cloneProfile(profile) : undefined;
+  }
+
   listUserProfiles(): ManagerProfile[] {
     return this.listProfiles().filter((profile) => !isSystemProfile(profile));
   }

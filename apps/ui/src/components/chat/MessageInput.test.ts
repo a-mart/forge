@@ -65,6 +65,18 @@ vi.mock('@/lib/manager-selection-catalog-api', () => ({
     catalogApiMock.fetchManagerSelectionCatalog(...args),
 }))
 
+const contextModeApiMock = vi.hoisted(() => ({
+  fetchSessionContextMode: vi.fn(),
+  updateSessionContextMode: vi.fn(),
+}))
+
+vi.mock('@/components/settings/context-mode-api', () => ({
+  fetchSessionContextMode: (...args: unknown[]) =>
+    contextModeApiMock.fetchSessionContextMode(...args),
+  updateSessionContextMode: (...args: unknown[]) =>
+    contextModeApiMock.updateSessionContextMode(...args),
+}))
+
 const voiceInputMockState: {
   transcribedText: string | null
 } = {
@@ -146,6 +158,13 @@ beforeEach(() => {
   invalidateManagerSelectionCatalog()
   vi.clearAllMocks()
   catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog())
+  contextModeApiMock.fetchSessionContextMode.mockResolvedValue({
+    sessionAgentId: 'manager-1',
+    profileId: 'forge',
+    projectDefault: 'summary',
+    effectiveMode: 'summary',
+    freshSupported: true,
+  })
 })
 
 afterEach(() => {
@@ -180,6 +199,7 @@ function renderMessageInput(
     onClearReplyTarget: () => void
     sessionModelPicker: ComponentProps<typeof MessageInput>['sessionModelPicker']
     sessionCoordinationPicker: ComponentProps<typeof MessageInput>['sessionCoordinationPicker']
+    sessionContextModePicker: ComponentProps<typeof MessageInput>['sessionContextModePicker']
     secureSessionPicker: ComponentProps<typeof MessageInput>['secureSessionPicker']
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
@@ -636,6 +656,32 @@ describe('MessageInput', () => {
         'Work mode: Delegate first. Roster: balanced.',
       )
       expect((trigger as HTMLButtonElement).disabled).toBe(true)
+    })
+  })
+
+  describe('session context mode picker', () => {
+    const baseContextModePicker = {
+      originId: 'local',
+      httpClientRef: { current: pickerApiClient },
+      sessionAgentId: 'manager-1',
+    }
+
+    it('stays hidden without a parent-provided Builder manager configuration', async () => {
+      renderMessageInput()
+      await flush()
+      expect(container.querySelector('[aria-label^="Context management:"]')).toBeNull()
+    })
+
+    it('renders a non-submitting control beside the existing session pickers', async () => {
+      renderMessageInput({ sessionContextModePicker: baseContextModePicker })
+      await flush()
+
+      const trigger = getByLabelText(
+        container,
+        'Context management: Summary (default). project default.',
+      )
+      expect(trigger).toBeInstanceOf(HTMLButtonElement)
+      expect((trigger as HTMLButtonElement).type).toBe('button')
     })
   })
 

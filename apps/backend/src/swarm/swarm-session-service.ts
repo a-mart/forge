@@ -80,6 +80,7 @@ export interface SwarmSessionServiceOptions {
   cancelAllPendingChoicesForAgent: (agentId: string) => void;
   clearPinsForConversationReset: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   resetConversationHistory: (agentId: string) => void;
+  invalidateHistory?: (agentId: string) => void | Promise<void>;
   captureSessionRuntimePromptMeta: (
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
@@ -299,6 +300,7 @@ export class SwarmSessionService {
     await this.options.clearPinsForConversationReset(descriptor);
 
     this.options.resetConversationHistory(agentId);
+    await this.options.invalidateHistory?.(agentId);
     await this.options.clearSessionPlan(descriptor);
 
     const runtime = this.options.runtimes.get(agentId);
@@ -369,6 +371,11 @@ export class SwarmSessionService {
       sourceDescriptor.managerPostureOrigin ?? "product_default";
     forkedDescriptor.delegationRosterId = sourceDescriptor.delegationRosterId;
     forkedDescriptor.delegationRosterOrigin = sourceDescriptor.delegationRosterOrigin;
+    if (sourceDescriptor.contextModeOverride !== undefined) {
+      forkedDescriptor.contextModeOverride = sourceDescriptor.contextModeOverride;
+    } else {
+      delete forkedDescriptor.contextModeOverride;
+    }
     forkedDescriptor.cli = sourceDescriptor.cli ? { ...sourceDescriptor.cli } : undefined;
     await this.ensureEffectiveDelegationRoster(forkedDescriptor);
 

@@ -14,6 +14,7 @@ import {
   type CollaborationAuthor,
   type ConversationReplyTarget,
   type PersistedMessageChannel as ProtocolPersistedMessageChannel,
+  type ContextMode,
   type ManagerPosture,
   type ManagerPostureOrigin,
   type ExternalThreadInfo,
@@ -37,6 +38,7 @@ export type {
   AgentSessionSurface,
   CliSessionMetadata,
   DelegationBehaviorMode,
+  ContextMode,
   DelegationRosterOrigin,
   ManagerPosture,
   ManagerPostureOrigin,
@@ -88,6 +90,8 @@ export interface ManagerProfile {
   defaultModel: AgentModelDescriptor;
   defaultManagerPosture?: ManagerPosture;
   defaultDelegationRosterId?: string;
+  /** Absent means inherit the product summary default. */
+  defaultContextMode?: ContextMode;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
@@ -112,6 +116,8 @@ export interface AgentDescriptor {
   managerPostureOrigin?: ManagerPostureOrigin;
   delegationRosterId?: string;
   delegationRosterOrigin?: DelegationRosterOrigin;
+  /** Manager-session override. Absent means inherit the project default. */
+  contextModeOverride?: ContextMode;
   sessionFile: string;
   contextUsage?: AgentContextUsage;
   profileId?: string;

@@ -19,9 +19,42 @@ const SESSION_KEY = "synthetic-session-key-with-enough-bytes";
 
 afterEach(() => {
   spawnMock.mockReset();
+  vi.restoreAllMocks();
 });
 
 describe("BitwardenPasswordManagerCommandClient", () => {
+  it("reuses only collection metadata and invalidates it on expiry, sync and lock", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    spawnMock.mockImplementation((_executable: string, args: string[]) => {
+      if (args[0] === "unlock") return fakeChild(SESSION_KEY);
+      if (args[0] === "status") return fakeChild(JSON.stringify({ status: "unlocked" }));
+      if (args[0] === "list") return fakeChild(JSON.stringify([
+        { id: COLLECTION_A, organizationId: ORGANIZATION, name: "Infrastructure" },
+      ]));
+      return fakeChild("");
+    });
+    const client = new BitwardenPasswordManagerCommandClient("fake-bw");
+    await client.unlock(Buffer.from("synthetic-master-password"));
+    const first = await client.listCollections();
+    first[0]!.name = "Changed by consumer";
+    expect((await client.listCollections())[0]!.name).toBe("Infrastructure");
+    const lists = () => spawnMock.mock.calls.filter((call) => call[1][0] === "list").length;
+    expect(lists()).toBe(1);
+    now += 60_001;
+    await client.listCollections();
+    expect(lists()).toBe(2);
+    await client.sync();
+    await client.listCollections();
+    expect(lists()).toBe(3);
+    await client.lock();
+    await expect(client.listCollections()).rejects.toThrow("SECURE_SOURCE_LOCKED");
+    await client.unlock(Buffer.from("synthetic-master-password"));
+    await client.listCollections();
+    expect(lists()).toBe(4);
+    client.dispose();
+  });
+
   it("launches npm-style Windows command shims through cmd.exe without shell interpolation", async () => {
     spawnMock.mockImplementation((
       _executable: string,

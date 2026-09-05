@@ -279,6 +279,26 @@ describe("ProfileBootReconciler", () => {
     expect(harness.reconciler.reconcileDelegationStateOnBoot("global-roster")).toBe(false);
   });
 
+  it("drops malformed saved context-mode values without rewriting valid ones", () => {
+    const profile = makeProfile("forge", {
+      defaultContextMode: "window" as ManagerProfile["defaultContextMode"],
+    });
+    const valid = makeManager("valid", "forge", { contextModeOverride: "fresh" });
+    const malformed = makeManager("malformed", "forge", {
+      contextModeOverride: "window" as AgentDescriptor["contextModeOverride"],
+    });
+    const harness = createHarness({
+      descriptors: [valid, malformed],
+      profiles: [profile],
+    });
+
+    expect(harness.reconciler.normalizeContextModeStateOnBoot()).toBe(true);
+    expect(harness.profiles.get("forge")?.defaultContextMode).toBeUndefined();
+    expect(valid.contextModeOverride).toBe("fresh");
+    expect(malformed.contextModeOverride).toBeUndefined();
+    expect(harness.reconciler.normalizeContextModeStateOnBoot()).toBe(false);
+  });
+
   it("marks the Cortex profile as system and is idempotent", () => {
     const cortex = makeProfile("cortex", { profileType: "user" });
     const harness = createHarness({ profiles: [cortex] });

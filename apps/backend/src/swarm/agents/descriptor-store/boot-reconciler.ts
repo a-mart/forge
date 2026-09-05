@@ -63,12 +63,14 @@ export class BootReconciler {
         delegationRosterSettings.defaultRosterId,
       );
     const normalizedSystemProfileTypes = this.options.profileReconciler.normalizeSystemProfileTypes();
+    const normalizedContextModeState = this.options.profileReconciler.normalizeContextModeStateOnBoot();
     if (
       cortexPruneResult.pruned ||
       workerSidecarPruneResult.pruned ||
       normalizedSessionModelState ||
       normalizedDelegationState ||
-      normalizedSystemProfileTypes
+      normalizedSystemProfileTypes ||
+      normalizedContextModeState
     ) {
       await this.options.saveStore();
     }

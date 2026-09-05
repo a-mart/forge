@@ -1,3 +1,4 @@
+import type { HistorySearchService } from "./history-recall/index.js";
 import {
   ArchiveLastUsedHydrator,
   type ArchiveLastUsedHydratorDeps,
@@ -49,6 +50,7 @@ export interface SwarmManagerSessionCompositionServices {
   descriptorFactory: SessionDescriptorFactory;
   pins: SessionPinCoordinator;
   conversations: ConversationProjector;
+  history?: Pick<HistorySearchService, "invalidateSession">;
 }
 
 type ProvisionerOwnedKeys = "dataDir" | "runtimes" | "forgetPinnedMessages" | "conversationProjector";
@@ -101,6 +103,7 @@ export function createSwarmManagerSessionComposition(
     runtimes: state.runtimes,
     forgetPinnedMessages: (agentId) => services.pins.forget(agentId),
     conversationProjector: services.conversations,
+    invalidateHistory: (id) => services.history?.invalidateSession(id),
   });
   const archiveLastUsedHydrator = new ArchiveLastUsedHydrator({
     ...options.archive.hydration,
@@ -150,6 +153,7 @@ export function createSwarmManagerSessionComposition(
       }),
     copyPinnedMessagesForFork: (source, forked) => services.pins.copyPinsForFork(source, forked),
     resetConversationHistory: (agentId) => services.conversations.resetConversationHistory(agentId),
+    invalidateHistory: (id) => services.history?.invalidateSession(id),
   });
   const projectAgentService = new SwarmProjectAgentService({
     ...options.projectAgents,

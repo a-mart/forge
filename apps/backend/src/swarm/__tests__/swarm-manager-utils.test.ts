@@ -431,6 +431,19 @@ describe("validateAgentDescriptor", () => {
     expect(result).toEqual(d);
   });
 
+  it("keeps a valid contextModeOverride and drops a malformed saved value", () => {
+    expect(validateAgentDescriptor(baseDescriptor({ contextModeOverride: "fresh" }))).toMatchObject({
+      contextModeOverride: "fresh",
+    });
+    const dropped = validateAgentDescriptor(baseDescriptor({
+      contextModeOverride: "window" as AgentDescriptor["contextModeOverride"],
+    }));
+    expect(typeof dropped).not.toBe("string");
+    if (typeof dropped !== "string") {
+      expect(dropped.contextModeOverride).toBeUndefined();
+    }
+  });
+
   it("validates durable worker parent context and rejects it on managers", () => {
     const worker = baseDescriptor({
       role: "worker",

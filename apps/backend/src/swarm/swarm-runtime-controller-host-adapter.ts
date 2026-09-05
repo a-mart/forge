@@ -85,6 +85,8 @@ export function createSwarmRuntimeControllerHost(
     },
 
     listAgents: toolHost.listAgents.bind(toolHost),
+    getContextMode: toolHost.getContextMode.bind(toolHost),
+    getSessionContextMode: toolHost.getSessionContextMode?.bind(toolHost),
     getWorkerActivity: toolHost.getWorkerActivity.bind(toolHost),
     spawnAgent: toolHost.spawnAgent.bind(toolHost),
     killAgent: toolHost.killAgent.bind(toolHost),
@@ -114,5 +116,7 @@ export function createSwarmRuntimeControllerHost(
     callCodexPluginScopedTool: toolHost.callCodexPluginScopedTool?.bind(toolHost),
     exportCodexPluginScopedToolResult: toolHost.exportCodexPluginScopedToolResult?.bind(toolHost),
     retryCodexPluginWorker: toolHost.retryCodexPluginWorker?.bind(toolHost),
+    searchHistory: toolHost.searchHistory?.bind(toolHost),
+    readHistory: toolHost.readHistory?.bind(toolHost),
   } satisfies SwarmRuntimeControllerHost;
 }

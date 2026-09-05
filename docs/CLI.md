@@ -78,11 +78,11 @@ Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Example
 
 ## Session compaction
 
-`forge sessions compact <agentId> [--instructions <text>]` triggers manual context compaction for a manager session. `forge sessions smart-compact <agentId> [--instructions <text>]` asks the runtime to compact only when useful. Both commands use first-class CLI WebSocket commands, not slash-command wrapping.
+`forge sessions compact <agentId> [--instructions <text>]` triggers manual context compaction for a manager session. `forge sessions smart-compact <agentId> [--instructions <text>]` asks the runtime to compact only when useful. Both commands use first-class CLI WebSocket commands, not slash-command wrapping. They follow the session's effective context policy: Summary keeps the current handoff/resume path, while Fresh uses a deterministic checkpoint, skips the Smart LLM handoff, rejects busy manual attempts until idle, and leaves an idle manager idle.
 
 The CLI waits for the backend compaction mutation to finish or fail, then prints the normalized result. JSON output includes `action`, `sessionAgentId`, `profileId` when available, `outcome` (`compacted`, `skipped`, or `not_reduced`), `compacted`, `reason` when no compaction happened, `customInstructionsProvided`, and `completedAt`. Human output prints the same compact summary. Context before/after values are shown only if the server includes them.
 
-Compaction is Builder-runtime-only in v1 and requires the server to advertise the `sessionCompaction` capability. Older servers, collaboration runtimes, worker sessions, and runtime providers that do not support compaction return stable unsupported or usage errors instead of falling back to slash commands. If the CLI WebSocket disconnects before the request result arrives, the CLI exits with the connection error code and does not infer whether compaction continued server-side.
+Compaction is Builder-runtime-only in v1 and requires the server to advertise the `sessionCompaction` capability. Older servers, collaboration runtimes, worker sessions, and runtime providers that do not support compaction return stable unsupported or usage errors instead of falling back to slash commands. Fresh windows are executable only by supported ordinary Pi Builder managers (OpenAI/Codex or Anthropic); unsupported surfaces cannot run them. If the CLI WebSocket disconnects before the request result arrives, the CLI exits with the connection error code and does not infer whether compaction continued server-side.
 
 ## Run semantics
 

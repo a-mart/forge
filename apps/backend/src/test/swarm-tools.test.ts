@@ -52,6 +52,9 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
     listAgents(): AgentDescriptor[] {
       return [makeManagerDescriptor()]
     },
+    getContextMode() {
+      return 'summary' as const
+    },
     getWorkerActivity() {
       return undefined
     },
@@ -85,6 +88,9 @@ function makeHostWithAgents(
   return {
     listAgents(): AgentDescriptor[] {
       return agents
+    },
+    getContextMode() {
+      return 'summary' as const
     },
     getWorkerActivity,
     spawnAgent: async () => makeWorkerDescriptor('worker'),
@@ -890,6 +896,7 @@ describe('buildSwarmTools', () => {
 
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
+      getContextMode: () => 'summary' as const,
       getWorkerActivity: () => undefined,
       spawnAgent: async () => makeWorkerDescriptor('worker'),
       killAgent: async () => {},
@@ -943,6 +950,7 @@ describe('buildSwarmTools', () => {
   it('includes working-plan and goal tools for managers', () => {
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
+      getContextMode: () => 'summary' as const,
       getWorkerActivity: () => undefined,
       spawnAgent: async () => makeWorkerDescriptor('worker'),
       killAgent: async () => {},

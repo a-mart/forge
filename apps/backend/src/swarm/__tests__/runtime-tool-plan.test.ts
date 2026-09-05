@@ -22,6 +22,7 @@ import type { AgentDescriptor, SwarmConfig } from "../types.js";
 function createHost(): SwarmToolHost {
   return {
     listAgents: () => [],
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     spawnAgent: async () => {
       throw new Error("not implemented");

@@ -1,3 +1,4 @@
+import type { HistorySearchRequest, HistorySearchResponse, HistoryReadRequest, HistoryReadResponse } from "@forge/protocol";
 import { createHash } from "node:crypto";
 import type { AuthCredential } from "@earendil-works/pi-coding-agent";
 import type {
@@ -854,6 +855,8 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     return this.services.registry.directory.listProfiles();
   }
 
+  getProfile(profileId: string): ManagerProfile | undefined { return this.services.registry.directory.getProfile(profileId); }
+
   listUserProfiles(): ManagerProfile[] {
     return this.services.registry.directory.listUserProfiles();
   }
@@ -1176,17 +1179,17 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     return this.services.knowledge.getCompactionRuntimeSettingsProvider();
   }
 
-  getCompactionSettingsService(): CompactionSettingsService | null {
-    return this.services.knowledge.getCompactionSettingsService();
-  }
+  getCompactionSettingsService(): CompactionSettingsService | null { return this.services.knowledge.getCompactionSettingsService(); }
 
-  getKnowledgeV2SettingsService(): KnowledgeV2SettingsService {
-    return this.services.knowledge.getKnowledgeV2SettingsService();
-  }
+  getKnowledgeV2SettingsService(): KnowledgeV2SettingsService { return this.services.knowledge.getKnowledgeV2SettingsService(); }
 
-  getKnowledgeService(): KnowledgeService {
-    return this.services.knowledge.getKnowledgeService();
-  }
+  getKnowledgeService(): KnowledgeService { return this.services.knowledge.getKnowledgeService(); }
+
+  searchHistory(callerAgentId: string, request: HistorySearchRequest): Promise<HistorySearchResponse> { return this.services.conversation.history.search(callerAgentId, request); }
+
+  readHistory(callerAgentId: string, request: HistoryReadRequest): Promise<HistoryReadResponse> { return this.services.conversation.history.read(callerAgentId, request); }
+
+  async disposeHistoryRecall(): Promise<void> { await this.services.conversation.history.dispose(); }
 
   searchKnowledge(
     callerAgentId: string,

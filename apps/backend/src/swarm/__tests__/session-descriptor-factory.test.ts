@@ -57,6 +57,17 @@ describe("SessionDescriptorFactory", () => {
       archetypeId: "planner",
       sessionSystemPrompt: "Inherited prompt",
     });
+    expect(prepared.sessionDescriptor.contextModeOverride).toBeUndefined();
+  });
+
+  it("does not copy a source-session context override onto a newly created session", async () => {
+    const harness = await createHarness();
+    harness.profile.defaultContextMode = "fresh";
+    harness.rootDescriptor.contextModeOverride = "summary";
+
+    const prepared = harness.factory.prepareSessionCreation("forge");
+
+    expect(prepared.sessionDescriptor.contextModeOverride).toBeUndefined();
   });
 
   it("allocates after the highest Builder number and skips reserved directories", async () => {

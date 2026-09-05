@@ -39,6 +39,7 @@ function createWorker(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor
 function createHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
   return {
     listAgents: () => [],
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     spawnAgent: async () => {
       throw new Error("not needed");

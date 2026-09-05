@@ -619,6 +619,11 @@ export function getSharedGenerationThroughputCachePath(dataDir: string): string 
   return join(getSharedCacheDir(dataDir), "generation-throughput-cache.json");
 }
 
+/** Rebuildable derived FTS index for local history recall; canonical JSONL remains authoritative. */
+export function getHistoryRecallIndexPath(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "history-recall.db");
+}
+
 export function getTelemetryConfigPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "telemetry.json");
 }

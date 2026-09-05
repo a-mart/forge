@@ -1,3 +1,4 @@
+import type { HistoryRecallToolHost } from "./history-recall-tool.js";
 import type {
   AgentDescriptor,
   ChoiceAnswer,
@@ -25,7 +26,9 @@ import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
 import type {
   BrowserAutomationInputByOperation,
   BrowserAutomationOperation,
+  ContextMode,
   RequestSecureSshHostTrustRequest,
+  SessionContextModeSnapshot,
   SessionGoalSnapshot,
 } from "@forge/protocol";
 import type { BrowserAutomationInvocationResult } from "./browser-automation/browser-automation-service.js";
@@ -54,8 +57,10 @@ export interface SwarmToolSideEffectEvent {
   metadata?: Record<string, unknown>;
 }
 
-export interface SwarmToolHost {
+export interface SwarmToolHost extends HistoryRecallToolHost {
   listAgents(): AgentDescriptor[];
+  getContextMode(callerAgentId: string): ContextMode;
+  getSessionContextMode?(callerAgentId: string): SessionContextModeSnapshot;
   getWorkerActivity(agentId: string): {
     currentTool: string | null;
     currentToolElapsedSec: number;

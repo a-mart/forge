@@ -134,8 +134,14 @@ export function BitwardenPasswordManagerPanel({
   }
 
   const refreshCollections = async () => {
+    if (!providerId) return
     setBusy('refresh-collections')
     try {
+      const result = await testSecureSecretProvider(apiClient, providerId)
+      if (result.code !== 'ok') {
+        await onChanged('Bitwarden Password Manager still needs attention.')
+        return
+      }
       await loadSettings()
       await onChanged('Bitwarden collections refreshed.')
     } catch (error) {

@@ -18,6 +18,7 @@ import {
   type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
+import { evaluateFreshContextSupport } from "../../context-mode.js";
 import { PiGenerationTelemetryAdapter } from "../generation-telemetry.js";
 import {
   createPiInitialModelInputCapture,
@@ -648,7 +649,18 @@ export class PiRuntimeCreator {
       compactionFailureScopeKey,
       generationTelemetry,
       callbacks: runtimeCallbacks,
-      now: this.deps.now
+      now: this.deps.now,
+      dataDir: this.deps.config.paths.dataDir,
+      getContextMode: () => {
+        const support = evaluateFreshContextSupport({
+          manager: descriptor,
+          runtime: { runtimeType: "pi" },
+        });
+        if (!support.freshSupported) {
+          return "summary";
+        }
+        return this.deps.host.getContextMode(descriptor.agentId);
+      },
     });
 
     if (pooledCredentialId) {

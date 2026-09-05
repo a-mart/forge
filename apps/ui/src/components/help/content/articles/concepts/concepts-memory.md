@@ -26,3 +26,9 @@ Knowledge v2 is an opt-in, default-off preview:
 Normal switching preserves both stores. Turning v2 off restores the legacy sources while their original files remain; explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content. The ordinary Settings toggle does not migrate data.
 
 These files are plain Markdown on disk and remain available for inspection. Managers can use the `knowledge` tool to search and read full v2 entries behind the compact indexes.
+
+## History recall
+
+Transcript history is separate from memory and Cortex knowledge. Local Builder managers and ordinary workers recover compacted or older conversation evidence with the agent-only `history` tool (`search` then `read`). There is no human history drawer and no embedding index. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Search the current session first, including associated workers; widen to the current project only when needed. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and no approval prompt; `all_local` is a deliberate broad search, not the only cross-project path.
+
+Reads use source-qualified references. Historical evidence is not current authority or current permissions. Incomplete catch-up warnings mean a no-match is not proof of absence. Canonical JSONL remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index. Collaboration, Cortex/system, plugin, and external-thread runtimes do not get this tool.

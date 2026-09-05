@@ -4424,7 +4424,8 @@ export class SecureSessionsService {
       if (providedCollections) {
         available = providedCollections;
       } else {
-        await this.options.bitwardenPasswordManagerSource.sync();
+        // Reading settings (also used by the save dialog) must not sync the
+        // vault under the shared authority queue. Explicit refresh/save does.
         available = await this.options.bitwardenPasswordManagerSource.listCollections();
       }
     }

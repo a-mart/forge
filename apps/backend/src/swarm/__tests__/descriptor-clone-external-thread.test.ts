@@ -51,6 +51,28 @@ describe("descriptor clone externalThread", () => {
     expect(source.threadId).toBe("thread-1");
   });
 
+  it("persists manager contextModeOverride through clone", () => {
+    const source = {
+      agentId: "manager",
+      managerId: "manager",
+      displayName: "Manager",
+      role: "manager" as const,
+      status: "idle" as const,
+      createdAt: "2026-05-30T00:00:00.000Z",
+      updatedAt: "2026-05-30T00:00:00.000Z",
+      cwd: "/tmp",
+      model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" },
+      sessionFile: "/tmp/manager.jsonl",
+      contextModeOverride: "fresh" as const,
+    };
+    const persisted = cloneDescriptorForPersistence(source);
+    const published = cloneDescriptorForPublic(source);
+    expect(persisted.contextModeOverride).toBe("fresh");
+    expect(published.contextModeOverride).toBe("fresh");
+    persisted.contextModeOverride = "summary";
+    expect(source.contextModeOverride).toBe("fresh");
+  });
+
   it("cloneDescriptorForPersistence deep-clones externalThread", () => {
     const source = codexWorkerDescriptor();
     const cloned = cloneDescriptorForPersistence(source);

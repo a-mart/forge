@@ -44,7 +44,7 @@ In normal Builder chat, hover a visible user or assistant message and click **Re
 
 ## Context window
 
-The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
+The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting. Compact and Smart compact follow the session's effective context policy from **Project Settings** or the Send-adjacent **Context management** control. Open **Context Compaction** for Summary vs experimental Fresh windows and agent-only history recall.
 
 ## Working plans
 

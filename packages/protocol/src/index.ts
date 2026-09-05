@@ -73,3 +73,6 @@ export * from './telemetry-types.js'
 export * from './terminal-types.js'
 export * from './transport-events.js'
 export * from './ws-request-contract.js'
+
+export * from './history-recall.js'
+export * from './context-mode.js'

@@ -15,6 +15,12 @@ Eligible Builder manager sessions show a compact model pill beside **Send**. The
 
 For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
 
+## Changing context management
+
+Eligible local Builder managers also show a compact **Context management** control beside Send. It reports the effective policy (Summary or Fresh windows) and whether that comes from the project default or a session override. Open it to inherit the project default, force Summary, or opt into experimental Fresh windows. Saving a choice does not clear the current conversation; it applies at the next Compact, Smart compact, or automatic context transition.
+
+Fresh is executable only by supported ordinary Pi Builder managers (OpenAI/Codex or Anthropic). The control is hidden for workers, Collaboration channels, Remote Projects, and system profiles such as Cortex. If the current runtime cannot execute Fresh, that option is disabled with the server's reason; Compact and Smart compact still follow the effective supported policy.
+
 ### Model-change notices
 
 When a model or reasoning change is accepted for a session, Forge adds a neutral **Model change** notice to that session's conversation. It appears live and remains visible after reload or replay. The notice records the effective before-and-after values, for example: `Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.6 Luna (reasoning: high).` It is informational conversation history, not an assistant or user message.

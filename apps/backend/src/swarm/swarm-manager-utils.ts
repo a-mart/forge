@@ -6,6 +6,7 @@ import { getModel, getModels, type Api, type Model } from "./pi/pi-ai-compat.js"
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   PROJECT_AGENT_CAPABILITIES,
+  isContextMode,
   isManagerPosture,
   isTerminalAssistantConversationMessage,
   type AgentRuntimeExtensionSnapshot,
@@ -523,7 +524,12 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
           handle: normalizedProjectAgentHandle
         }
       : descriptor.projectAgent;
-  const { fastModePolicy: _fastModePolicy, fastModeOverride: _fastModeOverride, ...descriptorWithoutFastMode } =
+  const {
+    fastModePolicy: _fastModePolicy,
+    fastModeOverride: _fastModeOverride,
+    contextModeOverride: rawContextModeOverride,
+    ...descriptorWithoutFastMode
+  } =
     descriptor as AgentDescriptor & { fastModePolicy?: unknown; fastModeOverride?: unknown };
 
   return {
@@ -536,7 +542,8 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     },
     ...(value.cli !== undefined ? { cli: normalizedCli } : {}),
     ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {}),
-    ...(normalizedExternalThread !== undefined ? { externalThread: normalizedExternalThread } : {})
+    ...(normalizedExternalThread !== undefined ? { externalThread: normalizedExternalThread } : {}),
+    ...(isContextMode(rawContextModeOverride) ? { contextModeOverride: rawContextModeOverride } : {})
   };
 }
 

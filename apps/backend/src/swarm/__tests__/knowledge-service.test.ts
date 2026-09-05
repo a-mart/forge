@@ -200,6 +200,7 @@ function createKnowledgeHost(service: KnowledgeService, enabled: boolean): Swarm
   };
   return {
     listAgents: () => [],
+    getContextMode: () => "summary",
     getWorkerActivity: () => undefined,
     spawnAgent: async () => descriptor("worker"),
     killAgent: async () => undefined,

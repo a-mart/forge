@@ -736,6 +736,7 @@ async function main(frame) {
       return;
     }
     process.exitCode = outcome.code;
+    return true;
   } finally {
     await stopSshAgent(sshAgent);
     cleanupMaterializedFiles(createdFiles);
@@ -757,6 +758,7 @@ process.stdin.once("end", async () => {
   const frame = Buffer.concat(chunks);
   for (const chunk of chunks) chunk.fill(0);
   let executionRoot;
+  let commandCompleted = false;
   try {
     if (frame.byteLength >= PREFIX_BYTES) {
       const headerByteLength = frame.readUInt32BE(MAGIC.byteLength);
@@ -767,7 +769,7 @@ process.stdin.once("end", async () => {
         executionRoot = path.join(ROOT, parsed.executionId);
       }
     }
-    await main(frame);
+    commandCompleted = await main(frame) === true;
   } catch (error) {
     frame.fill(0);
     if (error && error.message === "ssh-agent-cleanup-failed") {
@@ -790,9 +792,15 @@ process.stdin.once("end", async () => {
           force: true,
         });
       } catch {
+        commandCompleted = false;
         fail("cleanup-failed");
       }
     }
+  }
+  // Docker and the executor also use 125 for their own failures. Confirm a
+  // normal command exit only after all credential cleanup has succeeded.
+  if (commandCompleted && process.exitCode === 125) {
+    process.stderr.write("forge-secure-executor:command-exit-125\n");
   }
 });
 `;

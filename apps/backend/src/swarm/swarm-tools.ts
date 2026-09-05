@@ -1,3 +1,4 @@
+import { buildHistoryRecallTools } from "./history-recall-tool.js";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
@@ -146,6 +147,7 @@ function compactPath(value: string): string {
 export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
   const secureSessionTools = buildSecureSessionTools(host, descriptor);
   const shared: ToolDefinition[] = [
+    ...buildHistoryRecallTools(host, descriptor),
     {
       name: "list_agents",
       label: "List Agents",
@@ -452,7 +454,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         })
       : [];
 
-    const workerBaseTools = shared.filter((tool) => tool.name === "knowledge");
+    const workerBaseTools = shared.filter((tool) => tool.name === "knowledge" || tool.name === "history");
 
     return [...workerBaseTools, ...secureSessionTools, ...codexPluginTools];
   }

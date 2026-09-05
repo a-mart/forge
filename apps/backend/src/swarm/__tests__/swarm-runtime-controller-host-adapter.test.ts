@@ -22,6 +22,7 @@ function createToolHost(onListAgents: (receiver: unknown) => void): SwarmToolHos
       onListAgents(this);
       return [];
     },
+    getContextMode: vi.fn(() => "summary"),
     getWorkerActivity: vi.fn(),
     spawnAgent: vi.fn(),
     killAgent: vi.fn(),
@@ -87,6 +88,26 @@ describe("createSwarmRuntimeControllerHost", () => {
     host.listAgents();
 
     expect(receiver).toBe(toolHost);
+  });
+
+  it("binds context-mode and history-recall methods to the original tool host", () => {
+    let contextReceiver: unknown;
+    let historyReceiver: unknown;
+    const toolHost = createToolHost(() => undefined);
+    toolHost.getContextMode = function () {
+      contextReceiver = this;
+      return "summary";
+    };
+    toolHost.searchHistory = async function () {
+      historyReceiver = this;
+      return { scope: "session", results: [], complete: true, warnings: [] };
+    };
+    const host = createAdapter({ toolHost });
+
+    expect(host.getContextMode("manager")).toBe("summary");
+    void host.searchHistory?.("manager", { query: "old" });
+    expect(contextReceiver).toBe(toolHost);
+    expect(historyReceiver).toBe(toolHost);
   });
 
   it("binds the Secure Session runtime capability resolver to the tool host", () => {
