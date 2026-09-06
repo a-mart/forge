@@ -1,6 +1,12 @@
-Forge uses two kinds of agents: **managers** and **workers**. A manager is the agent you talk to in chat. Workers are agents the manager creates to do specific tasks. Claude models run through the native Anthropic provider and Forge's Pi runtime.
+Forge uses two kinds of agents: **managers** and **workers**. A manager is the agent you talk to in chat and remains the accountable owner of the outcome. Workers are agents the manager can create for specific tasks. Claude models run through the native Anthropic provider and Forge's Pi runtime.
 
-When you send a message, the manager reads it, decides what needs to happen, and spawns one or more workers. Each worker gets a focused job — edit a file, run a command, research a topic. Delegation returns immediately, so the manager can continue receiving your messages while workers run. Each worker's final assistant response is returned automatically to the manager when its run ends; the worker does not need to find the manager or call a messaging tool. Stalled-worker detection remains separate from result delivery. A bare runtime `errorMessage: "terminated"` waits out a short grace period before failure projection; fresh worker progress cancels that transient error.
+When you send a message, the manager reads it and decides what needs to happen. Selected Work Mode determines ownership and handoff:
+
+- **Delegate first** (default) — workers own substantive execution; the manager answers, orients with bounded read-only checks, and accepts results.
+- **Adaptive** — starts directly and hands off only when the total path, including briefing, waiting, acceptance, and likely rework, improves.
+- **Hands-on** — keeps investigation, implementation, and validation, including the critical path; explicit delegation remains available.
+
+When the manager delegates, each worker gets a focused job — edit a file, run a command, research a topic. Delegation returns immediately, so the manager can continue receiving your messages while workers run. Each worker's final assistant response is returned automatically to the manager when its run ends; the worker does not need to find the manager or call a messaging tool. Stalled-worker detection remains separate from result delivery. A bare runtime `errorMessage: "terminated"` waits out a short grace period before failure projection; fresh worker progress cancels that transient error.
 
 ## What you see
 
@@ -8,9 +14,9 @@ Workers appear as pills below the chat header while they are active. Click a pil
 
 ## Why this matters
 
-Splitting work across workers means the manager can handle multiple things at once. A single message might trigger a backend fix, a UI update, and a test run — all happening in parallel instead of one after another.
+The manager can keep the work itself or split it across workers. When work is delegated, a single message might trigger a backend fix, a UI update, and a test run — all happening in parallel instead of one after another.
 
-The manager controls the flow. It decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat. User-facing manager updates are intentionally concise and focused on decisions, results, and blockers.
+The manager controls the flow. When it delegates, it decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat. User-facing manager updates are intentionally concise and focused on decisions, results, and blockers.
 
 ## How routing works
 

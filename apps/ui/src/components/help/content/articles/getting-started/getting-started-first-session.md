@@ -9,7 +9,7 @@ Click the **+** button at the top of the sidebar to create a new project. You ca
 You'll need three things:
 
 - **Name** — something that identifies the project or workstream. You can rename it later.
-- **Working directory** — the project folder where workers will operate. Each worker gets its own worktree branched from this directory.
+- **Working directory** — the project folder where the manager and any workers operate. Each worker gets its own worktree branched from this directory.
 - **Model** — which LLM powers the manager. Claude Sonnet and GPT models both work well. You can change this later in Settings, and supported models also let you choose a reasoning level.
 
 ### Clone repository
@@ -30,11 +30,11 @@ Type in the chat input at the bottom. Start with something concrete:
 - "Add dark mode support to the settings page"
 - "Review the last three PRs and summarize the changes"
 
-The manager reads your message, plans the work, and spawns workers as needed. Workers execute focused tasks and report evidence; the manager remains accountable and performs the smallest focused check needed before reporting an accepted result or material blocker. You may see fewer routine status updates while it focuses on useful outcomes.
+The manager reads your message and owns the outcome. Work Mode decides whether it executes directly or spawns workers: Delegate first (default) delegates substantive execution, Adaptive starts directly and hands off only when the total path improves, and Hands-on keeps the critical path while explicit delegation remains available. Workers, when used, execute focused tasks and report evidence; the manager remains accountable and performs the smallest focused check needed before reporting an accepted result or material blocker. You may see fewer routine status updates while it focuses on useful outcomes.
 
 ## Watch workers run
 
-Active workers show up as green pills below the chat header. Click a pill to open that worker's transcript, which defaults to **All**. For substantial work, the manager may show a working plan at the top of chat and in the header; it keeps the active work and completion count visible without narrating every routine action. The manager stays outcome-focused, so expect useful results, blockers, and completion updates rather than constant narration of routine worker activity.
+Active workers show up as green pills below the chat header. Click a pill to open that worker's transcript, which defaults to **All**. For substantial work, the manager may show a working plan at the top of chat and in the header; it keeps the active work and completion count visible without narrating every routine action. The manager stays outcome-focused, so expect useful results, blockers, and completion updates rather than constant narration of routine activity.
 
 Workers run independently. You can keep talking to the manager, start a new task, or close the tab entirely. Workers continue in the background and the manager tracks everything.
 
