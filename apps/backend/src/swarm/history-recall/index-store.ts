@@ -8,7 +8,7 @@ import {
   isProvisionalWindowId,
   projectCanonicalRecord,
 } from "./canonical-projector.js";
-import { ftsSafeText } from "./content-policy.js";
+import { ftsSafeText, MAX_LINE_BYTES } from "./content-policy.js";
 import {
   readCompleteLines,
   readPrefixTailHash,
@@ -386,13 +386,50 @@ export class HistoryRecallIndexStore {
       }
       const gap = row.suffix_start > 0 && row.prefix_bytes < row.suffix_start;
       const replaying = row.suffix_start > 0 && row.suffix_ready === 0;
-      const prefixLag = row.suffix_start === 0 && row.prefix_bytes < row.source_size;
-      if (gap || replaying || prefixLag) {
+      const prefixLag = row.suffix_start === 0 && row.prefix_bytes < row.source_size && row.oversized_state !== 2;
+      if (gap || replaying || prefixLag || row.oversized_state === 1) {
         pendingSourceCount += 1;
       }
     }
     pendingSourceCount += sourceIds.length - rows.length;
     return { pendingSourceCount, unreadableSourceCount, omittedEligibleText };
+  }
+
+  /** True only when scannable bytes or a replacement remain. Permanent omissions are degraded, not pending. */
+  needsScan(source: HistorySourceDescriptor): boolean {
+    let stat: ReturnType<typeof readSourceStat>;
+    try {
+      stat = readSourceStat(source.path);
+    } catch {
+      return false;
+    }
+    const row = this.getSourceRow(source.sourceId);
+    if (!stat) {
+      return Boolean(row);
+    }
+    if (!row || row.unreadable) {
+      return true;
+    }
+    const generation = readSourceGeneration(source.path, stat);
+    if (row.generation !== generation || row.inode !== stat.ino) {
+      return true;
+    }
+    if (stat.size > Math.max(row.suffix_end, row.prefix_bytes, row.source_size, row.indexed_bytes)) {
+      return true;
+    }
+    if (row.oversized_state === 1 || (row.suffix_start > 0 && row.prefix_bytes >= row.suffix_start && row.suffix_ready === 0)) {
+      return true;
+    }
+    const frontier = row.suffix_start > 0 && row.prefix_bytes < row.suffix_start
+      ? row.prefix_bytes
+      : Math.max(row.suffix_end, row.prefix_bytes, row.indexed_bytes);
+    if (frontier >= stat.size) {
+      return false;
+    }
+    const ahead = readCompleteLines(source.path, frontier, stat.size, MAX_LINE_BYTES + 1, {
+      resumeSkippingOversized: row.prefix_oversized === 1 || row.suffix_oversized === 1 || row.oversized_state === 1,
+    });
+    return ahead.lines.length > 0 || ahead.skippingOversized || ahead.nextOffset > frontier;
   }
 
   listNeighbors(sourceId: string, byteOffset: number, before: number, after: number, current?: EntryRow): { before: EntryRow[]; after: EntryRow[] } {
@@ -546,13 +583,7 @@ export class HistoryRecallIndexStore {
       }
       warnings.push(...result.warnings);
     }
-    const pendingSourceCount = ordered.filter((source) => {
-      const row = this.getSourceRow(source.sourceId);
-      if (!row) {
-        return true;
-      }
-      return sourceIsPending(row);
-    }).length;
+    const pendingSourceCount = ordered.filter((source) => this.needsScan(source)).length;
     return { incomplete, warnings: unique(warnings), pendingSourceCount };
   }
 
@@ -747,7 +778,7 @@ export class HistoryRecallIndexStore {
         indexedBytes: startOffset,
         sourceSize: stat.size,
         incomplete: incompleteEof || Boolean(current?.oversized_state || current?.omitted_eligible_text),
-        pending: Boolean(current && sourceIsPending({ ...current, prefix_bytes: startOffset })),
+        pending: Boolean(current && sourceHasRemainingScan({ ...current, prefix_bytes: startOffset })),
         omittedEligibleText: Boolean(current?.omitted_eligible_text || current?.oversized_state),
         unreadable: false,
         scannedBytes: 0,
@@ -811,8 +842,8 @@ export class HistoryRecallIndexStore {
       generation,
       indexedBytes: nextOffset,
       sourceSize: stat.size,
-      incomplete: incomplete || prefixOversized !== 0 || Boolean(latest && sourceIsPending(latest)),
-      pending: Boolean(latest && sourceIsPending(latest)),
+      incomplete: incomplete || prefixOversized !== 0 || Boolean(latest && sourceHasRemainingScan(latest)),
+      pending: Boolean(latest && sourceHasRemainingScan(latest)),
       omittedEligibleText: prefixOversized !== 0 || Boolean(current?.omitted_eligible_text),
       unreadable: false,
       scannedBytes,
@@ -937,7 +968,7 @@ export class HistoryRecallIndexStore {
     scannedBytes: number,
     warnings: string[],
   ): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
-    const pending = Boolean(current && sourceIsPending(current));
+    const pending = Boolean(current && sourceHasRemainingScan(current));
     const omitted = Boolean(current && (current.omitted_eligible_text || current.oversized_state || current.prefix_oversized || current.suffix_oversized));
     if (omitted) {
       warnings.push(`Indexing of ${source.sessionLabel}/${source.actorLabel} skipped oversized JSONL rows.`);
@@ -1106,9 +1137,9 @@ function projectLines(lines: Array<{ line: string; byteOffset: number }>, projec
   return entries;
 }
 
-function sourceIsPending(row: Pick<SourceRow, "prefix_bytes" | "suffix_start" | "suffix_end" | "suffix_ready" | "source_size" | "replay_frontier" | "unreadable">): boolean {
+function sourceHasRemainingScan(row: Pick<SourceRow, "prefix_bytes" | "suffix_start" | "suffix_end" | "suffix_ready" | "source_size" | "replay_frontier" | "unreadable">): boolean {
   if (row.unreadable) {
-    return true;
+    return false;
   }
   if (row.suffix_start > 0 && (row.suffix_ready === 0 || row.prefix_bytes < row.suffix_start || row.replay_frontier > 0)) {
     return true;
@@ -1143,8 +1174,8 @@ function prioritizeRecent(sources: HistorySourceDescriptor[], store: HistoryReca
   return [...sources].sort((left, right) => {
     const leftRow = store.getSourceRow(left.sourceId);
     const rightRow = store.getSourceRow(right.sourceId);
-    const leftPending = !leftRow || sourceIsPending(leftRow) ? 0 : 1;
-    const rightPending = !rightRow || sourceIsPending(rightRow) ? 0 : 1;
+    const leftPending = !leftRow || sourceHasRemainingScan(leftRow) ? 0 : 1;
+    const rightPending = !rightRow || sourceHasRemainingScan(rightRow) ? 0 : 1;
     if (leftPending !== rightPending) {
       return leftPending - rightPending;
     }

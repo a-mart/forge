@@ -788,6 +788,173 @@ describe("HistorySearchService", () => {
     expect(read.after.map((entry) => entry.ref.entryId)).toEqual([]);
   });
 
+  it("start returns before cache initialization finishes", async () => {
+    const fx = await createFixture();
+    let resolveDb: (value: typeof Database) => void = () => undefined;
+    const delayed = new Promise<typeof Database>((resolve) => {
+      resolveDb = resolve;
+    });
+    const service = new HistorySearchService({
+      ...fx.host,
+      loadDatabaseModule: () => delayed,
+    });
+    created.push(service);
+    let finished = false;
+    const start = service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    }).then(() => {
+      finished = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(finished).toBe(true);
+    resolveDb(Database);
+    await start;
+  });
+
+  it("discovers a lost append through idle reconciliation without a search driving ingestion", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      nativeMessage("seed", { role: "user", content: "idle seed" }),
+    ]);
+    const started = Date.now();
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    expect(Date.now() - started).toBeLessThan(250);
+    await waitFor(async () => {
+      const seed = await fx.service.search(fx.session.agentId, { query: "idle seed" });
+      return seed.results.some((hit) => hit.ref.entryId === "seed");
+    });
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await appendFile(path, nativeMessage("lost-append", {
+      role: "assistant",
+      content: [{ type: "text", text: "autonomouslostappend landed" }],
+    }, "2026-09-01T00:00:00.000Z") + "\n");
+    await waitFor(async () => {
+      const db = new Database(getHistoryRecallIndexPath(fx.dataDir), { readonly: true });
+      const row = db.prepare("SELECT count(*) AS n FROM entries WHERE entry_id = 'lost-append'").get() as { n: number };
+      db.close();
+      return row.n > 0;
+    });
+    const found = await fx.service.search(fx.session.agentId, { query: "autonomouslostappend" });
+    expect(found.results.some((hit) => hit.ref.entryId === "lost-append")).toBe(true);
+  });
+
+  it("does not spin ingest on oversized degraded coverage once catch-up is idle", async () => {
+    const fx = await createFixture();
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("first", { role: "user", content: "degradedidle" }),
+      nativeMessage("huge", { role: "user", content: "x".repeat(1_200_000) }),
+      nativeMessage("after", { role: "user", content: "after oversized" }),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    await waitFor(async () => {
+      const db = new Database(getHistoryRecallIndexPath(fx.dataDir), { readonly: true });
+      const state = db.prepare("SELECT omitted_eligible_text FROM sources").get() as { omitted_eligible_text: number } | undefined;
+      const after = db.prepare("SELECT count(*) AS n FROM entries WHERE entry_id = 'after'").get() as { n: number };
+      db.close();
+      return Boolean(state?.omitted_eligible_text && after.n > 0);
+    }, 4_000);
+    const ingest = vi.spyOn(HistoryRecallIndexStore.prototype, "ingestSource");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const calls = ingest.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(ingest.mock.calls.length - calls).toBeLessThanOrEqual(2);
+    ingest.mockRestore();
+    const result = await fx.service.search(fx.session.agentId, { query: "degradedidle" });
+    expect(result.results.some((hit) => hit.ref.entryId === "first")).toBe(true);
+    expect(result.coverage?.omittedEligibleText).toBe(true);
+    expect(result.complete).toBe(false);
+  });
+
+  it("rotates later active sources and archives past a busy nonarchived backlog", async () => {
+    const fx = await createFixture();
+    const busy: AgentDescriptor[] = [];
+    for (let i = 0; i < 9; i += 1) {
+      const agent = descriptor({
+        agentId: `busy-${i}`,
+        managerId: `busy-${i}`,
+        role: "manager",
+        profileId: "project-a",
+        displayName: `Busy ${i}`,
+      });
+      fx.agents.push(agent);
+      busy.push(agent);
+      await writeTranscript(fx.dataDir, agent, [
+        header("/tmp/busy", agent.agentId),
+        ...Array.from({ length: 80 }, (_, row) => nativeMessage(`pad-${i}-${row}`, {
+          role: "user",
+          content: `busy backlog ${i} ${row} ${"z".repeat(12_000)}`,
+        })),
+      ]);
+    }
+    const later = descriptor({
+      agentId: "later-active",
+      managerId: "later-active",
+      role: "manager",
+      profileId: "project-a",
+      displayName: "Later Active",
+    });
+    fx.agents.push(later);
+    await writeTranscript(fx.dataDir, later, [
+      header("/tmp/later"),
+      nativeMessage("later-hit", { role: "assistant", content: "lateractivesource needle" }),
+    ]);
+    await writeTranscript(fx.dataDir, fx.otherSession, [
+      header("/tmp/a2"),
+      nativeMessage("archive-hit", { role: "user", content: "archivefairness needle" }),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [...busy, later, fx.otherSession]),
+    });
+    await waitFor(async () => {
+      const laterHits = await fx.service.search(fx.session.agentId, {
+        query: "lateractivesource",
+        scope: "project",
+      });
+      const archiveHits = await fx.service.search(fx.session.agentId, {
+        query: "archivefairness",
+        scope: "project",
+      });
+      return laterHits.results.some((hit) => hit.ref.entryId === "later-hit")
+        && archiveHits.results.some((hit) => hit.ref.entryId === "archive-hit");
+    }, 4_000);
+  });
+
+  it("stops scheduled background work on dispose", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      nativeMessage("seed", { role: "user", content: "dispose stop" }),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    await waitFor(async () => {
+      const seed = await fx.service.search(fx.session.agentId, { query: "dispose stop" });
+      return seed.results.length > 0;
+    });
+    await fx.service.dispose();
+    const ingest = vi.spyOn(HistoryRecallIndexStore.prototype, "ingestSource");
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(ingest).not.toHaveBeenCalled();
+    ingest.mockRestore();
+  });
+
 });
 
 async function createFixture() {
@@ -965,4 +1132,15 @@ function compaction(id: string, firstKeptEntryId: string, summary: string, detai
     tokensBefore: 10,
     ...(details ? { details } : {}),
   });
+}
+
+async function waitFor(check: () => Promise<boolean>, timeoutMs = 2_000): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await check()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("timed out waiting for history scheduler condition");
 }

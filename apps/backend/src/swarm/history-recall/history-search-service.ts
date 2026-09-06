@@ -47,9 +47,12 @@ import {
   sourcesFromCatalog,
 } from "./source-catalog.js";
 import {
+  BACKGROUND_ARCHIVE_SHARE,
+  BACKGROUND_SLICE_SOURCES,
   DEFAULT_SEARCH_LIMIT,
   DEFAULT_SESSION_LIMIT,
   EMPTY_CATALOG,
+  IDLE_RECONCILE_MS,
   MAX_INDEX_CATCHUP_BYTES,
   MAX_LIVE_SNAPSHOTS,
   MAX_NEIGHBORS,
@@ -57,7 +60,6 @@ import {
   MAX_SESSION_LIMIT,
   MAX_SNAPSHOT_HITS,
   SNAPSHOT_TTL_MS,
-  TAIL_PREP_BYTES,
   type HistorySearchServiceHost,
   type HistorySourceDescriptor,
 } from "./types.js";
@@ -87,9 +89,12 @@ export class HistorySearchService {
   private started = false;
   private catalog: HistoryCatalogSnapshot = EMPTY_CATALOG;
   private readonly dirtySourceIds = new Set<string>();
-  private backgroundScheduled = false;
+  private backgroundTimer: ReturnType<typeof setTimeout> | undefined;
+  private backgroundRunning = false;
+  private backgroundWake = false;
   private readonly searchSnapshots = new Map<string, SnapshotPage<HistorySearchHit>>();
   private readonly sessionSnapshots = new Map<string, SnapshotPage<HistorySessionHit>>();
+  private activeCursor = 0;
   private archivalCursor = 0;
 
   constructor(private readonly host: HistorySearchServiceHost) {}
@@ -98,12 +103,8 @@ export class HistorySearchService {
     this.assertOpen();
     this.replaceCatalog(snapshot);
     this.started = true;
-    try {
-      await this.getStore();
-    } catch {
-      // Derived-cache failure must not block boot. Coverage stays unavailable until a later retry.
-    }
-    this.scheduleBackground();
+    this.ensureStore();
+    this.scheduleBackground(0);
   }
 
   replaceCatalog(snapshot: HistoryCatalogSnapshot): void {
@@ -114,7 +115,7 @@ export class HistorySearchService {
       sources: snapshot.sources.filter((source) => isCatalogSourceAllowed(this.host, source)),
     };
     if (this.started) {
-      this.scheduleBackground();
+      this.scheduleBackground(0);
     }
   }
 
@@ -122,7 +123,7 @@ export class HistorySearchService {
     this.assertOpen();
     this.dirtySourceIds.add(`${source.sessionAgentId}:${source.actorAgentId}`);
     if (this.started) {
-      this.scheduleBackground();
+      this.scheduleBackground(0);
     }
   }
 
@@ -134,7 +135,7 @@ export class HistorySearchService {
     }).catch(() => undefined);
     this.dirtySourceIds.add(sourceId);
     if (this.started) {
-      this.scheduleBackground();
+      this.scheduleBackground(0);
     }
   }
 
@@ -386,7 +387,9 @@ export class HistorySearchService {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.started = false;
-    this.backgroundScheduled = false;
+    this.backgroundWake = false;
+    this.clearBackgroundTimer();
+    this.backgroundRunning = false;
     this.searchSnapshots.clear();
     this.sessionSnapshots.clear();
     const run = this.writeChain.then(async () => {
@@ -423,7 +426,7 @@ export class HistorySearchService {
       const warnings: string[] = [];
       let incomplete = this.catalog.hydration !== "complete";
       for (const source of preferred) {
-        const result = store.ingestSource(source, TAIL_PREP_BYTES);
+        const result = store.ingestSource(source, MAX_INDEX_CATCHUP_BYTES);
         warnings.push(...result.warnings);
         if (result.incomplete || result.pending) incomplete = true;
       }
@@ -436,27 +439,56 @@ export class HistorySearchService {
     });
   }
 
-  private scheduleBackground(): void {
-    if (!this.started || this.disposed || this.backgroundScheduled) {
+  private scheduleBackground(delayMs = 0): void {
+    if (!this.started || this.disposed) {
       return;
     }
-    this.backgroundScheduled = true;
-    this.writeChain = this.writeChain.then(async () => {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      this.backgroundScheduled = false;
-      if (!this.started || this.disposed) {
+    if (delayMs === 0) {
+      this.backgroundWake = true;
+    }
+    if (this.backgroundRunning) {
+      return;
+    }
+    if (this.backgroundTimer) {
+      if (delayMs === 0) {
+        clearTimeout(this.backgroundTimer);
+        this.backgroundTimer = undefined;
+      } else {
         return;
       }
-      try {
-        const store = await this.getStore();
-        const pending = this.runBackgroundSlice(store);
-        if (pending || this.dirtySourceIds.size > 0) {
-          this.scheduleBackground();
-        }
-      } catch {
-        return;
-      }
-    }).then(() => undefined, () => undefined);
+    }
+    this.backgroundTimer = setTimeout(() => {
+      this.backgroundTimer = undefined;
+      void this.runBackgroundTick();
+    }, delayMs);
+    this.backgroundTimer.unref?.();
+  }
+
+  private clearBackgroundTimer(): void {
+    if (this.backgroundTimer) {
+      clearTimeout(this.backgroundTimer);
+      this.backgroundTimer = undefined;
+    }
+  }
+
+  private async runBackgroundTick(): Promise<void> {
+    if (!this.started || this.disposed || this.backgroundRunning) {
+      return;
+    }
+    this.backgroundRunning = true;
+    this.backgroundWake = false;
+    let pendingWork = false;
+    try {
+      pendingWork = await this.runExclusive((store) => this.runBackgroundSlice(store));
+    } catch {
+      pendingWork = true;
+    } finally {
+      this.backgroundRunning = false;
+    }
+    if (!this.started || this.disposed) {
+      return;
+    }
+    this.scheduleBackground(pendingWork || this.backgroundWake ? 0 : IDLE_RECONCILE_MS);
   }
 
   private runBackgroundSlice(store: HistoryRecallIndexStore): boolean {
@@ -469,32 +501,39 @@ export class HistorySearchService {
         }
       }
     }
-    const dirty: HistorySourceDescriptor[] = [];
-    for (const sourceId of this.dirtySourceIds) {
-      const source = byId.get(sourceId) ?? catalogSources.find((entry) => entry.sourceId === sourceId);
-      if (source) {
-        dirty.push(source);
-      }
-      this.dirtySourceIds.delete(sourceId);
+    const dirtyIds = new Set(this.dirtySourceIds);
+    this.dirtySourceIds.clear();
+    const dirty = catalogSources.filter((source) => dirtyIds.has(source.sourceId));
+    const active = catalogSources.filter((source) => !source.archived);
+    const archives = catalogSources.filter((source) => source.archived);
+    const wantsWork = (source: HistorySourceDescriptor): boolean => dirtyIds.has(source.sourceId) || store.needsScan(source);
+    const promoted = dirty.slice(0, 2);
+    const remainingSlots = BACKGROUND_SLICE_SOURCES - promoted.length;
+    const archiveNeed = archives.some((source) => !promoted.some((entry) => entry.sourceId === source.sourceId) && wantsWork(source));
+    const archiveShare = archiveNeed ? Math.min(BACKGROUND_ARCHIVE_SHARE, remainingSlots) : 0;
+    const activeShare = remainingSlots - archiveShare;
+    const skipPromoted = (source: HistorySourceDescriptor): boolean => !promoted.some((entry) => entry.sourceId === source.sourceId);
+    const activePick = takeRotating(active, this.activeCursor, activeShare, (source) => skipPromoted(source) && wantsWork(source));
+    const archivePick = takeRotating(archives, this.archivalCursor, archiveShare, (source) => skipPromoted(source) && wantsWork(source));
+    this.activeCursor = activePick.nextCursor;
+    this.archivalCursor = archivePick.nextCursor;
+    const queue = uniqueSources([...promoted, ...activePick.picked, ...archivePick.picked]);
+    if (queue.length === 0) {
+      return this.dirtySourceIds.size > 0;
     }
-    const remaining = catalogSources.filter((source) => !dirty.some((entry) => entry.sourceId === source.sourceId));
-    const recent = remaining.filter((source) => !source.archived);
-    const archives = remaining.filter((source) => source.archived);
-    const rotated = archives.length === 0
-      ? []
-      : [...archives.slice(this.archivalCursor % archives.length), ...archives.slice(0, this.archivalCursor % archives.length)];
-    if (archives.length > 0) {
-      this.archivalCursor = (this.archivalCursor + 1) % archives.length;
-    }
-    const queue = [...dirty, ...recent, ...rotated];
-    const result = store.reconcileSources(queue, {
-      preferRecent: true,
+    store.reconcileSources(queue, {
+      preferRecent: false,
       purgeMissing: false,
-      maxSources: 8,
+      maxSources: BACKGROUND_SLICE_SOURCES,
       maxBytes: MAX_INDEX_CATCHUP_BYTES,
-      perSourceBytes: Math.min(MAX_INDEX_CATCHUP_BYTES, TAIL_PREP_BYTES),
+      perSourceBytes: MAX_INDEX_CATCHUP_BYTES,
     });
-    return result.incomplete || result.pendingSourceCount > 0 || this.dirtySourceIds.size > 0;
+    const stillPending = catalogSources.some((source) => store.needsScan(source)) || this.dirtySourceIds.size > 0;
+    return stillPending;
+  }
+
+  private ensureStore(): void {
+    void this.getStore().catch(() => undefined);
   }
 
   private runExclusive<T>(operation: (store: HistoryRecallIndexStore) => T | Promise<T>): Promise<T> {
@@ -1015,4 +1054,39 @@ function newerTimestamp(left: string | undefined, right: string | undefined): st
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function takeRotating<T>(
+  items: T[],
+  cursor: number,
+  count: number,
+  want: (item: T) => boolean,
+): { picked: T[]; nextCursor: number } {
+  if (items.length === 0 || count <= 0) {
+    return { picked: [], nextCursor: cursor };
+  }
+  const picked: T[] = [];
+  let scanned = 0;
+  const start = ((cursor % items.length) + items.length) % items.length;
+  while (picked.length < count && scanned < items.length) {
+    const item = items[(start + scanned) % items.length]!;
+    scanned += 1;
+    if (want(item)) {
+      picked.push(item);
+    }
+  }
+  return { picked, nextCursor: (start + Math.max(scanned, 1)) % items.length };
+}
+
+function uniqueSources(sources: HistorySourceDescriptor[]): HistorySourceDescriptor[] {
+  const seen = new Set<string>();
+  const uniqueList: HistorySourceDescriptor[] = [];
+  for (const source of sources) {
+    if (seen.has(source.sourceId)) {
+      continue;
+    }
+    seen.add(source.sourceId);
+    uniqueList.push(source);
+  }
+  return uniqueList;
 }
