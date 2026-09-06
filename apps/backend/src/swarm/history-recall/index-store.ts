@@ -155,7 +155,9 @@ export class HistoryRecallIndexStore {
     this.listSourceIds = database.prepare("SELECT source_id FROM sources");
     this.deleteSource = database.prepare("DELETE FROM sources WHERE source_id = ?");
     this.deleteEntries = database.prepare("DELETE FROM entries WHERE source_id = ?");
-    this.deleteFts = database.prepare("DELETE FROM entries_fts WHERE source_id = ?");
+    this.deleteFts = database.prepare(`
+      DELETE FROM entries_fts WHERE rowid IN (SELECT rowid FROM entries WHERE source_id = ?)
+    `);
     this.insertEntry = database.prepare(`
       INSERT INTO entries (
         source_id, entry_id, kind, role, tool_name, timestamp, window_id, origin,
@@ -166,11 +168,15 @@ export class HistoryRecallIndexStore {
       )
     `);
     this.insertFts = database.prepare(`
-      INSERT INTO entries_fts (text, extra, source_id, entry_id)
-      VALUES (@text, @extra, @source_id, @entry_id)
+      INSERT INTO entries_fts (rowid, text, extra, source_id, entry_id)
+      VALUES (@rowid, @text, @extra, @source_id, @entry_id)
     `);
     this.deleteEntry = database.prepare("DELETE FROM entries WHERE source_id = ? AND entry_id = ?");
-    this.deleteFtsEntry = database.prepare("DELETE FROM entries_fts WHERE source_id = ? AND entry_id = ?");
+    this.deleteFtsEntry = database.prepare(`
+      DELETE FROM entries_fts WHERE rowid = (
+        SELECT rowid FROM entries WHERE source_id = ? AND entry_id = ?
+      )
+    `);
     this.getEntry = database.prepare("SELECT * FROM entries WHERE source_id = ? AND entry_id = ?");
     this.neighborsBefore = database.prepare(`
       SELECT * FROM entries WHERE source_id = ? AND byte_offset < ? ORDER BY byte_offset DESC LIMIT ?
@@ -199,6 +205,7 @@ export class HistoryRecallIndexStore {
       database.exec(SCHEMA_SQL);
       ensureSourceColumns(database);
       ensureIndexSchemaVersion(database);
+      ensureFtsRowIds(database);
       return new HistoryRecallIndexStore(database);
     } catch (error) {
       if (database.open) {
@@ -469,11 +476,11 @@ export class HistoryRecallIndexStore {
 
   private writeProjected(sourceId: string, entry: ProjectedHistoryEntry): void {
     if (entry.replacesEntryId && entry.replacesEntryId !== entry.entryId) {
-      this.deleteEntry.run(sourceId, entry.replacesEntryId);
       this.deleteFtsEntry.run(sourceId, entry.replacesEntryId);
+      this.deleteEntry.run(sourceId, entry.replacesEntryId);
     }
-    this.deleteEntry.run(sourceId, entry.entryId);
     this.deleteFtsEntry.run(sourceId, entry.entryId);
+    this.deleteEntry.run(sourceId, entry.entryId);
     const row = {
       source_id: sourceId,
       entry_id: entry.entryId,
@@ -489,8 +496,9 @@ export class HistoryRecallIndexStore {
       text: entry.text,
       extra: entry.extra,
     };
-    this.insertEntry.run(row);
+    const { lastInsertRowid } = this.insertEntry.run(row);
     this.insertFts.run({
+      rowid: lastInsertRowid,
       text: ftsSafeText(entry.text),
       extra: ftsSafeText(entry.extra),
       source_id: sourceId,
@@ -574,6 +582,30 @@ function ensureIndexSchemaVersion(database: Database.Database): void {
   database.transaction(() => {
     database.exec("DELETE FROM entries_fts; DELETE FROM entries; DELETE FROM sources;");
     database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('projection_version', '2')").run();
+  })();
+}
+
+// FTS UNINDEXED columns cannot locate rows efficiently. Share the ordinary
+// table's rowids so maintenance uses its primary key instead of scanning all
+// indexed text for every insert. Rekey the derived FTS table once, preserving
+// source progress, sanitized text, and canonical history references.
+function ensureFtsRowIds(database: Database.Database): void {
+  const version = database.prepare("SELECT value FROM meta WHERE key = 'fts_rowid_version'").get() as { value: string } | undefined;
+  if (version?.value === "1") return;
+  database.transaction(() => {
+    database.exec(`
+      CREATE VIRTUAL TABLE entries_fts_rekey USING fts5(
+        text, extra, source_id UNINDEXED, entry_id UNINDEXED,
+        tokenize = 'unicode61 remove_diacritics 2'
+      );
+      INSERT INTO entries_fts_rekey (rowid, text, extra, source_id, entry_id)
+      SELECT entries.rowid, entries_fts.text, entries_fts.extra, entries.source_id, entries.entry_id
+      FROM entries_fts
+      JOIN entries ON entries.source_id = entries_fts.source_id AND entries.entry_id = entries_fts.entry_id;
+      DROP TABLE entries_fts;
+      ALTER TABLE entries_fts_rekey RENAME TO entries_fts;
+    `);
+    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_rowid_version', '1')").run();
   })();
 }
 
