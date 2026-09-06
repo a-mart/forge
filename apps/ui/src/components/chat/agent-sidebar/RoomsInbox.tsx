@@ -1,13 +1,14 @@
-import type React from 'react'
-import { BellOff, CheckCheck, CircleAlert, Globe, Inbox, Pin } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { BellOff, CheckCheck, ChevronDown, ChevronUp, CircleAlert, Globe, Inbox, Pin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
 import { SidebarRoomAvatar } from './shared'
 import { formatRoomsInboxRelativeTime, presentRoomsInboxReason } from './rooms-inbox-presenter'
-import type {
-  RoomsInboxIdentity,
-  RoomsInboxSections,
-  RoomsInboxSessionViewModel,
+import {
+  MAX_SECTION_ITEMS,
+  type RoomsInboxIdentity,
+  type RoomsInboxSections,
+  type RoomsInboxSessionViewModel,
 } from './rooms-inbox-selectors'
 
 export function RoomsInbox({
@@ -23,6 +24,7 @@ export function RoomsInbox({
   hasInlineProjectContent = false,
   mutedSessionIds,
   now,
+  searchQuery,
 }: {
   sections: RoomsInboxSections
   selected?: Pick<RoomsInboxIdentity, 'originId' | 'sessionAgentId'> | null
@@ -33,13 +35,19 @@ export function RoomsInbox({
   onClearNeedsYou: (sessions: readonly RoomsInboxSessionViewModel[]) => void
   dismissError?: string | null
   /** The same Rooms v2 project tree rendered in the Projects tab. */
-  projectTree?: React.ReactNode
+  projectTree?: ReactNode
   /** Derived from the shared tree's rows and visible remote status cards. */
   hasInlineProjectContent?: boolean
   /** Presentation-only mute affordance; this does not participate in Inbox classification. */
   mutedSessionIds?: ReadonlySet<string>
   now?: Date
+  searchQuery?: string
 }) {
+  const [recentExpanded, setRecentExpanded] = useState(false)
+  useEffect(() => {
+    setRecentExpanded(false)
+  }, [searchQuery])
+  const recentVisibility = visibleRecentSessions(sections.recent, recentExpanded, selected)
   // The shared tree is the authoritative Projects-mode render model: it may
   // contain a session/worker-only search match, an inactive Project Agent, or
   // a remote sign-in/retry card even when the Inbox shortcut count is zero.
@@ -142,7 +150,7 @@ export function RoomsInbox({
 
       {sections.recent.length > 0 ? (
         <InboxSection title="Recent" testId="recent">
-          {sections.recent.map((session) => (
+          {recentVisibility.visible.map((session) => (
             <InboxSessionRow
               key={`${session.identity.originId}::${session.identity.sessionAgentId}`}
               session={session}
@@ -153,6 +161,38 @@ export function RoomsInbox({
               now={now}
             />
           ))}
+          {recentVisibility.hasMore || recentExpanded ? (
+            <div className="relative z-10 mt-0.5 flex items-center gap-2 pl-5 pr-1.5">
+              {recentVisibility.hasMore ? (
+                <button
+                  type="button"
+                  onClick={() => setRecentExpanded(true)}
+                  className={cn(
+                    'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                    'hover:text-muted-foreground',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                  )}
+                >
+                  <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                  <span>Show {recentVisibility.hiddenCount} more</span>
+                </button>
+              ) : null}
+              {recentExpanded ? (
+                <button
+                  type="button"
+                  onClick={() => setRecentExpanded(false)}
+                  className={cn(
+                    'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                    'hover:text-muted-foreground',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                  )}
+                >
+                  <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                  <span>Show less</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </InboxSection>
       ) : null}
 
@@ -165,6 +205,46 @@ export function RoomsInbox({
   )
 }
 
+function visibleRecentSessions(
+  recent: RoomsInboxSessionViewModel[],
+  expanded: boolean,
+  selected?: Pick<RoomsInboxIdentity, 'originId' | 'sessionAgentId'> | null,
+): {
+  visible: RoomsInboxSessionViewModel[]
+  hasMore: boolean
+  hiddenCount: number
+} {
+  const visibleLimit = expanded ? recent.length : MAX_SECTION_ITEMS
+  const hasMore = recent.length > visibleLimit
+  if (!hasMore) {
+    return { visible: recent, hasMore: false, hiddenCount: 0 }
+  }
+
+  const topSessions = recent.slice(0, visibleLimit)
+  const selectedSessionInTop = !selected || topSessions.some((session) => isSelectedSession(session, selected))
+  let visible = topSessions
+  if (!selectedSessionInTop && selected) {
+    const selectedSession = recent.find((session) => isSelectedSession(session, selected))
+    if (selectedSession) {
+      visible = [...topSessions.slice(0, visibleLimit - 1), selectedSession]
+    }
+  }
+
+  return {
+    visible,
+    hasMore: true,
+    hiddenCount: recent.length - visible.length,
+  }
+}
+
+function isSelectedSession(
+  session: RoomsInboxSessionViewModel,
+  selected: Pick<RoomsInboxIdentity, 'originId' | 'sessionAgentId'>,
+): boolean {
+  return selected.originId === session.identity.originId
+    && selected.sessionAgentId === session.identity.sessionAgentId
+}
+
 function InboxSection({
   title,
   detail,
@@ -174,9 +254,9 @@ function InboxSection({
 }: {
   title: string
   detail?: string
-  action?: React.ReactNode
+  action?: ReactNode
   testId: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <section
