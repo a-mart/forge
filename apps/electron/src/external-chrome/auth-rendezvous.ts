@@ -146,7 +146,9 @@ export class WindowsCurrentUserAccessController implements CurrentUserAccessCont
         '$private.SetAccessRuleProtection($true,$false)',
         `$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($me,'FullControl','${inheritance}','None','Allow')`,
         '$private.AddAccessRule($rule)',
-        'Set-Acl -LiteralPath $target -AclObject $private',
+        // Set-Acl persists all descriptor sections and can demand SeSecurityPrivilege
+        // for the SACL. Persist only the modified DACL; ownership/auditing stay untouched.
+        '$item.SetAccessControl($private)',
         '$acl=Get-Acl -LiteralPath $target',
       ] : []),
       '$rules=@($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]))',
