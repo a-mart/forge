@@ -8,7 +8,7 @@ For a local Builder project, use **Project Settings → Default model → Change
 
 ## Work mode
 
-Delegate first is the default work mode and prefers workers for substantive project work. Adaptive chooses direct or delegated ownership per outcome based on context continuity and whether delegation materially improves efficiency, independence, or capability. Hands-on asks the manager to own one cohesive bounded outcome directly while retaining delegation for useful parallelism, isolation, model diversity, independent review, or work-graph scheduling.
+Delegate first is the default work mode: workers execute substantive project work while the manager stays read-only. Adaptive starts directly and weighs the full time, cost, and assurance benefit of a handoff. Hands-on keeps the critical path with the manager through investigation, implementation, and validation. It delegates for explicit requests, unavailable capabilities, or concrete benefits from separable work—not merely because work is complex or spans multiple files.
 
 Set a project default or use the work-mode control beside Send for a session override. Work mode is part of the manager system prompt. Changing it mid-session replaces the runtime before the next turn and may cause one prompt-cache miss.
 

@@ -2,7 +2,7 @@ Forge delegates work through rosters of complete specialists. Work mode decides 
 
 ## Work mode
 
-Delegate first is the default and prefers workers for substantive project work. Adaptive chooses ownership outcome by outcome based on context continuity and the real value of delegation. Hands-on prefers one cohesive bounded manager-owned outcome, but still delegates when independent context, parallelism, diversity, or graph scheduling adds real value.
+Delegate first is the default and assigns substantive project execution to workers while the manager stays read-only. Adaptive starts directly and delegates when the expected benefit outweighs total handoff and verification effort. Hands-on keeps investigation, implementation, and validation with the manager; complexity alone does not trigger a handoff. Explicit requests, unavailable capabilities, and concrete benefits from separable work can still justify delegation.
 
 ## Task types
 
