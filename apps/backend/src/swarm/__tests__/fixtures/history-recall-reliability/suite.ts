@@ -2,7 +2,7 @@ import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { getHistoryRecallIndexPath, getSessionFilePath } from "../../../storage/data-paths.js";
 import { catalogSnapshot, createBenchmarkService, executeGolden } from "./adapter.js";
-import { waitForPassiveReadiness } from "./evaluation.js";
+import { elapsedSince, waitForPassiveReadiness } from "./evaluation.js";
 import {
   compactAgentSpecs,
   compactProfileSpecs,
@@ -23,6 +23,7 @@ import { inspectLifecycle } from "./lifecycle-contract.js";
 import { nativeUser } from "./jsonl.js";
 import { ResourceMonitor, measureDisk } from "./metrics.js";
 import { classifyCursor, scoreCase, summarizeQuality, type CaseScore, type ObservedResponse } from "./scoring.js";
+import { runIsolatedSeamPhases } from "./seam-phase.js";
 
 export interface SuiteReport {
   mode: CorpusMode;
@@ -78,7 +79,10 @@ export async function runReliabilitySuite(options: {
     const observations: ObservedResponse[] = [];
     const cases: CaseScore[] = [];
     const coldGoldens = goldens.filter((golden) => golden.gate === "readiness" && golden.op === "search");
-    const warmGoldens = goldens.filter((golden) => !(golden.gate === "readiness" && golden.op === "search"));
+    const isolatedSeamGolden = goldens.find((golden) => golden.id === "provisional-seam-unanchored");
+    const warmGoldens = goldens.filter((golden) =>
+      !(golden.gate === "readiness" && golden.op === "search") && golden.id !== "provisional-seam-unanchored",
+    );
     for (const golden of coldGoldens) {
       await resetDerivedIndex(root.dataDir);
       const cold = createBenchmarkService(root.dataDir, agents, profiles);
@@ -89,7 +93,7 @@ export async function runReliabilitySuite(options: {
         const observed = await executeGolden(cold, golden, root.dataDir, agents);
         observed.queryCount = 1;
         observed.passiveWaitMs = wait.waitedMs;
-        observed.startupToEvidenceMs = wait.waitedMs + observed.durationMs;
+        observed.startupToEvidenceMs = elapsedSince(startedAt);
         observations.push(observed);
         cases.push(scoreCase(golden, observed));
       } finally {
@@ -106,6 +110,23 @@ export async function runReliabilitySuite(options: {
       const observed = await executeGolden(service, golden, root.dataDir, agents);
       observations.push(observed);
       cases.push(scoreCase(golden, observed));
+    }
+    if (isolatedSeamGolden) {
+      const phase = await runIsolatedSeamPhases(root.dataDir);
+      const observed: ObservedResponse = {
+        op: isolatedSeamGolden.op,
+        hits: phase.hits,
+        durationMs: phase.durationMs,
+        queryCount: 1,
+        startupToEvidenceMs: phase.durationMs,
+        unanchored: phase.unanchored,
+        phase: phase.phase,
+        convergedEntryIds: phase.convergedEntryIds,
+        forwardEntryIds: phase.forwardEntryIds,
+        phaseNotes: phase.notes,
+      };
+      observations.push(observed);
+      cases.push(scoreCase(isolatedSeamGolden, observed));
     }
     const extras = await runExtraScenarios(service, root.dataDir, async () => {
       await service?.dispose().catch(() => undefined);

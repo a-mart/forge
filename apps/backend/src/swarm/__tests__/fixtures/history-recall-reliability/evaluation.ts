@@ -88,11 +88,15 @@ export function evaluateBaseline(
   };
 }
 
+export function elapsedSince(startedAtMs: number): number {
+  return performance.now() - startedAtMs;
+}
+
 export async function waitForPassiveReadiness(
   startedAtMs: number,
   deadlineMs = PASSIVE_READINESS_DEADLINE_MS,
 ): Promise<{ waitedMs: number; deadlineMs: number }> {
-  const remaining = Math.max(0, deadlineMs - (performance.now() - startedAtMs));
+  const remaining = Math.max(0, deadlineMs - elapsedSince(startedAtMs));
   if (remaining > 0) {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, remaining);
@@ -101,7 +105,7 @@ export async function waitForPassiveReadiness(
   for (let i = 0; i < 8; i += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  return { waitedMs: performance.now() - startedAtMs, deadlineMs };
+  return { waitedMs: elapsedSince(startedAtMs), deadlineMs };
 }
 
 export function fakeScore(overrides: Partial<CaseScore> & Pick<CaseScore, "id">): CaseScore {

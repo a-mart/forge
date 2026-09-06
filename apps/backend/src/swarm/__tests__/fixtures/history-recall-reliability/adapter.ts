@@ -12,7 +12,7 @@ import {
   type HistoryCatalogSnapshot,
   type HistoryServiceLifecycle,
 } from "./lifecycle-contract.js";
-import { waitForPassiveReadiness } from "./evaluation.js";
+import { elapsedSince, waitForPassiveReadiness } from "./evaluation.js";
 import { NEEDLE, SESSION } from "./ids.js";
 import { classifyCursor, type ObservedHit, type ObservedResponse } from "./scoring.js";
 
@@ -184,12 +184,14 @@ async function executeLifecycle(
       scope: "session",
       sessionAgentId: SESSION.recent,
     }, started, lifecycle);
+    const elapsed = elapsedSince(started);
     return {
       ...observed,
       op: golden.op,
       queryCount: 1,
       passiveWaitMs: wait.waitedMs,
-      startupToEvidenceMs: wait.waitedMs + observed.durationMs,
+      durationMs: elapsed,
+      startupToEvidenceMs: elapsed,
     };
   }
 
@@ -227,24 +229,13 @@ async function executeLifecycle(
   }
 
   if (golden.id === "provisional-seam-unanchored") {
-    if (typeof service.start !== "function") {
-      return { op: golden.op, hits: [], lifecycle, error: "required lifecycle methods are absent", durationMs: performance.now() - started, queryCount: 0 };
-    }
-    await service.start(catalogSnapshot(dataDir, agents, "complete", 1));
-    const wait = await waitForPassiveReadiness(started);
-    const observed = await executeSearch(service, {
-      ...golden,
-      op: "search",
-      query: NEEDLE.seam,
-      scope: "session",
-      sessionAgentId: SESSION.seam,
-    }, started, lifecycle);
     return {
-      ...observed,
       op: golden.op,
-      queryCount: 1,
-      passiveWaitMs: wait.waitedMs,
-      startupToEvidenceMs: wait.waitedMs + observed.durationMs,
+      hits: [],
+      lifecycle,
+      durationMs: elapsedSince(started),
+      queryCount: 0,
+      error: "isolated seam phase must run outside executeGolden",
     };
   }
 

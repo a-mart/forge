@@ -634,7 +634,7 @@ export const GOLDENS: GoldenCase[] = [
     gate: "integrity",
     lane: "lifecycle",
     critical: true,
-    summary: "Unanchored suffix native/custom mirrors must both remain searchable; provisional rows must not destructively replace.",
+    summary: "Isolated unanchored suffix must keep both native/custom mirrors, then match a clean forward projection after replay.",
     callerAgentId: SESSION.seam,
     op: "lifecycle",
     query: NEEDLE.seam,
@@ -643,7 +643,7 @@ export const GOLDENS: GoldenCase[] = [
       { sessionAgentId: SESSION.seam, actorAgentId: SESSION.seam, entryId: ENTRY.seamUnanchoredNative },
     ],
     expectedBaseline: "pass",
-    baselineNote: "A 280KiB prefix leaves the seam in the unanchored suffix. Both adjacent native and custom IDs must survive until replay converges.",
+    baselineNote: "Freeze an isolated tail-prep suffix, assert both native/custom IDs only while unanchored, then advance and compare against a clean forward projection. Faster correct ingestion must not fail the case.",
   },
   {
     id: "forward-seam-equivalence",

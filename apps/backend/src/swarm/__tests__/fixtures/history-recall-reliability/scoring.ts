@@ -12,6 +12,7 @@ export interface ObservedHit {
   text?: string;
   score?: number;
   toolName?: string;
+  provisional?: boolean;
 }
 
 export interface ObservedResponse {
@@ -29,6 +30,11 @@ export interface ObservedResponse {
   queryCount?: number;
   startupToEvidenceMs?: number;
   passiveWaitMs?: number;
+  unanchored?: boolean;
+  phase?: "provisional" | "converged";
+  convergedEntryIds?: string[];
+  forwardEntryIds?: string[];
+  phaseNotes?: string[];
 }
 
 export interface CaseScore {
@@ -46,6 +52,8 @@ export interface CaseScore {
   queryCount?: number;
   startupToEvidenceMs?: number;
   passiveWaitMs?: number;
+  unanchored?: boolean;
+  phase?: "provisional" | "converged";
 }
 
 export function classifyCursor(cursor: string | undefined): ObservedResponse["cursorKind"] {
@@ -104,11 +112,17 @@ export function scoreCase(golden: GoldenCase, observed: ObservedResponse): CaseS
     return finish(golden, observed, foundEntryIds, meetsGolden, "miss", notes);
   }
 
-  for (const expected of golden.expectedRefs) {
-    const match = topHits.find((hit) => hitMatches(hit, expected));
-    if (!match) {
-      meetsGolden = false;
-      notes.push(`missing ${expected.entryId}${expected.partId ? `#${expected.partId}` : ""}`);
+  if (golden.id === "provisional-seam-unanchored") {
+    scoreProvisionalSeam(golden, observed, foundEntryIds, notes, (ok) => {
+      meetsGolden = ok;
+    });
+  } else {
+    for (const expected of golden.expectedRefs) {
+      const match = topHits.find((hit) => hitMatches(hit, expected));
+      if (!match) {
+        meetsGolden = false;
+        notes.push(`missing ${expected.entryId}${expected.partId ? `#${expected.partId}` : ""}`);
+      }
     }
   }
 
@@ -246,7 +260,49 @@ function finish(
     queryCount: observed.queryCount,
     startupToEvidenceMs: observed.startupToEvidenceMs,
     passiveWaitMs: observed.passiveWaitMs,
+    unanchored: observed.unanchored,
+    phase: observed.phase,
   };
+}
+
+function scoreProvisionalSeam(
+  golden: GoldenCase,
+  observed: ObservedResponse,
+  foundEntryIds: string[],
+  notes: string[],
+  setMeetsGolden: (ok: boolean) => void,
+): void {
+  notes.push(...(observed.phaseNotes ?? []));
+  let ok = true;
+  if (observed.unanchored) {
+    for (const expected of golden.expectedRefs) {
+      if (!foundEntryIds.includes(expected.entryId)) {
+        ok = false;
+        notes.push(`missing ${expected.entryId} while suffix is unanchored`);
+      }
+    }
+    if (ok) {
+      notes.push("unanchored suffix kept both native and custom mirrors");
+    }
+  } else {
+    notes.push("bounded tail-prep already converged; dual-id assertion skipped");
+    if (foundEntryIds.length === 0) {
+      ok = false;
+      notes.push("converged isolated seam returned no evidence");
+    }
+  }
+  const converged = [...(observed.convergedEntryIds ?? [])].sort();
+  const forward = [...(observed.forwardEntryIds ?? [])].sort();
+  if (converged.length === 0 || forward.length === 0) {
+    ok = false;
+    notes.push("missing converged or clean-forward evidence after isolated advance");
+  } else if (converged.join(",") !== forward.join(",")) {
+    ok = false;
+    notes.push(`converged ${converged.join(",")} did not match clean forward ${forward.join(",")}`);
+  } else {
+    notes.push("converged isolated seam matched clean forward projection");
+  }
+  setMeetsGolden(ok);
 }
 
 function ratio(numerator: number, denominator: number): number {

@@ -18,8 +18,9 @@ import {
   isHarnessOwnedRoot,
   removeMarkedDataRoot,
   runReliabilitySuite,
+  scoreCase,
 } from "./fixtures/history-recall-reliability/index.js";
-import { COMPACT_ARCHIVE_COUNT } from "./fixtures/history-recall-reliability/ids.js";
+import { COMPACT_ARCHIVE_COUNT, ENTRY, SESSION } from "./fixtures/history-recall-reliability/ids.js";
 
 const roots: string[] = [];
 
@@ -83,6 +84,51 @@ describe("history-recall reliability acceptance preparation", () => {
     expect(green.missedGoldens).toEqual([]);
   });
 
+  it("requires both unanchored mirrors only before isolated convergence, then matches clean forward", () => {
+    const golden = GOLDENS.find((entry) => entry.id === "provisional-seam-unanchored");
+    expect(golden).toBeTruthy();
+    const missingNative = scoreCase(golden!, {
+      op: "lifecycle",
+      hits: [{ sessionAgentId: SESSION.seam, actorAgentId: SESSION.seam, entryId: ENTRY.seamUnanchoredCustom }],
+      durationMs: 12,
+      queryCount: 1,
+      unanchored: true,
+      phase: "provisional",
+      convergedEntryIds: [ENTRY.seamUnanchoredCustom],
+      forwardEntryIds: [ENTRY.seamUnanchoredCustom],
+    });
+    expect(missingNative.meetsGolden).toBe(false);
+    expect(missingNative.notes.some((note) => note.includes("hrr-seam-unanchored-native"))).toBe(true);
+
+    const unanchoredPass = scoreCase(golden!, {
+      op: "lifecycle",
+      hits: [
+        { sessionAgentId: SESSION.seam, actorAgentId: SESSION.seam, entryId: ENTRY.seamUnanchoredCustom },
+        { sessionAgentId: SESSION.seam, actorAgentId: SESSION.seam, entryId: ENTRY.seamUnanchoredNative },
+      ],
+      durationMs: 12,
+      queryCount: 1,
+      unanchored: true,
+      phase: "provisional",
+      convergedEntryIds: [ENTRY.seamUnanchoredCustom],
+      forwardEntryIds: [ENTRY.seamUnanchoredCustom],
+    });
+    expect(unanchoredPass.meetsGolden).toBe(true);
+
+    const alreadyConverged = scoreCase(golden!, {
+      op: "lifecycle",
+      hits: [{ sessionAgentId: SESSION.seam, actorAgentId: SESSION.seam, entryId: ENTRY.seamUnanchoredCustom }],
+      durationMs: 8,
+      queryCount: 1,
+      unanchored: false,
+      phase: "converged",
+      convergedEntryIds: [ENTRY.seamUnanchoredCustom],
+      forwardEntryIds: [ENTRY.seamUnanchoredCustom],
+    });
+    expect(alreadyConverged.meetsGolden).toBe(true);
+    expect(alreadyConverged.notes.some((note) => note.includes("dual-id assertion skipped"))).toBe(true);
+  });
+
   it("scores compact goldens strictly, starts cold queries after start(snapshot), and reports remaining engine failures separately", async () => {
     const report = await runReliabilitySuite({ mode: "compact" });
     expect(report.sourceCount).toBeGreaterThan(48);
@@ -98,6 +144,18 @@ describe("history-recall reliability acceptance preparation", () => {
     expect(cold?.passiveWaitMs ?? 0).toBeGreaterThan(0);
     expect(cold?.passiveWaitMs ?? 0).toBeLessThanOrEqual(PASSIVE_READINESS_DEADLINE_MS + 250);
     expect(cold?.startupToEvidenceMs ?? 0).toBeGreaterThan(0);
+    expect(cold?.startupToEvidenceMs ?? 0).toBeGreaterThanOrEqual(cold?.passiveWaitMs ?? 0);
+    expect(Math.abs((cold?.startupToEvidenceMs ?? 0) - ((cold?.passiveWaitMs ?? 0) + (cold?.durationMs ?? 0)))).toBeLessThan(50);
+
+    const coldTail = byId.get("cold-tail-without-search-clock");
+    expect(coldTail, "missing cold-tail-without-search-clock").toBeTruthy();
+    expect(Math.abs((coldTail?.startupToEvidenceMs ?? 0) - (coldTail?.durationMs ?? 0))).toBeLessThan(1);
+    expect(coldTail?.startupToEvidenceMs ?? 0).toBeLessThan(((coldTail?.passiveWaitMs ?? 0) * 2) - 100);
+
+    const seam = byId.get("provisional-seam-unanchored");
+    expect(seam, "missing provisional-seam-unanchored").toBeTruthy();
+    expect(seam?.notes.some((note) => note.includes("unanchored") || note.includes("clean forward"))).toBe(true);
+    expect(seam?.startupToEvidenceMs ?? seam?.durationMs ?? 0).toBeLessThan(PASSIVE_READINESS_DEADLINE_MS);
 
     const extras = new Map(report.extras.map((entry) => [entry.id, entry]));
     expect(extras.get("harness-refuses-unmarked-roots")?.meetsGolden).toBe(true);

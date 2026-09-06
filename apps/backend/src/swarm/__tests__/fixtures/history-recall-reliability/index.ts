@@ -9,4 +9,5 @@ export * from "./jsonl.js";
 export * from "./lifecycle-contract.js";
 export * from "./metrics.js";
 export * from "./scoring.js";
+export * from "./seam-phase.js";
 export * from "./suite.js";
