@@ -42,7 +42,7 @@ export interface PiResourceLoaderOptionsPlan {
     skills: Skill[];
     diagnostics: ResourceDiagnostic[];
   };
-  systemPrompt?: string;
+  systemPrompt: string;
   appendSystemPromptOverride: (base: string[]) => string[];
 }
 
@@ -129,7 +129,7 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
     extensionFactories,
     ...(extensionsOverride ? { extensionsOverride } : {}),
     ...(skillsOverride ? { skillsOverride } : {}),
-    ...(promptPlan.systemPrompt !== undefined ? { systemPrompt: promptPlan.systemPrompt } : {}),
+    systemPrompt: promptPlan.systemPrompt,
     appendSystemPromptOverride: promptPlan.appendSystemPromptOverride,
   };
 }

@@ -1,15 +1,13 @@
 import { join } from "node:path";
 import type { RuntimeStartupRecoveryContext } from "../runtime-contracts.js";
-import type { AgentDescriptor } from "../types.js";
 
 export interface PiRuntimePromptPlan {
-  systemPrompt?: string;
+  systemPrompt: string;
   appendSystemPromptOverride: (base: string[]) => string[];
   startupRecoveryContextFile?: { path: string; content: string };
 }
 
 export interface PlanPiRuntimePromptOptions {
-  descriptor: Pick<AgentDescriptor, "role">;
   systemPrompt: string;
   cwd: string;
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
@@ -23,16 +21,9 @@ export function planPiRuntimePrompt(options: PlanPiRuntimePromptOptions): PiRunt
       }
     : undefined;
 
-  if (options.descriptor.role === "manager") {
-    return {
-      systemPrompt: options.systemPrompt,
-      appendSystemPromptOverride: () => [],
-      ...(startupRecoveryContextFile ? { startupRecoveryContextFile } : {}),
-    };
-  }
-
   return {
-    appendSystemPromptOverride: (base) => [...base, options.systemPrompt],
+    systemPrompt: options.systemPrompt,
+    appendSystemPromptOverride: () => [],
     ...(startupRecoveryContextFile ? { startupRecoveryContextFile } : {}),
   };
 }
