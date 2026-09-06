@@ -60,8 +60,8 @@ export function assertSeaToolchain({
   env = process.env,
 } = {}) {
   // Validation packages the same Node executable that runs this package script.
-  // Its direct --build-sea invocation is the authoritative capability probe; do
-  // not replace that probe with an unqualified semver range. Release artifacts
+  // Its SEA build and executable smoke are the capability gates, including
+  // Windows blob injection when direct --build-sea is unavailable. Release artifacts
   // remain qualified to the separately pinned official Node distribution.
   if (externalChromeBuildMode(env) !== 'release') return
 
