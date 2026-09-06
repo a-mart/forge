@@ -59,6 +59,7 @@ import {
   MAX_SEARCH_LIMIT,
   MAX_SESSION_LIMIT,
   MAX_SNAPSHOT_HITS,
+  SCAN_BATCH_BYTES,
   SNAPSHOT_TTL_MS,
   type HistorySearchServiceHost,
   type HistorySourceDescriptor,
@@ -214,7 +215,7 @@ export class HistorySearchService {
           ...(row.provisional || isProvisionalWindowId(row.window_id) ? { provisional: true } : {}),
         });
       }
-      const coverage = this.buildCoverage(store, resolved.sources, catchup.incomplete || resolved.incomplete);
+      const coverage = this.buildCoverage(store, resolved.sources);
       const incomplete = catchup.incomplete || resolved.incomplete;
       const snapshot: SnapshotPage<HistorySearchHit> = {
         id: randomUUID(),
@@ -281,7 +282,7 @@ export class HistorySearchService {
       }
       return left.sessionLabel.localeCompare(right.sessionLabel);
     });
-    const coverage = await this.runExclusive((store) => this.buildCoverage(store, resolved.sources, resolved.incomplete))
+    const coverage = await this.runExclusive((store) => this.buildCoverage(store, resolved.sources))
       .catch(() => unknownCoverage(this.catalog, resolved.sources.length, resolved.incomplete));
     const snapshot: SnapshotPage<HistorySessionHit> = {
       id: randomUUID(),
@@ -349,7 +350,7 @@ export class HistorySearchService {
       if (indexedGeneration && indexedGeneration !== ref.sourceVersion) {
         throw new HistoryRecallError("History reference is stale; the source was replaced or reset", 409);
       }
-      store.ingestSource(source, MAX_INDEX_CATCHUP_BYTES);
+      store.ingestSource(source, SCAN_BATCH_BYTES);
       const currentGeneration = this.currentSourceGeneration(source);
       if (!currentGeneration || currentGeneration !== ref.sourceVersion) {
         throw new HistoryRecallError("History reference is stale; the source was replaced or reset", 409);
@@ -426,7 +427,7 @@ export class HistorySearchService {
       const warnings: string[] = [];
       let incomplete = this.catalog.hydration !== "complete";
       for (const source of preferred) {
-        const result = store.ingestSource(source, MAX_INDEX_CATCHUP_BYTES);
+        const result = store.ingestSource(source, SCAN_BATCH_BYTES);
         warnings.push(...result.warnings);
         if (result.incomplete || result.pending) incomplete = true;
       }
@@ -526,7 +527,7 @@ export class HistorySearchService {
       purgeMissing: false,
       maxSources: BACKGROUND_SLICE_SOURCES,
       maxBytes: MAX_INDEX_CATCHUP_BYTES,
-      perSourceBytes: MAX_INDEX_CATCHUP_BYTES,
+      perSourceBytes: SCAN_BATCH_BYTES,
     });
     const stillPending = catalogSources.some((source) => store.needsScan(source)) || this.dirtySourceIds.size > 0;
     return stillPending;
@@ -682,14 +683,13 @@ export class HistorySearchService {
   private buildCoverage(
     store: HistoryRecallIndexStore,
     sources: HistorySourceDescriptor[],
-    incomplete: boolean,
   ): HistoryCoverage {
     const counts = store.coverageCounts(sources.map((source) => source.sourceId));
     const hydration = this.started ? this.catalog.hydration : "partial";
-    const pendingSourceCount = Math.max(counts.pendingSourceCount, incomplete && counts.pendingSourceCount === 0 ? 1 : 0);
+    const pendingSourceCount = counts.pendingSourceCount;
     const state = coverageState({
       unavailable: sources.length > 0 && counts.unreadableSourceCount >= sources.length,
-      pending: pendingSourceCount > 0 || hydration === "partial" && this.started,
+      pending: pendingSourceCount > 0 || (hydration === "partial" && this.started),
       omitted: counts.omittedEligibleText,
     });
     return {

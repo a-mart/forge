@@ -108,15 +108,19 @@ export function* iterateCompleteLines(
   try {
     while (offset < endOffset) {
       const remainingBudget = maxBytes - scannedBytes;
+      const openRowStart = remainder.length > 0 ? offset - remainder.length : offset;
+      const finishingStartedRow = !skippingOversized && remainingBudget <= 0 && remainder.length > 0
+        && remainder.length <= MAX_LINE_BYTES && openRowStart === startOffset;
       const probeExactCap = !skippingOversized && remainingBudget <= 0 && remainder.length === MAX_LINE_BYTES;
-      if (remainingBudget <= 0 && !probeExactCap) {
+      if (remainingBudget <= 0 && !probeExactCap && !finishingStartedRow) {
         break;
       }
-      const toRead = Math.min(
-        MAX_JSONL_CHUNK_BYTES,
-        endOffset - offset,
-        probeExactCap ? 1 : remainingBudget,
-      );
+      const extra = remainingBudget > 0
+        ? remainingBudget
+        : probeExactCap
+          ? 1
+          : Math.max(1, MAX_LINE_BYTES + 1 - remainder.length);
+      const toRead = Math.min(MAX_JSONL_CHUNK_BYTES, endOffset - offset, extra);
       if (toRead <= 0) {
         break;
       }
@@ -142,6 +146,7 @@ export function* iterateCompleteLines(
       }
 
       let start = 0;
+      let finishedStartedRow = false;
       while (start < remainder.length) {
         const newline = remainder.indexOf(0x0a, start);
         if (newline < 0) {
@@ -160,6 +165,10 @@ export function* iterateCompleteLines(
           };
         }
         start = newline + 1;
+        if (scannedBytes > maxBytes && byteOffset === startOffset) {
+          finishedStartedRow = true;
+          break;
+        }
       }
       remainder = remainder.subarray(start);
 
@@ -168,6 +177,9 @@ export function* iterateCompleteLines(
         incomplete = true;
         skippingOversized = true;
         remainder = Buffer.alloc(0);
+      }
+      if (finishedStartedRow) {
+        break;
       }
     }
   } finally {

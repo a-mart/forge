@@ -24,6 +24,7 @@ import {
   MAX_INDEX_CATCHUP_SOURCES,
   MAX_INDEX_CATCHUP_TOTAL_BYTES,
   REPLAY_BATCH_BYTES,
+  SCAN_BATCH_BYTES,
   TAIL_PREP_BYTES,
   type HistorySourceDescriptor,
   type ProjectedHistoryEntry,
@@ -385,7 +386,7 @@ export class HistoryRecallIndexStore {
         omittedEligibleText = true;
       }
       const gap = row.suffix_start > 0 && row.prefix_bytes < row.suffix_start;
-      const replaying = row.suffix_start > 0 && row.suffix_ready === 0;
+      const replaying = row.suffix_start > 0 && row.suffix_ready === 0 && row.prefix_bytes >= row.suffix_start;
       const prefixLag = row.suffix_start === 0 && row.prefix_bytes < row.source_size && row.oversized_state !== 2;
       if (gap || replaying || prefixLag || row.oversized_state === 1) {
         pendingSourceCount += 1;
@@ -792,7 +793,7 @@ export class HistoryRecallIndexStore {
       source.path,
       startOffset,
       endOffset,
-      maxBytes,
+      Math.min(maxBytes, SCAN_BATCH_BYTES),
       { resumeSkippingOversized: (current?.prefix_oversized ?? current?.oversized_state) === 1 },
     );
     const prefixOversized = skippingOversized ? 1 : (skippedOversized || current?.prefix_oversized || current?.oversized_state ? 2 : 0);
@@ -865,7 +866,7 @@ export class HistoryRecallIndexStore {
       source.path,
       current.suffix_end,
       stat.size,
-      maxBytes,
+      Math.min(maxBytes, SCAN_BATCH_BYTES),
       { resumeSkippingOversized: current.suffix_oversized === 1 },
     );
     const suffixOversized = skippingOversized ? 1 : (skippedOversized || current.suffix_oversized ? 2 : 0);
@@ -924,7 +925,7 @@ export class HistoryRecallIndexStore {
       source.path,
       start,
       current.suffix_end || stat.size,
-      maxBytes,
+      Math.min(maxBytes, SCAN_BATCH_BYTES),
       { resumeSkippingOversized: current.suffix_oversized === 1 },
     );
     const prefixOversized = skippingOversized ? 1 : (skippedOversized || current.prefix_oversized ? 2 : 0);

@@ -408,6 +408,33 @@ describe("HistorySearchService", () => {
     expect(afterInvalidate.results).toEqual([]);
   });
 
+  it("indexes a valid 500KiB row that exceeds a 256KiB scan batch and then becomes ready", async () => {
+    const fx = await createFixture();
+    const marker = "fivehundredkibneedle";
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      nativeMessage("midsize", { role: "user", content: `${marker} ${"m".repeat(500_000)}` }),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    await waitFor(async () => {
+      const result = await fx.service.search(fx.session.agentId, { query: marker });
+      return result.results.some((hit) => hit.ref.entryId === "midsize") && result.coverage?.state === "ready";
+    }, 4_000);
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await appendFile(path, nativeMessage("suffix-midsize", {
+      role: "assistant",
+      content: `suffix${marker} ${"s".repeat(500_000)}`,
+    }) + "\n");
+    await waitFor(async () => {
+      const result = await fx.service.search(fx.session.agentId, { query: `suffix${marker}` });
+      return result.results.some((hit) => hit.ref.entryId === "suffix-midsize") && result.coverage?.state === "ready";
+    }, 4_000);
+  });
+
   it("skips oversized JSONL rows without treating coverage as complete", async () => {
     const fx = await createFixture();
     const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
@@ -432,6 +459,17 @@ describe("HistorySearchService", () => {
     expect(result.results.map((hit) => hit.ref.entryId)).toEqual(["complete"]);
     expect(result.complete).toBe(false);
     expect(result.warnings.join(" ")).toMatch(/oversized|incomplete/i);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    await waitFor(async () => {
+      const later = await fx.service.search(fx.session.agentId, { query: "after oversized row" });
+      return later.results.some((hit) => hit.ref.entryId === "after-huge")
+        && later.coverage?.state === "degraded"
+        && later.coverage?.omittedEligibleText === true;
+    }, 4_000);
   });
   it("resumes oversized skipping after restart, retrieves trailing evidence, and retains coverage warnings", async () => {
     const fx = await createFixture();
@@ -467,6 +505,15 @@ describe("HistorySearchService", () => {
     expect(warm.results).toHaveLength(1);
     expect(warm.complete).toBe(false);
     expect(warm.warnings.join(" ")).toMatch(/skipped oversized/);
+    await service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    await waitFor(async () => {
+      const settled = await service.search(fx.session.agentId, { query: "trailingneedle" });
+      return settled.coverage?.state === "degraded" && settled.coverage?.omittedEligibleText === true;
+    }, 4_000);
   });
 
   it("keeps repeated messages and identical checkpoints searchable across windows and restarts", async () => {
@@ -875,6 +922,7 @@ describe("HistorySearchService", () => {
     expect(result.results.some((hit) => hit.ref.entryId === "first")).toBe(true);
     expect(result.coverage?.omittedEligibleText).toBe(true);
     expect(result.complete).toBe(false);
+    expect(result.coverage?.state).toBe("degraded");
   });
 
   it("rotates later active sources and archives past a busy nonarchived backlog", async () => {
