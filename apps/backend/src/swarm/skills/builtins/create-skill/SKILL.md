@@ -99,7 +99,7 @@ Read only what you need:
 - Do not overwrite existing files unless the user explicitly wants that behavior or you are using a guarded overwrite path.
 - Prefer minimal file sets and minimal defaults.
 - If a request is really about extensions, slash commands, prompts, or one-off automation, say so and redirect.
-- Managers should delegate substantive implementation and validation to a worker instead of doing the full skill build inline.
+- Follow the selected work mode for execution ownership. Skill authoring does not itself require delegation; in Hands-on, implement and validate directly unless a specific delegation benefit justifies a handoff.
 
 ## Helper scripts
 

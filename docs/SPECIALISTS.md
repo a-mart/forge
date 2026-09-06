@@ -2,7 +2,7 @@
 
 Forge keeps manager ownership separate from worker configuration:
 
-- **Work mode** decides whether the manager normally delegates or owns bounded work itself.
+- **Work mode** decides whether the manager executes directly or delegates.
 - **Roster** chooses the active team of specialists.
 - **Specialist** combines a task type and output contract with model, reasoning, use/avoid guidance, fallback, and escalation behavior.
 
@@ -14,9 +14,11 @@ Work-graph nodes use the same optional named-specialist override. Forge pins the
 
 **Delegate first** is the product default. The manager delegates project mutations, sustained investigation, multi-step analysis, and substantial implementation while retaining small read-only orientation and acceptance checks.
 
-**Adaptive** chooses ownership outcome by outcome. The manager works directly when continuity of context or one cohesive implementation path matters, and delegates when independent context, parallelism, specialized capability, diversity, or meaningful efficiency outweighs coordination cost.
+**Adaptive** starts with direct execution. It delegates when the expected improvement in completion time, total cost, or necessary independent assurance outweighs briefing, context transfer, waiting, acceptance, and likely rework. Quick workers suit self-contained low-risk work that is cheap to explain and verify; available parallelism or a cheaper model alone does not justify a handoff.
 
-**Hands-on** asks the manager to own one cohesive bounded outcome directly, including focused changes and validation. It still delegates when parallelism, isolation, model diversity, specialized behavior, independent review, or scheduler-owned readiness adds material value.
+**Hands-on** keeps investigation, implementation, and validation with the manager, including the critical path. Complexity, ambiguity, multiple files or steps, and worktree isolation alone do not trigger delegation. Workers are used for explicit user requests, required capabilities unavailable directly, or clearly separable assignments with a concrete benefit over continuing directly.
+
+Work mode decides whether to delegate; the roster selects the worker after that decision. Skills do not impose a separate work mode. Once ownership is working, preserve it; do not hand off merely because orientation ended or a backend restart occurred. Workers receive explicit assignment context, not an automatic copy of the manager conversation.
 
 A project can set its default work mode. A session can inherit that default or override it from the compact work-mode control beside Send. Changing work mode during a session replaces the manager runtime before its next turn, so the next request may miss the prompt cache once. It does not stop workers or rewrite an active work graph.
 

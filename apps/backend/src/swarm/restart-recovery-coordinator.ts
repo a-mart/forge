@@ -203,7 +203,7 @@ export class RestartRecoveryCoordinator {
         .sendMessage(
           managerId,
           managerId,
-          "The backend restarted while you were mid-turn. Resume from the last persisted state and continue coordinating any interrupted workers.",
+          "The backend restarted while you were mid-turn. Resume the authorized task from the last persisted state, preserving existing ownership. Continue direct work or handle existing worker results as appropriate; the restart itself is not a reason to delegate.",
           "auto",
           { origin: "internal" },
         )

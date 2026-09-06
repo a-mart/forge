@@ -770,7 +770,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('use `NO_REPLY` to skip an unanswered direct request')
     expect(managerPrompt).toContain('Delegation transfers execution, not accountability')
     expect(managerPrompt).toContain('Before substantive work, silently establish:')
-    expect(managerPrompt).toContain('Default to one implementation pass, one bounded manager acceptance pass')
+    expect(managerPrompt).toContain('A direct implementation does not need a separate acceptance ceremony')
     expect(managerPrompt).toContain('A worker result is evidence, not acceptance.')
     expect(managerPrompt).toContain('Your posture is **Delegation-first**.')
     expect(managerPrompt).toContain('Workers normally own substantive implementation')

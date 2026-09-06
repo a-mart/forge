@@ -296,6 +296,8 @@ describe('SwarmManager restart recovery characterization', () => {
       expect(workerMessages[0]).toContain('backend restarted while you were mid-turn')
       expect(managerMessages).toHaveLength(2)
       expect(managerMessages.some((message) => message.includes('backend restarted while you were mid-turn'))).toBe(true)
+      expect(managerMessages.some((message) => message.includes('preserving existing ownership'))).toBe(true)
+      expect(managerMessages.some((message) => message.includes('the restart itself is not a reason to delegate'))).toBe(true)
       expect(managerMessages.some((message) => message.includes(RECOVERED_REPORT))).toBe(true)
 
       const ledgerAfterResume = await replayTurnLedger(fixture.target)
