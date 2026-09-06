@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { Socket } from 'node:net'
@@ -215,6 +215,50 @@ async function lifecycleExtensionLoop(
 }
 
 describe('ExternalChromeHostCoordinator', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('repairs legacy Windows state-directory inheritance on access denial without replacing metadata', async () => {
+    const { dataRoot } = await root()
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'win32')
+    const enabledPath = path.join(paths.state, 'enabled.json')
+    await writeFile(enabledPath, '{"schemaVersion":1,"enabled":false}\n')
+    // Exercise a real access-denied read locally; the Windows-only NTFS suite
+    // separately proves directory inheritance restores child access.
+    await chmod(enabledPath, 0o000)
+    const prepare = vi.fn(async (directory: string) => {
+      expect(directory).toBe(paths.state)
+      await access.preparePrivateDirectory(directory)
+      await chmod(enabledPath, 0o600).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+    })
+    try {
+      const coordinator = new ExternalChromeHostCoordinator({
+        dataRoot, platform: 'win32', access: {
+          preparePrivateDirectory: prepare,
+          securePrivateFile: (file, prepareDirectory) => access.securePrivateFile(file, prepareDirectory),
+          verifyPrivateFile: (file) => access.verifyPrivateFile(file),
+        },
+      })
+      await coordinator.resumeIfEnabled()
+      expect(prepare).toHaveBeenCalledTimes(1)
+      expect(await readFile(enabledPath, 'utf8')).toBe('{"schemaVersion":1,"enabled":false}\n')
+      await coordinator.resumeIfEnabled()
+      expect(prepare).toHaveBeenCalledTimes(1)
+      // A prior setup may have left deployment metadata but no enabled marker.
+      await rm(enabledPath)
+      await coordinator.resumeIfEnabled()
+      expect(prepare).toHaveBeenCalledTimes(2)
+      await expect(readFile(enabledPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await writeFile(enabledPath, '{"schemaVersion":1,"enabled":false}\n')
+      // Persistent policy/ownership failures must not loop or be treated as disabled.
+      await chmod(enabledPath, 0o000)
+      prepare.mockImplementation(async () => { throw new Error('fixture policy denial') })
+      await expect(coordinator.resumeIfEnabled()).rejects.toThrow('fixture policy denial')
+      expect(prepare).toHaveBeenCalledTimes(3)
+    } finally {
+      await chmod(enabledPath, 0o600)
+    }
+  })
+
   it('publishes a non-secret bounded rendezvous, quiesces, and permits clean takeover', async () => {
     const { dataRoot, deployer } = await root()
     const registration = new FakeRegistration()
