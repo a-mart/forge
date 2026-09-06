@@ -2729,6 +2729,154 @@ describe("SwarmAgentLifecycleService", () => {
     expect(worker.status).toBe("terminated");
   });
 
+  it("killAgent keeps the session epoch when the manager is still streaming", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-streaming-kill",
+      role: "manager",
+      managerId: "m-streaming-kill",
+      profileId: "m-streaming-kill",
+      status: "streaming",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-streaming-kill",
+      status: "streaming",
+    });
+    const suppressSessionAttention = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([
+          [manager.agentId, manager],
+          [worker.agentId, worker],
+        ]),
+        runtimes: new Map([
+          [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+        ]),
+        assertManager: () => manager,
+        getWorkersForManager: (managerId) => (
+          managerId === manager.agentId ? [worker] : []
+        ),
+        suppressSessionAttention,
+      }),
+    );
+
+    await svc.killAgent(manager.agentId, worker.agentId);
+
+    expect(suppressSessionAttention).not.toHaveBeenCalled();
+    expect(worker.status).toBe("terminated");
+  });
+
+  it("killAgent keeps the session epoch when another owned worker is still streaming", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-sibling-kill",
+      role: "manager",
+      managerId: "m-sibling-kill",
+      profileId: "m-sibling-kill",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-killed",
+      status: "streaming",
+    });
+    const sibling = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-sibling",
+      status: "streaming",
+    });
+    const suppressSessionAttention = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([
+          [manager.agentId, manager],
+          [worker.agentId, worker],
+          [sibling.agentId, sibling],
+        ]),
+        runtimes: new Map([
+          [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+        ]),
+        assertManager: () => manager,
+        getWorkersForManager: (managerId) => (
+          managerId === manager.agentId ? [worker, sibling] : []
+        ),
+        suppressSessionAttention,
+      }),
+    );
+
+    await svc.killAgent(manager.agentId, worker.agentId);
+
+    expect(suppressSessionAttention).not.toHaveBeenCalled();
+    expect(worker.status).toBe("terminated");
+    expect(sibling.status).toBe("streaming");
+  });
+
+  it("stopWorker keeps the session epoch when the manager is still streaming", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-streaming-stop",
+      role: "manager",
+      managerId: "m-streaming-stop",
+      profileId: "m-streaming-stop",
+      status: "streaming",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-streaming-stop",
+      status: "streaming",
+    });
+    const suppressSessionAttention = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([
+          [manager.agentId, manager],
+          [worker.agentId, worker],
+        ]),
+        runtimes: new Map([
+          [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+        ]),
+        getWorkersForManager: (managerId) => (
+          managerId === manager.agentId ? [worker] : []
+        ),
+        suppressSessionAttention,
+      }),
+    );
+
+    await svc.stopWorker(worker.agentId);
+
+    expect(suppressSessionAttention).not.toHaveBeenCalled();
+    expect(worker.status).toBe("idle");
+  });
+
+  it("stopWorker discards the session epoch when no manager or sibling work remains", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-idle-stop",
+      role: "manager",
+      managerId: "m-idle-stop",
+      profileId: "m-idle-stop",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-idle-stop",
+      status: "streaming",
+    });
+    const suppressSessionAttention = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([
+          [manager.agentId, manager],
+          [worker.agentId, worker],
+        ]),
+        runtimes: new Map([
+          [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+        ]),
+        getWorkersForManager: (managerId) => (
+          managerId === manager.agentId ? [worker] : []
+        ),
+        suppressSessionAttention,
+      }),
+    );
+
+    await svc.stopWorker(worker.agentId);
+
+    expect(suppressSessionAttention).toHaveBeenCalledWith(manager.agentId);
+    expect(worker.status).toBe("idle");
+  });
+
   it("routes lifecycle descriptor mutations through the mutation adapter", async () => {
     const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
     const descriptors = new Map([[worker.agentId, worker]]);
