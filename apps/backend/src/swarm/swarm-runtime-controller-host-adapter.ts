@@ -118,5 +118,6 @@ export function createSwarmRuntimeControllerHost(
     retryCodexPluginWorker: toolHost.retryCodexPluginWorker?.bind(toolHost),
     searchHistory: toolHost.searchHistory?.bind(toolHost),
     readHistory: toolHost.readHistory?.bind(toolHost),
+    listHistorySessions: toolHost.listHistorySessions?.bind(toolHost),
   } satisfies SwarmRuntimeControllerHost;
 }

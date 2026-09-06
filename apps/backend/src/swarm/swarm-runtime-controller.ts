@@ -229,6 +229,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   /** Builder-only, count-only live throughput delivery. */
   emitGenerationThroughput?(event: GenerationThroughputEvent): void;
   /** Internal post-append hook for cache freshness; never forwarded to clients. */
+  onHistorySourceChanged?(agentId: string): void;
   onGenerationMeasurementTerminalPersisted?(record: import("@forge/protocol").GenerationMeasurementRecordV1): void;
   resolveManagerAssistantFinalOutputTarget(
     agentId: string,
@@ -330,7 +331,9 @@ export class SwarmRuntimeController {
           await this.handleRuntimeStatus(runtimeToken, agentId, status, pendingCount, contextUsage);
         },
         onSessionEvent: async (runtimeToken, agentId, event) => {
-          await this.handleRuntimeSessionEvent(runtimeToken, agentId, event);
+          if (await this.handleRuntimeSessionEvent(runtimeToken, agentId, event)) {
+            this.host.onHistorySourceChanged?.(agentId);
+          }
         },
         onAgentEnd: async (runtimeToken, agentId) => {
           await this.handleRuntimeAgentEnd(runtimeToken, agentId);

@@ -8,7 +8,7 @@ import { parseHistoryQuery } from "../../../history-recall/query-parser.js";
 import { getSessionFilePath } from "../../../storage/data-paths.js";
 import {
   MAX_INDEX_CATCHUP_BYTES,
-  TAIL_PREP_BYTES,
+  SCAN_BATCH_BYTES,
   type HistorySourceDescriptor,
 } from "../../../history-recall/types.js";
 import { ENTRY, NEEDLE, PROFILE, SESSION, TIME } from "./ids.js";
@@ -87,10 +87,10 @@ function freezeUnanchoredTail(store: HistoryRecallIndexStore, source: HistorySou
   const generation = readSourceGeneration(source.path, stat);
   const prepareTail = Reflect.get(store, "prepareTail");
   if (typeof prepareTail !== "function") {
-    store.ingestSource(source, TAIL_PREP_BYTES);
+    store.ingestSource(source, SCAN_BATCH_BYTES);
     return;
   }
-  prepareTail.call(store, source, generation, stat, TAIL_PREP_BYTES, []);
+  prepareTail.call(store, source, generation, stat, SCAN_BATCH_BYTES, []);
 }
 
 function descriptor(sourceId: string, path: string): HistorySourceDescriptor {

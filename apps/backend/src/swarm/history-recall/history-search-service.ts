@@ -108,6 +108,23 @@ export class HistorySearchService {
     this.scheduleBackground(0);
   }
 
+  /** Called only after descriptor and worker hydration has completed. */
+  async startFromRegistry(): Promise<void> {
+    await this.start({ revision: this.catalog.revision + 1, hydration: "complete", sources: listIndexableSources(this.host) });
+  }
+
+  refreshRegistryCatalog(): void {
+    if (!this.started || this.disposed) return;
+    this.replaceCatalog({ revision: this.catalog.revision + 1, hydration: "complete", sources: listIndexableSources(this.host) });
+  }
+
+  markAgentDirty(agentId: string): void {
+    if (this.disposed) return;
+    const actor = this.host.getAgent(agentId);
+    if (!actor) return;
+    this.markSourceDirty({ sessionAgentId: actor.role === "manager" ? actor.agentId : actor.managerId, actorAgentId: actor.agentId });
+  }
+
   replaceCatalog(snapshot: HistoryCatalogSnapshot): void {
     this.assertOpen();
     this.catalog = {
@@ -510,7 +527,7 @@ export class HistorySearchService {
     const wantsWork = (source: HistorySourceDescriptor): boolean => dirtyIds.has(source.sourceId) || store.needsScan(source);
     const promoted = dirty.slice(0, 2);
     const remainingSlots = BACKGROUND_SLICE_SOURCES - promoted.length;
-    const archiveNeed = archives.some((source) => !promoted.some((entry) => entry.sourceId === source.sourceId) && wantsWork(source));
+    const archiveNeed = archives.length > 0;
     const archiveShare = archiveNeed ? Math.min(BACKGROUND_ARCHIVE_SHARE, remainingSlots) : 0;
     const activeShare = remainingSlots - archiveShare;
     const skipPromoted = (source: HistorySourceDescriptor): boolean => !promoted.some((entry) => entry.sourceId === source.sourceId);
@@ -529,7 +546,7 @@ export class HistorySearchService {
       maxBytes: MAX_INDEX_CATCHUP_BYTES,
       perSourceBytes: SCAN_BATCH_BYTES,
     });
-    const stillPending = catalogSources.some((source) => store.needsScan(source)) || this.dirtySourceIds.size > 0;
+    const stillPending = queue.some((source) => store.needsScan(source)) || this.dirtySourceIds.size > 0;
     return stillPending;
   }
 
@@ -1068,7 +1085,8 @@ function takeRotating<T>(
   const picked: T[] = [];
   let scanned = 0;
   const start = ((cursor % items.length) + items.length) % items.length;
-  while (picked.length < count && scanned < items.length) {
+  // Bound filesystem probes even when thousands of sources are already caught up.
+  while (picked.length < count && scanned < Math.min(items.length, BACKGROUND_SLICE_SOURCES * 2)) {
     const item = items[(start + scanned) % items.length]!;
     scanned += 1;
     if (want(item)) {

@@ -91,6 +91,7 @@ interface ConversationProjectorDependencies {
   emitServerEvent: (eventName: ConversationEventName, payload: ServerEvent) => void;
   logDebug: (message: string, details?: unknown) => void;
   perf?: SidebarPerfRecorder;
+  onEntryPersisted?: (agentId: string) => void;
   getPinnedMessageIds?: (agentId: string) => ReadonlySet<string> | undefined;
 }
 
@@ -484,6 +485,7 @@ export class ConversationProjector {
     try {
       if (runtime) {
         const entryId = runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+        this.deps.onEntryPersisted?.(historyAgentId);
         this.assignConversationMessageIdIfMissing(event, entryId);
         if (descriptor) {
           this.timeline.trackLastSessionEntryId(descriptor.sessionFile, entryId);
@@ -500,6 +502,7 @@ export class ConversationProjector {
       }
 
       const { entryId } = this.timeline.appendConversationEntry(descriptor, event);
+      this.deps.onEntryPersisted?.(historyAgentId);
       this.assignConversationMessageIdIfMissing(event, entryId);
       this.historyCacheStore.incrementPersistedEntryCount(descriptor.sessionFile);
       this.queueConversationHistoryCacheWrite(historyAgentId, history);

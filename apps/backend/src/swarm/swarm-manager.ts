@@ -304,6 +304,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.knowledgeMemoryCoordinator.resolveMemoryOwnerAgentId(descriptor),
       },
       conversation: {
+        onEntryPersisted: (id) => this.historySearchService.markAgentDirty(id),
         emitServerEvent: (eventName, payload) => {
           this.emit(eventName, payload);
           if (payload.type === "agent_tool_call") {
@@ -636,7 +637,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         // Deliberately direct: count-only throughput must not enter the
         // conversation projector or Collaboration fanout path.
         emitGenerationThroughput: (event) => this.emit("generation_throughput", event),
-        emitGenerationMeasurementTerminalPersisted: (record) =>
+        onHistorySourceChanged: (id) => this.historySearchService.markAgentDirty(id), emitGenerationMeasurementTerminalPersisted: (record) =>
           this.emit("generation_measurement_terminal_persisted", record),
         logDebug: (message, details) => this.logDebug(message, details),
       },
@@ -804,7 +805,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
       },
-      conversationProjector: this.conversationProjector,
+      conversationProjector: this.conversationProjector, history: this.historySearchService,
       observability: this.observabilityCoordinator,
       sessionActiveTools: this.sessionActiveTools, managerToolActivity: this.managerToolActivity,
       now: this.now,

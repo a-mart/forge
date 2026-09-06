@@ -97,7 +97,7 @@ export interface RuntimeCompositionEvents {
   /** Ephemeral Builder-only count telemetry; never conversation or Collaboration projection. */
   emitGenerationThroughput(event: GenerationThroughputEvent): void;
   /** Internal post-append cache freshness notification; never client transport. */
-  emitGenerationMeasurementTerminalPersisted(record: GenerationMeasurementRecordV1): void;
+  onHistorySourceChanged?(agentId: string): void; emitGenerationMeasurementTerminalPersisted(record: GenerationMeasurementRecordV1): void;
   logDebug(message: string, details?: unknown): void;
 }
 export interface RuntimeCompositionMessaging {
@@ -493,7 +493,7 @@ export class SwarmManagerRuntimeComposition {
         this.requireServices().configuration.isModelCacheVisualizationEnabled(),
       emitModelCacheObservation: events.emitModelCacheObservation,
       emitGenerationThroughput: events.emitGenerationThroughput,
-      onGenerationMeasurementTerminalPersisted: events.emitGenerationMeasurementTerminalPersisted,
+      onGenerationMeasurementTerminalPersisted: events.emitGenerationMeasurementTerminalPersisted, onHistorySourceChanged: events.onHistorySourceChanged,
       resolveManagerAssistantFinalOutputTarget: (agentId, target) =>
         this.assistantOutput.resolveManagerFinalTarget(agentId, target),
       resolveManagerAssistantFinalOutputRoute: (agentId, target) =>

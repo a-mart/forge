@@ -46,6 +46,7 @@ export interface SwarmEventCoordinatorOptions {
   sessionActiveTools: SessionActiveToolsState;
   managerToolActivity: ManagerToolActivityState;
   now: () => string;
+  history?: { refreshRegistryCatalog(): void; markAgentDirty(agentId: string): void };
 }
 
 /** Owns event projection, snapshot coalescing/versioning, and session activity timestamps. */
@@ -72,6 +73,7 @@ export class SwarmEventCoordinator {
   ): void {
     this.options.conversationProjector.emitConversationMessage(event, options);
     this.options.observability.recordUserVisibleMessage(event);
+
   }
 
   emitAgentMessage(event: AgentMessageEvent): void {
@@ -174,6 +176,7 @@ export class SwarmEventCoordinator {
   }
 
   emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void {
+    this.options.history?.refreshRegistryCatalog();
     const payload: SessionWorkersSnapshotEvent = {
       type: "session_workers_snapshot",
       sessionAgentId,
@@ -229,6 +232,7 @@ export class SwarmEventCoordinator {
       }
 
       this.pendingAgentsSnapshotEmit = false;
+      this.options.history?.refreshRegistryCatalog();
       this.agentsSnapshotVersion += 1;
       this.options.host.emit("agents_snapshot", {
         type: "agents_snapshot",
@@ -238,6 +242,7 @@ export class SwarmEventCoordinator {
   }
 
   emitProfilesSnapshot(): void {
+    this.options.history?.refreshRegistryCatalog();
     this.profilesSnapshotVersion += 1;
     this.options.host.emit("profiles_snapshot", {
       type: "profiles_snapshot",

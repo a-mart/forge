@@ -23,9 +23,7 @@ import {
   MAX_INDEX_CATCHUP_BYTES,
   MAX_INDEX_CATCHUP_SOURCES,
   MAX_INDEX_CATCHUP_TOTAL_BYTES,
-  REPLAY_BATCH_BYTES,
   SCAN_BATCH_BYTES,
-  TAIL_PREP_BYTES,
   type HistorySourceDescriptor,
   type ProjectedHistoryEntry,
   type ProjectorState,
@@ -358,12 +356,11 @@ export class HistoryRecallIndexStore {
     if (sourceIds.length === 0) {
       return { pendingSourceCount: 0, unreadableSourceCount: 0, omittedEligibleText: false };
     }
-    const placeholders = sourceIds.map((_, index) => `@s${index}`).join(", ");
-    const bindings = Object.fromEntries(sourceIds.map((sourceId, index) => [`s${index}`, sourceId]));
+    const bindings = { sourceIds: JSON.stringify(sourceIds) };
     const rows = this.database.prepare(`
       SELECT unreadable, omitted_eligible_text, prefix_bytes, suffix_start, suffix_end, suffix_ready,
              replay_frontier, source_size, oversized_state
-      FROM sources WHERE source_id IN (${placeholders})
+      FROM sources WHERE source_id IN (SELECT value FROM json_each(@sourceIds))
     `).all(bindings) as Array<{
       unreadable: number;
       omitted_eligible_text: number;
@@ -473,31 +470,14 @@ export class HistoryRecallIndexStore {
       offset: params.offset,
     };
     if (params.sourceWindows) {
-      const parts: string[] = [];
-      params.sourceWindows.forEach((source, index) => {
-        if (source.windowIds.length === 0) {
-          return;
-        }
-        bindings[`s${index}`] = source.sourceId;
-        const windowPlaceholders = source.windowIds.map((_, windowIndex) => {
-          const key = `w${index}_${windowIndex}`;
-          bindings[key] = source.windowIds[windowIndex];
-          return `@${key}`;
-        });
-        parts.push(`(entries.source_id = @s${index} AND entries.window_id IN (${windowPlaceholders.join(", ")}) AND entries.provisional = 0)`);
-      });
-      if (parts.length === 0) {
-        return [];
-      }
-      clauses.push(`(${parts.join(" OR ")})`);
+      const pairs = params.sourceWindows.flatMap((source) => source.windowIds.map((windowId) => [source.sourceId, windowId]));
+      if (pairs.length === 0) return [];
+      bindings.sourceWindows = JSON.stringify(pairs);
+      clauses.push("(entries.source_id, entries.window_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(@sourceWindows)) AND entries.provisional = 0");
     } else {
-      if (params.sourceIds.length === 0) {
-        return [];
-      }
-      clauses.push(`entries.source_id IN (${params.sourceIds.map((_, index) => `@s${index}`).join(", ")})`);
-      params.sourceIds.forEach((sourceId, index) => {
-        bindings[`s${index}`] = sourceId;
-      });
+      if (params.sourceIds.length === 0) return [];
+      clauses.push("entries.source_id IN (SELECT value FROM json_each(@sourceIds))");
+      bindings.sourceIds = JSON.stringify(params.sourceIds);
       if (!params.allowProvisional) {
         clauses.push("(entries.provisional = 0 OR entries.slice = 'suffix')");
       }
@@ -532,13 +512,18 @@ export class HistoryRecallIndexStore {
       ? "CASE WHEN entries.timestamp IS NULL OR entries.timestamp = '' THEN 1 ELSE 0 END ASC, entries.timestamp DESC, entries.byte_offset DESC"
       : "score ASC, COALESCE(entries.timestamp, '') DESC, entries.byte_offset DESC";
     const sql = `
-      SELECT entries.*, bm25(entries_fts) AS score
-      FROM entries_fts
-      JOIN entries ON entries.source_id = entries_fts.source_id AND entries.entry_id = entries_fts.entry_id
-        AND entries.rowid = entries_fts.rowid
-      WHERE ${clauses.join(" AND ")}
-      ORDER BY ${orderSql}
-      LIMIT @limit OFFSET @offset
+      WITH selected AS MATERIALIZED (
+        SELECT entries.rowid AS entry_rowid, ${params.order === "newest" ? "0" : "bm25(entries_fts)"} AS score,
+               entries.timestamp, entries.byte_offset
+        FROM entries_fts
+        CROSS JOIN entries ON entries.rowid = entries_fts.rowid
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY ${orderSql}
+        LIMIT @limit OFFSET @offset
+      )
+      SELECT entries.*, selected.score FROM selected
+      JOIN entries ON entries.rowid = selected.entry_rowid
+      ORDER BY ${params.order === "newest" ? "CASE WHEN selected.timestamp IS NULL OR selected.timestamp = '' THEN 1 ELSE 0 END ASC, selected.timestamp DESC, selected.byte_offset DESC" : "selected.score ASC, COALESCE(selected.timestamp, '') DESC, selected.byte_offset DESC"}
     `;
     return this.database.prepare(sql).all(bindings) as Array<EntryRow & { score: number }>;
   }
@@ -652,8 +637,8 @@ export class HistoryRecallIndexStore {
     }
     const current = (replaced || truncated ? undefined : existing);
     if (!current) {
-      if (stat.size > TAIL_PREP_BYTES) {
-        const prepared = this.prepareTail(source, generation, stat, Math.min(maxBytes, TAIL_PREP_BYTES), warnings);
+      if (stat.size > SCAN_BATCH_BYTES) {
+        const prepared = this.prepareTail(source, generation, stat, Math.min(maxBytes, SCAN_BATCH_BYTES), warnings);
         const remaining = Math.max(0, maxBytes - prepared.scannedBytes);
         if (remaining <= 0) {
           return prepared;
@@ -686,7 +671,7 @@ export class HistoryRecallIndexStore {
     }
     const latest = this.getSourceRow(source.sourceId) ?? current;
     if (latest.suffix_start > 0 && latest.prefix_bytes >= latest.suffix_start && latest.suffix_ready === 0) {
-      const replayed = this.replaySuffix(source, generation, stat, latest, Math.min(remaining, REPLAY_BATCH_BYTES), warnings);
+      const replayed = this.replaySuffix(source, generation, stat, latest, Math.min(remaining, SCAN_BATCH_BYTES), warnings);
       scannedBytes += replayed.scannedBytes;
       remaining -= replayed.scannedBytes;
       if (remaining <= 0 || replayed.pending) {
@@ -711,7 +696,7 @@ export class HistoryRecallIndexStore {
     maxBytes: number,
     warnings: string[],
   ): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
-    const tail = readTailLines(source.path, stat.size, Math.min(maxBytes, TAIL_PREP_BYTES));
+    const tail = readTailLines(source.path, stat.size, Math.min(maxBytes, SCAN_BATCH_BYTES));
     const projector = createProjectorState({ provisional: true });
     const oversizedState = tail.skippedOversized || tail.skippingOversized ? (tail.skippingOversized ? 1 : 2) : 0;
     const insertBatch = this.database.transaction((entries: ProjectedHistoryEntry[]) => {

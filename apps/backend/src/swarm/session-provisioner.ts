@@ -51,6 +51,7 @@ export interface SessionProvisionerOptions {
   forgetPinnedMessages: (agentId: string) => void;
   conversationProjector: SessionProvisionerConversationProjector;
   invalidateHistory?: (sessionAgentId: string) => void | Promise<void>;
+  invalidateHistorySource?: (descriptor: AgentDescriptor) => void | Promise<void>;
   ensureProfilePiDirectories: (profileId: string) => Promise<void>;
   ensureSessionFileParentDirectory: (sessionFile: string) => Promise<void>;
   ensureAgentMemoryFile: (memoryFilePath: string, profileId?: string) => Promise<void>;
@@ -148,7 +149,11 @@ export class SessionProvisioner {
     this.options.conversationProjector.deleteConversationHistory(descriptor.agentId, descriptor.sessionFile);
 
     await this.removeSessionFiles(descriptor);
-    await this.options.invalidateHistory?.(descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId);
+    if (this.options.invalidateHistorySource) {
+      await this.options.invalidateHistorySource(descriptor);
+    } else {
+      await this.options.invalidateHistory?.(descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId);
+    }
 
     if (options.removeProfileId) {
       this.options.descriptorMutations.deleteProfile(options.removeProfileId);

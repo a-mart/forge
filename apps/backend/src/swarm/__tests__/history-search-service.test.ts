@@ -21,6 +21,19 @@ afterEach(async () => {
 });
 
 describe("HistorySearchService", () => {
+  it("bounds idle filesystem probes independently of catalog size", async () => {
+    const fx = await createFixture();
+    for (let i = 0; i < 1000; i += 1) {
+      fx.agents.push(descriptor({ agentId: `idle-${i}`, managerId: `idle-${i}`, role: "manager", profileId: "project-a" }));
+    }
+    await fx.service.startFromRegistry();
+    const needsScan = vi.fn(() => false);
+    const store = { listIndexedSourceIds: () => [], needsScan, reconcileSources: vi.fn() };
+    Reflect.get(fx.service, "runBackgroundSlice").call(fx.service, store);
+    expect(needsScan.mock.calls.length).toBeGreaterThan(0);
+    expect(needsScan.mock.calls.length).toBeLessThanOrEqual(32);
+    expect(store.reconcileSources).not.toHaveBeenCalled();
+  });
   it("reads checkpoint evidence from a cold index with a bounded canonical offset", async () => {
     const fx = await createFixture();
     const text = "tool evidence\n" + "x".repeat(70_000) + "\nlast line";
@@ -894,7 +907,6 @@ describe("HistorySearchService", () => {
 
   it("does not spin ingest on oversized degraded coverage once catch-up is idle", async () => {
     const fx = await createFixture();
-    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
     await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
       nativeMessage("first", { role: "user", content: "degradedidle" }),
       nativeMessage("huge", { role: "user", content: "x".repeat(1_200_000) }),
