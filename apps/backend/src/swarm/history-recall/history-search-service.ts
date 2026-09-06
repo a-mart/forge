@@ -207,7 +207,12 @@ export class HistorySearchService {
   }
 
   private runExclusive<T>(operation: (store: HistoryRecallIndexStore) => T | Promise<T>): Promise<T> {
-    const run = this.writeChain.then(async () => operation(await this.getStore()));
+    const run = this.writeChain.then(async () => {
+      // Let health checks, stop requests, and other sessions run between catch-up
+      // batches instead of draining concurrent history calls as one microtask chain.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return operation(await this.getStore());
+    });
     this.writeChain = run.then(() => undefined, () => undefined);
     return run;
   }

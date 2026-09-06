@@ -108,6 +108,7 @@ let allowPopoutClose = false
 let mainWindowClosing = false
 let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
+let appQuitCleanupComplete = false
 let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
 let disposeExternalChromeIpc: (() => void) | null = null
@@ -588,6 +589,7 @@ async function prepareQuitForUpdate(): Promise<void> {
     await externalChromeCoordinator?.quiesce('desktop-update')
     await stopPackagedRemoteUiServer()
     await backendSupervisor.stop()
+    appQuitCleanupComplete = true
   }
 }
 
@@ -959,6 +961,9 @@ if (!hasSingleInstanceLock) {
   app.on('before-quit', (event) => {
     lifecycleLog.record('electron_before_quit', { alreadyQuitting: appIsQuitting })
     if (appIsQuitting) {
+      // A second quit (window close, signal, or launcher disconnect) must not
+      // bypass pending cleanup. The updater may quit only after preparation.
+      if (!appQuitCleanupComplete) event.preventDefault()
       return
     }
 

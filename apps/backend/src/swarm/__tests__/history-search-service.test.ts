@@ -3,9 +3,10 @@ import { appendFile, readFile, mkdir, mkdtemp, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 import { getHistoryRecallIndexPath, getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
+import { HistoryRecallIndexStore } from "../history-recall/index-store.js";
 import { HistorySearchService } from "../history-recall/history-search-service.js";
 import { HistoryRecallError } from "../history-recall/source-catalog.js";
 import { FORGE_CONTEXT_BOUNDARY_TYPE } from "../history-recall/types.js";
@@ -494,6 +495,74 @@ describe("HistorySearchService", () => {
     for (const hit of [...all.results, ...checkpoints.results]) {
       expect((await service.read(fx.session.agentId, { ref: hit.ref })).entry.ref.entryId).toBe(hit.ref.entryId);
     }
+  });
+
+  it("yields to pending I/O between queued history operations", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("first", { role: "user", content: "fairnessneedle" }),
+    ]);
+    await fx.service.search(fx.session.agentId, { query: "fairnessneedle" });
+    const order: string[] = [];
+    const reconcile = HistoryRecallIndexStore.prototype.reconcileSources;
+    const spy = vi.spyOn(HistoryRecallIndexStore.prototype, "reconcileSources").mockImplementation(function (...args) {
+      order.push(order.length === 0 ? "first" : "second");
+      if (order.length === 1) setImmediate(() => order.push("io"));
+      return reconcile.apply(this, args);
+    });
+    try {
+      await Promise.all([
+        fx.service.search(fx.session.agentId, { query: "fairnessneedle" }),
+        fx.service.search(fx.session.agentId, { query: "fairnessneedle" }),
+      ]);
+      expect(order).toEqual(["first", "io", "second"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("rekeys legacy FTS rowids and preserves append, restart, and purge behavior", async () => {
+    const fx = await createFixture();
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("first", { role: "user", content: "rowidneedle original" }),
+      nativeMessage("second", { role: "user", content: "rowidneedle second" }),
+    ]);
+    const first = await fx.service.search(fx.session.agentId, { query: "rowidneedle" });
+    await fx.service.dispose();
+    const canonical = await readFile(path, "utf8");
+    const dbPath = getHistoryRecallIndexPath(fx.dataDir);
+    const legacy = new Database(dbPath);
+    legacy.exec("UPDATE entries_fts SET rowid = rowid + 1000; DELETE FROM meta WHERE key = 'fts_rowid_version';");
+    legacy.close();
+
+    const service = createService(fx);
+    const restored = await service.search(fx.session.agentId, { query: "rowidneedle" });
+    expect(restored.results.map(hit => hit.ref)).toEqual(first.results.map(hit => hit.ref));
+    expect(await readFile(path, "utf8")).toBe(canonical);
+    await appendFile(path, nativeMessage("third", { role: "user", content: "rowidneedle appended" }) + "\n");
+    expect((await service.search(fx.session.agentId, { query: "rowidneedle" })).results).toHaveLength(3);
+    await service.dispose();
+
+    const db = new Database(dbPath);
+    const mismatched = db.prepare(`SELECT count(*) AS n FROM entries_fts f JOIN entries e
+      ON e.source_id=f.source_id AND e.entry_id=f.entry_id WHERE e.rowid != f.rowid`).get() as { n: number };
+    expect(mismatched.n).toBe(0);
+    // A constrained FTS rowid lookup is essential: UNINDEXED metadata predicates
+    // otherwise scan every cached document on each insertion.
+    const plan = db.prepare(`EXPLAIN QUERY PLAN DELETE FROM entries_fts WHERE rowid = (
+      SELECT rowid FROM entries WHERE source_id = ? AND entry_id = ?
+    )`).all("source", "entry") as Array<{ detail: string }>;
+    expect(plan.some(row => row.detail.includes("VIRTUAL TABLE INDEX 0:="))).toBe(true);
+    db.close();
+
+    const reopened = createService(fx);
+    expect((await reopened.search(fx.session.agentId, { query: "rowidneedle" })).results).toHaveLength(3);
+    await reopened.invalidateSession(fx.session.agentId);
+    const purged = new Database(dbPath);
+    expect(purged.prepare("SELECT count(*) AS n FROM entries_fts").get()).toEqual({ n: 0 });
+    purged.close();
+    expect((await reopened.search(fx.session.agentId, { query: "rowidneedle" })).results).toHaveLength(3);
   });
 
   it("rebuilds legacy derived projections once without modifying canonical history or invalidating refs", async () => {
