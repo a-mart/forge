@@ -151,7 +151,7 @@ export function ChangeModelDialog({
         <DialogHeader className="mb-3">
           <DialogTitle>Change Default Model</DialogTitle>
           <DialogDescription>
-            Update the default model and reasoning level for {profileLabel}. Sessions using the project default will be updated. Sessions with a model override are not affected.
+            Update the default model and reasoning level for {profileLabel}. This applies to new conversations. Existing conversations keep their current model.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

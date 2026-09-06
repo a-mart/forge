@@ -82,7 +82,12 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
     currentReasoningLevels,
   )
   const effectiveLabel = `${modelLabel} · ${reasoningLabel}`
-  const originLabel = config.modelOrigin === 'session_override' ? 'session override' : 'project default'
+  const originLabel = config.modelOrigin === 'session_override' ? 'session override' : 'selected from project default'
+  const canUseProjectDefault = config.modelOrigin === 'session_override' || Boolean(config.profileDefaultModel && (
+    config.currentModel.provider !== config.profileDefaultModel.provider ||
+    config.currentModel.modelId !== config.profileDefaultModel.modelId ||
+    config.currentModel.thinkingLevel !== config.profileDefaultModel.thinkingLevel
+  ))
 
   const { selectableRows, groups } = useMemo(() => {
     if (!catalog) return { selectableRows: [], groups: [] }
@@ -253,7 +258,7 @@ export function SessionModelPicker({ config }: { config: SessionModelPickerConfi
           </DropdownMenuSubContent>
         </DropdownMenuSub>
 
-        {config.modelOrigin === 'session_override' && (
+        {canUseProjectDefault && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem

@@ -11,7 +11,7 @@ Your mode preference is saved across sessions.
 
 ## Changing the session model
 
-Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** clears it so the session tracks future project-default changes again.
+Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** applies the current project default to that session. Later default changes affect only new conversations.
 
 For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
 

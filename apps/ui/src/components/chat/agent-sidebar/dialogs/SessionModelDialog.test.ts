@@ -156,10 +156,18 @@ describe('SessionModelDialog', () => {
     })
 
     it('does not show "Use Project Default" reset link when already using default', async () => {
-      await renderDialog({ modelOrigin: 'profile_default' })
+      await renderDialog({ modelOrigin: 'profile_default', profileDefaultModel: { provider: 'anthropic', modelId: 'claude-opus-4-6', thinkingLevel: 'high' } })
 
       const resetLink = findResetLink()
       expect(resetLink).toBeNull()
+    })
+
+    it('can explicitly apply a changed default to an existing session', async () => {
+      const props = await renderDialog({ modelOrigin: 'profile_default' })
+      const resetLink = findResetLink()
+      expect(resetLink).not.toBeNull()
+      await act(async () => resetLink!.click())
+      expect(props.onConfirm).toHaveBeenCalledWith('session-1', 'inherit')
     })
 
     it('shows description indicating project default tracking with session name', async () => {
@@ -167,8 +175,8 @@ describe('SessionModelDialog', () => {
 
       const dialog = document.body.querySelector('[role="dialog"]')
       expect(dialog?.textContent).toContain('Test Session')
-      expect(dialog?.textContent).toContain('project default model')
-      expect(dialog?.textContent).toContain('tracks future changes')
+      expect(dialog?.textContent).toContain('selected from the project default')
+      expect(dialog?.textContent).toContain('apply only to new conversations')
     })
   })
 

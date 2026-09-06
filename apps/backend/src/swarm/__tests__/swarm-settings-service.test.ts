@@ -514,7 +514,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       stopSecureSessionForLifecycle,
     });
 
-    await service.updateManagerModel("manager", "pi-5.6", "high");
+    await service.updateSessionModel("manager", "override", "pi-5.6", "high");
 
     expect(stopSecureSessionForLifecycle).not.toHaveBeenCalled();
     expect(hasActiveSecureSession).toHaveBeenCalledWith(session.agentId);
@@ -544,7 +544,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     });
 
     await expect(
-      service.updateManagerModel(session.agentId, "cursor-composer", "high"),
+      service.updateSessionModel(session.agentId, "override", "cursor-composer", "high"),
     ).rejects.toThrow("Secure Sessions are not supported by this runtime provider.");
 
     expect(hasActiveSecureSession).toHaveBeenCalledWith(session.agentId);
@@ -582,7 +582,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     const session = createSession(root, "manager");
     const service = createService({ rootDir: root, sessions: [session] });
 
-    await service.updateManagerModel(session.agentId, "cursor-composer", "high");
+    await service.updateSessionModel(session.agentId, "override", "cursor-composer", "high");
 
     expect(session.model).toEqual({
       provider: "cursor-sdk",
@@ -634,7 +634,8 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       now: () => `2026-01-02T00:00:0${tick++}.000Z`
     });
 
-    await service.updateManagerModel("manager", "pi-5.6");
+    await service.updateSessionModel(activeSession.agentId, "override", "pi-5.6");
+    await service.updateSessionModel(inactiveSession.agentId, "override", "pi-5.6");
 
     expect(activeSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
     expect(inactiveSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
@@ -642,8 +643,8 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       [activeSession.agentId, "model_change"],
       [inactiveSession.agentId, "model_change"]
     ]);
-    expect(saveStore).toHaveBeenCalledTimes(1);
-    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+    expect(saveStore).toHaveBeenCalledTimes(2);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(2);
 
     const activeState = await loadModelChangeContinuityState(activeSession.sessionFile);
     const inactiveState = await loadModelChangeContinuityState(inactiveSession.sessionFile);
@@ -671,7 +672,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       emitModelChangeNotice,
     });
 
-    await service.updateManagerModel(session.agentId, "pi-codex", "high");
+    await service.updateSessionModel(session.agentId, "override", "pi-codex", "high");
 
     expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
     expect(emitModelChangeNotice).toHaveBeenCalledWith(
@@ -680,11 +681,11 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       { ...resolveModelDescriptorFromPreset("pi-codex"), thinkingLevel: "high" },
     );
 
-    await service.updateManagerModel(session.agentId, "pi-codex", "high");
+    await service.updateSessionModel(session.agentId, "override", "pi-codex", "high");
     expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
   });
 
-  it("marks only effectively changed inherited sessions during a profile-default cascade", async () => {
+  it("does not emit notices or change any existing session when updating a project default", async () => {
     const root = await createTempRoot();
     const inheritedChanged = createSession(root, "manager--changed");
     const inheritedNoop = createSession(root, "manager--noop", resolveModelDescriptorFromPreset("pi-5.6"));
@@ -698,12 +699,8 @@ describe("SwarmSettingsService.updateManagerModel", () => {
 
     await service.updateProfileDefaultModel("manager", "pi-5.6");
 
-    expect(emitModelChangeNotice).toHaveBeenCalledTimes(1);
-    expect(emitModelChangeNotice).toHaveBeenCalledWith(
-      inheritedChanged.agentId,
-      resolveModelDescriptorFromPreset("pi-codex"),
-      resolveModelDescriptorFromPreset("pi-5.6"),
-    );
+    expect(emitModelChangeNotice).not.toHaveBeenCalled();
+    expect(inheritedChanged.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
     expect(inheritedNoop.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
     expect(overridden.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
   });
@@ -752,12 +749,13 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       applyManagerRuntimeRecyclePolicy,
     });
 
-    await service.updateManagerModel("manager", "pi-5.6");
+    await service.updateSessionModel(deferred.agentId, "override", "pi-5.6");
+    await service.updateSessionModel(failed.agentId, "override", "pi-5.6");
 
     expect(emitModelChangeNotice).toHaveBeenCalledTimes(2);
     expect(order[0]).toBe("save");
     const firstRecycleIndex = order.findIndex((entry) => entry.startsWith("recycle:"));
-    expect(order.slice(1, firstRecycleIndex)).toEqual(["notice", "notice"]);
+    expect(order.slice(1, firstRecycleIndex)).toEqual(["notice"]);
     expect(order).toContain(`recycle:${deferred.agentId}`);
     expect(order).toContain(`recycle:${failed.agentId}`);
     expect(deferred.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
@@ -813,7 +811,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("aborts before any model mutation or recycle when any request write fails, leaving partial writes inert", async () => {
+  it("aborts an explicit session model change when its continuity request cannot be written", async () => {
     const root = await createTempRoot();
     const firstSession = createSession(root, "manager");
     const secondSession = createSession(root, "manager--s2");
@@ -833,7 +831,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       now: () => "2026-01-02T00:00:00.000Z"
     });
 
-    await expect(service.updateManagerModel("manager", "pi-5.6")).rejects.toThrow(/invalid session header/i);
+    await expect(service.updateSessionModel(secondSession.agentId, "override", "pi-5.6")).rejects.toThrow(/invalid session header/i);
 
     expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
     expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
@@ -843,7 +841,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     await expect(readFile(secondSession.sessionFile, "utf8")).resolves.toBe(invalidHeader);
 
     const firstState = await loadModelChangeContinuityState(firstSession.sessionFile);
-    expect(firstState.requests).toHaveLength(1);
+    expect(firstState.requests).toHaveLength(0);
     expect(
       findLatestPendingModelChangeContinuityRequest({
         sessionAgentId: firstSession.agentId,
@@ -886,10 +884,10 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       now: () => "2026-01-02T00:00:00.000Z"
     });
 
-    await service.updateManagerModel("manager", "pi-5.6");
+    await service.updateSessionModel("manager", "override", "pi-5.6");
     expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
 
-    await service.updateManagerModel("manager", "pi-opus");
+    await service.updateSessionModel("manager", "override", "pi-opus");
     expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-opus"));
 
     const state = await loadModelChangeContinuityState(session.sessionFile);
@@ -916,7 +914,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     });
   });
 
-  it("rolls back the profile default model when profile updates fail before session mutations apply", async () => {
+  it("updates the project default without reading even malformed existing histories", async () => {
     const root = await createTempRoot();
     const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
     const firstSession = createSession(root, "manager");
@@ -931,11 +929,11 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       now: () => "2026-01-02T00:00:00.000Z"
     });
 
-    await expect(service.updateProfileDefaultModel("manager", "pi-5.6")).rejects.toThrow(/invalid session header/i);
+    await service.updateProfileDefaultModel("manager", "pi-5.6");
 
     expect(profiles.get("manager")).toMatchObject({
-      defaultModel: resolveModelDescriptorFromPreset("pi-codex"),
-      updatedAt: "2026-01-01T00:00:00.000Z"
+      defaultModel: resolveModelDescriptorFromPreset("pi-5.6"),
+      updatedAt: "2026-01-02T00:00:00.000Z"
     });
     expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
     expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
@@ -1022,7 +1020,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it("treats profile-default recycle failures after save as deferred and still completes the update", async () => {
+  it("does not invoke runtime recycling when changing the project default", async () => {
     const root = await createTempRoot();
     const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
     const firstSession = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
@@ -1054,15 +1052,15 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       defaultModel: resolveModelDescriptorFromPreset("pi-5.6"),
       updatedAt: "2026-01-02T00:00:00.000Z"
     });
-    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
-    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
+    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
     expect(saveStore).toHaveBeenCalledTimes(1);
-    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(2);
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
     expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
     expect(emitProfilesSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it("updates only inherited sessions when the profile default model changes", async () => {
+  it("preserves inherited and overridden sessions when the profile default model changes", async () => {
     const root = await createTempRoot();
     const inheritedRoot = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
     const inheritedSession = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
@@ -1079,18 +1077,15 @@ describe("SwarmSettingsService.updateManagerModel", () => {
 
     await service.updateProfileDefaultModel("manager", "pi-5.6");
 
-    expect(inheritedRoot.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
-    expect(inheritedSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.6"));
+    expect(inheritedRoot.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(inheritedSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
     expect(overriddenSession.model).toEqual(resolveModelDescriptorFromPreset("pi-opus"));
     expect(overriddenSession.modelOrigin).toBe("session_override");
-    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
-      ["manager", "model_change"],
-      ["manager--s2", "model_change"]
-    ]);
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
     expect(emitProfilesSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it("applies profile default session descriptor patches in one transaction before recycling", async () => {
+  it("persists only the profile default in the descriptor transaction", async () => {
     const root = await createTempRoot();
     const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
     const firstSession = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
@@ -1134,12 +1129,12 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     await service.updateProfileDefaultModel("manager", "pi-5.6");
 
     expect(transactionDescriptors).toHaveBeenCalledTimes(1);
-    expect(transactionCalls).toEqual([["manager", "manager--s2"]]);
+    expect(transactionCalls).toEqual([[]]);
     expect(profiles.get("manager")).toMatchObject({
       defaultModel: resolveModelDescriptorFromPreset("pi-5.6"),
       updatedAt: "2026-01-02T00:00:00.000Z"
     });
-    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(2);
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
   });
 
   it("persists metadata-only session override transitions without recycling when the effective model stays the same", async () => {
