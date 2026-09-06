@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readCompleteLines } from "../history-recall/jsonl-reader.js";
+import { alignToNextRecord, readCompleteLines, readTailLines } from "../history-recall/jsonl-reader.js";
 import { MAX_LINE_BYTES } from "../history-recall/content-policy.js";
 
 const dirs: string[] = [];
@@ -45,6 +45,16 @@ describe("bounded JSONL forward progress", () => {
     expect(second.lines[0].line).toHaveLength(MAX_LINE_BYTES - 2);
     const third = readCompleteLines(path, second.nextOffset, text.length, MAX_LINE_BYTES);
     expect(third.lines.map(line => line.line)).toEqual(["tail"]);
+  });
+
+  it("aligns tail scans to the next newline instead of treating a mid-row seek as a record", () => {
+    const text = "first\nsecond-record\nthird\n";
+    const path = fixture(text);
+    const midSecond = text.indexOf("second") + 3;
+    expect(alignToNextRecord(path, midSecond, text.length)).toBe(text.indexOf("third"));
+    const tail = readTailLines(path, text.length, 8);
+    expect(tail.lines.map((line) => line.line)).toEqual(["third"]);
+    expect(tail.startOffset).toBeGreaterThan(0);
   });
 
   it("resumes an oversized partial row after append without interpreting its suffix as a record", () => {

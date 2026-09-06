@@ -1,4 +1,4 @@
-import { isSystemProfile } from "@forge/protocol";
+import { isSystemProfile, type HistoryCatalogSnapshot } from "@forge/protocol";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
 import type { HistorySearchServiceHost, HistorySourceDescriptor } from "./types.js";
@@ -151,6 +151,7 @@ export function sourceFromDescriptor(
     archived: Boolean(session.archivedAt || profile?.archivedAt),
     sessionLabel: session.sessionLabel ?? session.displayName ?? session.agentId,
     actorLabel: descriptor.displayName ?? descriptor.agentId,
+    lastActivityAt: descriptor.lastUserMessageAt ?? session.lastUserMessageAt,
   };
 }
 
@@ -158,27 +159,63 @@ export function findSource(
   host: HistorySearchServiceHost,
   sessionAgentId: string,
   actorAgentId: string,
+  catalog?: HistoryCatalogSnapshot,
 ): HistorySourceDescriptor | undefined {
   const session = host.getAgent(sessionAgentId);
-  if (!session || session.role !== "manager") {
-    return undefined;
-  }
   const actor = host.getAgent(actorAgentId);
-  if (!actor) {
+  if (session && actor) {
+    if (session.role !== "manager") {
+      return undefined;
+    }
+    if (actor.role === "manager" && actor.agentId !== session.agentId) {
+      return undefined;
+    }
+    if (actor.role === "worker" && actor.managerId !== session.agentId) {
+      return undefined;
+    }
+    const profilesById = new Map(host.listProfiles().map((profile) => [profile.profileId, profile]));
+    const fromDescriptor = sourceFromDescriptor(host, actor, profilesById);
+    if (fromDescriptor) {
+      return fromDescriptor;
+    }
+  }
+  const fromCatalog = catalog?.sources.find((source) => (
+    source.sessionAgentId === sessionAgentId && source.actorAgentId === actorAgentId
+  ));
+  if (!fromCatalog || !isCatalogSourceAllowed(host, fromCatalog)) {
     return undefined;
   }
-  if (actor.role === "manager" && actor.agentId !== session.agentId) {
-    return undefined;
+  return fromCatalog;
+}
+
+export function sourcesFromCatalog(
+  host: HistorySearchServiceHost,
+  catalog: HistoryCatalogSnapshot,
+): HistorySourceDescriptor[] {
+  return catalog.sources.filter((source) => isCatalogSourceAllowed(host, source));
+}
+
+export function isCatalogSourceAllowed(
+  host: HistorySearchServiceHost,
+  source: HistorySourceDescriptor,
+): boolean {
+  const actor = host.getAgent(source.actorAgentId);
+  const session = host.getAgent(source.sessionAgentId);
+  if (actor && isRestrictedDescriptor(actor)) {
+    return false;
   }
-  if (actor.role === "worker" && actor.managerId !== session.agentId) {
-    return undefined;
+  if (session && isRestrictedDescriptor(session)) {
+    return false;
   }
-  const profilesById = new Map(host.listProfiles().map((profile) => [profile.profileId, profile]));
-  return sourceFromDescriptor(host, actor, profilesById);
+  const profile = host.listProfiles().find((entry) => entry.profileId === source.profileId);
+  if (isRestrictedProfile(profile)) {
+    return false;
+  }
+  return true;
 }
 
 export class HistoryRecallError extends Error {
-  constructor(message: string, readonly statusCode = 400) {
+  constructor(message: string, readonly statusCode = 400, readonly code?: string) {
     super(message);
     this.name = "HistoryRecallError";
   }

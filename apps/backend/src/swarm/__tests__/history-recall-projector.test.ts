@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
-import { createProjectorState, projectCanonicalLine } from "../history-recall/canonical-projector.js";
+import { createProjectorState, projectCanonicalLine, projectCanonicalRecord } from "../history-recall/canonical-projector.js";
 import { FORGE_CONTEXT_BOUNDARY_TYPE, INITIAL_WINDOW_ID } from "../history-recall/types.js";
 
 function projectAll(lines: string[]) {
@@ -172,6 +172,32 @@ describe("history recall canonical projector", () => {
       ["n3", undefined], ["n4", undefined], ["later", undefined],
     ]);
     expect(projectAll([forge("f1"), native("n1"), forge("f2"), native("n2")]).map(entry => entry.entryId)).toEqual(["f1", "f2"]);
+  });
+
+  it("projects every native text and tool block instead of keeping only the last slot", () => {
+    const line = JSON.stringify({
+      type: "message",
+      id: "mixed",
+      timestamp: "2026-01-01T00:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will inspect billing next" },
+          { type: "toolCall", id: "call-a", name: "read", arguments: { path: "src/a.ts" } },
+          { type: "toolCall", id: "call-b", name: "bash", arguments: { command: "rg billing" } },
+        ],
+      },
+    });
+    const record = projectCanonicalRecord(line, 0, createProjectorState(), "read");
+    expect(record?.parts.map((part) => [part.partId, part.kind, part.toolName ?? part.text.includes("billing")])).toEqual([
+      ["message", "message", true],
+      ["toolCall:call-a", "tool_call", "read"],
+      ["toolCall:call-b", "tool_call", "bash"],
+    ]);
+    const combined = projectCanonicalLine(line, 0, createProjectorState(), "read");
+    expect(combined?.text).toContain("I will inspect billing next");
+    expect(combined?.text).toContain("src/a.ts");
+    expect(combined?.text).toContain("rg billing");
   });
 
   it("does not pair identical text across a context boundary or retain unbounded dedup state", () => {

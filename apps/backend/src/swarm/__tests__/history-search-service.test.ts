@@ -589,6 +589,205 @@ describe("HistorySearchService", () => {
     expect((await reopened.search(fx.session.agentId, { query: "migrationneedle" })).results).toHaveLength(2);
   });
 
+  it("exposes a cold recent suffix before the archival prefix and reports honest coverage", async () => {
+    const fx = await createFixture();
+    const old = Array.from({ length: 4_000 }, (_, i) => nativeMessage(`old-${i}`, {
+      role: "user",
+      content: `archive filler ${i} ${"z".repeat(280)}`,
+    }));
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      ...old,
+      nativeMessage("recent-status", {
+        role: "assistant",
+        content: [{ type: "text", text: "september mobile launch is live" }],
+      }, "2026-09-01T00:00:00.000Z"),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    const cold = await fx.service.search(fx.session.agentId, { query: "september mobile launch", order: "newest" });
+    expect(cold.results.some((hit) => hit.ref.entryId === "recent-status")).toBe(true);
+    expect(cold.coverage?.state === "building" || cold.complete === false).toBe(true);
+    expect(cold.coverage?.eligibleSourceCount).toBe(1);
+  });
+
+  it("indexes a dirty append without another search driving catch-up and keeps newest chronological", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      nativeMessage("old-mobile", { role: "user", content: "mobile notes from march" }, "2026-03-01T00:00:00.000Z"),
+    ]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session, fx.otherSession]),
+    });
+    await fx.service.search(fx.session.agentId, { query: "mobile" });
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await appendFile(path, nativeMessage("new-mobile", {
+      role: "assistant",
+      content: [{ type: "text", text: "mobile launch landed in september" }],
+    }, "2026-09-01T00:00:00.000Z") + "\n");
+    fx.service.markSourceDirty({ sessionAgentId: fx.session.agentId, actorAgentId: fx.session.agentId });
+    const newest = await fx.service.search(fx.session.agentId, { query: "mobile", order: "newest" });
+    expect(newest.results[0]?.ref.entryId).toBe("new-mobile");
+    expect(newest.results.map((hit) => hit.ref.entryId)).toContain("old-mobile");
+  });
+
+  it("keeps suffix projection provisional until bounded replay matches a clean forward index", async () => {
+    const fx = await createFixture();
+    const filler = Array.from({ length: 3_000 }, (_, i) => nativeMessage(`pad-${i}`, {
+      role: "user",
+      content: `padding ${i} ${"y".repeat(200)}`,
+    }));
+    const nativeMirror = nativeMessage("seam-native", { role: "user", content: "seam repeated evidence" }, "2026-01-01T00:00:01.000Z");
+    const customMirror = conversation("seam-custom", {
+      type: "conversation_message",
+      role: "user",
+      text: "seam repeated evidence",
+      timestamp: "2026-01-01T00:00:01.000Z",
+    });
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"), ...filler, nativeMirror, customMirror]);
+    await fx.service.start({
+      revision: 1,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    let converged = await fx.service.search(fx.session.agentId, { query: '"seam repeated evidence"' });
+    expect(converged.results.length).toBeGreaterThan(0);
+    for (let i = 0; i < 16 && converged.coverage?.state !== "ready"; i += 1) {
+      converged = await fx.service.search(fx.session.agentId, { query: '"seam repeated evidence"' });
+    }
+    expect(converged.results.map((hit) => hit.ref.entryId).sort()).toEqual(["seam-custom"]);
+    expect(converged.results.every((hit) => !hit.provisional)).toBe(true);
+    await fx.service.dispose();
+    const fresh = createService(fx);
+    await writeTranscript(fx.dataDir, fx.otherSession, [header("/tmp/a2"), nativeMirror, customMirror]);
+    const forward = await fresh.search(fx.otherSession.agentId, { query: '"seam repeated evidence"' });
+    expect(converged.results.map((hit) => hit.ref.entryId).sort()).toEqual(forward.results.map((hit) => hit.ref.entryId).sort());
+  });
+
+  it("returns a complete multipart row for a legacy no-part read and validates qualified parts", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("mixed", {
+        role: "assistant",
+        content: [
+          { type: "text", text: "decision: inspect billing" },
+          { type: "toolCall", id: "call-a", name: "read", arguments: { path: "src/a.ts" } },
+          { type: "toolCall", id: "call-b", name: "bash", arguments: { command: "rg billing" } },
+        ],
+      }),
+    ]);
+    const hits = await fx.service.search(fx.session.agentId, { query: "billing" });
+    expect(hits.results.some((hit) => hit.ref.entryId === "mixed")).toBe(true);
+    const anyHit = hits.results.find((hit) => hit.ref.entryId === "mixed")!;
+    const legacy = await fx.service.read(fx.session.agentId, {
+      ref: { ...anyHit.ref, partId: undefined, chunkIndex: undefined },
+    });
+    expect(legacy.entry.text).toContain("decision: inspect billing");
+    expect(legacy.entry.text).toContain("src/a.ts");
+    expect(legacy.entry.text).toContain("rg billing");
+    expect(legacy.entry.totalChars).toBe(legacy.entry.text.length);
+    const partHit = hits.results.find((hit) => hit.ref.partId === "toolCall:call-b");
+    if (partHit) {
+      const part = await fx.service.read(fx.session.agentId, { ref: partHit.ref });
+      expect(part.entry.text).toContain("rg billing");
+      expect(part.entry.text).not.toContain("decision: inspect billing");
+    }
+    await expect(fx.service.read(fx.session.agentId, {
+      ref: { ...anyHit.ref, partId: "toolCall:missing" },
+    })).rejects.toBeInstanceOf(HistoryRecallError);
+  });
+
+  it("pages a stable snapshot while appends continue and suppresses history artifacts by default", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      ...Array.from({ length: 12 }, (_, i) => nativeMessage(`hit-${i}`, {
+        role: "user",
+        content: `stablepaging ${i}`,
+      }, `2026-01-01T00:00:${String(i).padStart(2, "0")}.000Z`)),
+      nativeMessage("history-echo", {
+        role: "toolResult",
+        toolCallId: "hist-1",
+        toolName: "history",
+        content: [{ type: "text", text: "stablepaging copied into a history tool result" }],
+      }),
+    ]);
+    const first = await fx.service.search(fx.session.agentId, { query: "stablepaging", limit: 5, order: "newest" });
+    expect(first.results.length).toBeGreaterThan(0);
+    expect(first.results.length).toBeLessThanOrEqual(5);
+    expect(first.results.some((hit) => hit.toolName === "history")).toBe(false);
+    expect(first.nextCursor).toBeTruthy();
+    const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
+    await appendFile(path, nativeMessage("late", { role: "user", content: "stablepaging late" }, "2026-02-01T00:00:00.000Z") + "\n");
+    const second = await fx.service.search(fx.session.agentId, {
+      query: "stablepaging",
+      limit: 5,
+      order: "newest",
+      cursor: first.nextCursor,
+    });
+    expect(second.snapshotId).toBe(first.snapshotId);
+    expect(second.results.some((hit) => hit.ref.entryId === "late")).toBe(false);
+    const firstIds = first.results.map((hit) => hit.ref.entryId);
+    const secondIds = second.results.map((hit) => hit.ref.entryId);
+    expect(firstIds.some((id) => secondIds.includes(id))).toBe(false);
+    const artifacts = await fx.service.search(fx.session.agentId, {
+      query: "stablepaging",
+      includeHistoryArtifacts: true,
+      limit: 50,
+    });
+    expect(artifacts.results.some((hit) => hit.toolName === "history")).toBe(true);
+    await expect(fx.service.search(fx.session.agentId, {
+      query: "billing",
+      cursor: first.nextCursor,
+    })).rejects.toBeInstanceOf(HistoryRecallError);
+  });
+
+  it("discovers sessions, omits restricted sources, and does not purge from a partial catalog", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"), nativeMessage("keep", { role: "user", content: "partialcatalog" })]);
+    await writeTranscript(fx.dataDir, fx.otherSession, [header("/tmp/a2"), nativeMessage("other", { role: "user", content: "partialcatalog" })]);
+    await fx.service.search(fx.session.agentId, { query: "partialcatalog", scope: "project" });
+    await fx.service.start({
+      revision: 2,
+      hydration: "partial",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    const sessions = await fx.service.sessions(fx.session.agentId, { query: "Session", scope: "project" });
+    expect(sessions.results.some((hit) => hit.sessionAgentId === fx.session.agentId)).toBe(true);
+    expect(sessions.coverage.catalogHydration).toBe("partial");
+    expect(sessions.coverage.eligibleSourceCount).toBeUndefined();
+    const stillIndexed = await fx.service.search(fx.session.agentId, { query: "partialcatalog", scope: "project" });
+    expect(stillIndexed.results.map((hit) => hit.ref.entryId).sort()).toEqual(["keep", "other"]);
+    expect(stillIndexed.coverage?.eligibleSourceCount).toBeUndefined();
+    await expect(fx.service.search(fx.cortex.agentId, { query: "partialcatalog" })).rejects.toBeInstanceOf(HistoryRecallError);
+    await fx.service.start({
+      revision: 3,
+      hydration: "complete",
+      sources: catalogSources(fx, [fx.session]),
+    });
+    const purged = await fx.service.search(fx.session.agentId, { query: "partialcatalog", scope: "project" });
+    expect(purged.results.map((hit) => hit.ref.entryId)).toEqual(["keep"]);
+  });
+
+  it("does not treat sibling branches as same-branch neighbors", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [
+      header("/tmp/a"),
+      JSON.stringify({ type: "message", id: "root", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "branch root" } }),
+      JSON.stringify({ type: "message", id: "left", parentId: "root", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: "left sibling needle" } }),
+      JSON.stringify({ type: "message", id: "right", parentId: "root", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "user", content: "right sibling needle" } }),
+    ]);
+    const hits = await fx.service.search(fx.session.agentId, { query: "left sibling" });
+    const read = await fx.service.read(fx.session.agentId, { ref: hits.results[0]!.ref, before: 1, after: 1 });
+    expect(read.before.map((entry) => entry.ref.entryId)).toEqual(["root"]);
+    expect(read.after.map((entry) => entry.ref.entryId)).toEqual([]);
+  });
+
 });
 
 async function createFixture() {
@@ -684,6 +883,30 @@ function createService(fx: Awaited<ReturnType<typeof createFixture>>): HistorySe
   created.push(service);
   return service;
 }
+
+function catalogSources(
+  fx: Awaited<ReturnType<typeof createFixture>>,
+  agents: AgentDescriptor[],
+) {
+  return agents.map((agent) => {
+    const session = agent.role === "manager" ? agent : fx.agents.find((entry) => entry.agentId === agent.managerId)!;
+    const profileId = agent.profileId ?? session.profileId ?? agent.agentId;
+    return {
+      sourceId: `${session.agentId}:${agent.agentId}`,
+      profileId,
+      sessionAgentId: session.agentId,
+      actorAgentId: agent.agentId,
+      path: agent.role === "manager"
+        ? getSessionFilePath(fx.dataDir, profileId, agent.agentId)
+        : getWorkerSessionFilePath(fx.dataDir, profileId, session.agentId, agent.agentId),
+      archived: Boolean(session.archivedAt),
+      sessionLabel: session.displayName ?? session.agentId,
+      actorLabel: agent.displayName ?? agent.agentId,
+      lastActivityAt: agent.lastUserMessageAt ?? session.lastUserMessageAt,
+    };
+  });
+}
+
 
 function descriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "managerId" | "role">): AgentDescriptor {
   const now = "2026-01-01T00:00:00.000Z";

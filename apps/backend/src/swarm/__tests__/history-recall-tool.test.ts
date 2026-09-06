@@ -28,6 +28,20 @@ describe('history recall tool', () => {
     await buildHistoryRecallTools(h, descriptor())[0].execute('call', { op: 'read', ref, offset: 100, maxChars: 500 })
     expect(h.readHistory).toHaveBeenCalledWith('worker', { ref, offset: 100, maxChars: 500 })
   })
+  it('discovers sessions without requiring another approval and keeps search/read working without that host method', async () => {
+    const h = {
+      ...host(),
+      listHistorySessions: vi.fn(async () => ({ scope: 'project' as const, results: [], warnings: [], coverage: {
+        catalogHydration: 'partial' as const, state: 'building' as const, catalogRevision: 0,
+        pendingSourceCount: 1, unreadableSourceCount: 0, omittedEligibleText: false,
+      } })),
+    }
+    const [tool] = buildHistoryRecallTools(h, descriptor())
+    await tool.execute('call', { op: 'sessions', query: 'mobile', scope: 'project' })
+    expect(h.listHistorySessions).toHaveBeenCalledWith('worker', { query: 'mobile', scope: 'project' })
+    await tool.execute('call', { op: 'search', query: 'mobile', order: 'newest' })
+    expect(h.searchHistory).toHaveBeenCalledWith('worker', { query: 'mobile', order: 'newest' })
+  })
   it('does not expose local history to restricted runtimes or when the service is absent', () => {
     expect(buildHistoryRecallTools({}, descriptor())).toEqual([])
     for (const overrides of [

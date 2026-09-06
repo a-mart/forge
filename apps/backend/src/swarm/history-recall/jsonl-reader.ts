@@ -7,6 +7,7 @@ import {
   MAX_JSONL_CHUNK_BYTES,
   type JsonlCompleteLine,
   type JsonlScanResult,
+  type JsonlTailScanResult,
 } from "./types.js";
 
 export interface SourceFileStat {
@@ -200,6 +201,51 @@ export function readCompleteLines(
     result = iterator.next();
   }
   return { lines, ...result.value };
+}
+
+/** Never treat an arbitrary seek offset as a record start; skip to the next newline. */
+export function alignToNextRecord(path: string, offset: number, endOffset: number): number {
+  if (offset <= 0) {
+    return 0;
+  }
+  if (offset >= endOffset) {
+    return endOffset;
+  }
+  const descriptor = openSync(path, "r");
+  try {
+    const previous = Buffer.alloc(1);
+    if (readSync(descriptor, previous, 0, 1, offset - 1) === 1 && previous[0] === 10) {
+      return offset;
+    }
+    let cursor = offset;
+    const buffer = Buffer.allocUnsafe(Math.min(MAX_JSONL_CHUNK_BYTES, endOffset - cursor));
+    while (cursor < endOffset) {
+      const toRead = Math.min(buffer.length, endOffset - cursor);
+      const bytesRead = readSync(descriptor, buffer, 0, toRead, cursor);
+      if (bytesRead <= 0) {
+        return endOffset;
+      }
+      const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+      if (newline >= 0) {
+        return cursor + newline + 1;
+      }
+      cursor += bytesRead;
+    }
+    return endOffset;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+export function readTailLines(
+  path: string,
+  endOffset: number,
+  maxBytes: number,
+): JsonlTailScanResult {
+  const hint = Math.max(0, endOffset - Math.max(1, maxBytes));
+  const startOffset = alignToNextRecord(path, hint, endOffset);
+  const scan = readCompleteLines(path, startOffset, endOffset, Math.max(maxBytes, endOffset - startOffset));
+  return { ...scan, startOffset };
 }
 
 export function readLineAt(path: string, byteOffset: number): JsonlLineRead | undefined {

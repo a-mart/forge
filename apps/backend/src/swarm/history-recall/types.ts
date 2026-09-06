@@ -1,4 +1,8 @@
-import type { HistoryEntryKind } from "@forge/protocol";
+import type {
+  HistoryCatalogHydration,
+  HistoryCatalogSnapshot,
+  HistoryEntryKind,
+} from "@forge/protocol";
 import type {
   AgentDescriptor,
   ManagerProfile,
@@ -19,6 +23,8 @@ export type ProjectionMode = "index" | "read";
 
 export interface ProjectedHistoryEntry {
   entryId: string;
+  partId: string;
+  chunkIndex: number;
   kind: HistoryEntryKind;
   role?: "user" | "assistant";
   toolName?: string;
@@ -31,6 +37,14 @@ export interface ProjectedHistoryEntry {
   byteOffset: number;
   parentId: string | null;
   replacesEntryId?: string;
+  retainsFromEntryId?: string;
+  provisional?: boolean;
+}
+
+export interface ProjectedCanonicalRecord {
+  entryId: string;
+  windowId: string;
+  parts: ProjectedHistoryEntry[];
   retainsFromEntryId?: string;
 }
 
@@ -46,6 +60,8 @@ export interface ProjectorState {
   windowId: string;
   pendingBoundaryId?: string;
   seenContentKeys: Map<string, ContentKeyOccurrences>;
+  /** Unanchored suffix projection; forbids resolved-window claims and seam replacement. */
+  provisional?: boolean;
 }
 
 export interface HistorySourceDescriptor {
@@ -57,6 +73,7 @@ export interface HistorySourceDescriptor {
   archived: boolean;
   sessionLabel: string;
   actorLabel: string;
+  lastActivityAt?: string;
 }
 
 export interface JsonlCompleteLine {
@@ -74,13 +91,33 @@ export interface JsonlScanResult {
   skippingOversized: boolean;
 }
 
+export interface JsonlTailScanResult extends JsonlScanResult {
+  startOffset: number;
+}
+
 export const INITIAL_WINDOW_ID = "window:initial";
 export const FORGE_CONTEXT_BOUNDARY_TYPE = "forge_context_boundary";
 export const DEFAULT_SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 50;
+export const DEFAULT_SESSION_LIMIT = 20;
+export const MAX_SESSION_LIMIT = 50;
 export const MAX_NEIGHBORS = 5;
 export const MAX_INDEX_CATCHUP_BYTES = 1 * 1024 * 1024;
 export const MAX_INDEX_CATCHUP_TOTAL_BYTES = 2 * 1024 * 1024;
 export const MAX_INDEX_CATCHUP_SOURCES = 48;
 export const MAX_JSONL_CHUNK_BYTES = 64 * 1024;
 export const MAX_GENERATION_SCAN_BYTES = 64 * 1024;
+export const TAIL_PREP_BYTES = 256 * 1024;
+export const REPLAY_BATCH_BYTES = 256 * 1024;
+export const MAX_INDEX_CHUNKS = 8;
+export const HISTORY_TOOL_NAME = "history";
+export const SNAPSHOT_TTL_MS = 60_000;
+export const MAX_LIVE_SNAPSHOTS = 32;
+export const MAX_SNAPSHOT_HITS = 500;
+export const INDEX_SCHEMA_VERSION = "3";
+
+export const EMPTY_CATALOG: HistoryCatalogSnapshot = {
+  revision: 0,
+  hydration: "partial" satisfies HistoryCatalogHydration,
+  sources: [],
+};

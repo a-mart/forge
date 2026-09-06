@@ -13,15 +13,18 @@ import {
 import {
   FORGE_CONTEXT_BOUNDARY_TYPE,
   INITIAL_WINDOW_ID,
+  MAX_INDEX_CHUNKS,
+  type ProjectedCanonicalRecord,
   type ProjectedHistoryEntry,
   type ProjectionMode,
   type ProjectorState,
 } from "./types.js";
 
-export function createProjectorState(): ProjectorState {
+export function createProjectorState(options?: { provisional?: boolean; windowId?: string }): ProjectorState {
   return {
-    windowId: INITIAL_WINDOW_ID,
+    windowId: options?.windowId ?? INITIAL_WINDOW_ID,
     seenContentKeys: new Map(),
+    provisional: options?.provisional,
   };
 }
 
@@ -31,6 +34,27 @@ export function projectCanonicalLine(
   state: ProjectorState,
   mode: ProjectionMode = "index",
 ): ProjectedHistoryEntry | undefined {
+  const record = projectCanonicalRecord(line, byteOffset, state, mode);
+  if (!record) {
+    return undefined;
+  }
+  const combined = combineProjectedRecord(record);
+  if (mode === "index" && combined.text.length > MAX_INDEX_TEXT_CHARS) {
+    return {
+      ...combined,
+      text: clipText(combined.text, MAX_INDEX_TEXT_CHARS),
+      extra: clipText(combined.extra, MAX_INDEX_TEXT_CHARS),
+    };
+  }
+  return combined;
+}
+
+export function projectCanonicalRecord(
+  line: string,
+  byteOffset: number,
+  state: ProjectorState,
+  mode: ProjectionMode = "index",
+): ProjectedCanonicalRecord | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -56,11 +80,13 @@ export function projectCanonicalLine(
   }
 
   if (wrapperType === "compaction") {
-    return projectCompaction(parsed, byteOffset, state, mode);
+    const entry = projectCompaction(parsed, byteOffset, state, mode);
+    return entry ? recordFromParts([entry], mode) : undefined;
   }
 
   if (wrapperType === "custom" && stringValue(parsed.customType) === CONVERSATION_ENTRY_TYPE) {
-    return projectForgeConversationEntry(parsed, byteOffset, state, mode);
+    const entry = projectForgeConversationEntry(parsed, byteOffset, state, mode);
+    return entry ? recordFromParts([entry], mode) : undefined;
   }
 
   if (wrapperType === "message") {
@@ -68,6 +94,46 @@ export function projectCanonicalLine(
   }
 
   return undefined;
+}
+
+export function combineProjectedRecord(record: ProjectedCanonicalRecord): ProjectedHistoryEntry {
+  const [first, ...rest] = record.parts;
+  if (!first || rest.length === 0) {
+    return first ?? {
+      entryId: record.entryId,
+      partId: "message",
+      chunkIndex: 0,
+      kind: "message",
+      windowId: record.windowId,
+      text: "",
+      extra: "",
+      contentKey: contentKeyForRecord("message", undefined, undefined, "", record.entryId),
+      origin: "native",
+      byteOffset: 0,
+      parentId: null,
+    };
+  }
+  return {
+    ...first,
+    text: record.parts.map((part) => part.text).filter(Boolean).join(first.origin === "native" ? "\n" : "\n"),
+    extra: record.parts.map((part) => part.extra).filter(Boolean).join("\n"),
+    retainsFromEntryId: record.retainsFromEntryId ?? first.retainsFromEntryId,
+  };
+}
+
+function recordFromParts(parts: ProjectedHistoryEntry[], mode: ProjectionMode = "index"): ProjectedCanonicalRecord | undefined {
+  if (parts.length === 0) {
+    return undefined;
+  }
+  const expanded = mode === "index"
+    ? parts.flatMap((part) => chunkProjected(part, mode))
+    : parts.map((part) => ({ ...part, chunkIndex: 0 }));
+  return {
+    entryId: expanded[0]!.entryId,
+    windowId: expanded[0]!.windowId,
+    parts: expanded,
+    retainsFromEntryId: expanded[0]!.retainsFromEntryId,
+  };
 }
 
 function projectCompaction(
@@ -84,30 +150,32 @@ function projectCompaction(
   const forgeContext = details && isRecord(details.forgeContext) ? details.forgeContext : undefined;
   const modeName = stringValue(forgeContext?.mode);
   const firstKeptEntryId = stringValue(parsed.firstKeptEntryId);
-  if (firstKeptEntryId) {
-    state.windowId = modeName === "fresh"
-      ? `window:fresh:${entryId}`
-      : `window:compact:${entryId}`;
+  if (!state.provisional) {
+    if (firstKeptEntryId) {
+      state.windowId = modeName === "fresh"
+        ? `window:fresh:${entryId}`
+        : `window:compact:${entryId}`;
+    }
+    state.pendingBoundaryId = undefined;
   }
-  state.pendingBoundaryId = undefined;
 
   const summary = finalizeText(rawString(parsed.summary) ?? "", mode);
   if (!summary) {
     return undefined;
   }
-  return acceptProjected(state, {
+  return acceptProjected(state, makeEntry({
     entryId,
+    partId: "checkpoint",
     kind: "checkpoint",
     timestamp: stringValue(parsed.timestamp),
-    windowId: state.windowId,
+    windowId: state.provisional ? unresolvedWindowId(state.windowId) : state.windowId,
     text: summary,
-    extra: mode === "index" ? expandCodeTokens(summary) : "",
-    contentKey: contentKeyForRecord("checkpoint", undefined, undefined, summary, entryId),
     origin: "native",
     byteOffset,
     parentId: nullableString(parsed.parentId),
     retainsFromEntryId: firstKeptEntryId,
-  }, mode);
+    mode,
+  }), mode);
 }
 
 function projectForgeConversationEntry(
@@ -124,6 +192,7 @@ function projectForgeConversationEntry(
   const conversationType = stringValue(data.type);
   const timestamp = stringValue(data.timestamp) ?? stringValue(parsed.timestamp);
   const parentId = nullableString(parsed.parentId);
+  const windowId = projectionWindowId(state);
 
   if (conversationType === "conversation_message") {
     if (stringValue(data.role) === "system") {
@@ -136,10 +205,11 @@ function projectForgeConversationEntry(
     }
     return acceptProjected(state, makeEntry({
       entryId,
+      partId: "message",
       kind: "message",
       role,
       timestamp,
-      windowId: state.windowId,
+      windowId,
       text,
       origin: "forge_custom",
       byteOffset,
@@ -155,10 +225,11 @@ function projectForgeConversationEntry(
     }
     return acceptProjected(state, makeEntry({
       entryId,
+      partId: "message",
       kind: "message",
       role: "user",
       timestamp,
-      windowId: state.windowId,
+      windowId,
       text,
       origin: "forge_custom",
       byteOffset,
@@ -182,17 +253,19 @@ function projectForgeConversationEntry(
     if (!text) {
       return undefined;
     }
+    const toolCallId = stringValue(data.toolCallId);
     return acceptProjected(state, makeEntry({
       entryId,
+      partId: partIdFor(kind, toolCallId, 0),
       kind,
       toolName,
       timestamp,
-      windowId: state.windowId,
+      windowId,
       text,
       origin: "forge_custom",
       byteOffset,
       parentId,
-      toolCallId: stringValue(data.toolCallId),
+      toolCallId,
       mode,
     }), mode);
   }
@@ -205,7 +278,7 @@ function projectNativeMessage(
   byteOffset: number,
   state: ProjectorState,
   mode: ProjectionMode,
-): ProjectedHistoryEntry | undefined {
+): ProjectedCanonicalRecord | undefined {
   const entryId = stringValue(parsed.id);
   const message = parsed.message;
   if (!entryId || !isRecord(message)) {
@@ -217,65 +290,85 @@ function projectNativeMessage(
   }
   const timestamp = isoTimestamp(message.timestamp) ?? stringValue(parsed.timestamp);
   const parentId = nullableString(parsed.parentId);
-  const extracted = extractNativeContent(message.content, role, message, mode);
-  if (!extracted || extracted.hidden) {
+  const extracted = extractNativeParts(message.content, role, message, mode);
+  if (extracted.hidden || extracted.parts.length === 0) {
     return undefined;
   }
-  if (isSecretToolName(extracted.toolName)) {
-    return undefined;
+  const windowId = projectionWindowId(state);
+  const parts: ProjectedHistoryEntry[] = [];
+  for (const [index, part] of extracted.parts.entries()) {
+    if (isSecretToolName(part.toolName)) {
+      continue;
+    }
+    const mappedRole = part.kind === "message" ? asUserAssistantRole(role) : undefined;
+    if (part.kind === "message" && !mappedRole) {
+      continue;
+    }
+    const projected = acceptProjected(state, makeEntry({
+      entryId,
+      partId: partIdFor(part.kind, part.toolCallId, index),
+      kind: part.kind,
+      role: mappedRole,
+      toolName: part.toolName,
+      timestamp,
+      windowId,
+      text: part.text,
+      origin: "native",
+      byteOffset,
+      parentId,
+      toolCallId: part.toolCallId,
+      mode,
+    }), mode);
+    if (projected) {
+      parts.push(projected);
+    }
   }
-  const mappedKind = extracted.kind;
-  const mappedRole = mappedKind === "message" ? asUserAssistantRole(role) : undefined;
-  if (mappedKind === "message" && !mappedRole) {
-    return undefined;
-  }
-  return acceptProjected(state, makeEntry({
-    entryId,
-    kind: mappedKind,
-    role: mappedRole,
-    toolName: extracted.toolName,
-    timestamp,
-    windowId: state.windowId,
-    text: extracted.text,
-    origin: "native",
-    byteOffset,
-    parentId,
-    toolCallId: extracted.toolCallId,
-    mode,
-  }), mode);
+  return recordFromParts(parts, mode);
 }
 
-function extractNativeContent(
+function extractNativeParts(
   content: unknown,
   role: string | undefined,
   message: Record<string, unknown>,
   mode: ProjectionMode,
-): { kind: HistoryEntryKind; text: string; toolName?: string; toolCallId?: string; hidden?: boolean } | undefined {
+): { parts: Array<{ kind: HistoryEntryKind; text: string; toolName?: string; toolCallId?: string }>; hidden?: boolean } {
   if (role === "toolResult") {
     const text = extractRenderableText(content, mode);
     if (!text) {
-      return undefined;
+      return { parts: [] };
     }
     return {
-      kind: "tool_result",
-      text,
-      toolName: stringValue(message.toolName) ?? stringValue(message.name),
-      toolCallId: stringValue(message.toolCallId) ?? stringValue(message.id),
+      parts: [{
+        kind: "tool_result",
+        text,
+        toolName: stringValue(message.toolName) ?? stringValue(message.name),
+        toolCallId: stringValue(message.toolCallId) ?? stringValue(message.id),
+      }],
     };
   }
 
   if (typeof content === "string") {
     const text = finalizeText(content, mode);
-    return text ? { kind: "message", text } : undefined;
+    return text ? { parts: [{ kind: "message", text }] } : { parts: [] };
   }
   if (!Array.isArray(content)) {
-    return undefined;
+    return { parts: [] };
   }
 
+  const parts: Array<{ kind: HistoryEntryKind; text: string; toolName?: string; toolCallId?: string }> = [];
   const textParts: string[] = [];
   let thinkingOnly = true;
-  let toolCall: { name?: string; id?: string; args?: string } | undefined;
-  let toolResult: { name?: string; id?: string; text?: string } | undefined;
+
+  const flushText = (): void => {
+    if (textParts.length === 0) {
+      return;
+    }
+    const text = finalizeText(textParts.join("\n"), mode);
+    textParts.length = 0;
+    if (text) {
+      parts.push({ kind: "message", text });
+    }
+  };
 
   for (const item of content) {
     if (typeof item === "string") {
@@ -303,35 +396,37 @@ function extractNativeContent(
       continue;
     }
     if (itemType === "toolCall" || itemType === "tool_call" || itemType === "functionCall" || itemType === "function_call") {
-      toolCall = {
+      flushText();
+      const toolCall = {
         name: stringValue(item.name) ?? stringValue(item.toolName),
         id: stringValue(item.id) ?? stringValue(item.toolCallId) ?? stringValue(item.callId),
         args: stringifyRedacted(item.arguments ?? item.input ?? item.args),
       };
+      const text = finalizeText([toolCall.name, toolCall.args].filter(Boolean).join(mode === "read" ? "\n" : " "), mode);
+      if (text) {
+        parts.push({ kind: "tool_call", text, toolName: toolCall.name, toolCallId: toolCall.id });
+      }
       continue;
     }
     if (itemType === "toolResult" || itemType === "tool_result" || itemType === "functionResult" || itemType === "function_result") {
-      toolResult = {
+      flushText();
+      const toolResult = {
         name: stringValue(item.name) ?? stringValue(item.toolName),
         id: stringValue(item.id) ?? stringValue(item.toolCallId) ?? stringValue(item.callId),
         text: extractRenderableText(item.content ?? item.text ?? item.output, mode),
       };
+      const text = finalizeText(toolResult.text ?? "", mode);
+      if (text) {
+        parts.push({ kind: "tool_result", text, toolName: toolResult.name, toolCallId: toolResult.id });
+      }
     }
   }
+  flushText();
 
-  if (thinkingOnly && textParts.length === 0 && !toolCall && !toolResult) {
-    return { kind: "message", text: "", hidden: true };
+  if (thinkingOnly && parts.length === 0) {
+    return { parts: [], hidden: true };
   }
-  if (toolCall) {
-    const text = finalizeText([toolCall.name, toolCall.args].filter(Boolean).join(mode === "read" ? "\n" : " "), mode);
-    return text ? { kind: "tool_call", text, toolName: toolCall.name, toolCallId: toolCall.id } : undefined;
-  }
-  if (toolResult) {
-    const text = finalizeText(toolResult.text ?? "", mode);
-    return text ? { kind: "tool_result", text, toolName: toolResult.name, toolCallId: toolResult.id } : undefined;
-  }
-  const text = finalizeText(textParts.join("\n"), mode);
-  return text ? { kind: "message", text } : undefined;
+  return { parts };
 }
 
 function extractRenderableText(content: unknown, mode: ProjectionMode): string {
@@ -381,6 +476,7 @@ function collectMessageText(data: Record<string, unknown>, mode: ProjectionMode)
 
 function makeEntry(input: {
   entryId: string;
+  partId: string;
   kind: HistoryEntryKind;
   role?: "user" | "assistant";
   toolName?: string;
@@ -391,10 +487,13 @@ function makeEntry(input: {
   byteOffset: number;
   parentId: string | null;
   toolCallId?: string;
+  retainsFromEntryId?: string;
   mode: ProjectionMode;
 }): ProjectedHistoryEntry {
   return {
     entryId: input.entryId,
+    partId: input.partId,
+    chunkIndex: 0,
     kind: input.kind,
     role: input.role,
     toolName: input.toolName,
@@ -402,11 +501,33 @@ function makeEntry(input: {
     windowId: input.windowId,
     text: input.text,
     extra: input.mode === "index" ? expandCodeTokens(input.text) : "",
-    contentKey: contentKeyForRecord(input.kind, input.role, input.toolName, input.text, input.toolCallId),
+    contentKey: contentKeyForRecord(input.kind, input.role, input.toolName, input.text, input.toolCallId ?? input.partId),
     origin: input.origin,
     byteOffset: input.byteOffset,
     parentId: input.parentId,
+    retainsFromEntryId: input.retainsFromEntryId,
+    provisional: undefined,
   };
+}
+
+function chunkProjected(entry: ProjectedHistoryEntry, mode: ProjectionMode): ProjectedHistoryEntry[] {
+  if (mode !== "index" || entry.text.length <= MAX_INDEX_TEXT_CHARS) {
+    return [{ ...entry, chunkIndex: 0 }];
+  }
+  const chunks: ProjectedHistoryEntry[] = [];
+  const maxChunks = Math.min(MAX_INDEX_CHUNKS, Math.ceil(entry.text.length / MAX_INDEX_TEXT_CHARS));
+  for (let index = 0; index < maxChunks; index += 1) {
+    const start = index * MAX_INDEX_TEXT_CHARS;
+    const text = entry.text.slice(start, start + MAX_INDEX_TEXT_CHARS);
+    chunks.push({
+      ...entry,
+      chunkIndex: index,
+      text,
+      extra: expandCodeTokens(text),
+      contentKey: `${entry.contentKey}:chunk:${index}`,
+    });
+  }
+  return chunks;
 }
 
 function acceptProjected(
@@ -414,32 +535,40 @@ function acceptProjected(
   entry: ProjectedHistoryEntry,
   mode: ProjectionMode,
 ): ProjectedHistoryEntry | undefined {
+  const stamped = {
+    ...entry,
+    provisional: state.provisional || undefined,
+    windowId: state.provisional ? unresolvedWindowId(entry.windowId) : entry.windowId,
+  };
   if (mode === "read") {
-    return entry;
+    return stamped;
+  }
+  if (state.provisional) {
+    return stamped;
   }
   const existing = state.seenContentKeys.get(entry.contentKey);
   // Only pair adjacent projected mirror occurrences. Repeated text is not an
   // identity: preserve later messages, other windows, and every checkpoint.
   state.seenContentKeys.clear();
-  if (entry.kind === "checkpoint") return entry;
+  if (entry.kind === "checkpoint") return stamped;
   const sameOccurrence = existing && existing.origin !== entry.origin
     && existing.windowId === entry.windowId && existing.text === entry.text
     && (entry.kind !== "message" || (entry.timestamp !== undefined && entry.timestamp === existing.timestamp));
   if (sameOccurrence) {
-    return entry.origin === "native" ? undefined : { ...entry, replacesEntryId: existing.entryId };
+    return entry.origin === "native" ? undefined : { ...stamped, replacesEntryId: existing.entryId };
   }
   state.seenContentKeys.set(entry.contentKey, {
     entryId: entry.entryId, origin: entry.origin, text: entry.text,
     windowId: entry.windowId, timestamp: entry.timestamp,
   });
-  return entry;
+  return stamped;
 }
 
 function finalizeText(value: string, mode: ProjectionMode): string {
   if (mode === "read") {
     return value;
   }
-  return clipText(normalizeSearchText(value), MAX_INDEX_TEXT_CHARS);
+  return normalizeSearchText(value);
 }
 
 function mapToolKind(kind: string | undefined, text: string | undefined): HistoryEntryKind | undefined {
@@ -479,7 +608,12 @@ function asUserAssistantRole(value: unknown): "user" | "assistant" | undefined {
 
 function isoTimestamp(value: unknown): string | undefined {
   if (typeof value === "string") {
-    return value;
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const ms = Date.parse(trimmed);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     return new Date(value).toISOString();
@@ -501,4 +635,27 @@ function rawString(value: unknown): string | undefined {
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function partIdFor(kind: HistoryEntryKind, toolCallId: string | undefined, index: number): string {
+  if (kind === "message") {
+    return index === 0 ? "message" : `message:${index}`;
+  }
+  if (kind === "checkpoint") {
+    return "checkpoint";
+  }
+  const prefix = kind === "tool_call" ? "toolCall" : "toolResult";
+  return toolCallId ? `${prefix}:${toolCallId}` : `${prefix}:${index}`;
+}
+
+function projectionWindowId(state: ProjectorState): string {
+  return state.provisional ? unresolvedWindowId(state.windowId) : state.windowId;
+}
+
+function unresolvedWindowId(windowId: string): string {
+  return windowId.startsWith("window:provisional") ? windowId : "window:provisional";
+}
+
+export function isProvisionalWindowId(windowId: string): boolean {
+  return windowId === "window:provisional" || windowId.startsWith("window:provisional:");
 }
