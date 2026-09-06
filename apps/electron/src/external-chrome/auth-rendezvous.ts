@@ -1,7 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { ExternalChromeRendezvousDocument } from '@forge/protocol'
@@ -24,7 +23,8 @@ export type PrivateFileVerification = 'secure' | 'insecure' | 'missing'
 
 export interface CurrentUserAccessController {
   preparePrivateDirectory(directory: string): Promise<void>
-  securePrivateFile(file: string): Promise<void>
+  /** Establish and verify file privacy, optionally securing its containing directory in the same operation. */
+  securePrivateFile(file: string, prepareDirectory?: boolean): Promise<void>
   verifyPrivateFile(file: string): Promise<PrivateFileVerification>
 }
 
@@ -40,8 +40,12 @@ export class PosixCurrentUserAccessController implements CurrentUserAccessContro
     await fs.chmod(directory, POSIX_PRIVATE_DIRECTORY_MODE)
   }
 
-  async securePrivateFile(file: string): Promise<void> {
+  async securePrivateFile(file: string, prepareDirectory = false): Promise<void> {
+    if (prepareDirectory) await this.preparePrivateDirectory(path.dirname(file))
     await fs.chmod(file, POSIX_PRIVATE_FILE_MODE)
+    if (await this.verifyPrivateFile(file) !== 'secure') {
+      throw new Error('External Chrome private file permissions could not be verified; check folder ownership and retry Chrome setup')
+    }
   }
 
   async verifyPrivateFile(file: string): Promise<PrivateFileVerification> {
@@ -70,52 +74,94 @@ export class ProcessCommandRunner implements ExternalCommandRunner {
 
 /** Windows ACL mutation is isolated behind a facade so tests and non-Windows hosts never invoke it. */
 export class WindowsCurrentUserAccessController implements CurrentUserAccessController {
-  constructor(
-    private readonly username: string,
-    private readonly runner: ExternalCommandRunner = new ProcessCommandRunner(),
-  ) {}
+  constructor(private readonly runner: ExternalCommandRunner = new ProcessCommandRunner()) {}
 
   async preparePrivateDirectory(directory: string): Promise<void> {
     await fs.mkdir(directory, { recursive: true })
-    await this.apply(directory)
+    await this.apply(directory, true)
   }
 
-  async securePrivateFile(file: string): Promise<void> {
-    await this.apply(file)
+  async securePrivateFile(file: string, prepareDirectory = false): Promise<void> {
+    await this.apply(file, false, prepareDirectory)
   }
 
   async verifyPrivateFile(file: string): Promise<PrivateFileVerification> {
     try {
       const info = await fs.lstat(file)
       if (!info.isFile() || info.isSymbolicLink()) return 'insecure'
-      const escaped = file.replaceAll("'", "''")
-      const script = [
-        `$acl=Get-Acl -LiteralPath '${escaped}'`,
-        '$me=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
-        "$allowed=@($me,'S-1-5-18','S-1-5-32-544')",
-        '$bad=@($acl.Access | Where-Object { $_.AccessControlType -eq \'Allow\' -and $allowed -notcontains $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value })',
-        '$mine=@($acl.Access | Where-Object { $_.AccessControlType -eq \'Allow\' -and $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $me })',
-        "if (-not $acl.AreAccessRulesProtected -or $bad.Count -ne 0 -or $mine.Count -eq 0) { exit 3 }; 'secure'",
-      ].join(';')
-      const output = await this.runner.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script])
-      return output.trim() === 'secure' ? 'secure' : 'insecure'
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
       return 'insecure'
     }
+    try {
+      return await this.checkAccess(file, false, false) ? 'secure' : 'insecure'
+    } catch {
+      return 'insecure'
+    }
   }
 
-  private async apply(target: string): Promise<void> {
-    await this.runner.run('icacls.exe', [target, '/inheritance:r', '/grant:r', `${this.username}:(F)`])
+  private async apply(target: string, directory: boolean, prepareDirectory = false): Promise<void> {
+    const info = await fs.lstat(target)
+    if (info.isSymbolicLink() || (directory ? !info.isDirectory() : !info.isFile())) {
+      throw new Error('External Chrome private path must not be a link or an unexpected file type')
+    }
+    try {
+      if (await this.checkAccess(target, directory, true, prepareDirectory)) return
+    } catch {
+      // Do not surface command output or ACL/account details through setup IPC.
+    }
+    throw new Error('External Chrome could not establish private Windows permissions. Check folder ownership and Windows security policy, then retry Chrome setup.')
+  }
+
+  private async checkAccess(target: string, directory: boolean, apply: boolean, prepareDirectory = false): Promise<boolean> {
+    // A private atomic write checks both directory and new inode in one process.
+    // No cached ACL verdicts and no extra verifier subprocess on the refresh path.
+    const targets = prepareDirectory ? [{ target: path.dirname(target), directory: true }, { target, directory }] : [{ target, directory }]
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      ...targets.flatMap(({ target, directory }) => this.accessScript(target, directory, apply)),
+      "'secure'",
+    ].join(';')
+    const output = await this.runner.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script])
+    return output.trim() === 'secure'
+  }
+
+  private accessScript(target: string, directory: boolean, apply: boolean): string[] {
+    const escaped = target.replaceAll("'", "''")
+    const inheritance = directory ? 'ContainerInherit, ObjectInherit' : 'None'
+    return [
+      `$target='${escaped}'`,
+      '$me=[System.Security.Principal.WindowsIdentity]::GetCurrent().User',
+      // Windows may assign Administrators as owner for an elevated creator.
+      // These are the same privileged principals already trusted for read ACLs.
+      "$allowed=@($me.Value,'S-1-5-18','S-1-5-32-544')",
+      '$item=Get-Item -LiteralPath $target -Force',
+      `if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or $item.PSIsContainer -ne $${directory}) { exit 3 }`,
+      '$acl=Get-Acl -LiteralPath $target',
+      'if ($allowed -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 3 }',
+      ...(apply ? [
+        // Replace the DACL, not just the named user's ACE. /grant:r preserves
+        // explicit logon/default-token grants and repeatedly fails verification.
+        `$private=New-Object System.Security.AccessControl.${directory ? 'DirectorySecurity' : 'FileSecurity'}`,
+        '$private.SetAccessRuleProtection($true,$false)',
+        `$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($me,'FullControl','${inheritance}','None','Allow')`,
+        '$private.AddAccessRule($rule)',
+        'Set-Acl -LiteralPath $target -AclObject $private',
+        '$acl=Get-Acl -LiteralPath $target',
+      ] : []),
+      '$rules=@($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]))',
+      '$bad=@($rules | Where-Object { $_.AccessControlType -ne \'Allow\' -or $allowed -notcontains $_.IdentityReference.Value })',
+      "$full=[System.Security.AccessControl.FileSystemRights]::FullControl",
+      `$inherit=[System.Security.AccessControl.InheritanceFlags]'${inheritance}'`,
+      '$mine=@($rules | Where-Object { $_.AccessControlType -eq \'Allow\' -and $_.IdentityReference.Value -eq $me.Value -and ($_.FileSystemRights -band $full) -eq $full -and $_.PropagationFlags -eq \'None\' -and ($_.InheritanceFlags -band $inherit) -eq $inherit })',
+      "if (-not $acl.AreAccessRulesProtected -or $bad.Count -ne 0 -or $mine.Count -eq 0 -or $allowed -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 3 }",
+    ]
   }
 }
 
-export function createCurrentUserAccessController(
-  platform: NodeJS.Platform,
-  username = os.userInfo().username,
-): CurrentUserAccessController {
+export function createCurrentUserAccessController(platform: NodeJS.Platform): CurrentUserAccessController {
   return platform === 'win32'
-    ? new WindowsCurrentUserAccessController(username)
+    ? new WindowsCurrentUserAccessController()
     : new PosixCurrentUserAccessController()
 }
 
@@ -156,15 +202,14 @@ export class ExternalChromeAuthStore {
   }
 
   async rotate(): Promise<AuthKeyRecord> {
-    await this.access.preparePrivateDirectory(this.paths.auth)
     const key = randomBytes(AUTH_KEY_BYTES)
-    await atomicWrite(this.paths.authKey, `${key.toString('base64')}\n`, POSIX_PRIVATE_FILE_MODE)
-    await this.access.securePrivateFile(this.paths.authKey)
-    if (await this.access.verifyPrivateFile(this.paths.authKey) !== 'secure') {
+    try {
+      await atomicPrivateWrite(this.paths.authKey, `${key.toString('base64')}\n`, this.access)
+      return { key, keyId: authKeyId(key), created: true }
+    } catch (error) {
       key.fill(0)
-      throw new Error('External Chrome authentication key permissions are not private to the current user')
+      throw error
     }
-    return { key, keyId: authKeyId(key), created: true }
   }
 
   async remove(): Promise<void> {
@@ -208,7 +253,6 @@ export class ExternalChromeAuthorityStore {
   }
 
   async claim(expiresAt: string): Promise<AuthorityClaim> {
-    await this.access.preparePrivateDirectory(path.dirname(this.authorityPath))
     const document: AuthorityDocument = {
       schemaVersion: 1,
       desktopInstanceId: this.instanceId,
@@ -219,14 +263,10 @@ export class ExternalChromeAuthorityStore {
     let tookOver = false
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const handle = await fs.open(this.authorityPath, 'wx', POSIX_PRIVATE_FILE_MODE)
-        try {
-          await handle.writeFile(`${JSON.stringify(document)}\n`)
-          await handle.sync()
-        } finally {
-          await handle.close()
-        }
-        await this.access.securePrivateFile(this.authorityPath)
+        // Publish a complete, verified inode without replacing another claimant.
+        // ACL subprocesses run only against our unique temporary file. Failure
+        // cleanup must never unlink the canonical path owned by a competitor.
+        await atomicPrivateWrite(this.authorityPath, `${JSON.stringify(document)}\n`, this.access, false)
         return { state: 'owned', owner: document, tookOver }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -242,24 +282,18 @@ export class ExternalChromeAuthorityStore {
   async refresh(expiresAt: string): Promise<void> {
     const inspected = await this.inspect()
     if (inspected.state !== 'owned') throw new Error('External Chrome authority was lost')
-    await atomicWrite(this.authorityPath, `${JSON.stringify({
+    await atomicPrivateWrite(this.authorityPath, `${JSON.stringify({
       schemaVersion: 1,
       desktopInstanceId: this.instanceId,
       desktopPid: this.pid,
       dataDirHash: this.dataDirHash,
       expiresAt,
-    } satisfies AuthorityDocument)}\n`, POSIX_PRIVATE_FILE_MODE)
-    await this.access.securePrivateFile(this.authorityPath)
+    } satisfies AuthorityDocument)}\n`, this.access)
   }
 
   async publish(document: ExternalChromeRendezvousDocument): Promise<void> {
     if ((await this.inspect()).state !== 'owned') throw new Error('Cannot publish External Chrome rendezvous without authority')
-    await atomicWrite(this.rendezvousPath, `${JSON.stringify(document)}\n`, POSIX_PRIVATE_FILE_MODE)
-    await this.access.securePrivateFile(this.rendezvousPath)
-    if (await this.access.verifyPrivateFile(this.rendezvousPath) !== 'secure') {
-      await fs.rm(this.rendezvousPath, { force: true })
-      throw new Error('External Chrome rendezvous permissions are not private to the current user')
-    }
+    await atomicPrivateWrite(this.rendezvousPath, `${JSON.stringify(document)}\n`, this.access)
   }
 
   async readRendezvous(): Promise<ExternalChromeRendezvousDocument | null> {
@@ -299,21 +333,24 @@ function authKeyId(key: Uint8Array): string {
   return `key-${createHash('sha256').update(key).digest('base64url').slice(0, 24)}`
 }
 
-async function atomicWrite(file: string, value: string, mode: number): Promise<void> {
+async function atomicPrivateWrite(file: string, value: string, access: CurrentUserAccessController, replace = true): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: POSIX_PRIVATE_DIRECTORY_MODE })
   const temporary = `${file}.new-${randomUUID()}`
-  const handle = await fs.open(temporary, 'wx', mode)
+  const handle = await fs.open(temporary, 'wx', POSIX_PRIVATE_FILE_MODE)
   try {
-    await handle.writeFile(value)
-    await handle.sync()
+    try {
+      // Establish and verify the new inode's ACL before writing any credential
+      // bytes or publishing it. Rename does not preserve the old file's DACL.
+      await access.securePrivateFile(temporary, true)
+      await handle.writeFile(value)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    if (replace) await fs.rename(temporary, file)
+    else await fs.link(temporary, file)
   } finally {
-    await handle.close()
-  }
-  try {
-    await fs.rename(temporary, file)
-  } catch (error) {
     await fs.rm(temporary, { force: true })
-    throw error
   }
 }
 
