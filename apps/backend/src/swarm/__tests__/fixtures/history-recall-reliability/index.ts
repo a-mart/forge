@@ -1,6 +1,7 @@
 export * from "./adapter.js";
 export * from "./catalog.js";
 export * from "./corpus.js";
+export * from "./evaluation.js";
 export * from "./goldens.js";
 export * from "./harness.js";
 export * from "./ids.js";

@@ -26,6 +26,9 @@ export interface ObservedResponse {
   errorStatus?: number;
   lifecycle?: Record<string, boolean>;
   durationMs: number;
+  queryCount?: number;
+  startupToEvidenceMs?: number;
+  passiveWaitMs?: number;
 }
 
 export interface CaseScore {
@@ -40,6 +43,9 @@ export interface CaseScore {
   notes: string[];
   foundEntryIds: string[];
   durationMs: number;
+  queryCount?: number;
+  startupToEvidenceMs?: number;
+  passiveWaitMs?: number;
 }
 
 export function classifyCursor(cursor: string | undefined): ObservedResponse["cursorKind"] {
@@ -139,6 +145,10 @@ export function scoreCase(golden: GoldenCase, observed: ObservedResponse): CaseS
     meetsGolden = false;
     notes.push("cursor is a raw BM25 offset, not a frozen snapshot");
   }
+  if ((observed.queryCount ?? 1) > 1) {
+    meetsGolden = false;
+    notes.push(`search-driven warmup used ${observed.queryCount} queries; cold evidence must use one query after start(snapshot)`);
+  }
 
   const observedKind = inferObserved(golden, observed, meetsGolden, notes);
   return finish(golden, observed, foundEntryIds, meetsGolden, observedKind, notes);
@@ -233,6 +243,9 @@ function finish(
     notes,
     foundEntryIds,
     durationMs: observed.durationMs,
+    queryCount: observed.queryCount,
+    startupToEvidenceMs: observed.startupToEvidenceMs,
+    passiveWaitMs: observed.passiveWaitMs,
   };
 }
 

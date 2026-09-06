@@ -12,6 +12,7 @@ import {
   type HistoryCatalogSnapshot,
   type HistoryServiceLifecycle,
 } from "./lifecycle-contract.js";
+import { waitForPassiveReadiness } from "./evaluation.js";
 import { NEEDLE, SESSION } from "./ids.js";
 import { classifyCursor, type ObservedHit, type ObservedResponse } from "./scoring.js";
 
@@ -130,6 +131,7 @@ async function executeSearch(
       cursorKind: classifyCursor(result.nextCursor),
       lifecycle,
       durationMs: performance.now() - started,
+      queryCount: 1,
     };
   } catch (error) {
     return fail("search", started, lifecycle, error);
@@ -171,17 +173,24 @@ async function executeLifecycle(
 
   if (golden.id === "cold-tail-without-search-clock") {
     if (typeof service.start !== "function") {
-      return { op: golden.op, hits: [], lifecycle, error: "required lifecycle methods are absent", durationMs: performance.now() - started };
+      return { op: golden.op, hits: [], lifecycle, error: "required lifecycle methods are absent", durationMs: performance.now() - started, queryCount: 0 };
     }
     await service.start(catalogSnapshot(dataDir, agents, "complete", 1));
-    await yieldBackground(8);
-    return executeSearch(service, {
+    const wait = await waitForPassiveReadiness(started);
+    const observed = await executeSearch(service, {
       ...golden,
       op: "search",
       query: NEEDLE.coldTail,
       scope: "session",
       sessionAgentId: SESSION.recent,
     }, started, lifecycle);
+    return {
+      ...observed,
+      op: golden.op,
+      queryCount: 1,
+      passiveWaitMs: wait.waitedMs,
+      startupToEvidenceMs: wait.waitedMs + observed.durationMs,
+    };
   }
 
   if (golden.id === "partial-catalog-no-purge") {
@@ -217,18 +226,26 @@ async function executeLifecycle(
     }, started, lifecycle);
   }
 
-  if (golden.id === "provisional-seam-replay") {
+  if (golden.id === "provisional-seam-unanchored") {
     if (typeof service.start !== "function") {
-      return { op: golden.op, hits: [], lifecycle, error: "required lifecycle methods are absent", durationMs: performance.now() - started };
+      return { op: golden.op, hits: [], lifecycle, error: "required lifecycle methods are absent", durationMs: performance.now() - started, queryCount: 0 };
     }
     await service.start(catalogSnapshot(dataDir, agents, "complete", 1));
-    return executeSearch(service, {
+    const wait = await waitForPassiveReadiness(started);
+    const observed = await executeSearch(service, {
       ...golden,
       op: "search",
-      query: "HRR_SEAM_MIRROR_TEXT",
+      query: NEEDLE.seam,
       scope: "session",
-      sessionAgentId: SESSION.multipart,
+      sessionAgentId: SESSION.seam,
     }, started, lifecycle);
+    return {
+      ...observed,
+      op: golden.op,
+      queryCount: 1,
+      passiveWaitMs: wait.waitedMs,
+      startupToEvidenceMs: wait.waitedMs + observed.durationMs,
+    };
   }
 
   return {
@@ -305,10 +322,4 @@ function fail(op: ObservedResponse["op"], started: number, lifecycle: Record<str
     lifecycle,
     durationMs: performance.now() - started,
   };
-}
-
-async function yieldBackground(turns: number): Promise<void> {
-  for (let i = 0; i < turns; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
 }

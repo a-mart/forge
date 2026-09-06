@@ -1,6 +1,8 @@
 import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import { getHistoryRecallIndexPath, getSessionFilePath } from "../../../storage/data-paths.js";
 import { catalogSnapshot, createBenchmarkService, executeGolden } from "./adapter.js";
+import { waitForPassiveReadiness } from "./evaluation.js";
 import {
   compactAgentSpecs,
   compactProfileSpecs,
@@ -81,7 +83,13 @@ export async function runReliabilitySuite(options: {
       await resetDerivedIndex(root.dataDir);
       const cold = createBenchmarkService(root.dataDir, agents, profiles);
       try {
+        const startedAt = performance.now();
+        await cold.start(catalogSnapshot(root.dataDir, agents, "complete", 1));
+        const wait = await waitForPassiveReadiness(startedAt);
         const observed = await executeGolden(cold, golden, root.dataDir, agents);
+        observed.queryCount = 1;
+        observed.passiveWaitMs = wait.waitedMs;
+        observed.startupToEvidenceMs = wait.waitedMs + observed.durationMs;
         observations.push(observed);
         cases.push(scoreCase(golden, observed));
       } finally {

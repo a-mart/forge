@@ -20,6 +20,7 @@ export const SESSION = {
   reset: "hrr-reset",
   worker: "hrr-worker-session",
   recent: "hrr-recent",
+  seam: "hrr-seam",
   outside: "hrr-outside",
   cortex: "hrr-cortex",
   collab: "hrr-collab",
@@ -72,6 +73,8 @@ export const ENTRY = {
   scaleTail: (index: number) => `hrr-scale-tail-${String(index).padStart(3, "0")}`,
   seamNative: "hrr-seam-native",
   seamCustom: "hrr-seam-custom",
+  seamUnanchoredNative: "hrr-seam-unanchored-native",
+  seamUnanchoredCustom: "hrr-seam-unanchored-custom",
 } as const;
 
 export const NEEDLE = {

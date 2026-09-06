@@ -2,8 +2,10 @@
 /**
  * Opt-in history-recall reliability runner.
  *
- * Default mode is the compact synthetic corpus used by Vitest. 200MB-class and
- * ~9GB-class corpora require --mode giant|scale and --confirm-large.
+ * Default evaluation is strict: missed authored goldens exit nonzero.
+ * Diagnostic baseline reporting requires --eval baseline --baseline-revision
+ * matching the pinned compact diagnostic revision. 200MB-class and ~9GB-class
+ * corpora require --mode giant|scale and --confirm-large.
  *
  * The runner creates a marked disposable tmp root and will only delete that
  * root. It never reads FORGE_DATA_DIR, live transcripts, or secrets.
@@ -12,13 +14,19 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BASELINE_PIN_REVISION,
   assertLargeModeConfirmed,
+  evaluateBaseline,
+  evaluateStrict,
   runReliabilitySuite,
   type CorpusMode,
+  type EvalMode,
 } from "../src/swarm/__tests__/fixtures/history-recall-reliability/index.js";
 
 interface Args {
   mode: CorpusMode;
+  evalMode: EvalMode;
+  baselineRevision?: string;
   confirmLarge: boolean;
   keepRoot: boolean;
   report: string;
@@ -30,6 +38,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     mode: "compact",
+    evalMode: "strict",
     confirmLarge: false,
     keepRoot: false,
     report: resolve(
@@ -45,6 +54,12 @@ function parseArgs(argv: string[]): Args {
     const next = argv[i + 1];
     if (token === "--mode" && next) {
       args.mode = next as CorpusMode;
+      i += 1;
+    } else if (token === "--eval" && next) {
+      args.evalMode = next as EvalMode;
+      i += 1;
+    } else if (token === "--baseline-revision" && next) {
+      args.baselineRevision = next;
       i += 1;
     } else if (token === "--confirm-large") {
       args.confirmLarge = true;
@@ -70,6 +85,12 @@ function parseArgs(argv: string[]): Args {
   if (!["compact", "giant", "scale"].includes(args.mode)) {
     throw new Error(`Unknown mode ${args.mode}`);
   }
+  if (args.evalMode !== "strict" && args.evalMode !== "baseline") {
+    throw new Error(`Unknown eval mode ${args.evalMode}`);
+  }
+  if (args.evalMode === "baseline" && args.baselineRevision !== BASELINE_PIN_REVISION) {
+    throw new Error(`Baseline eval requires --baseline-revision ${BASELINE_PIN_REVISION}`);
+  }
   return args;
 }
 
@@ -78,6 +99,8 @@ function printHelp(): void {
 
 Options:
   --mode compact|giant|scale   Corpus lane (default compact)
+  --eval strict|baseline       Evaluation mode (default strict)
+  --baseline-revision <id>     Required for --eval baseline; pin ${BASELINE_PIN_REVISION}
   --confirm-large              Required for giant/scale; never implied
   --keep-root                  Leave the marked tmp root in place
   --report <path>              JSON report path
@@ -89,6 +112,10 @@ Safety:
   Creates os.tmpdir()/forge-hrr-* with a marker file.
   Cleanup deletes only that marked root.
   Refuses FORGE_DATA_DIR / MIDDLEMAN_DATA_DIR / unmarked paths.
+
+Exit:
+  strict exits 1 when any authored golden/gate is missed.
+  baseline exits 1 when observations diverge from the pinned diagnostic revision.
 `);
 }
 
@@ -104,10 +131,16 @@ async function main(): Promise<void> {
     scalePadBytes: args.scalePadBytes,
     scaleSourceCount: args.scaleSourceCount,
   });
+  const scores = [...report.cases, ...report.extras];
+  const evaluation = args.evalMode === "baseline"
+    ? evaluateBaseline(scores, undefined, args.baselineRevision)
+    : evaluateStrict(scores);
   const payload = {
     generatedAt: new Date().toISOString(),
     durationMs: Date.now() - started,
     mode: report.mode,
+    evalMode: evaluation.mode,
+    ok: evaluation.ok,
     sourceCount: report.sourceCount,
     corpusBytes: report.corpusBytes,
     lifecycle: report.lifecycle,
@@ -121,8 +154,10 @@ async function main(): Promise<void> {
       rssPeakBytes: report.resources.rssPeakBytes,
     } : undefined,
     disk: report.disk,
-    gates: summarizeGates([...report.cases, ...report.extras]),
-    cases: [...report.cases, ...report.extras].map((entry) => ({
+    gates: summarizeGates(scores),
+    missedGoldens: evaluation.missedGoldens,
+    remainingEngineFailures: evaluation.remainingEngineFailures,
+    cases: scores.map((entry) => ({
       id: entry.id,
       gate: entry.gate,
       category: entry.category,
@@ -133,22 +168,32 @@ async function main(): Promise<void> {
       notes: entry.notes,
       foundEntryIds: entry.foundEntryIds,
       durationMs: entry.durationMs,
+      queryCount: entry.queryCount,
+      startupToEvidenceMs: entry.startupToEvidenceMs,
+      passiveWaitMs: entry.passiveWaitMs,
     })),
-    note: "This runner compares authored goldens to the current engine. Compact baseline reds are expected until the engine/lifecycle work lands. A matching baseline is not a product pass.",
+    note: evaluation.mode === "strict"
+      ? "Strict mode scores authored goldens. Remaining engine failures are reported separately and cause a nonzero exit."
+      : `Diagnostic baseline pin ${BASELINE_PIN_REVISION}. A matching pin is not a product pass.`,
   };
   await mkdir(dirname(args.report), { recursive: true });
   await writeFile(args.report, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(JSON.stringify({
     report: args.report,
     mode: report.mode,
+    evalMode: evaluation.mode,
+    ok: evaluation.ok,
     sourceCount: report.sourceCount,
     corpusBytes: report.corpusBytes,
-    qualityMeetsRubric: report.quality.meetsRubric,
-    baselineMatched: payload.cases.every((entry) => entry.matchesExpectedBaseline),
+    missedGoldens: evaluation.missedGoldens,
+    remainingEngineFailures: evaluation.remainingEngineFailures.map((entry) => entry.id),
     eventLoopP99Ms: payload.resources?.eventLoopP99Ms,
     rssPeakBytes: payload.resources?.rssPeakBytes,
     disk: report.disk,
   }, null, 2));
+  if (!evaluation.ok) {
+    process.exitCode = 1;
+  }
 }
 
 function summarizeGates(cases: Array<{ gate: string; meetsGolden: boolean; matchesExpectedBaseline: boolean }>) {

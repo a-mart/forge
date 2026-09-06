@@ -84,6 +84,7 @@ export function compactAgentSpecs(archiveCount: number): SyntheticAgentSpec[] {
       cwd: "/tmp/hrr/worker",
     },
     spec(SESSION.recent, "Recent Tail Session"),
+    spec(SESSION.seam, "Seam Mirror Session"),
     {
       agentId: SESSION.outside,
       managerId: SESSION.outside,

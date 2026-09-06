@@ -218,6 +218,8 @@ function transcriptFor(agent: SyntheticAgentSpec, options: MaterializeCorpusOpti
       return workerOnlyTranscript(cwd);
     case SESSION.recent:
       return recentTranscript(cwd, options.mode);
+    case SESSION.seam:
+      return seamTranscript(cwd);
     case SESSION.outside:
       return joinJsonl([
         sessionHeader(`${agent.agentId}-header`, cwd, TIME.archive),
@@ -440,6 +442,16 @@ function workerOnlyTranscript(cwd: string): string {
   return joinJsonl([
     sessionHeader(`${ACTOR.worker}-header`, cwd, TIME.current),
     nativeAssistant(ENTRY.workerOnly, `worker observed ${NEEDLE.workerOnly} on the mill fixture`, TIME.september),
+  ]);
+}
+
+function seamTranscript(cwd: string): string {
+  return joinJsonl([
+    sessionHeader(`${SESSION.seam}-header`, cwd, TIME.archive),
+    nativeUser("hrr-seam-first", "stable first row", TIME.archive),
+    fillerUser("hrr-seam-prefix", "unanchored seam prefix filler", TIME.archive, 280_000),
+    conversationMessage(ENTRY.seamUnanchoredCustom, "user", NEEDLE.seam, TIME.september),
+    nativeUser(ENTRY.seamUnanchoredNative, NEEDLE.seam, TIME.september),
   ]);
 }
 
