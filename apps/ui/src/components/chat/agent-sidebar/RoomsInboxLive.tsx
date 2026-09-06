@@ -224,6 +224,7 @@ export function RoomsInboxLive({
           projectTree={projectTree}
           hasInlineProjectContent={hasInlineProjectContent}
           mutedSessionIds={mutedSessionIds}
+          searchQuery={searchQuery}
         />
       ) : null}
     </>

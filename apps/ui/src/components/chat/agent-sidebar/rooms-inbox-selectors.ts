@@ -77,6 +77,7 @@ export interface RoomsInboxSections {
   activeOverflowCount: number
   activeWorkerCount: number
   recent: RoomsInboxSessionViewModel[]
+  recentOverflowCount: number
   projects: RoomsInboxProjectViewModel[]
   projectCount: number
 }
@@ -90,7 +91,7 @@ export interface SelectRoomsInboxOptions {
   mutedSessionIds?: ReadonlySet<string>
 }
 
-const MAX_SECTION_ITEMS = 5
+export const MAX_SECTION_ITEMS = 5
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 export function getRoomsInboxIdentityKey(originId: string, sessionAgentId: string): string {
@@ -309,7 +310,6 @@ export function selectRoomsInboxSections(
     .filter((session) => timestampMs(sessionTimestamp(session)) >= nowMs - RECENT_WINDOW_MS)
     .filter((session) => matchesSearch(session, searchQuery))
     .sort(compareRecent)
-    .slice(0, MAX_SECTION_ITEMS)
     .map((session) => ({
       ...session,
       reason: 'recently_updated' as const,
@@ -340,6 +340,7 @@ export function selectRoomsInboxSections(
     activeOverflowCount: Math.max(0, activeCandidates.length - active.length),
     activeWorkerCount,
     recent,
+    recentOverflowCount: Math.max(0, recent.length - MAX_SECTION_ITEMS),
     projects: projects.slice(0, MAX_SECTION_ITEMS),
     projectCount: projects.length,
   }

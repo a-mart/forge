@@ -39,6 +39,7 @@ function sections(overrides: Partial<RoomsInboxSections> = {}): RoomsInboxSectio
     activeOverflowCount: 0,
     activeWorkerCount: 0,
     recent: [],
+    recentOverflowCount: 0,
     projects: [],
     projectCount: 0,
     ...overrides,
@@ -225,6 +226,50 @@ describe('RoomsInbox', () => {
     expect(container.querySelector('[data-inbox-row="local::recent"] [aria-label="Pinned"]')).not.toBeNull()
     expect(container.querySelector('[data-inbox-row="local::recent"] [aria-label="Muted"]')).not.toBeNull()
     expect(container.querySelector('[data-inbox-row="local::recent"] .sidebar-room-inbox-relative-time')).not.toBeNull()
+  })
+
+  it('collapses Recent to five rows, expands inline, and collapses back without switching modes', () => {
+    const onShowProjects = vi.fn()
+    const recent = Array.from({ length: 7 }, (_, index) => view(`recent-${index}`))
+    renderInbox({
+      sections: sections({ recent, recentOverflowCount: 2 }),
+      onShowProjects,
+    })
+
+    const recentSection = container.querySelector('[data-inbox-section="recent"]') as HTMLElement
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 2 more' })).not.toBeNull()
+    expect(recentSection.textContent).not.toContain('Show less')
+
+    flushSync(() => {
+      fireEvent.click(getByRole(recentSection, 'button', { name: 'Show 2 more' }))
+    })
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(7)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-6"]')).not.toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show less' })).not.toBeNull()
+    expect(onShowProjects).not.toHaveBeenCalled()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(recentSection, 'button', { name: 'Show less' }))
+    })
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 2 more' })).not.toBeNull()
+  })
+
+  it('keeps a selected Recent session visible while collapsed', () => {
+    const recent = Array.from({ length: 6 }, (_, index) => view(`recent-${index}`))
+    renderInbox({
+      sections: sections({ recent, recentOverflowCount: 1 }),
+      selected: { originId: 'local', sessionAgentId: 'recent-5' },
+    })
+
+    const recentSection = container.querySelector('[data-inbox-section="recent"]') as HTMLElement
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).not.toBeNull()
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-4"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 1 more' })).not.toBeNull()
   })
 
   it('uses neutral raised selection in Needs You and Recent, reserving the green inset ring for Active', () => {
