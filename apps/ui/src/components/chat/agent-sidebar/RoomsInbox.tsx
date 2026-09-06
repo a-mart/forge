@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { BellOff, CheckCheck, ChevronDown, ChevronUp, CircleAlert, Globe, Inbox, Pin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
+import type { SessionRow } from '@/lib/agent-hierarchy'
+import { SessionContextMenu, type SessionContextMenuActions } from './SessionContextMenu'
 import { SidebarRoomAvatar } from './shared'
 import { formatRoomsInboxRelativeTime, presentRoomsInboxReason } from './rooms-inbox-presenter'
 import {
@@ -25,6 +27,7 @@ export function RoomsInbox({
   mutedSessionIds,
   now,
   searchQuery,
+  resolveSessionMenu,
 }: {
   sections: RoomsInboxSections
   selected?: Pick<RoomsInboxIdentity, 'originId' | 'sessionAgentId'> | null
@@ -42,6 +45,11 @@ export function RoomsInbox({
   mutedSessionIds?: ReadonlySet<string>
   now?: Date
   searchQuery?: string
+  /** Local rows reuse the Projects session menu; remote rows remain without those actions. */
+  resolveSessionMenu?: (session: RoomsInboxSessionViewModel) => {
+    session: SessionRow
+    actions: SessionContextMenuActions
+  } | null
 }) {
   const [recentExpanded, setRecentExpanded] = useState(false)
   useEffect(() => {
@@ -118,6 +126,7 @@ export function RoomsInbox({
               section="needs-you"
               muted={isMuted(session)}
               now={now}
+              sessionMenu={resolveSessionMenu?.(session) ?? null}
             />
           ))}
         </InboxSection>
@@ -134,6 +143,7 @@ export function RoomsInbox({
               section="active"
               muted={isMuted(session)}
               now={now}
+              sessionMenu={resolveSessionMenu?.(session) ?? null}
             />
           ))}
           {sections.activeOverflowCount > 0 ? (
@@ -159,6 +169,7 @@ export function RoomsInbox({
               section="recent"
               muted={isMuted(session)}
               now={now}
+              sessionMenu={resolveSessionMenu?.(session) ?? null}
             />
           ))}
           {recentVisibility.hasMore || recentExpanded ? (
@@ -290,6 +301,7 @@ function InboxSessionRow({
   section,
   muted = false,
   now,
+  sessionMenu,
 }: {
   session: RoomsInboxSessionViewModel
   selected?: Pick<RoomsInboxIdentity, 'originId' | 'sessionAgentId'> | null
@@ -299,6 +311,10 @@ function InboxSessionRow({
   section: 'needs-you' | 'active' | 'recent'
   muted?: boolean
   now?: Date
+  sessionMenu?: {
+    session: SessionRow
+    actions: SessionContextMenuActions
+  } | null
 }) {
   const presentation = presentRoomsInboxReason(session.reason)
   const isSelected = selected?.originId === session.identity.originId
@@ -308,7 +324,7 @@ function InboxSessionRow({
     : ''
   const reasonClass = session.reason
 
-  return (
+  const row = (
     <div
       className={cn(
         'sidebar-room-inbox-row group focus-within:ring-2 focus-within:ring-sidebar-ring/60',
@@ -358,6 +374,14 @@ function InboxSessionRow({
         </button>
       ) : null}
     </div>
+  )
+
+  if (!sessionMenu) return row
+
+  return (
+    <SessionContextMenu session={sessionMenu.session} actions={sessionMenu.actions}>
+      {row}
+    </SessionContextMenu>
   )
 }
 

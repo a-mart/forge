@@ -27,7 +27,7 @@ import { SidebarModelIcon, SidebarRoomAvatar } from './shared'
 import { SessionRowItem } from './SessionRowItem'
 import { InactiveRepoProjectAgentRow } from './InactiveRepoProjectAgentRow'
 import { MAX_VISIBLE_SESSIONS } from './constants'
-import { getProjectRoomSummary } from './utils'
+import { buildSessionContextMenuActions, getProjectRoomSummary } from './utils'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { ProfileGroupProps } from './types'
 
@@ -419,6 +419,33 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             const renderSession = (session: SessionRow) => {
               const sid = session.sessionAgent.agentId
               const sessionCollapsed = !collapsedSessionIds.has(sid)
+              const menuActions = buildSessionContextMenuActions(session, {
+                onStopSession,
+                onResumeSession,
+                onDeleteSession,
+                onArchiveSession,
+                onRequestRenameSession,
+                onForkSession,
+                onMarkUnread,
+                onPinSession,
+                onPromoteToProjectAgent,
+                onOpenProjectAgentSharing,
+                onOpenProjectAgentSettings,
+                onDemoteProjectAgent,
+                onChangeSessionModel,
+                onUseProjectDefault,
+                mutedAgents,
+                onToggleMute,
+                hideCliSessions,
+                onToggleHideCliSessions,
+              }, {
+                canPromoteToProjectAgent: !isCortex,
+                onViewCreationHistory:
+                  Boolean(session.sessionAgent.projectAgent?.creatorSessionId) &&
+                  sessionAgentIds.has(session.sessionAgent.projectAgent!.creatorSessionId!)
+                    ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
+                    : undefined,
+              })
 
               return (
                 <SessionRowItem
@@ -435,35 +462,30 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(sid)}
                   onSelect={onSelect}
                   onDeleteAgent={onDeleteAgent}
-                  onStop={onStopSession ? () => onStopSession(sid) : undefined}
-                  onResume={onResumeSession ? () => onResumeSession(sid) : undefined}
-                  onDelete={onDeleteSession ? () => onDeleteSession(sid) : undefined}
-                  onArchive={onArchiveSession && !session.isDefault ? () => onArchiveSession(sid) : undefined}
-                  archiveDisabledReason={session.isDefault ? 'The default session for a project can’t be archived directly.' : undefined}
-                  onRename={onRequestRenameSession ? () => onRequestRenameSession(sid) : undefined}
-                  onFork={onForkSession ? () => onForkSession(sid) : undefined}
-                  onMarkUnread={onMarkUnread ? () => onMarkUnread(sid) : undefined}
+                  onStop={menuActions.onStop}
+                  onResume={menuActions.onResume}
+                  onDelete={menuActions.onDelete}
+                  onArchive={menuActions.onArchive}
+                  archiveDisabledReason={menuActions.archiveDisabledReason}
+                  onRename={menuActions.onRename}
+                  onFork={menuActions.onFork}
+                  onMarkUnread={menuActions.onMarkUnread}
                   onStopWorker={onStopSession}
                   onResumeWorker={onResumeSession}
                   highlightQuery={highlightQuery}
-                  onPinSession={onPinSession}
-                  onPromoteToProjectAgent={!isCortex && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(sid) : undefined}
-                  onOpenProjectAgentSharing={onOpenProjectAgentSharing ? () => onOpenProjectAgentSharing(sid) : undefined}
-                  onOpenProjectAgentSettings={onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(sid) : undefined}
-                  onDemoteProjectAgent={onDemoteProjectAgent ? () => { void onDemoteProjectAgent(sid) } : undefined}
-                  onViewCreationHistory={
-                    Boolean(session.sessionAgent.projectAgent?.creatorSessionId) &&
-                    sessionAgentIds.has(session.sessionAgent.projectAgent!.creatorSessionId!)
-                      ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
-                      : undefined
-                  }
-                  onChangeSessionModel={onChangeSessionModel ? () => onChangeSessionModel(sid) : undefined}
-                  onUseProjectDefault={onUseProjectDefault ? () => onUseProjectDefault(sid) : undefined}
-                  isMutedSession={mutedAgents?.has(sid)}
-                  onToggleMute={onToggleMute ? () => onToggleMute(sid) : undefined}
+                  onPinSession={menuActions.onPinSession}
+                  onPromoteToProjectAgent={menuActions.onPromoteToProjectAgent}
+                  onOpenProjectAgentSharing={menuActions.onOpenProjectAgentSharing}
+                  onOpenProjectAgentSettings={menuActions.onOpenProjectAgentSettings}
+                  onDemoteProjectAgent={menuActions.onDemoteProjectAgent}
+                  onViewCreationHistory={menuActions.onViewCreationHistory}
+                  onChangeSessionModel={menuActions.onChangeSessionModel}
+                  onUseProjectDefault={menuActions.onUseProjectDefault}
+                  isMutedSession={menuActions.isMutedSession}
+                  onToggleMute={menuActions.onToggleMute}
                   getCreatorAttribution={getCreatorAttribution}
-                  hideCliSessions={hideCliSessions}
-                  onToggleHideCliSessions={onToggleHideCliSessions}
+                  hideCliSessions={menuActions.hideCliSessions}
+                  onToggleHideCliSessions={menuActions.onToggleHideCliSessions}
                 />
               )
             }

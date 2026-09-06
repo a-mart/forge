@@ -1,10 +1,13 @@
 import type React from 'react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { SESSION_ATTENTION_MAX_DISMISS_IDS } from '@forge/protocol'
 import { LOCAL_ORIGIN_ID, originRegistry, useAllOrigins } from '@/lib/origin-store'
+import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { RoomsInbox } from './RoomsInbox'
 import { RoomsModeSwitch, type RoomsMode } from './RoomsModeSwitch'
+import { buildSessionContextMenuActions } from './utils'
+import type { SessionContextMenuActionSource } from './types'
 import {
   selectRoomsInboxSections,
   type RoomsInboxIdentity,
@@ -109,6 +112,8 @@ export function RoomsInboxLive({
   hasInlineProjectContent = false,
   mutedSessionIds,
   fallbackOrigins = [],
+  localTreeRows = [],
+  sessionMenuActions,
 }: {
   mode: RoomsMode
   onModeChange: (mode: RoomsMode) => void
@@ -128,6 +133,9 @@ export function RoomsInboxLive({
   mutedSessionIds?: ReadonlySet<string>
   /** Direct component consumers may not have an origin store yet (tests/bootstrap). */
   fallbackOrigins?: readonly RoomsInboxOriginInput[]
+  /** Local project tree used to bind Inbox rows to the same session-menu actions as Projects. */
+  localTreeRows?: readonly ProfileTreeRow[]
+  sessionMenuActions?: SessionContextMenuActionSource
 }) {
   const originSnapshots = useAllOrigins(selectInboxOriginSnapshot, {
     selectorKey: 'sidebar.rooms-inbox',
@@ -174,6 +182,34 @@ export function RoomsInboxLive({
       onSelectRemote?.(identity.originId, identity.sessionAgentId)
     }
   }
+
+  const localSessionById = useMemo(() => {
+    const sessions = new Map<string, { session: ProfileTreeRow['sessions'][number]; isCortex: boolean; sessionAgentIds: Set<string> }>()
+    for (const row of localTreeRows) {
+      const sessionAgentIds = new Set(row.sessions.map((session) => session.sessionAgent.agentId))
+      const isCortex = row.sessions.some((session) => session.sessionAgent.archetypeId === 'cortex')
+      for (const session of row.sessions) {
+        sessions.set(session.sessionAgent.agentId, { session, isCortex, sessionAgentIds })
+      }
+    }
+    return sessions
+  }, [localTreeRows])
+
+  const resolveSessionMenu = useCallback((view: RoomsInboxSessionViewModel) => {
+    if (view.identity.originId !== LOCAL_ORIGIN_ID || !sessionMenuActions) return null
+    const local = localSessionById.get(view.identity.sessionAgentId)
+    if (!local) return null
+    const creatorSessionId = local.session.sessionAgent.projectAgent?.creatorSessionId
+    return {
+      session: local.session,
+      actions: buildSessionContextMenuActions(local.session, sessionMenuActions, {
+        canPromoteToProjectAgent: !local.isCortex,
+        onViewCreationHistory: creatorSessionId && local.sessionAgentIds.has(creatorSessionId)
+          ? () => onSelectLocal(creatorSessionId)
+          : undefined,
+      }),
+    }
+  }, [localSessionById, onSelectLocal, sessionMenuActions])
 
   const dismissNeedsYou = (sessions: readonly RoomsInboxSessionViewModel[]) => {
     const attempt = ++dismissalAttemptRef.current
@@ -225,6 +261,7 @@ export function RoomsInboxLive({
           hasInlineProjectContent={hasInlineProjectContent}
           mutedSessionIds={mutedSessionIds}
           searchQuery={searchQuery}
+          resolveSessionMenu={resolveSessionMenu}
         />
       ) : null}
     </>
