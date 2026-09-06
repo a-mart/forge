@@ -63,6 +63,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
           platform: 'ios',
           deviceName: 'iPhone',
           enabled: true,
+          originId: 'server-a',
         }),
       })
       const registerPayload = await parseJsonResponse(registerResponse)
@@ -73,6 +74,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         platform: 'ios',
         deviceName: 'iPhone',
         enabled: true,
+        originId: 'server-a',
       })
 
       const devicesPath = getSharedMobileDevicesPath(config.paths.dataDir)

@@ -7,6 +7,7 @@ import {
   canUseBuilder,
   evaluateApiProxyMemberAccess,
   evaluateBuilderCommandAccess,
+  isInventoryCommandAllowed,
 } from "../ws/builder-command-access.js";
 
 function createAuthContext(
@@ -186,6 +187,7 @@ describe("api_proxy member access", () => {
       ["/api/mobile/notification-preferences", "GET"],
       ["/api/mobile/devices/register", "POST"],
       ["/api/mobile/push/register", "POST"],
+      ["/api/mobile/push/unregister", "POST"],
       ["/api/mobile/push/test", "POST"],
       ["/api/slash-commands", "POST"],
       ["/api/anything-else", "GET"],
@@ -210,5 +212,38 @@ describe("api_proxy member access", () => {
     expect(
       evaluateApiProxyMemberAccess({ pathname: "/api/terminals", method: "GET", authContext: member, terminalsEnabled: false }).ok,
     ).toBe(true);
+  });
+});
+
+describe("inventory command allowlist", () => {
+  it("allows register and unregister over inventory api_proxy without widening implicit proxy authority", () => {
+    expect(isInventoryCommandAllowed({
+      type: "api_proxy",
+      requestId: "push-register",
+      method: "POST",
+      path: "/api/mobile/push/register",
+      body: "{}",
+    })).toBe(true);
+    expect(isInventoryCommandAllowed({
+      type: "api_proxy",
+      requestId: "push-unregister",
+      method: "POST",
+      path: "/api/mobile/push/unregister",
+      body: "{}",
+    })).toBe(true);
+    expect(isInventoryCommandAllowed({
+      type: "api_proxy",
+      requestId: "push-test",
+      method: "POST",
+      path: "/api/mobile/push/test",
+      body: "{}",
+    })).toBe(false);
+    expect(isInventoryCommandAllowed({
+      type: "api_proxy",
+      requestId: "artifact",
+      method: "POST",
+      path: "/api/chat-artifacts/read",
+      body: "{}",
+    })).toBe(false);
   });
 });

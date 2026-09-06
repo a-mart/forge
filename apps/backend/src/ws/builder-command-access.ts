@@ -247,7 +247,11 @@ export function isInventoryCommandAllowed(command: import("@forge/protocol").Cli
     case "api_proxy": {
       // Exact paths only; never a generic proxy or a subscription-derived target.
       if (command.method === "GET") return command.path === "/api/settings/manager-selection-catalog";
-      return command.method === "POST" && (command.path === "/api/mobile/push/register" || command.path === "/api/mobile/devices/register");
+      return command.method === "POST" && (
+        command.path === "/api/mobile/push/register"
+        || command.path === "/api/mobile/push/unregister"
+        || command.path === "/api/mobile/devices/register"
+      );
     }
     default:
       return false;

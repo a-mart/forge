@@ -101,3 +101,28 @@ describe("WS chat artifact API proxy", () => {
     expect(fake.send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("WS mobile push API proxy", () => {
+  it("unregisters devices through the inventory-safe exact path", async () => {
+    const unregisterDevice = vi.fn(async () => true);
+    const proxy = new WsApiProxy({
+      swarmManager: {} as any,
+      mobilePushService: { unregisterDevice } as any,
+      feedbackService: {} as any,
+      terminalService: null,
+      unreadTracker: null,
+    } as any);
+
+    const response = await proxy.routeApiProxyCommand({
+      type: "api_proxy",
+      requestId: "unreg-1",
+      method: "POST",
+      path: "/api/mobile/push/unregister",
+      body: JSON.stringify({ token: "ExpoPushToken[device]" }),
+    } as any, "manager");
+
+    expect(unregisterDevice).toHaveBeenCalledWith({ token: "ExpoPushToken[device]" });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true, removed: true });
+  });
+});

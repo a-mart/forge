@@ -51,6 +51,7 @@ const API_PROXY_CHAT_ARTIFACT_READ_PATH = "/api/chat-artifacts/read";
 const API_PROXY_NOTIFICATION_PREFERENCES_PATH = "/api/mobile/notification-preferences";
 const API_PROXY_REGISTER_DEVICE_PATH = "/api/mobile/devices/register";
 const API_PROXY_LEGACY_REGISTER_DEVICE_PATH = "/api/mobile/push/register";
+const API_PROXY_UNREGISTER_DEVICE_PATH = "/api/mobile/push/unregister";
 const API_PROXY_TEST_PUSH_PATH = "/api/mobile/push/test";
 const API_PROXY_AUTH_TOKENS_PATH = "/api/auth/tokens";
 const API_PROXY_UNREAD_PATH = "/api/unread";
@@ -134,6 +135,10 @@ export class WsApiProxy {
 
       if (pathname === API_PROXY_REGISTER_DEVICE_PATH || pathname === API_PROXY_LEGACY_REGISTER_DEVICE_PATH) {
         return await this.handleApiProxyRegisterDevice(command, payload);
+      }
+
+      if (pathname === API_PROXY_UNREGISTER_DEVICE_PATH) {
+        return await this.handleApiProxyUnregisterDevice(command, payload);
       }
 
       if (pathname === API_PROXY_TEST_PUSH_PATH) {
@@ -255,6 +260,18 @@ export class WsApiProxy {
 
     const device = await this.mobilePushService.registerDevice(payload);
     return this.createApiProxyJsonResponse(command.requestId, 200, { ok: true, device });
+  }
+
+  private async handleApiProxyUnregisterDevice(
+    command: ApiProxyCommand,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    if (command.method !== "POST") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
+    }
+
+    const removed = await this.mobilePushService.unregisterDevice(payload);
+    return this.createApiProxyJsonResponse(command.requestId, 200, { ok: true, removed });
   }
 
   private async handleApiProxyTestPush(

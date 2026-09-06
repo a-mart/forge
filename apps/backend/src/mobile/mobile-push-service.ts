@@ -1,4 +1,10 @@
-import { isTerminalAssistantConversationMessage, type ServerEvent } from "@forge/protocol";
+import {
+  isTerminalAssistantConversationMessage,
+  MOBILE_PUSH_ANDROID_CHANNEL_ID,
+  MOBILE_PUSH_DATA_VERSION,
+  type MobilePushDevice,
+  type ServerEvent,
+} from "@forge/protocol";
 import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
 import {
   NotificationSettingsService,
@@ -10,7 +16,6 @@ import {
   MobilePushStore,
   type MobileNotificationPreferences,
   type MobileNotificationPreferencesPatch,
-  type MobilePushDevice
 } from "./mobile-push-store.js";
 
 const DEFAULT_RECEIPT_POLL_INTERVAL_MS = 60_000;
@@ -151,13 +156,15 @@ export class MobilePushService {
       platform?: unknown;
       deviceName?: unknown;
       enabled?: unknown;
+      originId?: unknown;
     };
 
     return this.store.registerDevice({
       token: maybe.token,
       platform: maybe.platform,
       deviceName: maybe.deviceName,
-      enabled: maybe.enabled
+      enabled: maybe.enabled,
+      originId: maybe.originId,
     });
   }
 
@@ -199,6 +206,7 @@ export class MobilePushService {
       route?: unknown;
       profileId?: unknown;
       agentId?: unknown;
+      originId?: unknown;
     };
 
     const token = normalizeRequiredString(maybe.token, "token");
@@ -206,6 +214,10 @@ export class MobilePushService {
     const body = normalizeOptionalString(maybe.body) ?? DEFAULT_TEST_BODY;
     const profileId = normalizeOptionalString(maybe.profileId) ?? "mobile";
     const agentId = normalizeOptionalString(maybe.agentId) ?? "mobile";
+    const requestedOriginId = normalizeOptionalString(maybe.originId);
+    const devices = await this.store.listDevices();
+    const registeredDevice = devices.find((device) => device.token === token);
+    const originId = requestedOriginId ?? registeredDevice?.originId;
     const route =
       normalizeOptionalString(maybe.route) ??
       buildSessionRoute({
@@ -217,12 +229,14 @@ export class MobilePushService {
       title,
       body,
       sound: "default",
+      channelId: MOBILE_PUSH_ANDROID_CHANNEL_ID,
       data: {
-        v: 1,
+        v: MOBILE_PUSH_DATA_VERSION,
         type: "test",
         agentId,
         profileId,
-        route
+        route,
+        ...(originId ? { originId } : {}),
       }
     });
 
@@ -330,23 +344,36 @@ export class MobilePushService {
       return;
     }
 
+    const eventId = buildPushEventId({
+      type: notification.type,
+      agentId: notification.agentId,
+      sessionAgentId: context.sessionAgentId,
+    });
     const payload: Omit<ExpoPushMessage, "to"> = {
       title: notification.title ?? buildMessageNotificationTitle(context),
       body: notification.body,
       sound: "default",
+      channelId: MOBILE_PUSH_ANDROID_CHANNEL_ID,
       data: {
-        v: 1,
+        v: MOBILE_PUSH_DATA_VERSION,
         type: notification.type,
         reason: notification.reason ?? (notification.type === "choice_request" ? "choice_request" : "message"),
         agentId: notification.agentId,
         sessionAgentId: context.sessionAgentId,
         profileId: context.profileId,
-        route: context.route
+        route: context.route,
+        eventId,
       }
     };
 
     for (const device of devices) {
-      const sendResult = await this.sendToDeviceWithRetry(device.token, payload);
+      const sendResult = await this.sendToDeviceWithRetry(device.token, {
+        ...payload,
+        data: {
+          ...payload.data,
+          ...(device.originId ? { originId: device.originId } : {}),
+        },
+      });
       if (!sendResult.ok) {
         this.logError("send_push", sendResult.error ?? "Unknown Expo send error");
       }
@@ -602,6 +629,14 @@ function buildChoiceRequestNotificationContent(options: {
 
 function buildSessionRoute(options: { profileId: string; sessionAgentId: string }): string {
   return `/profiles/${encodeURIComponent(options.profileId)}/sessions/${encodeURIComponent(options.sessionAgentId)}`;
+}
+
+function buildPushEventId(options: {
+  type: PushNotificationType;
+  agentId: string;
+  sessionAgentId: string;
+}): string {
+  return `${options.type}:${options.sessionAgentId}:${options.agentId}:${Date.now()}`;
 }
 
 function normalizeRequiredString(value: unknown, fieldName: string): string {

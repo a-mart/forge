@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 import {
+  MOBILE_PUSH_ORIGIN_ID_MAX_CODE_POINTS,
+  type MobilePushDevice,
+  type MobilePushPlatform,
+} from "@forge/protocol";
+import {
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath
 } from "../swarm/data-paths.js";
@@ -10,18 +15,8 @@ const MOBILE_NOTIFICATION_PREFERENCES_VERSION = 1;
 const MAX_DEVICE_NAME_LENGTH = 120;
 const MAX_TOKEN_LENGTH = 4096;
 
-export type MobilePlatform = "ios" | "android" | "unknown";
-
-export interface MobilePushDevice {
-  token: string;
-  platform: MobilePlatform;
-  deviceName: string;
-  registeredAt: string;
-  enabled: boolean;
-  updatedAt?: string;
-  disabledAt?: string;
-  disabledReason?: string;
-}
+export type { MobilePushDevice };
+export type MobilePlatform = MobilePushPlatform;
 
 interface MobilePushDeviceRegistryFile {
   version: 1;
@@ -78,16 +73,20 @@ export class MobilePushStore {
     platform: unknown;
     deviceName?: unknown;
     enabled?: unknown;
+    originId?: unknown;
   }): Promise<MobilePushDevice> {
     const token = normalizePushToken(input.token);
     const platform = normalizePlatform(input.platform);
     const deviceName = normalizeDeviceName(input.deviceName);
     const enabled = normalizeOptionalBoolean(input.enabled, true, "enabled");
+    const originId = normalizeOriginId(input.originId);
 
     return this.runExclusive(async () => {
       const nowIso = this.now().toISOString();
       const registry = await this.loadDeviceRegistry();
       const existingIndex = registry.devices.findIndex((device) => device.token === token);
+      const existing = existingIndex >= 0 ? registry.devices[existingIndex] : undefined;
+      const persistedOriginId = originId ?? existing?.originId;
 
       const nextDevice: MobilePushDevice = {
         token,
@@ -95,9 +94,10 @@ export class MobilePushStore {
         deviceName,
         registeredAt:
           existingIndex >= 0
-            ? normalizeIsoForLoad(registry.devices[existingIndex]?.registeredAt) ?? nowIso
+            ? normalizeIsoForLoad(existing?.registeredAt) ?? nowIso
             : nowIso,
         enabled,
+        ...(persistedOriginId ? { originId: persistedOriginId } : {}),
         updatedAt: nowIso,
         ...(enabled
           ? {}
@@ -345,6 +345,7 @@ function normalizeDeviceForLoad(value: unknown): MobilePushDevice | null {
     deviceName: normalizeDeviceNameForLoad(raw.deviceName),
     registeredAt: normalizeIsoForLoad(raw.registeredAt) ?? nowIso,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
+    originId: normalizeOriginIdForLoad(raw.originId),
     updatedAt: normalizeIsoForLoad(raw.updatedAt) ?? undefined,
     disabledAt: normalizeIsoForLoad(raw.disabledAt) ?? undefined,
     disabledReason: normalizeOptionalStringForLoad(raw.disabledReason)
@@ -381,7 +382,7 @@ function normalizePushTokenForLoad(value: unknown): string | null {
   return trimmed;
 }
 
-function normalizePlatform(value: unknown): MobilePlatform {
+function normalizePlatform(value: unknown): MobilePushPlatform {
   if (typeof value !== "string") {
     throw new Error("platform must be a string");
   }
@@ -398,7 +399,7 @@ function normalizePlatform(value: unknown): MobilePlatform {
   throw new Error("platform must be one of: ios, android, unknown");
 }
 
-function normalizePlatformForLoad(value: unknown): MobilePlatform {
+function normalizePlatformForLoad(value: unknown): MobilePushPlatform {
   if (typeof value !== "string") {
     return "unknown";
   }
@@ -490,6 +491,50 @@ function normalizeOptionalStringForLoad(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOriginId(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("originId must be a string");
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  if ([...trimmed].length > MOBILE_PUSH_ORIGIN_ID_MAX_CODE_POINTS) {
+    throw new Error(`originId must not exceed ${MOBILE_PUSH_ORIGIN_ID_MAX_CODE_POINTS} characters`);
+  }
+
+  if (/[\r\n\u0000]/.test(trimmed) || /:\/\//.test(trimmed) || trimmed.includes("@")) {
+    throw new Error("originId must be a client origin identity, not a URL");
+  }
+
+  return trimmed;
+}
+
+function normalizeOriginIdForLoad(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (
+    !trimmed ||
+    [...trimmed].length > MOBILE_PUSH_ORIGIN_ID_MAX_CODE_POINTS ||
+    /[\r\n\u0000]/.test(trimmed) ||
+    /:\/\//.test(trimmed) ||
+    trimmed.includes("@")
+  ) {
+    return undefined;
+  }
+
+  return trimmed;
 }
 
 function validatePreferencesPatch(patch: MobileNotificationPreferencesPatch): void {
