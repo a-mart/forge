@@ -544,7 +544,7 @@ Sessions can compact 50+ times and still maintain full continuity. You can just 
 
 ### History Recall
 
-Local Builder managers and ordinary workers can recover compacted or older conversation evidence with the agent-only `history` tool (`sessions`, `search`, then `read`). There is no human history drawer, no embedding index, and no settings toggle. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Use `sessions` to discover matching sessions, then `search` the current session first, including associated workers. If that is not enough, search the current project explicitly. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and does not create an approval prompt; `all_local` is a deliberate broad search across local Builder projects, not the only cross-project path.
+Local Builder managers and ordinary workers can recover compacted or older conversation evidence with the agent-only `history` tool (`sessions`, `search`, then `read`). There is no human history drawer and no embedding index. Pause or resume indexing from **Settings → History**; that pause is not a search enable toggle. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Use `sessions` to discover matching sessions, then `search` the current session first, including associated workers. If that is not enough, search the current project explicitly. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and does not create an approval prompt; `all_local` is a deliberate broad search across local Builder projects, not the only cross-project path.
 
 Indexing starts autonomously after local Builder hydration and prefers recent sources. Hits return source-qualified references, not bare entry IDs; long entries may include part locators. Reads expand those references from canonical JSONL. Historical evidence is not current authority or proof of current state. Coverage is `building`, `ready`, `degraded`, or `unavailable`. Incomplete catch-up or `building` coverage means a no-match is not proof of absence. Unreadable sources surface as `degraded` or `unavailable`, not endless building. Canonical `session.jsonl` remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index. See [Configuration](CONFIGURATION.md#history-recall) for index and read limits.
 
@@ -769,6 +769,7 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
 │   │   │   ├── auth.db            # Collaboration auth + structured state
 │   │   │   └── auth-secret.key    # Generated collaboration auth secret
 │   │   ├── secrets.json           # Shared secret values
+│   │   ├── history-index.json     # Persistent History indexing pause preference
 │   │   ├── knowledge-v2.json      # Default-off Knowledge v2 mode settings
 │   │   └── terminal-settings.json # Saved terminal default shell
 │   ├── cache/                     # Regenerable stats/model/provider caches plus history-recall.db
