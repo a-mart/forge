@@ -33,7 +33,7 @@ import {
   OVERSIZED_LINE_WARNING,
 } from "./content-policy.js";
 import { HistoryRecallIndexStore, type EntryRow } from "./index-store.js";
-import { readLineAt, readSourceGeneration, readSourceStat } from "./jsonl-reader.js";
+import { isSourceReadError, readLineAt, readSourceGeneration, readSourceStat } from "./jsonl-reader.js";
 import { parseHistoryQuery } from "./query-parser.js";
 import {
   findSource,
@@ -47,7 +47,6 @@ import {
   sourcesFromCatalog,
 } from "./source-catalog.js";
 import {
-  BACKGROUND_ARCHIVE_SHARE,
   BACKGROUND_SLICE_SOURCES,
   DEFAULT_SEARCH_LIMIT,
   DEFAULT_SESSION_LIMIT,
@@ -97,6 +96,9 @@ export class HistorySearchService {
   private readonly sessionSnapshots = new Map<string, SnapshotPage<HistorySessionHit>>();
   private activeCursor = 0;
   private archivalCursor = 0;
+  private catalogNeedsDiscovery = true;
+  private readonly undiscoveredSourceIds = new Set<string>();
+  private preferReady = false;
 
   constructor(private readonly host: HistorySearchServiceHost) {}
 
@@ -127,11 +129,14 @@ export class HistorySearchService {
 
   replaceCatalog(snapshot: HistoryCatalogSnapshot): void {
     this.assertOpen();
+    const profiles = new Map(this.host.listProfiles().map((profile) => [profile.profileId, profile]));
     this.catalog = {
       revision: snapshot.revision,
       hydration: snapshot.hydration,
-      sources: snapshot.sources.filter((source) => isCatalogSourceAllowed(this.host, source)),
+      sources: snapshot.sources.filter((source) => isCatalogSourceAllowed(this.host, source, profiles))
+        .sort((a, b) => (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? "")),
     };
+    this.catalogNeedsDiscovery = true;
     if (this.started) {
       this.scheduleBackground(0);
     }
@@ -198,6 +203,7 @@ export class HistorySearchService {
       if (capped) {
         warnings.push(`Search snapshot was capped at ${MAX_SNAPSHOT_HITS} hits; narrow the query to continue.`);
       }
+      let skippedUnavailableHit = false;
       for (const row of pageRows) {
         const source = sourceById.get(row.source_id);
         if (!source) {
@@ -206,7 +212,8 @@ export class HistorySearchService {
         const generation = this.currentSourceGeneration(source);
         const indexedGeneration = store.getSourceRow(source.sourceId)?.generation;
         if (!generation || generation !== indexedGeneration) {
-          warnings.push("A search hit referred to a replaced transcript and was skipped.");
+          skippedUnavailableHit = true;
+          warnings.push("A search hit referred to an unavailable or replaced transcript and was skipped.");
           continue;
         }
         results.push({
@@ -233,7 +240,7 @@ export class HistorySearchService {
         });
       }
       const coverage = this.buildCoverage(store, resolved.sources);
-      const incomplete = catchup.incomplete || resolved.incomplete;
+      const incomplete = catchup.incomplete || resolved.incomplete || skippedUnavailableHit;
       const snapshot: SnapshotPage<HistorySearchHit> = {
         id: randomUUID(),
         identity,
@@ -499,7 +506,8 @@ export class HistorySearchService {
     try {
       pendingWork = await this.runExclusive((store) => this.runBackgroundSlice(store));
     } catch {
-      pendingWork = true;
+      // Retain hints but back off after I/O/open failures rather than hot-looping.
+      pendingWork = false;
     } finally {
       this.backgroundRunning = false;
     }
@@ -512,42 +520,55 @@ export class HistorySearchService {
   private runBackgroundSlice(store: HistoryRecallIndexStore): boolean {
     const catalogSources = sourcesFromCatalog(this.host, this.catalog);
     const byId = new Map(catalogSources.map((source) => [source.sourceId, source]));
-    if (this.catalog.hydration === "complete") {
-      for (const sourceId of store.listIndexedSourceIds()) {
-        if (!byId.has(sourceId)) {
-          store.purgeSource(sourceId);
-        }
+    if (this.catalogNeedsDiscovery) {
+      const indexed = new Set(store.listIndexedSourceIds());
+      if (this.catalog.hydration === "complete") {
+        for (const id of indexed) if (!byId.has(id)) store.purgeSource(id);
+        for (const id of this.undiscoveredSourceIds) if (!byId.has(id)) this.undiscoveredSourceIds.delete(id);
       }
+      for (const source of catalogSources) if (!indexed.has(source.sourceId)) this.undiscoveredSourceIds.add(source.sourceId);
+      this.catalogNeedsDiscovery = false;
     }
-    const dirtyIds = new Set(this.dirtySourceIds);
-    this.dirtySourceIds.clear();
-    const dirty = catalogSources.filter((source) => dirtyIds.has(source.sourceId));
+    if (this.catalog.hydration === "complete") {
+      for (const id of this.dirtySourceIds) if (!byId.has(id)) this.dirtySourceIds.delete(id);
+    }
+    const readyScope = this.catalog.hydration !== "complete" || catalogSources.length !== this.catalog.sources.length
+      ? [...byId.keys()] : undefined;
+    const dirty = [...this.dirtySourceIds].map((id) => byId.get(id)).filter((source): source is HistorySourceDescriptor => Boolean(source)).slice(0, 2);
+    const ready = store.readySourceIds(BACKGROUND_SLICE_SOURCES, readyScope).map((id) => byId.get(id)).filter((source): source is HistorySourceDescriptor => Boolean(source));
+    const unknown = [...this.undiscoveredSourceIds].map((id) => byId.get(id)).filter((source): source is HistorySourceDescriptor => Boolean(source)).slice(0, BACKGROUND_SLICE_SOURCES);
+    // Alternate the first slot so either a huge dirty row or a huge backlog row
+    // cannot monopolize the entire soft byte/time budget on successive slices.
+    this.preferReady = !this.preferReady;
+    const queue = uniqueSources([
+      ...(this.preferReady ? [ready[0], dirty[0]] : [dirty[0], ready[0]]), unknown[0],
+      ready[1], dirty[1], unknown[1], ...ready.slice(2), ...unknown.slice(2),
+    ].filter((source): source is HistorySourceDescriptor => Boolean(source))).slice(0, BACKGROUND_SLICE_SOURCES);
+    const probeCount = queue.length ? 1 : 16;
     const active = catalogSources.filter((source) => !source.archived);
     const archives = catalogSources.filter((source) => source.archived);
-    const wantsWork = (source: HistorySourceDescriptor): boolean => dirtyIds.has(source.sourceId) || store.needsScan(source);
-    const promoted = dirty.slice(0, 2);
-    const remainingSlots = BACKGROUND_SLICE_SOURCES - promoted.length;
-    const archiveNeed = archives.length > 0;
-    const archiveShare = archiveNeed ? Math.min(BACKGROUND_ARCHIVE_SHARE, remainingSlots) : 0;
-    const activeShare = remainingSlots - archiveShare;
-    const skipPromoted = (source: HistorySourceDescriptor): boolean => !promoted.some((entry) => entry.sourceId === source.sourceId);
-    const activePick = takeRotating(active, this.activeCursor, activeShare, (source) => skipPromoted(source) && wantsWork(source));
-    const archivePick = takeRotating(archives, this.archivalCursor, archiveShare, (source) => skipPromoted(source) && wantsWork(source));
-    this.activeCursor = activePick.nextCursor;
-    this.archivalCursor = archivePick.nextCursor;
-    const queue = uniqueSources([...promoted, ...activePick.picked, ...archivePick.picked]);
-    if (queue.length === 0) {
-      return this.dirtySourceIds.size > 0;
+    const activeProbe = takeRotating(active, this.activeCursor, probeCount, () => true);
+    const archiveProbe = takeRotating(archives, this.archivalCursor, probeCount, () => true);
+    this.activeCursor = activeProbe.nextCursor;
+    this.archivalCursor = archiveProbe.nextCursor;
+    for (const source of [...activeProbe.picked, ...archiveProbe.picked]) {
+      if (!queue.some((entry) => entry.sourceId === source.sourceId) && store.needsScan(source)) {
+        this.dirtySourceIds.add(source.sourceId);
+        if (queue.length < BACKGROUND_SLICE_SOURCES) queue.push(source);
+      }
     }
-    store.reconcileSources(queue, {
-      preferRecent: false,
-      purgeMissing: false,
-      maxSources: BACKGROUND_SLICE_SOURCES,
-      maxBytes: MAX_INDEX_CATCHUP_BYTES,
-      perSourceBytes: SCAN_BATCH_BYTES,
-    });
-    const stillPending = queue.some((source) => store.needsScan(source)) || this.dirtySourceIds.size > 0;
-    return stillPending;
+    let remaining = MAX_INDEX_CATCHUP_BYTES;
+    const deadline = performance.now() + 25;
+    for (const source of queue) {
+      if (remaining <= 0 || performance.now() >= deadline) break;
+      const result = store.ingestSource(source, Math.min(remaining, SCAN_BATCH_BYTES));
+      remaining -= result.scannedBytes;
+      // Consume hints only after successful ingest. Store scan_ready remains
+      // authoritative across foreground reads, invalidation, and restart.
+      this.dirtySourceIds.delete(source.sourceId);
+      this.undiscoveredSourceIds.delete(source.sourceId);
+    }
+    return [...this.dirtySourceIds, ...this.undiscoveredSourceIds].some((id) => byId.has(id)) || store.readySourceIds(1, readyScope).length > 0;
   }
 
   private ensureStore(): void {
@@ -690,11 +711,13 @@ export class HistorySearchService {
   }
 
   private currentSourceGeneration(source: HistorySourceDescriptor): string | undefined {
-    const stat = readSourceStat(source.path);
-    if (!stat) {
+    try {
+      const stat = readSourceStat(source.path);
+      return stat ? readSourceGeneration(source.path, stat) : undefined;
+    } catch (error) {
+      if (!isSourceReadError(error)) throw error;
       return undefined;
     }
-    return readSourceGeneration(source.path, stat);
   }
 
   private buildCoverage(
@@ -707,7 +730,7 @@ export class HistorySearchService {
     const state = coverageState({
       unavailable: sources.length > 0 && counts.unreadableSourceCount >= sources.length,
       pending: pendingSourceCount > 0 || (hydration === "partial" && this.started),
-      omitted: counts.omittedEligibleText,
+      omitted: counts.omittedEligibleText || counts.unreadableSourceCount > 0,
     });
     return {
       catalogHydration: hydration,

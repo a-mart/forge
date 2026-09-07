@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { HistoryEntryKind } from "@forge/protocol";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 import {
@@ -546,19 +547,20 @@ function acceptProjected(
   if (state.provisional) {
     return stamped;
   }
+  const textHash = createHash("sha256").update(entry.text, "utf16le").digest("hex");
   const existing = state.seenContentKeys.get(entry.contentKey);
   // Only pair adjacent projected mirror occurrences. Repeated text is not an
   // identity: preserve later messages, other windows, and every checkpoint.
   state.seenContentKeys.clear();
   if (entry.kind === "checkpoint") return stamped;
   const sameOccurrence = existing && existing.origin !== entry.origin
-    && existing.windowId === entry.windowId && existing.text === entry.text
+    && existing.windowId === entry.windowId && existing.textHash === textHash
     && (entry.kind !== "message" || (entry.timestamp !== undefined && entry.timestamp === existing.timestamp));
   if (sameOccurrence) {
     return entry.origin === "native" ? undefined : { ...stamped, replacesEntryId: existing.entryId };
   }
   state.seenContentKeys.set(entry.contentKey, {
-    entryId: entry.entryId, origin: entry.origin, text: entry.text,
+    entryId: entry.entryId, origin: entry.origin, textHash,
     windowId: entry.windowId, timestamp: entry.timestamp,
   });
   return stamped;

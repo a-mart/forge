@@ -305,3 +305,8 @@ export function readLineAt(path: string, byteOffset: number): JsonlLineRead | un
     closeSync(descriptor);
   }
 }
+
+export function isSourceReadError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return Boolean(code && ["EACCES", "EPERM", "EIO", "ENOENT", "ENOTDIR", "EISDIR"].includes(code));
+}

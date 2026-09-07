@@ -94,28 +94,17 @@ export function ftsSafeText(text: string): string {
 }
 
 export function expandCodeTokens(text: string): string {
+  // unicode61 already indexes words and splits paths/snake_case. Only add
+  // camel-case subwords that the original text column cannot match itself.
   const extras = new Set<string>();
-  for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_./:-]{0,63}/g)) {
+  for (const match of text.matchAll(/[A-Za-z][A-Za-z0-9]{0,63}/g)) {
     const token = match[0];
-    extras.add(token);
-    for (const part of token.split(/[./:_-]+/)) {
-      if (!part) {
-        continue;
-      }
-      extras.add(part);
-      extras.add(part.toLowerCase());
-      for (const camel of splitCamelCase(part)) {
-        if (camel.length > 1) {
-          extras.add(camel);
-          extras.add(camel.toLowerCase());
-        }
-      }
+    for (const part of splitCamelCase(token)) {
+      const normalized = part.toLowerCase();
+      if (part.length > 1 && normalized !== token.toLowerCase()) extras.add(normalized);
     }
   }
-  if (extras.size === 0) {
-    return text;
-  }
-  return `${text}\n${[...extras].join(" ")}`;
+  return [...extras].join(" ");
 }
 
 export function contentKeyForRecord(kind: HistoryEntryKind, role: string | undefined, toolName: string | undefined, text: string, toolCallId?: string): string {

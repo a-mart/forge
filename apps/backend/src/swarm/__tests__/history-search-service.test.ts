@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 import { getHistoryRecallIndexPath, getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
+import * as jsonlReader from "../history-recall/jsonl-reader.js";
 import { HistoryRecallIndexStore } from "../history-recall/index-store.js";
 import { HistorySearchService } from "../history-recall/history-search-service.js";
 import { HistoryRecallError } from "../history-recall/source-catalog.js";
@@ -28,12 +29,215 @@ describe("HistorySearchService", () => {
     }
     await fx.service.startFromRegistry();
     const needsScan = vi.fn(() => false);
-    const store = { listIndexedSourceIds: () => [], needsScan, reconcileSources: vi.fn() };
+    const store = { listIndexedSourceIds: () => catalogSources(fx, fx.agents).map((source) => source.sourceId), readySourceIds: () => [], purgeSource: vi.fn(), needsScan, reconcileSources: vi.fn() };
     Reflect.get(fx.service, "runBackgroundSlice").call(fx.service, store);
     expect(needsScan.mock.calls.length).toBeGreaterThan(0);
     expect(needsScan.mock.calls.length).toBeLessThanOrEqual(32);
     expect(store.reconcileSources).not.toHaveBeenCalled();
   });
+  it("revisits runnable backlog without rotating through a thousand idle sources", async () => {
+    const fx = await createFixture();
+    for (let i = 0; i < 1000; i++) fx.agents.push(descriptor({ agentId: `idle-${i}`, managerId: `idle-${i}`, role: "manager", profileId: "project-a" }));
+    await fx.service.startFromRegistry();
+    const source = catalogSources(fx, [fx.session])[0]!;
+    const ingestSource = vi.fn(() => ({ scannedBytes: 256_000 }));
+    const store = {
+      listIndexedSourceIds: () => catalogSources(fx, fx.agents).map((entry) => entry.sourceId),
+      readySourceIds: () => [source.sourceId], purgeSource: vi.fn(), needsScan: () => false, ingestSource,
+    };
+    const slice = Reflect.get(fx.service, "runBackgroundSlice").bind(fx.service);
+    expect(slice(store)).toBe(true);
+    expect(slice(store)).toBe(true);
+    expect(ingestSource).toHaveBeenCalledTimes(2);
+    Reflect.get(fx.service, "dirtySourceIds").add("removed:removed");
+    store.readySourceIds = () => [];
+    expect(slice(store)).toBe(false);
+  });
+
+  it("persists runnable tail gaps across restart and clears them on complete ingestion", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      ...Array.from({ length: 80 }, (_, i) => nativeMessage(`large-${i}`, { role: "user", content: "x".repeat(32_000) })),
+    ]);
+    const path = getHistoryRecallIndexPath(fx.dataDir);
+    const source = catalogSources(fx, [fx.session])[0]!;
+    let store = await HistoryRecallIndexStore.open(path, async () => Database);
+    try {
+      store.ingestSource(source, 256_000);
+      expect(store.readySourceIds(1)).toEqual([source.sourceId]);
+      store.close();
+      store = await HistoryRecallIndexStore.open(path, async () => Database);
+      expect(store.readySourceIds(1)).toEqual([source.sourceId]);
+      for (let i = 0; i < 32 && store.readySourceIds(1).length; i++) store.ingestSource(source, 256_000);
+      expect(store.readySourceIds(1)).toEqual([]);
+      expect(store.coverageCounts([source.sourceId]).pendingSourceCount).toBe(0);
+    } finally { store.close(); }
+  });
+
+  it("does not keep an oversized unterminated EOF runnable", async () => {
+    const fx = await createFixture();
+    const source = catalogSources(fx, [fx.session])[0]!;
+    await mkdir(dirname(source.path), { recursive: true });
+    await writeFile(source.path, header("/tmp/a") + "\n" + '{"type":"message","text":"' + "x".repeat(1_500_000));
+    const store = await HistoryRecallIndexStore.open(getHistoryRecallIndexPath(fx.dataDir), async () => Database);
+    try {
+      for (let i = 0; i < 32; i++) store.ingestSource(source, 256_000);
+      expect(store.readySourceIds(1)).toEqual([]);
+      expect(store.needsScan(source)).toBe(false);
+    } finally { store.close(); }
+  });
+
+  it("rolls back interrupted schema creation and can reopen without manual cache deletion", async () => {
+    const fx = await createFixture();
+    const path = getHistoryRecallIndexPath(fx.dataDir);
+    const original = Database.prototype.exec;
+    const failure = vi.spyOn(Database.prototype, "exec").mockImplementationOnce(function (this: Database.Database) {
+      original.call(this, "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      throw new Error("simulated interrupted schema initialization");
+    });
+    try {
+      await expect(HistoryRecallIndexStore.open(path, async () => Database)).rejects.toThrow("simulated interrupted");
+    } finally { failure.mockRestore(); }
+    const inspect = new Database(path);
+    try {
+      expect(inspect.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()).toEqual([]);
+    } finally { inspect.close(); }
+    const recovered = await HistoryRecallIndexStore.open(path, async () => Database);
+    try { expect(recovered.readySourceIds(1)).toEqual([]); }
+    finally { recovered.close(); }
+  });
+
+  it("selects in-catalog ready work before LIMIT without changing omitted partial sources", async () => {
+    const fx = await createFixture();
+    const excluded = Array.from({ length: 8 }, (_, i) => descriptor({ agentId: `excluded-${i}`, managerId: `excluded-${i}`, role: "manager", profileId: "project-a" }));
+    fx.agents.push(...excluded);
+    const sources = catalogSources(fx, [...excluded, fx.session]);
+    const path = getHistoryRecallIndexPath(fx.dataDir);
+    const store = await HistoryRecallIndexStore.open(path, async () => Database);
+    try {
+      for (let i = 0; i < sources.length; i++) {
+        const source = sources[i]!;
+        await mkdir(dirname(source.path), { recursive: true });
+        await writeFile(source.path, header("/tmp/a") + "\n");
+        store.ingestSource(source, 256_000);
+      }
+      const seed = new Database(path);
+      try { seed.exec("UPDATE sources SET scan_ready=1, updated_at='2000-01-01'"); }
+      finally { seed.close(); }
+      const included = sources.at(-1)!;
+      expect(store.readySourceIds(8)).not.toContain(included.sourceId);
+      fx.service.replaceCatalog({ revision: 1, hydration: "partial", sources: [included] });
+      const ingest = vi.spyOn(store, "ingestSource");
+      Reflect.get(fx.service, "runBackgroundSlice").call(fx.service, store);
+      expect(ingest).toHaveBeenCalledWith(included, expect.any(Number));
+      expect(store.readySourceIds(8)).toEqual(sources.slice(0, 8).map((source) => source.sourceId));
+    } finally { store.close(); }
+  });
+
+  it("isolates an open/read permission failure so another ready source progresses", async () => {
+    const fx = await createFixture();
+    const sources = catalogSources(fx, [fx.session, fx.worker]);
+    const store = await HistoryRecallIndexStore.open(getHistoryRecallIndexPath(fx.dataDir), async () => Database);
+    let failure: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (const source of sources) {
+        await mkdir(dirname(source.path), { recursive: true });
+        await writeFile(source.path, header("/tmp/a") + "\n" + nativeMessage("large", { role: "user", content: "x".repeat(600_000) }) + "\n");
+        store.ingestSource(source, 128_000);
+      }
+      const original = jsonlReader.readSourceGeneration;
+      failure = vi.spyOn(jsonlReader, "readSourceGeneration").mockImplementation((path, stat) => {
+        if (path === sources[0]!.path) throw Object.assign(new Error("simulated EACCES after stat"), { code: "EACCES" });
+        return original(path, stat);
+      });
+      expect(store.needsScan(sources[0]!)).toBe(true);
+      fx.service.replaceCatalog({ revision: 1, hydration: "complete", sources });
+      const ingest = vi.spyOn(store, "ingestSource");
+      Reflect.get(fx.service, "runBackgroundSlice").call(fx.service, store);
+      expect(store.getSourceRow(sources[0]!.sourceId)?.unreadable).toBe(1);
+      expect(store.readySourceIds(8)).not.toContain(sources[0]!.sourceId);
+      expect(ingest).toHaveBeenCalledWith(sources[1], expect.any(Number));
+    } finally { failure?.mockRestore(); store.close(); }
+  });
+
+  it("reports missing canonical files as degraded, not permanently building", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a")]);
+    await fx.service.start({ revision: 1, hydration: "complete", sources: catalogSources(fx, [fx.session, fx.worker]) });
+    await vi.waitFor(async () => {
+      const result = await fx.service.sessions(fx.session.agentId, { scope: "project" });
+      expect(result.coverage).toMatchObject({ state: "degraded", pendingSourceCount: 0, unreadableSourceCount: 1 });
+    });
+  });
+
+  it("keeps the bounded recent fast path exact and falls back for older matches", async () => {
+    const fx = await createFixture();
+    const path = getHistoryRecallIndexPath(fx.dataDir);
+    const source = catalogSources(fx, [fx.session])[0]!;
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
+      nativeMessage("old-one", { role: "user", content: "oldneedle" }),
+      nativeMessage("old-two", { role: "user", content: "oldneedle" }),
+    ]);
+    const store = await HistoryRecallIndexStore.open(path, async () => Database);
+    try {
+      store.ingestSource(source, 256_000);
+      // Populate only the derived SQL fixture: these rows exercise the query
+      // planner/cohort boundary, not canonical reading or projection.
+      const seed = new Database(path);
+      try {
+        seed.transaction(() => {
+          seed.prepare(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<65536)
+            INSERT INTO entries(source_id,entry_id,kind,role,timestamp,window_id,origin,byte_offset,content_key)
+            SELECT ?, 'padding-'||i, 'message','user','2099-01-01T00:00:00.000Z','initial','native',i,'padding' FROM n`).run(source.sourceId);
+          seed.exec(`INSERT INTO entry_payload(entry_rowid,text) SELECT id,'padding' FROM entries WHERE entry_id LIKE 'padding-%';
+            INSERT INTO entries_fts(rowid,text,extra) SELECT id,'padding','' FROM entries WHERE entry_id LIKE 'padding-%';`);
+        })();
+      } finally { seed.close(); }
+      const params = { sourceIds: [source.sourceId], order: "newest" as const, offset: 0, limit: 501 };
+      const recent = store.search({ ...params, ftsMatch: '"padding"' });
+      const full = store.search({ ...params, ftsMatch: '"padding"', offset: 1, limit: 500 });
+      expect(recent).toHaveLength(501);
+      expect(recent.slice(1).map((row) => row.entry_id)).toEqual(full.map((row) => row.entry_id));
+      expect(store.search({ ...params, ftsMatch: '"oldneedle"', limit: 1 }).map((row) => row.entry_id)).toEqual(["old-two"]);
+      expect(store.search({ ...params, ftsMatch: '"padding"', sourceIds: ["not-in-scope"] })).toEqual([]);
+    } finally { store.close(); }
+  });
+
+  it("keeps persisted mirror state bounded for a large eligible record", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"), nativeMessage("large-mirror", { role: "user", content: "x".repeat(900_000) })]);
+    const source = catalogSources(fx, [fx.session])[0]!;
+    const store = await HistoryRecallIndexStore.open(getHistoryRecallIndexPath(fx.dataDir), async () => Database);
+    try {
+      store.ingestSource(source, 2_000_000);
+      for (let i = 0; i < 16 && store.readySourceIds(1).length; i++) store.ingestSource(source, 256_000);
+      const state = store.getSourceRow(source.sourceId)!.prefix_projector_json;
+      expect(state.length).toBeLessThan(2048);
+      expect(state).toMatch(/"textHash":"[a-f0-9]{64}"/);
+      expect(state).not.toContain('"text":');
+    } finally { store.close(); }
+  });
+
+  it("skips an unreadable hit without failing other search results", async () => {
+    const fx = await createFixture();
+    for (const agent of [fx.session, fx.worker]) await writeTranscript(fx.dataDir, agent, [header("/tmp/a"), nativeMessage("match", { role: "user", content: "sharedneedle" })]);
+    const initial = await fx.service.search(fx.session.agentId, { query: "sharedneedle" });
+    expect(initial.results).toHaveLength(2);
+    const blocked = initial.results.find((hit) => hit.ref.actorAgentId === fx.session.agentId)!;
+    const original = jsonlReader.readSourceGeneration;
+    const failure = vi.spyOn(jsonlReader, "readSourceGeneration").mockImplementation((path, stat) => {
+      if (path === getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId)) throw Object.assign(new Error("simulated EACCES"), { code: "EACCES" });
+      return original(path, stat);
+    });
+    try {
+      const result = await fx.service.search(fx.session.agentId, { query: "sharedneedle" });
+      expect(result.results.map((hit) => hit.ref.actorAgentId)).toEqual([fx.worker.agentId]);
+      expect(result.complete).toBe(false);
+      expect(result.warnings.join(" ")).toContain("unavailable or replaced");
+      await expect(fx.service.read(fx.session.agentId, { ref: blocked.ref })).rejects.toThrow(/stale/);
+    } finally { failure.mockRestore(); }
+  });
+
   it("reads checkpoint evidence from a cold index with a bounded canonical offset", async () => {
     const fx = await createFixture();
     const text = "tool evidence\n" + "x".repeat(70_000) + "\nlast line";
@@ -58,6 +262,7 @@ describe("HistorySearchService", () => {
 
   it("makes catch-up progress beyond the per-query source limit", async () => {
     const fx = await createFixture();
+    for (const agent of fx.agents) await writeTranscript(fx.dataDir, agent, [header("/tmp/a")]);
     for (let i = 0; i < 60; i++) {
       const agentId = `bulk-${String(i).padStart(3, "0")}`;
       const agent = descriptor({ agentId, managerId: agentId, role: "manager", profileId: "project-a" });
@@ -581,7 +786,7 @@ describe("HistorySearchService", () => {
     }
   });
 
-  it("rekeys legacy FTS rowids and preserves append, restart, and purge behavior", async () => {
+  it("rebuilds legacy FTS rowids and preserves append, restart, and purge behavior", async () => {
     const fx = await createFixture();
     const path = getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId);
     await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"),
@@ -593,7 +798,11 @@ describe("HistorySearchService", () => {
     const canonical = await readFile(path, "utf8");
     const dbPath = getHistoryRecallIndexPath(fx.dataDir);
     const legacy = new Database(dbPath);
-    legacy.exec("UPDATE entries_fts SET rowid = rowid + 1000; DELETE FROM meta WHERE key = 'fts_rowid_version';");
+    legacy.exec(`DROP TABLE entries_fts;
+      CREATE VIRTUAL TABLE entries_fts USING fts5(text,extra,source_id UNINDEXED,entry_id UNINDEXED);
+      INSERT INTO entries_fts(rowid,text,extra,source_id,entry_id)
+        SELECT e.id+1000,p.text,'',e.source_id,e.entry_id FROM entries e JOIN entry_payload p ON p.entry_rowid=e.id;
+      UPDATE meta SET value='3' WHERE key='projection_version';`);
     legacy.close();
 
     const service = createService(fx);
@@ -605,8 +814,12 @@ describe("HistorySearchService", () => {
     await service.dispose();
 
     const db = new Database(dbPath);
-    const mismatched = db.prepare(`SELECT count(*) AS n FROM entries_fts f JOIN entries e
-      ON e.source_id=f.source_id AND e.entry_id=f.entry_id WHERE e.rowid != f.rowid`).get() as { n: number };
+    const mismatched = db.prepare(`SELECT count(*) AS n FROM (
+      SELECT id FROM entries EXCEPT SELECT rowid FROM entries_fts
+    )`).get() as { n: number };
+    db.exec("INSERT INTO entries_fts(entries_fts) VALUES('integrity-check')");
+    expect(db.prepare("SELECT count(*) AS n FROM entries").get()).toEqual(db.prepare("SELECT count(*) AS n FROM entries_fts").get());
+    expect(db.prepare("SELECT count(*) AS n FROM entries").get()).toEqual(db.prepare("SELECT count(*) AS n FROM entry_payload").get());
     expect(mismatched.n).toBe(0);
     // A constrained FTS rowid lookup is essential: UNINDEXED metadata predicates
     // otherwise scan every cached document on each insertion.
@@ -637,7 +850,7 @@ describe("HistorySearchService", () => {
     await fx.service.dispose();
     const db = new Database(getHistoryRecallIndexPath(fx.dataDir));
     // Model the old cache: no version/oversized state and later occurrence omitted.
-    db.exec("DELETE FROM meta; DELETE FROM entries WHERE entry_id='later'; DELETE FROM entries_fts WHERE entry_id='later'; ALTER TABLE sources DROP COLUMN oversized_state;");
+    db.exec("DELETE FROM meta; DELETE FROM entries_fts WHERE rowid IN (SELECT id FROM entries WHERE entry_id='later'); DELETE FROM entries WHERE entry_id='later'; ALTER TABLE sources DROP COLUMN oversized_state;");
     db.close();
     const service = createService(fx);
     const restored = await service.search(fx.session.agentId, { query: "migrationneedle" });

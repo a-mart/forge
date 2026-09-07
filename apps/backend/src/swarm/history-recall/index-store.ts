@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import type Database from "better-sqlite3";
 import type { HistoryEntryKind, HistorySearchOrder } from "@forge/protocol";
@@ -14,6 +14,7 @@ import {
   readPrefixTailHash,
   readSourceGeneration,
   readSourceStat,
+  isSourceReadError,
   readTailLines,
 } from "./jsonl-reader.js";
 import {
@@ -67,9 +68,12 @@ CREATE TABLE IF NOT EXISTS sources (
   replay_frontier INTEGER NOT NULL DEFAULT 0,
   unreadable INTEGER NOT NULL DEFAULT 0,
   catalog_revision INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  scan_ready INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS sources_ready_idx ON sources(scan_ready, updated_at, source_id);
 CREATE TABLE IF NOT EXISTS entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id TEXT NOT NULL,
   entry_id TEXT NOT NULL,
   part_id TEXT NOT NULL DEFAULT '',
@@ -83,20 +87,25 @@ CREATE TABLE IF NOT EXISTS entries (
   byte_offset INTEGER NOT NULL,
   parent_id TEXT,
   content_key TEXT NOT NULL,
-  text TEXT NOT NULL,
-  extra TEXT NOT NULL,
   slice TEXT NOT NULL DEFAULT 'prefix',
   provisional INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (source_id, entry_id, part_id, chunk_index)
+  UNIQUE (source_id, entry_id, part_id, chunk_index)
+);
+CREATE TABLE IF NOT EXISTS entry_payload (
+  entry_rowid INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+  text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS entries_source_offset_idx ON entries(source_id, byte_offset, part_id, chunk_index);
 CREATE INDEX IF NOT EXISTS entries_source_window_idx ON entries(source_id, window_id, byte_offset);
 CREATE INDEX IF NOT EXISTS entries_parent_idx ON entries(source_id, parent_id, byte_offset);
+CREATE INDEX IF NOT EXISTS entries_recent_idx ON entries(
+  CASE WHEN timestamp IS NULL OR timestamp = '' THEN 1 ELSE 0 END,
+  timestamp DESC, byte_offset DESC, id, source_id, tool_name, kind, role, window_id, provisional, slice
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
   text,
   extra,
-  source_id UNINDEXED,
-  entry_id UNINDEXED,
+  content='', contentless_delete=1,
   tokenize = 'unicode61 remove_diacritics 2'
 );
 `;
@@ -178,6 +187,7 @@ export class HistoryRecallIndexStore {
   private readonly deleteFts: Database.Statement;
   private readonly insertEntry: Database.Statement;
   private readonly insertFts: Database.Statement;
+  private readonly insertPayload: Database.Statement;
   private readonly deleteEntry: Database.Statement;
   private readonly deleteFtsEntry: Database.Statement;
   private readonly deleteEntryParts: Database.Statement;
@@ -238,15 +248,16 @@ export class HistoryRecallIndexStore {
     this.insertEntry = database.prepare(`
       INSERT INTO entries (
         source_id, entry_id, part_id, chunk_index, kind, role, tool_name, timestamp, window_id, origin,
-        byte_offset, parent_id, content_key, text, extra, slice, provisional
+        byte_offset, parent_id, content_key, slice, provisional
       ) VALUES (
         @source_id, @entry_id, @part_id, @chunk_index, @kind, @role, @tool_name, @timestamp, @window_id, @origin,
-        @byte_offset, @parent_id, @content_key, @text, @extra, @slice, @provisional
+        @byte_offset, @parent_id, @content_key, @slice, @provisional
       )
     `);
+    this.insertPayload = database.prepare("INSERT INTO entry_payload(entry_rowid,text) VALUES (?, ?)");
     this.insertFts = database.prepare(`
-      INSERT INTO entries_fts (rowid, text, extra, source_id, entry_id)
-      VALUES (@rowid, @text, @extra, @source_id, @entry_id)
+      INSERT INTO entries_fts (rowid, text, extra)
+      VALUES (@rowid, @text, @extra)
     `);
     this.deleteEntry = database.prepare(`
       DELETE FROM entries WHERE source_id = ? AND entry_id = ? AND part_id = ? AND chunk_index = ?
@@ -269,18 +280,18 @@ export class HistoryRecallIndexStore {
       )
     `);
     this.getEntry = database.prepare(`
-      SELECT * FROM entries WHERE source_id = ? AND entry_id = ?
+      SELECT entries.*, '' AS text, '' AS extra FROM entries WHERE source_id = ? AND entry_id = ?
       ORDER BY byte_offset ASC, part_id ASC, chunk_index ASC LIMIT 1
     `);
     this.listEntryParts = database.prepare(`
-      SELECT * FROM entries WHERE source_id = ? AND entry_id = ?
+      SELECT entries.*, '' AS text, '' AS extra FROM entries WHERE source_id = ? AND entry_id = ?
       ORDER BY byte_offset ASC, part_id ASC, chunk_index ASC
     `);
     this.neighborsBefore = database.prepare(`
-      SELECT * FROM entries WHERE source_id = ? AND byte_offset < ? ORDER BY byte_offset DESC, part_id DESC, chunk_index DESC
+      SELECT entries.*, '' AS text, '' AS extra FROM entries WHERE source_id = ? AND byte_offset < ? ORDER BY byte_offset DESC, part_id DESC, chunk_index DESC LIMIT 512
     `);
     this.neighborsAfter = database.prepare(`
-      SELECT * FROM entries WHERE source_id = ? AND byte_offset > ? ORDER BY byte_offset ASC, part_id ASC, chunk_index ASC
+      SELECT entries.*, '' AS text, '' AS extra FROM entries WHERE source_id = ? AND byte_offset > ? ORDER BY byte_offset ASC, part_id ASC, chunk_index ASC LIMIT 512
     `);
     this.retagWindow = database.prepare(`
       UPDATE entries SET window_id = ? WHERE source_id = ? AND byte_offset >= ? AND byte_offset <= ? AND provisional = 0
@@ -296,20 +307,31 @@ export class HistoryRecallIndexStore {
   ): Promise<HistoryRecallIndexStore> {
     const DatabaseConstructor = await loadDatabaseModule();
     mkdirSync(dirname(path), { recursive: true });
-    const database = new DatabaseConstructor(path);
+    let database = new DatabaseConstructor(path);
     try {
+      const tables = database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+      if (tables.length > 0) {
+        const known = ["meta", "sources", "entries"].every((name) => tables.some((table) => table.name === name));
+        if (!known) throw new Error("Refusing to replace an unrecognized history cache");
+        const version = database.prepare("SELECT value FROM meta WHERE key='projection_version'").get() as { value: string } | undefined;
+        if (version?.value !== INDEX_SCHEMA_VERSION) {
+          database.close();
+          // Only this recognized, rebuildable cache is replaced; never canonical data.
+          for (const file of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(file)) unlinkSync(file);
+          database = new DatabaseConstructor(path);
+        }
+      }
       database.pragma("journal_mode = WAL");
+      database.pragma("synchronous = NORMAL");
+      database.pragma("cache_size = -32768");
       database.pragma("foreign_keys = ON");
-      database.exec(SCHEMA_SQL);
-      ensureSourceColumns(database);
-      ensureEntryColumns(database);
-      ensureIndexSchemaVersion(database);
-      ensureFtsRowIds(database);
+      database.transaction(() => {
+        database.exec(SCHEMA_SQL);
+        database.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('projection_version',?)").run(INDEX_SCHEMA_VERSION);
+      })();
       return new HistoryRecallIndexStore(database);
     } catch (error) {
-      if (database.open) {
-        database.close();
-      }
+      if (database.open) database.close();
       throw error;
     }
   }
@@ -322,6 +344,12 @@ export class HistoryRecallIndexStore {
 
   getSourceRow(sourceId: string): SourceRow | undefined {
     return normalizeSourceRow(this.getSource.get(sourceId) as SourceRow | undefined);
+  }
+
+  readySourceIds(limit: number, sourceIds?: string[]): string[] {
+    const scope = sourceIds ? " AND source_id IN (SELECT value FROM json_each(@sourceIds))" : "";
+    return (this.database.prepare(`SELECT source_id FROM sources WHERE scan_ready=1${scope} ORDER BY updated_at, source_id LIMIT @limit`)
+      .all({ limit, sourceIds: JSON.stringify(sourceIds ?? []) }) as Array<{ source_id: string }>).map((row) => row.source_id);
   }
 
   listIndexedSourceIds(): string[] {
@@ -385,7 +413,7 @@ export class HistoryRecallIndexStore {
       const gap = row.suffix_start > 0 && row.prefix_bytes < row.suffix_start;
       const replaying = row.suffix_start > 0 && row.suffix_ready === 0 && row.prefix_bytes >= row.suffix_start;
       const prefixLag = row.suffix_start === 0 && row.prefix_bytes < row.source_size && row.oversized_state !== 2;
-      if (gap || replaying || prefixLag || row.oversized_state === 1) {
+      if (gap || replaying || prefixLag || (row.oversized_state === 1 && Math.max(row.prefix_bytes, row.suffix_end) < row.source_size)) {
         pendingSourceCount += 1;
       }
     }
@@ -395,12 +423,18 @@ export class HistoryRecallIndexStore {
 
   /** True only when scannable bytes or a replacement remain. Permanent omissions are degraded, not pending. */
   needsScan(source: HistorySourceDescriptor): boolean {
-    let stat: ReturnType<typeof readSourceStat>;
     try {
-      stat = readSourceStat(source.path);
-    } catch {
-      return false;
+      return this.needsReadableSourceScan(source);
+    } catch (error) {
+      if (!isSourceReadError(error)) throw error;
+      // Let ingestion record unreadability; a failing probe must not block
+      // unrelated ready work or silently claim that this source is current.
+      return true;
     }
+  }
+
+  private needsReadableSourceScan(source: HistorySourceDescriptor): boolean {
+    const stat = readSourceStat(source.path);
     const row = this.getSourceRow(source.sourceId);
     if (!stat) {
       return Boolean(row);
@@ -412,18 +446,22 @@ export class HistoryRecallIndexStore {
     if (row.generation !== generation || row.inode !== stat.ino) {
       return true;
     }
-    if (stat.size > Math.max(row.suffix_end, row.prefix_bytes, row.source_size, row.indexed_bytes)) {
+    if (stat.size < row.source_size || stat.size > Math.max(row.suffix_end, row.prefix_bytes, row.source_size, row.indexed_bytes)) {
       return true;
     }
-    if (row.oversized_state === 1 || (row.suffix_start > 0 && row.prefix_bytes >= row.suffix_start && row.suffix_ready === 0)) {
+    if (row.suffix_start > 0 && row.prefix_bytes >= row.suffix_start && row.suffix_ready === 0) {
       return true;
     }
+    // A known unindexed gap before a complete suffix contains work. Do not
+    // reread/decode a megabyte merely to discover it on every scheduler probe.
+    if (row.suffix_start > 0 && row.prefix_bytes < row.suffix_start) return true;
     const frontier = row.suffix_start > 0 && row.prefix_bytes < row.suffix_start
       ? row.prefix_bytes
       : Math.max(row.suffix_end, row.prefix_bytes, row.indexed_bytes);
     if (frontier >= stat.size) {
       return false;
     }
+    if (row.oversized_state === 1) return true;
     const ahead = readCompleteLines(source.path, frontier, stat.size, MAX_LINE_BYTES + 1, {
       resumeSkippingOversized: row.prefix_oversized === 1 || row.suffix_oversized === 1 || row.oversized_state === 1,
     });
@@ -511,21 +549,39 @@ export class HistoryRecallIndexStore {
     const orderSql = params.order === "newest"
       ? "CASE WHEN entries.timestamp IS NULL OR entries.timestamp = '' THEN 1 ELSE 0 END ASC, entries.timestamp DESC, entries.byte_offset DESC"
       : "score ASC, COALESCE(entries.timestamp, '') DESC, entries.byte_offset DESC";
-    const sql = `
-      WITH selected AS MATERIALIZED (
+    const makeSql = (recent: boolean) => `
+      WITH ${recent ? `recent AS MATERIALIZED (
+        SELECT id AS rowid, source_id, timestamp, byte_offset, tool_name, kind, role, window_id, provisional, slice
+        FROM entries INDEXED BY entries_recent_idx
+        ORDER BY CASE WHEN timestamp IS NULL OR timestamp = '' THEN 1 ELSE 0 END, timestamp DESC, byte_offset DESC
+        LIMIT 65536
+      ),` : ""} selected AS MATERIALIZED (
         SELECT entries.rowid AS entry_rowid, ${params.order === "newest" ? "0" : "bm25(entries_fts)"} AS score,
                entries.timestamp, entries.byte_offset
         FROM entries_fts
-        CROSS JOIN entries ON entries.rowid = entries_fts.rowid
+        CROSS JOIN ${recent ? "recent AS entries" : "entries"} ON entries.rowid = entries_fts.rowid
         WHERE ${clauses.join(" AND ")}
         ORDER BY ${orderSql}
         LIMIT @limit OFFSET @offset
       )
-      SELECT entries.*, selected.score FROM selected
+      SELECT entries.*, p.text, '' AS extra, selected.score FROM selected
       JOIN entries ON entries.rowid = selected.entry_rowid
+      JOIN entry_payload p ON p.entry_rowid=entries.id
       ORDER BY ${params.order === "newest" ? "CASE WHEN selected.timestamp IS NULL OR selected.timestamp = '' THEN 1 ELSE 0 END ASC, selected.timestamp DESC, selected.byte_offset DESC" : "selected.score ASC, COALESCE(selected.timestamp, '') DESC, selected.byte_offset DESC"}
     `;
-    return this.database.prepare(sql).all(bindings) as Array<EntryRow & { score: number }>;
+    if (params.order === "newest" && params.offset === 0 && params.limit <= 65536) {
+      const matches = this.database.prepare(`SELECT count(*) AS n FROM (
+        SELECT rowid FROM entries_fts WHERE entries_fts MATCH ? LIMIT ?
+      )`).get(params.ftsMatch, params.limit + 1) as { n: number };
+      if (matches.n > params.limit) {
+        const recent = this.database.prepare(makeSql(true)).all(bindings) as Array<EntryRow & { score: number }>;
+        // Enough matches in a global newest-first prefix prove that older rows
+        // cannot improve this page. Otherwise use the complete FTS-led search;
+        // the bounded fast path must never hide old or narrowly scoped hits.
+        if (recent.length >= params.limit) return recent;
+      }
+    }
+    return this.database.prepare(makeSql(false)).all(bindings) as Array<EntryRow & { score: number }>;
   }
 
   reconcileSources(
@@ -590,39 +646,20 @@ export class HistoryRecallIndexStore {
   }
 
   ingestSource(source: HistorySourceDescriptor, maxBytes: number): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
-    const warnings: string[] = [];
-    let stat: ReturnType<typeof readSourceStat>;
     try {
-      stat = readSourceStat(source.path);
-    } catch {
-      this.markUnreadable(source, "permission or IO error");
-      return {
-        sourceId: source.sourceId,
-        generation: "",
-        indexedBytes: 0,
-        sourceSize: 0,
-        incomplete: true,
-        pending: true,
-        omittedEligibleText: false,
-        unreadable: true,
-        scannedBytes: 0,
-        warnings: [`History source ${source.sessionLabel}/${source.actorLabel} is unreadable.`],
-      };
+      return this.ingestReadableSource(source, maxBytes);
+    } catch (error) {
+      if (!isSourceReadError(error)) throw error;
+      return this.markUnreadable(source, "permission or IO error");
     }
+  }
+
+  private ingestReadableSource(source: HistorySourceDescriptor, maxBytes: number): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
+    const warnings: string[] = [];
+    const stat = readSourceStat(source.path);
     if (!stat) {
       this.purgeSource(source.sourceId);
-      return {
-        sourceId: source.sourceId,
-        generation: "",
-        indexedBytes: 0,
-        sourceSize: 0,
-        incomplete: false,
-        pending: false,
-        omittedEligibleText: false,
-        unreadable: false,
-        scannedBytes: 0,
-        warnings,
-      };
+      return this.markUnreadable(source, "source file missing");
     }
     const generation = readSourceGeneration(source.path, stat);
     const existing = this.getSourceRow(source.sourceId);
@@ -978,8 +1015,6 @@ export class HistoryRecallIndexStore {
       this.deleteFtsEntryParts.run(sourceId, entry.replacesEntryId);
       this.deleteEntryParts.run(sourceId, entry.replacesEntryId);
     }
-    this.deleteFtsEntry.run(sourceId, entry.entryId, entry.partId, entry.chunkIndex);
-    this.deleteEntry.run(sourceId, entry.entryId, entry.partId, entry.chunkIndex);
     const row = {
       source_id: sourceId,
       entry_id: entry.entryId,
@@ -999,7 +1034,18 @@ export class HistoryRecallIndexStore {
       slice,
       provisional: entry.provisional ? 1 : 0,
     };
-    const { lastInsertRowid } = this.insertEntry.run(row);
+    let inserted: Database.RunResult;
+    try {
+      inserted = this.insertEntry.run(row);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "SQLITE_CONSTRAINT_UNIQUE") throw error;
+      // Replayed/reused canonical IDs must remove FTS tokens before metadata.
+      this.deleteFtsEntry.run(sourceId, entry.entryId, entry.partId, entry.chunkIndex);
+      this.deleteEntry.run(sourceId, entry.entryId, entry.partId, entry.chunkIndex);
+      inserted = this.insertEntry.run(row);
+    }
+    const { lastInsertRowid } = inserted;
+    this.insertPayload.run(lastInsertRowid, entry.text);
     this.insertFts.run({
       rowid: lastInsertRowid,
       text: ftsSafeText(entry.text),
@@ -1015,7 +1061,7 @@ export class HistoryRecallIndexStore {
     }
   }
 
-  private markUnreadable(source: HistorySourceDescriptor, _reason: string): void {
+  private markUnreadable(source: HistorySourceDescriptor, _reason: string): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
     const existing = this.getSourceRow(source.sourceId);
     const projector = existing
       ? deserializeProjector(existing.prefix_projector_json || existing.projector_json)
@@ -1037,6 +1083,12 @@ export class HistoryRecallIndexStore {
       replayFrontier: existing?.replay_frontier ?? 0,
       unreadable: 1,
     });
+    return {
+      sourceId: source.sourceId, generation: existing?.generation ?? "", indexedBytes: existing?.prefix_bytes ?? 0,
+      sourceSize: existing?.source_size ?? 0, incomplete: true, pending: false,
+      omittedEligibleText: Boolean(existing?.omitted_eligible_text), unreadable: true, scannedBytes: 0,
+      warnings: [`History source ${source.sessionLabel}/${source.actorLabel} is unreadable.`],
+    };
   }
 
   private upsertSource(
@@ -1100,11 +1152,9 @@ export class HistoryRecallIndexStore {
       updated_at: new Date().toISOString(),
     };
     const existing = this.getSource.get(source.sourceId);
-    if (existing) {
-      this.updateSource.run(row);
-      return;
-    }
-    this.insertSource.run(row);
+    if (existing) this.updateSource.run(row);
+    else this.insertSource.run(row);
+    this.database.prepare("UPDATE sources SET scan_ready=? WHERE source_id=?").run(state.unreadable ? 0 : Number(this.needsScan(source)), source.sourceId);
   }
 }
 
@@ -1206,113 +1256,6 @@ function uniqueEntries(rows: EntryRow[], limit: number): EntryRow[] {
   return uniqueRows;
 }
 
-function ensureSourceColumns(database: Database.Database): void {
-  const columns = new Set(
-    (database.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).map((column) => column.name),
-  );
-  const add = (name: string, ddl: string): void => {
-    if (!columns.has(name)) {
-      database.exec(`ALTER TABLE sources ADD COLUMN ${ddl}`);
-    }
-  };
-  add("oversized_state", "oversized_state INTEGER NOT NULL DEFAULT 0");
-  add("current_window_id", "current_window_id TEXT NOT NULL DEFAULT 'window:initial'");
-  add("indexed_tail_hash", "indexed_tail_hash TEXT NOT NULL DEFAULT ''");
-  add("last_activity_at", "last_activity_at TEXT");
-  add("prefix_bytes", "prefix_bytes INTEGER NOT NULL DEFAULT 0");
-  add("suffix_start", "suffix_start INTEGER NOT NULL DEFAULT 0");
-  add("suffix_end", "suffix_end INTEGER NOT NULL DEFAULT 0");
-  add("prefix_tail_hash", "prefix_tail_hash TEXT NOT NULL DEFAULT ''");
-  add("suffix_head_hash", "suffix_head_hash TEXT NOT NULL DEFAULT ''");
-  add("suffix_tail_hash", "suffix_tail_hash TEXT NOT NULL DEFAULT ''");
-  add("prefix_projector_json", "prefix_projector_json TEXT NOT NULL DEFAULT '{}'");
-  add("suffix_projector_json", "suffix_projector_json TEXT NOT NULL DEFAULT '{}'");
-  add("prefix_oversized", "prefix_oversized INTEGER NOT NULL DEFAULT 0");
-  add("suffix_oversized", "suffix_oversized INTEGER NOT NULL DEFAULT 0");
-  add("omitted_eligible_text", "omitted_eligible_text INTEGER NOT NULL DEFAULT 0");
-  add("suffix_ready", "suffix_ready INTEGER NOT NULL DEFAULT 0");
-  add("replay_frontier", "replay_frontier INTEGER NOT NULL DEFAULT 0");
-  add("unreadable", "unreadable INTEGER NOT NULL DEFAULT 0");
-  add("catalog_revision", "catalog_revision INTEGER NOT NULL DEFAULT 0");
-}
-
-function ensureEntryColumns(database: Database.Database): void {
-  const columns = new Set(
-    (database.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((column) => column.name),
-  );
-  if (!columns.has("part_id")) {
-    database.exec("ALTER TABLE entries ADD COLUMN part_id TEXT NOT NULL DEFAULT ''");
-  }
-  if (!columns.has("chunk_index")) {
-    database.exec("ALTER TABLE entries ADD COLUMN chunk_index INTEGER NOT NULL DEFAULT 0");
-  }
-  if (!columns.has("slice")) {
-    database.exec("ALTER TABLE entries ADD COLUMN slice TEXT NOT NULL DEFAULT 'prefix'");
-  }
-  if (!columns.has("provisional")) {
-    database.exec("ALTER TABLE entries ADD COLUMN provisional INTEGER NOT NULL DEFAULT 0");
-  }
-}
-
-function ensureIndexSchemaVersion(database: Database.Database): void {
-  const version = database.prepare("SELECT value FROM meta WHERE key = 'projection_version'").get() as { value: string } | undefined;
-  if (version?.value === INDEX_SCHEMA_VERSION) return;
-  database.transaction(() => {
-    database.exec(`
-      DROP TABLE IF EXISTS entries_fts;
-      DROP TABLE IF EXISTS entries;
-      DELETE FROM sources;
-      CREATE TABLE entries (
-        source_id TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        part_id TEXT NOT NULL DEFAULT '',
-        chunk_index INTEGER NOT NULL DEFAULT 0,
-        kind TEXT NOT NULL,
-        role TEXT,
-        tool_name TEXT,
-        timestamp TEXT,
-        window_id TEXT NOT NULL,
-        origin TEXT NOT NULL,
-        byte_offset INTEGER NOT NULL,
-        parent_id TEXT,
-        content_key TEXT NOT NULL,
-        text TEXT NOT NULL,
-        extra TEXT NOT NULL,
-        slice TEXT NOT NULL DEFAULT 'prefix',
-        provisional INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (source_id, entry_id, part_id, chunk_index)
-      );
-      CREATE INDEX entries_source_offset_idx ON entries(source_id, byte_offset, part_id, chunk_index);
-      CREATE INDEX entries_source_window_idx ON entries(source_id, window_id, byte_offset);
-      CREATE INDEX entries_parent_idx ON entries(source_id, parent_id, byte_offset);
-      CREATE VIRTUAL TABLE entries_fts USING fts5(
-        text, extra, source_id UNINDEXED, entry_id UNINDEXED,
-        tokenize = 'unicode61 remove_diacritics 2'
-      );
-    `);
-    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('projection_version', ?)").run(INDEX_SCHEMA_VERSION);
-    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_rowid_version', '1')").run();
-  })();
-}
-
-function ensureFtsRowIds(database: Database.Database): void {
-  const version = database.prepare("SELECT value FROM meta WHERE key = 'fts_rowid_version'").get() as { value: string } | undefined;
-  if (version?.value === "1") return;
-  database.transaction(() => {
-    database.exec(`
-      CREATE VIRTUAL TABLE entries_fts_rekey USING fts5(
-        text, extra, source_id UNINDEXED, entry_id UNINDEXED,
-        tokenize = 'unicode61 remove_diacritics 2'
-      );
-      INSERT INTO entries_fts_rekey (rowid, text, extra, source_id, entry_id)
-      SELECT rowid, text, extra, source_id, entry_id FROM entries;
-      DROP TABLE entries_fts;
-      ALTER TABLE entries_fts_rekey RENAME TO entries_fts;
-    `);
-    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_rowid_version', '1')").run();
-  })();
-}
-
 function prefixReplaced(path: string, existing: SourceRow): boolean {
   const prefixBytes = existing.prefix_bytes || existing.indexed_bytes;
   const hash = existing.prefix_tail_hash || existing.indexed_tail_hash;
@@ -1359,12 +1302,12 @@ function deserializeProjector(raw: string, options?: { provisional?: boolean }):
           continue;
         }
         const value = entry[1];
-        if (typeof value.entryId !== "string" || typeof value.text !== "string" || typeof value.windowId !== "string"
+        if (typeof value.entryId !== "string" || typeof value.textHash !== "string" || !/^[a-f0-9]{64}$/.test(value.textHash) || typeof value.windowId !== "string"
           || (value.origin !== "forge_custom" && value.origin !== "native")) {
           continue;
         }
         state.seenContentKeys.set(entry[0], {
-          entryId: value.entryId, origin: value.origin, text: value.text, windowId: value.windowId,
+          entryId: value.entryId, origin: value.origin, textHash: value.textHash, windowId: value.windowId,
           timestamp: typeof value.timestamp === "string" ? value.timestamp : undefined,
         });
       }

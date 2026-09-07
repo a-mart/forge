@@ -51,7 +51,7 @@ export interface ProjectedCanonicalRecord {
 export interface ContentKeyOccurrences {
   entryId: string;
   origin: HistoryEntryOrigin;
-  text: string;
+  textHash: string;
   windowId: string;
   timestamp?: string;
 }
@@ -109,14 +109,13 @@ export const MAX_JSONL_CHUNK_BYTES = 64 * 1024;
 export const MAX_GENERATION_SCAN_BYTES = 64 * 1024;
 export const SCAN_BATCH_BYTES = 256 * 1024;
 export const BACKGROUND_SLICE_SOURCES = 8;
-export const BACKGROUND_ARCHIVE_SHARE = 2;
 export const IDLE_RECONCILE_MS = 250;
 export const MAX_INDEX_CHUNKS = 8;
 export const HISTORY_TOOL_NAME = "history";
 export const SNAPSHOT_TTL_MS = 60_000;
 export const MAX_LIVE_SNAPSHOTS = 32;
 export const MAX_SNAPSHOT_HITS = 500;
-export const INDEX_SCHEMA_VERSION = "3";
+export const INDEX_SCHEMA_VERSION = "4";
 
 export const EMPTY_CATALOG: HistoryCatalogSnapshot = {
   revision: 0,

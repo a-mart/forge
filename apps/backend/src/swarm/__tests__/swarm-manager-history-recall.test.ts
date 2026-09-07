@@ -19,7 +19,7 @@ describe('manager history recall integration', () => {
       // Read only the derived database: neither search nor sessions may drive catch-up.
       await expect.poll(() => {
         const db = new Database(getHistoryRecallIndexPath(config.paths.dataDir), { readonly: true })
-        try { return (db.prepare("SELECT count(*) AS n FROM entries WHERE text LIKE '%autonomouschartreuse%'").get() as { n: number }).n }
+        try { return (db.prepare("SELECT count(*) AS n FROM entry_payload WHERE text LIKE '%autonomouschartreuse%'").get() as { n: number }).n }
         finally { db.close() }
       }, { timeout: 5000 }).toBeGreaterThan(0)
       const tool = buildSwarmTools(manager, sessionAgent).find(entry => entry.name === 'history')!

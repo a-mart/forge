@@ -192,12 +192,14 @@ export function sourcesFromCatalog(
   host: HistorySearchServiceHost,
   catalog: HistoryCatalogSnapshot,
 ): HistorySourceDescriptor[] {
-  return catalog.sources.filter((source) => isCatalogSourceAllowed(host, source));
+  const profiles = new Map(host.listProfiles().map((profile) => [profile.profileId, profile]));
+  return catalog.sources.filter((source) => isCatalogSourceAllowed(host, source, profiles));
 }
 
 export function isCatalogSourceAllowed(
   host: HistorySearchServiceHost,
   source: HistorySourceDescriptor,
+  profiles?: ReadonlyMap<string, ManagerProfile>,
 ): boolean {
   const actor = host.getAgent(source.actorAgentId);
   const session = host.getAgent(source.sessionAgentId);
@@ -207,7 +209,7 @@ export function isCatalogSourceAllowed(
   if (session && isRestrictedDescriptor(session)) {
     return false;
   }
-  const profile = host.listProfiles().find((entry) => entry.profileId === source.profileId);
+  const profile = profiles ? profiles.get(source.profileId) : host.listProfiles().find((entry) => entry.profileId === source.profileId);
   if (isRestrictedProfile(profile)) {
     return false;
   }
