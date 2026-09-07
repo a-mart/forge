@@ -37,7 +37,7 @@ async function addGrant(file: string, sid: string, rights = 'ReadAndExecute'): P
     '$acl=Get-Acl -LiteralPath $target',
     `$sid=New-Object System.Security.Principal.SecurityIdentifier('${sid}')`,
     `$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'${rights}','Allow')))`,
-    'Set-Acl -LiteralPath $target -AclObject $acl',
+    '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
   ])
 }
 
@@ -54,7 +54,7 @@ describe.skipIf(process.platform !== 'win32')('External Chrome real Windows perm
       "$sid=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-5-0-55312928')",
       'if ($logon.Count -gt 0) { $sid=$logon[0] }',
       "$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'ReadAndExecute','Allow')))",
-      'Set-Acl -LiteralPath $target -AclObject $acl',
+      '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
     ])
     expect(await access.verifyPrivateFile(file)).toBe('insecure')
     for (let index = 0; index < 2; index += 1) {
@@ -81,7 +81,7 @@ describe.skipIf(process.platform !== 'win32')('External Chrome real Windows perm
       '$acl=New-Object System.Security.AccessControl.FileSecurity',
       '$acl.SetAccessRuleProtection($true,$false)',
       "$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($me,'Read','Allow')))",
-      'Set-Acl -LiteralPath $target -AclObject $acl',
+      '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
     ])
     expect(await access.verifyPrivateFile(file)).toBe('insecure')
     await access.securePrivateFile(file)
@@ -100,13 +100,13 @@ describe.skipIf(process.platform !== 'win32')('External Chrome real Windows perm
         '$acl=New-Object System.Security.AccessControl.DirectorySecurity',
         '$acl.SetAccessRuleProtection($true,$false)',
         "$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($me,'FullControl','None','None','Allow')))",
-        'Set-Acl -LiteralPath $target -AclObject $acl',
+        '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
       ])
       expect((await powershell(oldChild, [
         '$acl=Get-Acl -LiteralPath $target',
         "$acl.SetSecurityDescriptorSddlForm('D:',[System.Security.AccessControl.AccessControlSections]::Access)",
         '$acl.SetAccessRuleProtection($false,$false)',
-        'Set-Acl -LiteralPath $target -AclObject $acl',
+        '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
         '$acl=Get-Acl -LiteralPath $target',
         "if ($acl.AreAccessRulesProtected -or @($acl.Access).Count -ne 0) { throw 'expected legacy empty unprotected DACL' }; 'empty-dacl'",
       ])).trim()).toBe('empty-dacl')
@@ -134,7 +134,7 @@ describe.skipIf(process.platform !== 'win32')('External Chrome real Windows perm
       await powershell(oldChild, [
         '$acl=Get-Acl -LiteralPath $target',
         "$acl.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;' + $me.Value + ')'),[System.Security.AccessControl.AccessControlSections]::Access)",
-        'Set-Acl -LiteralPath $target -AclObject $acl',
+        '(Get-Item -LiteralPath $target -Force).SetAccessControl($acl)',
       ])
     }
   }, 30_000)
