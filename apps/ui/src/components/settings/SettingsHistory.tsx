@@ -8,12 +8,12 @@ export function SettingsHistory({ wsUrl }: { wsUrl: string }) {
   return <HistoryPanel key={wsUrl} wsUrl={wsUrl} />
 }
 
-const ACTIVITY = { starting: 'Starting', indexing: 'Indexing', idle: 'Up to date', paused: 'Paused', unavailable: 'Unavailable' }
+const ACTIVITY = { starting: 'Starting', indexing: 'Indexing', idle: 'Indexing complete', paused: 'Paused', unavailable: 'Unavailable' }
 
 function HistoryPanel({ wsUrl }: { wsUrl: string }) {
   const { status, error, updating, refresh, togglePaused } = useHistoryIndex(wsUrl)
   const stats = status?.statistics
-  const limited = !!stats && (stats.unreadableSources > 0 || stats.omittedSources > 0 || stats.pendingSources > 0)
+  const hasSearchLimitations = !!stats && (stats.unreadableSources > 0 || stats.omittedSources > 0)
   return (
     <div className="space-y-6" data-testid="history-settings">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -28,10 +28,12 @@ function HistoryPanel({ wsUrl }: { wsUrl: string }) {
         <SettingsSection label="Indexing" description="This preference applies to this Builder and persists after restart.">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-2">
-              <Badge variant="outline">{status.activity === 'idle' && limited ? 'Idle · limited coverage' : ACTIVITY[status.activity]}</Badge>
+              <Badge variant="outline">{ACTIVITY[status.activity]}</Badge>
               <p className="max-w-xl text-sm text-muted-foreground">{status.paused
                 ? 'Indexing is paused. Saved conversations and cached search results remain available; newer content may be missing.'
-                : 'Forge indexes new history automatically. Pausing also stops search-triggered catch-up, not conversation recording.'}</p>
+                : status.activity === 'idle'
+                  ? 'No indexing work is waiting. New history will be indexed automatically.'
+                  : 'Forge indexes new history automatically. Pausing stops indexing, not conversation recording.'}</p>
             </div>
             <Button variant={status.paused ? 'default' : 'outline'} disabled={updating} onClick={() => { void togglePaused() }}>
               {status.paused ? <Play className="mr-2 size-4" /> : <Pause className="mr-2 size-4" />}
@@ -40,18 +42,25 @@ function HistoryPanel({ wsUrl }: { wsUrl: string }) {
           </div>
           {status.error ? <p role="alert" className="mt-3 text-sm text-destructive">{status.error}</p> : null}
         </SettingsSection>
-        <SettingsSection label="Data and coverage" description="Byte counts describe discovered transcript data, not searchable text. More sources may still be discovered.">
+        <SettingsSection label="Indexing progress" description="Scanned bytes include content excluded from search. Sizes are rounded; matching totals do not mean all content is searchable.">
           <dl className="grid gap-3 sm:grid-cols-2">
             <Metric label="Index on disk" value={bytes(status.storage.databaseBytes)} />
             <Metric label="Write-ahead log" value={bytes(status.storage.walBytes)} />
             <Metric label="Known transcript data" value={bytes(stats?.transcriptBytes)} />
-            <Metric label="Processed transcript data" value={bytes(stats?.processedBytes)} />
+            <Metric label="Transcript data scanned" value={bytes(stats?.processedBytes)} />
             <Metric label="Sources discovered" value={stats ? `${stats.discoveredSources.toLocaleString()} / ${status.eligibleSources?.toLocaleString() ?? 'discovering'}` : 'Unavailable'} />
             <Metric label="Discovered sources awaiting work" value={stats?.runnableSources.toLocaleString() ?? 'Unavailable'} />
-            <Metric label="Unreadable or missing sources" value={stats?.unreadableSources.toLocaleString() ?? 'Unavailable'} />
-            <Metric label="Sources with content omissions" value={stats?.omittedSources.toLocaleString() ?? 'Unavailable'} />
           </dl>
-          {limited ? <p className="mt-3 text-sm text-muted-foreground">Coverage is incomplete or limited. Resuming continues pending work but cannot recover missing files or content omitted by safety limits.</p> : null}
+        </SettingsSection>
+        <SettingsSection label="Search availability" description="What can appear in search is separate from whether indexing has finished.">
+          {!stats ? <p className="text-sm text-muted-foreground">Search availability could not be determined.</p> : hasSearchLimitations ? <div className="space-y-2 text-sm">
+            <p className="font-medium">Some history is unavailable in search.</p>
+            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+              {stats.unreadableSources > 0 ? <li>{stats.unreadableSources.toLocaleString()} source {stats.unreadableSources === 1 ? 'file is' : 'files are'} missing or could not be read.</li> : null}
+              {stats.omittedSources > 0 ? <li>{stats.omittedSources.toLocaleString()} {stats.omittedSources === 1 ? 'source contains' : 'sources contain'} content excluded by indexing safety limits.</li> : null}
+            </ul>
+            {status.activity === 'idle' ? <p className="text-muted-foreground">Indexing has finished. These search limitations are not pending indexing work.</p> : null}
+          </div> : <p className="text-sm text-muted-foreground">No missing files or content omissions detected in the indexed data.</p>}
         </SettingsSection>
         <SettingsSection label="About this index" description="The SQLite index is a rebuildable cache. Canonical conversation files remain the source of truth.">
           <dl className="space-y-2 text-sm">
