@@ -77,6 +77,8 @@ describe('External Chrome authentication and authority stores', () => {
     expect(fileScript).toContain('WindowsIdentity]::GetCurrent().User')
     expect(fileScript).toContain('New-Object System.Security.AccessControl.FileSecurity')
     expect(fileScript).toContain('$private.SetAccessRuleProtection($true,$false)')
+    expect(fileScript).toContain('$item.SetAccessControl($private)')
+    expect(fileScript).not.toContain('Set-Acl')
     expect(fileScript).toContain("($me,'FullControl','None','None','Allow')")
     expect(fileScript).not.toContain('TEST\\user')
     expect(calls[1]!.args.at(-1)).toContain("owner''s metadata [1]")
