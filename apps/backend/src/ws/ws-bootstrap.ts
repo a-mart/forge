@@ -339,10 +339,16 @@ export async function sendSubscriptionBootstrap(options: {
     localBuilderThroughputSession
     && typeof swarmManager.getGenerationThroughputSnapshot === "function"
   ) {
-    await sendMeasured(
-      "generationThroughputSnapshot",
-      await swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId),
-    );
+    // Historical telemetry can require cold-cache recovery. It must neither block
+    // conversation history nor hold the serialized subscription controller open.
+    void Promise.resolve()
+      .then(() => canContinue() ? swarmManager.getGenerationThroughputSnapshot(throughputSessionAgentId) : null)
+      .then((snapshot) => snapshot && canContinue() ? send(socket, snapshot) : null)
+      .catch(() => {
+        warnWsThrottled("throughput_snapshot_unavailable", "[swarm] ws:throughput_snapshot_unavailable", {
+          sessionAgentId: throughputSessionAgentId,
+        });
+      });
   }
 
   const managerToolActivitySessionAgentId = resolveManagerToolActivitySessionAgentId(targetAgentId);

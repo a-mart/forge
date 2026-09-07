@@ -34,6 +34,19 @@ describe("atomic-files", () => {
     await expect(readFile(filePath, "utf8")).resolves.toBe("hello world");
   });
 
+  it("publishes streamed cache chunks only after the complete stream is written", async () => {
+    const root = await createTempRoot();
+    const path = join(root, "stream.json");
+    await writeFileAtomic(path, "previous");
+    async function* chunks() {
+      yield "[1,";
+      expect(await readFile(path, "utf8")).toBe("previous");
+      yield Buffer.from("2]");
+    }
+    await writeFileAtomic(path, chunks(), { mode: 0o600 });
+    expect(await readFile(path, "utf8")).toBe("[1,2]");
+  });
+
   it("writeJsonFileAtomic pretty prints JSON with a trailing newline", async () => {
     const root = await createTempRoot();
     const filePath = join(root, "data.json");

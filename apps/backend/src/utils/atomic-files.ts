@@ -15,7 +15,7 @@ interface AtomicJsonUpdateOptions extends AtomicWriteOptions {
 
 export async function writeFileAtomic(
   filePath: string,
-  content: string | Uint8Array,
+  content: string | Uint8Array | AsyncIterable<string | Uint8Array>,
   options: AtomicWriteOptions = {},
 ): Promise<void> {
   const targetDirectory = dirname(filePath);

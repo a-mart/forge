@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { getStatsSourceCache } from "../stats-source-cache.js";
 import { join } from "node:path";
 import type { GenerationMeasurementRecordV1, TokenAnalyticsAttributionKind } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
@@ -12,10 +12,9 @@ import { resolveRoster } from "../../swarm/specialists/specialist-registry.js";
 import {
   GENERATION_MEASUREMENT_ENTRY_TYPE,
   foldGenerationMeasurementRecords,
-  parseGenerationMeasurementCustomEntry,
   type GenerationMeasurementRecordSource,
 } from "../../utils/generation-measurement-records.js";
-import { isEnoentError, isRecord, listDirectoryNames, listFileNames, readJsonFileOrNull } from "../stats-shared.js";
+import { isRecord, listDirectoryNames, listFileNames, readJsonFileOrNull } from "../stats-shared.js";
 import type {
   GenerationMeasurementRecord,
   GenerationThroughputScanDiagnostics,
@@ -58,13 +57,13 @@ export async function scanGenerationThroughputProfiles(
       const meta = await readJsonFileOrNull<SessionMetaLite>(getSessionMetaPath(dataDir, profile.profileId, sessionId));
       sessionLabels.set(sessionKey(profile.profileId, sessionId), normalizeLabel(meta?.label, sessionId));
 
-      await scanMeasurementFile(getSessionFilePath(dataDir, profile.profileId, sessionId), sources, diagnostics);
+      await scanMeasurementFile(getSessionFilePath(dataDir, profile.profileId, sessionId), sources, diagnostics, dataDir);
 
       const workersDir = getWorkersDir(dataDir, profile.profileId, sessionId);
       const workerFiles = (await listFileNames(workersDir, { throwOnError: true }))
         .filter((name) => name.endsWith(".jsonl") && !name.endsWith(".conversation.jsonl"));
       for (const workerFile of workerFiles) {
-        await scanMeasurementFile(join(workersDir, workerFile), sources, diagnostics);
+        await scanMeasurementFile(join(workersDir, workerFile), sources, diagnostics, dataDir);
       }
     }
   }
@@ -93,56 +92,13 @@ async function scanMeasurementFile(
   path: string,
   destinations: GenerationMeasurementRecordSource[],
   diagnostics: GenerationThroughputScanDiagnostics,
+  dataDir: string,
 ): Promise<void> {
-  let byteOffset = 0;
-  let pending = Buffer.alloc(0);
-
-  try {
-    const stream = createReadStream(path);
-    for await (const chunk of stream) {
-      pending = pending.length === 0 ? Buffer.from(chunk) : Buffer.concat([pending, Buffer.from(chunk)]);
-      let newlineIndex: number;
-      while ((newlineIndex = pending.indexOf(0x0a)) >= 0) {
-        const line = pending.subarray(0, newlineIndex);
-        processMeasurementLine(line, path, byteOffset, destinations, diagnostics);
-        byteOffset += newlineIndex + 1;
-        pending = pending.subarray(newlineIndex + 1);
-      }
-    }
-
-    if (pending.length > 0) {
-      processMeasurementLine(pending, path, byteOffset, destinations, diagnostics);
-    }
-  } catch (error) {
-    if (!isEnoentError(error)) {
-      throw error;
-    }
-  }
-}
-
-function processMeasurementLine(
-  rawLine: Buffer,
-  sourcePath: string,
-  byteOffset: number,
-  destinations: GenerationMeasurementRecordSource[],
-  diagnostics: GenerationThroughputScanDiagnostics,
-): void {
-  const text = rawLine.toString("utf8").trim();
-  if (!text) return;
-
-  try {
-    const entry = JSON.parse(text) as unknown;
-    const record = parseGenerationMeasurementCustomEntry(entry);
-    if (record) {
-      destinations.push({ record, sourcePath, byteOffset });
-      return;
-    }
-
-    if (isGenerationMeasurementCustomEntry(entry)) {
-      diagnostics.malformedRecordCount += 1;
-    }
-  } catch {
-    // A malformed non-measurement JSONL entry is irrelevant to this scanner.
+  for (const { entry, byteOffset } of await getStatsSourceCache(dataDir).read(path)) {
+    const record = entry.type === "custom" && entry.customType === "swarm_generation_measurement"
+      ? entry.data as GenerationMeasurementRecordV1 | null : null;
+    if (record) destinations.push({ record, sourcePath: path, byteOffset });
+    else if (isGenerationMeasurementCustomEntry(entry)) diagnostics.malformedRecordCount += 1;
   }
 }
 

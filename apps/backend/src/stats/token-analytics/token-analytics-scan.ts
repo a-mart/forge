@@ -109,7 +109,7 @@ export async function scanTokenAnalyticsProfiles(swarmManager: SwarmManager): Pr
           if (event) {
             events.push(event);
           }
-        }, { throwOnError: true });
+        }, { throwOnError: true, dataDir });
       }
     }
   }

@@ -610,6 +610,14 @@ export function getSharedStatsCachePath(dataDir: string): string {
   return join(getSharedCacheDir(dataDir), "stats-cache.json");
 }
 
+export function getSharedStatsGitCacheDir(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "stats-git");
+}
+
+export function getSharedStatsSourcesDir(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "stats-sources");
+}
+
 export function getSharedTokenAnalyticsCachePath(dataDir: string): string {
   return join(getSharedCacheDir(dataDir), "token-analytics-cache.json");
 }

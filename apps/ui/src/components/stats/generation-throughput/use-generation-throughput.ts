@@ -12,7 +12,11 @@ export function useGenerationThroughput(wsUrl: string, query: GenerationThroughp
   const snapshotRef = useRef<GenerationThroughputSnapshot | null>(null)
   const customIncomplete = query.rangePreset === 'custom' && (!query.startDate || !query.endDate)
 
+  const requestSequence = useRef(0)
+
   useEffect(() => {
+    const sequence = ++requestSequence.current
+    setIsRefreshing(false)
     if (customIncomplete) {
       setIsLoading(false)
       setIsSwitchingQuery(false)
@@ -28,34 +32,41 @@ export function useGenerationThroughput(wsUrl: string, query: GenerationThroughp
 
     fetchGenerationThroughput(wsUrl, query)
       .then((next) => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           snapshotRef.current = next
           setSnapshot(next)
         }
       })
       .catch((nextError) => {
-        if (!cancelled) setError(nextError)
+        if (!cancelled && sequence === requestSequence.current) setError(nextError)
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setIsLoading(false)
           setIsSwitchingQuery(false)
         }
       })
-    return () => { cancelled = true }
+    return () => { cancelled = true; requestSequence.current += 1 }
   }, [customIncomplete, query, wsUrl]) // query is intentionally the request identity
 
   const refresh = useCallback(async () => {
+    const sequence = ++requestSequence.current
     setIsRefreshing(true)
     try {
       const next = await refreshGenerationThroughput(wsUrl, query)
+      if (sequence !== requestSequence.current) return
       snapshotRef.current = next
       setSnapshot(next)
       setError(null)
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return
       setError(nextError)
     } finally {
-      setIsRefreshing(false)
+      if (sequence === requestSequence.current) {
+        setIsRefreshing(false)
+        setIsLoading(false)
+        setIsSwitchingQuery(false)
+      }
     }
   }, [query, wsUrl])
 

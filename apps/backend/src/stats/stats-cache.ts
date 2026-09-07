@@ -5,12 +5,12 @@ import { isEnoentError, isRecord, STATS_CACHE_TTL_MS } from "./stats-shared.js";
 import { normalizeTimezone } from "./stats-time.js";
 import type { CacheEntry, PersistedStatsCache } from "./stats-types.js";
 
-const STATS_CACHE_VERSION = 8;
+const STATS_CACHE_VERSION = 9;
 
 export { STATS_CACHE_VERSION };
 
-export function getStatsCacheKey(range: StatsRange): string {
-  return `stats:${range}`;
+export function getStatsCacheKey(range: StatsRange, timezone: string = normalizeTimezone(undefined)): string {
+  return `stats:${range}:${timezone}`;
 }
 
 export function getStatsInFlightKey(range: StatsRange, timezone: string): string {
@@ -32,13 +32,13 @@ export async function loadPersistedStatsCache(
   try {
     const raw = await readFile(cacheFilePath, "utf8");
     const parsed = JSON.parse(raw) as PersistedStatsCache;
-    if (!isRecord(parsed) || parsed.version !== STATS_CACHE_VERSION || !isRecord(parsed.entries)) {
+    if (!isRecord(parsed) || (parsed.version !== STATS_CACHE_VERSION && parsed.version !== 8) || !isRecord(parsed.entries)) {
       return;
     }
 
-    const ranges: StatsRange[] = ["7d", "30d", "all"];
-    for (const range of ranges) {
-      const entry = parsed.entries[range];
+    for (const [key, entry] of Object.entries(parsed.entries)) {
+      const range = (parsed.version === 8 ? key : key.split(":")[1]) as StatsRange;
+      if (!["7d", "30d", "all"].includes(range)) continue;
       if (!entry || !isRecord(entry)) {
         continue;
       }
@@ -49,7 +49,7 @@ export async function loadPersistedStatsCache(
         continue;
       }
 
-      cache.set(getStatsCacheKey(range), {
+      cache.set(getStatsCacheKey(range, timezone), {
         expiresAt,
         timezone,
         snapshot: entry.snapshot as StatsSnapshot,
@@ -66,20 +66,7 @@ export async function persistStatsCache(
   cacheFilePath: string,
   cache: Map<string, CacheEntry>
 ): Promise<void> {
-  const entries: Partial<Record<StatsRange, CacheEntry>> = {};
-  const entry7d = cache.get(getStatsCacheKey("7d"));
-  const entry30d = cache.get(getStatsCacheKey("30d"));
-  const entryAll = cache.get(getStatsCacheKey("all"));
-
-  if (entry7d) {
-    entries["7d"] = entry7d;
-  }
-  if (entry30d) {
-    entries["30d"] = entry30d;
-  }
-  if (entryAll) {
-    entries.all = entryAll;
-  }
+  const entries = Object.fromEntries(cache);
 
   const payload: PersistedStatsCache = {
     version: STATS_CACHE_VERSION,
@@ -99,7 +86,7 @@ export function getLatestTokenStatsForTimezone(
   let latestComputedAtMs = Number.NEGATIVE_INFINITY;
 
   for (const range of ranges) {
-    const entry = cache.get(getStatsCacheKey(range));
+    const entry = cache.get(getStatsCacheKey(range, timezone));
     if (!entry || entry.timezone !== timezone) {
       continue;
     }

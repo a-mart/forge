@@ -1110,6 +1110,37 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     })])
   })
 
+  it('finishes history and a same-session retry while old throughput hydration is pending', async () => {
+    const base = createManagerStub()
+    const deferred = createDeferred<any>()
+    const snapshot = { type: 'generation_throughput_snapshot', sessionAgentId: 'manager', measurements: [] }
+    const manager = {
+      ...base,
+      getConfig: () => ({ managerId: 'manager', runtimeTarget: 'builder' }),
+      listWorkersForSession: () => [],
+      getGenerationThroughputSnapshot: vi.fn().mockReturnValueOnce(deferred.promise).mockResolvedValue(snapshot),
+    }
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any, allowNonManagerSubscriptions: true, terminalService: null,
+      unreadTracker: null, perf: createPerfStub(),
+      send: (_socket, event) => { sentEvents.push(event); return 1 },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'web', false, 'cold')
+    expect(sentEvents.some((event) => event.type === 'conversation_history' && event.subscriptionId === 'cold')).toBe(true)
+    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'web', false, 'retry')
+    expect(sentEvents.some((event) => event.type === 'conversation_history' && event.subscriptionId === 'retry')).toBe(true)
+    await flushMicrotasks()
+    expect(sentEvents.filter((event) => event.type === 'generation_throughput_snapshot')).toHaveLength(1)
+    deferred.resolve(snapshot)
+    await flushMicrotasks()
+    expect(sentEvents.filter((event) => event.type === 'generation_throughput_snapshot')).toHaveLength(1)
+    subscriptions.remove(socket)
+    expect((subscriptions as any).bootstrapControllers.size).toBe(0)
+  })
+
   it('does not retry a failed generation until a later subscribe explicitly retries it', async () => {
     const manager = createManagerStub()
     const sentEvents: ServerEvent[] = []

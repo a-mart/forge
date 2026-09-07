@@ -1,4 +1,4 @@
-import type { StatsRange, StatsSnapshot } from "@forge/protocol";
+import type { StatsSnapshot } from "@forge/protocol";
 
 export interface SessionMetaLite {
   workers?: Array<{
@@ -62,7 +62,7 @@ export interface CacheEntry {
 
 export interface PersistedStatsCache {
   version: number;
-  entries: Partial<Record<StatsRange, CacheEntry>>;
+  entries: Record<string, CacheEntry>;
 }
 
 export interface StatsServiceOptions {

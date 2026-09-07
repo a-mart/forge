@@ -133,7 +133,7 @@ describe('StatsService refresh completion hook', () => {
     releaseScan.resolve()
     await Promise.all([batchRefresh, forcedRangeRefresh])
 
-    expect(cacheSetSpy.mock.calls.filter(([key]) => key === 'stats:30d')).toHaveLength(1)
+    expect(cacheSetSpy.mock.calls.filter(([key]) => key === `stats:30d:${Intl.DateTimeFormat().resolvedOptions().timeZone}`)).toHaveLength(1)
   })
 
   it('waits for an older range refresh, then replaces every range from one batch scan', async () => {

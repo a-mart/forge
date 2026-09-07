@@ -1,11 +1,10 @@
-import { createReadStream } from "node:fs";
+import { getStatsSourceCache } from "../../stats/stats-source-cache.js";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { GenerationMeasurementRecordV1 } from "@forge/protocol";
 import { getSessionFilePath, getWorkersDir } from "../data-paths.js";
 import {
   foldGenerationMeasurementRecords,
-  parseGenerationMeasurementCustomEntry,
   type GenerationMeasurementRecordSource,
 } from "../../utils/generation-measurement-records.js";
 
@@ -25,7 +24,11 @@ export async function loadDurableGenerationMeasurements(
   const sources: GenerationMeasurementRecordSource[] = [];
 
   for (const path of [sessionFile, ...workerFiles.map((file) => join(workersDir, file))]) {
-    await collectMeasurementSources(path, sources);
+    for (const { entry, byteOffset } of await getStatsSourceCache(dataDir).read(path)) {
+      const record = entry.type === "custom" && entry.customType === "swarm_generation_measurement"
+      ? entry.data as GenerationMeasurementRecordV1 | null : null;
+      if (record) sources.push({ record, sourcePath: path, byteOffset });
+    }
   }
 
   return foldGenerationMeasurementRecords(sources).records;
@@ -38,44 +41,6 @@ async function listWorkerFiles(workersDir: string): Promise<string[]> {
   } catch (error) {
     if (isEnoentError(error)) return [];
     throw error;
-  }
-}
-
-async function collectMeasurementSources(
-  path: string,
-  destinations: GenerationMeasurementRecordSource[],
-): Promise<void> {
-  let byteOffset = 0;
-  let pending = Buffer.alloc(0);
-
-  try {
-    for await (const chunk of createReadStream(path)) {
-      pending = pending.length === 0 ? Buffer.from(chunk) : Buffer.concat([pending, Buffer.from(chunk)]);
-      let newlineIndex: number;
-      while ((newlineIndex = pending.indexOf(0x0a)) >= 0) {
-        collectLine(pending.subarray(0, newlineIndex), path, byteOffset, destinations);
-        byteOffset += newlineIndex + 1;
-        pending = pending.subarray(newlineIndex + 1);
-      }
-    }
-    if (pending.length > 0) collectLine(pending, path, byteOffset, destinations);
-  } catch (error) {
-    if (!isEnoentError(error)) throw error;
-  }
-}
-
-function collectLine(
-  rawLine: Buffer,
-  sourcePath: string,
-  byteOffset: number,
-  destinations: GenerationMeasurementRecordSource[],
-): void {
-  try {
-    const entry = JSON.parse(rawLine.toString("utf8").trim()) as unknown;
-    const record = parseGenerationMeasurementCustomEntry(entry);
-    if (record) destinations.push({ record, sourcePath, byteOffset });
-  } catch {
-    // A malformed history line cannot prevent a count-only reconnect summary.
   }
 }
 

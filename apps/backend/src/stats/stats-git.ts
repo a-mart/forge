@@ -1,5 +1,8 @@
+import { writeFileAtomic } from "../utils/atomic-files.js";
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { getSharedStatsGitCacheDir } from "../swarm/storage/data-paths.js";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { CodeStats } from "@forge/protocol";
@@ -10,7 +13,7 @@ const UNKNOWN_APP_VERSION = "unknown";
 const VERSION_FILE_NAME = "version.json";
 const execFileAsync = promisify(execFileCallback);
 
-export async function computeCodeStats(repoPaths: string[], rangeStartMs: number): Promise<CodeStats> {
+export async function computeCodeStats(repoPaths: string[], rangeStartMs: number, dataDir?: string): Promise<CodeStats> {
   if (repoPaths.length === 0) {
     return {
       linesAdded: 0,
@@ -37,20 +40,13 @@ export async function computeCodeStats(repoPaths: string[], rangeStartMs: number
         continue;
       }
 
-      const numstatOutput = await runGitCommand(repoPath, [
-        "log",
-        `--author=${author}`,
-        `--since=${sinceIso}`,
-        "--numstat",
-        "--format=",
-      ]);
-      const parsedNumstat = parseNumstatTotals(numstatOutput);
-
-      const commitCount = await countCommits(repoPath, author, sinceIso);
-
-      linesAdded += parsedNumstat.linesAdded;
-      linesDeleted += parsedNumstat.linesDeleted;
-      commits += commitCount;
+      const head = (await runGitCommand(repoPath, ["rev-parse", "HEAD"])).trim();
+      const result = await cachedRepoStats(repoPath, author, sinceIso, head, dataDir);
+      const parsedNumstat = result;
+      const commitCount = result.commits;
+      linesAdded += result.linesAdded;
+      linesDeleted += result.linesDeleted;
+      commits += result.commits;
 
       if (commitCount > 0 || parsedNumstat.linesAdded > 0 || parsedNumstat.linesDeleted > 0) {
         repos += 1;
@@ -170,18 +166,35 @@ async function isGitRepo(repoPath: string): Promise<boolean> {
   }
 }
 
-async function countCommits(repoPath: string, author: string, sinceIso: string): Promise<number> {
-  const output = await runGitCommand(repoPath, [
-    "log",
-    `--author=${author}`,
-    `--since=${sinceIso}`,
-    "--format=%H",
-  ]);
+interface RepoStats { linesAdded: number; linesDeleted: number; commits: number }
+const gitComputations = new Map<string, Promise<RepoStats>>();
 
-  return output
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0).length;
+async function cachedRepoStats(repoPath: string, author: string, sinceIso: string, head: string, dataDir?: string): Promise<RepoStats> {
+  const identity = JSON.stringify([resolve(repoPath), author, sinceIso]);
+  const key = JSON.stringify([dataDir, identity, head]);
+  const existing = gitComputations.get(key);
+  if (existing) return existing;
+  const computation = (async () => {
+    const dir = dataDir ? getSharedStatsGitCacheDir(dataDir) : null;
+    const path = dir ? join(dir, `${createHash("sha256").update(identity).digest("hex")}.json`) : null;
+    if (path) {
+      try {
+        const cached = JSON.parse(await readFile(path, "utf8"));
+        if (cached.version === 1 && cached.head === head && cached.identity === identity
+          && [cached.result?.linesAdded, cached.result?.linesDeleted, cached.result?.commits]
+            .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return cached.result as RepoStats;
+      } catch { /* Derived cache is optional. */ }
+    }
+    // One traversal returns both numstat totals and commit count.
+    const output = await runGitCommand(repoPath, ["log", head, `--author=${author}`, `--since=${sinceIso}`, "--numstat", "--format=commit:%H"]);
+    const result = { ...parseNumstatTotals(output), commits: output.split(/\r?\n/u).filter((line) => /^commit:[0-9a-f]+$/.test(line)).length };
+    if (path && dir) {
+      await writeFileAtomic(path, JSON.stringify({ version: 1, identity, head, result }), { mode: 0o600 }).catch(() => undefined);
+    }
+    return result;
+  })().finally(() => gitComputations.delete(key));
+  gitComputations.set(key, computation);
+  return computation;
 }
 
 async function runGitCommand(repoPath: string, args: string[]): Promise<string> {

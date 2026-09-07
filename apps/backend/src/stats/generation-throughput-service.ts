@@ -45,7 +45,7 @@ export interface GenerationThroughputServiceOptions {
 export class GenerationThroughputService {
   private scanCache: GenerationThroughputCacheEntry | null = null;
   private inFlightScan: { generation: number; promise: Promise<GenerationThroughputScanResult> } | null = null;
-  private persistentCacheLoaded = false;
+  private persistentCacheLoad: Promise<void> | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
   private cacheGeneration = 0;
   private disposed = false;
@@ -68,9 +68,10 @@ export class GenerationThroughputService {
     this.scanCache = null;
   }
 
-  /** A post-append terminal event invalidates stale disk scans without trusting live payloads. */
+  /** Keep the last snapshot available; reconciliation reads only appended source bytes. */
   invalidateFromRuntimeCompletion(): void {
-    this.clearCache();
+    this.cacheGeneration += 1;
+    if (this.scanCache) this.scanCache = { ...this.scanCache, expiresAt: 0 };
   }
 
   /** Wait for background cache writes before callers tear down the data directory. */
@@ -196,7 +197,11 @@ export class GenerationThroughputService {
         return this.scanCache.result;
       }
     }
-    if (this.inFlightScan?.generation === this.cacheGeneration) return this.inFlightScan.promise;
+    if (this.inFlightScan) {
+      const active = this.inFlightScan;
+      const result = await active.promise;
+      return active.generation === this.cacheGeneration ? result : this.getScanResult(forceRefresh);
+    }
 
     const generation = this.cacheGeneration;
     const promise = this.scanProfiles(this.swarmManager)
@@ -215,12 +220,14 @@ export class GenerationThroughputService {
     return promise;
   }
 
-  private async ensurePersistentCacheLoaded(): Promise<void> {
-    if (this.persistentCacheLoaded) return;
-    this.persistentCacheLoaded = true;
-    const generation = this.cacheGeneration;
-    const entry = await loadPersistedGenerationThroughputCache(this.cacheFilePath);
-    if (generation === this.cacheGeneration) this.scanCache = entry;
+  private ensurePersistentCacheLoaded(): Promise<void> {
+    if (!this.persistentCacheLoad) {
+      const generation = this.cacheGeneration;
+      this.persistentCacheLoad = loadPersistedGenerationThroughputCache(this.cacheFilePath)
+        .then((entry) => { if (generation === this.cacheGeneration) this.scanCache = entry; })
+        .catch(() => undefined);
+    }
+    return this.persistentCacheLoad;
   }
 
   private queuePersistCacheWrite(generation: number, entry: GenerationThroughputCacheEntry): void {
