@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { ActorTaskNotes, TaskNotesStore } from "../task-notes-store.js";
 import { SessionGoalStore } from "../goals/session-goal-store.js";
 import { SessionPlanStore } from "../planning/session-plan-store.js";
-import { savePins } from "../session/message-pins.js";
+import { PINNED_MESSAGES_FILE_NAME, savePins } from "../session/message-pins.js";
 import { getSessionDir } from "../storage/data-paths.js";
 import {
   collectUnconsumedToolEvidenceIds,
@@ -15,6 +16,14 @@ import {
   isFreshContextBusy,
   resolveFreshCheckpointBudget,
 } from "../runtime/fresh-context-checkpoint.js";
+
+const temporaryRoots: string[] = [];
+afterEach(async () => { await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
+async function temporaryRoot() {
+  const path = await mkdtemp(join(tmpdir(), "forge-fresh-checkpoint-"));
+  temporaryRoots.push(path);
+  return path;
+}
 
 function messageEntry(
   id: string,
@@ -32,7 +41,7 @@ function messageEntry(
 describe("fresh context checkpoint helper", () => {
   it("budgets the fresh window without subtracting discarded overflow context", async () => {
     const handler = createFreshContextHandler({
-      dataDir: join(tmpdir(), "unused"),
+      dataDir: await temporaryRoot(),
       descriptor: { agentId: "s", profileId: "p", role: "manager", managerId: "s" },
       getContextMode: () => "fresh",
       getBudget: () => ({ contextWindow: 32000, maxOutputTokens: 1024, retainedContextTokens: 2000 }),
@@ -109,7 +118,7 @@ describe("fresh context checkpoint helper", () => {
   });
 
   it("builds identical checkpoints from native branch plus current goal/plan/pins", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "forge-fresh-checkpoint-"));
+    const dataDir = await temporaryRoot();
     const descriptor = {
       agentId: "session-1",
       profileId: "profile-1",
@@ -154,9 +163,12 @@ describe("fresh context checkpoint helper", () => {
       }),
       messageEntry("result-9", { role: "toolResult", toolCallId: "call-9", content: "evidence" }),
     ];
+    const sessionFile = join(dataDir, "session.jsonl");
+    await writeFile(sessionFile, branch.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     const handler = createFreshContextHandler({
       dataDir,
       descriptor,
+      sessionFile,
       getContextMode: () => "fresh",
     });
     const first = await handler({
@@ -176,9 +188,9 @@ describe("fresh context checkpoint helper", () => {
     expect(first?.summary).toContain("Ship fresh windows");
     expect(first?.summary).toContain("Write tests");
     expect(first?.summary).toContain("Never leak secrets");
-    expect(first?.summary).toContain("unavailable: result-9");
+    expect(first?.summary).toContain('"entryId":"result-9"');
     expect(first?.summary).not.toContain("pendingDeliveries");
-    expect(first?.details.forgeContext).toEqual({
+    expect(first?.details.forgeContext).toMatchObject({
       mode: "fresh",
       trigger: "manual",
       willRetry: false,
@@ -187,7 +199,7 @@ describe("fresh context checkpoint helper", () => {
 
   it("returns undefined in summary mode without building a checkpoint", async () => {
     const handler = createFreshContextHandler({
-      dataDir: join(tmpdir(), "unused"),
+      dataDir: await temporaryRoot(),
       descriptor: {
         agentId: "session-1",
         profileId: "profile-1",
@@ -211,7 +223,7 @@ describe("fresh context checkpoint helper", () => {
         retainedContextTokens: 1_900,
       })).toBe(0);
       const handler = createFreshContextHandler({
-        dataDir: join(tmpdir(), "unused"),
+        dataDir: await temporaryRoot(),
         descriptor: {
           agentId: "session-1",
           profileId: "profile-1",
@@ -229,4 +241,125 @@ describe("fresh context checkpoint helper", () => {
         retainedContextTokens: 1_900,
       })).rejects.toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
     });
+  it("retains all ten full pins in a readable checkpoint when inline sections exceed budget", async () => {
+    const dataDir = await temporaryRoot();
+    const descriptor = { agentId: "s", profileId: "p", managerId: "s", role: "manager" as const };
+    await savePins(getSessionDir(dataDir, "p", "s"), { version: 1, pins: Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [`p${i}`, {
+        role: "user" as const, text: `pin-${i}-start ` + "constraint ".repeat(160) + ` pin-${i}-end`,
+        timestamp: "2026-01-01T00:00:00.000Z", pinnedAt: "2026-01-01T00:00:00.000Z",
+      }]),
+    ) });
+    const handler = createFreshContextHandler({ dataDir, descriptor, getContextMode: () => "fresh" });
+    const result = await handler({ reason: "agent", willRetry: true, branchEntries: [
+      messageEntry("first", { role: "user", content: "Build the original requested outcome" }),
+      messageEntry("latest", { role: "user", content: "Yes, continue." }),
+    ] });
+    expect(result!.summary.length).toBeLessThanOrEqual(8000);
+    expect(result!.summary).toContain('notes({op:"read",path:"runtime/continuity-0.md"})');
+    expect(result!.summary).toContain("Protected pins");
+    const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
+    const note = await notes.read({ path: "runtime/continuity-0.md", maxChars: 20000 });
+    for (let i = 0; i < 10; i++) expect(note.text).toContain(`pin-${i}-end`);
+    expect(note.text).toContain("Build the original requested outcome");
+    expect(note.text).toContain("Yes, continue.");
+    expect(note.text).toContain('op:"items"');
+  });
+
+  it("refuses oversized sections without a durable recovery reference instead of slicing them", () => {
+    expect(() => formatFreshContextCheckpoint({ trigger: "manual", willRetry: false,
+      pins: [{ role: "user", text: "x".repeat(9000) }], maxChars: 8000,
+    })).toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
+  });
+
+  it("refuses missing completed-tool evidence before persisting a reset checkpoint", async () => {
+    const dataDir = await temporaryRoot();
+    const handler = createFreshContextHandler({ dataDir,
+      descriptor: { agentId: "s", profileId: "p", managerId: "s", role: "manager" }, getContextMode: () => "fresh" });
+    await expect(handler({ reason: "agent", willRetry: true, branchEntries: [
+      messageEntry("tool", { role: "toolResult", toolCallId: "call", toolName: "bash", content: "already completed" }),
+    ] })).rejects.toThrow("canonical records are unavailable");
+    const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
+    expect((await notes.list()).notes).toEqual([]);
+  });
+
+  it("rejects unreadable notes and aborts without replacing an existing recovery note", async () => {
+    const dataDir = await temporaryRoot();
+    const descriptor = { agentId: "s", profileId: "p", managerId: "s", role: "manager" as const };
+    const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
+    await notes.write({ path: "checkpoint.md", text: "still working" });
+    await writeFile(notes.filePath, "{corrupted");
+    const handler = createFreshContextHandler({ dataDir, descriptor, getContextMode: () => "fresh" });
+    await expect(handler({ reason: "agent", willRetry: true, branchEntries: [] })).rejects.toThrow("cannot read task notes");
+    const controller = new AbortController(); controller.abort();
+    await expect(handler({ reason: "agent", willRetry: true, branchEntries: [], signal: controller.signal })).rejects.toThrow("aborted");
+  });
+
+  it("keeps the committed snapshot intact when preparation is aborted after its write", async () => {
+    const dataDir = await temporaryRoot();
+    const descriptor = { agentId: "s", profileId: "p", managerId: "s", role: "manager" as const };
+    const handler = createFreshContextHandler({ dataDir, descriptor, getContextMode: () => "fresh" });
+    const first = await handler({ reason: "manual", willRetry: false, branchEntries: [] });
+    const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
+    const before = await notes.read({ path: first!.details.forgeContext.recoveryNote!.path });
+    const controller = new AbortController();
+    const write = ActorTaskNotes.prototype.write;
+    const spy = vi.spyOn(ActorTaskNotes.prototype, "write").mockImplementation(async function (this: ActorTaskNotes, options) {
+      const result = await write.call(this, options); controller.abort(); return result;
+    });
+    try {
+      await expect(handler({ reason: "agent", willRetry: true, signal: controller.signal, branchEntries: [{
+        type: "compaction", id: "committed", parentId: null, timestamp: "2026-01-01T00:00:00Z",
+        summary: first!.summary, details: first!.details, tokensBefore: 100,
+      } as SessionEntry, messageEntry("next", { role: "user", content: "new steering" })] })).rejects.toThrow("aborted");
+    } finally { spy.mockRestore(); }
+    expect(await notes.read({ path: before.path })).toEqual(before);
+    expect((await notes.read({ path: "runtime/continuity-1.md" })).text).toContain("new steering");
+  });
+
+  it("recovers a large original request beyond the recent lookup tail without copying its body", async () => {
+    const dataDir = await temporaryRoot();
+    const first = messageEntry("first", { role: "user", content: "Original objective " + "x".repeat(150000) });
+    const latest = messageEntry("latest", { role: "user", content: "Yes, continue." });
+    const sessionFile = join(dataDir, "session.jsonl");
+    const filler = JSON.stringify({ type: "custom", id: "filler", data: "y".repeat(60000) });
+    await writeFile(sessionFile, JSON.stringify(first) + "\n" + (filler + "\n").repeat(160) + JSON.stringify(latest) + "\n");
+    const handler = createFreshContextHandler({ dataDir, sessionFile,
+      descriptor: { agentId: "s", profileId: "p", managerId: "s", role: "manager" }, getContextMode: () => "fresh" });
+    const result = await handler({ reason: "agent", willRetry: true, branchEntries: [first, latest] });
+    expect(result!.summary).toContain('"entryId":"first"');
+    expect(result!.summary.length).toBeLessThanOrEqual(8000);
+  });
+
+  it("keeps actual user corrections distinct from internal deliveries and redacts argument previews", async () => {
+    const dataDir = await temporaryRoot();
+    const branch = [
+      messageEntry("first", { role: "user", content: '[sourceContext] {"channel":"web"}\nOriginal request' }),
+      messageEntry("correction", { role: "user", content: '[sourceContext] {"channel":"web"}\nUse the corrected requirement' }),
+      messageEntry("worker", { role: "user", content: "SYSTEM: Worker finished some work" }),
+      messageEntry("call", { role: "assistant", content: [{ type: "toolCall", id: "c", name: "test", arguments: { password: "FAKE-SECRET-PREVIEW", safe: "visible" } }] }),
+      messageEntry("result", { role: "toolResult", toolCallId: "c", toolName: "test", content: "done" }),
+    ];
+    const sessionFile = join(dataDir, "session.jsonl");
+    await writeFile(sessionFile, branch.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const handler = createFreshContextHandler({ dataDir, sessionFile,
+      descriptor: { agentId: "s", profileId: "p", managerId: "s", role: "manager" }, getContextMode: () => "fresh" });
+    const result = await handler({ reason: "agent", willRetry: true, branchEntries: branch });
+    expect(result!.summary).toContain("Use the corrected requirement");
+    expect(result!.summary).not.toContain("Worker finished some work");
+    expect(result!.summary).not.toContain("FAKE-SECRET-PREVIEW");
+    const note = await new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" }).read({ path: "runtime/continuity-0.md" });
+    expect(note.text).not.toContain("FAKE-SECRET-PREVIEW");
+  });
+
+  it("preserves context when protected pins are corrupt instead of treating them as empty", async () => {
+    const dataDir = await temporaryRoot();
+    const sessionDir = getSessionDir(dataDir, "p", "s");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, PINNED_MESSAGES_FILE_NAME), '{"version":1,"pins":{"lost":{"role":"invalid"}}}');
+    const handler = createFreshContextHandler({ dataDir,
+      descriptor: { agentId: "s", profileId: "p", managerId: "s", role: "manager" }, getContextMode: () => "fresh" });
+    await expect(handler({ reason: "manual", willRetry: false, branchEntries: [] })).rejects.toThrow("cannot read protected pins");
+  });
+
 });

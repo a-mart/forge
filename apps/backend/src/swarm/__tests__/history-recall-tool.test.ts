@@ -42,6 +42,17 @@ describe('history recall tool', () => {
     await tool.execute('call', { op: 'search', query: 'mobile', order: 'newest' })
     expect(h.searchHistory).toHaveBeenCalledWith('worker', { query: 'mobile', order: 'newest' })
   })
+  it('routes query-free windows/items and explicit literal filters through the same caller', async () => {
+    const h = { ...host(), listHistoryWindows: vi.fn(async () => ({ results: [], complete: true, warnings: [] })),
+      listHistoryItems: vi.fn(async () => ({ results: [], complete: true, warnings: [] })) }
+    const [tool] = buildHistoryRecallTools(h, descriptor())
+    await tool.execute('windows', { op: 'windows', actorAgentId: 'worker', limit: 5 })
+    expect(h.listHistoryWindows).toHaveBeenCalledWith('worker', { actorAgentId: 'worker', limit: 5 })
+    await tool.execute('items', { op: 'items', windowId: 'window:initial', role: 'user' })
+    expect(h.listHistoryItems).toHaveBeenCalledWith('worker', { windowId: 'window:initial', role: 'user' })
+    await tool.execute('literal', { op: 'search', query: 'foo-bar', mode: 'literal', caseSensitive: true })
+    expect(h.searchHistory).toHaveBeenCalledWith('worker', { query: 'foo-bar', mode: 'literal', caseSensitive: true })
+  })
   it('does not expose local history to restricted runtimes or when the service is absent', () => {
     expect(buildHistoryRecallTools({}, descriptor())).toEqual([])
     for (const overrides of [

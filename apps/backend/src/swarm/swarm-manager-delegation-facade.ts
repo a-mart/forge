@@ -75,6 +75,7 @@ export abstract class SwarmManagerDelegationFacade extends SwarmManagerSecureSes
       sessionAgentId: manager.agentId,
       profile,
       manager,
+      actor: caller,
       runtime: services.runtime.runtimes.get(manager.agentId),
     });
   }

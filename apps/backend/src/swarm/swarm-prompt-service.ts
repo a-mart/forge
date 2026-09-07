@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace, type TierConfig } from "@forge/protocol";
 import { assembleRuntimePrompt, discoverAgentsMd } from "./runtime-prompt-assembler.js";
 import { isSessionAgentDescriptor } from "./agent-directory.js";
@@ -68,7 +68,6 @@ const COMMON_KNOWLEDGE_MEMORY_HEADER =
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
   "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
-const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge collaboration channel with multiple human participants.
 - Treat every reply as visible to the full channel audience.
 - Keep answers concise, easy to scan, and explicit about decisions, blockers, and next steps when relevant.
@@ -77,7 +76,7 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
 const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
-You are a Forge Project Agent: a persistent peer manager session, not a disposable worker. Own outcomes, integration, acceptance, and final claims. Honor peer response expectations and send no receipts or courtesy acknowledgments.
+You are a Forge Project Agent: a thoughtful, capable, and candid collaborator and persistent peer manager. Carry authorized work through to a verified outcome. Preserve the user's objective, corrections, and scoped authorization across steering and context resets; recover missing evidence before repeating an action. Give meaningful updates during substantial work and a self-contained final result. Honor peer response expectations and send no receipts or courtesy acknowledgments.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
@@ -87,7 +86,7 @@ Use one accountable owner per outcome and the simplest adequate coordination lan
 
 \${SPECIALIST_ROSTER}
 
-Give workers one bounded outcome and require a secure runtime for secret-dependent work. Treat [workerResult] as evidence requiring same-turn disposition, not an automatic update. Follow the planning, goal, and delivery tool contracts for mechanics.`;
+Give workers one bounded outcome and require a secure runtime for secret-dependent work. Treat [workerResult] as evidence requiring same-turn disposition, not an automatic update. Complete proportionate checks, then finish. Ask only for required missing permission, after authorized preparation; do not ask twice. Task-local notes may be maintained when available; durable memory changes require an explicit user memory request. Never store secrets in either. Follow the planning, goal, and delivery tool contracts for mechanics.`;
 const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 - Use a visualization only when it makes an important relationship materially clearer than prose or a short list.
 - Prefer one readable abstraction level, short labels, and the smallest useful view. Split dense subjects instead of returning an unreadable canvas.`;
@@ -187,10 +186,11 @@ export class SwarmPromptService {
     const archetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
-    const archetypeEntry = projectAgentComposition
+    const sessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
+    const archetypeEntry = projectAgentComposition || sessionSystemPrompt
       ? undefined
       : await this.options.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
-    if (!projectAgentComposition && !archetypeEntry) {
+    if (!projectAgentComposition && !sessionSystemPrompt && !archetypeEntry) {
       throw new Error(`Prompt not found: archetype/${archetypeId}`);
     }
 
@@ -203,7 +203,9 @@ export class SwarmPromptService {
 
     const systemPromptSource = projectAgentComposition
       ? this.formatProjectAgentPromptSources(projectAgentComposition.sources)
-      : archetypeEntry!.sourcePath;
+      : sessionSystemPrompt
+        ? `sessionSystemPrompt:${descriptor.agentId}`
+        : archetypeEntry!.sourcePath;
 
     const sections: PromptPreviewSection[] = [
       {
@@ -223,11 +225,10 @@ export class SwarmPromptService {
       sections.push(activeWorkContext);
     }
 
-    const agentsPath = join(descriptor.cwd, AGENTS_CONTEXT_FILE_NAME);
-    if (existsSync(agentsPath)) {
+    for (const agentsPath of await discoverAgentsMd(descriptor.cwd)) {
       try {
         sections.push({
-          label: AGENTS_CONTEXT_FILE_NAME,
+          label: basename(agentsPath),
           source: agentsPath,
           content: await readFile(agentsPath, "utf8"),
         });
@@ -618,7 +619,7 @@ export class SwarmPromptService {
     }
 
     const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
-    let memoryContent = sessionMemoryContent;
+    let memoryContent = `# Session Memory (durable facts — update only on an explicit user memory request)\n\n${sessionMemoryContent.trimEnd()}`;
 
     const profileMemoryOwnerId = this.options.resolveSessionProfileId(memoryOwnerAgentId);
     if (this.options.getKnowledgeV2Enabled?.() === true) {
@@ -705,16 +706,9 @@ export class SwarmPromptService {
     }
 
     const normalizedSessionMemory = sessionMemoryContent.trimEnd();
-    if (indexSections.length === 0) {
-      return normalizedSessionMemory;
-    }
-
     return [
-      indexSections.join("\n\n---\n\n"),
-      "",
-      "---",
-      "",
-      "# Session Memory (this session's working memory — your writes go here)",
+      ...(indexSections.length > 0 ? [indexSections.join("\n\n---\n\n"), "", "---", ""] : []),
+      "# Session Memory (durable facts — update only on an explicit user memory request)",
       "",
       normalizedSessionMemory,
     ].join("\n").trimEnd();

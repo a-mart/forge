@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 // Atomic refers to the write operation (temp file + rename), not to concurrent access.
 import { basename, dirname, join } from "node:path";
 import { renameWithRetry } from "../swarm/retry-rename.js";
@@ -7,6 +7,10 @@ import { isEnoentError } from "./fs-errors.js";
 interface AtomicWriteOptions {
   createParentDir?: boolean;
   mode?: number;
+  /** Exclusive temp creation and fsync before replacement for recovery-critical state. */
+  durable?: boolean;
+  /** Revalidate a caller-owned storage boundary immediately before replacement. */
+  beforeCommit?: () => Promise<void>;
 }
 
 interface AtomicJsonUpdateOptions extends AtomicWriteOptions {
@@ -24,19 +28,36 @@ export async function writeFileAtomic(
   if (options.createParentDir !== false) {
     await mkdir(targetDirectory, { recursive: true });
   }
-  await writeFile(
-    tempPath,
-    content,
-    typeof content === "string"
-      ? {
-          encoding: "utf8",
-          ...(options.mode === undefined ? {} : { mode: options.mode }),
+  let ownsTemporary = false;
+  try {
+    if (options.durable) {
+      const file = await open(tempPath, "wx", options.mode);
+      ownsTemporary = true;
+      try {
+        if (typeof content === "string" || content instanceof Uint8Array) {
+          await file.writeFile(content);
+        } else {
+          for await (const chunk of content) await file.writeFile(chunk);
         }
-      : options.mode === undefined
-        ? undefined
-        : { mode: options.mode },
-  );
-  await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+    } else {
+      await writeFile(
+        tempPath,
+        content,
+        typeof content === "string"
+          ? { encoding: "utf8", ...(options.mode === undefined ? {} : { mode: options.mode }) }
+          : options.mode === undefined ? undefined : { mode: options.mode },
+      );
+      ownsTemporary = true;
+    }
+    await options.beforeCommit?.();
+    await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
+  } finally {
+    if (options.durable && ownsTemporary) await unlink(tempPath).catch(error => { if (!isEnoentError(error)) throw error; });
+  }
 }
 
 export async function writeJsonFileAtomic(

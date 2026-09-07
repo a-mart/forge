@@ -26,4 +26,6 @@ When viewing the Cortex profile, the category picker is hidden and all items are
 
 ## Preview
 
-Click the **Preview** button (eye icon) to see the complete runtime context a new session would receive. The preview shows every section: system prompt, memory, AGENTS.md content, loaded skills, and more. This is useful for understanding exactly what an agent sees when it starts.
+Click **Preview** (eye icon) to inspect resolved prompt resources and their source labels, including the selected base prompt, memory, applicable inherited `AGENTS.md` or `CLAUDE.md`, and skills. This is a resource preview; provider formatting, live tool guidance, and transient turn context may differ from an actual request. The **Initial Model Input** viewer retains the provider-independent record from a session's first Pi request.
+
+Saved custom prompts stay in place when Forge's builtins change. Clear an override to adopt the next available repository or builtin template. A separate session prompt may still replace the ordinary manager base. Changes apply when the prompt is next assembled and do not forcibly restart active work.

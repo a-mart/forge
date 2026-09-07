@@ -435,7 +435,7 @@ describe('SwarmManager', () => {
     )
 
     expect(combined).toContain('# Manager Memory (shared across all sessions — read-only reference)')
-    expect(combined).toContain('# Session Memory (this session\'s working memory — your writes go here)')
+    expect(combined).toContain('# Session Memory (durable facts — update only on an explicit user memory request)')
     expect(combined).toContain('\n---\n')
     expect(combined.indexOf('profile fact')).toBeGreaterThan(combined.indexOf('# Manager Memory'))
     expect(combined.indexOf('profile fact')).toBeLessThan(combined.indexOf('# Session Memory'))
@@ -457,7 +457,7 @@ describe('SwarmManager', () => {
       '# Manager Memory (shared across all sessions — read-only reference)',
     )
     const sessionHeaderIndex = resources.memoryContextFile.content.indexOf(
-      '# Session Memory (this session\'s working memory — your writes go here)',
+      '# Session Memory (durable facts — update only on an explicit user memory request)',
     )
     const profileDecisionIndex = resources.memoryContextFile.content.indexOf('canonical profile decision')
     const rootWorkingIndex = resources.memoryContextFile.content.indexOf('root working note')
@@ -606,7 +606,7 @@ describe('SwarmManager', () => {
     )
     expect(resources.memoryContextFile.content).toContain('shared profile decision')
     expect(resources.memoryContextFile.content).toContain(
-      '# Session Memory (this session\'s working memory — your writes go here)',
+      '# Session Memory (durable facts — update only on an explicit user memory request)',
     )
     expect(resources.memoryContextFile.content).toContain('session-only decision')
   })

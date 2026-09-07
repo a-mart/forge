@@ -946,7 +946,7 @@ export function buildSessionMemoryRuntimeView(profileMemoryContent: string, sess
     "",
     "---",
     "",
-    "# Session Memory (this session's working memory — your writes go here)",
+    "# Session Memory (durable facts — update only on an explicit user memory request)",
     "",
     normalizedSessionMemory
   ].join("\n");

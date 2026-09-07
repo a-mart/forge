@@ -543,6 +543,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }
   private createSessionInteractionCoordinator(): SessionInteractionCoordinator {
     return new SessionInteractionCoordinator({
+      withRuntimeAdmission: (agentId, operation) => this.runtimeController.withRuntimeAdmission(agentId, operation),
       descriptors: this.descriptors,
       directory: this.agentDirectory,
       plans: this.sessionPlanCoordinator,
@@ -551,8 +552,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       runtimeOutput: {
         flushPreservedManagerAssistantOutputForTool: (agentId, toolName) =>
           this.runtimeController.flushPreservedManagerAssistantOutputForTool(agentId, toolName),
-        markExplicitManagerAssistantOutput: (agentId) =>
-          this.runtimeController.markExplicitManagerAssistantOutput(agentId),
+        markExplicitManagerAssistantOutput: (agentId) => this.runtimeController.markExplicitManagerAssistantOutput(agentId),
       },
       lifecycle: this.lifecycleService,
       codexPlugin: this.codexPluginDelegationCoordinator,
@@ -1017,6 +1017,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         getOrCreateRuntimeForDescriptor: (descriptor) =>
           this.getOrCreateRuntimeForDescriptor(descriptor),
         stopSessionInternal: (agentId, options) => this.stopSessionInternal(agentId, options),
+        withRuntimeShutdownBarrier: (agentId, operation) => this.runtimeController.withRuntimeShutdownBarrier(agentId, operation),
         assertSessionIsDeletable: (descriptor) =>
           this.agentDirectory.assertSessionIsDeletable(descriptor),
         saveStore: () => this.descriptorStoreAdapter.saveStore(),

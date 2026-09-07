@@ -9,10 +9,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import {
   CONTEXT_MODE_APPLIES_LATER,
+  CONTEXT_MODE_DESCRIPTIONS,
   CONTEXT_MODE_OPTION_LABELS,
   inheritChoiceLabel,
   sessionContextModeChoice,
-  sessionContextOriginLabel,
+  sessionContextAppliedMode,
+  sessionContextPreferenceLabel,
   sessionContextStatusLabel,
   type SessionContextModeChoice,
 } from '@/components/settings/context-mode-copy'
@@ -87,12 +89,12 @@ export function SessionContextModePicker({
 
   const currentSnapshot = snapshot
   const projectDefault = currentSnapshot?.projectDefault ?? DEFAULT_CONTEXT_MODE
-  const effectiveMode = currentSnapshot?.effectiveMode ?? projectDefault
+  const appliedMode = currentSnapshot ? sessionContextAppliedMode(currentSnapshot) : projectDefault
   const freshSupported = currentSnapshot?.freshSupported ?? true
   const unsupportedReason = currentSnapshot?.unsupportedReason
   const selectedChoice = sessionContextModeChoice(currentSnapshot)
-  const triggerLabel = CONTEXT_MODE_OPTION_LABELS[effectiveMode]
-  const originLabel = sessionContextOriginLabel(currentSnapshot)
+  const triggerLabel = CONTEXT_MODE_OPTION_LABELS[appliedMode]
+  const originLabel = currentSnapshot ? sessionContextPreferenceLabel(currentSnapshot) : 'project default'
   const statusLabel = currentSnapshot
     ? sessionContextStatusLabel(currentSnapshot)
     : loading
@@ -115,6 +117,7 @@ export function SessionContextModePicker({
           ...previous,
           sessionOverride: nextMode ?? undefined,
           effectiveMode: nextMode ?? previous.projectDefault,
+          appliedMode: previous.freshSupported ? nextMode ?? previous.projectDefault : 'summary',
         }
       : previous
     if (optimistic) {
@@ -198,6 +201,7 @@ export function SessionContextModePicker({
               selected={selectedChoice === 'summary'}
               disabled={saving || loading}
               onSelect={() => selectChoice('summary')}
+              hint={CONTEXT_MODE_DESCRIPTIONS.summary}
             />
             <ChoiceOption
               name={`context-mode-${config.sessionAgentId}`}
@@ -206,16 +210,16 @@ export function SessionContextModePicker({
               selected={selectedChoice === 'fresh'}
               disabled={saving || loading || !freshSupported}
               onSelect={() => selectChoice('fresh')}
-              hint={!freshSupported ? unsupportedReason ?? 'Fresh windows are not supported for this session.' : undefined}
+              hint={CONTEXT_MODE_DESCRIPTIONS.fresh}
             />
           </div>
           <p className="px-1 text-[10px] leading-snug text-muted-foreground">
             {CONTEXT_MODE_APPLIES_LATER}
           </p>
         </fieldset>
-        {!freshSupported && unsupportedReason ? (
+        {!freshSupported ? (
           <p className="px-1 text-[11px] leading-snug text-amber-800 dark:text-amber-200" role="status">
-            {unsupportedReason}
+            {unsupportedReason ?? 'Fresh windows are not supported for this session. Summary is used instead.'}
           </p>
         ) : null}
         {error ? (

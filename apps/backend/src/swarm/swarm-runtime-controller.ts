@@ -80,6 +80,7 @@ type RuntimeShutdownAttemptResult =
   | { status: "failed"; error: Error };
 
 interface RuntimeShutdownQuarantine {
+  admissionBarrierHolds?: number;
   runtime?: SwarmAgentRuntime;
   runtimeToken?: number;
   attempt?: Promise<RuntimeShutdownAttemptResult>;
@@ -89,6 +90,9 @@ interface RuntimeShutdownQuarantine {
 function getRuntimeShutdownBlockMessage(
   quarantine: RuntimeShutdownQuarantine,
 ): string {
+  if (quarantine.admissionBarrierHolds) {
+    return "This session is being reset. Wait for the reset to finish before sending another message.";
+  }
   if (!quarantine.result) return RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE;
   return quarantine.result.status === "clean"
     ? RUNTIME_SHUTDOWN_RECOVERY_READY_MESSAGE
@@ -637,6 +641,30 @@ export class SwarmRuntimeController {
     });
   }
 
+  /** Keep the existing shutdown admission fence through a session storage mutation. */
+  async withRuntimeShutdownBarrier<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    this.prepareRuntimeShutdown(agentId);
+    const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(agentId)!;
+    quarantine.admissionBarrierHolds = (quarantine.admissionBarrierHolds ?? 0) + 1;
+    try {
+      return await operation();
+    } finally {
+      quarantine.admissionBarrierHolds -= 1;
+      if (quarantine.admissionBarrierHolds === 0 && quarantine.result?.status === "clean"
+        && this.runtimeShutdownQuarantinesByAgentId.get(agentId) === quarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(agentId);
+      }
+    }
+  }
+
+  private completeRuntimeShutdown(agentId: string, quarantine: RuntimeShutdownQuarantine): void {
+    quarantine.result = { status: "clean" };
+    if (!quarantine.admissionBarrierHolds
+      && this.runtimeShutdownQuarantinesByAgentId.get(agentId) === quarantine) {
+      this.runtimeShutdownQuarantinesByAgentId.delete(agentId);
+    }
+  }
+
   async recoverRuntimeShutdown(descriptor: AgentDescriptor): Promise<boolean> {
     if (!this.runtimeShutdownQuarantinesByAgentId.has(descriptor.agentId)) {
       return false;
@@ -678,7 +706,7 @@ export class SwarmRuntimeController {
           quarantine.runtimeToken,
         );
       }
-      this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      this.completeRuntimeShutdown(descriptor.agentId, quarantine);
       return { status: "clean", runtimeToken: quarantine.runtimeToken };
     }
 
@@ -693,9 +721,7 @@ export class SwarmRuntimeController {
 
     const runtime = this.runtimes.get(descriptor.agentId) ?? quarantine.runtime;
     if (!runtime) {
-      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
-        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-      }
+      this.completeRuntimeShutdown(descriptor.agentId, quarantine);
       return { status: "clean" };
     }
 
@@ -742,13 +768,11 @@ export class SwarmRuntimeController {
       return { status: "failed", runtimeToken, error: result.error };
     }
 
-    if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
-      this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
-    }
+    this.completeRuntimeShutdown(descriptor.agentId, quarantine);
     return { status: "clean", runtimeToken };
   }
 
-  private waitForRuntimeAdmissions(agentId: string): Promise<void> {
+  waitForRuntimeAdmissions(agentId: string): Promise<void> {
     if ((this.runtimeAdmissionCountsByAgentId.get(agentId) ?? 0) === 0) {
       return Promise.resolve();
     }

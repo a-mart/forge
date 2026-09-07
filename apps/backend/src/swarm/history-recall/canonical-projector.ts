@@ -13,8 +13,8 @@ import {
 } from "./content-policy.js";
 import {
   FORGE_CONTEXT_BOUNDARY_TYPE,
+  contextWindowIdForCompaction,
   INITIAL_WINDOW_ID,
-  MAX_INDEX_CHUNKS,
   type ProjectedCanonicalRecord,
   type ProjectedHistoryEntry,
   type ProjectionMode,
@@ -153,9 +153,7 @@ function projectCompaction(
   const firstKeptEntryId = stringValue(parsed.firstKeptEntryId);
   if (!state.provisional) {
     if (firstKeptEntryId) {
-      state.windowId = modeName === "fresh"
-        ? `window:fresh:${entryId}`
-        : `window:compact:${entryId}`;
+      state.windowId = contextWindowIdForCompaction(entryId, modeName);
     }
     state.pendingBoundaryId = undefined;
   }
@@ -516,10 +514,11 @@ function chunkProjected(entry: ProjectedHistoryEntry, mode: ProjectionMode): Pro
     return [{ ...entry, chunkIndex: 0 }];
   }
   const chunks: ProjectedHistoryEntry[] = [];
-  const maxChunks = Math.min(MAX_INDEX_CHUNKS, Math.ceil(entry.text.length / MAX_INDEX_TEXT_CHARS));
+  const maxChunks = Math.ceil(entry.text.length / MAX_INDEX_TEXT_CHARS);
   for (let index = 0; index < maxChunks; index += 1) {
     const start = index * MAX_INDEX_TEXT_CHARS;
-    const text = entry.text.slice(start, start + MAX_INDEX_TEXT_CHARS);
+    // Cover the maximum accepted query across the chunk seam; canonical rows already bound total work.
+    const text = entry.text.slice(start, start + MAX_INDEX_TEXT_CHARS + 2000);
     chunks.push({
       ...entry,
       chunkIndex: index,

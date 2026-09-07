@@ -447,7 +447,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-compaction',
     title: 'Context Compaction',
     category: 'chat',
-    summary: 'How Summary and experimental Fresh windows continue a conversation, and how agents recall older history with sessions, search, and read.',
+    summary: 'How Summary and experimental Fresh windows continue work with task notes and recoverable earlier messages and tool results.',
     content: chatCompactionContent,
     keywords: [
       'compact',
@@ -464,6 +464,8 @@ export const chatArticles: HelpArticle[] = [
       'history recall',
       'sessions',
       'checkpoint',
+      'task notes',
+      'literal search',
     ],
     relatedIds: ['chat-overview', 'chat-system-prompt', 'chat-sending', 'settings-project-settings', 'concepts-memory', 'settings-history'],
     contextKeys: ['chat.compaction'],

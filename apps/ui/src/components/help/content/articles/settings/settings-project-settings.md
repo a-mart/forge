@@ -18,18 +18,18 @@ project default follow a later model change; a session with its own override doe
 not.
 
 **Context management** chooses how this project continues when context fills:
-**Summary (default)** or **Fresh windows (experimental)**. Summary generates a
-summary; Fresh starts from a checkpoint and retrieves older history with the
-agent-only `history` tool (`sessions`, `search`, `read`). There is no human
-history drawer. Indexing pause and diagnostics live in **Settings → History**,
-not here. Saving this setting does not clear the current conversation; it
-applies at the next context transition. Eligible local Builder managers can
-inherit this default or override it from the compact **Context management**
-control beside Send. Fresh is executable only by supported ordinary Pi Builder
-managers (OpenAI/Codex or Anthropic). Collaboration, Cortex/system, Cursor SDK,
-plugin/external threads, and workers cannot run it; workers inherit the owning
-manager. **Settings → General** still holds compaction model, reasoning, and
-timeout, not this policy.
+**Summary (default)** or **Fresh windows (experimental)**. Summary carries forward
+a summary. Fresh uses task notes and retrieves earlier messages and tool results
+as needed. Saving this setting does not clear the current conversation; it
+applies at the next context transition.
+
+Eligible local Builder managers can inherit this default or override it from
+**Context management** beside Send. That control shows the supported policy and
+explains when Summary is used while a Fresh preference stays saved. Fresh requires
+a supported ordinary Pi Builder manager and an eligible model. Workers and other
+unsupported runtimes continue using Summary. Indexing pause and diagnostics live
+in **Settings → History**. **Settings → General → Compaction** holds the compaction
+model, reasoning, and timeout, not the project policy.
 
 Choose **Project secrets** to open **Settings → Secrets** with this project
 preselected. Use **Repository resources** to inspect the selected project's

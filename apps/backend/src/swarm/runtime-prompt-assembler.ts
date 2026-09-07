@@ -5,7 +5,7 @@ import { isEnoentError } from "../utils/fs-errors.js";
 const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 const CLAUDE_CONTEXT_FILE_NAME = "CLAUDE.md";
 const MANAGER_MEMORY_HEADER = "# Manager Memory (shared across all sessions — read-only reference)";
-const SESSION_MEMORY_HEADER = "# Session Memory (this session's working memory — your writes go here)";
+const SESSION_MEMORY_HEADER = "# Session Memory (durable facts — update only on an explicit user memory request)";
 
 export interface RuntimePromptAssemblerOptions {
   // Base prompt (archetype or specialist)

@@ -12,6 +12,7 @@ export function locateCheckpointEvidence(options: {
   sessionAgentId: string
   actorAgentId: string
   entryIds: readonly string[]
+  scanFrom?: 'start' | 'end'
 }): { refs: HistoryEntryReference[]; missingIds: string[] } {
   const wanted = new Set(options.entryIds.slice(-32))
   const refs: HistoryEntryReference[] = []
@@ -19,10 +20,10 @@ export function locateCheckpointEvidence(options: {
   const stat = readSourceStat(options.sessionFile)
   if (!stat) return { refs, missingIds: [...wanted] }
   const sourceVersion = readSourceGeneration(options.sessionFile, stat)
-  const start = Math.max(0, stat.size - MAX_CHECKPOINT_SCAN_BYTES)
+  const start = options.scanFrom === 'start' ? 0 : Math.max(0, stat.size - MAX_CHECKPOINT_SCAN_BYTES)
   const fd = openSync(options.sessionFile, 'r')
   try {
-    const bytes = Buffer.alloc(stat.size - start)
+    const bytes = Buffer.alloc(Math.min(MAX_CHECKPOINT_SCAN_BYTES, stat.size - start))
     const length = readSync(fd, bytes, 0, bytes.length, start)
     const data = bytes.subarray(0, length)
     let position = start === 0 ? 0 : data.indexOf(10) + 1

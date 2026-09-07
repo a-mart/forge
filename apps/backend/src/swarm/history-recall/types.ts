@@ -96,6 +96,10 @@ export interface JsonlTailScanResult extends JsonlScanResult {
 }
 
 export const INITIAL_WINDOW_ID = "window:initial";
+/** One window identity for runtime budgets, canonical traversal, and lexical indexing. */
+export function contextWindowIdForCompaction(entryId: string, mode?: string): string {
+  return mode === "fresh" ? `window:fresh:${entryId}` : `window:compact:${entryId}`;
+}
 export const FORGE_CONTEXT_BOUNDARY_TYPE = "forge_context_boundary";
 export const DEFAULT_SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 50;
@@ -110,12 +114,11 @@ export const MAX_GENERATION_SCAN_BYTES = 64 * 1024;
 export const SCAN_BATCH_BYTES = 256 * 1024;
 export const BACKGROUND_SLICE_SOURCES = 8;
 export const IDLE_RECONCILE_MS = 250;
-export const MAX_INDEX_CHUNKS = 8;
 export const HISTORY_TOOL_NAME = "history";
 export const SNAPSHOT_TTL_MS = 60_000;
 export const MAX_LIVE_SNAPSHOTS = 32;
 export const MAX_SNAPSHOT_HITS = 500;
-export const INDEX_SCHEMA_VERSION = "4";
+export const INDEX_SCHEMA_VERSION = "5";
 
 export const EMPTY_CATALOG: HistoryCatalogSnapshot = {
   revision: 0,

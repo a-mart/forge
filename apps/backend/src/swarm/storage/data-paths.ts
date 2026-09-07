@@ -232,6 +232,17 @@ export function getSessionDir(dataDir: string, profileId: string, sessionAgentId
   return join(getSessionsDir(dataDir, profileId), sanitizePathSegment(sessionAgentId));
 }
 
+/** Task-local agent notes; independent of profile/session durable memory. */
+export function getTaskNotesDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "task-notes");
+}
+
+export function getActorTaskNotesPath(
+  dataDir: string, profileId: string, sessionAgentId: string, actorAgentId: string
+): string {
+  return join(getTaskNotesDir(dataDir, profileId, sessionAgentId), `${sanitizePathSegment(actorAgentId)}.json`);
+}
+
 export function getSessionMemoryPath(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "memory.md");
 }

@@ -1,5 +1,6 @@
 import {
   DEFAULT_CONTEXT_MODE,
+  getCatalogModel,
   isCompactionProviderSupported,
   isContextMode,
   isSystemProfile,
@@ -32,8 +33,10 @@ export const FRESH_CONTEXT_UNSUPPORTED_NON_PI =
   "Fresh windows are currently limited to Pi-backed Builder manager compaction runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_PROVIDER =
   "Fresh windows are only supported for existing Pi-backed compaction providers.";
+export const FRESH_CONTEXT_UNSUPPORTED_MODEL =
+  "Fresh windows require a recognized tool-capable model with at least 32,000 context tokens.";
 export const FRESH_CONTEXT_UNSUPPORTED_WORKER =
-  "Workers inherit the owning manager context mode; fresh windows apply at the manager runtime.";
+  "Workers retain the owning manager preference, but currently run with Summary context.";
 export const CONTEXT_MODE_WORKER_WRITE_ERROR =
   "Context mode can only be updated on manager sessions.";
 
@@ -121,6 +124,10 @@ export function evaluateFreshContextSupport(options: {
   if (!isCompactionProviderSupported(manager.model.provider)) {
     return { freshSupported: false, unsupportedReason: FRESH_CONTEXT_UNSUPPORTED_PROVIDER };
   }
+  const model = getCatalogModel(manager.model.modelId, manager.model.provider);
+  if (!model || model.supportsTools === false || model.contextWindow < 32_000) {
+    return { freshSupported: false, unsupportedReason: FRESH_CONTEXT_UNSUPPORTED_MODEL };
+  }
   return { freshSupported: true };
 }
 
@@ -142,6 +149,7 @@ export function buildSessionContextModeSnapshot(options: {
     | "collab"
   >;
   runtime?: Pick<SwarmAgentRuntime, "runtimeType">;
+  actor?: Pick<AgentDescriptor, "role">;
 }): SessionContextModeSnapshot {
   const projectDefault = options.profile.defaultContextMode ?? DEFAULT_CONTEXT_MODE;
   const sessionOverride = options.manager.contextModeOverride;
@@ -150,11 +158,17 @@ export function buildSessionContextModeSnapshot(options: {
     profile: options.profile,
     runtime: options.runtime,
   });
+  if (options.actor?.role === "worker") {
+    support.freshSupported = false;
+    support.unsupportedReason = FRESH_CONTEXT_UNSUPPORTED_WORKER;
+  }
+  const effectiveMode = resolveEffectiveContextMode(options.profile.defaultContextMode, sessionOverride);
   const snapshot: SessionContextModeSnapshot = {
     sessionAgentId: options.sessionAgentId,
     profileId: options.profile.profileId,
     projectDefault,
-    effectiveMode: resolveEffectiveContextMode(options.profile.defaultContextMode, sessionOverride),
+    effectiveMode,
+    appliedMode: effectiveMode === "fresh" && support.freshSupported ? "fresh" : "summary",
     freshSupported: support.freshSupported,
   };
   if (sessionOverride !== undefined) {

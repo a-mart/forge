@@ -31,8 +31,9 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `restart-recovery-coordinator.ts` - boot recovery snapshot creation, single-claim resume delivery, and dismissal.
 - `swarm-observability-coordinator.ts` - runtime/input/tool/lifecycle trace coordination with bounded fail-open projection.
 - `swarm-compaction-coordinator.ts` - runtime compaction orchestration, retry/recovery state, and capture/plan lifecycle hooks.
-- `context-mode.ts` - Summary/Fresh policy resolution, Fresh runtime support, and session snapshots; workers inherit the owning manager.
-- `history-recall/` / `history-recall-tool.ts` - rebuildable recognized v4 contentless lexical history cache and the agent-only `history` tool (`sessions` / `search` / `read`); canonical JSONL remains authoritative and the index payload is not read authority. Pause preference lives in `shared/config/history-index.json`, outside the disposable cache.
+- `context-mode.ts` - Summary/Fresh policy resolution, Fresh runtime support, and session snapshots; saved preferences and actual runtime policy are distinct.
+- `task-notes-store.ts` / `task-notes-tool.ts` - bounded actor-scoped working notes, independent of durable memory; context rollover preserves them, while conversation reset settles runtime writers before clearing them.
+- `history-recall/` / `history-recall-tool.ts` - rebuildable contentless lexical history cache and the agent-only `history` tool; bounded canonical traversal and reads remain available independently of the index. Canonical JSONL remains authoritative and the index payload is not read authority. Pause preference lives in `shared/config/history-index.json`, outside the disposable cache.
 - `prompt-resource-coordinator.ts` - prompt, specialist, reference, skill, extension, and executable-resource resolution for runtime creation.
 - `collaboration-storage-provisioner.ts` - Collaboration-specific profile/session storage provisioning and system prompt persistence.
 - `session-pin-coordinator.ts` - message-pin indexes, persistence/runtime synchronization, fork filtering, disposal, and sidebar pin mutations.

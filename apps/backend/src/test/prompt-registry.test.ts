@@ -35,7 +35,7 @@ describe("FileBackedPromptRegistry", () => {
     const { registry } = await createRegistryFixture();
 
     await expect(registry.resolve("archetype", "manager")).resolves.toContain(
-      "You are the manager agent in a multi-agent swarm."
+      "You are Forge, a capable collaborator working with the user in a shared workspace."
     );
     await expect(registry.resolve("archetype", "collaboration-channel")).resolves.toContain(
       "You are the manager agent for a collaboration channel in a multi-agent swarm."
@@ -66,7 +66,7 @@ describe("FileBackedPromptRegistry", () => {
     });
 
     await expect(registry.resolve("archetype", "manager")).resolves.toContain(
-      "# Own the outcome"
+      "# Work with the user"
     );
     await expect(registry.resolve("archetype", "manager")).resolves.not.toBe("stale manager prompt\n");
     await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(

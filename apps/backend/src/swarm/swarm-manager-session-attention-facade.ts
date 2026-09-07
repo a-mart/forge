@@ -1,4 +1,4 @@
-import type { HistorySessionsRequest, HistorySessionsResponse } from "@forge/protocol";
+import type { HistorySessionsRequest, HistorySessionsResponse, HistoryItemsRequest, HistoryItemsResponse, HistoryWindowsRequest, HistoryWindowsResponse } from "@forge/protocol";
 import { SwarmManagerInitialModelInputFacade } from "./swarm-manager-initial-model-input-facade.js";
 
 /** Stable boot and session-attention surface layered into the manager facade. */
@@ -13,6 +13,14 @@ export abstract class SwarmManagerSessionAttentionFacade extends SwarmManagerIni
 
   listHistorySessions(callerAgentId: string, request: HistorySessionsRequest): Promise<HistorySessionsResponse> {
     return this.getFacadeServices().conversation.history.sessions(callerAgentId, request);
+  }
+
+  listHistoryItems(callerAgentId: string, request: HistoryItemsRequest): Promise<HistoryItemsResponse> {
+    return this.getFacadeServices().conversation.history.items(callerAgentId, request);
+  }
+
+  listHistoryWindows(callerAgentId: string, request: HistoryWindowsRequest): Promise<HistoryWindowsResponse> {
+    return this.getFacadeServices().conversation.history.windows(callerAgentId, request);
   }
 
   getHistoryIndexStatus() {

@@ -2615,7 +2615,9 @@ Never use plain assistant text for user communication.`
     })])
     await manager.handleUserMessage('start fresh', { targetAgentId: 'manager' })
 
-    const clearedRuntimeText = runtime?.sendCalls.at(-1)?.message as string
+    const clearedRuntime = manager.runtimeByAgentId.get('manager')
+    expect(clearedRuntime).not.toBe(runtime)
+    const clearedRuntimeText = clearedRuntime?.sendCalls.at(-1)?.message as string
     const clearedContextLine = clearedRuntimeText
       .split('\n')
       .find((line) => line.startsWith('[workingPlan] '))

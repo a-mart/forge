@@ -1272,6 +1272,60 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("holds runtime admission closed until stopped-session storage mutation completes", async () => {
+    const config = await makeTempConfig();
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({ agentId: "clear-barrier", role: "manager", managerId: "clear-barrier" });
+    descriptors.set(manager.agentId, manager);
+    controller.attachRuntime(manager.agentId, { terminate: vi.fn(async () => undefined) } as unknown as SwarmAgentRuntime);
+    let releaseStorage!: () => void;
+    const storagePending = new Promise<void>(resolve => { releaseStorage = resolve; });
+    let storageStarted!: () => void;
+    const storageReady = new Promise<void>(resolve => { storageStarted = resolve; });
+    const clearing = controller.withRuntimeShutdownBarrier(manager.agentId, async () => {
+      expect(await controller.runRuntimeShutdown(manager, "terminate", { abort: true })).toMatchObject({ status: "clean" });
+      expect(controller.runtimes.has(manager.agentId)).toBe(false);
+      storageStarted();
+      await storagePending;
+    });
+    await storageReady;
+    await expect(controller.withRuntimeAdmission(manager.agentId, async () => "new input")).rejects.toThrow(/reset/);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow(/reset/);
+    // Another cleanup observer must not release the clear operation's fence.
+    await controller.runRuntimeShutdown(manager, "terminate", { abort: true });
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    releaseStorage();
+    await clearing;
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(false);
+    expect(await controller.withRuntimeAdmission(manager.agentId, async () => "new input")).toBe("new input");
+  });
+
+  it("releases a completed shutdown barrier after storage failure so clear can be retried", async () => {
+    const config = await makeTempConfig();
+    const { host } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({ agentId: "clear-storage-failure", role: "manager", managerId: "clear-storage-failure" });
+    await expect(controller.withRuntimeShutdownBarrier(manager.agentId, async () => {
+      expect(await controller.runRuntimeShutdown(manager, "terminate")).toMatchObject({ status: "clean" });
+      throw new Error("storage unavailable");
+    })).rejects.toThrow("storage unavailable");
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(false);
+  });
+
+  it("retains failed runtime shutdown quarantine after a clear barrier exits", async () => {
+    const config = await makeTempConfig();
+    const { host } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({ agentId: "clear-shutdown-failure", role: "manager", managerId: "clear-shutdown-failure" });
+    controller.attachRuntime(manager.agentId, { terminate: vi.fn(async () => { throw new Error("still writing"); }) } as unknown as SwarmAgentRuntime);
+    await controller.withRuntimeShutdownBarrier(manager.agentId, async () => {
+      expect(await controller.runRuntimeShutdown(manager, "terminate")).toMatchObject({ status: "failed" });
+    });
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow();
+  });
+
   it("admits invalidated manager token message_end after shutdown timeout cleanup", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

@@ -41,6 +41,8 @@ export function expectInstalledPiCodingAgentPatchIdentity(url: string, source: s
   const currentDigest = readCurrentPiCodingAgentPatchDigest(repoRoot);
   expect(currentDigest).toBe(readLockfilePiCodingAgentPatchDigest(repoRoot));
   expect(source).toContain("setFreshContextHandler(handler)");
+  expect(source).toContain("setFreshContextBoundaryHandler(handler)");
+  expect(source).toContain("...(freshCommitted ? { messages: this.agent.state.messages.slice() } : {})");
   expect(source).toContain("_commitCompaction(");
   expect(source).toContain("appendCustomEntry(\"forge_context_boundary\"");
   expect(source).toContain("this.sessionManager.getEntry(compactionId)");

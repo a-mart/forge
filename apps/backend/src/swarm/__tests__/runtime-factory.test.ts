@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
 import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
+import { TaskNotesStore } from "../task-notes-store.js";
 import { createModelVisibleToolResultBudget } from "../model-visible-tool-result-budget.js";
 import { planPiExtensionFactories } from "../runtime/runtime-tool-plan.js";
 
@@ -271,6 +272,7 @@ function createFactory(
       skillMetadata: SkillMetadata[];
     }>;
     buildCursorSdkRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+    mergeRuntimeContextFiles?: (base: Array<{ path: string; content: string }>, options: { swarmContextFiles: Array<{ path: string; content: string }> }) => Array<{ path: string; content: string }>;
     callbacks?: Partial<{
       onRuntimeError: (runtimeToken: number, agentId: string, error: unknown) => Promise<void>;
       onGenerationEvent: (runtimeToken: number, agentId: string, event: unknown) => Promise<void>;
@@ -340,7 +342,7 @@ function createFactory(
     }),
     buildCursorSdkRuntimeSystemPrompt:
       overrides.buildCursorSdkRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
-    mergeRuntimeContextFiles: (base) => base,
+    mergeRuntimeContextFiles: overrides.mergeRuntimeContextFiles ?? ((base) => base),
     callbacks: {
       onStatusChange: async () => {},
       onSessionEvent: async () => {},
@@ -550,6 +552,49 @@ describe("RuntimeFactory", () => {
     await factory.createRuntimeForDescriptor(createManagerDescriptor(rootDir), "system prompt");
     expect(createdSession.setFreshContextHandler).toHaveBeenCalledTimes(1);
     expect(createdSession.setFreshContextHandler).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it.each(["manager", "worker", "cortex", "special", "collab"] as const)("scopes notes and context-control tools for %s", async kind => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-context-tools-"));
+    setupPiModel();
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({ session: createMockPiSession(), extensionsResult: { extensions: [], errors: [] } });
+    const factory = createFactory(rootDir, { hostOverrides: {
+      getContextMode: () => "fresh", searchHistory: vi.fn(), readHistory: vi.fn(),
+    } });
+    const descriptor = kind === "worker" ? createDescriptor(rootDir) : createManagerDescriptor(rootDir,
+      kind === "cortex" ? { profileId: "cortex", archetypeId: "cortex" } :
+      kind === "special" ? { sessionPurpose: "cortex_review" } :
+      kind === "collab" ? { sessionSurface: "collab" } : {});
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt");
+    const names = (piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as Array<{ name: string }>).map(tool => tool.name);
+    expect(names.includes("notes")).toBe(kind === "manager" || kind === "worker");
+    expect(names.includes("get_context_remaining")).toBe(kind === "manager");
+    expect(names.includes("new_context")).toBe(kind === "manager");
+  });
+
+  it("injects an explicit recovery hint for a historical fork that omitted future notes", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-historical-fork-"));
+    setupPiModel();
+    const descriptor = createManagerDescriptor(rootDir);
+    const source = new TaskNotesStore({ dataDir: join(rootDir, "data") }).forActor({
+      profileId: descriptor.profileId!, sessionAgentId: "source", actorAgentId: "source",
+    });
+    await source.write({ path: "checkpoint.md", text: "Future notes must not enter earlier fork" });
+    const snapshot = await source.snapshot();
+    const target = new TaskNotesStore({ dataDir: join(rootDir, "data") }).forActor({
+      profileId: descriptor.profileId!, sessionAgentId: descriptor.agentId, actorAgentId: descriptor.agentId,
+    });
+    await target.restoreFork(snapshot, { fromMessageId: "earlier-message" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({ session: createMockPiSession(), extensionsResult: { extensions: [], errors: [] } });
+    const factory = createFactory(rootDir, {
+      hostOverrides: { searchHistory: vi.fn(), readHistory: vi.fn() },
+      mergeRuntimeContextFiles: (base, options) => [...base, ...options.swarmContextFiles],
+    });
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt");
+    const loader = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0];
+    const context = loader.agentsFilesOverride({ agentsFiles: [] });
+    expect(JSON.stringify(context)).toContain("Later working notes were intentionally not inherited");
+    expect(JSON.stringify(context)).not.toContain("Future notes must not enter earlier fork");
   });
 
   it("keeps unsupported worker and special-purpose Pi descriptors on summary despite a fresh host setting", async () => {

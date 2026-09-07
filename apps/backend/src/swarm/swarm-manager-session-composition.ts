@@ -126,6 +126,7 @@ export function createSwarmManagerSessionComposition(
     },
   });
   const sessionService = new SwarmSessionService({
+    dataDir: state.config.paths.dataDir,
     ...options.sessions,
     profiles: state.profiles,
     runtimes: state.runtimes,

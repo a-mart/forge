@@ -20,6 +20,8 @@ export interface SessionContextModeSnapshot {
   projectDefault: ContextMode
   sessionOverride?: ContextMode
   effectiveMode: ContextMode
+  /** Actual supported runtime behavior. Absent on older servers; derive from effectiveMode/freshSupported. */
+  appliedMode?: ContextMode
   /** Fresh-window operation is a runtime capability, not implied by the saved preference. */
   freshSupported: boolean
   unsupportedReason?: string

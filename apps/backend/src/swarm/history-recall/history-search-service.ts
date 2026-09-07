@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { CanonicalHistoryTraversal } from "./canonical-traversal.js";
 import { HistoryIndexPreferences } from "./history-index-preferences.js";
 import type { HistoryIndexStatus } from "@forge/protocol";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,7 @@ import type {
   HistorySessionHit,
   HistorySessionsRequest,
   HistorySessionsResponse,
+  HistoryItemsRequest, HistoryItemsResponse, HistoryWindowsRequest, HistoryWindowsResponse,
 } from "@forge/protocol";
 import { getHistoryRecallIndexPath } from "../storage/data-paths.js";
 import {
@@ -87,6 +89,7 @@ interface SearchCursor {
 }
 
 export class HistorySearchService {
+  private readonly canonical = new CanonicalHistoryTraversal();
   private storePromise: Promise<HistoryRecallIndexStore> | undefined;
   private writeChain: Promise<void> = Promise.resolve();
   private disposed = false;
@@ -195,6 +198,7 @@ export class HistorySearchService {
   async invalidateSource(source: HistoryDirtySource): Promise<void> {
     this.assertOpen();
     const sourceId = `${source.sessionAgentId}:${source.actorAgentId}`;
+    this.canonical.clear();
     await this.runExclusive((store) => {
       store.purgeSource(sourceId);
     }).catch(() => undefined);
@@ -207,11 +211,23 @@ export class HistorySearchService {
   async search(callerAgentId: string, request: HistorySearchRequest): Promise<HistorySearchResponse> {
     this.assertOpen();
     const callerSession = resolveCallerSession(this.host, callerAgentId);
+    if (request.windowId && request.window && request.window !== "all") throw new HistoryRecallError("Choose windowId or window, not both");
+    if (request.mode === "literal") {
+      if (typeof request.query !== "string" || !request.query.length || request.query.length > 2000) throw new HistoryRecallError("Literal query must contain 1 to 2000 characters");
+      if (request.window && request.window !== "all") throw new HistoryRecallError("Literal search uses exact windowId; list windows first");
+      if (request.order === "newest") throw new HistoryRecallError("Canonical literal search traverses oldest first; omit order");
+      const resolved = this.resolveSearchSources(callerSession, request);
+      const sources = filterActor(resolved.sources, request.actorAgentId);
+      const result = this.canonical.page("literal", callerAgentId, request, sources, [...resolved.warnings, ...resolved.scopeNotes], resolved.incomplete);
+      return { ...result, scope: resolved.scope, results: result.results as HistorySearchHit[] };
+    }
+    if (request.caseSensitive !== undefined) throw new HistoryRecallError("caseSensitive is available only in literal mode");
     const query = parseHistoryQuery(request.query ?? "");
     if (query.tokens.length === 0 || !query.ftsMatch) {
       throw new HistoryRecallError("Query must include a searchable term or quoted phrase");
     }
     const resolved = this.resolveSearchSources(callerSession, request);
+    resolved.sources = filterActor(resolved.sources, request.actorAgentId);
     const identity = snapshotIdentity("search", callerSession.agentId, request);
     const existing = request.cursor ? this.readSearchCursor(request.cursor, identity) : undefined;
     if (existing) {
@@ -220,7 +236,9 @@ export class HistorySearchService {
 
     return this.runExclusive(async (store) => {
       const catchup = this.catchUpForSearch(store, resolved.sources, request.sessionAgentId);
-      const sourceWindows = this.sourceWindows(store, resolved.sources, request.window);
+      const sourceWindows = request.windowId
+        ? resolved.sources.map(source => ({ sourceId: source.sourceId, windowIds: [request.windowId!] }))
+        : this.sourceWindows(store, resolved.sources, request.window);
       const limit = clampLimit(request.limit);
       const rows = store.search({
         ftsMatch: query.ftsMatch,
@@ -264,6 +282,7 @@ export class HistorySearchService {
             actorAgentId: source.actorAgentId,
             entryId: row.entry_id,
             sourceVersion: generation,
+            byteOffset: row.byte_offset,
             ...(row.part_id ? { partId: row.part_id } : {}),
             ...(row.chunk_index ? { chunkIndex: row.chunk_index } : {}),
           },
@@ -282,7 +301,7 @@ export class HistorySearchService {
         });
       }
       const coverage = this.buildCoverage(store, resolved.sources);
-      const incomplete = catchup.incomplete || resolved.incomplete || skippedUnavailableHit;
+      const incomplete = catchup.incomplete || resolved.incomplete || skippedUnavailableHit || capped;
       const snapshot: SnapshotPage<HistorySearchHit> = {
         id: randomUUID(),
         identity,
@@ -298,6 +317,22 @@ export class HistorySearchService {
       this.rememberSnapshot(this.searchSnapshots, snapshot);
       return this.pageSearchSnapshot(snapshot, 0, limit);
     });
+  }
+
+  async windows(callerAgentId: string, request: HistoryWindowsRequest): Promise<HistoryWindowsResponse> {
+    this.assertOpen();
+    const caller = resolveCallerSession(this.host, callerAgentId);
+    const resolved = this.resolveSearchSources(caller, request);
+    return this.canonical.page("windows", callerAgentId, request, filterActor(resolved.sources, request.actorAgentId),
+      [...resolved.warnings, ...resolved.scopeNotes], resolved.incomplete) as HistoryWindowsResponse;
+  }
+
+  async items(callerAgentId: string, request: HistoryItemsRequest): Promise<HistoryItemsResponse> {
+    this.assertOpen();
+    const caller = resolveCallerSession(this.host, callerAgentId);
+    const resolved = this.resolveSearchSources(caller, request);
+    return this.canonical.page("items", callerAgentId, request, filterActor(resolved.sources, request.actorAgentId),
+      [...resolved.warnings, ...resolved.scopeNotes], resolved.incomplete) as HistoryItemsResponse;
   }
 
   async sessions(callerAgentId: string, request: HistorySessionsRequest): Promise<HistorySessionsResponse> {
@@ -382,33 +417,29 @@ export class HistorySearchService {
       throw new HistoryRecallError("History reference is stale; the source was replaced or reset", 409);
     }
 
+    let directResult: HistoryReadResponse | undefined;
     if (ref.byteOffset !== undefined) {
       if (!Number.isSafeInteger(ref.byteOffset) || ref.byteOffset < 0) throw new HistoryRecallError("Invalid history byte offset");
       const line = readLineAt(source.path, ref.byteOffset);
       if (!line || line.oversized) throw new HistoryRecallError("Checkpoint evidence is unavailable or exceeds the readable row limit", 404);
-      const projected = projectCanonicalRecord(line.line, line.byteOffset, createProjectorState(), "read");
+      const projected = projectCanonicalRecord(line.line, line.byteOffset, createProjectorState({ provisional: true }), "read");
       if (!projected || projected.entryId !== ref.entryId || this.currentSourceGeneration(source) !== generation) {
         throw new HistoryRecallError("History reference is stale or does not identify this row", 409);
       }
       const selected = selectReadParts(projected.parts, ref.partId, ref.chunkIndex);
+      const combined = combineReadParts(projected, selected);
       const entry = this.toReadEntry(
         source,
         generation,
-        combineReadParts(projected, selected),
-        Math.max(0, request.offset ?? chunkStart(ref.chunkIndex)),
+        combined,
+        Math.max(0, request.offset ?? chunkStart(ref.chunkIndex, combined.text)),
         clampReadChars(request.maxChars),
         { remaining: MAX_READ_RESPONSE_CHARS },
         selected,
       );
       entry.ref.byteOffset = ref.byteOffset;
-      return {
-        entry,
-        before: [],
-        after: [],
-        warnings: request.before || request.after
-          ? ["Checkpoint direct reads omit neighbors; use search for indexed context expansion."]
-          : [],
-      };
+      directResult = { entry, before: [], after: [], warnings: [] };
+      if (!request.before && !request.after) return directResult;
     }
 
     return this.runExclusive((store) => {
@@ -441,17 +472,24 @@ export class HistorySearchService {
         warnings.push(`Read response was bounded to ${MAX_READ_RESPONSE_CHARS} characters across the main entry and neighbors.`);
       }
       return { entry: main, before, after, warnings: unique(warnings) };
+    }).catch(error => {
+      if (directResult && (!(error instanceof HistoryRecallError) || error.statusCode === 404)) {
+        return { ...directResult, warnings: ["Indexed neighbors are unavailable; the requested entry was recovered directly. Use items for canonical context traversal."] };
+      }
+      throw error;
     });
   }
 
   async invalidateSession(sessionAgentId: string): Promise<void> {
     this.assertOpen();
+    this.canonical.clear();
     await this.runExclusive((store) => {
       store.purgeSession(sessionAgentId);
     });
   }
 
   async dispose(): Promise<void> {
+    this.canonical.clear();
     this.disposed = true;
     this.started = false;
     this.backgroundWake = false;
@@ -837,7 +875,7 @@ export class HistorySearchService {
     }
     const selected = selectReadParts(projected.parts, request.ref.partId, request.ref.chunkIndex);
     const combined = combineReadParts(projected, selected);
-    const offset = Math.max(0, request.offset ?? chunkStart(request.ref.chunkIndex));
+    const offset = Math.max(0, request.offset ?? chunkStart(request.ref.chunkIndex, combined.text));
     return this.toReadEntry(
       source,
       generation,
@@ -874,6 +912,13 @@ export class HistorySearchService {
     const text = clipText(entry.text.slice(start), allowed);
     budget.remaining = Math.max(0, budget.remaining - text.length);
     const nextOffset = start + text.length < totalChars ? start + text.length : undefined;
+    if (parts.length > 50) omissions = [...omissions, { reason: "response_limit",
+      detail: "Multipart previews are limited to 50 parts; use history items to traverse the remaining part references." }];
+    const boundedParts = parts.slice(0, 50).map(part => {
+      const partText = part.text.slice(0, Math.min(256, budget.remaining));
+      budget.remaining = Math.max(0, budget.remaining - partText.length);
+      return { ...part, text: partText };
+    });
     return {
       ref: {
         sessionAgentId: source.sessionAgentId,
@@ -891,7 +936,7 @@ export class HistorySearchService {
       offset: start,
       ...(nextOffset !== undefined ? { nextOffset } : {}),
       totalChars,
-      ...(parts.length > 1 || entry.partId ? { parts } : {}),
+      ...(parts.length > 1 || entry.partId ? { parts: boundedParts } : {}),
       ...(omissions.length > 0 ? { omissions } : {}),
     };
   }
@@ -1044,11 +1089,28 @@ function combineReadParts(
   };
 }
 
-function chunkStart(chunkIndex: number | undefined): number {
-  if (!Number.isSafeInteger(chunkIndex) || !chunkIndex || chunkIndex < 0) {
-    return 0;
+/** Indexed offsets count whitespace-normalized UTF-16 characters; reads preserve the raw text. */
+function chunkStart(chunkIndex: number | undefined, text: string): number {
+  if (!Number.isSafeInteger(chunkIndex) || !chunkIndex || chunkIndex < 0) return 0;
+  const target = chunkIndex * MAX_INDEX_TEXT_CHARS;
+  let normalized = 0;
+  let seenText = false;
+  for (let raw = 0; raw < text.length;) {
+    if (/\s/.test(text[raw]!)) {
+      const start = raw;
+      while (raw < text.length && /\s/.test(text[raw]!)) raw++;
+      if (seenText && raw < text.length) {
+        if (normalized >= target) return start;
+        normalized++;
+      }
+    } else {
+      if (normalized >= target) return raw;
+      normalized++;
+      seenText = true;
+      raw++;
+    }
   }
-  return chunkIndex * MAX_INDEX_TEXT_CHARS;
+  return text.length;
 }
 
 function coverageState(input: { unavailable: boolean; pending: boolean; omitted: boolean }): HistoryCoverageState {
@@ -1190,4 +1252,11 @@ function uniqueSources(sources: HistorySourceDescriptor[]): HistorySourceDescrip
 async function historyFileSize(path: string): Promise<number | null> {
   try { return (await stat(path)).size; }
   catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? 0 : null; }
+}
+
+function filterActor(sources: HistorySourceDescriptor[], actorAgentId: string | undefined): HistorySourceDescriptor[] {
+  if (!actorAgentId) return sources;
+  const selected = sources.filter(source => source.actorAgentId === actorAgentId);
+  if (!selected.length) throw new HistoryRecallError("Requested actor is not available in this history scope", 404);
+  return selected;
 }

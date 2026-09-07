@@ -10,7 +10,7 @@ Use this skill when the user explicitly asks to:
 - update previously remembered facts/preferences, or
 - forget/remove stored memory entries.
 
-Do not write memory for normal one-off requests.
+Do not write persistent memory for normal one-off requests. Task-local working notes are separate: when the runtime exposes a task-note tool, use it to preserve the active objective, decisions, evidence pointers, and next steps without a separate memory request. Do not use `${SWARM_MEMORY_FILE}` as a task scratchpad or copy task notes into durable memory automatically.
 
 ## File location
 - Use `${SWARM_MEMORY_FILE}` as the source of truth for the memory file path in this runtime (also shown in your loaded context).

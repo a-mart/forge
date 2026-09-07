@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "@sinclair/typebox";
+import { TaskNotesStore, ActorTaskNotes } from "../task-notes-store.js";
+import { createTaskNotesTool } from "../task-notes-tool.js";
+import { createContextManagementTools } from "../runtime/context-management-tools.js";
 import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import {
   AuthStorage,
@@ -11,8 +15,9 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { AgentRuntime } from "../agent-runtime.js";
 import {
   createFreshContextHandler,
@@ -32,13 +37,14 @@ const tempDirs: string[] = [];
 const fauxRegistrations: Array<{ unregister: () => void }> = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   while (fauxRegistrations.length > 0) {
     fauxRegistrations.pop()?.unregister();
   }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function createFreshSession(options?: { persist?: boolean; sessionFile?: string }) {
+async function createFreshSession(options?: { persist?: boolean; sessionFile?: string; customTools?: ToolDefinition[] }) {
   const root = await mkdtemp(join(tmpdir(), "forge-pi-fresh-"));
   tempDirs.push(root);
   const agentDir = join(root, "agent");
@@ -79,6 +85,8 @@ async function createFreshSession(options?: { persist?: boolean; sessionFile?: s
     resourceLoader,
     settingsManager,
     noTools: "all",
+    customTools: options?.customTools,
+    tools: options?.customTools?.map(tool => tool.name),
   });
   return { root, sessionFile, session, faux };
 }
@@ -141,13 +149,14 @@ describe("pi fresh-window native runtime", () => {
     expect(disk).toContain("forge_context_boundary");
     expect(disk).toContain("\"mode\":\"fresh\"");
     const active = JSON.stringify(session.sessionManager.buildSessionContext().messages);
-    expect(active).not.toContain("Oversized first input that must remain on the old branch");
+    expect(session.sessionManager.buildSessionContext().messages.some(message => message.role === "user")).toBe(false);
     expect(active).toContain("Fresh window checkpoint");
     const branch = session.sessionManager.getBranch();
     expect(branch.some((entry) => entry.type === "message")).toBe(true);
     const reopened = SessionManager.open(sessionFile, undefined, root);
     const reopenedActive = JSON.stringify(reopened.buildSessionContext().messages);
-    expect(reopenedActive).not.toContain("Oversized first input that must remain on the old branch");
+    expect(reopened.buildSessionContext().messages.some(message => message.role === "user")).toBe(false);
+    expect(reopenedActive).toContain("Fresh window checkpoint");
     expect(reopened.getBranch().some((entry) => entry.type === "compaction")).toBe(true);
     unsubscribe();
     session.dispose();
@@ -295,7 +304,7 @@ describe("pi fresh-window native runtime", () => {
     const summary = (compactEntry as { summary?: string }).summary ?? "";
     expect(summary).toContain("Active overflow obligation");
     expect(summary).toContain('history({op:"read",ref:');
-    const match = summary.match(/history\(\{op:"read",ref:(\{.*?\})\}\)/);
+    const match = summary.slice(summary.indexOf("## Unconsumed tool evidence")).match(/history\(\{op:"read",ref:(\{.*?\})\}\)/);
     expect(match?.[1]).toBeTruthy();
     const ref = JSON.parse(match![1]);
     const service = new HistorySearchService({
@@ -491,7 +500,7 @@ describe("pi fresh-window AgentRuntime policy", () => {
     const receipt = await runtime.sendMessage("late during stalled handler");
     expect(receipt.acceptedMode).toBe("steer");
     resolveHandler?.();
-    await pending;
+    await expect(pending).rejects.toThrow("superseded by new input");
     expect(session.promptCalls).toEqual([]);
   });
 
@@ -612,5 +621,230 @@ describe("pi fresh-window AgentRuntime policy", () => {
     expect((runtime as unknown as { frozenContextMode?: string }).frozenContextMode).toBeUndefined();
   });
 
+
+});
+
+
+async function createControlledFreshSession(extraTools?: (getRuntime: () => AgentRuntime) => ToolDefinition[],
+  getContextMode: () => "fresh" | "summary" = () => "fresh") {
+  const root = await mkdtemp(join(tmpdir(), "forge-controlled-fresh-"));
+  tempDirs.push(root);
+  const dataDir = join(root, "data");
+  const descriptor = makeDescriptor(root);
+  descriptor.sessionFile = getSessionFilePath(dataDir, descriptor.profileId!, descriptor.agentId);
+  const notes = new TaskNotesStore({ dataDir }).forActor({
+    profileId: descriptor.profileId!, sessionAgentId: descriptor.agentId, actorAgentId: descriptor.agentId,
+  });
+  const getRuntime = () => runtime;
+  const native = await createFreshSession({ sessionFile: descriptor.sessionFile, customTools: [
+    createTaskNotesTool(notes), ...createContextManagementTools(getRuntime), ...(extraTools?.(getRuntime) ?? []),
+  ] });
+  const runtime = new AgentRuntime({ descriptor, session: native.session, dataDir,
+    getContextMode, callbacks: { onStatusChange: () => {} },
+  });
+  return { ...native, descriptor, dataDir, notes, runtime };
+}
+
+describe("agent-controlled native Fresh continuation", () => {
+  it("persists every completed tool before the boundary, continues once, and reopens the new window", async () => {
+    let effects = 0;
+    let compactionsInsideTool = -1;
+    const harness = await createControlledFreshSession(() => [{
+      name: "record_effect", label: "Record effect", description: "Synthetic effect", parameters: Type.Object({}),
+      async execute() {
+        effects++;
+        compactionsInsideTool = harness.session.sessionManager.getBranch().filter(entry => entry.type === "compaction").length;
+        return { content: [{ type: "text", text: "effect completed once: violet-receipt" }], details: {} };
+      },
+    }]);
+    const { session, faux, notes, runtime, sessionFile, root } = harness;
+    await notes.write({ path: "checkpoint.md", text: "Objective: finish synthetic task. Permission: local synthetic writes only. Next: verify violet-receipt and report." });
+    let secondContext = "";
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("new_context", {}, { id: "reset-1" }), fauxToolCall("record_effect", {}, { id: "effect-1" })], { stopReason: "toolUse" }),
+      context => { secondContext = JSON.stringify(context.messages); return fauxAssistantMessage("Verified the completed effect; task done."); },
+    ]);
+    await session.prompt("Complete the synthetic task without repeating its effect.");
+    await session.waitForIdle();
+    expect(effects).toBe(1);
+    expect(faux.state.callCount).toBe(2);
+    expect(compactionsInsideTool).toBe(0);
+    expect(secondContext).toContain("Fresh window checkpoint");
+    expect(secondContext).toContain("violet-receipt");
+    expect(secondContext).not.toContain('"role":"toolResult"');
+    const branch = session.sessionManager.getBranch();
+    const boundaryIndex = branch.findIndex(entry => entry.type === "custom" && entry.customType === "forge_context_boundary");
+    expect(boundaryIndex).toBeGreaterThan(0);
+    expect(branch.slice(0, boundaryIndex).filter(entry => entry.type === "message" && entry.message.role === "toolResult")).toHaveLength(2);
+    const compactions = branch.filter(entry => entry.type === "compaction");
+    expect(compactions).toHaveLength(1);
+    expect(compactions[0].details).toMatchObject({ forgeContext: { trigger: "agent", willRetry: true, taskCheckpointRevision: 1 } });
+    expect(runtime.getContextRemaining()).toMatchObject({ mode: "fresh", transitionPending: false });
+    expect(runtime.getContextRemaining().windowId).toBe(`window:fresh:${compactions[0].id}`);
+    expect((await runtime.requestNewContext()).accepted).toBe(false);
+    expect(SessionManager.open(sessionFile, undefined, root).buildSessionContext().messages.some(message => message.role === "toolResult")).toBe(false);
+    await runtime.terminate({ abort: false });
+  });
+
+  it("rejects missing notes without dropping context or running a summarizer", async () => {
+    const { session, faux, runtime } = await createControlledFreshSession();
+    let nextContext = "";
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("new_context", {}), { stopReason: "toolUse" }),
+      context => { nextContext = JSON.stringify(context.messages); return fauxAssistantMessage("Need to save notes first."); },
+    ]);
+    await session.prompt("Keep this original request available.");
+    await session.waitForIdle();
+    expect(nextContext).toContain("Keep this original request available.");
+    expect(nextContext).toContain("Save or update notes checkpoint.md");
+    expect(session.sessionManager.getBranch().some(entry => entry.type === "compaction")).toBe(false);
+    expect(faux.state.callCount).toBe(2);
+    await runtime.terminate({ abort: false });
+  });
+
+  it("invalidates an accepted request when late user input arrives before the tool batch settles", async () => {
+    const { session, faux, notes, runtime } = await createControlledFreshSession(getRuntime => [{
+      name: "late_input", label: "Late input", description: "Synthetic input arrival", parameters: Type.Object({}),
+      async execute() {
+        await getRuntime().sendMessage("New correction: inspect the existing result first.");
+        return { content: [{ type: "text", text: "Late correction delivered" }], details: {} };
+      },
+    }]);
+    await notes.write({ path: "checkpoint.md", text: "Original task is active; verify its result." });
+    let nextContext = "";
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("new_context", {}), fauxToolCall("late_input", {})], { stopReason: "toolUse" }),
+      context => { nextContext = JSON.stringify(context.messages); return fauxAssistantMessage("Applied the new correction."); },
+    ]);
+    await session.prompt("Perform the original task.");
+    await session.waitForIdle();
+    expect(nextContext).toContain("New correction: inspect the existing result first.");
+    expect(nextContext.match(/New correction: inspect the existing result first/g)).toHaveLength(1);
+    expect(session.sessionManager.getBranch().some(entry => entry.type === "compaction")).toBe(false);
+    await runtime.terminate({ abort: false });
+  });
+
+  it("preserves context if recovery storage fails after accepting the tool request", async () => {
+    const { session, faux, notes, runtime } = await createControlledFreshSession(() => [{
+      name: "break_notes", label: "Break notes", description: "Synthetic storage failure", parameters: Type.Object({}),
+      async execute() {
+        vi.spyOn(ActorTaskNotes.prototype, "checkpointHint").mockResolvedValue({ ready: false, empty: false,
+          revision: 0, digest: "", hint: "unavailable", notes: [], warnings: ["synthetic failure"] });
+        return { content: [{ type: "text", text: "Storage unavailable" }], details: {} };
+      },
+    }]);
+    await notes.write({ path: "checkpoint.md", text: "Continue the task and retain permission scope." });
+    let nextContext = "";
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("new_context", {}), fauxToolCall("break_notes", {})], { stopReason: "toolUse" }),
+      context => { nextContext = JSON.stringify(context.messages); return fauxAssistantMessage("Context retained; repair notes."); },
+    ]);
+    await session.prompt("Keep the task until storage is fixed.");
+    await session.waitForIdle();
+    expect(nextContext).toContain("Keep the task until storage is fixed.");
+    expect(nextContext).toContain("requested fresh context was not committed");
+    expect(session.sessionManager.getBranch().some(entry => entry.type === "compaction")).toBe(false);
+    expect(faux.state.callCount).toBe(2);
+    await runtime.terminate({ abort: false });
+  });
+
+  it.each(["new input", "stop"] as const)("cancels native preparation on %s without committing or losing the original context", async interruption => {
+    const { session, faux, notes, runtime } = await createControlledFreshSession();
+    await notes.write({ path: "checkpoint.md", text: "Original objective is active. Local actions only. Continue after checking the latest correction." });
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const originalHint = ActorTaskNotes.prototype.checkpointHint;
+    let held = false;
+    vi.spyOn(ActorTaskNotes.prototype, "checkpointHint").mockImplementation(async function(options) {
+      if (!held && (runtime as unknown as { freshBoundaryInProgress: boolean }).freshBoundaryInProgress) {
+        held = true;
+        enter();
+        await gate;
+      }
+      return originalHint.call(this, options);
+    });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("new_context", {}), { stopReason: "toolUse" }),
+      fauxAssistantMessage("Original context retained; latest input incorporated."),
+      fauxAssistantMessage("Late input incorporated once."),
+    ]);
+    const prompt = session.prompt("Original active task must survive failed preparation.");
+    await entered;
+    const interrupted = interruption === "stop"
+      ? runtime.stopInFlight()
+      : runtime.sendMessage("Latest correction during preparation.");
+    release();
+    await interrupted;
+    await prompt;
+    await session.waitForIdle();
+    await vi.waitFor(() => expect(runtime.getStatus()).toBe("idle"));
+    const branch = session.sessionManager.getBranch();
+    expect(branch.some(entry => entry.type === "compaction")).toBe(false);
+    const users = branch.filter(entry => entry.type === "message" && entry.message.role === "user");
+    expect(JSON.stringify(users)).toContain("Original active task must survive failed preparation.");
+    if (interruption === "new input") expect(JSON.stringify(users).match(/Latest correction during preparation/g)).toHaveLength(1);
+    expect(runtime.getContextRemaining()).toMatchObject({ windowId: "window:initial", transitionPending: false });
+    await vi.waitFor(() => expect(runtime.isContextRecoveryActive()).toBe(false), { timeout: 4000 });
+    await runtime.shutdownForReplacement();
+    expect((await runtime.requestNewContext()).accepted).toBe(false);
+  });
+
+
+  it("reminds once before using reserved capacity and checkpoints after the notes tool settles", async () => {
+    const { session, faux, runtime } = await createControlledFreshSession(() => [{
+      name: "inspect", label: "Inspect", description: "Synthetic inspection", parameters: Type.Object({}),
+      async execute() { return { content: [{ type: "text", text: "Inspected state" }], details: {} }; },
+    }]);
+    vi.spyOn(session, "getContextUsage").mockReturnValue({ tokens: 29_500, contextWindow: 32_000, percent: 92.18 } as never);
+    let reminderContext = "";
+    let freshContext = "";
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("inspect", {}), { stopReason: "toolUse" }),
+      context => {
+        reminderContext = JSON.stringify(context.messages);
+        return fauxAssistantMessage(fauxToolCall("notes", { op: "write", path: "checkpoint.md", text: "Objective: finish inspection. Inspected state. Next: report verified outcome." }), { stopReason: "toolUse" });
+      },
+      context => { freshContext = JSON.stringify(context.messages); return fauxAssistantMessage("Inspection finished."); },
+    ]);
+    await session.prompt("Inspect and finish the task.");
+    await session.waitForIdle();
+    expect(reminderContext).toContain("Context is nearing its reserved capacity");
+    expect(freshContext).toContain("Fresh window checkpoint");
+    const branch = session.sessionManager.getBranch();
+    expect(branch.filter(entry => entry.type === "custom_message" && entry.customType === "forge_context_reserve")).toHaveLength(1);
+    const compactions = branch.filter(entry => entry.type === "compaction");
+    expect(compactions).toHaveLength(1);
+    expect(compactions[0].details).toMatchObject({ forgeContext: { trigger: "threshold", willRetry: true } });
+    expect(faux.state.callCount).toBe(3);
+    await runtime.terminate({ abort: false });
+  });
+
+
+  it("keeps registered tools truthful across a live Summary-to-Fresh policy switch", async () => {
+    let mode: "summary" | "fresh" = "summary";
+    const { session, faux, notes, runtime } = await createControlledFreshSession(undefined, () => mode);
+    await notes.write({ path: "checkpoint.md", text: "Objective: verify the live policy. Local task only. Next: finish after the accepted Fresh transition." });
+    let summaryContext = "";
+    let freshContext = "";
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("new_context", {}), { stopReason: "toolUse" }),
+      context => {
+        summaryContext = JSON.stringify(context.messages);
+        mode = "fresh";
+        return fauxAssistantMessage(fauxToolCall("new_context", {}), { stopReason: "toolUse" });
+      },
+      context => { freshContext = JSON.stringify(context.messages); return fauxAssistantMessage("Same task completed in Fresh mode."); },
+    ]);
+    await session.prompt("Exercise the currently selected context policy.");
+    await session.waitForIdle();
+    expect(summaryContext).toContain("Agent-requested fresh context is unavailable in this runtime or mode.");
+    expect(summaryContext).not.toContain("Fresh window checkpoint");
+    expect(freshContext).toContain("Fresh window checkpoint");
+    expect(session.sessionManager.getBranch().filter(entry => entry.type === "compaction")).toHaveLength(1);
+    expect(faux.state.callCount).toBe(3);
+    await runtime.terminate({ abort: false });
+  });
 
 });

@@ -352,6 +352,36 @@ describe("SessionInteractionCoordinator", () => {
     expect(harness.options.plans.recordWorkerAssignment).not.toHaveBeenCalled();
   });
 
+  it("holds spawn admission across a suspended plan lookup and assignment recording", async () => {
+    const harness = createHarness();
+    let admitted = false;
+    let closed = false;
+    let releasePlan!: () => void;
+    const pendingPlan = new Promise<void>(resolve => { releasePlan = resolve; });
+    let planStarted!: () => void;
+    const planReady = new Promise<void>(resolve => { planStarted = resolve; });
+    harness.options.withRuntimeAdmission = async (_id, operation) => {
+      if (closed) throw new Error("session reset in progress");
+      admitted = true;
+      try { return await operation(); } finally { admitted = false; }
+    };
+    vi.mocked(harness.options.plans.resolveAssignment).mockImplementation(async (_owner, step) => {
+      expect(admitted).toBe(true);
+      planStarted(); await pendingPlan;
+      return { revision: 2, stepIndex: 0, step, status: "in_progress" };
+    });
+    vi.mocked(harness.options.plans.recordWorkerAssignment).mockImplementation(async () => { expect(admitted).toBe(true); });
+    const spawning = harness.coordinator.spawnAgent("manager", { agentId: "worker", planStep: "Inspect" });
+    await planReady;
+    closed = true;
+    expect(admitted).toBe(true);
+    await expect(harness.coordinator.spawnAgent("manager", { agentId: "late" })).rejects.toThrow("reset");
+    releasePlan();
+    await spawning;
+    expect(admitted).toBe(false);
+    expect(harness.options.plans.recordWorkerAssignment).toHaveBeenCalledOnce();
+  });
+
   it("routes Codex Plugin specialist spawn through the scoped delegation owner", async () => {
     const harness = createHarness();
     const input: SpawnAgentInput = {
@@ -589,6 +619,7 @@ function createHarness(): Harness {
       ),
       rememberChoiceContinuation: vi.fn(),
     },
+    withRuntimeAdmission: async (_id, operation) => operation(),
     runtimeOutput: {
       flushPreservedManagerAssistantOutputForTool: vi.fn(),
       markExplicitManagerAssistantOutput: vi.fn(),

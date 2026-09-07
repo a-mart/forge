@@ -592,8 +592,7 @@ export class SwarmManagerRuntimeComposition {
         ),
       attachRuntime: (agentId, runtime) => this.runtimeController.attachRuntime(agentId, runtime),
       detachRuntime: (agentId, token) => this.requireRuntimeLifecycle().detachRuntime(agentId, token),
-      detachRuntimeIfMatches: (agentId, runtime, token) =>
-        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, token),
+      detachRuntimeIfMatches: (agentId, runtime, token) => this.runtimeController.detachRuntimeIfMatches(agentId, runtime, token),
       updateSessionMetaForWorkerDescriptor: (descriptor, prompt) =>
         this.requireServices().knowledge.updateSessionMetaForWorkerDescriptor(descriptor, prompt ?? undefined),
       refreshSessionMetaStatsBySessionId: (agentId) =>
@@ -731,8 +730,7 @@ export class SwarmManagerRuntimeComposition {
         this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(agentId, token),
       allowInvalidatedManualStopMessageEnd: (agentId, token) =>
         this.runtimeController.allowInvalidatedManualStopMessageEnd(agentId, token),
-      markPendingManualManagerStopNotice: (agentId) =>
-        runtimeLifecycle.markPendingManualManagerStopNotice(agentId),
+      markPendingManualManagerStopNotice: (agentId) => runtimeLifecycle.markPendingManualManagerStopNotice(agentId),
       emitImmediateManualManagerStopNotice: (agentId, text) => runtimeLifecycle.emitImmediateManualManagerStopNotice(agentId, text),
       cancelAllPendingChoicesForAgent: (agentId) => {
         this.assistantOutput.clearChoiceContinuationsForAgent(agentId);
@@ -742,12 +740,13 @@ export class SwarmManagerRuntimeComposition {
       recoverRuntimeShutdown: (descriptor) => this.runtimeController.recoverRuntimeShutdown(descriptor),
       isRuntimeShutdownQuarantined: (agentId) => this.runtimeController.isRuntimeShutdownQuarantined(agentId),
       prepareRuntimeShutdown: (agentId) => this.runtimeController.prepareRuntimeShutdown(agentId),
+      withRuntimeAdmission: (agentId, operation) => this.runtimeController.withRuntimeAdmission(agentId, operation),
+      waitForRuntimeAdmissions: (agentId) => this.runtimeController.waitForRuntimeAdmissions(agentId),
       assertRuntimeCreationAllowed: (agentId) => this.runtimeController.assertRuntimeCreationAllowed(agentId),
       detachRuntime: (agentId, token) => runtimeLifecycle.detachRuntime(agentId, token),
       clearAgentTurnState: (agentId) => runtimeLifecycle.clearAgentState(agentId),
       reconcileStoppedManagerRuntime: (input) => runtimeLifecycle.reconcileStoppedManagerRuntime(input),
-      detachRuntimeIfMatches: (agentId, runtime, token) =>
-        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, token),
+      detachRuntimeIfMatches: (agentId, runtime, token) => this.runtimeController.detachRuntimeIfMatches(agentId, runtime, token),
       syncPinnedContentForManagerRuntime: async (descriptor, pinOptions) => {
         await this.options.foundation.sessionPins.syncPinnedContent(descriptor, pinOptions);
       },

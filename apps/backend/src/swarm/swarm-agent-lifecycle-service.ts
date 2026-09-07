@@ -277,6 +277,8 @@ export interface SwarmAgentLifecycleServiceOptions {
   recoverRuntimeShutdown: (descriptor: AgentDescriptor) => Promise<boolean>;
   isRuntimeShutdownQuarantined: (agentId: string) => boolean;
   prepareRuntimeShutdown: (agentId: string) => void;
+  withRuntimeAdmission: <T>(agentId: string, operation: () => Promise<T>) => Promise<T>;
+  waitForRuntimeAdmissions: (agentId: string) => Promise<void>;
   assertRuntimeCreationAllowed: (agentId: string) => void;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
   clearAgentTurnState: (agentId: string) => void;
@@ -557,6 +559,10 @@ export class SwarmAgentLifecycleService {
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
+    return this.options.withRuntimeAdmission(callerAgentId, () => this.spawnAdmittedAgent(callerAgentId, input));
+  }
+
+  private async spawnAdmittedAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
     const manager = this.options.assertManager(callerAgentId, "spawn agents");
 
     const requestedAgentId = input.agentId?.trim();
@@ -1993,6 +1999,11 @@ export class SwarmAgentLifecycleService {
     const invalidatedManagerRuntime = this.invalidateManagerRuntimeBeforeWorkerTeardown(agentId, {
       allowManualStopMessageEnd: shouldAllowManualStopMessageEnd
     });
+
+    // Spawn is a bounded manager admission through registration and initial
+    // delivery. Drain it before taking the worker snapshot so no child can
+    // appear after teardown has chosen the runtimes it must settle.
+    await this.options.waitForRuntimeAdmissions(agentId);
 
     for (const workerDescriptor of this.options.getWorkersForManager(agentId)) {
       if (shouldPreserveExternalThreadWorkerOnSessionStop(workerDescriptor, options.deleteWorkers)) {

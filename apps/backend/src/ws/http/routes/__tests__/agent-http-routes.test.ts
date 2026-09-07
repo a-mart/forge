@@ -238,7 +238,7 @@ describe('SwarmWebSocketServer', () => {
           message: 'Available after the first model request.',
         },
       })
-      expect(payload.systemPrompt).toContain('You are the manager agent in a multi-agent swarm.')
+      expect(payload.systemPrompt).toContain('You are Forge, a capable collaborator working with the user in a shared workspace.')
     } finally {
       await server.stop()
     }

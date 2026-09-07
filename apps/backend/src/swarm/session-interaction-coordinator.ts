@@ -77,6 +77,7 @@ export interface SessionInteractionEventPort {
 }
 
 export interface SessionInteractionCoordinatorOptions {
+  withRuntimeAdmission: <T>(agentId: string, operation: () => Promise<T>) => Promise<T>;
   descriptors: ReadonlyMap<string, AgentDescriptor>;
   directory: Pick<
     AgentDirectory,
@@ -434,6 +435,10 @@ export class SessionInteractionCoordinator {
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
+    return this.options.withRuntimeAdmission(callerAgentId, () => this.spawnAdmittedAgent(callerAgentId, input));
+  }
+
+  private async spawnAdmittedAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "spawn_agent");
     const planAssignment = input.planStep
       ? await this.resolvePlanStepAssignment(callerAgentId, input.planStep)

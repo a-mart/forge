@@ -50,6 +50,11 @@ describe('manager history recall integration', () => {
       native.appendMessage({ role: 'user', content: 'Continue in the new window.', timestamp: 2 })
       const tool = buildSwarmTools(manager, sessionAgent).find(entry => entry.name === 'history')
       expect(tool).toBeDefined()
+      const windowPage = await tool!.execute('windows-call', { op: 'windows', actorAgentId: sessionAgent.agentId })
+      const windows = JSON.parse((windowPage.content[0] as { text: string }).text).results
+      expect(windows.some((window: { windowId: string }) => window.windowId === 'window:initial')).toBe(true)
+      const itemPage = await tool!.execute('items-call', { op: 'items', actorAgentId: sessionAgent.agentId, role: 'user', windowId: 'window:initial' })
+      expect(JSON.stringify(itemPage)).toContain('violet sentinel')
       const result = await tool!.execute('search-call', { op: 'search', query: '"violet sentinel"' })
       const hits = JSON.parse((result.content[0] as { text: string }).text).results
       expect(hits).toHaveLength(1)

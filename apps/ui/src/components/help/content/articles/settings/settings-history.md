@@ -6,7 +6,7 @@ History search is not a toggle. Indexing starts on its own after local Builder h
 
 The badge reports current activity: **Starting**, **Indexing**, **Indexing complete**, **Paused**, or **Unavailable**. Use **Refresh** to reload diagnostics immediately. While this page is visible, status also refreshes every five seconds.
 
-**Pause indexing** waits for the current bounded indexing work, then stops background indexing and the extra catch-up that search and read would otherwise trigger. The preference is saved in `shared/config/history-index.json` and survives restart. Conversations keep recording. Cached search hits and faithful canonical reads stay available, but newer content may be missing.
+**Pause indexing** waits for the current bounded indexing work, then stops background indexing and the extra catch-up that search and read would otherwise trigger. The preference is saved in `shared/config/history-index.json` and survives restart. Conversations keep recording. Cached search hits and direct conversation reads stay available, but newer content may be missing from indexed search. Browsing context windows, listing earlier messages, and literal scans of canonical history remain available without advancing the index.
 
 **Resume indexing** saves the preference as running and schedules catch-up without resetting the index. If the saved preference file is unreadable or malformed, indexing stays paused until you resume and Forge can save a new preference. A failed save leaves the previous preference unchanged.
 

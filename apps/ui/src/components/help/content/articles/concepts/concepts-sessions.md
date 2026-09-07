@@ -17,7 +17,7 @@ When you create a new session in a profile, it inherits the profile's settings. 
 A session is a single conversation thread. Each session has:
 
 - Its own **chat history** stored as a JSONL file
-- Its own **working memory** for in-progress context
+- Its own **task notes** for in-progress work and **session memory** for approved durable facts
 - Its own **workers** that run during the conversation
 - Its own **pinned messages** (up to 10)
 - Its own **context management** inherit/override (Summary default, or experimental Fresh windows where supported)
@@ -26,11 +26,11 @@ Sessions within a profile are independent. You can have one session debugging a 
 
 ## Lifecycle
 
-Sessions are either **running** (actively connected) or **idle** (saved but not processing). Archived sessions and archived profiles are a reversible, lossless frozen state: the data stays on disk, but the session or project is read-only and unavailable for runtime use until restored. Archive entries are sorted by last user-message activity and show the last-used date. The default Main session in a project cannot be archived directly. Deleting a session still removes its history, memory, and workers.
+Sessions are either **running** (actively connected) or **idle** (saved but not processing). Archived sessions and archived profiles are a reversible, lossless frozen state: the data stays on disk, but the session or project is read-only and unavailable for runtime use until restored. Archive entries are sorted by last user-message activity and show the last-used date. The default Main session in a project cannot be archived directly. Deleting a session still removes its history, task notes, memory, and workers.
 
 ## Forking
 
-You can fork a session to branch off from a specific point in the conversation. The fork copies history up to that message and creates a fresh session memory with a note about where it branched. This is useful when you want to try an alternative approach without losing the original thread.
+You can fork a session to branch off from a specific point in the conversation. The fork copies history up to that message and creates a fresh session memory with a note about where it branched. This is useful when you want to try an alternative approach without losing the original thread. A current-state fork receives an independent snapshot of task notes. A fork at an earlier message starts empty task notes with provenance, so newer findings do not leak into the earlier branch.
 
 Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override. The same inherit-or-override rule applies to context management. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. A source session's initial Pi model-input record is also omitted; a Pi-backed fork records its own initial input on its first model request. Historical Codex sidecar display cards are also omitted from forked sessions.
 

@@ -395,6 +395,45 @@ async function readJsonlFile<T>(path: string): Promise<T[]> {
 
 
 describe('SwarmManager', () => {
+  it('adopts the installed built-in after restart without treating captured prompt metadata as an override', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    const root = await bootWithDefaultManager(firstBoot, config)
+    const authoredPrompt = 'Use our release team voice and preserve approved checklist wording.'
+    const custom = await firstBoot.createSessionWithOverrides('manager', { label: 'Custom voice' }, {
+      sessionSystemPrompt: authoredPrompt,
+    })
+    const staleCapturedPrompt = 'Captured prompt from an older Forge installation.'
+    for (const descriptor of [root, custom.sessionAgent]) {
+      const meta = await readSessionMeta(config.paths.dataDir, 'manager', descriptor.agentId)
+      expect(meta).not.toBeNull()
+      await writeSessionMeta(config.paths.dataDir, { ...meta!, resolvedSystemPrompt: staleCapturedPrompt })
+    }
+
+    // The fake runtimes perform no background model work. Restart from the real persisted
+    // descriptors and metadata, then trigger normal lazy runtime creation on the next user turn.
+    const restarted = new TestSwarmManager(config)
+    await restarted.boot()
+    expect(restarted.getAgent(root.agentId)).toBeDefined()
+    expect(restarted.getAgent(custom.sessionAgent.agentId)).toBeDefined()
+    await restarted.handleUserMessage('Continue the local task.', { targetAgentId: root.agentId })
+    await restarted.handleUserMessage('Continue the local task.', { targetAgentId: custom.sessionAgent.agentId })
+
+    const installedBuiltin = await readFile(
+      new URL('../archetypes/builtins/manager.md', import.meta.url), 'utf8',
+    )
+    const builtinIdentity = installedBuiltin.split('\n')[0]!
+    expect(restarted.systemPromptByAgentId.get(root.agentId)).toContain(builtinIdentity)
+    expect(restarted.systemPromptByAgentId.get(root.agentId)).not.toContain(staleCapturedPrompt)
+    expect(restarted.systemPromptByAgentId.get(custom.sessionAgent.agentId)).toContain(authoredPrompt)
+    expect(restarted.systemPromptByAgentId.get(custom.sessionAgent.agentId)).not.toContain(builtinIdentity)
+    const refreshedMeta = await readSessionMeta(config.paths.dataDir, 'manager', root.agentId)
+    expect(refreshedMeta?.resolvedSystemPrompt).toContain(builtinIdentity)
+    const persisted = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(persisted.agents.find(agent => agent.agentId === root.agentId)?.sessionSystemPrompt).toBeUndefined()
+    expect(persisted.agents.find(agent => agent.agentId === custom.sessionAgent.agentId)?.sessionSystemPrompt).toBe(authoredPrompt)
+  })
+
   it('recycles manager runtimes through project-agent directory refresh when a project-agent system prompt is saved', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -592,7 +631,7 @@ describe('SwarmManager', () => {
     })
     expect(systemPromptSection?.content).toContain('Forge Project Agent Operating Contract')
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
-    expect(systemPromptSection?.content).not.toContain('You are the manager agent in a multi-agent swarm.')
+    expect(systemPromptSection?.content).not.toContain('You are Forge, a capable collaborator working with the user in a shared workspace.')
   })
 
   it('previews promoted sessions even when their saved archetype no longer exists', async () => {
@@ -762,32 +801,32 @@ describe('SwarmManager', () => {
 
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
     const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
-    expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
+    expect(managerPrompt).toContain('You are Forge, a capable collaborator working with the user in a shared workspace.')
     expect(managerPrompt).toContain('Direct request or accepted closeout: normal final text.')
     expect(managerPrompt).toContain('Direct progress: only when same-turn action follows.')
     expect(managerPrompt).toContain('Routed or proactive publication: `speak_to_user`, then exactly `NO_REPLY`')
     expect(managerPrompt).toContain('Never duplicate a reply through two paths')
     expect(managerPrompt).toContain('use `NO_REPLY` to skip an unanswered direct request')
-    expect(managerPrompt).toContain('Delegation transfers execution, not accountability')
-    expect(managerPrompt).toContain('Before substantive work, silently establish:')
-    expect(managerPrompt).toContain('A direct implementation does not need a separate acceptance ceremony')
-    expect(managerPrompt).toContain('A worker result is evidence, not acceptance.')
+    expect(managerPrompt).toContain('You own the requested outcome, whether you do the work yourself or coordinate workers')
+    expect(managerPrompt).toContain('Establish the intended outcome and what would demonstrate success')
+    expect(managerPrompt).toContain('Match verification to the changed behavior and user-visible risk')
+    expect(managerPrompt).toContain('A worker result requires a same-turn decision:')
     expect(managerPrompt).toContain('Your posture is **Delegation-first**.')
     expect(managerPrompt).toContain('Workers normally own substantive implementation')
-    expect(managerPrompt).toContain('unless the user already authorized that action or action class')
+    expect(managerPrompt).toContain('Do not ask again for an action already authorized')
     expect(managerPrompt).not.toContain('other routed user-facing delivery')
-    expect(managerPrompt).toContain('`SYSTEM:` content is internal context, not a direct user request.')
+    expect(managerPrompt).toContain('`SYSTEM:` is internal context.')
     expect(managerPrompt).toContain('Project agents in this profile — none configured.')
-    expect(managerPrompt).toContain('Workers do not receive the project-agent directory.')
-    expect(managerPrompt).toContain('`[projectAgentContext]` is a message from a peer manager session')
-    expect(managerPrompt).toContain('Treat new user messages as steering')
-    expect(managerPrompt).toContain('confirm the resource is stable')
+    expect(managerPrompt).toContain('Workers do not receive the peer directory.')
+    expect(managerPrompt).toContain('Project agents are peer managers.')
+    expect(managerPrompt).toContain('New user messages normally steer the active task')
+    expect(managerPrompt).toContain('settle worker actions that could mutate it')
     expect(managerPrompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i)
-    expect(managerPrompt).toContain('work-advancing coordination to its `fromAgentId`')
-    expect(managerPrompt).toContain('Honor its stated response expectation')
-    expect(managerPrompt).toContain('Do not send courtesy acknowledgments')
-    expect(managerPrompt).toContain('Do not ask twice for the same scoped permission')
-    expect(managerPrompt).toContain("It does not require extra confirmation for a direct reply in the user's current channel")
+    expect(managerPrompt).toContain('response expectations and use its `fromAgentId`')
+    expect(managerPrompt).toContain('Honor `[projectAgentContext]` response expectations')
+    expect(managerPrompt).toContain('no courtesy acknowledgments')
+    expect(managerPrompt).toContain('Authorization and user preferences persist across turns and context resets within their original scope')
+    expect(managerPrompt).toContain("A direct reply in the current channel or an explicitly requested internal peer handoff needs no extra confirmation")
     expect(managerPrompt).toContain(managerMemoryPath)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })

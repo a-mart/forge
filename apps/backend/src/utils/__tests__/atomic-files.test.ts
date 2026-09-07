@@ -34,7 +34,7 @@ describe("atomic-files", () => {
     await expect(readFile(filePath, "utf8")).resolves.toBe("hello world");
   });
 
-  it("publishes streamed cache chunks only after the complete stream is written", async () => {
+  it.each([false, true])("publishes streamed cache chunks only after the complete stream is written (durable=%s)", async (durable) => {
     const root = await createTempRoot();
     const path = join(root, "stream.json");
     await writeFileAtomic(path, "previous");
@@ -43,7 +43,7 @@ describe("atomic-files", () => {
       expect(await readFile(path, "utf8")).toBe("previous");
       yield Buffer.from("2]");
     }
-    await writeFileAtomic(path, chunks(), { mode: 0o600 });
+    await writeFileAtomic(path, chunks(), { mode: 0o600, durable });
     expect(await readFile(path, "utf8")).toBe("[1,2]");
   });
 
@@ -57,6 +57,24 @@ describe("atomic-files", () => {
   "answer": 42
 }
 `);
+  });
+
+  it("durable writes validate before commit and clean temporary files after a rejected boundary", async () => {
+    const root = await createTempRoot();
+    const filePath = join(root, "notes.json");
+    await writeFileAtomic(filePath, "accepted", { durable: true, mode: 0o600 });
+    const beforeCommit = vi.fn(async () => {
+      expect(await readFile(filePath, "utf8")).toBe("accepted");
+      expect((await readdir(root)).filter(name => name.endsWith(".tmp"))).toHaveLength(1);
+      throw new Error("storage boundary changed");
+    });
+    await expect(writeFileAtomic(filePath, "rejected", { durable: true, beforeCommit }))
+      .rejects.toThrow("storage boundary changed");
+    expect(beforeCommit).toHaveBeenCalledOnce();
+    expect(await readFile(filePath, "utf8")).toBe("accepted");
+    expect(await readdir(root)).toEqual(["notes.json"]);
+    await writeFileAtomic(filePath, "retried", { durable: true });
+    expect(await readFile(filePath, "utf8")).toBe("retried");
   });
 
   it("writeFileAtomic applies an explicit private file mode to the replacement", async () => {

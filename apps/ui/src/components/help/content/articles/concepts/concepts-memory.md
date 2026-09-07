@@ -1,4 +1,4 @@
-Forge maintains session memory, profile memory, and Cortex knowledge as distinct layers. Which files enter a prompt depends on the Knowledge v2 mode.
+Forge separates task notes, session memory, profile memory, and Cortex knowledge. Which files enter a prompt depends on the Knowledge v2 mode.
 
 ## Profile memory
 
@@ -8,9 +8,13 @@ Do not confuse profile memory with **profile-scoped Knowledge v2**. The latter i
 
 ## Session memory
 
-Each chat session has its own `memory.md` for working state: what the agent tried, what worked, and open questions. It is private to that session and remains prompt-injected in both modes.
+Each chat session has its own `memory.md` for durable facts and decisions you ask the agent to remember. It remains prompt-injected in both knowledge modes. Approved durable session insights can enter the profile memory-merge lifecycle.
 
-This separation keeps a session's exploratory or temporary state from automatically becoming shared profile context. Durable session insights can still be merged into canonical profile memory.
+## Task notes
+
+The agent can keep task notes automatically while doing authorized work: the objective, your corrections, progress, open questions, evidence references, and next steps. These notes are separate from `memory.md`. They survive context transitions and restart without automatically becoming profile memory or Cortex knowledge. Fresh windows uses these notes to continue the same task and retrieves earlier evidence when more detail is needed.
+
+Each agent owns its notes. A fork from the current state receives an independent snapshot; a fork at an earlier message starts fresh notes so later discoveries do not leak into that branch. Clearing or deleting a session removes its task notes. Notes preserve working state, but do not create new permission or prove the current state of files and services.
 
 ## Legacy common knowledge
 
@@ -29,6 +33,8 @@ These files are plain Markdown on disk and remain available for inspection. Mana
 
 ## History recall
 
-Transcript history is separate from memory and Cortex knowledge. Local Builder managers and ordinary workers recover compacted or older conversation evidence with the agent-only `history` tool (`sessions`, `search`, then `read`). There is no human history drawer and no embedding index. Pause or resume indexing from **Settings → History**; that pause is not a search enable toggle. Indexing starts autonomously after local Builder hydration and prefers recent sources. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Discover matching sessions, then search the current session first, including associated workers; widen to the current project only when needed. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and no approval prompt; `all_local` is a deliberate broad search, not the only cross-project path.
+Transcript history preserves messages and tool results. Local Builder managers and ordinary workers can browse context windows, list earlier items, search, and read evidence with the agent-only `history` tool. The agent starts with the current session and associated workers, then widens to a project or explicitly selected session when needed. Searches outside the current project need a reason, without a separate approval prompt.
 
-Reads use source-qualified references, including parts for long entries. Historical evidence is not current authority or current permissions. Coverage is `building`, `ready`, `degraded`, or `unavailable`. Incomplete catch-up or `building` coverage means a no-match is not proof of absence. Canonical JSONL remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index, not read authority. Collaboration, Cortex/system, plugin, and external-thread runtimes do not get this tool. Remote Projects stay origin-scoped. Secure Sessions secrets are excluded.
+Ranked word searches help discover related work. Literal search finds exact wording, paths, or errors. Results report incomplete coverage or bounded scans, so an empty partial result does not prove that evidence is absent. The agent should read relevant results and verify current state before acting.
+
+**Settings → History** pauses or resumes indexing. Conversation recording and direct window/item browsing, literal scans, and canonical reads remain available while the index is paused. Canonical JSONL is the source of truth; the local index is a rebuildable cache. Restricted runtime content and Secure Sessions secrets remain excluded. Remote Projects keep their own origin-scoped history. There is no separate human history drawer.

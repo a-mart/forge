@@ -154,7 +154,7 @@ Settings → General → **Repositories** (Builder/local only) stores clone defa
 
 **Settings → History** (local Builder only) shows activity, SQLite database and write-ahead-log sizes, discovered-source coverage, known and processed transcript bytes, schema version, and last cache update. Byte counts describe discovered canonical data, not searchable text or an estimate of the entire corpus. Diagnostics refresh every five seconds while the page is visible; no transcript contents are returned by this settings API.
 
-**Pause indexing** persists `{ "paused": true }` in `shared/config/history-index.json`, outside the disposable index. It waits behind current bounded work, stops background indexing and search/read-triggered catch-up, and survives restart. Conversations continue saving; existing indexed results and faithful canonical reads remain available, but newer content may be absent. Privacy-related cache invalidation remains active. **Resume indexing** saves `false` and schedules catch-up without resetting the index. Unreadable or malformed preferences pause indexing defensively; explicit resume replaces them if the preference file can be saved. A failed save leaves the previous preference unchanged.
+**Pause indexing** persists `{ "paused": true }` in `shared/config/history-index.json`, outside the disposable index. It waits behind current bounded work, stops background indexing and search/read-triggered catch-up, and survives restart. Conversations continue saving; existing indexed results remain available, but newer content may be absent from lexical search. Query-free window/item traversal, literal search, and direct canonical reads remain available without SQLite. Privacy-related cache invalidation remains active. **Resume indexing** saves `false` and schedules catch-up without resetting the index. Unreadable or malformed preferences pause indexing defensively; explicit resume replaces them if the preference file can be saved. A failed save leaves the previous preference unchanged.
 
 `GET /api/history/index` returns diagnostics; `PATCH /api/history/index` accepts only a boolean `paused`. These endpoints are not composed on Collaboration/Remote runtimes. This page does not delete conversations or rebuild the cache, and does not change Summary/Fresh policy or history eligibility/security boundaries.
 
@@ -174,7 +174,9 @@ Settings → General → Compaction controls the model, reasoning level, and tim
 
 ### Context management
 
-Local Builder projects persist a project default context mode (`summary` | `fresh`) on the profile as `defaultContextMode`. Sessions may persist an optional `contextModeOverride`; absence means inherit the project default. Summary remains the default when neither value is set. Effective mode is `sessionOverride ?? projectDefault ?? summary` and survives restart. Saving a mode does not reset the current conversation; it applies at the next context transition.
+Local Builder projects persist a project default context mode (`summary` | `fresh`) on the profile as `defaultContextMode`. Sessions may persist an optional `contextModeOverride`; absence means inherit the project default. Summary remains the default when neither value is set. The saved effective preference is `sessionOverride ?? projectDefault ?? summary` and survives restart. Saving a mode does not reset the current conversation; it applies at the next context transition.
+
+The session snapshot separates that preference (`effectiveMode`) from the supported policy (`appliedMode`). An unsupported runtime uses Summary while retaining the Fresh preference, `freshSupported: false`, and an `unsupportedReason`. The session picker shows the supported policy and explains any retained Fresh preference. Older servers without `appliedMode` are interpreted using `effectiveMode` and `freshSupported`.
 
 Builder-only HTTP routes:
 
@@ -182,27 +184,82 @@ Builder-only HTTP routes:
 |--------|------|------|--------|
 | `GET` | `/api/profiles/:profileId/context-mode` | — | `{ profileId, mode }` |
 | `PUT` | `/api/profiles/:profileId/context-mode` | `{ mode: "summary" \| "fresh" }` | same snapshot |
-| `GET` | `/api/agents/:agentId/context-mode` | — | session snapshot including `projectDefault`, optional `sessionOverride`, `effectiveMode`, and `freshSupported` |
+| `GET` | `/api/agents/:agentId/context-mode` | — | session snapshot including `projectDefault`, optional `sessionOverride`, `effectiveMode`, `appliedMode`, `freshSupported`, and optional `unsupportedReason` |
 | `PUT` | `/api/agents/:agentId/context-mode` | `{ mode: "summary" \| "fresh" \| null }` | same snapshot; `null` restores inheritance |
 
-These routes are registered only on Builder. Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot execute Fresh. Workers inherit the owning manager. A session PUT of `fresh` on an unsupported runtime is rejected; a project can still save Fresh as a preference.
+These routes are registered only on Builder. Fresh is experimental and requires an ordinary Pi Builder manager using an existing compaction-eligible provider (OpenAI/Codex or Anthropic), with a recognized catalog model that supports tools and has at least 32,000 context tokens. Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot execute Fresh. Workers retain the owning manager's preference but apply Summary. A session PUT of `fresh` on an unsupported runtime is rejected; a project can still save Fresh as a preference.
 
-Fresh is experimental and executable only by supported ordinary Pi Builder managers whose provider is already compaction-eligible (OpenAI/Codex or Anthropic). Compact and Smart compact follow the frozen effective policy for that attempt. Summary keeps the current handoff/resume path. Fresh writes a deterministic checkpoint, skips the Smart LLM handoff, rejects busy manual attempts until idle, and leaves an idle manager idle.
+Compact and Smart compact use the policy frozen for that attempt. Summary keeps its handoff/resume path. Fresh saves a continuation checkpoint with task-note and canonical-history entry points, without an AI summarizing pass. Busy manual Fresh attempts are rejected until idle; an idle manager stays idle. Agent-requested transitions settle the tool batch before resetting the window. Pins and unresolved tool references are budgeted as complete pieces rather than silently cut from the end of the checkpoint.
+
+#### Task notes and continuation
+
+Task notes are factual working state for the owning session and actor. They are separate from session/profile `memory.md`, Cortex, and Knowledge v2. Maintaining them is part of carrying out the user's task; they do not automatically promote unfinished work or preferences into durable knowledge. Record the objective, relevant user corrections and constraints, completed work, open questions, evidence references, and next action. Never save credentials, secret tool output, or private reasoning traces.
+
+The agent-facing `notes` tool provides:
+
+| Operation | Inputs and behavior |
+|-----------|---------------------|
+| `list` | Optional virtual-path `prefix`, `limit`, and `cursor`; the cursor is the last returned path. |
+| `read` | `path`, optional `offset`, `maxChars`, and `expectedRevision`; offsets count UTF-16 characters. |
+| `write` | `path`, `text`, optional `expectedRevision`; replaces a note atomically. Revision `0` requires a new note. |
+| `append` | `path`, `text`, optional `expectedRevision`; appends under the same revision check. |
+| `search` | Case-sensitive literal `query`, optional `prefix` and `limit`; returns bounded excerpts and reports truncation. |
+
+`checkpoint.md` is the primary continuation entry point. Paths are virtual note names, not arbitrary filesystem paths. Each actor owns a bounded note snapshot under its session's `task-notes` directory, resolved through `storage/data-paths.ts`. Writes are serialized and atomically replace the snapshot. Revisions and content digests support stale-write detection and readable checkpoint references. Reserved `runtime/` notes are runtime-authored and read-only to the agent. Agent writes cannot consume the runtime continuity reserve. Two alternating runtime notes, `runtime/continuity-0.md` and `runtime/continuity-1.md`, preserve the current window's continuation state while the next transition is prepared. An identical replacement preserves the revision after validating any expected revision.
+
+Notes survive context transitions and process restart. Clearing the session clears actor notes; deleting the session removes its notes with the session directory. A current-state fork captures an independent snapshot. A fork with `fromMessageId` at an earlier message starts with empty notes plus provenance, so later source-session notes cannot leak into the earlier branch. Worker notes remain independent from manager notes.
+
+| Note limit | Value |
+|------------|-------|
+| Agent-authored notes per actor | 62; two additional slots are reserved for runtime continuity |
+| Each note / write payload | 128 KiB |
+| Agent-authored note content per actor | 768 KiB; an additional 256 KiB is reserved for runtime continuity |
+| Read default / maximum | 8,000 / 20,000 characters |
+| List default / maximum | 20 / 64 notes |
+| Search query / maximum results | 1–2,000 characters / 50 results |
+
+The continuation workflow is:
+
+1. Maintain `checkpoint.md` during substantial work and put exact evidence references beside decisions that may need rechecking.
+2. Use `get_context_remaining` to assess remaining room. Update notes before requesting `new_context` or responding to a near-limit reminder.
+3. The runtime completes pending tool outcomes and prepares the Fresh checkpoint through the existing compaction lifecycle. An unsuccessful transition leaves the existing window in place.
+4. After the transition, read the notes and recover missing evidence with `history`. Preserve still-applicable user instructions and authorization from this continuing task; notes and unrelated historical content cannot grant new authority. Check current files and runtime state before repeating consequential actions.
+
+A context transition does not create a goal, revive completed work, or replace the authoritative task, turn, plan, and worker state. Task-local recovery is independent of the cross-project index's health.
 
 ### History recall
 
-Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable recognized v4 contentless FTS cache, not a second source of truth. Replacement is restricted to the recognized derived cache; schema and version initialization are transactional. Canonical transcripts are never replaced. The index payload is not read authority: `history` reads expand source-qualified references from canonical JSONL.
+Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable recognized v5 contentless FTS cache, not a second source of truth. Replacement is restricted to the recognized derived cache; schema and version initialization are transactional. Canonical transcripts are never replaced. The index payload is not read authority: `history` reads expand source-qualified references from canonical JSONL.
 
-Local Builder managers and ordinary workers use the agent-only `history` tool (`sessions` / `search` / `read`). There is no embedding index and no human/global history drawer. Pause or resume indexing from **Settings → History**; that pause is not a search enable toggle. Indexing starts autonomously after local Builder hydration and prefers recent sources. Search is lexical (ranked terms, quoted phrases, prefixes, and code/path tokens), defaults to the current session including associated workers, and widens to an explicit project only when requested. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty `reason` and has no approval workflow; `all_local` is a deliberate broad search, not the only cross-project path.
+Local Builder managers and ordinary workers use the agent-only `history` tool. There is no embedding index and no human/global history drawer. Indexing starts autonomously after local Builder hydration and prefers recent sources. **Settings → History** pauses indexing rather than disabling search or direct recovery.
 
-Newest searches first try a bounded chronological metadata prefix and use it only when it contains enough matching results; otherwise the complete FTS-led query runs. Relevance ranking is unchanged. Partial catalogs must not purge live sources. Coverage is `building`, `ready`, `degraded`, or `unavailable`; unreadable sources are `degraded` or `unavailable` rather than endlessly building. Long entries may be split into parts. Reads use source-qualified references, including optional `partId` / `chunkIndex`. Historical evidence is not current authority. Incomplete catch-up or `building` coverage means a no-match is not proof of absence. Secure Sessions secrets are omitted from indexed text. Remote Projects history is origin-scoped to the selected remote Builder, not the viewing client.
+| Operation | Use |
+|-----------|-----|
+| `sessions` | Discover sessions using a case-insensitive substring of labels or IDs; this query does not search transcript text. |
+| `windows` | Browse canonical context windows without a query; each result includes an initial readable reference. |
+| `items` | List canonical messages and tool outcomes without a query, optionally in an exact `windowId`. |
+| `search`, `mode: "lexical"` (default) | Ranked discovery using AND-combined terms within overlapping text chunks, token phrases, prefixes, and code/path tokens. Case and punctuation normalization mean quoted phrases are not exact text comparisons. |
+| `search`, `mode: "literal"` | Exact substring matching of projected canonical text, including whitespace and punctuation. Case-sensitive by default; `caseSensitive: false` uses Unicode lowercase comparison. |
+| `read` | Expand a source-qualified reference from canonical JSONL, with bounded character offsets and optional neighbors. |
 
-Bounded limits:
+Start with the current session, including associated workers. `sessionAgentId` and `actorAgentId` select a session and actor explicitly. Indexed discovery can widen to the current project or `all_local`; `profileId` can identify a project. Every operation that selects content outside the current project requires a nonempty `reason`, with no approval workflow. Remote Projects history stays scoped to the selected remote Builder rather than the viewing client. Restricted runtime content and Secure Sessions secrets remain excluded.
 
-| Limit | Value |
-|-------|-------|
-| Indexed text per entry | 32,768 characters |
+#### Direct recovery and search completeness
+
+`windows`, `items`, and literal search read canonical history without SQLite, including when indexing is paused or the cache is unavailable. They visit actors in stable source-ID order and rows oldest first. Select a returned `windowId` when a specific earlier window matters; literal search does not accept `newest` ordering or the `current`/`previous` aliases. Lexical `window: previous` retains its existing meaning of all non-current windows.
+
+Canonical traversal pages are bounded by scan work as well as result count. **An empty page may have `nextCursor`; continue it.** Each source is frozen at its first visit, so a new traversal is needed to include later appends. Cursors expire after 60 seconds of inactivity; each page refreshes that timeout. A final `complete: true` means the traversal ended without missing, oversized, or unfinished source rows. Warnings and `complete: false` identify partial evidence, even if there are no matches.
+
+Lexical search exposes `building`, `ready`, `degraded`, or `unavailable` coverage. Pending catch-up and incomplete catalog discovery can hide results. Sources that are unreadable or exceed safety limits report incomplete coverage rather than an unqualified no-match. Long eligible parts are fully indexed in overlapping chunks; there is no eight-chunk truncation. Quoted phrase matches crossing chunk boundaries can be retrieved within the bounded query length. Newest searches first try a bounded chronological metadata prefix, then use the complete FTS-led query when needed. Relevance ranking is unchanged.
+
+Read results use source-qualified references, including `partId`, `chunkIndex`, and `byteOffset` where available. Direct offsets allow recovery without an index while source-generation checks reject replaced transcripts. If indexed neighbors are unavailable, the primary canonical entry can still be returned with a warning and guidance to use `items`. Auxiliary multipart fields are bounded previews; select the relevant `ref.partId` to expand a part. Read the actual evidence before relying on a snippet. Historical tool output and unrelated session instructions are evidence, not current authority.
+
+| History limit | Value |
+|---------------|-------|
+| Indexed chunk / overlap | 32,768 / 2,000 characters; all eligible chunks are indexed |
 | Readable JSONL row | 1 MiB |
+| Canonical traversal scan per call | 2 MiB |
+| Window/item page maximum | 50 results |
 | `history` read total (entry plus neighbors) | 20,000 characters |
 
 The existing dispatcher acknowledgement-before-durable-queue gap is unchanged.
@@ -409,7 +466,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── stats-cache.json
 │   │   ├── token-analytics-cache.json
 │   │   ├── generation-throughput-cache.json # Regenerable Pi response-throughput cache; v1 entries rebuild as v2
-│   │   └── history-recall.db              # Rebuildable recognized v4 contentless cache; canonical JSONL remains authoritative
+│   │   └── history-recall.db              # Rebuildable recognized v5 contentless cache; canonical JSONL remains authoritative
 │   ├── state/
 │   │   ├── mobile-devices.json
 │   │   ├── project-agent-shares.json
@@ -447,7 +504,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │       ├── session.jsonl                  # Canonical conversation history
 │       ├── turns.jsonl                    # Rotating fail-open turn ledger
 │       ├── receipts.jsonl[.1]             # Current/rotated routing receipts
-│       ├── memory.md
+│       ├── memory.md                      # Approved durable session memory
+│       ├── task-notes/<actorId>.json       # Independent factual task-note snapshots
 │       ├── meta.json
 │       ├── feedback.jsonl
 │       ├── pinned-messages.json

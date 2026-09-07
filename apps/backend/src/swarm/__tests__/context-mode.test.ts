@@ -6,6 +6,8 @@ import {
   FRESH_CONTEXT_UNSUPPORTED_CURSOR_SDK,
   FRESH_CONTEXT_UNSUPPORTED_EXTERNAL_THREAD,
   FRESH_CONTEXT_UNSUPPORTED_PROVIDER,
+  FRESH_CONTEXT_UNSUPPORTED_MODEL,
+  FRESH_CONTEXT_UNSUPPORTED_WORKER,
   FRESH_CONTEXT_UNSUPPORTED_SPECIAL_PURPOSE,
   FRESH_CONTEXT_UNSUPPORTED_SYSTEM_PROFILE,
   buildSessionContextModeSnapshot,
@@ -73,7 +75,7 @@ describe("context mode resolution", () => {
   it("supports only existing Pi-backed compaction providers", () => {
     expect(evaluateFreshContextSupport({ manager: MANAGER }).freshSupported).toBe(true);
     expect(evaluateFreshContextSupport({
-      manager: { ...MANAGER, model: { ...MANAGER.model, provider: "anthropic" } },
+      manager: { ...MANAGER, model: { ...MANAGER.model, provider: "anthropic", modelId: "claude-opus-4-6" } },
       runtime: { runtimeType: "pi" },
     }).freshSupported).toBe(true);
     expect(evaluateFreshContextSupport({
@@ -88,6 +90,13 @@ describe("context mode resolution", () => {
     expect(evaluateFreshContextSupport({
       manager: { ...MANAGER, model: { ...MANAGER.model, provider: "unknown" } },
     }).freshSupported).toBe(false);
+  });
+
+  it("requires a recognized model as well as a compatible provider", () => {
+    expect(evaluateFreshContextSupport({ manager: { ...MANAGER, model: { ...MANAGER.model, modelId: "unknown-model" } } }))
+      .toEqual({ freshSupported: false, unsupportedReason: FRESH_CONTEXT_UNSUPPORTED_MODEL });
+    expect(buildSessionContextModeSnapshot({ sessionAgentId: "worker", profile: { ...PROFILE, defaultContextMode: "fresh" }, manager: MANAGER, actor: { role: "worker" } }))
+      .toMatchObject({ effectiveMode: "fresh", appliedMode: "summary", freshSupported: false, unsupportedReason: FRESH_CONTEXT_UNSUPPORTED_WORKER });
   });
 
   it("reports unsupported runtimes honestly without changing the saved preference", () => {

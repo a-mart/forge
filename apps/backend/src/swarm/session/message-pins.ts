@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { ConversationMessageAttachment } from "../types.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 export interface PinEntry {
@@ -26,13 +27,21 @@ const EMPTY_PIN_REGISTRY: PinRegistry = {
 
 const pinLocks = new Map<string, Promise<void>>();
 
-export async function loadPins(sessionDir: string): Promise<PinRegistry> {
+export async function loadPins(sessionDir: string, options: { strict?: boolean } = {}): Promise<PinRegistry> {
   const filePath = getPinsFilePath(sessionDir);
 
   try {
     const raw = await readFile(filePath, "utf8");
-    return normalizeRegistry(JSON.parse(raw));
-  } catch {
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeRegistry(parsed);
+    if (options.strict && (!parsed || parsed.version !== 1 || !parsed.pins
+      || typeof parsed.pins !== "object" || Array.isArray(parsed.pins)
+      || Object.keys(parsed.pins).length !== Object.keys(normalized.pins).length)) {
+      throw new Error("Invalid pinned message registry");
+    }
+    return normalized;
+  } catch (error) {
+    if (options.strict && !isEnoentError(error)) throw new Error("Pinned messages could not be read or validated.");
     return cloneRegistry(EMPTY_PIN_REGISTRY);
   }
 }

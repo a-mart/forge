@@ -214,7 +214,8 @@ describe("SwarmManagerFacade", () => {
       profileId: "profile",
       projectDefault: "fresh",
       effectiveMode: "fresh",
-      freshSupported: true,
+      appliedMode: "summary",
+      freshSupported: false,
     });
 
     manager.contextModeOverride = "summary";

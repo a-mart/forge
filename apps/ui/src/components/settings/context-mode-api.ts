@@ -47,6 +47,7 @@ export function parseSessionContextModeSnapshot(value: unknown): SessionContextM
     projectDefault?: unknown
     sessionOverride?: unknown
     effectiveMode?: unknown
+    appliedMode?: unknown
     freshSupported?: unknown
     unsupportedReason?: unknown
   }
@@ -57,6 +58,9 @@ export function parseSessionContextModeSnapshot(value: unknown): SessionContextM
     throw new Error('Invalid session context-mode response.')
   }
   if (!isContextMode(payload.projectDefault) || !isContextMode(payload.effectiveMode)) {
+    throw new Error('Invalid session context-mode response.')
+  }
+  if (payload.appliedMode !== undefined && !isContextMode(payload.appliedMode)) {
     throw new Error('Invalid session context-mode response.')
   }
   if (typeof payload.freshSupported !== 'boolean') {
@@ -75,6 +79,9 @@ export function parseSessionContextModeSnapshot(value: unknown): SessionContextM
     projectDefault: payload.projectDefault,
     effectiveMode: payload.effectiveMode,
     freshSupported: payload.freshSupported,
+  }
+  if (isContextMode(payload.appliedMode)) {
+    snapshot.appliedMode = payload.appliedMode
   }
   if (isContextMode(payload.sessionOverride)) {
     snapshot.sessionOverride = payload.sessionOverride

@@ -17,9 +17,9 @@ For Remote Projects, the pill loads model availability from and applies the chan
 
 ## Changing context management
 
-Eligible local Builder managers also show a compact **Context management** control beside Send. It reports the effective policy (Summary or Fresh windows) and whether that comes from the project default or a session override. Open it to inherit the project default, force Summary, or opt into experimental Fresh windows. Saving a choice does not clear the current conversation; it applies at the next Compact, Smart compact, or automatic context transition.
+Eligible local Builder managers also show a compact **Context management** control beside Send. It reports the policy the runtime can use (Summary or Fresh windows) and the saved project default or session override. Open it to inherit the project default, force Summary, or opt into experimental Fresh windows. Saving a choice does not clear the current conversation; it applies at the next Compact, Smart compact, or automatic context transition.
 
-Fresh is executable only by supported ordinary Pi Builder managers (OpenAI/Codex or Anthropic). The control is hidden for workers, Collaboration channels, Remote Projects, and system profiles such as Cortex. If the current runtime cannot execute Fresh, that option is disabled with the server's reason; Compact and Smart compact still follow the effective supported policy.
+Fresh requires a supported ordinary Pi Builder manager and an eligible model. The control is hidden for workers, Collaboration channels, Remote Projects, and system profiles such as Cortex. If the current runtime cannot execute Fresh, that option is disabled with the server's reason. Summary is used while any existing Fresh preference stays saved. Compact and Smart compact follow the supported policy.
 
 ### Model-change notices
 

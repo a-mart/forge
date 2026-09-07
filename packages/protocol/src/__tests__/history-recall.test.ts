@@ -13,6 +13,7 @@ import {
   type HistorySearchRequest,
   type HistorySearchResponse,
   type HistorySessionsRequest,
+  type HistoryItemsRequest, type HistoryWindowsRequest, type HistoryWindowsResponse,
 } from '../index.js'
 
 describe('history recall shared contracts', () => {
@@ -33,6 +34,17 @@ describe('history recall shared contracts', () => {
     expectTypeOf(qualified).toMatchTypeOf<HistoryEntryReference>()
     expect(HISTORY_ENTRY_KINDS).toEqual(['message', 'tool_call', 'tool_result', 'checkpoint'])
     expect(HISTORY_SEARCH_SCOPES).toEqual(['session', 'project', 'all_local'])
+  })
+
+  it('adds canonical traversal and literal search without changing lexical defaults', () => {
+    const items = { actorAgentId: 'worker', windowId: 'window:initial', role: 'user', limit: 1 } satisfies HistoryItemsRequest
+    const windows = { sessionAgentId: 'session', cursor: 'opaque' } satisfies HistoryWindowsRequest
+    const response = { results: [], nextCursor: 'next', complete: false, warnings: [] } satisfies HistoryWindowsResponse
+    const literal = { query: 'foo-bar', mode: 'literal', caseSensitive: true, actorAgentId: 'worker', windowId: 'window:initial' } satisfies HistorySearchRequest
+    expectTypeOf(items).toMatchTypeOf<HistoryItemsRequest>()
+    expectTypeOf(windows).toMatchTypeOf<HistoryWindowsRequest>()
+    expect(response.complete).toBe(false)
+    expect(literal.caseSensitive).toBe(true)
   })
 
   it('preserves search defaults while adding newest, artifacts, coverage, and sessions', () => {

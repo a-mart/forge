@@ -19,6 +19,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { evaluateFreshContextSupport } from "../../context-mode.js";
+import { TaskNotesStore } from "../../task-notes-store.js";
+import { createTaskNotesTool } from "../../task-notes-tool.js";
+import { createContextManagementTools } from "../context-management-tools.js";
+import { isRestrictedDescriptor } from "../../history-recall/source-catalog.js";
 import { PiGenerationTelemetryAdapter } from "../generation-telemetry.js";
 import {
   createPiInitialModelInputCapture,
@@ -366,6 +370,39 @@ export class PiRuntimeCreator {
       projectExecutableTrustPlan.trustedPiSettingsPaths,
       projectExecutableTrustPlan.trusted
     );
+    const contextTools: ToolDefinition[] = [];
+    let taskNotesStartupContext: string | undefined;
+    // Use the established tool plan's history eligibility instead of inventing a
+    // second list of excluded system, collaboration, and plugin runtimes.
+    if (descriptor.profileId && !isRestrictedDescriptor(descriptor)
+      && (!sessionDescriptor || !isRestrictedDescriptor(sessionDescriptor))
+      && runtimeSwarmTools.some(tool => tool.name === "history")) {
+      const taskNotes = new TaskNotesStore({ dataDir: this.deps.config.paths.dataDir }).forActor({
+        profileId: descriptor.profileId,
+        sessionAgentId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+        actorAgentId: descriptor.agentId,
+      });
+      contextTools.push(createTaskNotesTool(taskNotes));
+      try {
+        const metadata = await taskNotes.list({ limit: 1 });
+        if (metadata.provenance?.notesOmitted === "historical_boundary") {
+          taskNotesStartupContext = "This conversation was forked at an earlier history boundary. Later working notes were intentionally not inherited. Recover the objective, corrections, and task state using this fork's history items and canonical references. Older copied Fresh checkpoints may refer to notes that do not exist in this fork; do not follow those pointers as if they were current notes. Write a new checkpoint.md from the retained history and current user direction.";
+        }
+      } catch {
+        taskNotesStartupContext = "Task-local notes could not be read during runtime startup. The existing conversation context is retained. Do not request a Fresh transition until recovery notes are readable; use canonical history to recover task evidence.";
+      }
+      if (evaluateFreshContextSupport({ manager: descriptor, runtime: { runtimeType: "pi" } }).freshSupported) {
+        contextTools.push(...createContextManagementTools(() => {
+          if (!runtime) throw new Error("Context runtime is not ready");
+          return runtime;
+        }));
+      }
+    }
+    const guardedContextTools = secureRuntimeBinding ? guardSecureRuntimeTools(contextTools, secureRuntimeBinding) : contextTools;
+    const runtimeContextTools = preparedForgeBindings ? wrapForgeToolsWithExtensionHooks({
+      tools: guardedContextTools, forgeExtensionHost: this.deps.forgeExtensionHost,
+      bindingToken: preparedForgeBindings.bindingToken, host: this.deps.host, descriptor,
+    }) : guardedContextTools;
     const secureCodingTools = secureRuntimeBinding
       ? createSecurePiCodingTools({
           cwd: descriptor.cwd,
@@ -375,8 +412,8 @@ export class PiRuntimeCreator {
         })
       : [];
     const runtimeCustomTools = secureRuntimeBinding
-      ? [...secureCodingTools, ...runtimeSwarmTools]
-      : runtimeSwarmTools;
+      ? [...secureCodingTools, ...runtimeSwarmTools, ...runtimeContextTools]
+      : [...runtimeSwarmTools, ...runtimeContextTools];
     const toolOutputBudget = createModelVisibleToolResultBudget();
     toolOutputBudget.augmentToolDefinitions(runtimeCustomTools);
     const secureAllowedToolNames = isCodexPluginWorkerDescriptor(descriptor)
@@ -384,6 +421,9 @@ export class PiRuntimeCreator {
       : runtimeCustomTools.map((tool) => tool.name);
 
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
+    if (taskNotesStartupContext) swarmContextFiles.push({
+      path: join(runtimeAgentDir, "task-notes-recovery.md"), content: taskNotesStartupContext,
+    });
     const extensionFactories = planPiExtensionFactories({
       descriptor,
       config: this.deps.config,

@@ -169,6 +169,7 @@ function createPromptServiceForDescriptor(
   descriptor: AgentDescriptor,
   options?: {
     getKnowledgeV2Enabled?: () => boolean;
+    promptRegistry?: FileBackedPromptRegistry;
     specialistRoster?: Array<{ specialistId: string; promptBody: string }>;
     specialistRegistryError?: Error;
     logDebug?: (message: string, details?: unknown) => void;
@@ -179,7 +180,7 @@ function createPromptServiceForDescriptor(
     config,
     descriptors: new Map([[descriptor.agentId, descriptor]]),
     profiles: new Map([[profileId, createProfile(descriptor.agentId)]]),
-    promptRegistry: createPromptRegistry(config),
+    promptRegistry: options?.promptRegistry ?? createPromptRegistry(config),
     skillMetadataService: {
       ensureSkillMetadataLoaded: async () => {},
       getSkillMetadata: () => [],
@@ -221,7 +222,7 @@ describe("SwarmPromptService", () => {
     );
 
     expect(managerSource.length).toBeLessThan(10_000);
-    expect(projectAgentSource.length).toBeLessThan(4_000);
+    expect(projectAgentSource.length).toBeLessThan(7_000);
     for (const obsoleteSection of [
       "# Output routing",
       "# User updates",
@@ -250,6 +251,82 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("*/sessions/*.jsonl");
     expect(resolved).toContain("[Plan](/abs/path/plan.md)");
     expect(resolved).toContain("Broad autonomy or an active goal is not blanket permission");
+  });
+
+  it("preserves an authored replacement until reset, then previews the installed built-in", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, { managerPosture: "adaptive" });
+    const registry = createPromptRegistry(config);
+    const authored = "Use our team's own voice. Preserve the exact release checklist wording.";
+    await registry.save("archetype", "manager", authored, descriptor.profileId);
+    const service = createPromptServiceForDescriptor(config, descriptor, { promptRegistry: registry });
+    const entry = await registry.resolveEntry("archetype", "manager", descriptor.profileId);
+    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
+    const system = preview.sections.find((section) => section.label === "System Prompt")!;
+    expect(system.source).toBe(entry!.sourcePath);
+    expect(system.content).toContain(authored);
+    expect(system.content).not.toContain("You are Forge, a capable collaborator");
+    expectCurrentProjectAgentRoutingFooter(system.content);
+    expect(await readFile(entry!.sourcePath, "utf8")).toBe(authored);
+
+    await registry.deleteOverride("archetype", "manager", descriptor.profileId);
+    const adopted = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
+    const adoptedSystem = adopted.sections.find((section) => section.label === "System Prompt")!;
+    expect(adoptedSystem.source).toBe(join(BUILTIN_ARCHETYPES, "manager.md"));
+    expect(adoptedSystem.content).toContain("You are Forge, a capable collaborator");
+    expect(adoptedSystem.content).not.toContain(authored);
+    expect(adoptedSystem.content.match(/Your posture is/g)).toHaveLength(1);
+    expect(adoptedSystem.content).not.toMatch(/\$\{(?:MODEL_SPECIFIC_INSTRUCTIONS|MANAGER_POSTURE|SPECIALIST_ROSTER)\}/);
+    expect(descriptor.managerPosture).toBe("adaptive");
+  });
+
+  it("reports an ordinary session replacement as its actual source without requiring an archetype", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      archetypeId: "missing-custom-archetype",
+      sessionSystemPrompt: "A session-specific authored voice.",
+    });
+    const service = createPromptServiceForDescriptor(config, descriptor);
+    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
+    const system = preview.sections.find((section) => section.label === "System Prompt")!;
+    expect(system.source).toBe(`sessionSystemPrompt:${descriptor.agentId}`);
+    expect(system.content).toContain(descriptor.sessionSystemPrompt);
+    expect(system.content).not.toContain("You are Forge, a capable collaborator");
+    expect(descriptor.sessionSystemPrompt).toBe("A session-specific authored voice.");
+  });
+
+  it("previews inherited project instructions in the same order as runtime discovery", async () => {
+    const { config } = await makeConfig();
+    const parent = join(config.paths.dataDir, "prompt-project");
+    const nested = join(parent, "packages", "app");
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(parent, "AGENTS.md"), "Inherited project rule.");
+    await writeFile(join(parent, "CLAUDE.md"), "Shadowed rule.");
+    await writeFile(join(nested, "CLAUDE.md"), "Local runtime rule.");
+    const descriptor = createManagerDescriptor(config, nested);
+    const preview = await createPromptServiceForDescriptor(config, descriptor)
+      .previewManagerSystemPromptForAgent(descriptor.agentId);
+    const instructions = preview.sections.filter((section) => ["AGENTS.md", "CLAUDE.md"].includes(section.label));
+    expect(instructions).toEqual([
+      { label: "AGENTS.md", source: join(parent, "AGENTS.md"), content: "Inherited project rule." },
+      { label: "CLAUDE.md", source: join(nested, "CLAUDE.md"), content: "Local runtime rule." },
+    ]);
+  });
+
+  it.each([false, true])("labels persisted session facts independently of task notes (knowledge v2: %s)", async (knowledgeV2) => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot);
+    const sessionPath = resolveMemoryFilePath(config.paths.dataDir, descriptor, undefined);
+    const content = "# Saved preferences\n\nUse metric units.\n";
+    await ensureMemoryFile(sessionPath, content);
+    const service = createPromptServiceForDescriptor(config, descriptor, {
+      getKnowledgeV2Enabled: () => knowledgeV2,
+    });
+    const resources = await service.getMemoryRuntimeResources(descriptor);
+    expect(resources.memoryContextFile.content).toContain("# Session Memory (durable facts — update only on an explicit user memory request)");
+    expect(resources.memoryContextFile.content).toContain("Use metric units.");
+    expect(resources.memoryContextFile.content).not.toContain("your writes go here");
+    expect(await readFile(sessionPath, "utf8")).toBe(content);
   });
 
   it("appends current manager routing contract after copied stale session prompts", async () => {
@@ -450,16 +527,16 @@ Custom project instruction: always mention the release train when summarizing de
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-    expect(resolved).toContain("Use the simplest adequate coordination lane")
-    expect(resolved).toContain("**Checklist:** `update_plan`")
-    expect(resolved).toContain("**Graph:** `update_work_graph`")
-    expect(resolved).toContain("two or more independently dispatchable and independently acceptable worker outcomes")
-    expect(resolved).toContain("Task size, step count, thoroughness")
-    expect(resolved).toContain("do not also manually dispatch graph-owned work")
-    expect(resolved).toContain("Follow the graph tool contracts for node state, retry, decisions, and acceptance")
-    expect(resolved).toContain("`[workingPlan]` with the highest revision is the authoritative")
-    expect(resolved).toContain("A goal never expands authority")
-    expect(resolved).toContain("Follow the goal tool contracts for completion and blocking")
+    expect(resolved).toContain("Use the simplest coordination that helps")
+    expect(resolved).toContain("`update_plan` for a visible checklist you sequence")
+    expect(resolved).toContain("`update_work_graph` only when Forge scheduling adds value")
+    expect(resolved).toContain("multiple independently dispatchable and acceptable outcomes")
+    expect(resolved).toContain("Task size or thoroughness alone does not require a graph")
+    expect(resolved).toContain("Let Forge dispatch graph-owned work")
+    expect(resolved).toContain("follow the tool contracts for state changes and acceptance")
+    expect(resolved).toContain("`[workingPlan]` with the highest revision is authoritative")
+    expect(resolved).toContain("Broad autonomy or an active goal is not blanket permission")
+    expect(resolved).toContain("do not infer a goal from ordinary work")
     expect(resolved).not.toContain("preserve returned step ids")
     expect(resolved).not.toContain("Submit the complete desired graph on each revision")
   });
@@ -490,16 +567,16 @@ Custom project instruction: always mention the release train when summarizing de
     expect(delegationPrompt).toContain("Workers normally own substantive implementation")
     expect(adaptivePrompt).toContain("Your posture is **Adaptive**.")
     expect(adaptivePrompt).toContain("Start with direct execution.")
-    expect(adaptivePrompt).toContain("Keep integration work with the manager")
+    expect(adaptivePrompt).toContain("Keep integration with its effective owner")
     expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
     expect(handsOnPrompt).toContain("Execute the requested work directly through investigation, implementation, and validation.")
     for (const prompt of [delegationPrompt, adaptivePrompt, handsOnPrompt]) {
-      expect(prompt).toContain("Use the simplest adequate coordination lane")
-      expect(prompt).toContain("# Execute, accept, and converge")
+      expect(prompt).toContain("Use the simplest coordination that helps")
+      expect(prompt).toContain("# Verify and finish")
       expect(prompt).toContain("Specialist roster for tests.")
       expect(prompt.match(/^# Non-Negotiable Forge Routing Contract$/gm)).toHaveLength(1)
       expect(prompt.split(INTERNAL_TURN_SILENCE_RULE)).toHaveLength(2)
-      expect(prompt.match(/A worker result is evidence, not acceptance\./g)).toHaveLength(1)
+      expect(prompt.match(/A worker result requires a same-turn decision:/g)).toHaveLength(1)
     }
     expect(delegationPrompt.match(/^## Work routing$/gm)).toHaveLength(1)
     expect(adaptivePrompt.match(/^## Work routing$/gm)).toHaveLength(1)
@@ -560,9 +637,9 @@ Always preserve the user's release notes.`,
     const handsOn = await handsOnService.buildResolvedManagerPrompt(handsOnDescriptor);
 
     expect(resolved).toContain("Your own project work remains read-only");
-    expect(resolved).toContain("Delegate the execution once you can give a useful assignment")
-    expect(adaptive).toContain("Compare the whole path, including briefing, context transfer, waiting, acceptance, and likely rework")
-    expect(adaptive).toContain("Preserve current ownership while it remains effective")
+    expect(resolved).toContain("Delegate once you can give a useful assignment")
+    expect(adaptive).toContain("after accounting for briefing, context transfer, waiting, acceptance, and likely rework")
+    expect(adaptive).toContain("reconsider ownership when evidence changes the tradeoff")
     expect(adaptive).not.toContain("Workers normally own substantive implementation")
     expect(handsOn).toContain("Execute the requested work directly through investigation, implementation, and validation.")
     expect(handsOn).toContain("Delegate when the user requests it, a required capability is unavailable directly")
@@ -588,10 +665,10 @@ Always preserve the user's release notes.`,
       const prompt = await service.buildResolvedManagerPrompt(descriptor);
 
       expect(prompt.match(/^## Work routing$/gm)).toHaveLength(1);
-      expect(prompt).toContain("Retain ownership of the critical path");
-      expect(prompt).toContain("Complexity, ambiguity, task size, multiple files or steps");
-      expect(prompt).toContain("The selected work mode decides whether to delegate");
-      expect(prompt).toContain("not a separate work mode or permission grant");
+      expect(prompt).toContain("Retain the critical path");
+      expect(prompt).toContain("Task size, ambiguity, multiple files, or an isolated worktree alone");
+      expect(prompt).toMatch(/(?:The selected work mode decides|The work mode determines) whether to delegate/);
+      expect(prompt).toMatch(/(?:do not independently grant|not a separate work mode or permission grant)/);
       expect(prompt).not.toMatch(/Maximize delegation|<delegation_first>|return to delegation-first|direct work becomes broad/);
       expect(prompt).not.toContain("Your own project work remains read-only");
       if (surface === "collaboration-channel") {
@@ -999,9 +1076,9 @@ Always preserve the user's release notes.`,
     const manager = createManagerDescriptor(config, repoRoot, { archetypeId: "manager" });
     const managerPrompt = await createPromptServiceForDescriptor(config, manager)
       .resolveSystemPromptForDescriptor(manager);
-    expect(managerPrompt).toContain("work-advancing coordination to its `fromAgentId`");
-    expect(managerPrompt).toContain("Honor its stated response expectation");
-    expect(managerPrompt).toContain("Do not send courtesy acknowledgments");
+    expect(managerPrompt).toContain("response expectations and use its `fromAgentId`");
+    expect(managerPrompt).toContain("Honor `[projectAgentContext]` response expectations");
+    expect(managerPrompt).toContain("no courtesy acknowledgments");
   });
 
   it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {

@@ -54,6 +54,9 @@ import type {
 } from "../types.js";
 import type { ContextMode } from "@forge/protocol";
 import { evaluateFreshContextSupport } from "../context-mode.js";
+import { TaskNotesStore } from "../task-notes-store.js";
+import { INITIAL_WINDOW_ID, contextWindowIdForCompaction } from "../history-recall/types.js";
+import type { ContextRemaining } from "./context-management-tools.js";
 import {
   FRESH_CONTEXT_BUSY_ERROR,
   buildFreshContextHandlerResult,
@@ -243,6 +246,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private frozenContextMode: ContextMode | undefined;
   private contextModeAttemptId: string | undefined;
   private autoFreshRecoveryClaimedBeforeStart = false;
+  /** The request belongs to this runtime and current input epoch, never the session facade. */
+  private freshContextRequest: { inputEpoch: number; windowId: string } | undefined;
+  private freshInputEpoch = 0;
+  private freshReminderWindowId: string | undefined;
+  private freshBoundaryInProgress = false;
+  private freshBoundaryRequestEpoch: number | undefined;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
@@ -308,6 +317,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.session.setFreshContextHandler?.((request) => this.handleFreshContextRequest(request));
+    this.session.setFreshContextBoundaryHandler?.((signal) => this.prepareFreshContextBoundary(signal));
     this.unsubscribe = this.session.subscribe((event) => {
       this.sessionEventQueue = this.sessionEventQueue
         .then(() => this.handleEvent(event))
@@ -443,6 +453,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
+    this.invalidateFreshContextRequest();
     this.inputDispatchesInProgress += 1;
     try {
       this.suppressSessionEventsUntilIdle = null;
@@ -487,6 +498,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   async terminate(options?: RuntimeShutdownOptions): Promise<void> {
+    this.invalidateFreshContextRequest();
     if (this.status === "terminated") return;
 
     if (!this.terminationPrepared) {
@@ -526,6 +538,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   async shutdownForReplacement(): Promise<void> {
+    this.invalidateFreshContextRequest();
     if (this.status === "terminated") {
       return;
     }
@@ -539,6 +552,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   async recycle(): Promise<void> {
+    this.invalidateFreshContextRequest();
     if (this.status === "terminated") {
       return;
     }
@@ -552,6 +566,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   async stopInFlight(options?: RuntimeShutdownOptions): Promise<void> {
+    this.invalidateFreshContextRequest();
     if (this.status === "terminated") {
       return;
     }
@@ -1134,7 +1149,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
     this.autoFreshRecoveryClaimedBeforeStart = true;
-    this.latestAutoCompactionReason ??= reason === "manual" ? undefined : reason;
+    this.latestAutoCompactionReason ??= reason === "manual" ? undefined : reason === "agent" ? "threshold" : reason;
     this.autoCompactionEntryKeysBefore ??= this.getCompactionEntryKeys();
     if (!this.autoCompactionRecoveryInProgress) {
       this.beginAutoCompactionRecovery();
@@ -1193,9 +1208,126 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return pendingToolCallIds.size > 0;
   }
 
+  getContextRemaining(): ContextRemaining {
+    const usage = this.getContextUsage();
+    const model = this.session.model;
+    const contextWindowTokens = usage?.contextWindow ?? model?.contextWindow ?? null;
+    // Pi clears usage after a fresh window. Include retained prompt/tool material in
+    // the fallback instead of reporting the entire window as available.
+    const usedTokens = usage?.tokens ?? (contextWindowTokens ? Math.ceil((
+      (this.session.systemPrompt ?? this.systemPrompt).length + JSON.stringify(this.getSessionAgentMessages()).length
+      + JSON.stringify(this.session.getAllTools?.() ?? []).length
+    ) / 4) : null);
+    const reserveTokens = contextWindowTokens
+      ? Math.min(Math.floor(contextWindowTokens / 3), Math.max(4096, Math.ceil(contextWindowTokens * 0.12)))
+      : 4096;
+    const remainingTokens = contextWindowTokens !== null && usedTokens !== null
+      ? Math.max(0, contextWindowTokens - usedTokens) : null;
+    return {
+      windowId: this.getFreshWindowId(),
+      mode: this.resolveEffectiveContextMode(), contextWindowTokens, usedTokens,
+      remainingTokens, reserveTokens,
+      usableTokens: remainingTokens === null ? null : Math.max(0, remainingTokens - reserveTokens),
+      estimated: !usage,
+      notesRecommended: remainingTokens !== null && remainingTokens <= reserveTokens * 2,
+      transitionPending: Boolean(this.freshContextRequest || this.freshBoundaryInProgress),
+    };
+  }
+
+  async requestNewContext(): Promise<{ accepted: boolean; message: string }> {
+    if (this.resolveEffectiveContextMode() !== "fresh" || !this.session.setFreshContextBoundaryHandler
+      || this.status === "terminated" || this.sessionShutdownComplete || this.lifecycleInterruptionInProgress || !this.dataDir) {
+      return { accepted: false, message: "Agent-requested fresh context is unavailable in this runtime or mode." };
+    }
+    const inputEpoch = this.freshInputEpoch;
+    const windowId = this.getFreshWindowId();
+    const notes = await this.getFreshTaskNotes().checkpointHint();
+    const checkpoint = notes.notes.find(note => note.path === "checkpoint.md");
+    const previousCheckpointRevision = this.getFreshCheckpointRevision();
+    if (!notes.ready || !checkpoint || checkpoint.bytes === 0 || checkpoint.revision <= previousCheckpointRevision) {
+      return { accepted: false, message: "Save or update notes checkpoint.md for the current context window before requesting new_context. The current context was preserved." };
+    }
+    if (inputEpoch !== this.freshInputEpoch || windowId !== this.getFreshWindowId()) {
+      return { accepted: false, message: "New input or a context boundary arrived while preparing the request. Incorporate it, update checkpoint.md, and request again." };
+    }
+    this.freshContextRequest = { inputEpoch, windowId };
+    return { accepted: true, message: "Fresh context requested. The runtime will validate recovery notes and commit the boundary after all tools in this batch finish. Continue the same task using checkpoint.md and history." };
+  }
+
+  private getFreshTaskNotes() {
+    return new TaskNotesStore({ dataDir: this.dataDir! }).forActor({
+      profileId: this.descriptor.profileId ?? this.descriptor.managerId,
+      sessionAgentId: this.descriptor.role === "manager" ? this.descriptor.agentId : this.descriptor.managerId,
+      actorAgentId: this.descriptor.agentId,
+    });
+  }
+
+  private getFreshWindowId(): string {
+    const entries = this.session.sessionManager.getBranch();
+    for (let index = entries.length - 1; index >= 0; index--) {
+      const entry = entries[index];
+      if (entry.type === "compaction" && entry.firstKeptEntryId) {
+        const details = entry.details as { forgeContext?: { mode?: string } } | undefined;
+        return contextWindowIdForCompaction(entry.id, details?.forgeContext?.mode);
+      }
+    }
+    return INITIAL_WINDOW_ID;
+  }
+
+  private getFreshCheckpointRevision(): number {
+    const entries = this.session.sessionManager.getBranch();
+    for (let index = entries.length - 1; index >= 0; index--) {
+      const entry = entries[index];
+      if (entry.type === "compaction") {
+        const details = entry.details as { forgeContext?: { taskCheckpointRevision?: number } } | undefined;
+        return details?.forgeContext?.taskCheckpointRevision ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  private invalidateFreshContextRequest(): void {
+    this.freshInputEpoch++;
+    this.freshContextRequest = undefined;
+    if (this.freshBoundaryInProgress || this.autoFreshRecoveryClaimedBeforeStart) this.session.abortCompaction?.();
+  }
+
+  private async prepareFreshContextBoundary(signal?: AbortSignal): Promise<"agent" | "threshold" | undefined> {
+    if (signal?.aborted || this.lifecycleInterruptionInProgress || this.status === "terminated" || this.sessionShutdownComplete
+      || this.resolveEffectiveContextMode() !== "fresh") {
+      this.freshContextRequest = undefined;
+      return undefined;
+    }
+    const requested = this.freshContextRequest;
+    this.freshContextRequest = undefined;
+    if (requested && requested.inputEpoch === this.freshInputEpoch && requested.windowId === this.getFreshWindowId()) {
+      this.freshBoundaryRequestEpoch = this.freshInputEpoch;
+      return "agent";
+    }
+    if (this.isAutoCompactionCooldownActive()) return undefined;
+    const budget = this.getContextRemaining();
+    const windowId = this.getFreshWindowId();
+    if (budget.notesRecommended && this.freshReminderWindowId !== windowId) {
+      this.freshReminderWindowId = windowId;
+      await this.session.sendCustomMessage({
+        customType: "forge_context_reserve", display: false,
+        content: `Context is nearing its reserved capacity (approximately ${budget.remainingTokens} tokens remain). Save notes checkpoint.md now with the current objective, corrections, scoped authorization, completed side effects, evidence references, and next action. Then use new_context to continue this same task. Do not repeat completed actions.`,
+      }, { deliverAs: "steer" });
+      return undefined;
+    }
+    // Emergency fallback still uses the same deterministic, validated checkpoint.
+    // The reminder gets one whole tool/model opportunity before this reserve is used.
+    if (budget.remainingTokens !== null && budget.remainingTokens <= budget.reserveTokens
+      && this.freshReminderWindowId === windowId) return "threshold";
+    return undefined;
+  }
+
   private async handleFreshContextRequest(
     request: FreshContextHandlerRequest,
   ): Promise<{ summary: string; tokensBefore: number; details: unknown } | undefined> {
+    if (request.reason === "agent" && this.freshBoundaryRequestEpoch !== this.freshInputEpoch) {
+      throw new Error("New input superseded the fresh context request; previous context preserved.");
+    }
     const liveMode = this.resolveEffectiveContextMode();
     if (liveMode !== "fresh" && this.getAttemptContextMode() !== "fresh") {
       return undefined;
@@ -1213,23 +1345,41 @@ export class AgentRuntime implements SwarmAgentRuntime {
       throw new Error("Fresh context checkpoint requires a data directory");
     }
     const model = this.session.model as { contextWindow?: number; maxTokens?: number } | undefined;
-    return buildFreshContextHandlerResult({
-      dataDir: this.dataDir,
-      descriptor: this.descriptor,
-      request,
-      sessionFile: this.descriptor.sessionFile,
-      budget: {
-        contextWindow: model?.contextWindow,
-        maxOutputTokens: model?.maxTokens,
-        retainedContextTokens: Math.ceil((
-          this.systemPrompt.length
-          + JSON.stringify((this.session.getAllTools?.() ?? []).filter((tool) =>
-            (this.session.getActiveToolNames?.() ?? []).includes(tool.name))).length
-          + (this.session.getSteeringMessages?.() ?? []).join("\n").length
-          + (this.session.getFollowUpMessages?.() ?? []).join("\n").length
-        ) / 4),
-      },
-    });
+    const inputEpoch = this.freshInputEpoch;
+    this.freshBoundaryInProgress = true;
+    try {
+      const notes = await this.getFreshTaskNotes().checkpointHint();
+      const checkpoint = notes.notes.find(note => note.path === "checkpoint.md");
+      if (request.reason === "agent" && (!notes.ready || !checkpoint || checkpoint.bytes === 0
+        || checkpoint.revision <= this.getFreshCheckpointRevision())) {
+        throw new Error("Fresh context requires a current readable notes checkpoint.md; previous context preserved.");
+      }
+      const result = await buildFreshContextHandlerResult({
+        dataDir: this.dataDir,
+        descriptor: this.descriptor,
+        request,
+        sessionFile: this.descriptor.sessionFile,
+        budget: {
+          contextWindow: model?.contextWindow,
+          maxOutputTokens: model?.maxTokens,
+          retainedContextTokens: Math.ceil((
+            (this.session.systemPrompt ?? this.systemPrompt).length
+            + JSON.stringify((this.session.getAllTools?.() ?? []).filter((tool) =>
+              (this.session.getActiveToolNames?.() ?? []).includes(tool.name))).length
+            + (this.session.getSteeringMessages?.() ?? []).join("\n").length
+            + (this.session.getFollowUpMessages?.() ?? []).join("\n").length
+          ) / 4),
+        },
+      });
+      if (request.signal?.aborted || inputEpoch !== this.freshInputEpoch || this.lifecycleInterruptionInProgress) {
+        throw new Error("Fresh context preparation was superseded by new input or interrupted; previous context preserved.");
+      }
+      if (checkpoint) Object.assign(result.details.forgeContext, { taskCheckpointRevision: checkpoint.revision });
+      return result;
+    } finally {
+      this.freshBoundaryInProgress = false;
+      this.freshBoundaryRequestEpoch = undefined;
+    }
   }
 
   isContextRecoveryActive(): boolean {

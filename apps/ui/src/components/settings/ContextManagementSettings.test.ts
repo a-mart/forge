@@ -91,9 +91,9 @@ describe('ContextManagementSettings', () => {
 
     expect(apiMock.fetchProjectContextMode).toHaveBeenCalledWith(apiClient, 'forge')
     expect(container.textContent).toContain('Context management')
-    expect(container.textContent).toContain('Summary generates a summary')
-    expect(container.textContent).toContain('Fresh windows starts from a checkpoint')
-    expect(container.textContent).toContain('History search uses lexical matching')
+    expect(container.textContent).toContain('Summary carries forward a summary')
+    expect(container.textContent).toContain('Fresh windows uses task notes')
+    expect(container.textContent).toContain('earlier messages and tool results')
     expect(container.textContent).not.toContain('Full conversation history stays searchable')
     expect(container.textContent).not.toContain('does not use embeddings')
     expect(container.textContent).toContain('does not clear the current conversation')

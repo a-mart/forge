@@ -1,3 +1,5 @@
+import { isEnoentError } from "../utils/fs-errors.js";
+import { TaskNotesStore } from './task-notes-store.js';
 import { writeFile } from "node:fs/promises";
 import { DEFAULT_MANAGER_POSTURE } from "@forge/protocol";
 import { assertBuilderSession, assertCollabSession, cloneDescriptor } from "./swarm-manager-utils.js";
@@ -10,6 +12,7 @@ interface StopSessionInternalOptions {
   emitSnapshots: boolean;
   emitStatus?: boolean;
   deleteWorkers?: boolean;
+  manualStopNotice?: boolean;
 }
 
 interface SessionCreationOptions {
@@ -48,6 +51,8 @@ interface PreparedSessionCreation {
 }
 
 export interface SwarmSessionServiceOptions {
+  dataDir?: string;
+  withRuntimeShutdownBarrier: <T>(agentId: string, operation: () => Promise<T>) => Promise<T>;
   profiles: Map<string, ManagerProfile>;
   runtimes: Map<string, SwarmAgentRuntime>;
   provisioner: SessionProvisioner;
@@ -285,16 +290,38 @@ export class SwarmSessionService {
   async clearSessionConversation(agentId: string): Promise<void> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     assertBuilderSession(descriptor, "clear Builder conversations");
+    await this.options.withRuntimeShutdownBarrier(agentId, async () => {
+      const runtime = this.options.runtimes.get(agentId);
+      const { unsafeShutdownAgentIds } = await this.options.stopSessionInternal(agentId, {
+        saveStore: true, emitSnapshots: true, manualStopNotice: false,
+      });
+      if (unsafeShutdownAgentIds.length) {
+        throw new Error(`Forge could not safely clear this session because shutdown is incomplete for: ${unsafeShutdownAgentIds.join(", ")}. Retry cleanup, then clear again. Conversation and notes were preserved.`);
+      }
+      await this.clearStoppedSessionConversation(descriptor, runtime);
+    });
+  }
+
+  private async clearStoppedSessionConversation(
+    descriptor: ProvisionedSessionDescriptor,
+    previousRuntime: SwarmAgentRuntime | undefined,
+  ): Promise<void> {
+    const agentId = descriptor.agentId;
     this.options.cancelAllPendingChoicesForAgent(agentId);
     // Capture and archive the live goal before truncating the manager transcript,
     // which is the source of its token-usage estimate.
     await this.options.clearSessionGoal(descriptor);
+    if (this.options.dataDir) {
+      await new TaskNotesStore({ dataDir: this.options.dataDir })
+        .clearSession(descriptor.profileId, descriptor.agentId);
+    }
 
     if (descriptor.sessionFile) {
       try {
         await writeFile(descriptor.sessionFile, "");
-      } catch {
-        // File may not exist yet — that's fine
+      } catch (error) {
+        if (!isEnoentError(error)) throw error;
+        // A not-yet-created session directory has no conversation to clear.
       }
     }
 
@@ -304,9 +331,8 @@ export class SwarmSessionService {
     await this.options.invalidateHistory?.(agentId);
     await this.options.clearSessionPlan(descriptor);
 
-    const runtime = this.options.runtimes.get(agentId);
-    if (runtime) {
-      await this.options.captureSessionRuntimePromptMeta(descriptor, runtime.getSystemPrompt?.());
+    if (previousRuntime) {
+      await this.options.captureSessionRuntimePromptMeta(descriptor, previousRuntime.getSystemPrompt?.());
     }
 
     this.options.emitConversationReset(agentId, "api_reset");
@@ -380,6 +406,14 @@ export class SwarmSessionService {
     forkedDescriptor.cli = sourceDescriptor.cli ? { ...sourceDescriptor.cli } : undefined;
     await this.ensureEffectiveDelegationRoster(forkedDescriptor);
 
+    // Capture before copying canonical history. A source still running after this
+    // point cannot leak later note edits into the fork. Historical forks omit
+    // current notes because they cannot establish the requested earlier boundary.
+    const notesStore = this.options.dataDir ? new TaskNotesStore({ dataDir: this.options.dataDir }) : undefined;
+    const sourceNotes = await notesStore?.forActor({
+      profileId: sourceDescriptor.profileId, sessionAgentId: sourceDescriptor.agentId,
+      actorAgentId: sourceDescriptor.agentId,
+    }).snapshot();
     let rollbackSecureAccess: (() => Promise<void>) | undefined;
     await this.options.provisioner.provisionSession({
       descriptor: forkedDescriptor,
@@ -392,6 +426,11 @@ export class SwarmSessionService {
           forkedDescriptor.sessionFile,
           normalizedFromMessageId
         );
+        if (notesStore && sourceNotes) {
+          await notesStore.forActor({ profileId: forkedDescriptor.profileId,
+            sessionAgentId: forkedDescriptor.agentId, actorAgentId: forkedDescriptor.agentId,
+          }).restoreFork(sourceNotes, { fromMessageId: normalizedFromMessageId });
+        }
         await this.options.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor);
         await this.options.writeForkedSessionMemoryHeader(
           sourceDescriptor,

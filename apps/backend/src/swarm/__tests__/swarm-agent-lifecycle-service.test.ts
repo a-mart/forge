@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +7,8 @@ import {
   SwarmAgentLifecycleService,
   type SwarmAgentLifecycleServiceOptions
 } from "../swarm-agent-lifecycle-service.js";
+import { TaskNotesStore } from "../task-notes-store.js";
+import { SwarmSessionService, type SwarmSessionServiceOptions } from "../swarm-session-service.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { SessionProvisioner } from "../session-provisioner.js";
 import type {
@@ -183,6 +185,8 @@ function baseLifecycleOptions(
     recoverRuntimeShutdown: overrides.recoverRuntimeShutdown ?? vi.fn(async () => false),
     isRuntimeShutdownQuarantined: overrides.isRuntimeShutdownQuarantined ?? vi.fn(() => false),
     prepareRuntimeShutdown: overrides.prepareRuntimeShutdown ?? vi.fn(),
+    withRuntimeAdmission: overrides.withRuntimeAdmission ?? (async (_id, operation) => operation()),
+    waitForRuntimeAdmissions: overrides.waitForRuntimeAdmissions ?? vi.fn(async () => undefined),
     assertRuntimeCreationAllowed: overrides.assertRuntimeCreationAllowed ?? vi.fn(),
     detachRuntime:
       overrides.detachRuntime ??
@@ -4223,6 +4227,114 @@ describe("SwarmAgentLifecycleService", () => {
     expect(result.stoppedWorkerIds).toEqual([]);
     expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
     expect(codex.status).toBe("idle");
+  });
+
+  it("settles an admitted in-flight spawn before enumerating workers for session stop", async () => {
+    const manager = createAgentDescriptor({ agentId: "spawn-owner", managerId: "spawn-owner", profileId: "project", role: "manager" });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>([[manager.agentId, makeRuntimeStub({ descriptor: manager })]]);
+    let releaseArchetype!: () => void;
+    const archetypePending = new Promise<void>(resolve => { releaseArchetype = resolve; });
+    let archetypeStarted!: () => void;
+    const archetypeReady = new Promise<void>(resolve => { archetypeStarted = resolve; });
+    let stopPrepared!: () => void;
+    const stopReady = new Promise<void>(resolve => { stopPrepared = resolve; });
+    const admissions = new Set<Promise<unknown>>();
+    let blocked = false;
+    const options = baseLifecycleOptions({
+      descriptors, runtimes,
+      resolveSpawnWorkerArchetypeId: async () => { archetypeStarted(); await archetypePending; return "worker"; },
+      prepareRuntimeShutdown: () => { blocked = true; stopPrepared(); },
+      getWorkersForManager: () => Array.from(descriptors.values()).filter(d => d.role === "worker"),
+    });
+    Object.assign(options, {
+      withRuntimeAdmission: async <T>(_id: string, operation: () => Promise<T>): Promise<T> => {
+        if (blocked) throw new Error("runtime stopping");
+        const pending = operation(); admissions.add(pending);
+        try { return await pending; } finally { admissions.delete(pending); }
+      },
+      waitForRuntimeAdmissions: async () => { await Promise.allSettled([...admissions]); },
+    });
+    const service = new SwarmAgentLifecycleService(options);
+    const spawning = service.spawnAgent(manager.agentId, { agentId: "late-worker", initialMessage: "Do the assigned work" });
+    await archetypeReady;
+    const stopping = service.stopSessionInternal(manager.agentId, { saveStore: false, emitSnapshots: false, manualStopNotice: false });
+    await stopReady;
+    releaseArchetype();
+    await spawning;
+    const result = await stopping;
+    expect(result.unsafeShutdownAgentIds).toEqual([]);
+    expect(result.terminatedWorkerIds).toContain("late-worker");
+    expect(descriptors.get("late-worker")?.status).toBe("terminated");
+    expect(runtimes.has("late-worker")).toBe(false);
+    await expect(service.spawnAgent(manager.agentId, { agentId: "after-stop" })).rejects.toThrow("runtime stopping");
+  });
+
+  it.each([false, true])("clear drains delayed child startup and removes its notes (startup failure=%s)", async (failStartup) => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-clear-spawn-"));
+    try {
+      const manager = createAgentDescriptor({ agentId: "owner", managerId: "owner", profileId: "project", role: "manager", sessionFile: join(dataDir, "session.jsonl") });
+      await writeFile(manager.sessionFile, "old conversation");
+      const store = new TaskNotesStore({ dataDir });
+      const childNotes = store.forActor({ profileId: "project", sessionAgentId: "owner", actorAgentId: "child" });
+      const descriptors = new Map([[manager.agentId, manager]]);
+      const runtimes = new Map<string, SwarmAgentRuntime>([[manager.agentId, makeRuntimeStub({ descriptor: manager })]]);
+      let releaseArchetype!: () => void;
+      const archetypePending = new Promise<void>(resolve => { releaseArchetype = resolve; });
+      let archetypeStarted!: () => void;
+      const archetypeReady = new Promise<void>(resolve => { archetypeStarted = resolve; });
+      let stopPrepared!: () => void;
+      const stopReady = new Promise<void>(resolve => { stopPrepared = resolve; });
+      const admissions = new Set<Promise<unknown>>();
+      const childTerminated = vi.fn(async () => undefined);
+      const options = baseLifecycleOptions({
+        dataDir, descriptors, runtimes,
+        resolveSpawnWorkerArchetypeId: async () => { archetypeStarted(); await archetypePending; return "worker"; },
+        prepareRuntimeShutdown: () => stopPrepared(),
+        withRuntimeAdmission: async (_id, operation) => {
+          const pending = operation(); admissions.add(pending);
+          try { return await pending; } finally { admissions.delete(pending); }
+        },
+        waitForRuntimeAdmissions: async () => { await Promise.allSettled([...admissions]); },
+        createRuntimeForDescriptor: async descriptor => {
+          await childNotes.write({ path: "checkpoint.md", text: "old child task state" });
+          if (failStartup) throw new Error("child startup failed");
+          return makeRuntimeStub({ descriptor, terminate: childTerminated });
+        },
+        getWorkersForManager: () => Array.from(descriptors.values()).filter(d => d.role === "worker"),
+        runRuntimeShutdown: async (descriptor, action) => {
+          await runtimes.get(descriptor.agentId)?.[action]({ abort: true });
+          return { status: "clean", runtimeToken: 1 };
+        },
+      });
+      const lifecycle = new SwarmAgentLifecycleService(options);
+      const sessions = new SwarmSessionService({
+        dataDir, runtimes, getRequiredSessionDescriptor: () => manager,
+        withRuntimeShutdownBarrier: async (_id: string, operation: () => Promise<unknown>) => operation(),
+        stopSessionInternal: (id: string, input: Parameters<typeof lifecycle.stopSessionInternal>[1]) => lifecycle.stopSessionInternal(id, input),
+        cancelAllPendingChoicesForAgent: vi.fn(), clearSessionGoal: vi.fn(async () => undefined),
+        clearPinsForConversationReset: vi.fn(async () => undefined), resetConversationHistory: vi.fn(),
+        clearSessionPlan: vi.fn(async () => {
+          expect(runtimes.has("child")).toBe(false);
+          expect((await childNotes.list()).notes).toEqual([]);
+          if (!failStartup) expect(childTerminated).toHaveBeenCalledOnce();
+        }),
+        captureSessionRuntimePromptMeta: vi.fn(async () => undefined),
+        emitConversationReset: vi.fn(), logDebug: vi.fn(),
+      } as unknown as SwarmSessionServiceOptions);
+      const spawning = lifecycle.spawnAgent("owner", { agentId: "child", initialMessage: "Start work" }).then(
+        () => ({ succeeded: true }), () => ({ succeeded: false }),
+      );
+      await archetypeReady;
+      const clearing = sessions.clearSessionConversation("owner");
+      await stopReady;
+      releaseArchetype();
+      expect((await spawning).succeeded).toBe(!failStartup);
+      await clearing;
+      expect(admissions.size).toBe(0);
+      expect(runtimes.size).toBe(0);
+      expect((await childNotes.list()).notes).toEqual([]);
+    } finally { await rm(dataDir, { recursive: true, force: true }); }
   });
 
   it("deleteSession uses external-thread terminate cleanup service without changing terminated semantics", async () => {

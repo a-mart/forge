@@ -88,6 +88,18 @@ describe('context-mode-api', () => {
     })
   })
 
+  it('preserves the supported policy separately from the saved preference', () => {
+    const snapshot = {
+      sessionAgentId: 'manager', profileId: 'forge', projectDefault: 'fresh',
+      effectiveMode: 'fresh', appliedMode: 'summary', freshSupported: false,
+      unsupportedReason: 'This model does not support Fresh windows.',
+    }
+    expect(parseSessionContextModeSnapshot(snapshot)).toEqual(snapshot)
+    expect(() => parseSessionContextModeSnapshot({ ...snapshot, appliedMode: 'unknown' })).toThrow(
+      'Invalid session context-mode response.',
+    )
+  })
+
   it('rejects malformed snapshots instead of inventing defaults', () => {
     expect(() => parseProjectContextModeSnapshot({ profileId: 'forge', mode: 'window' })).toThrow(
       'Invalid project context-mode response.',

@@ -38,6 +38,16 @@ Pi extensions are TypeScript/JavaScript modules that hook into the agent lifecyc
 
 Forge runs Pi in headless/library mode (no terminal UI), so TUI-specific features like custom rendering, keyboard shortcuts, and interactive dialogs are not available. Extensions should check `ctx.hasUI` and adapt accordingly.
 
+## Forge context lifecycle hooks
+
+Forge pins Pi to the version in `package.json` and applies the checked-in coding-agent patch under `patches/`. `pnpm pi-package:identity` verifies the installed package, lockfile, and patch digest together. Historical fixture manifests retain their original producing revision and byte hashes; their target-Pi validation identity is regenerated when the patch changes.
+
+For Fresh context, Forge's runtime supplies `setFreshContextHandler` to prepare a deterministic checkpoint at the existing compaction boundary. The additional `setFreshContextBoundaryHandler` is invoked from Pi's existing next-turn preparation hook, after the entire tool batch has settled and its messages have been appended to the native transcript. `new_context` only records a request; it does not compact recursively while a tool is executing.
+
+A successful transition updates both the session's active messages and the agent loop's next-request snapshot. It retains the native branch, appends a Fresh compaction entry, and continues the same run. Agent-requested details use `forgeContext.trigger: "agent"`; compatibility lifecycle events use `reason: "threshold"` with `willRetry: true`. Preparation errors retain the prior active window and inject a model-visible failure notice. Cancellation and input changes invalidate stale preparation before commit. No summarizer fallback is allowed for a requested Fresh boundary.
+
+These hooks are Forge runtime integration, not a separate extension coordination system. Project extensions still receive the existing compaction lifecycle notifications. Fresh model eligibility is a runtime policy, not evidence that every eligible model has passed behavioral evaluation; see [Context management](CONFIGURATION.md#context-management) for the supported surfaces and tools.
+
 ## Extension Auto-Discovery
 
 Pi automatically discovers extensions and skills from well-known directories. Forge creates these directories on startup:

@@ -5,7 +5,7 @@
   "producingCommitShort": "08a7ab833ab0",
   "forgeCommit": "08a7ab833ab0aaab99d697e9ba7b39adbad76b4f",
   "forgeCommitShort": "08a7ab833ab0",
-  "generatedAt": "2026-08-03T20:20:43.839Z",
+  "generatedAt": "2026-09-07T22:59:18.458Z",
   "generation": {
     "command": "pnpm pi-upgrade:generate-session-fixture-manifests",
     "script": "scripts/pi-upgrade/generate-pi-session-fixture-manifests.mjs",
@@ -53,7 +53,7 @@
         {
           "key": "@earendil-works/pi-coding-agent@0.80.6",
           "patchFile": "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
-          "sha256": "257a1476e88f530d489d2bdf7362306be5d4d4fc23698e87b183aef59fbef192"
+          "sha256": "1f14bfba039f9e17ebfb3d34d6250fefa141ca44f6de3678360033007e132c66"
         }
       ]
     },

@@ -78,12 +78,13 @@ const conceptsMemory: HelpArticle = {
   id: 'concepts-memory',
   title: 'Memory System',
   category: 'concepts',
-  summary: 'How session memory, profile memory, Knowledge v2, and agent-only history sessions/search/read differ.',
+  summary: 'How automatic task notes, approved durable memory, Knowledge v2, and recoverable conversation history differ.',
   content: conceptsMemoryContent,
   keywords: [
     'memory',
     'profile memory',
     'session memory',
+    'task notes',
     'common knowledge',
     'knowledge v2',
     'index',
@@ -104,7 +105,7 @@ const conceptsPromptResolution: HelpArticle = {
   id: 'concepts-prompt-resolution',
   title: 'Prompt System',
   category: 'concepts',
-  summary: 'How Forge resolves system prompts through three layers: profile, repo, and builtin defaults.',
+  summary: 'How base-prompt overrides, project instructions, runtime resources, and preserved customizations shape agent behavior.',
   content: conceptsPromptResolutionContent,
   keywords: [
     'prompt',
