@@ -16,6 +16,7 @@ import {
 import { encryptRemoteSecureValue } from './secure-browser-control-api'
 import type {
   ApplySecureSessionProjectDefaultsRequest,
+  SetSecureSessionAccessRequest,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
@@ -32,6 +33,7 @@ export type SecureSessionUiErrorCode =
   | 'SECURE_PRIVATE_API_UNAVAILABLE'
   | 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED'
   | 'SECURE_REQUEST_INVALID'
+  | 'SECURE_ACCESS_BLOCKED'
   | 'SECURE_SECRET_ALIAS_CONFLICT'
   | 'SECURE_SSH_HOST_KEY_CONFLICT'
   | 'SECURE_SSH_HOST_NOT_FOUND'
@@ -45,6 +47,7 @@ const ERROR_MESSAGES: Record<SecureSessionUiErrorCode, string> = {
   SECURE_PRIVATE_API_UNAVAILABLE: 'Private secret entry requires the Forge desktop app.',
   SECURE_PROJECT_DEFAULT_LIMIT_REACHED:
     'This project already has the maximum number of secure grants.',
+  SECURE_ACCESS_BLOCKED: 'Secret access is blocked. Restore access using the secret controls.',
   SECURE_REQUEST_INVALID: 'The secure session request is no longer valid.',
   SECURE_SECRET_ALIAS_CONFLICT:
     'A secret with this name was saved elsewhere. Refresh and choose the saved secret.',
@@ -175,6 +178,16 @@ export async function fetchSecureSessionSnapshot(
   sessionAgentId: string,
 ): Promise<SecureSessionSnapshot> {
   return requestSnapshot(apiClient, sessionPath(sessionAgentId))
+}
+
+export async function setSecureSessionAccess(
+  apiClient: SettingsApiClient,
+  sessionAgentId: string,
+  input: SetSecureSessionAccessRequest,
+): Promise<SecureSessionSnapshot> {
+  return requestSnapshot(apiClient, `${sessionPath(sessionAgentId)}/access`, {
+    method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input),
+  })
 }
 
 export async function startSecureSession(
@@ -453,6 +466,11 @@ export function toSecureSessionSnapshotView(
       ? { ownerManagerAgentId: snapshot.ownerManagerAgentId }
       : {}),
     revision: snapshot.revision,
+    ...(snapshot.accessPolicy ? { accessPolicy: {
+      paused: snapshot.accessPolicy.paused,
+      blockedAgentIds: [...snapshot.accessPolicy.blockedAgentIds],
+      blockedSecretIds: [...snapshot.accessPolicy.blockedSecretIds],
+    } } : {}),
     executionMode: snapshot.executionMode,
     environmentStatus: snapshot.environmentStatus,
     outputState: snapshot.outputState ?? 'clear',

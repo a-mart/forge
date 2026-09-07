@@ -16,6 +16,10 @@ export function shouldShowSecureSessionPicker(
   const snapshot = config.snapshot
   const needsAttention =
     config.outputState === 'quarantined'
+    || (snapshot?.projectDefaults?.length ?? 0) > 0
+    || snapshot?.accessPolicy?.paused
+    || (snapshot?.accessPolicy?.blockedAgentIds.length ?? 0) > 0
+    || (snapshot?.accessPolicy?.blockedSecretIds.length ?? 0) > 0
     || snapshot?.leases.some((lease) => lease.status === 'active')
     || (
       snapshot?.executionMode === 'secure'
@@ -23,7 +27,7 @@ export function shouldShowSecureSessionPicker(
     )
   if (needsAttention) return true
 
-  if (config.readOnly || config.availability.state !== 'available') {
+  if ((config.readOnly && !snapshot?.accessPolicy) || config.availability.state !== 'available') {
     return false
   }
 

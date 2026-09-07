@@ -87,6 +87,7 @@ import {
   SecureSessionUiError,
   shouldRefreshAfterProjectDefaultsApplyError,
   startSecureSession,
+  setSecureSessionAccess,
   stopSecureSession,
   toSecureSecretOptions,
   toSecureSessionSnapshotView,
@@ -529,6 +530,12 @@ export function BuilderSurface({
     dismissPrompt: dismissBitwardenPrompt,
   } = useBitwardenUnlockPrompt({
     catalog: secureCatalog,
+    providerIds: secureCatalog?.secrets.filter((secret) =>
+      secureSessionSnapshot?.projectDefaults?.some((entry) => entry.secretId === secret.secretId
+        && entry.state !== 'blocked')).map((secret) => secret.providerId) ?? [],
+    promptWhenNeeded: secureSessionSnapshot?.accessPolicy?.paused !== true
+      && !secureSessionSnapshot?.accessPolicy?.blockedAgentIds.includes(activeAgentId ?? '')
+      && secureSessionSnapshot?.projectDefaults?.some((entry) => entry.state === 'unavailable') === true,
     active: state.connected && !isRemoteOriginActive,
     canUnlock:
       isSecureControlAvailable(secureBrowserControl?.authorized === true)
@@ -1700,6 +1707,42 @@ export function BuilderSurface({
     await refreshSecureBrowserControl()
   }, [refreshSecureBrowserControl])
 
+  const handleSetSecureAccess = useCallback(async (
+    subject: import('@forge/protocol').SecureSessionAccessSubject,
+    blocked: boolean,
+  ): Promise<boolean> => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (!apiClient || !client || !secureAuthorityAgentId || isRemoteOriginActive) return false
+    const current = client.getState().secureSessionSnapshots[secureAuthorityAgentId]
+    if (!current?.accessPolicy) return false
+    try {
+      const snapshot = await setSecureSessionAccess(apiClient, secureAuthorityAgentId, {
+        baseRevision: current.revision, subject, blocked,
+      })
+      applySecureMutationResult(client, snapshot)
+      return true
+    } catch (error) {
+      try { applySecureMutationResult(client, await fetchSecureSessionSnapshot(apiClient, secureAuthorityAgentId)) } catch { /* Preserve the original fixed error. */ }
+      reportSecureMutationError(client, secureAuthorityAgentId, error)
+      return false
+    }
+  }, [httpClientRef, clientRef, secureAuthorityAgentId, isRemoteOriginActive, applySecureMutationResult, reportSecureMutationError])
+
+  const handleRecoverSecureAccess = useCallback(async (): Promise<boolean> => {
+    try {
+      if (!(await ensureBitwardenUnlocked())) return false
+      return await unlockLocalProjectDefaultsIfNeeded(secureCatalog,
+        secureSessionSnapshot?.profileId ?? activeAgent?.profileId,
+        secureBrowserControl?.authorized === true && secureBrowserControl.privateEntryAvailable === true)
+    } catch (error) {
+      const client = clientRef.current
+      if (client && secureAuthorityAgentId) reportSecureMutationError(client, secureAuthorityAgentId, error)
+      return false
+    }
+  }, [ensureBitwardenUnlocked, secureCatalog, secureSessionSnapshot?.profileId, activeAgent?.profileId,
+    secureBrowserControl, clientRef, secureAuthorityAgentId, reportSecureMutationError])
+
   const secureSessionPicker = useMemo<SecureSessionPickerConfig | undefined>(() => {
     if (!activeAgentId) return undefined
     const config: SecureSessionPickerConfig = {
@@ -1707,6 +1750,9 @@ export function BuilderSurface({
       availability: secureSessionAvailability,
       snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
       ...(!isActiveManager ? { readOnly: true } : {}),
+      accessAgentId: activeAgentId,
+      ...(!isRemoteOriginActive && isSecureControlAvailable(secureBrowserControl?.authorized === true)
+        ? { onSetAccess: handleSetSecureAccess, onRecoverAccess: handleRecoverSecureAccess } : {}),
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
@@ -1730,6 +1776,9 @@ export function BuilderSurface({
     return shouldShowSecureSessionPicker(config) ? config : undefined
   }, [
     activeAgentId,
+    secureBrowserControl,
+    handleSetSecureAccess,
+    handleRecoverSecureAccess,
     activeOriginId,
     handleGrantSecureSessions,
     handleApplySecureProjectDefaults,

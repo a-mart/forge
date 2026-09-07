@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS } from "@forge/protocol";
+import { type SecureSessionAccessPolicy, type SecureSessionAccessSubject, SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS } from "@forge/protocol";
 import {
   closeSecureSessionDb,
   getOrCreateSecureSessionDb,
@@ -175,6 +175,54 @@ export class SecureSessionStore {
    */
   withTransaction<T>(operation: () => T): T {
     return this.database.transaction(operation)();
+  }
+
+  getAccessPolicy(sessionAgentId: string): SecureSessionAccessPolicy {
+    assertId(sessionAgentId, "session agent ID");
+    const rows = this.database.prepare(`
+      SELECT kind, subject_id FROM secure_session_access_denial
+      WHERE session_agent_id = ? ORDER BY kind, subject_id
+    `).all(sessionAgentId) as Array<{ kind: string; subject_id: string }>;
+    return {
+      paused: rows.some((row) => row.kind === "task"),
+      blockedAgentIds: rows.filter((row) => row.kind === "agent").map((row) => row.subject_id),
+      blockedSecretIds: rows.filter((row) => row.kind === "secret").map((row) => row.subject_id),
+    };
+  }
+
+  setAccessBlocked(
+    sessionAgentId: string,
+    subject: SecureSessionAccessSubject,
+    blocked: boolean,
+    baseRevision?: number,
+  ): SecureSessionMutationResult {
+    assertId(sessionAgentId, "session agent ID");
+    assertEnum(subject.kind, ["task", "agent", "secret"], "access subject");
+    if (typeof blocked !== "boolean") throw new Error("Invalid access block");
+    const subjectId = subject.kind === "task" ? sessionAgentId
+      : subject.kind === "agent" ? subject.agentId : subject.secretId;
+    assertId(subjectId, "access subject ID");
+    return this.withTransaction(() => {
+      const state = this.requireSessionState(sessionAgentId);
+      if (baseRevision !== undefined) this.assertRevision(state, baseRevision);
+      const now = this.timestamp();
+      const result = blocked
+        ? this.database.prepare(`
+          INSERT OR IGNORE INTO secure_session_access_denial
+          (session_agent_id, kind, subject_id, created_at) VALUES (?, ?, ?, ?)
+        `).run(sessionAgentId, subject.kind, subjectId, now)
+        : this.database.prepare(`
+          DELETE FROM secure_session_access_denial
+          WHERE session_agent_id = ? AND kind = ? AND subject_id = ?
+        `).run(sessionAgentId, subject.kind, subjectId);
+      if (result.changes > 0) {
+        this.incrementRevision(sessionAgentId, "access_policy_updated", null, 1, now);
+        this.audit({ eventType: "access_policy_updated", sessionAgentId,
+          outcome: blocked ? "denied" : "approved", occurredAt: now });
+      }
+      const snapshot = this.getSnapshot(sessionAgentId);
+      return { changed: result.changes > 0, revision: snapshot.state.revision, snapshot };
+    });
   }
 
   listProviders(): SecureSessionProvider[] {
@@ -1595,6 +1643,11 @@ export class SecureSessionStore {
         now,
         now
       );
+      this.database.prepare(`
+        INSERT INTO secure_session_access_denial (session_agent_id, kind, subject_id, created_at)
+        SELECT ?, kind, CASE WHEN kind = 'task' THEN ? ELSE subject_id END, ?
+        FROM secure_session_access_denial WHERE session_agent_id = ? AND kind IN ('task', 'secret')
+      `).run(forkSessionAgentId, forkSessionAgentId, now, sourceSessionAgentId);
       this.insertRevision(forkSessionAgentId, 0, "fork_initialized", null, 0, now);
       this.audit({
         eventType: "fork_initialized",

@@ -51,6 +51,8 @@ describe("Secure Sessions shared team sandbox vertical slice", () => {
       enabled: true,
     });
 
+    expect(harness.recycles).toEqual([MANAGER_A, WORKER_A1, WORKER_A2]);
+    harness.recycles.length = 0;
     const manager = await harness.service.startSecureSession(MANAGER_A);
     const team = await harness.service.listSecureSessionTeamSnapshots(MANAGER_A);
 

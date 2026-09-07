@@ -25,6 +25,7 @@ export interface ProvisionSessionOptions {
   beforeRuntime?: () => Promise<void>;
   initializeRuntime?: () => Promise<void>;
   onError?: (error: unknown) => Promise<void>;
+  beforeRollbackRemoval?: () => Promise<void>;
   removeProfileOnRollback?: boolean;
 }
 
@@ -119,7 +120,8 @@ export class SessionProvisioner {
       }
 
       const rollback = await this.rollbackCreatedSession(descriptor, {
-        removeProfileId: removeProfileOnRollback && profile ? profile.profileId : undefined
+        removeProfileId: removeProfileOnRollback && profile ? profile.profileId : undefined,
+        beforeRemoval: options.beforeRollbackRemoval,
       });
       if (rollback.status === "retained") {
         this.options.logDebug("session:provision:rollback_retained", {
@@ -157,7 +159,7 @@ export class SessionProvisioner {
 
   async rollbackCreatedSession(
     descriptor: AgentDescriptor,
-    options: { removeProfileId?: string } = {}
+    options: { removeProfileId?: string; beforeRemoval?: () => Promise<void> } = {}
   ): Promise<SessionRollbackDisposition> {
     const runtime = this.options.runtimes.get(descriptor.agentId);
     if (runtime) {
@@ -180,6 +182,9 @@ export class SessionProvisioner {
     }
 
     try {
+      // Owned external state must be removed only after runtime shutdown is
+      // confirmed, and before this ID can be reused by another creation.
+      await options.beforeRemoval?.();
       this.options.descriptorMutations.deleteDescriptor(descriptor.agentId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

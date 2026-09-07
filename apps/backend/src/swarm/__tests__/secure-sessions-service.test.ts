@@ -2288,9 +2288,9 @@ describe("SecureSessionsService", () => {
       exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
       leaseKind: "one_use",
     });
-    const binding = harness.service.getSecureRuntimeBinding(
+    const binding = (await harness.service.prepareSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
-    )!;
+    ))!;
 
     const first = binding.executeBash({
       secretAliases: ["alpha"],
@@ -2346,7 +2346,7 @@ describe("SecureSessionsService", () => {
       exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
       leaseKind: "one_use",
     });
-    const first = harness.service.getSecureRuntimeBinding(workerA)!.executeBash({
+    const first = (await harness.service.prepareSecureRuntimeBinding(workerA))!.executeBash({
       secretAliases: ["alpha"],
       command: "wait-for-release",
       cwd: "/workspace-a",
@@ -2354,7 +2354,7 @@ describe("SecureSessionsService", () => {
     });
     await harness.execution.waitForBlockedExecution("manager-a");
 
-    await expect(harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+    await expect((await harness.service.prepareSecureRuntimeBinding(workerB))!.executeBash({
       secretAliases: ["alpha"],
       command: "must-not-run",
       cwd: "/workspace-a",
@@ -2548,9 +2548,9 @@ describe("SecureSessionsService", () => {
         leaseKind: "timed",
         durationSeconds: 1,
       });
-      const binding = harness.service.getSecureRuntimeBinding(
+      const binding = (await harness.service.prepareSecureRuntimeBinding(
         harness.descriptors.get("manager-a")!,
-      )!;
+      ))!;
       const executionsBeforeExpiry = harness.execution.executed.length;
 
       logicalNow += 1_001;
@@ -2920,6 +2920,7 @@ describe("SecureSessionsService", () => {
       .toEqual(expect.objectContaining({
         availableSecrets: [{
           displayAlias: "shared",
+          access: "request",
           bindings: [{ deliveryKind: "environment", targetName: "PROJECT_TOKEN" }],
         }],
       }));
@@ -2927,6 +2928,7 @@ describe("SecureSessionsService", () => {
       .toEqual(expect.objectContaining({
         availableSecrets: [{
           displayAlias: "shared",
+          access: "request",
           bindings: [{ deliveryKind: "environment", targetName: "GLOBAL_TOKEN" }],
         }],
       }));
@@ -3591,15 +3593,6 @@ describe("SecureSessionsService", () => {
       bindings: [{ deliveryKind: "environment", targetName: "REQUESTED_DEFAULT" }],
       scope: { kind: "profile", profileId: "profile-a" },
     });
-    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
-      profileId: "profile-a",
-      enabled: true,
-    });
-    const initialStart = await harness.service.startSecureSession("manager-a");
-    await harness.service.stopSecureSession("manager-a", {
-      baseRevision: initialStart.revision,
-      stopProcesses: true,
-    });
     await harness.service.requestSecureSecretAccess("manager-a", "tool-default", {
       displayAlias: "requested-project-default",
       exposures: [{ deliveryKind: "environment", targetName: "REQUESTED_DEFAULT" }],
@@ -3609,6 +3602,10 @@ describe("SecureSessionsService", () => {
     expect((await harness.service.getSecureSessionSnapshot("manager-a"))
       .pendingRequests).toHaveLength(1);
 
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
     const started = await harness.service.startSecureSession("manager-a");
 
     expect(started.pendingRequests).toEqual([]);
@@ -5221,6 +5218,8 @@ describe("SecureSessionsService", () => {
       { profileId: "profile-a", enabled: true },
     );
 
+    expect(harness.recycles).toEqual(["manager-a", "worker-a"]);
+    harness.recycles.length = 0;
     await harness.service.startSecureSession("manager-a");
     expect(harness.recycles).toEqual(["manager-a", "worker-a"]);
     expect(harness.execution.ensured).toEqual(["manager-a"]);
@@ -5482,7 +5481,7 @@ describe("SecureSessionsService", () => {
     await harness.service.startSecureSession("manager-a");
 
     await expect(
-      harness.service.getSecureRuntimeBinding(workerA)!.executeBash({
+      (await harness.service.prepareSecureRuntimeBinding(workerA))!.executeBash({
       secretAliases: [],
         command: "throw-execution-timeout",
         cwd: "/workspace-a",
@@ -5515,7 +5514,7 @@ describe("SecureSessionsService", () => {
     expect(harness.execution.destroyed).not.toContain("worker-b::assignment-b");
     expect(harness.service.getSecureRuntimeBinding(workerA)).toBeDefined();
     await expect(
-      harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+      (await harness.service.prepareSecureRuntimeBinding(workerB))!.executeBash({
       secretAliases: [],
         command: "worker-b-safe-follow-up",
         cwd: "/workspace-a",
@@ -6058,6 +6057,238 @@ describe("SecureSessionsService", () => {
       "manager-a",
     ]);
     await harness.close();
+  });
+});
+
+describe("automatic project secret access", () => {
+  async function project(harness: ReturnType<typeof createHarness>, alias = "automatic") {
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: alias, encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: { kind: "profile", profileId: "profile-a" },
+      bindings: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, { profileId: "profile-a", enabled: true });
+    return secret;
+  }
+  const command = (secretAliases: string[] = ["automatic"]) => ({
+    command: "emit-alpha-canary", cwd: "/workspace-a", secretAliases, onData: vi.fn(),
+  });
+
+  it("installs protection without resolving values or starting Docker, then grants on first use", async () => {
+    const h = createHarness();
+    await project(h);
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    expect(binding).toBeDefined();
+    expect(h.execution.ensured).toEqual([]);
+    expect(h.sourceResolutions.size).toBe(0);
+    expect((await h.service.getSecureSessionAgentView("manager-a")).availableSecrets)
+      .toEqual([expect.objectContaining({ displayAlias: "automatic", access: "granted" })]);
+    const request = command();
+    await binding!.executeBash(request);
+    expect(h.execution.ensured).toEqual(["manager-a"]);
+    expect(h.sourceResolutions.get(ALPHA)).toBe(1);
+    expect(Buffer.concat(request.onData.mock.calls.map(([value]) => Buffer.from(value))).toString())
+      .not.toContain(ALPHA);
+    await binding!.executeBash(command());
+    expect(h.sourceResolutions.get(ALPHA)).toBe(1);
+    expect(h.execution.ensured).toHaveLength(1);
+    expect((await h.service.getSecureSessionSnapshot("manager-a")).leases)
+      .toEqual([expect.objectContaining({ grantSource: "project_default", status: "active" })]);
+    await h.close();
+  });
+
+  it("does not request approval again for project authority before its first use", async () => {
+    const h = createHarness();
+    await project(h);
+    await expect(h.service.requestSecureSecretAccess("manager-a", "request", {
+      displayAlias: "automatic", leaseKind: "task", purposeSummary: "test",
+      exposures: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }],
+    })).resolves.toBe("already_granted");
+    expect(h.execution.ensured).toEqual([]);
+    expect((await h.service.getSecureSessionSnapshot("manager-a")).pendingRequests).toEqual([]);
+    await h.close();
+  });
+
+  it("retries a recovered source on the next command without an apply action", async () => {
+    const unavailable = [ALPHA];
+    const h = createHarness({ failSourceMaterials: unavailable });
+    await project(h);
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_SOURCE_UNAVAILABLE" });
+    expect(h.execution.executed).toEqual([]);
+    expect((await h.service.getSecureSessionSnapshot("manager-a")).projectDefaults?.[0]?.state).toBe("unavailable");
+    unavailable.length = 0;
+    await binding!.executeBash(command());
+    expect(h.execution.executed).toEqual(["manager-a"]);
+    await h.close();
+  });
+
+  it("rejects an in-place workspace change before first delivery", async () => {
+    const h = createHarness();
+    await project(h);
+    const descriptor = h.descriptors.get("manager-a")!;
+    const binding = await h.service.prepareSecureRuntimeBinding(descriptor);
+    descriptor.cwd = "/different-workspace";
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    expect(h.execution.ensured).toEqual([]);
+    await h.close();
+  });
+
+  it("rejects an old runtime after stop and restart changes its generation", async () => {
+    const h = createHarness();
+    await project(h);
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await binding!.executeBash(command());
+    await h.service.stopSecureSessionForLifecycle("manager-a");
+    const replacement = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await replacement!.executeBash(command());
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    expect(h.execution.executed).toHaveLength(2);
+    await h.close();
+  });
+
+  it("inherits on a worker's first command without starting the manager", async () => {
+    const h = createHarness();
+    await project(h);
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    expect(await h.service.prepareWorkerForSecureTeam(worker.agentId)).toBe(true);
+    const binding = await h.service.prepareSecureRuntimeBinding(worker);
+    await binding!.executeBash(command());
+    expect(h.execution.ensured).toEqual(["manager-a"]);
+    await h.close();
+  });
+
+  it("honors a worker block in captured bindings and manual requests, while the manager keeps access", async () => {
+    const h = createHarness();
+    await project(h);
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    const binding = await h.service.prepareSecureRuntimeBinding(worker);
+    await binding!.executeBash(command());
+    const snapshot = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.setSecureSessionAccess("manager-a", { baseRevision: snapshot.revision,
+      subject: { kind: "agent", agentId: worker.agentId }, blocked: true });
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    expect(await h.service.prepareWorkerForSecureTeam(worker.agentId)).toBe(false);
+    await expect(h.service.requestSecureSecretAccess(worker.agentId, "blocked-request", {
+      displayAlias: "automatic", purposeSummary: "test", leaseKind: "task",
+      exposures: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }],
+    })).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    const manager = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await manager!.executeBash(command());
+    expect(h.execution.destroyed).toContain("manager-a");
+    expect((await h.service.getSecureSessionAgentView(worker.agentId)).availableSecrets[0]?.access).toBe("blocked");
+    await h.close();
+  });
+
+  it("does not approve a blocked worker's pending request when project authority arrives", async () => {
+    const h = createHarness();
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    const secret = await h.service.createLocalSecureSecret({ displayAlias: "automatic",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"), scope: { kind: "profile", profileId: "profile-a" },
+      bindings: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }] });
+    await h.service.requestSecureSecretAccess(worker.agentId, "request", { displayAlias: "automatic",
+      exposures: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }], leaseKind: "task", purposeSummary: "test" });
+    const pending = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.setSecureSessionAccess("manager-a", { baseRevision: pending.revision,
+      subject: { kind: "agent", agentId: worker.agentId }, blocked: true });
+    await h.service.setSecureSecretProjectDefault(secret.secretId, { profileId: "profile-a", enabled: true });
+    const manager = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await manager!.executeBash(command());
+    const current = await h.service.getSecureSessionSnapshot("manager-a");
+    expect(current.pendingRequests).toHaveLength(1);
+    const requestId = current.pendingRequests[0]!.requestId;
+    await expect(h.service.resolveSecureAccessRequest("manager-a", requestId, {
+      requestId, baseRevision: current.revision, decision: "approve",
+    })).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    await h.service.resolveSecureAccessRequest("manager-a", requestId, {
+      requestId, baseRevision: current.revision, decision: "deny",
+    });
+    expect((await h.service.getSecureSessionSnapshot("manager-a")).pendingRequests).toEqual([]);
+    await h.close();
+  });
+
+  it("keeps a task pause through lifecycle recovery and restores only explicit user intent", async () => {
+    const h = createHarness();
+    await project(h);
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    const initial = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.setSecureSessionAccess("manager-a", { baseRevision: initial.revision,
+      subject: { kind: "task" }, blocked: true });
+    await h.service.initializeSecureSessions();
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    expect(h.execution.executed).toEqual([]);
+    const paused = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.setSecureSessionAccess("manager-a", { baseRevision: paused.revision,
+      subject: { kind: "task" }, blocked: false });
+    await binding!.executeBash(command());
+    expect(h.execution.executed).toHaveLength(1);
+    await h.close();
+  });
+
+  it("does not regrant a revoked inherited secret until explicitly restored", async () => {
+    const h = createHarness();
+    const secret = await project(h);
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await binding!.executeBash(command());
+    const before = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.revokeSecureSessionLease("manager-a", { baseRevision: before.revision, leaseId: before.leases[0]!.leaseId });
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    const denied = await h.service.getSecureSessionSnapshot("manager-a");
+    expect(denied.projectDefaults?.[0]?.state).toBe("blocked");
+    await h.service.setSecureSessionAccess("manager-a", { baseRevision: denied.revision,
+      subject: { kind: "secret", secretId: secret.secretId }, blocked: false });
+    const restored = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    await restored!.executeBash(command());
+    await h.close();
+  });
+
+  it("never widens catalog-only availability into a project grant", async () => {
+    const h = createHarness();
+    await h.service.createLocalSecureSecret({ displayAlias: "catalog-only",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: { kind: "profile", profileId: "profile-a" } });
+    const binding = await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!);
+    expect(binding).toBeUndefined();
+    const view = await h.service.getSecureSessionAgentView("manager-a");
+    expect(view.availableSecrets[0]?.access).toBe("request");
+    expect(h.sourceResolutions.size).toBe(0);
+    expect(h.execution.executed).toEqual([]);
+    await h.close();
+  });
+
+  it("rejects stale assignment bindings and unsupported runtimes before provisioning", async () => {
+    const h = createHarness();
+    await project(h);
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    const binding = await h.service.prepareSecureRuntimeBinding(worker);
+    h.descriptors.set(worker.agentId, workerDescriptor(worker.agentId, "manager-a", "profile-a", "/workspace-a", "assignment-b"));
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    const unsupported = { ...worker, model: { ...worker.model, provider: "cursor-sdk" } } as AgentDescriptor;
+    h.descriptors.set(worker.agentId, unsupported);
+    expect(await h.service.prepareSecureRuntimeBinding(unsupported)).toBeUndefined();
+    expect(h.execution.ensured).toEqual([]);
+    await h.close();
+  });
+
+  it("persists a block even when shared process cleanup fails", async () => {
+    const h = createHarness();
+    await project(h);
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    const binding = await h.service.prepareSecureRuntimeBinding(worker);
+    await binding!.executeBash(command());
+    h.execution.destroyUnconfirmed.add("manager-a");
+    const before = await h.service.getSecureSessionSnapshot("manager-a");
+    await expect(h.service.setSecureSessionAccess("manager-a", { baseRevision: before.revision,
+      subject: { kind: "agent", agentId: worker.agentId }, blocked: true })).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    await expect(binding!.executeBash(command())).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+    expect(h.store.getAccessPolicy("manager-a").blockedAgentIds).toEqual([worker.agentId]);
+    h.execution.destroyUnconfirmed.clear();
+    await h.close();
   });
 });
 
@@ -6678,3 +6909,198 @@ function sshHostKey(marker: string): {
       `SHA256:${createHash("sha256").update(blob).digest("base64").replace(/=+$/u, "")}`,
   };
 }
+
+
+describe("automatic runtime revocation and recovery", () => {
+  async function setupLocal(h: ReturnType<typeof createHarness>) {
+    const secret = await h.service.createLocalSecureSecret({ displayAlias: "review-alias",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: {kind: "profile", profileId: "profile-a"},
+      bindings: [{deliveryKind: "environment", targetName: "REVIEW_TOKEN"}] });
+    await h.service.setSecureSecretProjectDefault(secret.secretId, {profileId: "profile-a", enabled: true});
+    return secret;
+  }
+  const request = (command = "true", aliases = ["review-alias"]) => ({command, cwd: "/workspace-a", secretAliases: aliases, onData: vi.fn()});
+
+  it("invalidating a lazy binding cancels its already queued command", async () => {
+    const h = createHarness();
+    await setupLocal(h);
+    const binding = (await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!))!;
+    const queue = vi.spyOn(h.service as unknown as { withSessionBashExecution: (...args: unknown[]) => unknown }, "withSessionBashExecution");
+    const first = binding.executeBash(request("wait-for-release"));
+    await h.execution.waitForBlockedExecution("manager-a");
+    const second = binding.executeBash(request()).then(() => "executed", () => "rejected");
+    await vi.waitFor(() => expect(queue).toHaveBeenCalledTimes(2));
+    binding.invalidate!();
+    h.execution.releaseBlockedExecution("manager-a");
+    await first;
+    const result = await second;
+    await h.close();
+    expect(result).toBe("rejected");
+    expect(h.execution.executed).toHaveLength(1);
+  });
+
+  it("rejects a removed worker through the stable binding error before any delivery", async () => {
+    const h = createHarness();
+    await setupLocal(h);
+    const worker = workerDescriptor("worker-a", "manager-a", "profile-a", "/workspace-a", "assignment-a");
+    h.descriptors.set(worker.agentId, worker);
+    const binding = (await h.service.prepareSecureRuntimeBinding(worker))!;
+    h.descriptors.delete(worker.agentId);
+    expect(() => binding.guardValue("ordinary result")).toThrow("SECURE_OPERATION_FAILED");
+    await expect(binding.executeBash(request())).rejects.toMatchObject({code:"SECURE_OPERATION_FAILED"});
+    expect(h.execution.executed).toEqual([]);
+    await h.close();
+  });
+
+  it.each(["idle", "streaming"] as const)("recycles a %s worker after its last source is locked and permits recovery on the next runtime", async (status) => {
+    const collection = {id:"11111111-1111-4111-8111-111111111111",organizationId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",name:"Review"};
+    const h = createHarness({passwordManagerStatus:{state:"available",accountEmail:null,serverUrl:null,cli:testBitwardenCliSummary()},
+      recycleDisposition: status === "streaming" ? "deferred" : "recycled", passwordManagerCollections:[collection], passwordManagerItems:[{id:"33333333-3333-4333-8333-333333333333",name:"Review",username:null,collectionIds:[collection.id],revisionDate:NOW}]});
+    await h.service.initializeSecureSessions();
+    const provider = await h.service.connectBitwardenPasswordManager({displayName:"Review source"});
+    await h.service.replaceBitwardenPasswordManagerCollections(provider.providerId,{collectionIds:[collection.id]});
+    const secret = h.store.listSecrets(provider.providerId)[0]!;
+    await h.service.setSecureSecretProjectDefault(secret.secretId,{profileId:"profile-a",enabled:true});
+    const worker = workerDescriptor("worker-a","manager-a","profile-a","/workspace-a","assignment-a");
+    worker.status = status;
+    h.descriptors.set(worker.agentId,worker);
+    const binding = (await h.service.prepareSecureRuntimeBinding(worker))!;
+    await binding.executeBash(request("true",[secret.displayAlias]));
+    h.recycles.length = 0;
+    await h.service.lockBitwardenPasswordManager(provider.providerId);
+    expect(h.recycles).toEqual(["manager-a", worker.agentId]);
+    await h.service.unlockBitwardenPasswordManager(provider.providerId,{encryptedMasterPassword:Buffer.from("synthetic-review-password").toString("base64")});
+    // A retired runtime must stay rejected; safe lifecycle acquisition installs a fresh binding.
+    await expect(binding.executeBash(request("true",[secret.displayAlias]))).rejects.toMatchObject({code:"SECURE_OPERATION_FAILED"});
+    worker.status = "idle";
+    const recovered = (await h.service.prepareSecureRuntimeBinding(worker))!;
+    await recovered.executeBash(request("true",[secret.displayAlias]));
+    expect(h.execution.executed).toHaveLength(2);
+    await h.close();
+  });
+});
+
+
+describe("automatic project authorization transitions", () => {
+  it("granting the first project secret during private fulfillment protects other open tasks", async () => {
+    const h = createHarness();
+    const other = descriptor("manager-a2", "profile-a", "/workspace-a");
+    h.descriptors.set(other.agentId, other);
+    expect(await h.service.prepareSecureRuntimeBinding(other)).toBeUndefined();
+    await h.service.requestSecureSecretAccess("manager-a", "review", {
+      displayAlias:"review-new", exposures:[{deliveryKind:"environment",targetName:"REVIEW_NEW"}],
+      leaseKind:"task",purposeSummary:"Review synthetic fixture"});
+    const snapshot = await h.service.getSecureSessionSnapshot("manager-a");
+    await h.service.fulfillSecureAccessRequest("manager-a",snapshot.pendingRequests[0]!.requestId, {
+      baseRevision:snapshot.revision,displayAlias:"review-new",encryptedMaterial:Buffer.from(ALPHA).toString("base64"),
+      exposures:[{deliveryKind:"environment",targetName:"REVIEW_NEW"}],retention:"saved",
+      scope:{kind:"profile",profileId:"profile-a"},makeProjectDefault:true,leaseKind:"task"});
+    expect((await h.service.getSecureSessionAgentView(other.agentId)).availableSecrets[0]?.access).toBe("granted");
+    await h.close();
+    expect(h.recycles).toContain(other.agentId);
+  });
+
+  it.each(["settings", "approval"] as const)("SSH-trust-only projects prepare workers when first trust is added through %s", async (entryPoint) => {
+    const h = createHarness();
+    const worker = workerDescriptor("worker-a","manager-a","profile-a","/workspace-a","assignment-a");
+    h.descriptors.set(worker.agentId,worker);
+    const host = {alias:"review-host",hostName:"example.test",port:22,username:"test"};
+    const key = sshHostKey("review").base64;
+    if (entryPoint === "settings") {
+      await h.service.createSecureSshTrustedHost({...host,profileId:"profile-a",hostKey:`ssh-ed25519 ${key}`});
+    } else {
+      await h.service.requestSecureSshHostTrust("manager-a", "review-host-request", {
+        ...host, hostKeyAlgorithm:"ssh-ed25519",hostKeyBase64:key,purposeSummary:"Synthetic trust-only deployment",
+      });
+      const pending = await h.service.getSecureSessionSnapshot("manager-a");
+      await h.service.resolveSecureSshHostTrustRequest("manager-a", {
+        baseRevision:pending.revision,requestId:pending.pendingSshTrustRequests![0]!.requestId,decision:"approve",
+      });
+    }
+    expect(h.recycles).toEqual(expect.arrayContaining(["manager-a", worker.agentId]));
+    const prepared = await h.service.prepareWorkerForSecureTeam(worker.agentId);
+    expect(await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!)).toBeDefined();
+    await h.close();
+    expect(prepared).toBe(true);
+  });
+
+
+});
+
+
+describe("automatic delivery through production Pi tools", () => {
+  it("first automatic delivery is guarded through the Pi tool and provider context", async () => {
+    const {createSecurePiCodingTools} = await import("../secure-sessions/runtime/pi-secure-tools.js");
+    const {installPiProviderContextImageResize} = await import("../runtime/pi/pi-runtime-creator.js");
+    const h = createHarness();
+    const secret = await h.service.createLocalSecureSecret({displayAlias:"review-tool", encryptedMaterial:Buffer.from(ALPHA).toString("base64"),scope:{kind:"profile",profileId:"profile-a"},bindings:[{deliveryKind:"environment",targetName:"REVIEW_TOOL"}]});
+    await h.service.setSecureSecretProjectDefault(secret.secretId,{profileId:"profile-a",enabled:true});
+    const binding = (await h.service.prepareSecureRuntimeBinding(h.descriptors.get("manager-a")!))!;
+    const tool = createSecurePiCodingTools({cwd:"/workspace-a",binding}).find(t=>t.name==="secure_bash")!;
+    const updates: unknown[] = [];
+    const result = await tool.execute("review",{command:"emit-alpha-canary",secretAliases:["review-tool"]},undefined,u=>updates.push(u),{} as never);
+    expect(JSON.stringify({result,updates})).not.toContain(ALPHA);
+    const session: {agent:{transformContext?: (messages: unknown[]) => Promise<unknown>}} = {agent:{}};
+    installPiProviderContextImageResize(session as unknown as Parameters<typeof installPiProviderContextImageResize>[0],binding);
+    await expect(session.agent.transformContext!([{role:"user",content:ALPHA,timestamp:0}])).rejects.toThrow("Secure Session output could not be safely processed.");
+    const clean = [{role:"user",content:"safe review text",timestamp:0}];
+    expect(await session.agent.transformContext!(clean)).toEqual(clean);
+    expect(JSON.stringify(await h.service.getSecureSessionSnapshot("manager-a"))).not.toContain(ALPHA);
+    expect(JSON.stringify(h.store.listAudit())).not.toContain(ALPHA);
+    await h.close();
+  });
+});
+
+
+describe("secure fork provisioning rollback", () => {
+  it.each(["history", "runtime"] as const)("retrying a fork after %s failure inherits current task and secret denials", async (failureStage) => {
+    const {mkdtemp,mkdir,rm} = await import("node:fs/promises");
+    const {tmpdir} = await import("node:os");
+    const {join,dirname} = await import("node:path");
+    const {SessionDescriptorFactory} = await import("../session-descriptor-factory.js");
+    const {SessionProvisioner} = await import("../session-provisioner.js");
+    const {SwarmSessionService} = await import("../swarm-session-service.js");
+    const dataDir = await mkdtemp(join(tmpdir(),"forge-review-fork-"));
+    const h = createHarness();
+    await h.service.initializeSecureSessions();
+    const source = h.descriptors.get("manager-a")!;
+    const secret = await h.service.createLocalSecureSecret({displayAlias:"review-fork-secret",encryptedMaterial:Buffer.from(ALPHA).toString("base64"),scope:{kind:"profile",profileId:"profile-a"}});
+    await h.service.setSecureSecretProjectDefault(secret.secretId,{profileId:"profile-a",enabled:true});
+    const profiles = new Map([["profile-a",{profileId:"profile-a",displayName:"Review",defaultSessionAgentId:source.agentId,defaultModel:source.model}]]);
+    const factory = new SessionDescriptorFactory(dataDir,profiles as unknown as Map<string, import("@forge/protocol").ManagerProfile>,h.descriptors,()=>NOW);
+    const provisioner = new SessionProvisioner({dataDir,
+      descriptorMutations:{upsertDescriptor:(d:AgentDescriptor)=>h.descriptors.set(d.agentId,d),deleteDescriptor:(id:string)=>h.descriptors.delete(id),upsertProfile:()=>{},deleteProfile:()=>{}},
+      runtimes:new Map(),forgetPinnedMessages:()=>{},conversationProjector:{deleteConversationHistory:()=>{}},
+      ensureSessionFileParentDirectory:async(file:string)=>{await mkdir(dirname(file),{recursive:true});},
+      writeInitialSessionMeta:async()=>{},clearAgentTurnState:()=>{},deleteManagerSessionFile:async()=>{},logDebug:()=>{},
+    } as unknown as ConstructorParameters<typeof SessionProvisioner>[0]);
+    let fail = true;
+    let failedForkId: string | undefined;
+    const sessionService = new SwarmSessionService({profiles,getRequiredSessionDescriptor:(id:string)=>h.descriptors.get(id),
+      prepareSessionCreation:(id:string,opts: Parameters<typeof factory.prepareSessionCreation>[1])=>factory.prepareSessionCreation(id,opts),provisioner,
+      resolveGlobalDelegationRosterId:async()=>"review-roster",copySecureAccessForFork:async(a:string,b:string)=>{failedForkId=b; return await h.service.copySecureSessionAccessForFork(a,b);},
+      copySessionHistoryForFork:async()=>{if(fail && failureStage === "history")throw new Error("synthetic provision failure");},copyPinnedMessagesForFork:async()=>{},writeForkedSessionMemoryHeader:async()=>{},
+      getOrCreateRuntimeForDescriptor:async()=>{if(fail && failureStage === "runtime")throw new Error("synthetic provision failure");return {getContextUsage:()=>undefined};},
+      saveStore:async()=>{},emitSessionLifecycle:()=>{},emitAgentsSnapshot:()=>{},emitProfilesSnapshot:()=>{},
+    } as unknown as ConstructorParameters<typeof SwarmSessionService>[0]);
+    try {
+      await expect(sessionService.forkSession(source.agentId,{label:"Review fork"})).rejects.toThrow("synthetic provision failure");
+      expect(failedForkId).toBeDefined();
+      expect(h.store.listSessionStates().some(s=>s.sessionAgentId===failedForkId)).toBe(false);
+      expect(h.descriptors.has(failedForkId!)).toBe(false);
+      const snapshot = await h.service.getSecureSessionSnapshot(source.agentId);
+      const suppressed = await h.service.setSecureSessionAccess(source.agentId,{baseRevision:snapshot.revision,subject:{kind:"secret",secretId:secret.secretId},blocked:true});
+      await h.service.setSecureSessionAccess(source.agentId,{baseRevision:suppressed.revision,subject:{kind:"task"},blocked:true});
+      fail = false;
+      const retried = await sessionService.forkSession(source.agentId,{label:"Review fork"});
+      expect(retried.sessionAgent.agentId).toBe(failedForkId);
+      const policy = (await h.service.getSecureSessionSnapshot(retried.sessionAgent.agentId)).accessPolicy;
+      const paused = policy?.paused;
+      expect(policy?.blockedSecretIds).toEqual([secret.secretId]);
+      const binding = (await h.service.prepareSecureRuntimeBinding(retried.sessionAgent))!;
+      const executed = await binding.executeBash({command:"true",cwd:"/workspace-a",secretAliases:["review-fork-secret"],onData:()=>{}}).then(()=>true,()=>false);
+      expect({paused,executed}).toEqual({paused:true,executed:false});
+    } finally {await h.close();await rm(dataDir,{recursive:true,force:true});}
+  });
+});

@@ -1047,6 +1047,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           await this.sessionPlanCoordinator.clear(descriptor);
         },
         clearSessionGoal: async (descriptor) => { await runtimeComposition.goals.clear(descriptor); },
+        copySecureAccessForFork: (sourceId, forkId) => this.secureSessionsService.copySecureSessionAccessForFork(sourceId, forkId),
         writeForkedSessionMemoryHeader: (sourceDescriptor, forkedAgentId, fromMessageId) =>
           this.knowledgeMemoryCoordinator.writeForkedSessionMemoryHeader(
             sourceDescriptor,

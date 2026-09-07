@@ -53,6 +53,13 @@ describe("secure session server transport", () => {
     );
     expect(hostileHttpResponse.status).toBe(403);
 
+    const unauthorizedAccessMutation = await fetch(
+      `http://${config.host}:${config.port}/api/secure-sessions/manager/access`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseRevision: 0, subject: { kind: "task" }, blocked: false }),
+      });
+    expect(unauthorizedAccessMutation.status).toBe(403);
+
     const unauthorizedDefaultMutation = await fetch(
       `http://${config.host}:${config.port}/api/secure-secrets/project-defaults/manager/secret-1`,
       {
@@ -339,6 +346,7 @@ describe("secure session server transport", () => {
 
       manager.emit("secure_session_snapshot", {
         type: "secure_session_snapshot",
+        accessPolicy: { paused: true, blockedAgentIds: [worker.agentId], blockedSecretIds: [] },
         sessionAgentId: "manager",
         profileId: "manager",
         principalKind: "manager",
@@ -382,6 +390,7 @@ describe("secure session server transport", () => {
       );
       expect(managerEvents).toContainEqual(expect.objectContaining({
         type: "secure_session_snapshot",
+        accessPolicy: { paused: true, blockedAgentIds: [worker.agentId], blockedSecretIds: [] },
         leases: [expect.objectContaining({
           leaseId: "lease-1",
           grantSource: "project_default",

@@ -1818,7 +1818,6 @@ export class SwarmAgentLifecycleService {
 
     if (
       descriptor.role === "worker"
-      && requirements?.secureRuntimeRequired === true
       && this.options.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(
         descriptor.agentId,
       )
@@ -1845,12 +1844,11 @@ export class SwarmAgentLifecycleService {
     const existingRuntime = this.getRuntime(descriptor.agentId);
     if (existingRuntime) {
       const hasStaleSecureBinding =
-        requirements?.secureRuntimeRequired === true
+        this.options.hasSecureRuntimeBinding(existingRuntime)
         && !this.options.isSecureRuntimeBindingUsable(
           descriptor.agentId,
           existingRuntime,
-        )
-        && this.options.hasSecureRuntimeBinding(existingRuntime);
+        );
       if (!hasStaleSecureBinding) {
         return this.assertRuntimeMeetsCreationRequirements(
           descriptor.agentId,

@@ -43,6 +43,7 @@ const MAX_NOTE_LENGTH = 2_000;
 const MAX_ENCRYPTED_PAYLOAD_LENGTH = 2 * 1024 * 1024;
 
 export const SECURE_ROUTE_ERROR_CODES = [
+  "SECURE_ACCESS_BLOCKED",
   "SECURE_BUILDER_ONLY",
   "SECURE_PRIVATE_API_UNAVAILABLE",
   "SECURE_REQUEST_INVALID",
@@ -1222,6 +1223,8 @@ function mapSecureRouteError(error: unknown): {
       return { code: "SECURE_BUILDER_ONLY", statusCode: 404 };
     case "SECURE_PRIVATE_API_UNAVAILABLE":
       return { code: "SECURE_PRIVATE_API_UNAVAILABLE", statusCode: 503 };
+    case "SECURE_ACCESS_BLOCKED":
+      return { code: "SECURE_ACCESS_BLOCKED", statusCode: 403 };
     case "SECURE_REQUEST_INVALID":
     case "SECURE_SECRET_EMPTY":
     case "SECURE_SECRET_RELEASED":

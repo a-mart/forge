@@ -278,6 +278,7 @@ describe('BootstrapBuffer', () => {
       ownerManagerAgentId: null,
       workerAssignmentId: null,
       revision: 5,
+      accessPolicy: { paused: true, blockedAgentIds: ['worker'], blockedSecretIds: [] },
       executionMode: 'secure',
       environmentStatus: 'ready',
       leases: [],
@@ -289,6 +290,7 @@ describe('BootstrapBuffer', () => {
     expect(patches).toHaveLength(1)
     expect(patches[0].secureSessionSnapshots?.['session-b']).toMatchObject({
       revision: 5,
+      accessPolicy: { paused: true, blockedAgentIds: ['worker'], blockedSecretIds: [] },
       pendingRequests: [],
     })
   })

@@ -1,5 +1,7 @@
 import type {
   SecureBrowserPairingClaimResponse,
+  SecureSessionAccessPolicy,
+  SecureSessionAccessSubject,
   SecureBrowserPairingRequestCreated,
   SecureSecretLeaseGrantSource,
   SecureSecretRetention,
@@ -85,6 +87,7 @@ export interface SecureSessionSnapshotView {
   revision: number
   executionMode: 'standard' | 'secure'
   environmentStatus: 'stopped' | 'starting' | 'ready' | 'degraded' | 'failed'
+  accessPolicy?: SecureSessionAccessPolicy
   outputState?: 'clear' | 'quarantined'
   outputStateCode?: 'SECURE_OUTPUT_QUARANTINED'
   leases: SecureLeaseView[]
@@ -151,6 +154,9 @@ export interface SecureSessionPickerConfig {
   availability: SecureSessionAvailability
   snapshot?: SecureSessionSnapshotView | null
   readOnly?: boolean
+  accessAgentId?: string
+  onSetAccess?: (subject: SecureSessionAccessSubject, blocked: boolean) => Promise<boolean>
+  onRecoverAccess?: () => Promise<boolean>
   secrets: SecureSecretOption[]
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'

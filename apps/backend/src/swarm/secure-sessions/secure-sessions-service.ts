@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import path from "node:path";
 import type {
   BitwardenPasswordManagerSettings,
+  SetSecureSessionAccessRequest,
   GrantSecureSecretLeaseInput,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
@@ -377,19 +378,14 @@ export class SecureSessionsService {
     const descriptor = this.options.getDescriptor(workerAgentId);
     if (!descriptor || !this.isEligibleSecureWorker(descriptor)) return false;
     const manager = this.options.getDescriptor(descriptor.managerId);
-    if (!isBuilderManager(manager) || !this.isTeamSecureMode(manager.agentId)) {
-      return false;
-    }
-    if (!isWorkspaceWithin(manager.cwd, descriptor.cwd)) return false;
-    const active = this.activeSessions.get(manager.agentId);
-    if (!active || active.closed) return false;
+    if (!isBuilderManager(manager)) return false;
     const store = await this.store();
-    const state = store.getSessionState(manager.agentId);
-    return Boolean(
-      state
-      && state.executionMode === "secure"
-      && state.environmentStatus === "ready",
-    );
+    const policy = store.getAccessPolicy(manager.agentId);
+    if (policy.paused || policy.blockedAgentIds.includes(workerAgentId)) return false;
+    return this.isTeamSecureMode(manager.agentId)
+      || store.listSshTrustedHosts(requireProfileId(manager)).length > 0
+      || this.listEffectiveProjectDefaultsForProfile(store, requireProfileId(manager))
+        .some((entry) => !policy.blockedSecretIds.includes(entry.secretId));
   }
 
   async advanceWorkerSecureAssignment(
@@ -819,12 +815,14 @@ export class SecureSessionsService {
       }
       try {
         const store = await this.store();
+        const newlyProtected = !this.hasProjectRuntimeProtection(store, profileId);
         const host = store.putSshTrustedHost({
           trustedHostId: this.id(),
           profileId,
           ...normalized,
         });
         this.emitCatalog(store);
+        if (newlyProtected) await this.recycleNewlyProtectedProjectRuntimes(new Set([profileId]));
         return toPublicSshTrustedHost(host);
       } catch (error) {
         throw this.publicError(error);
@@ -1710,6 +1708,8 @@ export class SecureSessionsService {
         this.assertProfileLifecycleAvailable(profileId);
       }
     }
+    const newlyProtectedProfiles = new Set(targetProfileIds.filter((profileId) =>
+      !this.hasProjectRuntimeProtection(store, profileId)));
     const affected = captureProjectDefaultLeasesForSecret(
       store,
       normalizedSecretId,
@@ -1730,6 +1730,7 @@ export class SecureSessionsService {
       await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
       this.emitCatalog(store);
       this.emitSessionSnapshots(store, affected.sessionIds);
+      await this.recycleNewlyProtectedProjectRuntimes(newlyProtectedProfiles);
       return this.toSecretSummary(store, store.getSecret(normalizedSecretId)!);
     });
   }
@@ -2145,6 +2146,202 @@ export class SecureSessionsService {
     return this.toPublicSnapshot(store, snapshot);
   }
 
+  async copySecureSessionAccessForFork(sourceId: string, forkId: string): Promise<() => Promise<void>> {
+    await this.withAuthorityMutation(async () => {
+      const source = this.requireTeamManager(sourceId);
+      const fork = this.requireTeamManager(forkId);
+      if (source.profileId !== fork.profileId) throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      const store = await this.store();
+      store.initializePrincipalState(sourceId, principalStateInput(managerPrincipal(source)));
+      store.createForkSessionState(sourceId, forkId);
+    });
+    return () => this.stopSecureSessionForLifecycle(forkId, { deleteState: true });
+  }
+
+  private assertAccessAllowed(
+    store: SecureSessionStore,
+    managerId: string,
+    callerId: string,
+    secretIds: readonly string[] = [],
+  ): void {
+    const policy = store.getAccessPolicy(managerId);
+    if (policy.paused || policy.blockedAgentIds.includes(callerId)
+      || secretIds.some((id) => policy.blockedSecretIds.includes(id))) {
+      throw new SecureSessionsServiceError("SECURE_ACCESS_BLOCKED");
+    }
+  }
+
+  async setSecureSessionAccess(
+    sessionAgentId: string,
+    input: SetSecureSessionAccessRequest,
+  ): Promise<PublicSecureSessionSnapshot> {
+    const principal = this.resolveSecurePrincipal(sessionAgentId, { requireWorkerAssignment: false });
+    const managerId = principal.descriptor.agentId;
+    return await this.withAuthorityMutation(() => this.withSessionMutation(managerId, async () => {
+      const store = await this.store();
+      store.initializePrincipalState(managerId, principalStateInput(principal));
+      const { subject } = input;
+      if (subject.kind === "agent") {
+        const worker = this.options.getDescriptor(subject.agentId);
+        if (!worker || worker.role !== "worker" || worker.managerId !== managerId
+          || worker.profileId !== principal.profileId) {
+          throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+        }
+      }
+      if (subject.kind === "secret") {
+        const secret = store.getSecret(subject.secretId);
+        if (!secret || !resolveVisibleSavedSecrets(store, principal.profileId)
+          .some((entry) => entry.secretId === subject.secretId)) {
+          throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        }
+      }
+      requireRevision(store.getSnapshot(managerId).state.revision, input.baseRevision);
+      const mutation = store.setAccessBlocked(managerId, subject, input.blocked, input.baseRevision);
+      try {
+        // Persist denial before cleanup, so even a failed teardown cannot restore access.
+        if (input.blocked) {
+          if (subject.kind === "task") {
+            const stopped = await this.stopSecurePrincipalUnlocked(principal, {
+              baseRevision: mutation.revision, stopProcesses: true,
+            }, { preserveSessionSecrets: true, preservePendingRequests: true, recycleRuntime: false });
+            if (stopped.environmentStatus === "degraded") {
+              throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+            }
+          } else {
+            if (subject.kind === "secret") {
+              const leases = store.getSnapshot(managerId).leases.filter((lease) =>
+                lease.secretId === subject.secretId && lease.state === "active");
+              for (const lease of leases) {
+                store.revokeLease({ sessionAgentId: managerId, leaseId: lease.leaseId,
+                  baseRevision: store.getSnapshot(managerId).state.revision, reason: "user" });
+              }
+              this.releaseLeases(leases.map((lease) => lease.leaseId));
+            }
+            // Workers share a process environment. Reset it to also kill retained descendants.
+            if (this.activeSessions.has(managerId)) {
+              await this.rebuildEnvironmentForNewLease(store, principal.descriptor);
+              await this.ensureGuardForActiveLeases(store, managerId);
+            } else if (store.getSnapshot(managerId).state.environmentStatus === "degraded") {
+              if (!await this.options.execution.destroyTask(toManagerTask(principal.descriptor))) {
+                throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+              }
+              store.updateSessionRuntimeState({ sessionAgentId: managerId, environmentStatus: "stopped" });
+            }
+          }
+        }
+      } finally {
+        // Every client must observe the durable denial even when process cleanup fails.
+        this.options.emitSnapshot(toSnapshotEvent(this.toPublicSnapshot(store, store.getSnapshot(managerId))));
+      }
+      const snapshot = this.toPublicSnapshot(store, store.getSnapshot(managerId));
+      if (mutation.changed) {
+        await Promise.allSettled([principal.descriptor, ...this.listEligibleSecureWorkers(principal.descriptor)]
+          .map((agent) => this.options.applyModeRuntimeRecycle(agent.agentId)));
+      }
+      return snapshot;
+    }));
+  }
+
+  /** Runtime creation installs protection without provisioning Docker or resolving values. */
+  async prepareSecureRuntimeBinding(descriptor: AgentDescriptor): Promise<SecureRuntimeBinding | undefined> {
+    let principal: SecurePrincipal;
+    try { principal = this.resolveSecurePrincipal(descriptor.agentId); } catch { return undefined; }
+    if (!supportsSecureRuntimeProvider(descriptor.model.provider)) return undefined;
+    const store = await this.store();
+    const managerId = principal.descriptor.agentId;
+    if (!this.activeSessions.has(managerId)
+      && !this.hasProjectRuntimeProtection(store, principal.profileId)) return undefined;
+    const assignmentId = descriptorWorkerAssignmentId(descriptor);
+    const runtimeCwd = descriptor.cwd;
+    const runtimeProvider = descriptor.model.provider;
+    let revoked = false;
+    let delegatedBinding: SecureRuntimeBinding | undefined;
+    let observedGeneration = this.activeSessions.get(managerId)?.bindingGeneration;
+    const assertCaller = () => {
+      const caller = this.options.getDescriptor(descriptor.agentId);
+      let current: SecurePrincipal;
+      try {
+        current = this.resolveSecurePrincipal(descriptor.agentId);
+      } catch {
+        throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+      }
+      if (revoked || !caller || caller.cwd !== runtimeCwd
+        || caller.model.provider !== runtimeProvider
+        || current.descriptor.agentId !== managerId
+        || descriptorWorkerAssignmentId(caller) !== assignmentId) {
+        throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+      }
+    };
+    const currentBinding = () => {
+      assertCaller();
+      const generation = this.activeSessions.get(managerId)?.bindingGeneration;
+      if (observedGeneration && generation !== observedGeneration) {
+        throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+      }
+      observedGeneration ??= generation;
+      delegatedBinding ??= this.getSecureRuntimeBinding(descriptor);
+      return delegatedBinding;
+    };
+    return {
+      invalidate: () => {
+        revoked = true;
+        delegatedBinding?.invalidate?.();
+      },
+      executeBash: async (request) => {
+        assertCaller();
+        await this.withAuthorityMutation(() => this.withSessionMutation(managerId, async () => {
+          assertCaller();
+          this.assertAccessAllowed(store, managerId, descriptor.agentId);
+          for (const alias of request.secretAliases) {
+            const secret = resolveVisibleSavedSecretByAlias(store, principal.profileId, alias);
+            if (secret) this.assertAccessAllowed(store, managerId, descriptor.agentId, [secret.secretId]);
+          }
+          currentBinding();
+          if (request.signal?.aborted) throw new SecureExecutionError("EXECUTION_ABORTED");
+          await this.initializeSecureSessions();
+          assertCaller();
+          this.assertAccessAllowed(store, managerId, descriptor.agentId);
+          if (!this.activeSessions.has(managerId)) {
+            await this.startSecurePrincipalUnlocked(principal, {}, { recycleRuntime: false });
+          } else {
+            await this.applyProjectDefaultsToPrincipalUnlocked(store, principal);
+          }
+          for (const alias of request.secretAliases) {
+            const status = [...(this.projectDefaultStatuses.get(managerId)?.values() ?? [])]
+              .find((entry) => entry.displayAlias === alias);
+            if (status?.state === "unavailable") {
+              throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
+            }
+          }
+        }));
+        const binding = currentBinding();
+        if (!binding) throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        return await binding.executeBash(request);
+      },
+      guardValue: <T>(value: T): T => {
+        const binding = currentBinding();
+        return binding ? binding.guardValue(value) : value;
+      },
+      createOutputGuard: () => {
+        const binding = currentBinding();
+        if (binding) return binding.createOutputGuard();
+        // Output begun before the first delivery must not race a newly installed guard.
+        let closed = false;
+        const check = () => {
+          assertCaller();
+          if (closed || this.activeSessions.has(managerId)) {
+            throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+          }
+        };
+        return {
+          write: (bytes) => { check(); return Buffer.from(bytes); },
+          close: async () => { check(); closed = true; return Buffer.alloc(0); },
+          dispose: () => { closed = true; },
+        };
+      },
+    };
+  }
+
   async startSecureSession(
     sessionAgentId: string,
     input: StartSecureSessionInput = {},
@@ -2155,10 +2352,18 @@ export class SecureSessionsService {
       await this.withSessionMutation(manager.agentId, async () => {
         const principal = managerPrincipal(manager);
         const wasActive = this.activeSessions.has(manager.agentId);
+        const store = await this.store();
+        let startInput = input;
+        if (store.getAccessPolicy(manager.agentId).paused) {
+          const state = store.getSnapshot(manager.agentId).state;
+          if (input.baseRevision !== undefined) requireRevision(state.revision, input.baseRevision);
+          const restored = store.setAccessBlocked(manager.agentId, { kind: "task" }, false);
+          startInput = { baseRevision: restored.revision };
+        }
         try {
           const snapshot = await this.startSecurePrincipalUnlocked(
             principal,
-            input,
+            startInput,
             { recycleRuntime: true },
           );
           if (!wasActive) {
@@ -2214,6 +2419,7 @@ export class SecureSessionsService {
     const descriptor = principal.descriptor;
     const sessionAgentId = descriptor.agentId;
     const store = await this.store();
+    this.assertAccessAllowed(store, sessionAgentId, sessionAgentId);
     const initial = store.initializePrincipalState(
       sessionAgentId,
       principalStateInput(principal),
@@ -2418,6 +2624,10 @@ export class SecureSessionsService {
       await this.withSessionMutation(
         manager.agentId,
         async () => {
+          const store = await this.store();
+          store.initializePrincipalState(manager.agentId, principalStateInput(principal));
+          requireNonFutureRevision(store.getSnapshot(manager.agentId).state.revision, input.baseRevision);
+          store.setAccessBlocked(manager.agentId, { kind: "task" }, true);
           const stopped = await this.stopSecurePrincipalUnlocked(
             managerPrincipal(manager),
             input,
@@ -2697,6 +2907,7 @@ export class SecureSessionsService {
     );
     if (initialState) assertPrincipalStateMatches(principal, initialState);
     requireRevision(initialState?.revision ?? 0, input.baseRevision);
+    this.assertAccessAllowed(store, sessionAgentId, sessionAgentId, input.grants.map((grant) => grant.secretId));
     const profileId = requireProfileId(descriptor);
     const now = this.now();
     const grants = input.grants.map((grant) =>
@@ -2830,10 +3041,15 @@ export class SecureSessionsService {
       const current = store.getSnapshot(sessionAgentId);
       assertPrincipalStateMatches(principal, current.state);
       requireNonFutureRevision(current.state.revision, input.baseRevision);
+      const revokedLease = current.leases.find((lease) => lease.leaseId === input.leaseId);
+      if (revokedLease?.state === "active" && this.listEffectiveProjectDefaultsForProfile(store, principal.profileId)
+        .some((entry) => entry.secretId === revokedLease.secretId)) {
+        store.setAccessBlocked(sessionAgentId, { kind: "secret", secretId: revokedLease.secretId }, true);
+      }
       const result = store.revokeLease({
         sessionAgentId,
         leaseId: input.leaseId,
-        baseRevision: current.state.revision,
+        baseRevision: store.getSnapshot(sessionAgentId).state.revision,
         reason: "user",
       });
       this.releaseLeases([input.leaseId]);
@@ -2896,6 +3112,8 @@ export class SecureSessionsService {
       this.options.emitSnapshot(toSnapshotEvent(result));
       return result;
     }
+    this.assertAccessAllowed(store, sessionAgentId, request.requestedByAgentId,
+      request.secretId ? [request.secretId] : input.selectedSecretId ? [input.selectedSecretId] : []);
     if (request.secretId && input.selectedSecretId !== undefined) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -3014,6 +3232,7 @@ export class SecureSessionsService {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
     assertManagerRequestAuthority(request.workerAssignmentId);
+    this.assertAccessAllowed(store, sessionAgentId, request.requestedByAgentId);
     if (!samePublicBindings(request.requestedExposures.map(toPublicBinding), input.exposures)) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -3115,6 +3334,8 @@ export class SecureSessionsService {
         this.listEffectiveProjectDefaultsForProfile(store, profileId),
       );
     }
+    const newlyProtected = input.makeProjectDefault === true
+      && !this.hasProjectRuntimeProtection(store, profileId);
     let material: HostOnlySecret | null = null;
     let prospectiveGuard: SecureValueGuard | null = null;
     let leaseCreated = false;
@@ -3197,6 +3418,7 @@ export class SecureSessionsService {
       this.emitCatalog(store);
       const result = this.toPublicSnapshot(store, lease.snapshot);
       this.options.emitSnapshot(toSnapshotEvent(result));
+      if (newlyProtected) await this.recycleNewlyProtectedProjectRuntimes(new Set([profileId]));
       return result;
     } catch (error) {
       if (leaseCreated) {
@@ -3214,11 +3436,15 @@ export class SecureSessionsService {
     const principal = this.resolveSecurePrincipal(callerAgentId);
     const store = await this.store();
     const snapshot = await this.getSecureSessionSnapshot(principal.descriptor.agentId);
+    const policy = store.getAccessPolicy(principal.descriptor.agentId);
+    const accessBlocked = policy.paused || policy.blockedAgentIds.includes(callerAgentId);
+    const projectIds = new Set(this.listEffectiveProjectDefaultsForProfile(store, principal.profileId)
+      .map((entry) => entry.secretId));
     const secrets = resolveVisibleSavedSecrets(store, principal.profileId)
-      .map((secret) => this.toSecretSummary(store, secret))
-      .filter((secret) => secret.available);
+      .map((secret) => this.toSecretSummary(store, secret));
     return {
       revision: snapshot.revision,
+      accessBlocked,
       executionMode: snapshot.executionMode,
       environmentStatus: snapshot.environmentStatus,
       leases: snapshot.leases.map((lease) => ({
@@ -3244,6 +3470,9 @@ export class SecureSessionsService {
         expiresAt: request.expiresAt,
       })),
       availableSecrets: secrets.map((secret) => ({
+        access: accessBlocked || policy.blockedSecretIds.includes(secret.secretId) ? "blocked" as const
+          : projectIds.has(secret.secretId) || snapshot.leases.some((lease) => lease.secretId === secret.secretId && lease.status === "active")
+            ? "granted" as const : "request" as const,
         displayAlias: secret.displayAlias,
         ...(secret.username ? { username: secret.username } : {}),
         bindings: secret.bindings,
@@ -3319,7 +3548,12 @@ export class SecureSessionsService {
       principal.profileId,
       displayAlias,
     );
+    this.assertAccessAllowed(store, sessionAgentId, requestedBy.agentId, secret ? [secret.secretId] : []);
     if (secret) matchBindingIds(store.listBindings(secret.secretId), input.exposures);
+    if (secret && this.listEffectiveProjectDefaultsForProfile(store, principal.profileId)
+      .some((entry) => entry.secretId === secret.secretId)) {
+      return "already_granted";
+    }
     const current = store.getSnapshot(sessionAgentId);
     if (findActiveEquivalentLease(
       store,
@@ -3472,6 +3706,8 @@ export class SecureSessionsService {
         ) {
           throw new SecureSessionsServiceError("SECURE_STALE_REVISION");
         }
+        const newlyProtected = input.decision === "approve"
+          && !this.hasProjectRuntimeProtection(store, request.profileId);
         try {
           const snapshot = store.withTransaction(() => {
             if (input.decision === "approve") {
@@ -3512,6 +3748,7 @@ export class SecureSessionsService {
             });
           });
           if (input.decision === "approve") this.emitCatalog(store);
+          if (newlyProtected) await this.recycleNewlyProtectedProjectRuntimes(new Set([request.profileId]));
           this.scheduleSessionExpiry(store, sessionAgentId);
           const result = this.toPublicSnapshot(store, snapshot);
           this.options.emitSnapshot(toSnapshotEvent(result));
@@ -3827,6 +4064,8 @@ export class SecureSessionsService {
       stored.leases.filter((lease) => lease.state === "active"),
       request.secretAliases,
     );
+    this.assertAccessAllowed(store, sessionAgentId, descriptor.agentId,
+      activeLeases.map((lease) => lease.secretId));
     const reserved: ReservedLease[] = [];
     const resolved: ResolvedSecureSecretBinding[] = [];
     let guard: SecureValueGuard | null = null;
@@ -4099,6 +4338,11 @@ export class SecureSessionsService {
     try {
       for (const projectDefault of configured) {
         const secret = store.getSecret(projectDefault.secretId);
+        if (store.getAccessPolicy(sessionAgentId).blockedSecretIds.includes(projectDefault.secretId)) {
+          statuses.set(projectDefault.secretId, { secretId: projectDefault.secretId,
+            displayAlias: secret?.displayAlias ?? "unavailable", state: "blocked", statusCode: "access_blocked" });
+          continue;
+        }
         if (
           !secret
           || secret.retention !== "saved"
@@ -4309,7 +4553,9 @@ export class SecureSessionsService {
       snapshot.state.sessionAgentId,
     );
     let current = expired.at(-1)?.snapshot ?? snapshot;
+    const policy = store.getAccessPolicy(snapshot.state.sessionAgentId);
     for (const request of current.requests) {
+      if (policy.paused || policy.blockedAgentIds.includes(request.requestedByAgentId)) continue;
       const lease = findActiveEquivalentLease(
         store,
         current,
@@ -4317,7 +4563,7 @@ export class SecureSessionsService {
         request.requestedExposures.map(toPublicBinding),
         request.secretId,
       );
-      if (!lease) continue;
+      if (!lease || policy.blockedSecretIds.includes(lease.secretId)) continue;
       try {
         current = store.resolveRequest({
           requestId: request.requestId,
@@ -4787,9 +5033,12 @@ export class SecureSessionsService {
       environmentStatus: destroyFailed ? "degraded" : "stopped",
     });
     if (recycleRuntime) {
-      await Promise.resolve(
-        this.options.applyModeRuntimeRecycle(sessionAgentId),
-      ).catch(() => undefined);
+      const manager = this.options.getDescriptor(sessionAgentId);
+      const agents = isBuilderManager(manager)
+        ? [manager, ...this.listEligibleSecureWorkers(manager)]
+        : [];
+      await Promise.allSettled(agents.map((agent) =>
+        this.options.applyModeRuntimeRecycle(agent.agentId)));
     }
   }
 
@@ -5083,6 +5332,7 @@ export class SecureSessionsService {
       revision: snapshot.state.revision,
       executionMode: snapshot.state.executionMode,
       environmentStatus: snapshot.state.environmentStatus,
+      accessPolicy: store.getAccessPolicy(snapshot.state.sessionAgentId),
       leases: snapshot.leases.map((lease) => {
         const secret = store.getSecret(lease.secretId);
         return {
@@ -5131,6 +5381,10 @@ export class SecureSessionsService {
       )
         .map((projectDefault) => {
           const secret = store.getSecret(projectDefault.secretId);
+          if (store.getAccessPolicy(snapshot.state.sessionAgentId).blockedSecretIds.includes(projectDefault.secretId)) {
+            return { secretId: projectDefault.secretId, displayAlias: secret?.displayAlias ?? "unavailable",
+              state: "blocked", statusCode: "access_blocked" };
+          }
           const recorded = this.projectDefaultStatuses
             .get(snapshot.state.sessionAgentId)
             ?.get(projectDefault.secretId);
@@ -5307,6 +5561,19 @@ export class SecureSessionsService {
       && manager.profileId === descriptor.profileId
       && !manager.archivedAt
       && isWorkspaceWithin(manager.cwd, descriptor.cwd);
+  }
+
+  private hasProjectRuntimeProtection(store: SecureSessionStore, profileId: string): boolean {
+    return this.listEffectiveProjectDefaultsForProfile(store, profileId).length > 0
+      || store.listSshTrustedHosts(profileId).length > 0;
+  }
+
+  private async recycleNewlyProtectedProjectRuntimes(profileIds: ReadonlySet<string>): Promise<void> {
+    await Promise.allSettled([...this.options.listDescriptors()]
+      .filter((agent) => agent.profileId && profileIds.has(agent.profileId)
+        && (isBuilderManager(agent) || this.isEligibleSecureWorker(agent))
+        && !(isBuilderManager(agent) && this.activeSessions.has(agent.agentId)))
+      .map((agent) => this.options.applyModeRuntimeRecycle(agent.agentId)));
   }
 
   private listEligibleSecureWorkers(

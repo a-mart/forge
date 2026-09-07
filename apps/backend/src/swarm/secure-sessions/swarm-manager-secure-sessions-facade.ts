@@ -1,5 +1,6 @@
 import type {
   BitwardenPasswordManagerSettings,
+  SetSecureSessionAccessRequest,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
@@ -378,9 +379,13 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   getSecureRuntimeBinding(
     descriptor: AgentDescriptor,
-    runtimeToken?: number,
-  ): SecureRuntimeBinding | undefined {
-    return this.secureSessions.getSecureRuntimeBinding(descriptor, runtimeToken);
+    _runtimeToken?: number,
+  ): Promise<SecureRuntimeBinding | undefined> {
+    return this.secureSessions.prepareSecureRuntimeBinding(descriptor);
+  }
+
+  setSecureSessionAccess(sessionAgentId: string, input: SetSecureSessionAccessRequest): Promise<SecureSessionSnapshot> {
+    return this.secureSessions.setSecureSessionAccess(sessionAgentId, input);
   }
 
   initializeSecureSessions(): Promise<SecureOrphanRecoveryResult> {

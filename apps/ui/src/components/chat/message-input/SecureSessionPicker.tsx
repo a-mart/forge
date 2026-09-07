@@ -59,6 +59,7 @@ const PROJECT_DEFAULT_STATE_PRIORITY: Record<
   configured: 1,
   unavailable: 2,
   conflict: 3,
+  blocked: 4,
 }
 
 function aggregateProjectDefaults(
@@ -86,7 +87,8 @@ function projectDefaultStateLabel(
   state: SecureProjectDefaultStatusView['state'],
 ): string {
   if (state === 'active') return 'Active'
-  if (state === 'configured') return 'Ready to apply'
+  if (state === 'configured') return 'Available automatically'
+  if (state === 'blocked') return 'Blocked for this task'
   if (state === 'unavailable') return 'Unavailable'
   return 'Binding conflict'
 }
@@ -106,6 +108,12 @@ function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number
   tone: 'muted' | 'active' | 'warning'
   icon: 'shield' | 'check' | 'alert' | 'off' | 'loading'
 } {
+  const access = config.snapshot?.accessPolicy
+  if (access?.paused || (config.accessAgentId && access?.blockedAgentIds.includes(config.accessAgentId))) {
+    return { label: access.paused ? 'Secrets paused' : 'Secrets blocked',
+      ariaLabel: access.paused ? 'Secrets paused for this task and its agents.' : 'Secrets blocked for this agent.',
+      tone: 'muted', icon: 'off' }
+  }
   if (config.outputState === 'quarantined') {
     return {
       label: 'Output redacted',
@@ -159,6 +167,11 @@ function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number
     }
   }
 
+  if (access) {
+    return { label: 'Secrets', ariaLabel: 'Project secret access. Review access and restrictions.',
+      tone: config.snapshot?.projectDefaults?.length ? 'active' : 'muted', icon: 'shield' }
+  }
+
   const isReady =
     config.snapshot?.executionMode === 'secure'
     && config.snapshot.environmentStatus === 'ready'
@@ -201,9 +214,10 @@ export function SecureSessionPicker({
   const [grantOpen, setGrantOpen] = useState(false)
   const [stopOpen, setStopOpen] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [changingAccess, setChangingAccess] = useState(false)
   const [applyingProjectDefaults, setApplyingProjectDefaults] = useState(false)
   const sessionAgentId = config.snapshot?.sessionAgentId
-  const configIdentity = `${config.originId ?? ''}\u0000${sessionAgentId ?? ''}`
+  const configIdentity = `${config.originId ?? ''}\u0000${sessionAgentId ?? ''}\u0000${config.accessAgentId ?? ''}`
   const configIdentityRef = useRef(configIdentity)
   configIdentityRef.current = configIdentity
 
@@ -212,8 +226,9 @@ export function SecureSessionPicker({
     setGrantOpen(false)
     setStopOpen(false)
     setStarting(false)
+    setChangingAccess(false)
     setApplyingProjectDefaults(false)
-  }, [config.originId, sessionAgentId])
+  }, [config.originId, sessionAgentId, config.accessAgentId])
 
   const activeLeases = useMemo(
     () => config.snapshot?.leases.filter((lease) => lease.status === 'active') ?? [],
@@ -237,12 +252,17 @@ export function SecureSessionPicker({
       projectDefault.state === 'unavailable'
       || projectDefault.state === 'conflict',
   )
+  const automatic = Boolean(config.snapshot?.accessPolicy)
+  const access = config.snapshot?.accessPolicy
+  const worker = Boolean(config.accessAgentId && config.accessAgentId !== sessionAgentId)
+  const blocked = Boolean(access?.paused || (config.accessAgentId && access?.blockedAgentIds.includes(config.accessAgentId)))
   const canGrant =
     !config.readOnly
     && Boolean(config.onGrant)
     && config.availability.state === 'available'
-    && config.snapshot?.executionMode === 'secure'
-    && config.snapshot.environmentStatus === 'ready'
+    && !blocked
+    && (automatic || (config.snapshot?.executionMode === 'secure'
+      && config.snapshot.environmentStatus === 'ready'))
     && grantableSecrets.some((secret) => secret.available && secret.bindings.length > 0)
   const hasSavedSecrets = config.secrets.length > 0
   const hasUnleasedSecrets = grantableSecrets.length > 0
@@ -251,7 +271,8 @@ export function SecureSessionPicker({
     && hasUnleasedSecrets
     && Boolean(config.onReviewProjectSecrets)
   const shouldOfferStart =
-    !config.readOnly
+    !automatic
+    && !config.readOnly
     && config.availability.state === 'available'
     && (
       !config.snapshot
@@ -259,7 +280,8 @@ export function SecureSessionPicker({
       || config.snapshot.environmentStatus === 'stopped'
     )
   const shouldOfferStop =
-    !config.readOnly
+    !automatic
+    && !config.readOnly
     && Boolean(config.onRevoke)
     && (
       config.outputState === 'quarantined'
@@ -360,14 +382,46 @@ export function SecureSessionPicker({
           <PopoverHeader>
             <PopoverTitle className="flex items-center gap-2">
               <Shield className="size-4" aria-hidden="true" />
-              {config.readOnly ? 'Team Secure Status' : 'Team Secure Mode'}
+              {automatic ? 'Project secret access' : config.readOnly ? 'Team Secure Status' : 'Team Secure Mode'}
             </PopoverTitle>
             <PopoverDescription>
-              {config.readOnly
+              {automatic
+                ? 'Agents inherit the secrets granted to this project. Forge prepares protected execution when needed. Secret values stay out of chat and normal commands.'
+                : config.readOnly
                 ? 'Normal commands stay on the host. This worker uses the manager task’s shared Linux secure_bash container and session grants only when protected access is needed.'
                 : 'Normal commands stay on the host. The manager and its workers share one Linux secure_bash container and one set of session grants for protected access.'}
             </PopoverDescription>
           </PopoverHeader>
+
+          {automatic && config.onSetAccess ? (
+            <section className="space-y-2" aria-label="Secret access controls">
+              <Button type="button" size="sm" variant={blocked ? 'secondary' : 'outline'}
+                disabled={config.disabled || changingAccess || (worker && access?.paused)}
+                onClick={() => {
+                  const identity = configIdentity
+                  setChangingAccess(true)
+                  void config.onSetAccess?.(worker && config.accessAgentId
+                    ? { kind: 'agent', agentId: config.accessAgentId } : { kind: 'task' }, !blocked)
+                    .finally(() => { if (configIdentityRef.current === identity) setChangingAccess(false) })
+                }}>
+                {changingAccess ? 'Updating access…' : blocked
+                  ? worker ? 'Restore project access for this agent' : 'Restore project access for this task'
+                  : worker ? 'Block secrets for this agent' : 'Pause secrets for this task and its agents'}
+              </Button>
+              {worker && access?.paused ? <p className="text-xs text-muted-foreground">Secret access is paused for the whole task. Restore it from the manager.</p> : null}
+              <p className="text-xs text-muted-foreground">Blocking access stops protected processes. Other agents’ protected commands may also be interrupted.</p>
+              {config.onRecoverAccess && projectDefaults.some((entry) => entry.state === 'unavailable') && !blocked ? (
+                <Button type="button" size="sm" variant="secondary" disabled={config.disabled || changingAccess}
+                  onClick={() => {
+                    const identity = configIdentity
+                    setChangingAccess(true)
+                    void config.onRecoverAccess?.().finally(() => {
+                      if (configIdentityRef.current === identity) setChangingAccess(false)
+                    })
+                  }}>Unlock secret sources</Button>
+              ) : null}
+            </section>
+          ) : null}
 
           {unavailableDescription ? (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
@@ -413,7 +467,7 @@ export function SecureSessionPicker({
             >
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Project defaults
+                  Secrets this project can use
                 </h3>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {projectDefaults.length}
@@ -438,13 +492,22 @@ export function SecureSessionPicker({
                     )}>
                       {projectDefaultStateLabel(projectDefault.state)}
                     </span>
+                    {automatic && !worker && projectDefault.state === 'blocked' && config.onSetAccess ? (
+                      <Button size="sm" variant="ghost" disabled={config.disabled || changingAccess}
+                        onClick={() => {
+                          const identity = configIdentity
+                          setChangingAccess(true)
+                          void config.onSetAccess?.({ kind: 'secret', secretId: projectDefault.secretId }, false)
+                            .finally(() => { if (configIdentityRef.current === identity) setChangingAccess(false) })
+                        }}>Restore</Button>
+                    ) : null}
                   </div>
                 ))}
               </div>
               {!config.readOnly
               && (hasNonActiveProjectDefaults || hasProjectDefaultsNeedingReview) ? (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  {hasNonActiveProjectDefaults && config.onApplyProjectDefaults ? (
+                  {!automatic && hasNonActiveProjectDefaults && config.onApplyProjectDefaults ? (
                     <Button
                       type="button"
                       size="sm"

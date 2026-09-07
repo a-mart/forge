@@ -10,6 +10,8 @@ export interface BitwardenUnlockPromptState {
 
 interface UseBitwardenUnlockPromptOptions {
   catalog: SecureSecretsCatalog | null
+  providerIds?: readonly string[]
+  promptWhenNeeded?: boolean
   active: boolean
   canUnlock: boolean
   unlock: (providerId: string, masterPassword: string) => Promise<void>
@@ -17,6 +19,8 @@ interface UseBitwardenUnlockPromptOptions {
 
 export function useBitwardenUnlockPrompt({
   catalog,
+  providerIds,
+  promptWhenNeeded = false,
   active,
   canUnlock,
   unlock,
@@ -25,8 +29,8 @@ export function useBitwardenUnlockPrompt({
   const promptedAtLaunchRef = useRef(new Set<string>())
   const pendingResolutionRef = useRef<((unlocked: boolean) => void) | null>(null)
   const lockedProvider = useMemo(
-    () => findLockedBitwardenPasswordManager(catalog),
-    [catalog],
+    () => findLockedBitwardenPasswordManager(catalog, providerIds),
+    [catalog, providerIds],
   )
 
   const finish = useCallback((unlocked: boolean) => {
@@ -37,15 +41,15 @@ export function useBitwardenUnlockPrompt({
   }, [])
 
   useEffect(() => {
-    if (!active || !canUnlock || !lockedProvider) return
+    if (!promptWhenNeeded || !active || !canUnlock || !lockedProvider) return
     if (promptedAtLaunchRef.current.has(lockedProvider.providerId)) return
     promptedAtLaunchRef.current.add(lockedProvider.providerId)
     setPrompt({
       providerId: lockedProvider.providerId,
       providerName: lockedProvider.displayName,
-      reason: 'launch',
+      reason: 'secure_session',
     })
-  }, [active, canUnlock, lockedProvider])
+  }, [active, canUnlock, lockedProvider, promptWhenNeeded])
 
   useEffect(() => () => {
     pendingResolutionRef.current?.(false)
@@ -84,9 +88,11 @@ export function useBitwardenUnlockPrompt({
 
 export function findLockedBitwardenPasswordManager(
   catalog: SecureSecretsCatalog | null,
+  providerIds?: readonly string[],
 ): SecureSecretProviderSummary | null {
   return catalog?.providers.find((provider) =>
-    provider.kind === 'bitwarden_password_manager'
+    (!providerIds || providerIds.includes(provider.providerId))
+    && provider.kind === 'bitwarden_password_manager'
     && provider.enabled
     && provider.status === 'locked'
   ) ?? null

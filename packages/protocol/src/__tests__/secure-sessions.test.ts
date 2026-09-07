@@ -18,6 +18,7 @@ import {
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
   parseApplySecureSessionProjectDefaultsRequest,
+  parseSetSecureSessionAccessRequest,
   parseCreateSecureSshTrustedHostRequest,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
@@ -49,6 +50,19 @@ import {
 const now = '2026-07-23T12:00:00.000Z'
 
 describe('Secure Sessions protocol', () => {
+  it('validates exactly one bounded access subject and explicit user intent', () => {
+    for (const subject of [{ kind: 'task' }, { kind: 'agent', agentId: 'worker' }, { kind: 'secret', secretId: 'secret' }]) {
+      expect(parseSetSecureSessionAccessRequest({ baseRevision: 3, subject, blocked: true }))
+        .toEqual({ baseRevision: 3, subject, blocked: true })
+    }
+    for (const subject of [{ kind: 'task', agentId: 'worker' }, { kind: 'agent' },
+      { kind: 'agent', agentId: 'x'.repeat(257) }, { kind: 'secret', secretId: '' }, { kind: 'project' }]) {
+      expect(() => parseSetSecureSessionAccessRequest({ baseRevision: 3, subject, blocked: true })).toThrow()
+    }
+    expect(() => parseSetSecureSessionAccessRequest({ baseRevision: -1, subject: { kind: 'task' }, blocked: true })).toThrow()
+    expect(() => parseSetSecureSessionAccessRequest({ baseRevision: 1, subject: { kind: 'task' }, blocked: 'false' })).toThrow()
+  })
+
   it('exports bounded Bitwarden Password Manager CLI diagnostics', () => {
     expect(BITWARDEN_PASSWORD_MANAGER_CLI_STATES).toEqual([
       'ready',
