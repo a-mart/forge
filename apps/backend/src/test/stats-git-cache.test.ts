@@ -1,0 +1,27 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { computeCodeStats } from "../stats/stats-git.js";
+import { getSharedStatsGitCacheDir } from "../swarm/storage/data-paths.js";
+const execute = promisify(execFile);
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
+it("caches Git counts by HEAD, author and range and invalidates after a new commit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge-stats-git-")); roots.push(root);
+  const git = (...args: string[]) => execute("git", args, { cwd: root });
+  await git("init"); await git("config", "user.name", "Stats Test"); await git("config", "user.email", "stats@example.invalid");
+  await writeFile(join(root, "file.txt"), "one\ntwo\n"); await git("add", "file.txt"); await git("commit", "-m", "fixture");
+  const first = await computeCodeStats([root], 0, root);
+  expect(first).toEqual({ linesAdded: 2, linesDeleted: 0, commits: 1, repos: 1 });
+  const [name] = await readdir(getSharedStatsGitCacheDir(root));
+  const path = join(getSharedStatsGitCacheDir(root), name);
+  const cached = await readFile(path, "utf8");
+  expect(await computeCodeStats([root], 0, root)).toEqual(first);
+  expect(await readFile(path, "utf8")).toBe(cached);
+  await writeFile(join(root, "file.txt"), "one\nthree\nfour\n"); await git("commit", "-am", "next");
+  expect(await computeCodeStats([root], 0, root)).toEqual({ linesAdded: 4, linesDeleted: 1, commits: 2, repos: 1 });
+  expect(await readFile(path, "utf8")).not.toBe(cached);
+});

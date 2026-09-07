@@ -46,7 +46,7 @@ export class TokenAnalyticsService {
   private inFlightScan: Promise<TokenAnalyticsScanResult> | null = null;
   private readonly cacheFilePath: string;
 
-  private persistentCacheLoaded = false;
+  private persistentCacheLoad: Promise<void> | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly swarmManager: SwarmManager) {
@@ -229,12 +229,9 @@ export class TokenAnalyticsService {
     return computePromise;
   }
 
-  private async ensurePersistentCacheLoaded(): Promise<void> {
-    if (this.persistentCacheLoaded) {
-      return;
-    }
-    this.persistentCacheLoaded = true;
-    this.scanCache = await loadPersistedTokenAnalyticsCache(this.cacheFilePath);
+  private ensurePersistentCacheLoaded(): Promise<void> {
+    return this.persistentCacheLoad ??= loadPersistedTokenAnalyticsCache(this.cacheFilePath)
+      .then((entry) => { this.scanCache = entry; }).catch(() => undefined);
   }
 
   private queuePersistCacheWrite(): void {

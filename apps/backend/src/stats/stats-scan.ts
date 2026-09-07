@@ -48,7 +48,7 @@ export async function scanProfilesData(
           timezone,
           diagnostics,
         });
-      });
+      }, { dataDir });
 
       const workerFiles = (await listFileNames(workersDir)).filter(
         (name) => name.endsWith(".jsonl") && !name.endsWith(".conversation.jsonl")
@@ -65,7 +65,7 @@ export async function scanProfilesData(
             timezone,
             diagnostics,
           });
-        });
+        }, { dataDir });
 
         workerBillableTokenTotalsByRunKey.set(workerRunKey, billableTokensForWorker);
       }
@@ -274,7 +274,9 @@ function collectUsageAndMessages(
     const ts = toTimestampMs(entry.data.timestamp);
     if (ts !== null) {
       userMessages.push(ts);
-      const count = countFuckOccurrences(typeof entry.data.text === "string" ? entry.data.text : "");
+      const count = typeof entry.data.statsWordCount === "number"
+        ? entry.data.statsWordCount
+        : countFuckOccurrences(typeof entry.data.text === "string" ? entry.data.text : "");
       if (count > 0) {
         const day = toDayKey(ts, options.timezone);
         fuckMeterDaily.set(day, (fuckMeterDaily.get(day) ?? 0) + count);

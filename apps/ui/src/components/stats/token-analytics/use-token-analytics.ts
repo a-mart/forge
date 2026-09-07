@@ -14,7 +14,11 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
   const isCustomIncomplete =
     query.rangePreset === 'custom' && (!query.startDate || !query.endDate)
 
+  const requestSequence = useRef(0)
+
   useEffect(() => {
+    const sequence = ++requestSequence.current
+    setIsRefreshing(false)
     if (isCustomIncomplete) {
       // Don't fetch — keep showing existing snapshot (if any) without error
       setIsLoading(false)
@@ -36,18 +40,18 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
 
     fetchTokenAnalytics(wsUrl, query)
       .then((data) => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setSnapshot(data)
           setError(null)
         }
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setError(err instanceof Error ? err.message : 'Failed to fetch token analytics')
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setIsLoading(false)
           setIsSwitchingQuery(false)
         }
@@ -55,19 +59,27 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
 
     return () => {
       cancelled = true
+      requestSequence.current += 1
     }
   }, [wsUrl, query, isCustomIncomplete]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally using snapshot ref
 
   const refresh = useCallback(async () => {
+    const sequence = ++requestSequence.current
     setIsRefreshing(true)
     try {
       const data = await refreshTokenAnalytics(wsUrl, query)
+      if (sequence !== requestSequence.current) return
       setSnapshot(data)
       setError(null)
     } catch (err) {
+      if (sequence !== requestSequence.current) return
       setError(err instanceof Error ? err.message : 'Refresh failed')
     } finally {
-      setIsRefreshing(false)
+      if (sequence === requestSequence.current) {
+        setIsRefreshing(false)
+        setIsLoading(false)
+        setIsSwitchingQuery(false)
+      }
     }
   }, [wsUrl, query])
 

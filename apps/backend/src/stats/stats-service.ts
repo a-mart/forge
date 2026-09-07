@@ -37,8 +37,9 @@ export class StatsService {
   private readonly cacheFilePath: string;
   private readonly providerUsageService: ProviderUsageService;
   private readonly scanProfiles = scanProfilesData;
+  private readonly inFlightScans = new Map<string, Promise<StatsScanContext>>();
 
-  private persistentCacheLoaded = false;
+  private persistentCacheLoad: Promise<void> | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
   private refreshAllPromise: Promise<StatsSnapshot | null> | null = null;
   private readonly onRefreshAllCompleted: ((snapshot: StatsSnapshot | null) => void | Promise<void>) | null;
@@ -67,16 +68,17 @@ export class StatsService {
     await this.ensurePersistentCacheLoaded();
 
     const timezone = normalizeTimezone(options.timezone);
-    const cacheKey = getStatsCacheKey(range);
+    const cacheKey = getStatsCacheKey(range, timezone);
     const nowMs = Date.now();
 
     if (!options.forceRefresh) {
       const cached = this.cache.get(cacheKey);
-      if (cached && cached.timezone === timezone && cached.expiresAt > nowMs) {
+      const sameDay = cached && toDayKey(Date.parse(cached.snapshot.computedAt), timezone) === toDayKey(nowMs, timezone);
+      if (cached && sameDay && cached.timezone === timezone && cached.expiresAt > nowMs) {
         return this.withLatestTokenStats(cached.snapshot, timezone);
       }
 
-      if (cached && cached.timezone === timezone) {
+      if (cached && sameDay && cached.timezone === timezone) {
         void this.refreshRangeInBackground(range, timezone);
         return this.withLatestTokenStats(cached.snapshot, timezone);
       }
@@ -193,29 +195,29 @@ export class StatsService {
     const latestTokens = getLatestTokenStatsForTimezone(this.cache, timezone);
     const latestProviders = await this.providerUsageService.getSnapshot();
 
+    const uptimeMs = Math.round(process.uptime() * 1000);
     const tokensChanged = Boolean(latestTokens && latestTokens !== snapshot.tokens);
     const providersChanged =
       snapshot.providers.openai !== latestProviders.openai ||
       snapshot.providers.anthropic !== latestProviders.anthropic ||
       snapshot.providers.xai !== latestProviders.xai;
 
-    if (!tokensChanged && !providersChanged) {
+    if (!tokensChanged && !providersChanged && snapshot.uptimeMs === uptimeMs) {
       return snapshot;
     }
 
     return {
       ...snapshot,
+      uptimeMs,
+      system: { ...snapshot.system, uptimeFormatted: formatUptime(uptimeMs) },
       ...(tokensChanged ? { tokens: latestTokens ?? snapshot.tokens } : {}),
       ...(providersChanged ? { providers: latestProviders } : {}),
     };
   }
 
-  private async ensurePersistentCacheLoaded(): Promise<void> {
-    if (this.persistentCacheLoaded) {
-      return;
-    }
-    this.persistentCacheLoaded = true;
-    await loadPersistedStatsCache(this.cacheFilePath, this.cache);
+  private ensurePersistentCacheLoaded(): Promise<void> {
+    return this.persistentCacheLoad ??= loadPersistedStatsCache(this.cacheFilePath, this.cache)
+      .catch(() => undefined);
   }
 
   private queuePersistCacheWrite(): void {
@@ -240,7 +242,7 @@ export class StatsService {
 
     const computePromise = compute()
       .then((snapshot) => {
-        this.cache.set(getStatsCacheKey(range), createStatsCacheEntry(snapshot, timezone));
+        this.cache.set(getStatsCacheKey(range, timezone), createStatsCacheEntry(snapshot, timezone));
         if (persistCache) {
           this.queuePersistCacheWrite();
         }
@@ -261,11 +263,17 @@ export class StatsService {
     return this.computeSnapshotFromScan(range, nowMs, timezone, scanContext);
   }
 
-  private async scanAllProfiles(timezone: string): Promise<StatsScanContext> {
-    const dataDir = this.swarmManager.getConfig().paths.dataDir;
-    const profileIds = await listDirectoryNames(getProfilesDir(dataDir));
-    const scanResult = await this.scanProfiles(dataDir, profileIds, timezone);
-    return { profileIds, scanResult };
+  private scanAllProfiles(timezone: string): Promise<StatsScanContext> {
+    const existing = this.inFlightScans.get(timezone);
+    if (existing) return existing;
+    const promise = (async () => {
+      const dataDir = this.swarmManager.getConfig().paths.dataDir;
+      const profileIds = await listDirectoryNames(getProfilesDir(dataDir));
+      const scanResult = await this.scanProfiles(dataDir, profileIds, timezone);
+      return { profileIds, scanResult };
+    })().finally(() => this.inFlightScans.delete(timezone));
+    this.inFlightScans.set(timezone, promise);
+    return promise;
   }
 
   private async computeSnapshotFromScan(
@@ -286,7 +294,7 @@ export class StatsService {
       timezone
     );
     const fuckMeterRangeStartDayKey = toDayKey(fuckMeterRangeStartMs, timezone);
-    const code = await computeCodeStats(scanResult.managerRepoPaths, rangeStartMs);
+    const code = await computeCodeStats(scanResult.managerRepoPaths, rangeStartMs, this.swarmManager.getConfig().paths.dataDir);
 
     const dailyEntriesInRange = buildDailyEntriesForRange(scanResult.dailyUsage, rangeStartDayKey, todayKey);
 

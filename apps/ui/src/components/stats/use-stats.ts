@@ -10,7 +10,11 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
   const [isSwitchingRange, setIsSwitchingRange] = useState(false)
   const prevRangeRef = useRef(range)
 
+  const requestSequence = useRef(0)
+
   useEffect(() => {
+    const sequence = ++requestSequence.current
+    setIsRefreshing(false)
     let cancelled = false
     const rangeChanged = prevRangeRef.current !== range
     prevRangeRef.current = range
@@ -26,18 +30,18 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
 
     fetchStats(wsUrl, range)
       .then((data) => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setStats(data)
           setError(null)
         }
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setError(err instanceof Error ? err.message : 'Failed to fetch stats')
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && sequence === requestSequence.current) {
           setIsLoading(false)
           setIsSwitchingRange(false)
         }
@@ -45,19 +49,27 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
 
     return () => {
       cancelled = true
+      requestSequence.current += 1
     }
   }, [wsUrl, range]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally using stats ref
 
   const refresh = useCallback(async () => {
+    const sequence = ++requestSequence.current
     setIsRefreshing(true)
     try {
       const data = await refreshStats(wsUrl, range)
+      if (sequence !== requestSequence.current) return
       setStats(data)
       setError(null)
     } catch (err) {
+      if (sequence !== requestSequence.current) return
       setError(err instanceof Error ? err.message : 'Refresh failed')
     } finally {
-      setIsRefreshing(false)
+      if (sequence === requestSequence.current) {
+        setIsRefreshing(false)
+        setIsLoading(false)
+        setIsSwitchingRange(false)
+      }
     }
   }, [wsUrl, range])
 

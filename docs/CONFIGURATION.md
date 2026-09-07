@@ -395,6 +395,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── generated/pi-models.json       # Generated Pi model projection
 │   │   ├── provider-usage-cache.json
 │   │   ├── provider-usage-history.jsonl
+│   │   ├── stats-sources/ # Count-only per-transcript projections and append checkpoints
+│   │   ├── stats-git/     # Git totals keyed by repository, author, range and HEAD
 │   │   ├── stats-cache.json
 │   │   ├── token-analytics-cache.json
 │   │   ├── generation-throughput-cache.json # Regenerable Pi response-throughput cache; v1 entries rebuild as v2
@@ -629,3 +631,38 @@ HTTPS keeps the browser-encrypted private-entry path. The HTTP mode sends a boun
 value only to the paired Electron vault for immediate operating-system sealing; it
 never enters chat, tools, prompts, or persisted secret metadata. Do not use HTTP mode
 on a public or untrusted network.
+
+
+### Statistics caches
+
+Overview, Token Analytics, historical throughput, session token usage and session
+throughput summaries share the derived `shared/cache/stats-sources/` cache. The
+first encounter with an existing transcript imports its statistics once. Later
+reads check file metadata and reuse the projected records; appends resume from the
+last complete JSONL row, including after restart. Refreshing the Stats pane
+reconciles these cached sources rather than rereading unchanged transcripts.
+
+The cache keeps usage, reasoning, timing and attribution fields, plus numeric user
+activity counts. It does not retain message text, tool bodies or attachments.
+Writes use the repository's atomic-file helper. Truncation, replacement, cache
+corruption and a changed append boundary rebuild only the affected source. Normal
+JSONL writers are append-only: inode/birthtime and metadata checks plus prefix/tail
+fingerprints guard append reuse, not arbitrary undetectable edits to the middle of
+a file. Complete final rows without a newline remain visible but are not
+checkpointed until the newline is written. Deleted sources stop contributing to
+queries; derived files for sources no longer enumerated can remain on disk.
+
+The in-memory source cache retains the 64 most recently read sources; persisted
+projections remain available after eviction and restart. Aggregate snapshots keep
+the existing refresh cadence and explicit refresh endpoints. Overview cache keys
+include timezone and range (version 9 reads version 8 snapshots). Day rollover
+recomputes date-dependent totals from cached records, and uptime uses the current
+process. Git counts reuse persisted results for an unchanged HEAD, author and
+range, and collect commit counts and line totals in one traversal on a miss.
+Provider quota usage retains its independent short-lived network cache.
+
+Conversation bootstrap never waits for throughput history recovery. Its optional
+snapshot arrives asynchronously and remains tied to the current subscription
+generation; switching, retrying, demoting to inventory or disconnecting discards
+late snapshots from the previous generation. The throughput badge can remain
+empty until the first cold import completes, while conversation history is usable.

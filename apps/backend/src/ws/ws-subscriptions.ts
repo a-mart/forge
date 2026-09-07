@@ -909,6 +909,9 @@ export class WsSubscriptions {
             stage: "bootstrap",
           });
         }
+        if (this.getBootstrapRequestDisposition(state, failedRequest) === "current") {
+          this.cancelBootstrapController(socket);
+        }
       })
       .finally(() => {
         if (state.activePromise !== activePromise) {
@@ -926,10 +929,10 @@ export class WsSubscriptions {
 
         if (state.latestRequest.generation > lastAttemptedGeneration) {
           this.ensureBootstrapControllerDrain(socket, state);
-          return;
         }
 
-        this.bootstrapControllers.delete(socket);
+        // Retain the current generation until replacement/disconnect so deferred
+        // telemetry from a completed bootstrap still observes supersession.
       });
 
     state.activePromise = activePromise;

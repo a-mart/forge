@@ -128,6 +128,20 @@ describe("GenerationThroughputService", () => {
     expect(scanProfiles).toHaveBeenCalledOnce();
   });
 
+  it("joins persisted-cache loading before concurrent requests can start a scan", async () => {
+    const dataDir = await createFixtureData();
+    const first = createService(createSwarmManager(dataDir));
+    const query = { rangePreset: "all" as const, timezone: "UTC", quality: "all" as const };
+    const baseline = await first.getSnapshot(query);
+    await first.drainPersistence();
+    const scanProfiles = vi.fn(async () => { throw new Error("unexpected transcript scan"); });
+    const restarted = createService(createSwarmManager(dataDir), { scanProfiles: scanProfiles as never });
+    const [one, two] = await Promise.all([restarted.getSnapshot(query), restarted.getSnapshot(query)]);
+    expect(one).toEqual(baseline);
+    expect(two).toEqual(baseline);
+    expect(scanProfiles).not.toHaveBeenCalled();
+  });
+
   it("does not restore an invalidated cache from an older in-flight scan", async () => {
     const dataDir = await createFixtureData();
     let resolveStale: ((value: ReturnType<typeof scanFixture>) => void) | undefined;

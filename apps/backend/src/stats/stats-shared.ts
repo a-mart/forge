@@ -1,3 +1,4 @@
+import { getStatsSourceCache } from "./stats-source-cache.js";
 import { createReadStream } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -19,9 +20,17 @@ export interface JsonlScanContext {
 export async function scanJsonlFile(
   path: string,
   onEntry: (entry: unknown, context: JsonlScanContext) => void,
-  options: { throwOnError?: boolean } = {}
+  options: { throwOnError?: boolean; dataDir?: string } = {}
 ): Promise<void> {
   try {
+    if (options.dataDir) {
+      let thinkingLevel: string | null = null;
+      for (const { entry } of await getStatsSourceCache(options.dataDir).read(path)) {
+        thinkingLevel = extractThinkingLevelChange(entry) ?? thinkingLevel;
+        onEntry(entry, { thinkingLevel });
+      }
+      return;
+    }
     const stream = createReadStream(path, { encoding: "utf8" });
     const reader = createInterface({
       input: stream,

@@ -35,6 +35,7 @@ export async function scanManagerTokenUsage(input: {
     getSessionFilePath(input.dataDir, input.profileId, input.sessionAgentId),
     input.startAt,
     input.endAt,
+    input.dataDir,
   )
 }
 
@@ -55,7 +56,7 @@ export async function scanWorkerTokenUsage(input: {
   }
   for (const fileName of fileNames) {
     const workerId = fileName.slice(0, -'.jsonl'.length)
-    const scan = await scanTokenUsageFile(join(workersDir, fileName), input.startAt, input.endAt)
+    const scan = await scanTokenUsageFile(join(workersDir, fileName), input.startAt, input.endAt, input.dataDir)
     result.missingTimestampCount += scan.missingTimestampCount
     result.events.push(...scan.events.map((event) => ({ ...event, workerId })))
   }
@@ -110,6 +111,7 @@ async function scanTokenUsageFile(
   filePath: string,
   startAt: string,
   endAt: string,
+  dataDir: string,
 ): Promise<TokenUsageScanResult<TokenUsageEvent>> {
   const startMs = Date.parse(startAt)
   const endMs = Date.parse(endAt)
@@ -140,7 +142,7 @@ async function scanTokenUsageFile(
     if (timestampMs >= startMs && timestampMs <= endMs) {
       result.events.push({ timestampMs, usage: { ...cursor.usage } })
     }
-  })
+  }, { dataDir })
 
   return result
 }
