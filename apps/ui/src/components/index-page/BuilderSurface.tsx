@@ -524,6 +524,7 @@ export function BuilderSurface({
   }, [httpClientRef, isRemoteOriginActive])
 
   const {
+    lockedProvider: lockedBitwardenProvider,
     prompt: bitwardenUnlockPrompt,
     ensureUnlocked: ensureBitwardenUnlocked,
     unlockPrompt: unlockBitwardenPrompt,
@@ -1751,8 +1752,11 @@ export function BuilderSurface({
       snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
       ...(!isActiveManager ? { readOnly: true } : {}),
       accessAgentId: activeAgentId,
+      lockedBitwardenProviderName: isRemoteOriginActive ? undefined : lockedBitwardenProvider?.displayName,
       ...(!isRemoteOriginActive && isSecureControlAvailable(secureBrowserControl?.authorized === true)
-        ? { onSetAccess: handleSetSecureAccess, onRecoverAccess: handleRecoverSecureAccess } : {}),
+        ? { onSetAccess: handleSetSecureAccess,
+            ...(isPrivateSecureFulfillmentAvailable(secureBrowserControl?.privateEntryAvailable === true)
+              ? { onRecoverAccess: handleRecoverSecureAccess } : {}) } : {}),
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
@@ -1776,6 +1780,7 @@ export function BuilderSurface({
     return shouldShowSecureSessionPicker(config) ? config : undefined
   }, [
     activeAgentId,
+    lockedBitwardenProvider,
     secureBrowserControl,
     handleSetSecureAccess,
     handleRecoverSecureAccess,

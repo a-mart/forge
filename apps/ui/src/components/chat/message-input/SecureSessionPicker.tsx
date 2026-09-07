@@ -7,6 +7,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  TriangleAlert,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -105,8 +106,8 @@ function isSecureSessionSnapshotView(
 function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number): {
   label: string
   ariaLabel: string
-  tone: 'muted' | 'active' | 'warning'
-  icon: 'shield' | 'check' | 'alert' | 'off' | 'loading'
+  tone: 'muted' | 'active' | 'warning' | 'locked'
+  icon: 'shield' | 'check' | 'alert' | 'off' | 'loading' | 'locked'
 } {
   const access = config.snapshot?.accessPolicy
   if (access?.paused || (config.accessAgentId && access?.blockedAgentIds.includes(config.accessAgentId))) {
@@ -134,6 +135,15 @@ function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number
       ariaLabel: `Secure session: ${formatSecureAvailability(config.availability.state)}`,
       tone: 'muted',
       icon: 'off',
+    }
+  }
+
+  if (config.lockedBitwardenProviderName) {
+    return {
+      label: 'Secrets',
+      ariaLabel: 'Project secrets: Bitwarden vault locked. Unlock to use Bitwarden secrets.',
+      tone: 'locked',
+      icon: 'locked',
     }
   }
 
@@ -190,6 +200,9 @@ function PickerIcon({
 }: {
   icon: ReturnType<typeof pickerState>['icon']
 }) {
+  if (icon === 'locked') {
+    return <TriangleAlert className="size-3" aria-hidden="true" />
+  }
   if (icon === 'loading') {
     return <Loader2 className="size-3 animate-spin" aria-hidden="true" />
   }
@@ -360,6 +373,8 @@ export function SecureSessionPicker({
               'disabled:pointer-events-none disabled:opacity-50',
               state.tone === 'active'
                 ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300'
+                : state.tone === 'locked'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300'
                 : state.tone === 'warning'
                   ? 'border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15'
                   : 'border-border/60 bg-muted/55 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground',
@@ -393,6 +408,32 @@ export function SecureSessionPicker({
             </PopoverDescription>
           </PopoverHeader>
 
+          {config.lockedBitwardenProviderName && !blocked && config.availability.state === 'available' ? (
+            <section className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs"
+              aria-label="Bitwarden vault locked">
+              <p className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-300">
+                <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
+                Bitwarden vault locked
+              </p>
+              <p className="text-muted-foreground">
+                The yellow warning means {config.lockedBitwardenProviderName} is locked.
+                {' '}This project’s agents cannot use its Bitwarden secrets until you unlock the vault.
+                {' '}Other available secret sources are unaffected.
+              </p>
+              {config.onRecoverAccess ? (
+                <Button type="button" size="sm" variant="secondary" disabled={config.disabled || changingAccess}
+                  onClick={() => {
+                    const identity = configIdentity
+                    setOpen(false)
+                    setChangingAccess(true)
+                    void config.onRecoverAccess?.().finally(() => {
+                      if (configIdentityRef.current === identity) setChangingAccess(false)
+                    })
+                  }}>Unlock Bitwarden vault</Button>
+              ) : <p className="text-muted-foreground">Open Forge Desktop to unlock the vault.</p>}
+            </section>
+          ) : null}
+
           {automatic && config.onSetAccess ? (
             <section className="space-y-2" aria-label="Secret access controls">
               <Button type="button" size="sm" variant={blocked ? 'secondary' : 'outline'}
@@ -410,7 +451,7 @@ export function SecureSessionPicker({
               </Button>
               {worker && access?.paused ? <p className="text-xs text-muted-foreground">Secret access is paused for the whole task. Restore it from the manager.</p> : null}
               <p className="text-xs text-muted-foreground">Blocking access stops protected processes. Other agents’ protected commands may also be interrupted.</p>
-              {config.onRecoverAccess && projectDefaults.some((entry) => entry.state === 'unavailable') && !blocked ? (
+              {config.onRecoverAccess && !config.lockedBitwardenProviderName && projectDefaults.some((entry) => entry.state === 'unavailable') && !blocked ? (
                 <Button type="button" size="sm" variant="secondary" disabled={config.disabled || changingAccess}
                   onClick={() => {
                     const identity = configIdentity

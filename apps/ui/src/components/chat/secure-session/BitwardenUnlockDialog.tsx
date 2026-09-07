@@ -83,7 +83,7 @@ export function BitwardenUnlockDialog({
             </DialogTitle>
             <DialogDescription>
               {reason === 'secure_session'
-                ? `Unlock ${providerName} before Team Secure Mode starts.`
+                ? `Unlock ${providerName} so this project’s agents can use its granted Bitwarden secrets. Until then, those secrets are unavailable.`
                 : `${providerName} is configured for Forge and needs to be unlocked.`}
             </DialogDescription>
           </DialogHeader>
@@ -126,7 +126,7 @@ export function BitwardenUnlockDialog({
               {unlocking
                 ? 'Unlocking…'
                 : reason === 'secure_session'
-                  ? 'Unlock and start'
+                  ? 'Unlock vault'
                   : 'Unlock'}
             </Button>
           </DialogFooter>

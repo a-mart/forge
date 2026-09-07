@@ -157,6 +157,7 @@ export interface SecureSessionPickerConfig {
   accessAgentId?: string
   onSetAccess?: (subject: SecureSessionAccessSubject, blocked: boolean) => Promise<boolean>
   onRecoverAccess?: () => Promise<boolean>
+  lockedBitwardenProviderName?: string
   secrets: SecureSecretOption[]
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'

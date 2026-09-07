@@ -37,12 +37,14 @@ describe('BitwardenUnlockDialog', () => {
       }))
     })
 
+    expect(document.body.textContent).toContain('Until then, those secrets are unavailable.')
+
     const password = getByLabelText(
       document.body,
       'Bitwarden master password',
     ) as HTMLInputElement
     fireEvent.change(password, { target: { value: 'synthetic-master-password' } })
-    fireEvent.click(getByRole(document.body, 'button', { name: 'Unlock and start' }))
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Unlock vault' }))
 
     await waitFor(() => {
       expect(password.value).toBe('')
@@ -50,7 +52,7 @@ describe('BitwardenUnlockDialog', () => {
     })
     finishUnlock()
     await waitFor(() => {
-      expect(getByRole(document.body, 'button', { name: 'Unlock and start' })).toBeTruthy()
+      expect(getByRole(document.body, 'button', { name: 'Unlock vault' })).toBeTruthy()
     })
   })
 

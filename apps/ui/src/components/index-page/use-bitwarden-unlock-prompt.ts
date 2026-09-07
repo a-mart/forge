@@ -79,6 +79,7 @@ export function useBitwardenUnlockPrompt({
   const dismissPrompt = useCallback(() => finish(false), [finish])
 
   return {
+    lockedProvider,
     prompt,
     ensureUnlocked,
     unlockPrompt,
