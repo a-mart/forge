@@ -262,7 +262,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-project-settings',
     title: 'Project Settings',
     category: 'settings',
-    summary: 'Manage one local Builder project, its context policy, secrets, and repository .forge resources.',
+    summary: 'Manage one local Builder project, its context policy, agent-only history recall, secrets, and repository .forge resources.',
     content: settingsProjectSettingsContent,
     keywords: [
       'project settings',
@@ -276,6 +276,7 @@ export const settingsArticles: HelpArticle[] = [
       'fresh windows',
       'summary',
       'history recall',
+      'sessions',
       'project secrets',
       'repository resources',
       'repository .forge',
