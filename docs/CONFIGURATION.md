@@ -183,7 +183,11 @@ Fresh is experimental and executable only by supported ordinary Pi Builder manag
 
 ### History recall
 
-Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable derived FTS index, not a second source of truth. Local Builder managers and ordinary workers use the agent-only `history` tool (`search` / `read`). Search is lexical (ranked terms, quoted phrases, prefixes, and code/path tokens), defaults to the current session including associated workers, and widens to an explicit project only when requested. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty `reason` and has no approval workflow; `all_local` is a deliberate broad search, not the only cross-project path. Reads use source-qualified references. Historical evidence is not current authority. Incomplete catch-up warnings mean a no-match is not proof of absence.
+Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable recognized v4 contentless FTS cache, not a second source of truth. Schema or version replacement is restricted to that recognized cache and is transactional; canonical transcripts are never replaced. The index payload is not read authority: `history` reads expand source-qualified references from canonical JSONL.
+
+Local Builder managers and ordinary workers use the agent-only `history` tool (`sessions` / `search` / `read`). There is no embedding index, no human/global history drawer, and no settings toggle. Indexing starts autonomously after local Builder hydration and prefers recent sources. Search is lexical (ranked terms, quoted phrases, prefixes, and code/path tokens), defaults to the current session including associated workers, and widens to an explicit project only when requested. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty `reason` and has no approval workflow; `all_local` is a deliberate broad search, not the only cross-project path.
+
+Newest searches first try a bounded chronological metadata prefix and use it only when it contains enough matching results; otherwise the complete FTS-led query runs. Relevance ranking is unchanged. Partial catalogs must not purge live sources. Coverage is `building`, `ready`, `degraded`, or `unavailable`; unreadable sources are `degraded` or `unavailable` rather than endlessly building. Long entries may be split into parts. Reads use source-qualified references, including optional `partId` / `chunkIndex`. Historical evidence is not current authority. Incomplete catch-up or `building` coverage means a no-match is not proof of absence. Secure Sessions secrets are omitted from indexed text. Remote Projects history is origin-scoped to the selected remote Builder, not the viewing client.
 
 Bounded limits:
 
@@ -193,7 +197,7 @@ Bounded limits:
 | Readable JSONL row | 1 MiB |
 | `history` read total (entry plus neighbors) | 20,000 characters |
 
-There is no embedding index and no human/global history drawer. The existing dispatcher acknowledgement-before-durable-queue gap is unchanged.
+The existing dispatcher acknowledgement-before-durable-queue gap is unchanged.
 
 ### Cortex and Knowledge v2
 
@@ -394,7 +398,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── stats-cache.json
 │   │   ├── token-analytics-cache.json
 │   │   ├── generation-throughput-cache.json # Regenerable Pi response-throughput cache; v1 entries rebuild as v2
-│   │   └── history-recall.db              # Rebuildable FTS index; canonical JSONL remains authoritative
+│   │   └── history-recall.db              # Rebuildable recognized v4 contentless cache; canonical JSONL remains authoritative
 │   ├── state/
 │   │   ├── mobile-devices.json
 │   │   ├── project-agent-shares.json

@@ -544,11 +544,11 @@ Sessions can compact 50+ times and still maintain full continuity. You can just 
 
 ### History Recall
 
-Local Builder managers and ordinary workers can recover compacted or older conversation evidence with the agent-only `history` tool (`search` then `read`). There is no human history drawer and no embedding index. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Search the current session first, including associated workers. If that is not enough, search the current project explicitly. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and does not create an approval prompt; `all_local` is a deliberate broad search across local Builder projects, not the only cross-project path.
+Local Builder managers and ordinary workers can recover compacted or older conversation evidence with the agent-only `history` tool (`sessions`, `search`, then `read`). There is no human history drawer, no embedding index, and no settings toggle. Search is lexical: ranked terms, quoted phrases, prefixes, and code or path tokens. Use `sessions` to discover matching sessions, then `search` the current session first, including associated workers. If that is not enough, search the current project explicitly. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty reason and does not create an approval prompt; `all_local` is a deliberate broad search across local Builder projects, not the only cross-project path.
 
-Hits return source-qualified references, not bare entry IDs. Historical evidence is not current authority or proof of current state. Incomplete catch-up warnings mean a no-match is not proof of absence. Canonical `session.jsonl` remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index. See [Configuration](CONFIGURATION.md#history-recall) for index and read limits.
+Indexing starts autonomously after local Builder hydration and prefers recent sources. Hits return source-qualified references, not bare entry IDs; long entries may include part locators. Reads expand those references from canonical JSONL. Historical evidence is not current authority or proof of current state. Coverage is `building`, `ready`, `degraded`, or `unavailable`. Incomplete catch-up or `building` coverage means a no-match is not proof of absence. Unreadable sources surface as `degraded` or `unavailable`, not endless building. Canonical `session.jsonl` remains the source of truth; `shared/cache/history-recall.db` is a rebuildable derived index. See [Configuration](CONFIGURATION.md#history-recall) for index and read limits.
 
-Collaboration, Cortex/system, plugin, and external-thread runtimes do not get this tool. Workers inherit the owning manager's context policy and can search the same local Builder history.
+Collaboration, Cortex/system, plugin, and external-thread runtimes do not get this tool. Workers inherit the owning manager's context policy and can search the same origin-scoped Builder history. Remote Projects search the selected remote origin's Builder history, not the viewing client's. Secure Sessions secrets are excluded from indexed text.
 
 ### Pinning Messages
 
@@ -807,7 +807,7 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
         └── workers/               # Worker JSONL logs and worker Cursor SDK state
 ```
 
-Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh. The history-recall FTS cache under `shared/cache/history-recall.db` is also rebuildable; canonical JSONL remains the source of truth.
+Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh. The history-recall cache under `shared/cache/history-recall.db` is a rebuildable recognized v4 contentless index; canonical JSONL remains the source of truth, and the index payload is not read authority.
 
 Cortex is architecturally just another manager agent. It lives in the same profile structure with its own sessions and workers.
 

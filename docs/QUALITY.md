@@ -18,6 +18,16 @@ pnpm quality:report
 - Help-content edits are routed to `pnpm help:validate`; `pnpm help:validate:migration` is reserved for one-time migration baseline fidelity checks, not normal authoring.
 - Node runtime-pin, release-version, and browser-attribution changes include their repository-specific tests; the full tier includes those tests in the complete workspace suites.
 
+## Optional history-recall benchmark
+
+`apps/backend/scripts/history-recall-benchmark.ts` is an opt-in reliability runner and is not part of `quality:quick`, `quality:changed`, or `quality:full`.
+
+```bash
+cd apps/backend && pnpm exec tsx scripts/history-recall-benchmark.ts
+```
+
+Default evaluation is strict on the compact synthetic corpus. `giant` and `scale` modes require `--confirm-large` and are never implied. The runner creates a marked disposable tmp root and deletes only that marked root; it refuses `FORGE_DATA_DIR`, live transcripts, unmarked paths, and secrets. Windows execution of this benchmark is untested.
+
 ## Required Secure Sessions gate
 
 `.github/workflows/secure-sessions.yml` runs the mandatory `secure-container-e2e` job on a Linux runner. It validates the shared Linux-guest container security path used by supported macOS and Windows Docker Desktop hosts; it is not Linux Desktop packaging or Linux Desktop support coverage. Keep this security gate distinct from the supported macOS/Windows Desktop packaging and release gates.

@@ -78,7 +78,7 @@ const conceptsMemory: HelpArticle = {
   id: 'concepts-memory',
   title: 'Memory System',
   category: 'concepts',
-  summary: 'How session memory, profile memory, Knowledge v2, and agent-only history recall differ.',
+  summary: 'How session memory, profile memory, Knowledge v2, and agent-only history sessions/search/read differ.',
   content: conceptsMemoryContent,
   keywords: [
     'memory',
@@ -93,6 +93,7 @@ const conceptsMemory: HelpArticle = {
     'cortex',
     'history',
     'history recall',
+    'sessions',
     'fresh windows',
   ],
   relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge', 'chat-compaction'],
