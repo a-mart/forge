@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
-import { getHistoryRecallIndexPath, getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
+import { getHistoryIndexSettingsPath, getHistoryRecallIndexPath, getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
 import * as jsonlReader from "../history-recall/jsonl-reader.js";
 import { HistoryRecallIndexStore } from "../history-recall/index-store.js";
 import { HistorySearchService } from "../history-recall/history-search-service.js";
@@ -22,6 +22,52 @@ afterEach(async () => {
 });
 
 describe("HistorySearchService", () => {
+  it("pauses all catch-up, keeps indexed reads, persists across restart, and resumes", async () => {
+    const fx = await createFixture();
+    await writeTranscript(fx.dataDir, fx.session, [header("/tmp/a"), nativeMessage("cached", { role: "user", content: "cachedneedle" })]);
+    await fx.service.startFromRegistry();
+    const initial = await fx.service.search(fx.session.agentId, { query: "cachedneedle" });
+    expect(initial.results).toHaveLength(1);
+    const paused = await fx.service.setIndexPaused(true);
+    expect(paused.activity).toBe("paused");
+    const before = paused.statistics!.processedBytes;
+    await appendFile(getSessionFilePath(fx.dataDir, fx.session.profileId!, fx.session.agentId), nativeMessage("appended", { role: "user", content: "appendedneedle" }) + "\n");
+    fx.service.markAgentDirty(fx.session.agentId);
+    expect((await fx.service.search(fx.session.agentId, { query: "appendedneedle" })).results).toEqual([]);
+    expect((await fx.service.read(fx.session.agentId, { ref: initial.results[0]!.ref })).entry.text).toContain("cachedneedle");
+    expect((await fx.service.getIndexStatus()).statistics!.processedBytes).toBe(before);
+    await fx.service.dispose();
+    const restarted = createService(fx);
+    await restarted.startFromRegistry();
+    expect((await restarted.getIndexStatus()).paused).toBe(true);
+    expect((await restarted.search(fx.session.agentId, { query: "appendedneedle" })).results).toEqual([]);
+    await restarted.setIndexPaused(false);
+    await vi.waitFor(async () => expect((await restarted.search(fx.session.agentId, { query: "appendedneedle" })).results).toHaveLength(1));
+    expect(JSON.parse(await readFile(getHistoryIndexSettingsPath(fx.dataDir), "utf8"))).toEqual({ paused: false });
+  });
+
+  it("can persist a pause even when the index is unavailable", async () => {
+    const fx = await createFixture();
+    const service = new HistorySearchService({ ...fx.host, loadDatabaseModule: async () => { throw new Error("private diagnostic"); } });
+    created.push(service);
+    const status = await service.setIndexPaused(true);
+    expect(status).toMatchObject({ paused: true, activity: "paused", statistics: null });
+    expect(status.error).not.toContain("private diagnostic");
+    expect(JSON.parse(await readFile(getHistoryIndexSettingsPath(fx.dataDir), "utf8"))).toEqual({ paused: true });
+  });
+
+  it("fails closed on unreadable preferences and repairs them on explicit resume", async () => {
+    const fx = await createFixture();
+    const path = getHistoryIndexSettingsPath(fx.dataDir);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "not json");
+    await fx.service.startFromRegistry();
+    expect(await fx.service.getIndexStatus()).toMatchObject({ paused: true, activity: "paused", error: expect.stringContaining("preferences") });
+    const status = await fx.service.setIndexPaused(false);
+    expect(status.paused).toBe(false);
+    expect(status.error).toBeNull();
+  });
+
   it("bounds idle filesystem probes independently of catalog size", async () => {
     const fx = await createFixture();
     for (let i = 0; i < 1000; i += 1) {

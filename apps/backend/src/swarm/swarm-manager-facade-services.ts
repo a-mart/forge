@@ -117,7 +117,7 @@ export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeSer
     "emitModelCacheObservation" | "getAgentsSnapshotVersion" | "getProfilesSnapshotVersion"
   >;
   conversation: {
-    history: Pick<HistorySearchService, "search" | "read" | "sessions" | "startFromRegistry" | "dispose">;
+    history: Pick<HistorySearchService, "search" | "read" | "sessions" | "startFromRegistry" | "dispose" | "getIndexStatus" | "setIndexPaused">;
     projector: Pick<
       ConversationProjector,
       "getConversationHistory" | "getConversationHistoryWithDiagnostics" | "getConversationHistoryPage"

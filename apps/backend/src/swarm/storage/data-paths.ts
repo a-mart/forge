@@ -762,3 +762,7 @@ export function getLegacyAuthFilePath(dataDir: string): string {
 export function getLegacySecretsFilePath(dataDir: string): string {
   return join(dataDir, "secrets.json");
 }
+
+export function getHistoryIndexSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "history-index.json");
+}

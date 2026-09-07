@@ -61,9 +61,10 @@ describe('SettingsLayout', () => {
     // Desktop nav includes all maintained settings tabs.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(19)
+    expect(buttons.length).toBe(20)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Project Settings')
+    expect(labels).toContain('History')
     expect(labels).toContain('Appearance')
     expect(labels).toContain('Secrets')
     expect(labels).toContain('Stream Deck')

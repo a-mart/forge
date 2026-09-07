@@ -5,6 +5,7 @@ import type { SettingsBackendTarget } from '@/components/settings/settings-targe
 import { createBuilderSettingsTarget } from '@/components/settings/settings-target'
 import { createSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
+import { SettingsHistory } from '@/components/settings/SettingsHistory'
 import { SettingsGitMonitoring } from '@/components/settings/SettingsGitMonitoring'
 import { SettingsAppearance } from '@/components/settings/SettingsAppearance'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
@@ -263,6 +264,7 @@ export function SettingsPanel({
       {activeTab === 'external-chrome' && target.kind === 'builder' && <SettingsExternalChrome />}
       {activeTab === 'cli-access' && <SettingsCliAccess wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'stream-deck' && <SettingsStreamDeck apiClient={apiClient} />}
+      {activeTab === 'history' && target.kind === 'builder' && <SettingsHistory wsUrl={wsUrl} />}
       {activeTab === 'observability' && <SettingsObservability apiClient={apiClient} />}
       {activeTab === 'collaboration' && (
         <SettingsCollaboration

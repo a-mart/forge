@@ -150,6 +150,14 @@ Invalid boolean or below-minimum integer values are ignored in favor of the defa
 
 Settings → General → **Repositories** (Builder/local only) stores clone defaults in `shared/config/repository-settings.json`. Precedence for Clone repository is configured home → last successfully used clone base → user home. Collaboration admin surfaces do not load this route.
 
+### History indexing
+
+**Settings → History** (local Builder only) shows activity, SQLite database and write-ahead-log sizes, discovered-source coverage, known and processed transcript bytes, schema version, and last cache update. Byte counts describe discovered canonical data, not searchable text or an estimate of the entire corpus. Diagnostics refresh every five seconds while the page is visible; no transcript contents are returned by this settings API.
+
+**Pause indexing** persists `{ "paused": true }` in `shared/config/history-index.json`, outside the disposable index. It waits behind current bounded work, stops background indexing and search/read-triggered catch-up, and survives restart. Conversations continue saving; existing indexed results and faithful canonical reads remain available, but newer content may be absent. Privacy-related cache invalidation remains active. **Resume indexing** saves `false` and schedules catch-up without resetting the index. Unreadable or malformed preferences pause indexing defensively; explicit resume replaces them if the preference file can be saved. A failed save leaves the previous preference unchanged.
+
+`GET /api/history/index` returns diagnostics; `PATCH /api/history/index` accepts only a boolean `paused`. These endpoints are not composed on Collaboration/Remote runtimes. This page does not delete conversations or rebuild the cache, and does not change Summary/Fresh policy or history eligibility/security boundaries.
+
 ### Embedded data versioning
 
 The embedded Git service versions Forge's allowlisted knowledge, profile-memory, reference, and prompt files inside the data directory. The matching legacy `MIDDLEMAN_VERSIONING_*` aliases are also accepted.

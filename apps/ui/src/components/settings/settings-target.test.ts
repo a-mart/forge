@@ -37,6 +37,7 @@ describe('createBuilderSettingsTarget', () => {
 
     expect(target.availableTabs).toContain('general')
     expect(target.availableTabs).toContain('git-monitoring')
+    expect(target.availableTabs).toContain('history')
     expect(target.availableTabs).toContain('notifications')
     expect(target.availableTabs).toContain('auth')
     expect(target.availableTabs).toContain('secrets')
@@ -70,6 +71,7 @@ describe('createCollabSettingsTarget', () => {
 
     expect(target.availableTabs).not.toContain('notifications')
     expect(target.availableTabs).not.toContain('git-monitoring')
+    expect(target.availableTabs).not.toContain('history')
     expect(target.availableTabs).not.toContain('observability')
     expect(target.availableTabs).not.toContain('secrets')
   })

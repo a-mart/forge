@@ -15,6 +15,14 @@ export abstract class SwarmManagerSessionAttentionFacade extends SwarmManagerIni
     return this.getFacadeServices().conversation.history.sessions(callerAgentId, request);
   }
 
+  getHistoryIndexStatus() {
+    return this.getFacadeServices().conversation.history.getIndexStatus();
+  }
+
+  setHistoryIndexPaused(paused: boolean) {
+    return this.getFacadeServices().conversation.history.setIndexPaused(paused);
+  }
+
   getSessionAttentionSnapshot() {
     return this.getFacadeServices().sessionAttention.getSnapshot();
   }

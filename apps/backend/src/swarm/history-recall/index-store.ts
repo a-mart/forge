@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import type Database from "better-sqlite3";
-import type { HistoryEntryKind, HistorySearchOrder } from "@forge/protocol";
+import type { HistoryEntryKind, HistorySearchOrder, HistoryIndexStatistics } from "@forge/protocol";
 import type { SqliteDatabaseConstructor } from "../types.js";
 import {
   createProjectorState,
@@ -202,6 +202,8 @@ export class HistoryRecallIndexStore {
   private readonly distinctWindows: Database.Statement;
   readonly database: Database.Database;
 
+  private ingestionPaused = false;
+
   constructor(database: Database.Database) {
     this.database = database;
     this.insertSource = database.prepare(`
@@ -344,6 +346,22 @@ export class HistoryRecallIndexStore {
 
   getSourceRow(sourceId: string): SourceRow | undefined {
     return normalizeSourceRow(this.getSource.get(sourceId) as SourceRow | undefined);
+  }
+
+  setIngestionPaused(paused: boolean): void {
+    this.ingestionPaused = paused;
+  }
+
+  getStatistics(sourceIds: string[]): HistoryIndexStatistics {
+    const row = this.database.prepare(`SELECT count(*) AS discoveredSources,
+      coalesce(sum(scan_ready),0) AS runnableSources,
+      coalesce(sum(unreadable),0) AS unreadableSources,
+      coalesce(sum(omitted_eligible_text != 0 OR oversized_state != 0),0) AS omittedSources,
+      coalesce(sum(source_size),0) AS transcriptBytes,
+      coalesce(sum(min(source_size, prefix_bytes + max(0, suffix_end - max(suffix_start, prefix_bytes)))),0) AS processedBytes,
+      max(updated_at) AS lastUpdatedAt FROM sources
+      WHERE source_id IN (SELECT value FROM json_each(?))`).get(JSON.stringify(sourceIds)) as Omit<HistoryIndexStatistics, "pendingSources">;
+    return { ...row, pendingSources: this.coverageCounts(sourceIds).pendingSourceCount };
   }
 
   readySourceIds(limit: number, sourceIds?: string[]): string[] {
@@ -646,6 +664,15 @@ export class HistoryRecallIndexStore {
   }
 
   ingestSource(source: HistorySourceDescriptor, maxBytes: number): IndexedSourceState & { scannedBytes: number; warnings: string[] } {
+    if (this.ingestionPaused) {
+      const current = this.getSourceRow(source.sourceId);
+      return {
+        sourceId: source.sourceId, generation: current?.generation ?? "", indexedBytes: current?.prefix_bytes ?? 0,
+        sourceSize: current?.source_size ?? 0, incomplete: true, pending: Boolean(current && sourceHasRemainingScan(current)),
+        omittedEligibleText: Boolean(current?.omitted_eligible_text), unreadable: Boolean(current?.unreadable),
+        scannedBytes: 0, warnings: ["History indexing is paused; cached results may not include newer content."],
+      };
+    }
     try {
       return this.ingestReadableSource(source, maxBytes);
     } catch (error) {

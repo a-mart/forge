@@ -97,6 +97,7 @@ import { createFileBrowserRoutes } from "./http/routes/file-browser-routes.js";
 import { createFileRoutes } from "./http/routes/file-routes.js";
 import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
 import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
+import { createHistoryIndexRoutes } from "./http/routes/history-index-routes.js";
 import { createRemoteUpdateAwarenessRoutes } from "./http/routes/remote-update-awareness-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createKnowledgeV2SettingsRoutes } from "./http/routes/knowledge-v2-settings-routes.js";
@@ -809,6 +810,7 @@ export class SwarmWebSocketServer {
             }),
           })
         : []),
+      ...createHistoryIndexRoutes({ swarmManager: this.swarmManager }),
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
         allowReboot: !this.swarmManager.getConfig().isDesktop,

@@ -18,6 +18,7 @@ export type SettingsTab =
   | 'project-settings'
   | 'general'
   | 'git-monitoring'
+  | 'history'
   | 'appearance'
   | 'notifications'
   | 'auth'
@@ -54,6 +55,7 @@ export interface SettingsBackendTarget {
 const BUILDER_TABS: SettingsTab[] = [
   'general',
   'git-monitoring',
+  'history',
   'appearance',
   'notifications',
   'auth',

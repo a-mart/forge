@@ -1,3 +1,6 @@
+import { stat } from "node:fs/promises";
+import { HistoryIndexPreferences } from "./history-index-preferences.js";
+import type { HistoryIndexStatus } from "@forge/protocol";
 import { randomUUID } from "node:crypto";
 import type {
   HistoryCatalogSnapshot,
@@ -52,6 +55,7 @@ import {
   DEFAULT_SESSION_LIMIT,
   EMPTY_CATALOG,
   IDLE_RECONCILE_MS,
+  INDEX_SCHEMA_VERSION,
   MAX_INDEX_CATCHUP_BYTES,
   MAX_LIVE_SNAPSHOTS,
   MAX_NEIGHBORS,
@@ -100,10 +104,48 @@ export class HistorySearchService {
   private readonly undiscoveredSourceIds = new Set<string>();
   private preferReady = false;
 
-  constructor(private readonly host: HistorySearchServiceHost) {}
+  private readonly preferences: HistoryIndexPreferences;
+  private backgroundError: string | null = null;
+
+  constructor(private readonly host: HistorySearchServiceHost) {
+    this.preferences = new HistoryIndexPreferences(host.config.paths.dataDir);
+  }
+
+  async getIndexStatus(): Promise<HistoryIndexStatus> {
+    this.assertOpen();
+    await this.preferences.load();
+    const sources = this.started ? sourcesFromCatalog(this.host, this.catalog) : [];
+    let statistics: HistoryIndexStatus["statistics"] = null;
+    let error = this.preferences.error ?? this.backgroundError;
+    try {
+      statistics = await this.runExclusive((store) => store.getStatistics(sources.map((source) => source.sourceId)));
+    } catch {
+      error = "The history index could not be opened. Check available disk space and file permissions.";
+    }
+    const path = getHistoryRecallIndexPath(this.host.config.paths.dataDir);
+    const [databaseBytes, walBytes] = await Promise.all([historyFileSize(path), historyFileSize(`${path}-wal`)]);
+    return {
+      paused: this.preferences.paused,
+      activity: this.preferences.paused ? "paused" : !statistics ? "unavailable" : !this.started ? "starting"
+        : statistics.runnableSources > 0 || this.undiscoveredSourceIds.size > 0 || this.dirtySourceIds.size > 0 ? "indexing" : this.catalog.hydration !== "complete" ? "starting" : "idle",
+      catalogHydration: this.catalog.hydration,
+      eligibleSources: this.catalog.hydration === "complete" ? sources.length : null,
+      schemaVersion: INDEX_SCHEMA_VERSION, statistics,
+      storage: { databaseBytes, walBytes }, observedAt: new Date().toISOString(), error,
+    };
+  }
+
+  async setIndexPaused(paused: boolean): Promise<HistoryIndexStatus> {
+    this.assertOpen();
+    await this.runSerialized(() => this.preferences.setPaused(paused));
+    if (paused) this.clearBackgroundTimer();
+    else this.scheduleBackground(0);
+    return this.getIndexStatus();
+  }
 
   async start(snapshot: HistoryCatalogSnapshot): Promise<void> {
     this.assertOpen();
+    await this.preferences.load();
     this.replaceCatalog(snapshot);
     this.started = true;
     this.ensureStore();
@@ -465,7 +507,7 @@ export class HistorySearchService {
   }
 
   private scheduleBackground(delayMs = 0): void {
-    if (!this.started || this.disposed) {
+    if (!this.started || this.disposed || this.preferences.paused) {
       return;
     }
     if (delayMs === 0) {
@@ -497,15 +539,17 @@ export class HistorySearchService {
   }
 
   private async runBackgroundTick(): Promise<void> {
-    if (!this.started || this.disposed || this.backgroundRunning) {
+    if (!this.started || this.disposed || this.backgroundRunning || this.preferences.paused) {
       return;
     }
     this.backgroundRunning = true;
     this.backgroundWake = false;
     let pendingWork = false;
     try {
-      pendingWork = await this.runExclusive((store) => this.runBackgroundSlice(store));
+      pendingWork = await this.runExclusive((store) => this.preferences.paused ? false : this.runBackgroundSlice(store));
+      this.backgroundError = null;
     } catch {
+      this.backgroundError = "Indexing could not complete a batch. Forge will retry automatically.";
       // Retain hints but back off after I/O/open failures rather than hot-looping.
       pendingWork = false;
     } finally {
@@ -576,11 +620,20 @@ export class HistorySearchService {
   }
 
   private runExclusive<T>(operation: (store: HistoryRecallIndexStore) => T | Promise<T>): Promise<T> {
+    return this.runSerialized(async () => {
+      await this.preferences.load();
+      const store = await this.getStore();
+      store.setIngestionPaused(this.preferences.paused);
+      return operation(store);
+    });
+  }
+
+  private runSerialized<T>(operation: () => T | Promise<T>): Promise<T> {
     const run = this.writeChain.then(async () => {
       // Let health checks, stop requests, and other sessions run between catch-up
       // batches instead of draining concurrent history calls as one microtask chain.
       await new Promise<void>((resolve) => setImmediate(resolve));
-      return operation(await this.getStore());
+      return operation();
     });
     this.writeChain = run.then(() => undefined, () => undefined);
     return run;
@@ -1132,4 +1185,9 @@ function uniqueSources(sources: HistorySourceDescriptor[]): HistorySourceDescrip
     uniqueList.push(source);
   }
   return uniqueList;
+}
+
+async function historyFileSize(path: string): Promise<number | null> {
+  try { return (await stat(path)).size; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? 0 : null; }
 }

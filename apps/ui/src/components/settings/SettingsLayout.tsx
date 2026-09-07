@@ -17,6 +17,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'project-settings', label: 'Project Settings', icon: <Settings className="size-4" /> },
   { id: 'general', label: 'General', icon: <Settings className="size-4" /> },
+  { id: 'history', label: 'History', icon: <Activity className="size-4" /> },
   { id: 'git-monitoring', label: 'Git monitoring', icon: <GitBranch className="size-4" /> },
   { id: 'appearance', label: 'Appearance', icon: <Palette className="size-4" /> },
   { id: 'notifications', label: 'Notifications', icon: <Bell className="size-4" /> },
@@ -114,7 +115,7 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children, conte
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Desktop: left nav */}
-        <nav className="hidden w-48 shrink-0 border-r border-border/60 bg-card/30 md:block">
+        <nav className="hidden w-48 shrink-0 overflow-y-auto border-r border-border/60 bg-card/30 md:block">
           <div className="flex flex-col gap-0.5 p-2 pt-3">
             {visibleItems.map((item) => {
               const isActive = activeTab === item.id
