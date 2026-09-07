@@ -183,7 +183,7 @@ Fresh is experimental and executable only by supported ordinary Pi Builder manag
 
 ### History recall
 
-Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable recognized v4 contentless FTS cache, not a second source of truth. Schema or version replacement is restricted to that recognized cache and is transactional; canonical transcripts are never replaced. The index payload is not read authority: `history` reads expand source-qualified references from canonical JSONL.
+Canonical JSONL (`session.jsonl` and worker JSONL) remains authoritative. `shared/cache/history-recall.db` is a rebuildable recognized v4 contentless FTS cache, not a second source of truth. Replacement is restricted to the recognized derived cache; schema and version initialization are transactional. Canonical transcripts are never replaced. The index payload is not read authority: `history` reads expand source-qualified references from canonical JSONL.
 
 Local Builder managers and ordinary workers use the agent-only `history` tool (`sessions` / `search` / `read`). There is no embedding index, no human/global history drawer, and no settings toggle. Indexing starts autonomously after local Builder hydration and prefers recent sources. Search is lexical (ranked terms, quoted phrases, prefixes, and code/path tokens), defaults to the current session including associated workers, and widens to an explicit project only when requested. Targeted `sessionAgentId` or `profileId` searches are also valid. Every search outside the current project requires a nonempty `reason` and has no approval workflow; `all_local` is a deliberate broad search, not the only cross-project path.
 
