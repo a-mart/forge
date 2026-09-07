@@ -91,6 +91,24 @@ describe('useBitwardenUnlockPrompt', () => {
     expect(unlock).not.toHaveBeenCalled()
   })
 
+  it('exposes only a relevant locked provider and clears the indicator from refreshed catalog state', async () => {
+    const unlock = vi.fn(async () => undefined)
+    const render = (catalog: SecureSecretsCatalog, providerIds: string[]) => act(async () => {
+      root.render(createElement(Harness, { catalog, providerIds, unlock, onController: captureController }))
+    })
+    await render(lockedCatalog, ['unrelated-source'])
+    expect(controller.lockedProvider).toBeNull()
+    await render(lockedCatalog, ['bitwarden-password-manager'])
+    expect(controller.lockedProvider?.displayName).toBe('Bitwarden Password Manager')
+    expect(controller.prompt).toBeNull()
+    await render({ ...lockedCatalog,
+      providers: lockedCatalog.providers.map((provider) => ({ ...provider, status: 'available' })),
+    }, ['bitwarden-password-manager'])
+    expect(controller.lockedProvider).toBeNull()
+    await render(lockedCatalog, ['bitwarden-password-manager'])
+    expect(controller.lockedProvider?.status).toBe('locked')
+  })
+
   it('stays quiet at launch and prompts only when protected access needs unlocking', async () => {
     const unlock = vi.fn(async () => undefined)
     await act(async () => {

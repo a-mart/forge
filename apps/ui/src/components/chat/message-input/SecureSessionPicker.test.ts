@@ -89,6 +89,46 @@ afterEach(() => {
 })
 
 describe('SecureSessionPicker', () => {
+  it('shows an amber locked-vault warning before first use and opens private unlock from its explanation', async () => {
+    const onRecoverAccess = vi.fn(async () => false)
+    const config = makeConfig({ lockedBitwardenProviderName: 'Work vault', onRecoverAccess })
+    config.snapshot = { ...config.snapshot!, executionMode: 'standard', environmentStatus: 'stopped',
+      accessPolicy: { paused: false, blockedAgentIds: [], blockedSecretIds: [] },
+      projectDefaults: [{ secretId: 'secret-1', displayAlias: 'deploy-token', state: 'configured', statusCode: 'ok' }] }
+    renderPicker(config)
+    const trigger = getByRole(container, 'button', { name: /Bitwarden vault locked/i })
+    expect(trigger.className).toContain('text-amber-700')
+    expect(trigger.querySelector('.lucide-triangle-alert')).not.toBeNull()
+    openPicker(/Bitwarden vault locked/i)
+    expect(document.body.textContent).toContain('cannot use its Bitwarden secrets until you unlock the vault')
+    expect(document.body.textContent).toContain('Work vault is locked')
+    flushSync(() => fireEvent.click(getByRole(document.body, 'button', { name: 'Unlock Bitwarden vault' })))
+    await Promise.resolve()
+    expect(onRecoverAccess).toHaveBeenCalledOnce()
+    // Cancelling does not claim that the vault is unlocked; the catalog remains authoritative.
+    expect(getByRole(container, 'button', { name: /Bitwarden vault locked/i }).className).toContain('text-amber-700')
+    renderPicker({ ...config, lockedBitwardenProviderName: undefined })
+    expect(getByRole(container, 'button', { name: /project secret access/i }).className).toContain('text-emerald-700')
+  })
+
+  it('keeps the lock warning visible when another secret already has an active lease', () => {
+    const config = makeConfig({ lockedBitwardenProviderName: 'Bitwarden', readOnly: true, onRecoverAccess: vi.fn() })
+    config.snapshot!.leases = [{ leaseId: 'local-lease', secretId: 'local-secret', displayAlias: 'local',
+      policy: { kind: 'task' }, status: 'active', bindings: [] }]
+    renderPicker(config)
+    openPicker(/Bitwarden vault locked/i)
+    expect(getByRole(document.body, 'button', { name: 'Unlock Bitwarden vault' })).toBeDefined()
+  })
+
+  it('keeps a task pause authoritative over a locked provider warning', () => {
+    const config = makeConfig({ lockedBitwardenProviderName: 'Bitwarden', onRecoverAccess: vi.fn() })
+    config.snapshot!.accessPolicy = { paused: true, blockedAgentIds: [], blockedSecretIds: [] }
+    renderPicker(config)
+    openPicker(/secrets paused/i)
+    expect(document.body.textContent).not.toContain('Unlock Bitwarden vault')
+    expect(document.body.textContent).not.toContain('The yellow warning')
+  })
+
   it('offers inherited access and a durable task pause without Start or Apply controls', () => {
     const onSetAccess = vi.fn(async () => true)
     const config = makeConfig({ onSetAccess, accessAgentId: 'manager-1' })
