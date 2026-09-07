@@ -17,6 +17,17 @@ export interface StatsSnapshot {
   dailyUsage: DailyUsageBucket[];
   providers: ProviderUsageStats;
   system: SystemStats;
+  /** Hidden daily counts of user-authored "fuck" occurrences. Optional for older fixtures/clients. */
+  fuckMeter?: FuckMeterStats;
+}
+
+export interface FuckMeterDailyBucket {
+  date: string;
+  count: number;
+}
+
+export interface FuckMeterStats {
+  daily: FuckMeterDailyBucket[];
 }
 
 export interface TokenStats {

@@ -13,7 +13,7 @@ import {
 } from "./stats-cache.js";
 import { computeCodeStats, readServerVersion } from "./stats-git.js";
 import { listDirectoryNames } from "./stats-shared.js";
-import { buildDailyEntriesForRange, scanProfilesData, sumDailyWindow } from "./stats-scan.js";
+import { buildDailyEntriesForRange, buildFuckMeterEntriesForRange, scanProfilesData, sumDailyWindow } from "./stats-scan.js";
 import {
   computeLongestStreak,
   computeRangeDayCount,
@@ -279,6 +279,13 @@ export class StatsService {
     const yesterdayKey = shiftDayKey(todayKey, -1);
     const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayKey, timezone);
     const rangeStartDayKey = toDayKey(rangeStartMs, timezone);
+    const fuckMeterRangeStartMs = getRangeStartMs(
+      range,
+      nowMs,
+      scanResult.earliestUserActivityDayKey,
+      timezone
+    );
+    const fuckMeterRangeStartDayKey = toDayKey(fuckMeterRangeStartMs, timezone);
     const code = await computeCodeStats(scanResult.managerRepoPaths, rangeStartMs);
 
     const dailyEntriesInRange = buildDailyEntriesForRange(scanResult.dailyUsage, rangeStartDayKey, todayKey);
@@ -377,6 +384,13 @@ export class StatsService {
         cachedTokens: entry.totals.cacheRead,
       })),
       providers: await this.providerUsageService.getSnapshot(),
+      fuckMeter: {
+        daily: buildFuckMeterEntriesForRange(
+          scanResult.fuckMeterDaily,
+          fuckMeterRangeStartDayKey,
+          todayKey
+        ),
+      },
       system: {
         uptimeFormatted: formatUptime(uptimeMs),
         totalProfiles: profileIds.length,

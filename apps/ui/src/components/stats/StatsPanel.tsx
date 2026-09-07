@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card } from '@/components/ui/card'
 import { useStats } from './use-stats'
+import { useFuckMeterReveal } from './use-fuck-meter-reveal'
+import { FuckMeter } from './FuckMeter'
 import { StatsLayout } from './StatsLayout'
 import { TokenUsageCards } from './cards/TokenUsageCards'
 import { CacheMetricsCards } from './cards/CacheMetricsCards'
@@ -114,6 +116,7 @@ function isEmptyStats(stats: {
 
 export function StatsPanel({ wsUrl, onBack, activeTab, onTabChange }: StatsPanelProps) {
   const [range, setRange] = useState<StatsRange>('7d')
+  const fuckMeter = useFuckMeterReveal(!activeTab || activeTab === 'overview')
   const { stats, isLoading, error, isRefreshing, isSwitchingRange, refresh } = useStats(wsUrl, range)
   const isUpdating = isRefreshing || isSwitchingRange
 
@@ -135,6 +138,7 @@ export function StatsPanel({ wsUrl, onBack, activeTab, onTabChange }: StatsPanel
         <ErrorState error={error} onRetry={refresh} />
       ) : stats ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
+          {fuckMeter.visible && <FuckMeter key={range} data={stats.fuckMeter} onClose={fuckMeter.hide} />}
           {isEmptyStats(stats) ? (
             <EmptyState />
           ) : (

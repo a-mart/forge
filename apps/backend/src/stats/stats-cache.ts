@@ -5,7 +5,9 @@ import { isEnoentError, isRecord, STATS_CACHE_TTL_MS } from "./stats-shared.js";
 import { normalizeTimezone } from "./stats-time.js";
 import type { CacheEntry, PersistedStatsCache } from "./stats-types.js";
 
-const STATS_CACHE_VERSION = 7;
+const STATS_CACHE_VERSION = 8;
+
+export { STATS_CACHE_VERSION };
 
 export function getStatsCacheKey(range: StatsRange): string {
   return `stats:${range}`;
