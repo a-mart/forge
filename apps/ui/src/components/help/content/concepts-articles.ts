@@ -96,7 +96,7 @@ const conceptsMemory: HelpArticle = {
     'sessions',
     'fresh windows',
   ],
-  relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge', 'chat-compaction'],
+  relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge', 'chat-compaction', 'settings-history'],
   contextKeys: ['chat.main'],
 }
 

@@ -32,7 +32,7 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `swarm-observability-coordinator.ts` - runtime/input/tool/lifecycle trace coordination with bounded fail-open projection.
 - `swarm-compaction-coordinator.ts` - runtime compaction orchestration, retry/recovery state, and capture/plan lifecycle hooks.
 - `context-mode.ts` - Summary/Fresh policy resolution, Fresh runtime support, and session snapshots; workers inherit the owning manager.
-- `history-recall/` / `history-recall-tool.ts` - rebuildable recognized v4 contentless lexical history cache and the agent-only `history` tool (`sessions` / `search` / `read`); canonical JSONL remains authoritative and the index payload is not read authority.
+- `history-recall/` / `history-recall-tool.ts` - rebuildable recognized v4 contentless lexical history cache and the agent-only `history` tool (`sessions` / `search` / `read`); canonical JSONL remains authoritative and the index payload is not read authority. Pause preference lives in `shared/config/history-index.json`, outside the disposable cache.
 - `prompt-resource-coordinator.ts` - prompt, specialist, reference, skill, extension, and executable-resource resolution for runtime creation.
 - `collaboration-storage-provisioner.ts` - Collaboration-specific profile/session storage provisioning and system prompt persistence.
 - `session-pin-coordinator.ts` - message-pin indexes, persistence/runtime synchronization, fork filtering, disposal, and sidebar pin mutations.
@@ -97,7 +97,7 @@ Treat the explicit `SwarmManagerFacade` application API as stable. Any signature
 - Boot ordering matters. Session/meta hydration, prompt/runtime setup, and lifecycle recovery are intentionally sequenced; do not reorder casually.
 - Specialist fallback replay must preserve buffered callbacks and prepared replay snapshots so the replacement runtime sees the same work stream.
 - The `SwarmManager` file and constructor ESLint budgets are ratchets. Lower them after extractions; do not raise them to land a feature.
-- History recall indexes autonomously after local Builder hydration and prefers recent sources. Partial catalogs must not purge live sources. Newest searches may use a bounded chronological prefix only when it contains enough matches; otherwise the complete FTS-led query runs and relevance ranking is unchanged. Unreadable sources are `degraded` or `unavailable`, not endless `building`. Collaboration, Cortex/system, plugin, and external-thread runtimes stay excluded; Remote Projects remain origin-scoped; Secure Sessions secrets stay out of indexed text. The dispatcher acknowledgement-before-durable-queue gap is unchanged.
+- History recall indexes autonomously after local Builder hydration and prefers recent sources. Partial catalogs must not purge live sources. Newest searches may use a bounded chronological prefix only when it contains enough matches; otherwise the complete FTS-led query runs and relevance ranking is unchanged. Unreadable sources are `degraded` or `unavailable`, not endless `building`. Collaboration, Cortex/system, plugin, and external-thread runtimes stay excluded; Remote Projects remain origin-scoped; Secure Sessions secrets stay out of indexed text. Pause waits for bounded current work, then gates background indexing and search/read catch-up while conversation recording, cached hits, and canonical reads remain available. The dispatcher acknowledgement-before-durable-queue gap is unchanged.
 
 ## Tests to update
 

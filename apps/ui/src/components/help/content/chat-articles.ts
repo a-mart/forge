@@ -465,7 +465,7 @@ export const chatArticles: HelpArticle[] = [
       'sessions',
       'checkpoint',
     ],
-    relatedIds: ['chat-overview', 'chat-system-prompt', 'chat-sending', 'settings-project-settings', 'concepts-memory'],
+    relatedIds: ['chat-overview', 'chat-system-prompt', 'chat-sending', 'settings-project-settings', 'concepts-memory', 'settings-history'],
     contextKeys: ['chat.compaction'],
   },
   {

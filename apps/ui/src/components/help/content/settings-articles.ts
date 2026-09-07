@@ -9,6 +9,7 @@ import settingsExtensionsContent from './articles/settings/settings-extensions.m
 import settingsExternalChromeContent from './articles/settings/settings-external-chrome.md?raw'
 import settingsGeneralContent from './articles/settings/settings-general.md?raw'
 import settingsGitMonitoringContent from './articles/settings/settings-git-monitoring.md?raw'
+import settingsHistoryContent from './articles/settings/settings-history.md?raw'
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
@@ -259,6 +260,27 @@ export const settingsArticles: HelpArticle[] = [
     contextKeys: ['settings.git-monitoring'],
   },
   {
+    id: 'settings-history',
+    title: 'History',
+    category: 'settings',
+    summary: 'Pause or resume local Builder history indexing and inspect index diagnostics without changing search enablement.',
+    content: settingsHistoryContent,
+    keywords: [
+      'history',
+      'history recall',
+      'indexing',
+      'pause indexing',
+      'resume indexing',
+      'refresh',
+      'search availability',
+      'transcript data scanned',
+      'history-index.json',
+      'local builder',
+    ],
+    relatedIds: ['chat-compaction', 'concepts-memory', 'settings-project-settings'],
+    contextKeys: ['settings.history'],
+  },
+  {
     id: 'settings-project-settings',
     title: 'Project Settings',
     category: 'settings',
@@ -284,7 +306,7 @@ export const settingsArticles: HelpArticle[] = [
       'resource override',
       'project header',
     ],
-    relatedIds: ['chat-sidebar', 'chat-profiles', 'models-routing', 'settings-secrets', 'settings-skills', 'chat-compaction', 'chat-sending'],
+    relatedIds: ['chat-sidebar', 'chat-profiles', 'models-routing', 'settings-secrets', 'settings-skills', 'chat-compaction', 'chat-sending', 'settings-history'],
     contextKeys: ['settings.project-settings'],
   },
   {

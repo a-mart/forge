@@ -21,7 +21,8 @@ not.
 **Summary (default)** or **Fresh windows (experimental)**. Summary generates a
 summary; Fresh starts from a checkpoint and retrieves older history with the
 agent-only `history` tool (`sessions`, `search`, `read`). There is no human
-history drawer. Saving this setting does not clear the current conversation; it
+history drawer. Indexing pause and diagnostics live in **Settings → History**,
+not here. Saving this setting does not clear the current conversation; it
 applies at the next context transition. Eligible local Builder managers can
 inherit this default or override it from the compact **Context management**
 control beside Send. Fresh is executable only by supported ordinary Pi Builder
