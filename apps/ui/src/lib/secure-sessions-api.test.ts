@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SecureAccessRequestSummary, SecureSessionSnapshot } from '@forge/protocol'
 import {
+  setSecureSessionAccess,
   applySecureSessionProjectDefaults,
   approveSecureSshHostTrustRequest,
   denySecureAccessRequest,
@@ -72,6 +73,21 @@ beforeEach(() => {
 })
 
 describe('Secure Sessions API', () => {
+  it('preserves access denials in snapshot views and sends authenticated policy changes', async () => {
+    const source = snapshot();
+    source.accessPolicy = { paused: false, blockedAgentIds: ['worker'], blockedSecretIds: ['secret'] };
+    expect(toSecureSessionSnapshotView(source).accessPolicy).toEqual(source.accessPolicy);
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(source), { status: 200 }));
+    await setSecureSessionAccess(makeClient(fetchImpl), 'manager-1', {
+      baseRevision: 4, subject: { kind: 'agent', agentId: 'worker' }, blocked: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledWith('/api/secure-sessions/manager-1/access', expect.objectContaining({
+      method: 'POST', headers: expect.any(Headers),
+      body: JSON.stringify({ baseRevision: 4, subject: { kind: 'agent', agentId: 'worker' }, blocked: true }),
+    }));
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('x-forge-secure-control')).toBe('test-secure-control-token-that-is-long-enough');
+  });
+
   it('maps the project-default limit to a fixed safe message', () => {
     expect(secureSessionUiErrorMessage(
       new SecureSessionUiError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'),

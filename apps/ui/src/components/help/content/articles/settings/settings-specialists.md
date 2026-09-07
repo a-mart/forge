@@ -3,8 +3,8 @@ Delegation separates manager ownership from worker configuration. A roster is a 
 ## Work mode
 
 - **Delegate first** — the default. The manager delegates substantial project work and keeps direct work to answers, bounded read-only orientation, and acceptance checks.
-- **Adaptive** — the manager chooses ownership outcome by outcome, keeping work where continuity matters and delegating when efficiency, independence, or capability materially improves.
-- **Hands-on** — the manager normally owns one cohesive bounded outcome itself, while retaining delegation for useful parallelism, isolation, model diversity, specialized behavior, independent review, or work-graph scheduling.
+- **Adaptive** — starts directly and delegates when expected time, total cost, or independent assurance benefits outweigh briefing, waiting, verification, and likely rework.
+- **Hands-on** — the manager executes investigation, implementation, and validation directly. It delegates for explicit requests, unavailable capabilities, or concrete benefits from separable work. Complexity, multiple files, and worktrees alone do not trigger a handoff.
 
 Projects can set a default work mode. An eligible Builder manager session can inherit it or override it from the work-mode control beside Send. A mid-session work-mode change replaces the manager runtime before its next turn and may cause one prompt-cache miss. It does not stop workers or alter an active graph.
 

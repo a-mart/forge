@@ -183,6 +183,36 @@ describe('External Chrome development resource staging', () => {
     expect(packageCachedHost).not.toHaveBeenCalled()
   })
 
+  it('rebuilds a previously unsupported Windows host and writes the required development resource manifest', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'forge-external-chrome-dev-recovery-'))
+    roots.push(root)
+    const input = await developmentInputs(root)
+    const packageManifestPath = path.join(input.nativePackageRoot, 'package-manifest.json')
+    await writeFile(packageManifestPath, JSON.stringify({
+      schemaVersion: 1, package: '@forge/external-chrome-native-host',
+      sea: { status: 'unsupported-toolchain', reason: 'Node 24.19.0 lacks --build-sea' },
+    }))
+    const outputRoot = path.join(root, '.dev-external-chrome')
+    const runCommand = vi.fn(async () => {
+      // The packaging command must remove stale capability metadata before rebuilding.
+      await expect(readFile(packageManifestPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await validationSeaInput(input)
+    })
+    const result = await prepareExternalChromeDevelopmentResources({
+      outputRoot, ...input, platform: 'win32', architecture: 'x64',
+      packageWindowsNativeHost: () => packageWindowsDevelopmentHost({ packageManifestPath, runCommand }),
+      verifyExecutable: vi.fn().mockResolvedValue(undefined),
+    })
+    expect(runCommand).toHaveBeenCalledOnce()
+    expect(result.skipped).toBeUndefined()
+    expect(JSON.parse(await readFile(path.join(outputRoot, 'package-manifest.json'), 'utf8'))).toEqual(result.manifest)
+    expect(result.manifest.nativeHost).toMatchObject({
+      executable: 'forge-external-chrome-native-host.exe',
+      signature: { scheme: 'authenticode', mode: 'validation', verified: false },
+      development: { source: 'validation-sea' },
+    })
+  })
+
   it('executes a spaced Windows Node path directly while forcing validation mode', async () => {
     const runCommand = vi.fn().mockResolvedValue(undefined)
     const removeManifest = vi.fn().mockResolvedValue(undefined)

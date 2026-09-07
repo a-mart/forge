@@ -339,7 +339,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-secrets',
     title: 'Secrets and Secure Sessions',
     category: 'settings',
-    summary: 'Scope local or Bitwarden secrets by project, pair secure browsers, and privately fulfill agent requests.',
+    summary: 'Grant local or Bitwarden secrets to projects for automatic agent access, pause or block access, and privately fulfill requests.',
     content: settingsSecretsContent,
     keywords: [
       'secure session',

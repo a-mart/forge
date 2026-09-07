@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomsInbox } from './RoomsInbox'
+import type { SessionRow } from '@/lib/agent-hierarchy'
 import type { RoomsInboxSections, RoomsInboxSessionViewModel } from './rooms-inbox-selectors'
 
 let root: Root | null = null
@@ -39,6 +40,7 @@ function sections(overrides: Partial<RoomsInboxSections> = {}): RoomsInboxSectio
     activeOverflowCount: 0,
     activeWorkerCount: 0,
     recent: [],
+    recentOverflowCount: 0,
     projects: [],
     projectCount: 0,
     ...overrides,
@@ -227,6 +229,50 @@ describe('RoomsInbox', () => {
     expect(container.querySelector('[data-inbox-row="local::recent"] .sidebar-room-inbox-relative-time')).not.toBeNull()
   })
 
+  it('collapses Recent to five rows, expands inline, and collapses back without switching modes', () => {
+    const onShowProjects = vi.fn()
+    const recent = Array.from({ length: 7 }, (_, index) => view(`recent-${index}`))
+    renderInbox({
+      sections: sections({ recent, recentOverflowCount: 2 }),
+      onShowProjects,
+    })
+
+    const recentSection = container.querySelector('[data-inbox-section="recent"]') as HTMLElement
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 2 more' })).not.toBeNull()
+    expect(recentSection.textContent).not.toContain('Show less')
+
+    flushSync(() => {
+      fireEvent.click(getByRole(recentSection, 'button', { name: 'Show 2 more' }))
+    })
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(7)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-6"]')).not.toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show less' })).not.toBeNull()
+    expect(onShowProjects).not.toHaveBeenCalled()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(recentSection, 'button', { name: 'Show less' }))
+    })
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 2 more' })).not.toBeNull()
+  })
+
+  it('keeps a selected Recent session visible while collapsed', () => {
+    const recent = Array.from({ length: 6 }, (_, index) => view(`recent-${index}`))
+    renderInbox({
+      sections: sections({ recent, recentOverflowCount: 1 }),
+      selected: { originId: 'local', sessionAgentId: 'recent-5' },
+    })
+
+    const recentSection = container.querySelector('[data-inbox-section="recent"]') as HTMLElement
+    expect(recentSection.querySelectorAll('[data-inbox-row]')).toHaveLength(5)
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-5"]')).not.toBeNull()
+    expect(recentSection.querySelector('[data-inbox-row="local::recent-4"]')).toBeNull()
+    expect(getByRole(recentSection, 'button', { name: 'Show 1 more' })).not.toBeNull()
+  })
+
   it('uses neutral raised selection in Needs You and Recent, reserving the green inset ring for Active', () => {
     const sectionRows = sections({
       needsYou: [view('needs', 'decision_waiting')],
@@ -251,5 +297,111 @@ describe('RoomsInbox', () => {
       selected: { originId: 'local', sessionAgentId: 'active' },
     })
     expect(container.querySelector('[data-inbox-row="local::active"]')?.parentElement?.classList.contains('sidebar-room-row-selected')).toBe(true)
+  })
+
+  it('offers the same session context menu on Needs You, Active, and Recent rows and dispatches the bound action', () => {
+    const onRename = vi.fn()
+    const onFork = vi.fn()
+    const onChangeSessionModel = vi.fn()
+    const sessionRow: SessionRow = {
+      sessionAgent: {
+        agentId: 'needs',
+        managerId: 'needs',
+        displayName: 'needs',
+        role: 'manager',
+        status: 'idle',
+        createdAt: '2026-08-03T10:00:00.000Z',
+        updatedAt: '2026-08-03T10:00:00.000Z',
+        cwd: '/tmp',
+        model: { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514', thinkingLevel: 'none' },
+        sessionFile: '/tmp/needs.jsonl',
+        sessionLabel: 'needs',
+        profileId: 'project-a',
+      },
+      workers: [],
+      isDefault: false,
+    }
+    const resolveSessionMenu = (session: RoomsInboxSessionViewModel) => {
+      if (session.identity.originId !== 'local') return null
+      return {
+        session: { ...sessionRow, sessionAgent: { ...sessionRow.sessionAgent, agentId: session.identity.sessionAgentId, sessionLabel: session.label, sessionFile: `/tmp/${session.identity.sessionAgentId}.jsonl` } },
+        actions: { onRename, onFork, onChangeSessionModel },
+      }
+    }
+
+    renderInbox({
+      sections: sections({
+        needsYou: [view('needs', 'decision_waiting')],
+        active: [view('active', 'manager_working')],
+        recent: [view('recent')],
+      }),
+      resolveSessionMenu,
+    })
+
+    for (const section of ['needs-you', 'active', 'recent'] as const) {
+      const sectionEl = container.querySelector(`[data-inbox-section="${section}"]`) as HTMLElement
+      const row = sectionEl.querySelector('[data-inbox-row]') as HTMLElement
+      expect(row.closest('[data-slot="context-menu-trigger"]')).not.toBeNull()
+      flushSync(() => {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+      })
+      const text = document.body.textContent ?? ''
+      expect(text).toContain('Copy session data path')
+      expect(text).toContain('Rename')
+      expect(text).toContain('Fork')
+      expect(text).toContain('Override Session Model')
+    }
+
+    const renameItem = Array.from(document.body.querySelectorAll('[role="menuitem"]')).find(
+      (item) => item.textContent?.includes('Rename'),
+    ) as HTMLElement | undefined
+    expect(renameItem).toBeDefined()
+    flushSync(() => {
+      renameItem!.click()
+    })
+    expect(onRename).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not attach local session actions to remote Inbox rows', () => {
+    const onRename = vi.fn()
+    renderInbox({
+      sections: sections({
+        needsYou: [view('remote-session', 'decision_waiting')],
+        recent: [view('recent')],
+      }),
+      resolveSessionMenu: (session) => session.identity.originId === 'local'
+        ? {
+            session: {
+              sessionAgent: {
+                agentId: session.identity.sessionAgentId,
+                managerId: session.identity.sessionAgentId,
+                displayName: session.label,
+                role: 'manager',
+                status: 'idle',
+                createdAt: session.createdAt,
+                updatedAt: session.updatedAt ?? session.createdAt,
+                cwd: '/tmp',
+                model: { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514', thinkingLevel: 'none' },
+                sessionFile: `/tmp/${session.identity.sessionAgentId}.jsonl`,
+                sessionLabel: session.label,
+                profileId: session.identity.profileId,
+              },
+              workers: [],
+              isDefault: false,
+            },
+            actions: { onRename },
+          }
+        : null,
+    })
+
+    const remoteRow = container.querySelector('[data-inbox-row="remote::remote-session"]') as HTMLElement
+    expect(remoteRow.closest('[data-slot="context-menu-trigger"]')).toBeNull()
+    flushSync(() => {
+      remoteRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+    expect(document.body.textContent).not.toContain('Rename')
+
+    const localRow = container.querySelector('[data-inbox-row="local::recent"]') as HTMLElement
+    expect(localRow.closest('[data-slot="context-menu-trigger"]')).not.toBeNull()
   })
 })

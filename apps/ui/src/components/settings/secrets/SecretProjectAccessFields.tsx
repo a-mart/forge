@@ -165,10 +165,10 @@ export function AutomaticGrantFields({
       className="space-y-3 rounded-md border border-border/70 bg-card/30 p-3"
       disabled={disabled}
     >
-      <legend className="px-1 text-sm font-medium">Automatically grant in</legend>
+      <legend className="px-1 text-sm font-medium">Granted to projects</legend>
       <p className="text-xs text-muted-foreground">
-        Team Secure Mode grants this secret to eligible agents in the selected projects until
-        it stops. Being available in a project's catalog does not grant access.
+        Eligible agents in these projects can use this secret automatically. No start step is needed.
+        Catalog availability alone does not grant access.
       </p>
 
       <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border/70 bg-background/50 p-1.5">

@@ -45,6 +45,7 @@ function manager(options: { secureSnapshotError?: Error } = {}) {
     ownerManagerAgentId: null,
     workerAssignmentId: null,
     revision: 7,
+    accessPolicy: { paused: false, blockedAgentIds: ["worker-1"], blockedSecretIds: [] },
     executionMode: "secure" as const,
     environmentStatus: "ready" as const,
     leases: [{
@@ -146,6 +147,7 @@ describe("secure session bootstrap projection", () => {
         expect.objectContaining({
           type: "secure_session_snapshot",
           sessionAgentId: "session",
+          accessPolicy: { paused: false, blockedAgentIds: ["worker-1"], blockedSecretIds: [] },
           principalKind: "manager",
           ownerManagerAgentId: null,
           workerAssignmentId: null,

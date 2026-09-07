@@ -78,11 +78,17 @@ describe("SwarmSessionService shutdown safety", () => {
       sessionDescriptor: descriptors.get(forked.agentId)!,
       sessionNumber: 2,
     }));
+    const copySecureAccessForFork = vi.fn(async () => async () => undefined);
     const service = new SwarmSessionService({
       profiles,
+      copySecureAccessForFork,
       getRequiredSessionDescriptor: (agentId: string) => descriptors.get(agentId)!,
       prepareSessionCreation,
-      provisioner: { provisionSession: vi.fn(async () => undefined) },
+      provisioner: { provisionSession: vi.fn(async (input) => {
+        await input.beforeRuntime();
+        expect(copySecureAccessForFork).toHaveBeenCalled();
+        await input.initializeRuntime();
+      }) },
       ensureEffectiveDelegationRoster: vi.fn(async () => undefined),
       saveStore: vi.fn(async () => undefined),
       emitSessionLifecycle: vi.fn(),
@@ -97,6 +103,7 @@ describe("SwarmSessionService shutdown safety", () => {
 
     const copied = await service.forkSession(source.agentId, { label: "Fork" });
     expect(copied.sessionAgent.contextModeOverride).toBe("fresh");
+    expect(copySecureAccessForFork).toHaveBeenCalledWith(source.agentId, forked.agentId);
 
     prepareSessionCreation.mockImplementationOnce(() => ({
       profile: profiles.get("manager")!,
@@ -106,4 +113,36 @@ describe("SwarmSessionService shutdown safety", () => {
     const inherited = await service.forkSession(inheritSource.agentId, { label: "Inherit fork" });
     expect(inherited.sessionAgent.contextModeOverride).toBeUndefined();
   });
+});
+
+describe("provisioning rollback ownership", () => {
+  it.each(["pending", "failed", "cleanup_failed"] as const)(
+    "retains the session ID and secure state when rollback is %s",
+    async (failure) => {
+      const { SessionProvisioner } = await import("../session-provisioner.js");
+      const descriptor = createAgentDescriptor({
+        agentId: "failed-fork", managerId: "failed-fork", profileId: "project", role: "manager",
+      });
+      const deleteDescriptor = vi.fn();
+      const cleanupSecureState = vi.fn(async () => {
+        if (failure === "cleanup_failed") throw new Error("secure cleanup failed");
+      });
+      const provisioner = new SessionProvisioner({
+        runtimes: new Map([[descriptor.agentId, {}]]),
+        runRuntimeShutdown: async () => failure === "cleanup_failed"
+          ? { status: "clean" }
+          : failure === "pending" ? { status: "pending" }
+            : { status: "failed", error: new Error("runtime cleanup failed") },
+        detachRuntime: vi.fn(),
+        descriptorMutations: { deleteDescriptor },
+        logDebug: vi.fn(),
+      } as unknown as ConstructorParameters<typeof SessionProvisioner>[0]);
+
+      await expect(provisioner.rollbackCreatedSession(descriptor, {
+        beforeRemoval: cleanupSecureState,
+      })).resolves.toMatchObject({ status: "retained" });
+      expect(deleteDescriptor).not.toHaveBeenCalled();
+      expect(cleanupSecureState).toHaveBeenCalledTimes(failure === "cleanup_failed" ? 1 : 0);
+    },
+  );
 });

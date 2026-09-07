@@ -438,6 +438,7 @@ describe('handleConversationEvent secure session snapshots', () => {
       ownerManagerAgentId: null,
       workerAssignmentId: null,
       revision: 3,
+      accessPolicy: { paused: false, blockedAgentIds: ['worker'], blockedSecretIds: ['secret'] },
       executionMode: 'secure',
       environmentStatus: 'ready',
       leases: [],
@@ -446,6 +447,7 @@ describe('handleConversationEvent secure session snapshots', () => {
     })
 
     expect(live.secureSessionSnapshots.manager?.revision).toBe(3)
+    expect(live.secureSessionSnapshots.manager?.accessPolicy).toEqual({ paused: false, blockedAgentIds: ['worker'], blockedSecretIds: ['secret'] })
     expect(live.secureSessionSnapshotLoadingSessionId).toBeNull()
 
     const stale = runHandler(live, {

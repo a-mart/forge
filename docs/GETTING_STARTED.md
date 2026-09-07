@@ -72,7 +72,7 @@ See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for server pol
 
 ### First Impressions
 
-Once provider credentials are configured, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that controls a pool of workers.
+Once provider credentials are configured, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that owns the outcome and can dispatch workers.
 
 ---
 
@@ -83,7 +83,7 @@ Once provider credentials are configured, you'll see the main interface: a chat 
 Click the **+** button to create a new project. You'll be prompted for:
 
 - **Name** — Something meaningful. If it's for your web app, call it "webapp" or "analytics-api," not "test." You'll thank yourself later when you have five managers running.
-- **Working directory** — The root of the project you want to work on. Use a local folder, or choose **Clone repository** when that source option is available. This is where the manager and its workers will operate.
+- **Working directory** — The root of the project you want to work on. Use a local folder, or choose **Clone repository** when that source option is available. This is where the manager and any workers will operate.
 - **Default Model** — Pick the exact manager model for the project. The Reasoning Level selector shows the levels supported by that model and starts at its model-aware default.
 
 By default, the Create Project dialog also seeds repo-root `.forge` project resources. Leave that checkbox on if you want the starter `.forge/` tree; turn it off to skip the scaffold.
@@ -92,9 +92,9 @@ That's it. Your manager is now live.
 
 ### What Is a Manager?
 
-A manager agent is your single point of contact for a project. You talk to the manager. The manager talks to workers. You never directly interact with workers. The manager handles dispatch, status tracking, and result synthesis.
+A manager agent is your single point of contact for a project. You talk to the manager; it remains accountable for the outcome. It may execute work directly or talk to workers. You never directly interact with workers. The manager handles ownership, dispatch, status tracking, and result synthesis.
 
-You're the executive. The manager is your team lead. The workers are the ICs doing the actual coding, reviewing, and testing.
+You're the executive. The manager is your team lead. Selected Work Mode decides whether that lead keeps the work or assigns it.
 
 ### What Is a Session?
 
@@ -102,15 +102,21 @@ A session is a conversation thread within a manager. Your first session is creat
 
 In eligible Builder manager sessions, a compact pill beside **Send** shows the effective model and reasoning level. Click it to open **Session Model**, choose a session override, or select **Use Project Default** to clear an existing override and resume tracking the project default. The pill is not shown in worker views, Collaboration channels, or system profiles such as Cortex.
 
-The Send-adjacent work-mode control chooses Delegate first, Adaptive, or Hands-on for subsequent turns; see the Specialists and delegation docs for details.
+The Send-adjacent work-mode control chooses how the manager owns subsequent turns:
 
-Sessions are where work actually happens. The manager is just the container.
+- **Delegate first** (default) — workers own substantive execution; the manager answers, orients with bounded read-only checks, and accepts results.
+- **Adaptive** — starts directly and hands off only when the total path, including briefing, waiting, acceptance, and likely rework, improves.
+- **Hands-on** — keeps investigation, implementation, and validation, including the critical path; explicit delegation remains available.
+
+See [Worker Delegation](SPECIALISTS.md) for the maintained work-mode guidance.
+
+Sessions are where that owned work happens.
 
 ### The Manager–Worker Relationship
 
-When you ask your manager to do something ("fix the login bug," "add dark mode," "refactor the auth module"), the manager breaks the task down, spawns one or more worker agents, and delegates the actual coding. Workers run in their own processes, execute tool calls (file edits, terminal commands, web searches), and report evidence back to the manager. The manager retains accountability, performs the smallest focused check needed to accept the work, and reports an accepted result or material blocker.
+When you ask your manager to do something ("fix the login bug," "add dark mode," "refactor the auth module"), the manager owns the outcome. Work Mode decides whether it executes directly or delegates: Delegate first assigns substantive execution to workers, Adaptive starts directly and hands off only when the total path improves, and Hands-on keeps the critical path while explicit delegation remains available. When work is delegated, workers run in their own processes, execute tool calls (file edits, terminal commands, web searches), and report evidence back to the manager. The manager retains accountability, performs the smallest focused check needed to accept the work, and reports an accepted result or material blocker.
 
-The key insight: **your manager writes better prompts than you do.** Especially at 2am when you're tired, you're not giving the best instructions. But your manager takes your casual, imprecise request and translates it into precise, well-structured worker prompts. It handles the "write a prompt to write a prompt" step that you used to do manually across different chat windows.
+The key insight: **your manager writes better prompts than you do.** Especially at 2am when you're tired, you're not giving the best instructions. But your manager takes your casual, imprecise request and translates it into a precise execution path—and, when it delegates, into well-structured worker prompts. It handles the "write a prompt to write a prompt" step that you used to do manually across different chat windows.
 
 ---
 
@@ -118,7 +124,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, a plain leading `@Codex` or `[@Codex]` starts or continues a direct Codex app-server sidecar turn, while selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it through the visible `Codex Plugin` specialist worker. Normal plugin tool output is bounded to previews and metadata; full connector exports, such as Fireflies transcripts or summaries, appear as session artifacts instead of chat chunks. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
+The main panel is a chat window. You type messages to your manager, it responds. When it delegates, you'll see worker activity indicators. When workers complete, results flow back through the manager. In Builder web, a plain leading `@Codex` or `[@Codex]` starts or continues a direct Codex app-server sidecar turn, while selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it through the visible `Codex Plugin` specialist worker. Normal plugin tool output is bounded to previews and metadata; full connector exports, such as Fireflies transcripts or summaries, appear as session artifacts instead of chat chunks. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 
@@ -284,7 +290,7 @@ The manager may stay quiet while workers are running routine tasks. It will surf
 
 > "Refactor the auth middleware to support both JWT and session tokens."
 
-Your manager will break these down, plan the approach, and dispatch workers. For complex tasks, you'll see the plan before implementation starts.
+Your manager will break these down, plan the approach, and execute or dispatch according to Work Mode. For complex tasks, you'll see the plan before implementation starts.
 
 ### Parallel Task Execution
 
@@ -292,7 +298,7 @@ You can dump multiple tasks in a single message or in rapid succession:
 
 > "I need three things done in parallel: 1) Fix the broken pagination on the users list, 2) Add input validation to the signup form, 3) Update the API docs for the new endpoints."
 
-The manager spins up separate workers for each task. They all run simultaneously.
+When the tasks can run independently, the manager can spin up separate workers so they run simultaneously.
 
 Or you can send tasks one at a time as you think of them. While workers are crunching on the first task, you can plan the next one with the manager, start a new conversation thread, or just go get coffee. When you come back, there's a pile of completed work waiting for review.
 
@@ -302,7 +308,7 @@ Or you can send tasks one at a time as you think of them. While workers are crun
 
 This deserves a callout because it's the single biggest thing most people miss.
 
-We're all mediocre prompt writers by default, especially when we're tired or just trying to move fast. The instructions you'd type into a terminal at midnight are not great. But with Forge, those sloppy instructions go to your manager, which translates them into precise, well-structured prompts for the workers actually doing the work.
+We're all mediocre prompt writers by default, especially when we're tired or just trying to move fast. The instructions you'd type into a terminal at midnight are not great. But with Forge, those sloppy instructions go to your manager, which translates them into a precise execution path—and, when it delegates, into well-structured prompts for the workers doing that work.
 
 You used to have to manually chain prompts: ask one model to help you write a better prompt, take that prompt to another model. Forge does this automatically. Your manager is a prompt refinement layer that you get for free on every task.
 
@@ -827,7 +833,7 @@ The difference between "Forge is fine, I guess" and "this is indispensable" is w
 
 ### Start with One Task, Then Scale
 
-For your first few sessions, send one task at a time and watch how the manager handles it. Understand the dispatch → worker → report cycle. Then start sending two tasks. Then three. Then dump a list of five and watch it parallelize. Build your trust incrementally.
+For your first few sessions, send one task at a time and watch how the manager handles it. Understand how it owns the work, including the dispatch → worker → report cycle when it delegates. Then start sending two tasks. Then three. Then dump a list of five and watch it parallelize. Build your trust incrementally.
 
 ### Be Careful with Permissions
 

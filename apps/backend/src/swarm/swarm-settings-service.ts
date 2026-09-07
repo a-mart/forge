@@ -1220,21 +1220,8 @@ export class SwarmSettingsService {
     }
 
     const profileDefaultChanged = !sameModelDescriptor(profile.defaultModel, targetModel);
-    const mutations = this.options
-      .getSessionsForProfile(profile.profileId)
-      .filter((session) => session.modelOrigin !== "session_override")
-      .map((session) => ({
-        session,
-        targetModel,
-        targetModelOrigin: "profile_default" as const
-      }))
-      .filter(
-        (mutation) =>
-          !sameModelDescriptor(mutation.session.model, mutation.targetModel) ||
-          mutation.session.modelOrigin !== mutation.targetModelOrigin
-      );
-
-    if (!profileDefaultChanged && mutations.length === 0) {
+    // A project default is a creation-time choice. Existing sessions keep their stored model.
+    if (!profileDefaultChanged) {
       this.options.logDebug(`${details.logContext}:noop`, {
         profileId,
         modelPreset: details.modelPreset,
@@ -1245,7 +1232,7 @@ export class SwarmSettingsService {
       return;
     }
 
-    const stagedUpdatedAt = profileDefaultChanged ? getNow(this.options.now)() : profile.updatedAt;
+    const stagedUpdatedAt = getNow(this.options.now)();
     const previousDefaultModel = { ...profile.defaultModel };
     const previousUpdatedAt = profile.updatedAt;
     const applyProfileDefaultMutation = (): void => {
@@ -1253,60 +1240,32 @@ export class SwarmSettingsService {
       profile.updatedAt = stagedUpdatedAt;
     };
 
-    if (mutations.length === 0) {
-      await this.runDescriptorTransaction(async (store) => {
-        store.patchProfile(profile.profileId, {
-          defaultModel: { ...targetModel },
-          updatedAt: stagedUpdatedAt
-        });
-      }, async () => {
-        applyProfileDefaultMutation();
-        try {
-          await this.options.saveStore();
-        } catch (error) {
-          profile.defaultModel = previousDefaultModel;
-          profile.updatedAt = previousUpdatedAt;
-          throw error;
-        }
-      });
-      this.options.emitProfilesSnapshot();
-      this.options.emitAgentsSnapshot();
-      this.options.logDebug(details.logContext, {
-        profileId,
-        modelPreset: details.modelPreset,
-        modelSelection: details.modelSelection,
-        reasoningLevel: details.reasoningLevel,
-        updatedSessions: [],
-        effectiveModelChangedSessions: [],
-        recycledSessions: [],
-        deferredSessions: []
-      });
-      return;
-    }
-
-    const result = await this.applySessionModelMutations(mutations, {
-      emitProfilesSnapshot: true,
-      profilePatch: {
-        profileId: profile.profileId,
-        defaultModel: targetModel,
+    await this.runDescriptorTransaction(async (store) => {
+      store.patchProfile(profile.profileId, {
+        defaultModel: { ...targetModel },
         updatedAt: stagedUpdatedAt
-      },
-      beforeSave: applyProfileDefaultMutation,
-      rollbackBeforeSave: () => {
+      });
+    }, async () => {
+      applyProfileDefaultMutation();
+      try {
+        await this.options.saveStore();
+      } catch (error) {
         profile.defaultModel = previousDefaultModel;
         profile.updatedAt = previousUpdatedAt;
+        throw error;
       }
     });
-
+    this.options.emitProfilesSnapshot();
+    this.options.emitAgentsSnapshot();
     this.options.logDebug(details.logContext, {
       profileId,
       modelPreset: details.modelPreset,
       modelSelection: details.modelSelection,
       reasoningLevel: details.reasoningLevel,
-      updatedSessions: result.updatedSessions,
-      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
-      recycledSessions: result.recycledSessions,
-      deferredSessions: result.deferredSessions
+      updatedSessions: [],
+      effectiveModelChangedSessions: [],
+      recycledSessions: [],
+      deferredSessions: []
     });
   }
 
@@ -1459,9 +1418,6 @@ export class SwarmSettingsService {
     }>,
     options: {
       emitProfilesSnapshot: boolean;
-      profilePatch?: { profileId: string; defaultModel: AgentDescriptor["model"]; updatedAt: string };
-      beforeSave?: () => void;
-      rollbackBeforeSave?: () => void;
     }
   ): Promise<{
     updatedSessions: string[];
@@ -1541,12 +1497,7 @@ export class SwarmSettingsService {
           modelOrigin: mutation.targetModelOrigin
         });
       }
-      if (options.profilePatch) {
-        store.patchProfile(options.profilePatch.profileId, {
-          defaultModel: { ...options.profilePatch.defaultModel },
-          updatedAt: options.profilePatch.updatedAt
-        });
-      }
+
     }, async () => {
       try {
         for (const mutation of mutations) {
@@ -1554,14 +1505,12 @@ export class SwarmSettingsService {
           mutation.session.modelOrigin = mutation.targetModelOrigin;
         }
 
-        options.beforeSave?.();
         await this.options.saveStore();
       } catch (error) {
         for (const originalState of originalSessionStates) {
           originalState.session.model = originalState.model;
           originalState.session.modelOrigin = originalState.modelOrigin;
         }
-        options.rollbackBeforeSave?.();
         throw error;
       }
     });

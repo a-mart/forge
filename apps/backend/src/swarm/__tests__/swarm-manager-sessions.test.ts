@@ -1435,7 +1435,7 @@ Never use plain assistant text for user communication.`
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const updated = await manager.updateManagerExactModel('manager', {
+    const updated = await manager.updateSessionExactModel('manager', {
       provider: 'xai',
       modelId: 'grok-4.6',
     }, 'medium')
@@ -1608,7 +1608,36 @@ Never use plain assistant text for user communication.`
     )
   })
 
-  it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {
+  it('keeps existing session models and histories unchanged across a default change and restart', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const root = await bootWithDefaultManager(manager, config)
+    const { sessionAgent: existing } = await manager.createSession('manager', { label: 'Existing' })
+    const oldModel = { ...existing.model }
+    appendSessionConversationMessage(existing.sessionFile, existing.agentId, 'Preserve this history.')
+    const oldHistory = await readFile(existing.sessionFile, 'utf8')
+    const oldRuntime = manager.runtimeByAgentId.get(existing.agentId)
+
+    await manager.updateProfileDefaultModel('manager', 'pi-6', 'medium')
+
+    expect(manager.getAgent(root.agentId)?.model).toEqual(oldModel)
+    expect(manager.getAgent(existing.agentId)?.model).toEqual(oldModel)
+    expect(await readFile(existing.sessionFile, 'utf8')).toBe(oldHistory)
+    expect(oldRuntime?.shutdownForReplacementCalls).toHaveLength(0)
+    const { sessionAgent: created } = await manager.createSession('manager', { label: 'New default' })
+    expect(created.model).toMatchObject({ modelId: 'gpt-6-astra', thinkingLevel: 'medium' })
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    expect(rebooted.getAgent(existing.agentId)?.model).toEqual(oldModel)
+    expect(rebooted.getAgent(created.agentId)?.model).toEqual(created.model)
+    const { sessionAgent: afterRestart } = await rebooted.createSession('manager', { label: 'After restart' })
+    expect(afterRestart.model).toEqual(created.model)
+    await rebooted.updateSessionModel(existing.agentId, 'inherit')
+    expect(rebooted.getAgent(existing.agentId)?.model).toEqual(created.model)
+  })
+
+  it('replacement-shuts down idle manager session runtimes after explicit session model changes and recreates them on the next prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const rootSession = await bootWithDefaultManager(manager, config)
@@ -1628,7 +1657,8 @@ Never use plain assistant text for user communication.`
     rootRuntime!.terminateMutatesDescriptorStatus = true
     sessionRuntime!.terminateMutatesDescriptorStatus = true
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
+    await manager.updateSessionModel(rootSession.agentId, 'override', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
 
     expect(rootRuntime?.shutdownForReplacementCalls).toHaveLength(1)
     expect(sessionRuntime?.shutdownForReplacementCalls).toHaveLength(1)
@@ -1692,7 +1722,7 @@ Never use plain assistant text for user communication.`
     sessionRuntime.busy = true
     sessionRuntime.terminateMutatesDescriptorStatus = true
 
-    await manager.updateManagerModel('manager', 'pi-opus')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-opus')
 
     expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
     expect(sessionRuntime.recycleCalls).toBe(0)
@@ -1739,7 +1769,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from Cursor.')
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(beforeState.requests).toHaveLength(1)
@@ -1776,7 +1806,7 @@ Never use plain assistant text for user communication.`
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from an inactive session.')
 
     await manager.stopSession(sessionAgent.agentId)
-    await manager.updateManagerModel('manager', 'cursor-composer')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'cursor-composer')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(beforeState.requests).toHaveLength(1)
@@ -1811,8 +1841,8 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Deferred Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Most recent durable context.')
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
-    await manager.updateManagerModel('manager', 'pi-opus')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-opus')
 
     const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
     expect(beforeState.requests).toHaveLength(2)
@@ -1846,7 +1876,7 @@ Never use plain assistant text for user communication.`
       }
     }
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
 
     await expect(
       manager.handleUserMessage('Try to recreate the failing session', { targetAgentId: sessionAgent.agentId }),
@@ -1868,7 +1898,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Ordered Continuity Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before ordered attach.')
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
 
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
@@ -1918,7 +1948,7 @@ Never use plain assistant text for user communication.`
     const { sessionAgent } = await manager.createSession('manager', { label: 'Applied Write Failure Session' })
     appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before applied write failure.')
 
-    await manager.updateManagerModel('manager', 'pi-5.6')
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-5.6')
 
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
@@ -2331,6 +2361,7 @@ Never use plain assistant text for user communication.`
   it.each([
     {
       label: 'profile model changes',
+      expectedAgentIds: [],
       expectedReason: 'model_change' as const,
       invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
         await manager.updateManagerModel('manager', 'pi-5.6')

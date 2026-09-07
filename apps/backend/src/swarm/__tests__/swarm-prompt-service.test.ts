@@ -243,7 +243,7 @@ describe("SwarmPromptService", () => {
 
     expect(resolved.split(INTERNAL_TURN_SILENCE_RULE)).toHaveLength(2);
     expect(resolved).toContain("project work remains read-only");
-    expect(resolved).toContain("do not use shell or browser actions as an indirect mutation path");
+    expect(resolved).toContain("Do not use shell or browser actions as an indirect mutation path");
     expect(resolved).toContain("a screenshot proves appearance, not an interaction it did not exercise");
     expect(resolved).toContain("never quote them to the user");
     expect(resolved).toContain("do not silently replace it");
@@ -489,10 +489,10 @@ Custom project instruction: always mention the release train when summarizing de
     expect(delegationPrompt).toContain("Your posture is **Delegation-first**.")
     expect(delegationPrompt).toContain("Workers normally own substantive implementation")
     expect(adaptivePrompt).toContain("Your posture is **Adaptive**.")
-    expect(adaptivePrompt).toContain("Choose ownership outcome by outcome")
+    expect(adaptivePrompt).toContain("Start with direct execution.")
     expect(adaptivePrompt).toContain("Keep integration work with the manager")
     expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
-    expect(handsOnPrompt).toContain("Normally own one cohesive outcome directly")
+    expect(handsOnPrompt).toContain("Execute the requested work directly through investigation, implementation, and validation.")
     for (const prompt of [delegationPrompt, adaptivePrompt, handsOnPrompt]) {
       expect(prompt).toContain("Use the simplest adequate coordination lane")
       expect(prompt).toContain("# Execute, accept, and converge")
@@ -511,7 +511,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(adaptivePrompt).not.toContain("forge:manager-coordination")
     expect(handsOnPrompt).not.toContain("forge:manager-coordination")
     const postureLengths = [delegationPrompt.length, adaptivePrompt.length, handsOnPrompt.length]
-    expect(Math.max(...postureLengths) - Math.min(...postureLengths)).toBeLessThan(600)
+    expect(Math.max(...postureLengths) - Math.min(...postureLengths)).toBeLessThan(800)
   });
 
   it("replaces the legacy routing section in stale manager prompt overrides", async () => {
@@ -559,15 +559,51 @@ Always preserve the user's release notes.`,
     const adaptive = await adaptiveService.buildResolvedManagerPrompt(adaptiveDescriptor);
     const handsOn = await handsOnService.buildResolvedManagerPrompt(handsOnDescriptor);
 
-    expect(resolved).toContain("bounded read-only orientation");
-    expect(resolved).toContain("If direct orientation exposes material execution")
-    expect(adaptive).toContain("Work directly when continuity of context, rapid iteration, or one cohesive implementation path matters")
-    expect(adaptive).toContain("Delegate a bounded outcome when independent context")
+    expect(resolved).toContain("Your own project work remains read-only");
+    expect(resolved).toContain("Delegate the execution once you can give a useful assignment")
+    expect(adaptive).toContain("Compare the whole path, including briefing, context transfer, waiting, acceptance, and likely rework")
+    expect(adaptive).toContain("Preserve current ownership while it remains effective")
     expect(adaptive).not.toContain("Workers normally own substantive implementation")
-    expect(handsOn).toContain("Normally own one cohesive outcome directly")
-    expect(handsOn).toContain("Delegate when parallelism, isolation")
+    expect(handsOn).toContain("Execute the requested work directly through investigation, implementation, and validation.")
+    expect(handsOn).toContain("Delegate when the user requests it, a required capability is unavailable directly")
     expect(handsOn).not.toContain("Workers normally own substantive implementation")
   });
+
+  it.each(["manager", "project-agent", "collaboration-channel"] as const)(
+    "keeps Hands-on ownership consistent across the assembled %s prompt",
+    async (surface) => {
+      const { config } = await makeConfig();
+      const descriptor = createManagerDescriptor(config, repoRoot, {
+        managerPosture: "hands_on",
+        ...(surface === "project-agent" ? {
+          projectAgent: { handle: "direct-owner", whenToUse: "Own direct execution" },
+        } : {}),
+        ...(surface === "collaboration-channel" ? {
+          archetypeId: "collaboration-channel",
+          sessionSurface: "collab" as const,
+          collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+        } : {}),
+      });
+      const service = createPromptServiceForDescriptor(config, descriptor);
+      const prompt = await service.buildResolvedManagerPrompt(descriptor);
+
+      expect(prompt.match(/^## Work routing$/gm)).toHaveLength(1);
+      expect(prompt).toContain("Retain ownership of the critical path");
+      expect(prompt).toContain("Complexity, ambiguity, task size, multiple files or steps");
+      expect(prompt).toContain("The selected work mode decides whether to delegate");
+      expect(prompt).toContain("not a separate work mode or permission grant");
+      expect(prompt).not.toMatch(/Maximize delegation|<delegation_first>|return to delegation-first|direct work becomes broad/);
+      expect(prompt).not.toContain("Your own project work remains read-only");
+      if (surface === "collaboration-channel") {
+        expect(prompt).toContain("Every user-facing reply MUST go through `speak_to_user`");
+        expect(prompt).not.toContain("Direct request or accepted closeout: normal final text");
+        expect(prompt).toContain("Do not forward a worker claim as completion");
+        expect(prompt).not.toMatch(/update_plan|update_work_graph|accept_work_graph_node|create_goal|get_goal|update_goal|`history`|Checklist|Graph/);
+      } else {
+        expectCurrentProjectAgentRoutingFooter(prompt);
+      }
+    },
+  );
 
   it("buildResolvedManagerPrompt removes the model-specific placeholder when no user instructions exist", async () => {
     const { config } = await makeConfig();
@@ -734,8 +770,30 @@ Always preserve the user's release notes.`,
     expect(prompt).toContain("Messages prefixed with `SYSTEM:` are internal control");
     expect(prompt).toContain("Write memory only when explicitly asked");
     expect(prompt).toContain("Escalate before destructive actions");
+    expect(prompt).toContain("Broaden or repeat verification only for new changes, failures, or unresolved concerns");
+    expect(prompt).toContain("Do not stop at a plan or offer to continue when execution is assigned");
     expect(prompt).toContain("# Behavior Instructions");
     expect(prompt).toContain(rolePrompt);
+  });
+
+  it("uses the bounded worker contract when the worker archetype is unavailable", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, { agentId: "fallback-worker", archetypeId: undefined }),
+      role: "worker" as const,
+    } as AgentDescriptor;
+    const resolvePrompt = vi.spyOn(FileBackedPromptRegistry.prototype, "resolve")
+      .mockRejectedValue(new Error("worker prompt unavailable"));
+    try {
+      const prompt = await createPromptServiceForDescriptor(config, worker)
+        .resolveSystemPromptForDescriptor(worker);
+      expect(prompt).toContain("# Forge Worker Contract");
+      expect(prompt).toContain("Broaden or repeat verification only for new changes, failures, or unresolved concerns");
+      expect(prompt).toContain("Escalate before destructive actions");
+      expect(prompt).not.toContain("if more verification would improve correctness");
+    } finally {
+      resolvePrompt.mockRestore();
+    }
   });
 
   it("fails closed when a required behavior-mode prompt cannot be resolved", async () => {
@@ -1215,7 +1273,7 @@ Always preserve the user's release notes.`,
 
     expect(resolved.match(/^## Work routing$/gm)).toHaveLength(1);
     expect(resolved).toContain("Your posture is **Hands-on**.");
-    expect(resolved).toContain("Normally own one cohesive outcome directly");
+    expect(resolved).toContain("Execute the requested work directly through investigation, implementation, and validation.");
     expect(resolved).not.toContain(
       "Delegate substantive implementation and investigation to appropriate workers",
     );

@@ -1175,6 +1175,27 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             hasInlineProjectContent={hasRoomsInboxProjectContent}
             mutedSessionIds={mutedAgentsState}
             fallbackOrigins={inboxFallbackOrigins}
+            localTreeRows={treeRows}
+            sessionMenuActions={{
+              onStopSession,
+              onResumeSession,
+              onDeleteSession: handleRequestDelete,
+              onArchiveSession,
+              onRequestRenameSession: handleRequestRename,
+              onForkSession: onForkSession ? handleForkSetTarget : undefined,
+              onMarkUnread,
+              onPinSession,
+              onPromoteToProjectAgent: onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined,
+              onOpenProjectAgentSharing: onGetProjectAgentSharing && onSetProjectAgentSharing ? handleOpenProjectAgentSharing : undefined,
+              onOpenProjectAgentSettings: onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined,
+              onDemoteProjectAgent: onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined,
+              onChangeSessionModel: onUpdateSessionModel ? handleRequestSessionModelChange : undefined,
+              onUseProjectDefault: onUpdateSessionModel ? handleUseProjectDefault : undefined,
+              mutedAgents: mutedAgentsState,
+              onToggleMute: handleToggleMute,
+              hideCliSessions,
+              onToggleHideCliSessions: handleToggleHideCliSessions,
+            }}
             commandRow={(
               <SidebarSearch
                 searchQuery={searchQuery}

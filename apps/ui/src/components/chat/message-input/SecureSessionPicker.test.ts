@@ -89,6 +89,38 @@ afterEach(() => {
 })
 
 describe('SecureSessionPicker', () => {
+  it('offers inherited access and a durable task pause without Start or Apply controls', () => {
+    const onSetAccess = vi.fn(async () => true)
+    const config = makeConfig({ onSetAccess, accessAgentId: 'manager-1' })
+    config.snapshot = { ...config.snapshot!, executionMode: 'standard', environmentStatus: 'stopped',
+      accessPolicy: { paused: false, blockedAgentIds: [], blockedSecretIds: [] },
+      projectDefaults: [{ secretId: 'secret-1', displayAlias: 'deploy-token', state: 'configured', statusCode: 'ok' }] }
+    renderPicker(config)
+    openPicker(/project secret access/i)
+    expect(document.body.textContent).not.toContain('Start secure')
+    expect(document.body.textContent).not.toContain('Apply now')
+    flushSync(() => fireEvent.click(getByRole(document.body, 'button', { name: 'Pause secrets for this task and its agents' })))
+    expect(onSetAccess).toHaveBeenCalledWith({ kind: 'task' }, true)
+  })
+
+  it('blocks the viewed worker without addressing the manager pause', () => {
+    const onSetAccess = vi.fn(async () => true)
+    const config = makeConfig({ onSetAccess, readOnly: true, accessAgentId: 'worker-1' })
+    config.snapshot = { ...config.snapshot!, accessPolicy: { paused: false, blockedAgentIds: [], blockedSecretIds: [] } }
+    renderPicker(config)
+    openPicker(/project secret access/i)
+    flushSync(() => fireEvent.click(getByRole(document.body, 'button', { name: 'Block secrets for this agent' })))
+    expect(onSetAccess).toHaveBeenCalledWith({ kind: 'agent', agentId: 'worker-1' }, true)
+  })
+
+  it('keeps task pause authoritative in a worker view', () => {
+    const config = makeConfig({ onSetAccess: vi.fn(async () => true), readOnly: true, accessAgentId: 'worker-1' })
+    config.snapshot = { ...config.snapshot!, accessPolicy: { paused: true, blockedAgentIds: [], blockedSecretIds: [] } }
+    renderPicker(config)
+    openPicker(/secrets paused/i)
+    expect((getByRole(document.body, 'button', { name: 'Restore project access for this agent' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('shows active leases in a compact popover and supports narrow revocation', () => {
     const onRevoke = vi.fn()
     renderPicker(makeConfig({
@@ -170,7 +202,7 @@ describe('SecureSessionPicker', () => {
     const defaults = getByRole(document.body, 'region', {
       name: 'Project default status',
     })
-    expect(defaults.textContent).toContain('ready-secretReady to apply')
+    expect(defaults.textContent).toContain('ready-secretAvailable automatically')
     expect(defaults.textContent).toContain('unavailable-secretUnavailable')
     expect(defaults.textContent).toContain('conflicting-secretBinding conflict')
     expect(getByRole(defaults, 'button', { name: 'Apply now' })).toBeTruthy()

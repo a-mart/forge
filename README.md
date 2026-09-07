@@ -28,13 +28,13 @@ Forge gives you one.
 
 ---
 
-You talk to a single persistent manager agent per project. Describe what needs to happen (a feature, a batch of bug fixes, a refactor) and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention. If you're spending more time managing AI agents than doing your work, Forge is the next step.
+You talk to a single persistent manager agent per project. Describe what needs to happen (a feature, a batch of bug fixes, a refactor). The manager owns the outcome, executes or delegates according to Work Mode, parallelizes where it makes sense, and surfaces only the things that need your attention. If you're spending more time managing AI agents than doing your work, Forge is the next step.
 
 ## Why Forge?
 
 There are plenty of good coding agents. Forge isn't trying to replace them. It orchestrates them, learns from you, and gets better over time.
 
-**Your manager writes better prompts than you do at 2am.** We're all mediocre prompt writers, especially when tired or frustrated. Forge's manager agent sits between you and the workers. Your rough instructions become precise, well-structured worker prompts. It's the "write a prompt to write a prompt" workflow you were doing manually, except automatic.
+**Your manager writes better prompts than you do at 2am.** We're all mediocre prompt writers, especially when tired or frustrated. Forge's manager agent sits between you and the work. When it delegates, your rough instructions become precise, well-structured worker prompts. It's the "write a prompt to write a prompt" workflow you were doing manually, except automatic.
 
 **Parallelism kills latency.** Waiting 5 minutes for a model response is painful. Waiting 5 minutes while ten things run simultaneously? You barely notice. Dump a list of tasks and move on. Plan the next thing while the first one builds. You might have five sessions active with fifty workers running concurrently. That's fifty terminal windows you don't have to manage.
 
@@ -115,7 +115,7 @@ For automation, prefer `FORGE_CLI_API_KEY` or `--api-key` over saved plaintext c
 
 ### Your First Session
 
-Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
+Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it executes and delegates on your behalf.
 
 The builtin manager is designed to keep user-facing updates concise and outcome-focused. It will favor meaningful results, blockers, and completion updates over routine progress narration.
 
@@ -125,9 +125,11 @@ Then start rating messages. Thumbs up when the manager nails it, thumbs down whe
 
 ### Manager & Workers
 
-Every Forge manager is tied to a project directory. You talk to the manager; the manager talks to the workers. Describe work at a high level ("implement the search feature," "fix these three bugs," "refactor the auth module") and the manager breaks it down, spawns workers, and coordinates the results.
+Every Forge manager is tied to a project directory. You talk to the manager; it remains the accountable owner. Describe work at a high level ("implement the search feature," "fix these three bugs," "refactor the auth module") and the manager executes or delegates according to the selected Work Mode.
 
-Workers run in isolated worktrees so they don't step on each other. They execute focused tasks and report evidence; the manager retains accountability, performs the smallest focused check needed to accept their work, handles merging, and reports the accepted result or a material blocker. You can watch it all happen in real time from the dashboard, or walk away and check in later.
+**Delegate first** (the default) assigns substantive execution to workers. **Adaptive** starts directly and hands off only when the total path improves. **Hands-on** keeps the critical path with the manager while explicit delegation remains available.
+
+When work is delegated, workers run in isolated worktrees so they don't step on each other. They execute focused tasks and report evidence; the manager retains accountability, performs the smallest focused check needed to accept their work, handles merging, and reports the accepted result or a material blocker. You can watch it all happen in real time from the dashboard, or walk away and check in later.
 
 Need to run unrelated tasks at the same time? Just tell the manager. It'll figure out what can run concurrently and spin up workers in parallel.
 

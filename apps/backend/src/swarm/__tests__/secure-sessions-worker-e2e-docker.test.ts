@@ -380,11 +380,11 @@ async function collectScopeEvidence(
   return evidence;
 }
 
-function requireBinding(
+async function requireBinding(
   service: SecureSessionsService,
   descriptor: AgentDescriptor,
-): SecureRuntimeBinding {
-  const binding = service.getSecureRuntimeBinding(descriptor);
+): Promise<SecureRuntimeBinding> {
+  const binding = await service.prepareSecureRuntimeBinding(descriptor);
   expect(binding).toBeDefined();
   if (!binding) throw new Error("expected a secure runtime binding");
   return binding;
@@ -684,22 +684,23 @@ dockerSuite(
           canaries.oneUse,
         );
 
-        await harness.service.startSecureSession(MANAGER);
+        await harness.service.setSecureSecretProjectDefault(primary.secretId, {
+          profileId: harness.descriptors.get(MANAGER)!.profileId!, enabled: true,
+        });
+        const automatic = await harness.service.prepareSecureRuntimeBinding(harness.descriptors.get(WORKER_ONE)!);
+        expect(automatic).toBeDefined();
+        const beforeUse = await harness.service.getSecureSessionSnapshot(MANAGER);
+        expect(beforeUse.leases).toEqual([]);
+        await automatic!.executeBash({ command: `test -n "$${SHARED_PRIMARY}"`,
+          cwd: harness.descriptors.get(WORKER_ONE)!.cwd, secretAliases: ["docker-e2e/primary"], onData: () => undefined });
         const retainedBindings = new Map(
-          [MANAGER, WORKER_ONE, WORKER_TWO].map((agentId) => [
+          await Promise.all([MANAGER, WORKER_ONE, WORKER_TWO].map(async (agentId) => [
             agentId,
-            requireBinding(
+            await requireBinding(
               harness.service,
               harness.descriptors.get(agentId)!,
             ),
-          ]),
-        );
-        await grantEnvironmentLease(
-          harness,
-          MANAGER,
-          primary.secretId,
-          SHARED_PRIMARY,
-          "task",
+          ] as const)),
         );
         await grantEnvironmentLease(
           harness,
@@ -1009,7 +1010,7 @@ dockerSuite(
           await harness.service.getSecureSessionSnapshot(WORKER_TWO),
         ).toEqual(quarantined);
 
-        const staleBinding = requireBinding(
+        const staleBinding = await requireBinding(
           harness.service,
           harness.descriptors.get(WORKER_ONE)!,
         );
@@ -1044,7 +1045,7 @@ dockerSuite(
         expect(await fileExists(staleSentinel)).toBe(false);
 
         const replacement = await executeAndCapture(
-          requireBinding(
+          await requireBinding(
             harness.service,
             harness.descriptors.get(WORKER_ONE)!,
           ),
@@ -1067,7 +1068,7 @@ dockerSuite(
           bytes: replacement.output,
         });
 
-        const removedWorkerBinding = requireBinding(
+        const removedWorkerBinding = await requireBinding(
           harness.service,
           harness.descriptors.get(WORKER_ONE)!,
         );
@@ -1080,7 +1081,7 @@ dockerSuite(
         );
         expect(sandboxAfterWorkerTeardown.id).toBe(sandboxBeforeAssignment.id);
         const siblingAfterTeardown = await executeAndCapture(
-          requireBinding(
+          await requireBinding(
             harness.service,
             harness.descriptors.get(WORKER_TWO)!,
           ),
@@ -1127,6 +1128,19 @@ dockerSuite(
         expect(filesystemReport.totalMatches).toBe(0);
         expect(filesystemReport.matches).toEqual([]);
         invocationEvidence.bytes.fill(0);
+
+        const beforeBlockContainer = expectOneManagerSandbox(await listScopeContainers(harness.scopeHash));
+        const beforeBlock = await harness.service.getSecureSessionSnapshot(MANAGER);
+        await harness.service.setSecureSessionAccess(MANAGER, {
+          baseRevision: beforeBlock.revision, subject: { kind: "agent", agentId: WORKER_TWO }, blocked: true,
+        });
+        expect(expectOneManagerSandbox(await listScopeContainers(harness.scopeHash)).id).not.toBe(beforeBlockContainer.id);
+        await expect(retainedBindings.get(WORKER_TWO)!.executeBash({
+          command: "true", cwd: harness.workspacePath, secretAliases: ["docker-e2e/primary"], onData: () => undefined,
+        })).rejects.toMatchObject({ code: "SECURE_ACCESS_BLOCKED" });
+        const continuingManager = await harness.service.prepareSecureRuntimeBinding(harness.descriptors.get(MANAGER)!);
+        await continuingManager!.executeBash({ command: `test -n "$${SHARED_PRIMARY}"`,
+          cwd: harness.workspacePath, secretAliases: ["docker-e2e/primary"], onData: () => undefined });
 
         const beforeStop =
           await harness.service.getSecureSessionSnapshot(WORKER_TWO);

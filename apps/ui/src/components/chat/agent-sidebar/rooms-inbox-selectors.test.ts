@@ -113,7 +113,7 @@ describe('selectRoomsInboxSections', () => {
     expect(result.activeOverflowCount).toBe(1)
   })
 
-  it('keeps Recent within seven days, excludes higher-priority sections, and caps deterministically', () => {
+  it('keeps Recent within seven days, excludes higher-priority sections, and reports overflow past five', () => {
     const recent = Array.from({ length: 6 }, (_, index) => session(`recent-${index}`, {
       updatedAt: new Date(NOW.getTime() - index * 3_600_000).toISOString(),
     }))
@@ -127,7 +127,8 @@ describe('selectRoomsInboxSections', () => {
       origin(sessions, 'local', [attention('needs')]),
     ], { now: NOW })
 
-    expect(ids(result.recent)).toEqual(['recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4'])
+    expect(ids(result.recent)).toEqual(['recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4', 'recent-5'])
+    expect(result.recentOverflowCount).toBe(1)
     expect(ids(result.recent)).not.toContain('needs')
     expect(ids(result.recent)).not.toContain('active')
     expect(ids(result.recent)).not.toContain('old')

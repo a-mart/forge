@@ -1,35 +1,17 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { planCursorSdkRuntimePrompt, planPiRuntimePrompt } from "../runtime/runtime-prompt-plan.js";
-import type { AgentDescriptor } from "../types.js";
-
-function descriptor(role: AgentDescriptor["role"]): Pick<AgentDescriptor, "role"> {
-  return { role };
-}
 
 describe("runtime prompt planning", () => {
   describe("planPiRuntimePrompt", () => {
-    it("uses the loader system prompt for managers without appending an override", () => {
+    it("uses the loader system prompt without appending an override", () => {
       const plan = planPiRuntimePrompt({
-        descriptor: descriptor("manager"),
-        systemPrompt: "Base manager prompt",
+        systemPrompt: "Base Forge prompt",
         cwd: "/repo",
       });
 
-      expect(plan.systemPrompt).toBe("Base manager prompt");
+      expect(plan.systemPrompt).toBe("Base Forge prompt");
       expect(plan.appendSystemPromptOverride(["existing"])).toEqual([]);
-      expect(plan.startupRecoveryContextFile).toBeUndefined();
-    });
-
-    it("appends the base prompt to the Pi prompt stack for workers", () => {
-      const plan = planPiRuntimePrompt({
-        descriptor: descriptor("worker"),
-        systemPrompt: "Base worker prompt",
-        cwd: "/repo",
-      });
-
-      expect(plan.systemPrompt).toBeUndefined();
-      expect(plan.appendSystemPromptOverride(["existing"])).toEqual(["existing", "Base worker prompt"]);
       expect(plan.startupRecoveryContextFile).toBeUndefined();
     });
 
@@ -38,7 +20,6 @@ describe("runtime prompt planning", () => {
       const blockText = "# Recovered Forge Conversation Context\nRecovered history";
 
       const plan = planPiRuntimePrompt({
-        descriptor: descriptor("manager"),
         systemPrompt: "Base manager prompt",
         cwd,
         startupRecoveryContext: {
@@ -55,7 +36,6 @@ describe("runtime prompt planning", () => {
 
     it("does not add a startup recovery agents file for an empty recovery block", () => {
       const plan = planPiRuntimePrompt({
-        descriptor: descriptor("manager"),
         systemPrompt: "Base manager prompt",
         cwd: "/repo",
         startupRecoveryContext: {

@@ -245,7 +245,12 @@ export interface SwarmAgentLifecycleServiceOptions {
   ) => Promise<void>;
   attachRuntime: (agentId: string, runtime: SwarmAgentRuntime) => void;
   saveStore: () => Promise<void>;
-  /** Manual lifecycle actions suppress the current work epoch before teardown. */
+  /**
+   * Session-wide stop/recycle/delete discard the current work epoch before
+   * teardown so those actions cannot look like completed work. Worker-only
+   * kill/stop must not call this while the manager or another owned worker is
+   * still in the same epoch.
+   */
   suppressSessionAttention: (sessionAgentId: string) => Promise<void>;
   emitStatus: (
     agentId: string,
@@ -1138,7 +1143,7 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Only owning manager can kill agent ${targetAgentId}`);
     }
 
-    await this.options.suppressSessionAttention(manager.agentId);
+    await this.maybeSuppressSessionAttentionForWorkerTeardown(manager.agentId, targetAgentId);
     let cleanupFailure: unknown;
     try {
       await this.terminateDescriptor(target, {
@@ -1186,7 +1191,7 @@ export class SwarmAgentLifecycleService {
         return;
       }
 
-      await this.options.suppressSessionAttention(descriptor.managerId);
+      await this.maybeSuppressSessionAttentionForWorkerTeardown(descriptor.managerId, descriptor.agentId);
       await this.interruptExternalThreadWorker(descriptor, { abort: true, emitStatus: true });
       await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
       await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -1195,7 +1200,7 @@ export class SwarmAgentLifecycleService {
       return;
     }
 
-    await this.options.suppressSessionAttention(descriptor.managerId);
+    await this.maybeSuppressSessionAttentionForWorkerTeardown(descriptor.managerId, descriptor.agentId);
     this.clearWorkerTeardownState(agentId);
     const shutdownIncomplete = await this.shutdownWorkerRuntimeWithSuppressedCallbacks(
       descriptor,
@@ -1226,6 +1231,33 @@ export class SwarmAgentLifecycleService {
         formatWorkerStopIncompleteNotice([descriptor.agentId]),
       );
     }
+  }
+
+  /**
+   * Worker-only teardown is not a session stop. Discard the epoch only when
+   * no other manager/owned-worker activity remains that could still settle it.
+   */
+  private async maybeSuppressSessionAttentionForWorkerTeardown(
+    sessionAgentId: string,
+    targetWorkerId: string,
+  ): Promise<void> {
+    if (this.sessionHasRemainingWorkAfterWorkerTeardown(sessionAgentId, targetWorkerId)) {
+      return;
+    }
+    await this.options.suppressSessionAttention(sessionAgentId);
+  }
+
+  private sessionHasRemainingWorkAfterWorkerTeardown(
+    sessionAgentId: string,
+    targetWorkerId: string,
+  ): boolean {
+    const manager = this.options.descriptors.get(sessionAgentId);
+    if (manager?.role === "manager" && manager.status === "streaming") {
+      return true;
+    }
+    return this.options.getWorkersForManager(sessionAgentId).some((worker) => (
+      worker.agentId !== targetWorkerId && worker.status === "streaming"
+    ));
   }
 
   async resumeWorker(agentId: string): Promise<void> {
@@ -1786,7 +1818,6 @@ export class SwarmAgentLifecycleService {
 
     if (
       descriptor.role === "worker"
-      && requirements?.secureRuntimeRequired === true
       && this.options.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(
         descriptor.agentId,
       )
@@ -1813,12 +1844,11 @@ export class SwarmAgentLifecycleService {
     const existingRuntime = this.getRuntime(descriptor.agentId);
     if (existingRuntime) {
       const hasStaleSecureBinding =
-        requirements?.secureRuntimeRequired === true
+        this.options.hasSecureRuntimeBinding(existingRuntime)
         && !this.options.isSecureRuntimeBindingUsable(
           descriptor.agentId,
           existingRuntime,
-        )
-        && this.options.hasSecureRuntimeBinding(existingRuntime);
+        );
       if (!hasStaleSecureBinding) {
         return this.assertRuntimeMeetsCreationRequirements(
           descriptor.agentId,

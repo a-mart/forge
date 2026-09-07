@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { scanProfilesData } from "../stats/stats-scan.js";
+import { countFuckOccurrences, scanProfilesData } from "../stats/stats-scan.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 
 const tempDirs: string[] = [];
@@ -149,6 +149,81 @@ describe("scanProfilesData", () => {
     expect(result.activeWorkerCount).toBe(1);
   });
 
+  it("counts case-insensitive literal fuck occurrences only in canonical user_input text", async () => {
+    expect(countFuckOccurrences("Fuck this fucking fucked motherfucker")).toBe(4);
+    expect(countFuckOccurrences("FUCKFUCK")).toBe(2);
+    expect(countFuckOccurrences("f u c k")).toBe(0);
+
+    const dataDir = await createStatsFixture({
+      agents: [{ agentId: "session-one", role: "manager", status: "idle", profileId: PROFILE_ID }],
+      sessionIds: ["session-one"],
+    });
+    const sessionDir = join(dataDir, "profiles", PROFILE_ID, "sessions", "session-one");
+    await writeJsonl(join(sessionDir, "session.jsonl"), [
+      conversationEntry({
+        role: "user",
+        source: "user_input",
+        text: "Fuck this fucking messed up thing",
+        timestamp: "2026-05-20T10:00:00.000Z",
+        attachments: [{ name: "motherfucker.txt" }],
+      }),
+      conversationEntry({
+        role: "assistant",
+        source: "assistant_output",
+        text: "Don't fucking do that",
+        timestamp: "2026-05-20T10:01:00.000Z",
+      }),
+      conversationEntry({
+        role: "user",
+        source: "project_agent_input",
+        text: "generated fucking delegation",
+        timestamp: "2026-05-20T10:02:00.000Z",
+      }),
+      conversationEntry({
+        role: "system",
+        source: "system",
+        text: "system fucked up",
+        timestamp: "2026-05-20T10:03:00.000Z",
+      }),
+      {
+        type: "message",
+        timestamp: "2026-05-20T10:04:00.000Z",
+        message: {
+          role: "user",
+          content: "duplicate model user message: fuck",
+          usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, total: 6 },
+        },
+      },
+    ]);
+    await mkdir(join(sessionDir, "workers"), { recursive: true });
+    await writeJsonl(join(sessionDir, "workers", "worker-one.jsonl"), [
+      conversationEntry({
+        role: "user",
+        source: "user_input",
+        text: "worker chat: fuck this",
+        timestamp: "2026-05-21T04:00:00.000Z",
+      }),
+    ]);
+    await writeJsonl(join(sessionDir, "workers", "worker-one.conversation.jsonl"), [
+      conversationEntry({
+        role: "user",
+        source: "user_input",
+        text: "sidecar duplicate fuck",
+        timestamp: "2026-05-21T04:00:00.000Z",
+      }),
+    ]);
+
+    const utc = await scanProfilesData(dataDir, [PROFILE_ID], "UTC");
+    expect(utc.fuckMeterDaily.get("2026-05-20")).toBe(2);
+    expect(utc.fuckMeterDaily.get("2026-05-21")).toBe(1);
+    expect(utc.earliestUserActivityDayKey).toBe("2026-05-20");
+    expect(utc.userMessages).toHaveLength(2);
+
+    const chicago = await scanProfilesData(dataDir, [PROFILE_ID], "America/Chicago");
+    expect(chicago.fuckMeterDaily.get("2026-05-20")).toBe(3);
+    expect(chicago.fuckMeterDaily.has("2026-05-21")).toBe(false);
+  });
+
   async function createTempDir(prefix: string): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), prefix));
     tempDirs.push(dir);
@@ -204,6 +279,29 @@ function normalizedAgents(repoA: string, repoB: string): unknown[] {
 
 async function writeJsonl(path: string, entries: unknown[]): Promise<void> {
   await writeFile(path, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+}
+
+function conversationEntry(options: {
+  role: string;
+  source: string;
+  text: string;
+  timestamp: string;
+  attachments?: unknown[];
+}): unknown {
+  return {
+    type: "custom",
+    customType: "swarm_conversation_entry",
+    timestamp: options.timestamp,
+    data: {
+      type: "conversation_message",
+      agentId: "session-one",
+      role: options.role,
+      text: options.text,
+      timestamp: options.timestamp,
+      source: options.source,
+      attachments: options.attachments,
+    },
+  };
 }
 
 function cursorUsageEntry(

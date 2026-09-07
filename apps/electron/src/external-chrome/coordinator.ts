@@ -132,7 +132,7 @@ export class ExternalChromeHostCoordinator {
     this.schedule = options.setInterval ?? setInterval
     this.unschedule = options.clearInterval ?? clearInterval
     this.afterTakeoverTransfer = options.afterTakeoverTransfer
-    this.access = options.access ?? createCurrentUserAccessController(this.platform, username)
+    this.access = options.access ?? createCurrentUserAccessController(this.platform)
     this.auth = new ExternalChromeAuthStore(options.dataRoot, this.platform, this.access)
     this.authority = options.authority ?? new ExternalChromeAuthorityStore(
       options.dataRoot,
@@ -610,7 +610,20 @@ export class ExternalChromeHostCoordinator {
 
   private async readDesiredEnabled(): Promise<boolean> {
     try {
-      const value = JSON.parse(await fs.readFile(this.enabledStatePath, 'utf8')) as { enabled?: unknown }
+      let raw: string
+      try {
+        raw = await fs.readFile(this.enabledStatePath, 'utf8')
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (this.platform !== 'win32' || !['EACCES', 'EPERM', 'ENOENT'].includes(code ?? '')) throw error
+        // Older Windows setup gave state/ an owner-only, noninheritable ACE.
+        // Its unprotected children could therefore have empty DACLs, even when
+        // setup failed before enabled.json existed. Repair the owning directory
+        // before retrying this read; do not discard deployment/lease metadata.
+        await this.access.preparePrivateDirectory(path.dirname(this.enabledStatePath))
+        raw = await fs.readFile(this.enabledStatePath, 'utf8')
+      }
+      const value = JSON.parse(raw) as { enabled?: unknown }
       return value.enabled === true
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return false

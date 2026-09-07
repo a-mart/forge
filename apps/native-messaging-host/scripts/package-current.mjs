@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, readFile, writeFile } from 'node:fs/promises'
 import { endianness } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
   assertSeaToolchain,
+  externalChromeBuildMode,
   prepareExecutableForInitialSmoke,
   prepareReleaseExecutable,
   SEA_NODE_VERSION,
@@ -64,6 +65,42 @@ export function inspectSeaBuildCapability(result, { nodeVersion = process.versio
   return { supported: false, reason }
 }
 
+/** Older supported Windows Node builds generate a blob, then inject it into the same node.exe.
+ * Only a missing direct-build option permits this validation-only path. Build,
+ * injection, and executable-smoke failures must never be treated as success.
+ */
+export async function buildSeaExecutable({
+  executablePath,
+  currentConfigPath,
+  seaConfig,
+  cwd = root,
+  platform = process.platform,
+  mode = externalChromeBuildMode(),
+  nodeExecutable = process.execPath,
+  run = spawnSync,
+  inject = async (...args) => (await import('postject')).inject(...args),
+}) {
+  const options = { cwd, encoding: 'utf8' }
+  const result = run(nodeExecutable, [`--build-sea=${currentConfigPath}`], options)
+  if (result.status === 0) return result
+  const missingDirectOption = /bad option: --build-sea(?:=|\s|$)/u.test(String(result.stderr ?? ''))
+  if (platform !== 'win32' || mode !== 'validation' || !missingDirectOption) return result
+
+  // Keep the canonical executable config unchanged: staging hashes it for cache reuse.
+  const blobPath = path.join(path.dirname(currentConfigPath), 'sea-prep.blob')
+  const blobConfigPath = path.join(path.dirname(currentConfigPath), 'sea-config.blob.json')
+  await writeFile(blobConfigPath, `${stable({ ...seaConfig, output: blobPath })}\n`, { mode: 0o644 })
+  const blobResult = run(nodeExecutable, ['--experimental-sea-config', blobConfigPath], options)
+  if (blobResult.status !== 0) {
+    throw new Error(`SEA blob generation failed: ${blobResult.error?.message ?? blobResult.stderr ?? blobResult.status}`)
+  }
+  await copyFile(nodeExecutable, executablePath)
+  await inject(executablePath, 'NODE_SEA_BLOB', await readFile(blobPath), {
+    sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
+  })
+  return { status: 0 }
+}
+
 export async function packageCurrent() {
   assertSeaToolchain()
   const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
@@ -78,10 +115,7 @@ export async function packageCurrent() {
   const seaConfig = JSON.parse(await readFile(configPath, 'utf8'))
   seaConfig.output = `dist/${executableName}`
   await writeFile(currentConfigPath, `${stable(seaConfig)}\n`, { mode: 0o644 })
-  const result = spawnSync(process.execPath, [`--build-sea=${currentConfigPath}`], {
-    cwd: root,
-    encoding: 'utf8',
-  })
+  const result = await buildSeaExecutable({ executablePath, currentConfigPath, seaConfig })
   const seaCapability = inspectSeaBuildCapability(result)
   if (!seaCapability.supported) {
     const manifest = {
@@ -103,7 +137,7 @@ export async function packageCurrent() {
     }
     await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
     throw new Error(
-      `${seaCapability.reason}; validation packaging requires a Node executable with direct --build-sea support, ` +
+      `${seaCapability.reason}; validation packaging requires SEA-capable Node (Windows also supports experimental SEA blob injection), ` +
       `while release packaging is pinned to official Node ${SEA_NODE_VERSION}`,
     )
   }

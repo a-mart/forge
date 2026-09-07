@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StatsPanel } from './StatsPanel'
+import { StatsPage } from '../index-page/StatsPage'
 import type { StatsSnapshot } from '@forge/protocol'
 
 const useStatsMock = vi.fn()
@@ -13,6 +14,9 @@ const useStatsMock = vi.fn()
 vi.mock('./use-stats', () => ({
   useStats: (...args: unknown[]) => useStatsMock(...args),
 }))
+
+vi.mock('./token-analytics/TokenAnalyticsPanel', () => ({ TokenAnalyticsPanel: () => null }))
+vi.mock('./generation-throughput/GenerationThroughputPanel', () => ({ GenerationThroughputPanel: () => null }))
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -199,5 +203,95 @@ describe('StatsPanel', () => {
     expect(queryByText(container, '42%')).toBeNull()
     expect(getByText(container, 'No usage data yet')).toBeTruthy()
     expect(queryByText(container, 'Longest Streak')).toBeNull()
+  })
+})
+
+
+describe('Fuck Meter Easter egg', () => {
+  const press = (key = 'f', options: Record<string, unknown> = {}) => {
+    flushSync(() => { fireEvent.keyDown(window, { key, ...options }) })
+  }
+
+  it('reveals only after four consecutive presses, without fetching, even for token-empty stats', () => {
+    renderStatsPanel(buildStatsSnapshot({ fuckMeter: { daily: [{ date: '2026-04-01', count: 7 }] } }))
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press(); press(); press()
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press('x'); press(); press(); press()
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press('F')
+    expect(getByRole(container, 'heading', { name: 'Fuck Meter.' })).toBeTruthy()
+    expect(getByRole(container, 'listitem', { name: /7 fucks/ })).toBeTruthy()
+    expect(useStatsMock.mock.results.at(-1)?.value.refresh).not.toHaveBeenCalled()
+    flushSync(() => fireEvent.click(getByRole(container, 'button', { name: 'Hide Fuck Meter' })))
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+  })
+
+  it('ignores held keys, modified shortcuts, composition, and editable targets', () => {
+    renderStatsPanel(buildStatsSnapshot())
+    press()
+    for (let i = 0; i < 5; i++) press('f', { repeat: true })
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press('f', { ctrlKey: true })
+    press(); press(); press()
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press('f', { isComposing: true })
+    for (const tag of ['input', 'textarea', 'select', 'div']) {
+      const target = document.createElement(tag)
+      if (tag === 'div') target.setAttribute('contenteditable', 'true')
+      container.appendChild(target)
+      for (let i = 0; i < 4; i++) fireEvent.keyDown(target, { key: 'f' })
+      target.remove()
+    }
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    press(); press(); press(); press()
+    expect(getByText(container, /Waiting for the next stats refresh/)).toBeTruthy()
+  })
+
+  it('resets partial sequences on blur and does not register outside the overview', () => {
+    renderStatsPanel(buildStatsSnapshot({ fuckMeter: { daily: [] } }))
+    press(); press(); press()
+    fireEvent.blur(window)
+    press()
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+    flushSync(() => root?.render(createElement(StatsPanel, { wsUrl: 'test', onBack: vi.fn(), activeTab: 'tokens' })))
+    press(); press(); press(); press()
+    expect(queryByText(container, 'Fuck Meter')).toBeNull()
+  })
+
+  it('forgets the reveal when navigating away from the main stats page', () => {
+    renderStatsPanel(buildStatsSnapshot({ fuckMeter: { daily: [] } }))
+    const navigate = (statsTab: 'overview' | 'tokens' | 'throughput') => {
+      flushSync(() => root?.render(createElement(StatsPage, {
+        wsUrl: 'test', onBack: vi.fn(), onTabChange: vi.fn(), routeState: { view: 'stats', statsTab },
+      })))
+    }
+    navigate('overview')
+    press(); press(); press(); press()
+    expect(getByRole(container, 'heading', { name: 'Fuck Meter.' })).toBeTruthy()
+    navigate('tokens')
+    press(); press(); press(); press()
+    navigate('overview')
+    expect(container.textContent).not.toContain('Fuck Meter')
+    press(); press(); press(); press()
+    expect(getByRole(container, 'heading', { name: 'Fuck Meter.' })).toBeTruthy()
+    navigate('throughput')
+    press(); press(); press(); press()
+    navigate('overview')
+    expect(container.textContent).not.toContain('Fuck Meter')
+  })
+
+  it('updates counts with stats snapshots and pages daily all-time data', () => {
+    const daily = Array.from({ length: 31 }, (_, i) => ({ date: `2026-03-${String(i + 1).padStart(2, '0')}`, count: i }))
+    renderStatsPanel(buildStatsSnapshot({ fuckMeter: { daily } }))
+    press(); press(); press(); press()
+    expect(container.querySelectorAll('[role="listitem"]')).toHaveLength(30)
+    flushSync(() => fireEvent.click(getByRole(container, 'button', { name: 'Earlier Fuck Meter days' })))
+    expect(container.querySelectorAll('[role="listitem"]')).toHaveLength(1)
+    expect(getByRole(container, 'listitem', { name: /0 fucks/ })).toBeTruthy()
+    const previous = useStatsMock.mock.results.at(-1)?.value
+    useStatsMock.mockReturnValue({ ...previous, stats: buildStatsSnapshot({ fuckMeter: { daily: [{ date: '2026-04-01', count: 99 }] } }) })
+    flushSync(() => root?.render(createElement(StatsPanel, { wsUrl: 'test', onBack: vi.fn() })))
+    expect(getByRole(container, 'listitem', { name: /99 fucks/ })).toBeTruthy()
   })
 })

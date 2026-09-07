@@ -1288,7 +1288,7 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledTimes(1);
   });
 
-  it("passes systemPrompt only to manager DefaultResourceLoader options and preserves worker append overrides", async () => {
+  it("passes systemPrompt to manager and worker DefaultResourceLoader options without Pi append overrides", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await seedProjectionFile(rootDir);
     setupPiModel();
@@ -1301,17 +1301,21 @@ describe("RuntimeFactory", () => {
     await factory.createRuntimeForDescriptor(createManagerDescriptor(rootDir), "manager prompt");
     const managerOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
       systemPrompt?: string;
+      appendSystemPromptOverride?: (base: string[]) => string[];
       agentsFilesOverride?: unknown;
     };
     expect(managerOptions.systemPrompt).toBe("manager prompt");
+    expect(managerOptions.appendSystemPromptOverride?.(["existing"])).toEqual([]);
     expect(managerOptions.agentsFilesOverride).toEqual(expect.any(Function));
 
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "worker prompt");
     const workerOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
       systemPrompt?: string;
+      appendSystemPromptOverride?: (base: string[]) => string[];
       agentsFilesOverride?: unknown;
     };
-    expect(workerOptions).not.toHaveProperty("systemPrompt");
+    expect(workerOptions.systemPrompt).toBe("worker prompt");
+    expect(workerOptions.appendSystemPromptOverride?.(["existing"])).toEqual([]);
     expect(workerOptions.agentsFilesOverride).toEqual(expect.any(Function));
   });
 

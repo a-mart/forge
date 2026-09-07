@@ -35,6 +35,7 @@ function fakeService(): SecureSessionsTransportService {
       code: "available",
     })),
     getSecureSessionSnapshot: vi.fn(() => snapshot),
+    setSecureSessionAccess: vi.fn(async () => snapshot),
     startSecureSession: vi.fn(async () => snapshot),
     stopSecureSession: vi.fn(async () => snapshot),
     applySecureSessionProjectDefaults: vi.fn(async () => snapshot),
@@ -48,6 +49,20 @@ function fakeService(): SecureSessionsTransportService {
 }
 
 describe("secure session routes", () => {
+  it("parses access restrictions before dispatch and rejects mixed subjects", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const input = { baseRevision: 4, subject: { kind: "agent", agentId: "worker-1" }, blocked: true };
+    const response = await postJson(`${server.baseUrl}/api/secure-sessions/manager-1/access`, input);
+    expect(response.status).toBe(200);
+    expect(service.setSecureSessionAccess).toHaveBeenCalledWith("manager-1", input);
+    const invalid = await postJson(`${server.baseUrl}/api/secure-sessions/manager-1/access`, {
+      ...input, subject: { kind: "task", agentId: "worker-1" },
+    });
+    expect(invalid.status).toBe(400);
+    expect(service.setSecureSessionAccess).toHaveBeenCalledTimes(1);
+  });
+
   it("serves only fixed readiness metadata before the session-id route", async () => {
     const service = fakeService();
     const server = await createRouteServer(createSecureSessionRoutes({ service }));

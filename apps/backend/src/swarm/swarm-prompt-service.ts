@@ -53,31 +53,9 @@ import {
   isEnoentError,
   normalizeOptionalAgentId,
 } from "./swarm-manager-utils.js";
-import { composeBuiltinModeSystemPrompt } from "./worker-mode-prompt.js";
+import { composeBuiltinModeSystemPrompt, WORKER_MODE_SYSTEM_PROMPT_CORE } from "./worker-mode-prompt.js";
 import { buildManagerPostureBlock } from "./prompts/manager-posture.js";
 
-const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
-- Use coding tools (read/bash/edit/write) to execute implementation tasks.
-- You are not user-facing.
-- End users see only manager-owned user-visible outputs: final assistant replies, direct-web assistant progress updates, routed \`speak_to_user\` deliveries, and structured choice UI.
-- Your plain assistant text is not directly visible to end users.
-- Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
-- Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
-- Workers read their owning manager's memory file.
-- Only write memory when explicitly asked to remember/update/forget durable information.
-- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.
-- Act autonomously for reversible local work: reading, editing, testing, building.
-- Escalate to the manager before destructive actions, force pushes, deleting shared resources, or anything externally visible.
-- Keep working until the task is fully handled or you hit a concrete blocker.
-- Do not stop at the first plausible answer if more verification would improve correctness.
-- Your final assistant response is returned to the manager automatically. Do not call a messaging tool to report completion.
-- End your turn with a concise result using this structure:
-  - status: done | partial | blocked
-  - summary: (1-3 sentences of what you did)
-  - changed: (files modified/created)
-  - verified: (what checks you ran and results)
-  - risks: (anything the manager should know, or "none")
-  - follow-up: (optional next steps)`;
 const CURSOR_SDK_RUNTIME_GUIDANCE_BLOCK = `## Cursor SDK Runtime
 
 You are running as a Cursor SDK worker. Your coding tools (file read/write/edit, search, terminal) are provided natively by Cursor.
@@ -522,7 +500,7 @@ export class SwarmPromptService {
         profileId,
         message: error instanceof Error ? error.message : String(error),
       });
-      return this.appendRepositoryReferenceInventory(DEFAULT_WORKER_SYSTEM_PROMPT, descriptor);
+      return this.appendRepositoryReferenceInventory(WORKER_MODE_SYSTEM_PROMPT_CORE, descriptor);
     }
   }
 

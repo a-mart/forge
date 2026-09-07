@@ -25,6 +25,7 @@ export async function scanProfilesData(
   const dailyUsage = new Map<string, DailyTotals>();
   const workerRuns: WorkerRun[] = [];
   const userMessages: number[] = [];
+  const fuckMeterDaily = new Map<string, number>();
   const diagnostics: StatsScanDiagnostics = { skippedMissingTimestampUsageRecords: 0 };
 
   let totalSessionCount = 0;
@@ -42,7 +43,7 @@ export async function scanProfilesData(
       const workerBillableTokenTotalsByRunKey = new Map<string, number>();
 
       await scanJsonlFile(sessionFile, (entry, context) => {
-        collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
+        collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, fuckMeterDaily, {
           fallbackThinkingLevel: context.thinkingLevel,
           timezone,
           diagnostics,
@@ -59,7 +60,7 @@ export async function scanProfilesData(
         let billableTokensForWorker = 0;
 
         await scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
-          billableTokensForWorker += collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
+          billableTokensForWorker += collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, fuckMeterDaily, {
             fallbackThinkingLevel: context.thinkingLevel,
             timezone,
             diagnostics,
@@ -106,6 +107,14 @@ export async function scanProfilesData(
     }
   }
 
+  let earliestUserActivityDayKey: string | null = null;
+  for (const timestampMs of userMessages) {
+    const day = toDayKey(timestampMs, timezone);
+    if (earliestUserActivityDayKey === null || day < earliestUserActivityDayKey) {
+      earliestUserActivityDayKey = day;
+    }
+  }
+
   const { agents, profiles } = await readAgentsRegistry(dataDir);
   const profileArchivedById = new Map(profiles.map((profile) => [profile.profileId, Boolean(profile.archivedAt)]));
   const managerArchivedById = new Map(
@@ -142,9 +151,30 @@ export async function scanProfilesData(
     activeSessionCount,
     userMessages,
     earliestUsageDayKey,
+    earliestUserActivityDayKey,
+    fuckMeterDaily,
     managerRepoPaths,
     diagnostics,
   };
+}
+
+export function countFuckOccurrences(text: string): number {
+  if (text.length === 0) {
+    return 0;
+  }
+
+  const haystack = text.toLowerCase();
+  let count = 0;
+  let index = 0;
+  while (index < haystack.length) {
+    const found = haystack.indexOf("fuck", index);
+    if (found === -1) {
+      break;
+    }
+    count += 1;
+    index = found + 4;
+  }
+  return count;
 }
 
 export function sumDailyWindow(daily: Map<string, DailyTotals>, todayDayKey: string, days: number): DailyTotals {
@@ -167,11 +197,23 @@ export function buildDailyEntriesForRange(
   }));
 }
 
+export function buildFuckMeterEntriesForRange(
+  daily: Map<string, number>,
+  rangeStartDayKey: string,
+  rangeEndDayKey: string
+): Array<{ date: string; count: number }> {
+  return buildDayRange(rangeStartDayKey, rangeEndDayKey).map((date) => ({
+    date,
+    count: daily.get(date) ?? 0,
+  }));
+}
+
 function collectUsageAndMessages(
   entry: unknown,
   usageRecords: UsageRecord[],
   dailyUsage: Map<string, DailyTotals>,
   userMessages: number[],
+  fuckMeterDaily: Map<string, number>,
   options: { fallbackThinkingLevel: string | null; timezone: string; diagnostics: StatsScanDiagnostics }
 ): number {
   if (!isRecord(entry)) {
@@ -232,6 +274,11 @@ function collectUsageAndMessages(
     const ts = toTimestampMs(entry.data.timestamp);
     if (ts !== null) {
       userMessages.push(ts);
+      const count = countFuckOccurrences(typeof entry.data.text === "string" ? entry.data.text : "");
+      if (count > 0) {
+        const day = toDayKey(ts, options.timezone);
+        fuckMeterDaily.set(day, (fuckMeterDaily.get(day) ?? 0) + count);
+      }
     }
   }
 

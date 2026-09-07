@@ -96,6 +96,7 @@ export interface SwarmSessionServiceOptions {
     targetSessionFile: string,
     fromMessageId?: string
   ) => Promise<void>;
+  copySecureAccessForFork?: (sourceId: string, forkId: string) => Promise<() => Promise<void>>;
   copyPinnedMessagesForFork: (
     sourceDescriptor: ProvisionedSessionDescriptor,
     forkedDescriptor: ProvisionedSessionDescriptor
@@ -379,11 +380,13 @@ export class SwarmSessionService {
     forkedDescriptor.cli = sourceDescriptor.cli ? { ...sourceDescriptor.cli } : undefined;
     await this.ensureEffectiveDelegationRoster(forkedDescriptor);
 
+    let rollbackSecureAccess: (() => Promise<void>) | undefined;
     await this.options.provisioner.provisionSession({
       descriptor: forkedDescriptor,
       ensureSessionMemoryFile: false,
       ensureProfileMemoryFile: false,
       beforeRuntime: async () => {
+        rollbackSecureAccess = await this.options.copySecureAccessForFork?.(sourceDescriptor.agentId, forkedDescriptor.agentId);
         await this.options.copySessionHistoryForFork(
           sourceDescriptor.sessionFile,
           forkedDescriptor.sessionFile,
@@ -395,6 +398,9 @@ export class SwarmSessionService {
           forkedDescriptor.agentId,
           normalizedFromMessageId
         );
+      },
+      beforeRollbackRemoval: async () => {
+        await rollbackSecureAccess?.();
       },
       initializeRuntime: async () => {
         const runtime = await this.options.getOrCreateRuntimeForDescriptor(forkedDescriptor);

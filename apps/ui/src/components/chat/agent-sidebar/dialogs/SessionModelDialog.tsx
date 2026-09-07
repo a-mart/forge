@@ -71,6 +71,11 @@ export function SessionModelDialog({
   returnFocusRef?: RefObject<HTMLElement | null>
 }) {
   const isCurrentlyOverridden = modelOrigin === 'session_override'
+  const canUseProjectDefault = isCurrentlyOverridden || Boolean(profileDefaultModel && (
+    currentModel?.provider !== profileDefaultModel.provider ||
+    currentModel?.modelId !== profileDefaultModel.modelId ||
+    currentModel?.thinkingLevel !== profileDefaultModel.thinkingLevel
+  ))
   const {
     catalog,
     loading: availabilityLoading,
@@ -191,7 +196,7 @@ export function SessionModelDialog({
           <DialogDescription>
             {isCurrentlyOverridden
               ? `${sessionLabel} uses a custom model override, independent of the project default.`
-              : `${sessionLabel} uses the project default model and tracks future changes.`}
+              : `${sessionLabel} uses a model selected from the project default. Future default changes apply only to new conversations.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -262,7 +267,7 @@ export function SessionModelDialog({
             <p className="text-xs text-muted-foreground min-w-0">
               Project default: {profileDefaultLabel}
             </p>
-            {isCurrentlyOverridden ? (
+            {canUseProjectDefault ? (
               <Button
                 type="button"
                 variant="ghost"

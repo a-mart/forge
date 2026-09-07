@@ -1,5 +1,7 @@
 import {
   SECURE_SECRET_RETENTIONS,
+  parseSetSecureSessionAccessRequest,
+  type SetSecureSessionAccessRequest,
   SecureSessionsContractError,
   parseApplySecureSessionProjectDefaultsRequest,
   parseGrantSecureSecretLeaseRequest,
@@ -79,6 +81,7 @@ export type FulfillSecureAccessRequestInput = {
 );
 
 export interface SecureSessionsTransportService {
+  setSecureSessionAccess(sessionAgentId: string, input: SetSecureSessionAccessRequest): Promise<SecureSessionSnapshot>;
   getSecureSessionReadiness(): Promise<SecureSessionReadiness> | SecureSessionReadiness;
   installSecureRunner(): Promise<SecureSessionReadiness> | SecureSessionReadiness;
   getSecureSessionSnapshot(
@@ -178,6 +181,16 @@ export function createSecureSessionRoutes(options: {
             200,
             await options.service.getSecureSessionSnapshot(sessionAgentId),
           );
+          return;
+        }
+
+        const accessPolicyMatch = requestUrl.pathname.match(/^\/api\/secure-sessions\/([^/]+)\/access$/);
+        if (request.method === "POST" && accessPolicyMatch) {
+          const sessionAgentId = parsePathId(accessPolicyMatch[1], "sessionAgentId");
+          const body = await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES);
+          sendSecureJson(response, 200, await options.service.setSecureSessionAccess(
+            sessionAgentId, parseSetSecureSessionAccessRequest(body),
+          ));
           return;
         }
 

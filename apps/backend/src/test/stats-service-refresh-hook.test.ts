@@ -279,6 +279,8 @@ function createScanResult(): StatsScanResult {
     activeSessionCount: 2,
     userMessages: usageDays.map(([day]) => Date.parse(`${day}T13:00:00.000Z`)),
     earliestUsageDayKey: usageDays[0][0],
+    earliestUserActivityDayKey: usageDays[0][0],
+    fuckMeterDaily: new Map<string, number>(),
     managerRepoPaths: [],
     diagnostics: { skippedMissingTimestampUsageRecords: 0 },
   }

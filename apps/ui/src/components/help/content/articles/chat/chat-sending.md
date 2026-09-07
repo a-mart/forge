@@ -11,7 +11,7 @@ Your mode preference is saved across sessions.
 
 ## Changing the session model
 
-Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** clears it so the session tracks future project-default changes again.
+Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** applies the current project default to that session. Later default changes affect only new conversations.
 
 For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
 
@@ -25,9 +25,11 @@ Fresh is executable only by supported ordinary Pi Builder managers (OpenAI/Codex
 
 When a model or reasoning change is accepted for a session, Forge adds a neutral **Model change** notice to that session's conversation. It appears live and remains visible after reload or replay. The notice records the effective before-and-after values, for example: `Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.6 Luna (reasoning: high).` It is informational conversation history, not an assistant or user message.
 
-The Send-adjacent work-mode control chooses Delegate first, Adaptive, or Hands-on for subsequent turns.
-
 A notice is added only when the effective model or reasoning changes. Choosing the same effective settings again does not add one. Changing a project default affects sessions that still inherit it, so each inherited session that actually changes can receive a notice; sessions with an override are unaffected. **Use Project Default** can add a notice when it changes the session's effective model or reasoning, but not when the session already matches the project default.
+
+## Changing work mode
+
+The Send-adjacent work-mode control chooses how the manager owns subsequent turns. **Delegate first** (default) assigns substantive execution to workers. **Adaptive** starts directly and hands off only when the total path improves. **Hands-on** keeps the critical path with the manager; explicit delegation remains available. The manager stays the accountable owner in every mode.
 
 ## Replying to a message
 

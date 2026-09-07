@@ -13,7 +13,7 @@ Inbox is the default new project view. It lists:
 - **Recent** — sessions updated in the last 7 days, also bounded.
 - **Projects** — the same project/session tree as Projects mode, shown inline after those sections.
 
-**Done** and **Clear** dismiss the exact **Needs you** items they target. Muting a session only hides it from **Needs you** and the Inbox badge; it does not dismiss the attention. Origins that do not support session attention omit **Needs you** instead of inventing items from local badges.
+**Done** and **Clear** dismiss the exact **Needs you** items they target. Muting a session only hides it from **Needs you** and the Inbox badge; it does not dismiss the attention. Origins that do not support session attention omit **Needs you** instead of inventing items from local badges. Right-click a **Needs you**, **Active**, or **Recent** session for the same local session actions as Projects; remote Inbox rows stay limited the same way as remote project sessions.
 
 ## Projects
 

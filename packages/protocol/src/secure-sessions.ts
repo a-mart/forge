@@ -411,6 +411,7 @@ export const SECURE_SESSION_PROJECT_DEFAULT_STATES = [
   'active',
   'unavailable',
   'conflict',
+  'blocked',
 ] as const
 
 export type SecureSessionProjectDefaultState =
@@ -420,6 +421,7 @@ export const SECURE_SESSION_PROJECT_DEFAULT_STATUS_CODES = [
   'ok',
   'source_unavailable',
   'binding_conflict',
+  'access_blocked',
 ] as const
 
 export type SecureSessionProjectDefaultStatusCode =
@@ -451,6 +453,24 @@ export interface SecureSessionExecutionIncident {
   occurredAt: string
 }
 
+/** Durable restrictions on inherited and temporary task access. */
+export interface SecureSessionAccessPolicy {
+  paused: boolean
+  blockedAgentIds: string[]
+  blockedSecretIds: string[]
+}
+
+export type SecureSessionAccessSubject =
+  | { kind: 'task' }
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'secret'; secretId: string }
+
+export interface SetSecureSessionAccessRequest {
+  baseRevision: number
+  subject: SecureSessionAccessSubject
+  blocked: boolean
+}
+
 export interface SecureSessionSnapshot {
   /** Manager session that owns the shared sandbox, grants, and requests. */
   sessionAgentId: string
@@ -470,6 +490,9 @@ export interface SecureSessionSnapshot {
   revision: number
   executionMode: SecureSessionExecutionMode
   environmentStatus: SecureSessionEnvironmentStatus
+  /** Presence advertises automatic access and persisted restriction controls.
+   * Omission identifies a legacy server; clients must not assume V2 support. */
+  accessPolicy?: SecureSessionAccessPolicy
   /**
    * Additive runtime-only disclosure state. Older persisted/bootstrap
    * snapshots may omit it and clients must interpret omission as `clear`.
@@ -912,6 +935,35 @@ export function parseGrantSecureSecretLeasesRequest(
   return {
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
     grants,
+  }
+}
+
+export function parseSetSecureSessionAccessRequest(
+  value: unknown,
+): SetSecureSessionAccessRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(input, ['baseRevision', 'subject', 'blocked'], 'request')
+  if (typeof input.blocked !== 'boolean') {
+    throw new SecureSessionsContractError('request.blocked must be boolean')
+  }
+  const subject = recordInput(input.subject, 'request.subject')
+  let parsed: SecureSessionAccessSubject
+  if (subject.kind === 'task') {
+    knownKeys(subject, ['kind'], 'request.subject')
+    parsed = { kind: 'task' }
+  } else if (subject.kind === 'agent') {
+    knownKeys(subject, ['kind', 'agentId'], 'request.subject')
+    parsed = { kind: 'agent', agentId: boundedString(subject.agentId, 'request.subject.agentId', SECURE_SESSIONS_MAX_ID_LENGTH) }
+  } else if (subject.kind === 'secret') {
+    knownKeys(subject, ['kind', 'secretId'], 'request.subject')
+    parsed = { kind: 'secret', secretId: boundedString(subject.secretId, 'request.subject.secretId', SECURE_SESSIONS_MAX_ID_LENGTH) }
+  } else {
+    throw new SecureSessionsContractError('request.subject.kind is invalid')
+  }
+  return {
+    baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
+    subject: parsed,
+    blocked: input.blocked,
   }
 }
 

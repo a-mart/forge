@@ -120,7 +120,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-sending',
     title: 'Sending Messages',
     category: 'chat',
-    summary: 'How to send messages, change the session model or context policy, format text, and use shortcuts or slash commands.',
+    summary: 'How to send messages, change the session model, context policy, or work mode, format text, and use shortcuts or slash commands.',
     content: chatSendingContent,
     keywords: [
       'send',
@@ -145,8 +145,12 @@ export const chatArticles: HelpArticle[] = [
       'context management',
       'fresh windows',
       'summary',
+      'work mode',
+      'delegate first',
+      'adaptive',
+      'hands-on',
     ],
-    relatedIds: ['chat-overview', 'chat-attachments', 'models-routing', 'chat-compaction', 'settings-project-settings'],
+    relatedIds: ['chat-overview', 'chat-attachments', 'models-routing', 'chat-compaction', 'settings-project-settings', 'concepts-specialists'],
     contextKeys: ['chat.main'],
   },
   {

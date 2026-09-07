@@ -1,7 +1,7 @@
 ## Secrets and Secure Sessions
 
 **Settings → Secrets** manages private sources and reusable delivery bindings for
-local Builder Team Secure Mode. Saving alone does not give a secret to an agent or
+local Builder tasks. Saving alone does not give a secret to an agent or
 task. Each manager session owns one secure container, one grant set, and one request
 queue. Eligible local Forge Pi workers use that same session authority.
 
@@ -24,7 +24,7 @@ preselected. Neither route switches conversations or clears the current draft.
 ## Add a local secret
 
 Open **Secrets**, enter an alias, optional display name, and value. Choose its project
-scope and, when appropriate, select projects under **Automatically grant in**. In
+scope and, when appropriate, select projects under **Granted to projects**. In
 Desktop, the private bridge encrypts the value directly. A paired HTTPS browser
 encrypts it to a one-use Desktop key before the Builder backend relays it. Electron
 then seals it with the operating-system-backed secure storage service. A paired browser
@@ -58,21 +58,20 @@ automatic-grant policy as local-vault secrets.
 
 ## Grant a secret automatically
 
-Under **Automatically grant in**, select one or more projects. An all-projects secret
+Under **Granted to projects**, select one or more projects. An all-projects secret
 can instead use **Every project**, which covers current projects and projects created
 later. A selected-project secret can be granted automatically only in the projects
 where it is available. Catalog availability alone never grants access.
 
-Each selected policy gives the manager session one **Until Secure Session stops**
-lease when Team Secure Mode starts. Eligible workers use that existing lease without
-duplicating or re-resolving material. The policy does not put the value in standard
-Bash, a model prompt, the integrated terminal, another project, or an unsupported
-worker runtime.
+Agents in a granted project can use that secret automatically. There is no separate
+start step. Forge prepares the shared protected environment on the first
+`secure_bash` command and reuses it across eligible workers. Commands name only the
+aliases they need; values never enter ordinary Bash or model prompts.
 
-Changing this setting while Team Secure Mode is active marks it **Configured**. Choose
-**Apply now** in the shield to apply or retry non-active automatic grants for the
-session without restarting. An unavailable source or conflicting delivery skips only
-that grant and reports a fixed status without blocking other grants. Each project
+New grants and recovered sources are checked on the next protected command. If a
+needed source is locked, use **Unlock secret sources** in the shield and retry the
+command. Unrelated locked sources do not prompt at launch. An unavailable source
+or delivery conflict skips only that grant. Each project
 supports at most 50 effective secure grants by default, for both automatic grants
 and one manual request batch. Change that limit under **Secure grants per project**
 to a whole number from 1 to 256. Forge rejects a lower limit when any project already
@@ -108,14 +107,20 @@ are chosen in the chat shield.
 
 Open the shield beside **Send** in a supported local Builder session:
 
-1. Start Team Secure Mode.
-2. Grant an alias and its bindings to the manager session.
-3. Choose task, timed, or one-use access.
-4. Let the agent use normal host `bash` for ordinary work and `secure_bash` only for
-commands that need a granted value, SSH-agent key, or Forge-managed SSH trust. The
-agent names the exact active aliases needed by each secure command; this does not
-create another approval prompt.
-5. Revoke one shared grant or stop Team Secure Mode to revoke the session.
+Project grants work without opening this control. Use the shield to:
+
+- Review the secrets available to this task and their source status.
+- Pause secrets for the task and all its agents, or block only the selected worker.
+- Restore an explicitly blocked secret, or grant additional temporary access.
+- Revoke a grant. Revoking an inherited project secret also blocks it for this task
+  until you restore it, so the next command cannot silently regrant it.
+
+A worker block resets the team's shared protected environment and interrupts
+protected commands to stop retained processes. Access blocks survive restarts.
+Forks inherit task pauses and blocked secrets; individual worker blocks stay with
+the original task. Temporary grants are not copied. Unlocking a source does not
+remove a block. Older tasks that previously used secrets and were stopped before
+this update begin paused; restore access once in the shield.
 
 Agent requests appear as private approval cards, not transcript messages. A request
 belongs to the manager session; a worker identity is recorded only to show who asked.
@@ -131,7 +136,7 @@ worker by validating its runtime, workspace, and assignment before delivering se
 work through the manager container. Follow-ups and reassignments keep using the same
 session environment. A stale assignment binding fails closed, while worker stop,
 deletion, or idle status does not revoke the manager session. Unsupported worker
-runtimes fail closed instead of receiving the work outside Team Secure Mode.
+runtimes fail closed instead of receiving the work outside the protected environment.
 
 If the requested alias does not exist, the agent can propose its alias, purpose,
 delivery, and lease. The tool cannot include or receive protected material. Choose
@@ -149,7 +154,7 @@ on the host and adds a separate `secure_bash` tool backed by the manager-session
 Linux container. Only `secure_bash` receives approved values or Forge-managed SSH
 trust. Output from both tools is filtered before Pi can accumulate or persist it. If
 protected output is found, Forge redacts it and marks the shared session. The team can
-continue with task or timed grants still active, or you can stop Team Secure Mode.
+continue with task or timed grants still active, or you can pause secret access.
 File tools remain host-side and their structured results pass through the active
 exact-value guard; the integrated terminal is not a Secure Session path.
 

@@ -1,6 +1,7 @@
 import type { AgentDescriptor } from '@forge/protocol'
 import type { SessionRow } from '@/lib/agent-hierarchy'
-import type { AgentLiveStatus, StatusMap } from './types'
+import type { SessionContextMenuActions } from './SessionContextMenu'
+import type { AgentLiveStatus, SessionContextMenuActionSource, StatusMap } from './types'
 
 type SessionActivityAgent = Pick<AgentDescriptor, 'agentId' | 'status' | 'activeWorkerCount'>
 
@@ -79,6 +80,47 @@ export function slugifySessionName(name: string): string {
 
 export function getSessionLabel(session: SessionRow): string {
   return session.sessionAgent.sessionLabel || (session.isDefault ? 'Main' : session.sessionAgent.displayName || session.sessionAgent.agentId)
+}
+
+const DEFAULT_SESSION_ARCHIVE_DISABLED_REASON = 'The default session for a project can\u2019t be archived directly.'
+
+/**
+ * Bind the same local session-menu availability used by Projects/project view.
+ * Remote Inbox rows must not receive these actions.
+ */
+export function buildSessionContextMenuActions(
+  session: SessionRow,
+  source: SessionContextMenuActionSource,
+  options: {
+    canPromoteToProjectAgent?: boolean
+    onViewCreationHistory?: () => void
+  } = {},
+): SessionContextMenuActions {
+  const sid = session.sessionAgent.agentId
+  return {
+    onStop: source.onStopSession ? () => source.onStopSession?.(sid) : undefined,
+    onResume: source.onResumeSession ? () => source.onResumeSession?.(sid) : undefined,
+    onDelete: source.onDeleteSession ? () => source.onDeleteSession?.(sid) : undefined,
+    onArchive: source.onArchiveSession && !session.isDefault ? () => source.onArchiveSession?.(sid) : undefined,
+    archiveDisabledReason: session.isDefault ? DEFAULT_SESSION_ARCHIVE_DISABLED_REASON : undefined,
+    onRename: source.onRequestRenameSession ? () => source.onRequestRenameSession?.(sid) : undefined,
+    onFork: source.onForkSession ? () => source.onForkSession?.(sid) : undefined,
+    onMarkUnread: source.onMarkUnread ? () => source.onMarkUnread?.(sid) : undefined,
+    onPinSession: source.onPinSession,
+    onPromoteToProjectAgent: options.canPromoteToProjectAgent !== false && source.onPromoteToProjectAgent
+      ? () => source.onPromoteToProjectAgent?.(sid)
+      : undefined,
+    onOpenProjectAgentSharing: source.onOpenProjectAgentSharing ? () => source.onOpenProjectAgentSharing?.(sid) : undefined,
+    onOpenProjectAgentSettings: source.onOpenProjectAgentSettings ? () => source.onOpenProjectAgentSettings?.(sid) : undefined,
+    onDemoteProjectAgent: source.onDemoteProjectAgent ? () => { void source.onDemoteProjectAgent?.(sid) } : undefined,
+    onViewCreationHistory: options.onViewCreationHistory,
+    onChangeSessionModel: source.onChangeSessionModel ? () => source.onChangeSessionModel?.(sid) : undefined,
+    onUseProjectDefault: source.onUseProjectDefault ? () => source.onUseProjectDefault?.(sid) : undefined,
+    isMutedSession: source.mutedAgents?.has(sid),
+    onToggleMute: source.onToggleMute ? () => source.onToggleMute?.(sid) : undefined,
+    hideCliSessions: source.hideCliSessions,
+    onToggleHideCliSessions: source.onToggleHideCliSessions,
+  }
 }
 
 // ── Search helpers ──

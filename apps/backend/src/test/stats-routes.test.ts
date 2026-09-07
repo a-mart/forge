@@ -28,12 +28,22 @@ describe('createStatsRoutes', () => {
 
     const statsResponse = await fetch(`${server.baseUrl}/api/stats?range=7d&tz=America%2FChicago`)
     expect(statsResponse.status).toBe(200)
+    await expect(statsResponse.json()).resolves.toEqual(expect.objectContaining({
+      fuckMeter: {
+        daily: [{ date: '2026-05-20', count: 2 }, { date: '2026-05-21', count: 0 }],
+      },
+    }))
     expect(refreshAllRangesInBackground).not.toHaveBeenCalled()
 
     const refreshResponse = await fetch(`${server.baseUrl}/api/stats/refresh?range=30d&tz=America%2FNew_York`, {
       method: 'POST',
     })
     expect(refreshResponse.status).toBe(200)
+    await expect(refreshResponse.json()).resolves.toEqual(expect.objectContaining({
+      fuckMeter: {
+        daily: [{ date: '2026-05-20', count: 2 }, { date: '2026-05-21', count: 0 }],
+      },
+    }))
     expect(getSnapshot).toHaveBeenNthCalledWith(1, '7d', { timezone: 'America/Chicago' })
     expect(getSnapshot).toHaveBeenNthCalledWith(2, '30d', {
       forceRefresh: true,
@@ -353,6 +363,9 @@ function createStatsSnapshot(): StatsSnapshot {
     allProviders: [],
     dailyUsage: [],
     providers: {},
+    fuckMeter: {
+      daily: [{ date: '2026-05-20', count: 2 }, { date: '2026-05-21', count: 0 }],
+    },
     system: {
       uptimeFormatted: '0s',
       totalProfiles: 0,

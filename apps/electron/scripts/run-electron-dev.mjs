@@ -184,6 +184,7 @@ export function createElectronDevelopmentSupervisor({
   }
 
   const forceShutdown = async (reason, exitCode = 1) => {
+    if (settled) return completion
     stopping = true
     forcedExitCode = exitCode
     if (!forcePromise) {
@@ -206,6 +207,7 @@ export function createElectronDevelopmentSupervisor({
   }
 
   const requestShutdown = (reason, exitCode = 0) => {
+    if (settled) return completion
     if (exitCode !== 0) requestedExitCode = exitCode
     if (stopping) return completion
 

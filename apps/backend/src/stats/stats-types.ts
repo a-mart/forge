@@ -48,6 +48,8 @@ export interface StatsScanResult {
   activeSessionCount: number;
   userMessages: number[];
   earliestUsageDayKey: string | null;
+  earliestUserActivityDayKey: string | null;
+  fuckMeterDaily: Map<string, number>;
   managerRepoPaths: string[];
   diagnostics: StatsScanDiagnostics;
 }

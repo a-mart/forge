@@ -3,23 +3,24 @@
 Secure Sessions let a local Builder task use an approved secret without putting the
 secret value in chat, a model prompt, tool arguments, WebSocket messages, or the
 conversation transcript. The agent continues to call the ordinary Pi Bash and file
-tools for normal host work. While Team Secure Mode is active, Forge adds a separate
-`secure_bash` tool backed by the Linux secure execution plane. Approved values are
-resolved only after a `secure_bash` call has reached that local boundary and selected
-their already-granted display aliases; normal
-`bash` never receives them.
+tools for normal host work. For projects with secret grants, Forge automatically adds a separate
+`secure_bash` tool backed by the Linux secure execution plane. Forge resolves project
+grants inside its local secure service when preparing protected execution. Each
+command receives only the display aliases it selects; normal `bash` never receives
+the protected values.
 
 This feature is designed for the practical middle ground between two unsafe extremes:
 giving the model a password and building a special-purpose tool for every command that
 might need one.
 
-## What Team Secure Mode is
+## Shared project secret access
 
-Team Secure Mode belongs to one local Builder manager session. That manager session
+The protected environment belongs to one local Builder manager session. That manager session
 is the only authorization principal: it owns one reusable Linux container, one lease
 set, one request queue, and one output-protection state. Eligible local Forge Pi
 workers inherit that authority while executing work for the manager; they never
-create a second secret grant or sandbox. While it is active:
+create a second secret grant or sandbox. Explicit task and agent blocks override
+that inheritance. The runner starts on first protected use:
 
 - the manager and all eligible workers can run `secure_bash` in the same
   manager-owned container;
@@ -31,7 +32,7 @@ create a second secret grant or sandbox. While it is active:
   macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
   a protected RAM-backed file, an askpass helper, or an execution-local SSH agent;
-- each secure command names the exact active aliases it needs, so unrelated grants
+- each secure command names the exact granted aliases it needs, so unrelated grants
   are not delivered and no additional approval prompt is required;
 - a task or timed grant can be reused across many commands from the manager or any
   eligible worker in the session;
@@ -317,7 +318,7 @@ Detached background processes cannot keep using the agent after the direct
 
 ## Automatic grants
 
-Under **Automatically grant in**, a saved secret can be assigned to one or more
+Under **Granted to projects**, a saved secret can be assigned to one or more
 projects. An all-projects secret can instead use **Every project**, which is a durable
 rule that includes current projects and projects created later. This policy is
 separate from the secret's catalog availability scope:
@@ -331,7 +332,7 @@ separate from the secret's catalog availability scope:
 - lowering the configured limit is rejected when any project already has more effective automatic grants than the new value;
 - a live limit change invalidates the secret catalog so local Builder surfaces refetch the authoritative bound;
 - per-secret exposure/binding counts remain capped at 16 and are independent of the grant-batch limit;
-- when Team Secure Mode starts, Forge evaluates each applicable policy once for the
+- on the first protected command, Forge evaluates each applicable policy for the
   manager session;
 - each applicable policy creates one **Until Secure Session stops** lease in the
   shared manager authority;
@@ -340,11 +341,13 @@ separate from the secret's catalog availability scope:
 - an automatic grant is never injected into standard Bash, a model prompt, the integrated
   terminal, another project, or an unsupported worker runtime.
 
-Changing an automatic-grant policy while Team Secure Mode is active marks it
-**Configured**. Choose **Apply now** in the shield to apply or retry non-active
-automatic grants for the manager session without restarting. Disabling a policy
-revokes only the shared lease created from that policy; it does not remove a separate
-manual grant.
+Project grants are authorization: eligible agents install protected tools automatically,
+without resolving values or provisioning Docker at runtime creation. The first
+`secure_bash` command prepares the shared environment and grants. Later protected
+commands reconcile new policies and recovered sources, without an Apply action.
+Adding a first project grant schedules existing eligible runtimes for the normal
+safe recycle boundary. Disabling a policy revokes only its shared project lease;
+it does not remove a separate manual grant.
 
 Forge evaluates every automatic grant independently. A locked or unavailable source
 is reported as unavailable, and a delivery collision is reported as a binding
@@ -357,35 +360,33 @@ remain available after restore. Permanently deleting the project removes its
 project-scoped secrets and project-specific automatic-grant mappings. An all-projects
 secret and its **Every project** policy are not deleted with any one project.
 
-## Start, grant, reuse, and revoke
+## Automatic access, temporary grants, and blocks
 
-1. Open a local Builder manager whose current runtime is supported.
-2. Select the shield beside **Send** and start Team Secure Mode. Forge prepares the
-   manager's shared sandbox and recycles eligible idle workers onto that execution
-   boundary. If a worker is actively streaming, Team Secure Mode still starts: Forge
-   defers that worker's runtime recycle, so its in-flight turn remains ordinary and
-   non-secure until its next secure assignment.
-3. Forge applies the project's configured automatic grants once and reports
-   any secret it could not activate. Use **Apply now** to apply newly
-   configured policies or retry recovered sources without restarting.
-4. Select any additional saved aliases for the manager session. Forge gives a newly
-   saved secret a stable, generated environment delivery automatically; advanced
-   saved bindings remain available when a specific askpass, file, stdin, or
-   environment shape is needed.
-5. Choose a lease:
-   - **Until Secure Session stops** is the default and remains available until the
-     user revokes it or stops the Secure Session.
-   - **Timed** remains available for the selected duration, up to 24 hours.
-   - **One use** is atomically consumed by the next `secure_bash` command that selects
-     its alias.
-6. Continue ordinary repository work, builds, Git, GitHub CLI, and host-integrated
-   tasks with `bash`. Use `secure_bash` only for commands that need an approved value
-   or Forge-managed SSH trust. The agent passes the exact active display aliases each
-   command needs in `secretAliases`, or `[]` for a trust-only command. The same task
-   or timed lease remains available across calls from the manager or its eligible
-   workers, so a 16-command credentialed workflow does not require 16 prompts.
-7. Revoke one shared lease or stop Team Secure Mode to revoke the manager session and
-   destroy its environment.
+1. Grant a saved alias to a local project in **Settings → Secrets**.
+2. Ask an eligible agent to perform the work. It uses ordinary host `bash` for
+   repository work and `secure_bash` with the exact needed aliases for protected
+   commands. The runner starts on first use. A command with `[]` delivers no values.
+3. Use the shield when a needed source requires unlocking, or to approve additional
+   task, timed, or one-use access. Source recovery is checked on the next command;
+   Forge does not replay an uncertain command automatically.
+4. Pause all secret access for a task or block a selected worker. A worker block
+   resets the shared container to stop retained processes, interrupting the team's
+   protected commands. Revoking an inherited secret also suppresses regrant for
+   that task until explicitly restored.
+
+Denials are durable and checked before requests, approvals, and command delivery.
+A failed cleanup retains the denial and fails closed. Unlocking a source, runtime
+replacement, or worker reassignment does not clear it. Forks copy task pauses and
+secret suppressions, but neither worker IDs nor temporary grants. Migration
+conservatively pauses previously used tasks that were stopped; untouched tasks
+inherit project grants normally. Older clients retain the legacy start/stop API;
+explicit start restores a task pause and explicit stop records one.
+
+Runtime setup for projects without grants or trusted SSH hosts keeps its existing
+tool and extension policy. Protected Pi runtimes retain the existing restriction on
+external Pi extensions and the same host tool output guard. Unsupported runtimes,
+Remote Projects, and Collaboration do not inherit local secrets.
+
 
 Each `secure_bash` command receives only the active grants named in its
 `secretAliases` input, and those values are available to that command's child
@@ -603,7 +604,7 @@ still passes through the secure guard.
 | --- | --- |
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
-| Automatic grant unavailable | This session's automatic grant was skipped; fix its source and choose **Apply now** after it recovers |
+| Automatic grant unavailable | This session's automatic grant was skipped; unlock or repair its source, then retry the protected command |
 | Automatic grant binding conflict | This automatic grant was skipped because its saved delivery collides with another active or automatic delivery |
 | Revision conflict | Another view changed the session; refresh before retrying |
 | Protected output redacted | The guard removed protected material before it reached the agent; the shared session is quarantined but can continue, or you can stop Team Secure Mode |

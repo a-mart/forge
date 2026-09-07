@@ -303,7 +303,6 @@ export class PiRuntimeCreator {
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const promptPlan = planPiRuntimePrompt({
-      descriptor,
       systemPrompt,
       cwd: descriptor.cwd,
       startupRecoveryContext: creationOptions?.startupRecoveryContext
@@ -425,16 +424,10 @@ export class PiRuntimeCreator {
     const effectiveResourcePlan = secureRuntimeBinding
       ? applySecurePiResourcePolicy(resourcePlan)
       : resourcePlan;
-    const resourceLoader =
-      descriptor.role === "manager"
-        ? new DefaultResourceLoader({
-            ...effectiveResourcePlan,
-            settingsManager
-          })
-        : new DefaultResourceLoader({
-            ...omitSystemPrompt(effectiveResourcePlan),
-            settingsManager
-          });
+    const resourceLoader = new DefaultResourceLoader({
+      ...effectiveResourcePlan,
+      settingsManager
+    });
 
     try {
       await resourceLoader.reload({
@@ -1127,9 +1120,4 @@ export function resolveOpenAICodexTransport(model: Pick<Model<any>, "provider" |
 
 function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return structuredClone(descriptor);
-}
-
-function omitSystemPrompt<T extends { systemPrompt?: string }>(plan: T): Omit<T, "systemPrompt"> {
-  const { systemPrompt: _systemPrompt, ...rest } = plan;
-  return rest;
 }

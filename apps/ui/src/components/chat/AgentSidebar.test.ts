@@ -11,7 +11,10 @@ import type {
   AgentDescriptor,
   AgentStatus,
   BuilderSidebarOrderRef,
+  ManagerExactModelSelection,
   ManagerProfile,
+  ManagerReasoningLevel,
+  SessionModelUpdateMode,
 } from '@forge/protocol'
 import type { RemoteSidebarOrigin } from './agent-sidebar/types'
 import { originRegistry } from '@/lib/origin-store'
@@ -136,6 +139,9 @@ function renderSidebar({
   onOpenArchive,
   onArchiveSession,
   onArchiveProfile,
+  onRenameSession,
+  onForkSession,
+  onUpdateSessionModel,
   isSettingsActive = false,
   statuses = {},
   unreadCounts = {},
@@ -162,6 +168,9 @@ function renderSidebar({
   onOpenArchive?: () => void
   onArchiveSession?: (agentId: string) => void
   onArchiveProfile?: (profileId: string) => void
+  onRenameSession?: (agentId: string, label: string) => void
+  onForkSession?: (sourceAgentId: string, name?: string) => void
+  onUpdateSessionModel?: (sessionAgentId: string, mode: SessionModelUpdateMode, modelSelection?: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => void
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
   unreadCounts?: Record<string, number>
@@ -207,6 +216,9 @@ function renderSidebar({
           onOpenArchive,
           onArchiveSession,
           onArchiveProfile,
+          onRenameSession,
+          onForkSession,
+          onUpdateSessionModel,
           onCreateSession,
           isSettingsActive,
           isMobileOpen,
@@ -291,6 +303,128 @@ describe('AgentSidebar', () => {
     root = null
     renderSidebar({ agents: [sessionManager('rooms-mode', 'rooms-mode')] })
     expect(getByRole(getDesktopSidebar(), 'button', { name: 'Projects' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('offers the same local session context menu on Inbox Needs You, Active, and Recent rows', async () => {
+    localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
+    const onRenameSession = vi.fn()
+    const onForkSession = vi.fn()
+    const onUpdateSessionModel = vi.fn()
+    const extraSession = {
+      ...sessionManager('inbox-extra', 'inbox-project'),
+      sessionLabel: 'Inbox Extra',
+      status: 'streaming' as const,
+      activeWorkerCount: 1,
+      updatedAt: new Date().toISOString(),
+    }
+    const recentSession = {
+      ...sessionManager('inbox-recent', 'inbox-project'),
+      sessionLabel: 'Inbox Recent',
+      updatedAt: new Date().toISOString(),
+    }
+    const defaultSession = {
+      ...sessionManager('inbox-project', 'inbox-project'),
+      sessionLabel: 'Main',
+      pendingChoiceCount: 1,
+      updatedAt: new Date().toISOString(),
+    }
+    const profile = {
+      ...profileFor(defaultSession),
+      profileId: 'inbox-project',
+      displayName: 'Inbox Project',
+      defaultSessionAgentId: 'inbox-project',
+    }
+    const remoteSession = {
+      ...sessionManager('remote-inbox-session', 'remote-inbox-project'),
+      sessionLabel: 'Remote Inbox Session',
+      updatedAt: new Date().toISOString(),
+    }
+    const remoteProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'remote-inbox-project',
+      displayName: 'Remote Inbox Project',
+      defaultSessionAgentId: 'remote-inbox-session',
+    }
+
+    const store = originRegistry.createOrigin({
+      originId: 'local',
+      wsUrl: 'ws://local.test',
+      offline: true,
+    })
+    store.ingest({
+      type: 'snapshot',
+      state: {
+        connected: true,
+        hasReceivedAgentsSnapshot: true,
+        hasReceivedProfilesSnapshot: true,
+        profiles: [profile] as any,
+        agents: [defaultSession, extraSession, recentSession] as any,
+        sessionAttentionAvailable: true,
+        sessionAttentionRevision: 1,
+        sessionAttentions: {
+          'inbox-project': {
+            attentionId: 'attention-inbox-project',
+            sessionAgentId: 'inbox-project',
+            profileId: 'inbox-project',
+            reason: 'decision_waiting',
+            raisedAt: new Date().toISOString(),
+          },
+        },
+      },
+    })
+
+    renderSidebar({
+      agents: [defaultSession, extraSession, recentSession],
+      profiles: [profile],
+      onRenameSession,
+      onForkSession,
+      onUpdateSessionModel,
+      remoteOrigins: [{
+        originId: 'remote-inbox-origin',
+        connected: true,
+        treeRows: [{
+          profile: remoteProfile,
+          sessions: [{ sessionAgent: remoteSession, workers: [], isDefault: true }],
+        }],
+      }],
+    })
+
+    const sidebar = getDesktopSidebar()
+    const localRows = [
+      sidebar.querySelector('[data-inbox-row="local::inbox-project"]') as HTMLElement,
+      sidebar.querySelector('[data-inbox-row="local::inbox-extra"]') as HTMLElement,
+      sidebar.querySelector('[data-inbox-row="local::inbox-recent"]') as HTMLElement,
+    ]
+    expect(localRows.every((row) => row)).toBe(true)
+    expect(localRows.every((row) => row.closest('[data-slot="context-menu-trigger"]'))).toBe(true)
+    expect(sidebar.querySelector('[data-inbox-section="needs-you"] [data-inbox-row="local::inbox-project"]')).not.toBeNull()
+    expect(sidebar.querySelector('[data-inbox-section="active"] [data-inbox-row="local::inbox-extra"]')).not.toBeNull()
+    expect(sidebar.querySelector('[data-inbox-section="recent"] [data-inbox-row="local::inbox-recent"]')).not.toBeNull()
+
+    flushSync(() => {
+      localRows[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+    await flushEffects()
+    const menuText = document.body.textContent ?? ''
+    expect(menuText).toContain('Copy session data path')
+    expect(menuText).toContain('Rename')
+    expect(menuText).toContain('Fork')
+    expect(menuText).toContain('Override Session Model')
+
+    const forkItem = getAllByRole(document.body, 'menuitem').find((item) => item.textContent === 'Fork')
+    expect(forkItem).toBeTruthy()
+    click(forkItem as HTMLElement)
+    await flushEffects()
+    const forkSubmit = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Fork') as HTMLElement | undefined
+    expect(forkSubmit).toBeDefined()
+    click(forkSubmit!)
+    expect(onForkSession).toHaveBeenCalledWith('inbox-extra', undefined)
+    expect(onRenameSession).not.toHaveBeenCalled()
+    expect(onUpdateSessionModel).not.toHaveBeenCalled()
+
+    const remoteRow = sidebar.querySelector('[data-inbox-row="remote-inbox-origin::remote-inbox-session"]') as HTMLElement
+    expect(remoteRow).not.toBeNull()
+    expect(remoteRow.closest('[data-slot="context-menu-trigger"]')).toBeNull()
   })
 
   it('keeps Inbox selected when an origin-scoped remote Inbox row is selected', () => {

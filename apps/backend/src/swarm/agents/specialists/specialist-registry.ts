@@ -465,7 +465,7 @@ export function generateTierLensRosterBlock(
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "When delegating, use the active roster of specialists.",
+    "After the selected work mode calls for delegation, use the active roster of specialists. Roster availability is not a reason to delegate.",
     "",
     "Forge appends `[delegationRoster]` to manager turns. A named `route` selects a complete specialist: task instructions, model, and recovery. Otherwise choose a task `mode` and omit `route` for that task's default specialist.",
   ];
@@ -504,11 +504,9 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- A named route selects the full specialist. Without one, mode selects the task and its default specialist.",
     "- Availability fallback is automatic, not capability escalation. For granted secrets, set `requiresSecureRuntime=true`; Forge fails closed without a compatible runtime.",
     "- Name a non-default specialist only when its guidance clearly fits. Escalate only after evidence that the first specialist was inadequate.",
     "- Outside a work graph, escalation requires a fresh delegation on the stronger specialist; messaging the same worker does not change its pinned executor.",
-    "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
     "- Do not choose a stronger specialist merely because work is large, planned, reviewed, or graph-shaped.",
   );
 

@@ -1087,6 +1087,111 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         );
       `);
     }
+  },
+  {
+    version: 12,
+    name: "durable_secure_access_denials",
+    requiresForeignKeysOff: false,
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_revision_v12 (
+          session_agent_id TEXT NOT NULL
+            REFERENCES secure_session_state(session_agent_id) ON DELETE CASCADE,
+          revision INTEGER NOT NULL CHECK (revision >= 0),
+          event_type TEXT NOT NULL CHECK (event_type IN (
+            'initialized', 'fork_initialized', 'request_created', 'request_resolved',
+            'lease_created', 'lease_revoked', 'leases_expired', 'lease_used',
+            'lease_consumed', 'session_revoked', 'session_runtime_updated',
+            'worker_assignment_updated', 'access_policy_updated'
+          )),
+          lease_id TEXT CHECK (lease_id IS NULL OR length(lease_id) BETWEEN 1 AND 256),
+          affected_count INTEGER NOT NULL DEFAULT 1 CHECK (affected_count >= 0),
+          occurred_at TEXT NOT NULL,
+          PRIMARY KEY (session_agent_id, revision)
+        ) STRICT;
+        INSERT INTO secure_session_revision_v12 SELECT * FROM secure_session_revision;
+        DROP TABLE secure_session_revision;
+        ALTER TABLE secure_session_revision_v12 RENAME TO secure_session_revision;
+        CREATE TABLE secure_session_audit_v12 (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_type TEXT NOT NULL CHECK (event_type IN (
+            'provider_upserted', 'provider_backend_updated', 'provider_deleted',
+            'secret_created', 'secret_updated', 'secret_deleted', 'binding_put',
+            'binding_deleted', 'project_default_put', 'project_default_deleted',
+            'session_initialized', 'fork_initialized', 'request_created',
+            'request_resolved', 'lease_created', 'lease_revoked', 'leases_expired',
+            'lease_used', 'lease_consumed', 'session_revoked', 'session_deleted',
+            'session_runtime_updated', 'worker_assignment_updated', 'access_policy_updated',
+            'exposure_opened', 'exposure_closed'
+          )),
+          session_agent_id TEXT CHECK (
+            session_agent_id IS NULL OR length(session_agent_id) BETWEEN 1 AND 256
+          ),
+          profile_id TEXT CHECK (
+            profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 256
+          ),
+          principal_kind TEXT CHECK (
+            principal_kind IS NULL OR principal_kind IN ('manager', 'worker')
+          ),
+          owner_manager_agent_id TEXT CHECK (
+            owner_manager_agent_id IS NULL
+            OR length(owner_manager_agent_id) BETWEEN 1 AND 256
+          ),
+          worker_assignment_id TEXT CHECK (
+            worker_assignment_id IS NULL
+            OR length(worker_assignment_id) BETWEEN 1 AND 256
+          ),
+          provider_id TEXT CHECK (provider_id IS NULL OR length(provider_id) BETWEEN 1 AND 256),
+          secret_id TEXT CHECK (secret_id IS NULL OR length(secret_id) BETWEEN 1 AND 256),
+          binding_id TEXT CHECK (binding_id IS NULL OR length(binding_id) BETWEEN 1 AND 256),
+          request_id TEXT CHECK (request_id IS NULL OR length(request_id) BETWEEN 1 AND 256),
+          lease_id TEXT CHECK (lease_id IS NULL OR length(lease_id) BETWEEN 1 AND 256),
+          operation_id TEXT CHECK (operation_id IS NULL OR length(operation_id) BETWEEN 1 AND 256),
+          outcome TEXT NOT NULL CHECK (outcome IN (
+            'created', 'updated', 'deleted', 'approved', 'denied', 'cancelled',
+            'revoked', 'expired', 'reserved', 'succeeded', 'failed', 'completed'
+          )),
+          occurred_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO secure_session_audit_v12 SELECT * FROM secure_session_audit;
+        DROP TABLE secure_session_audit;
+        ALTER TABLE secure_session_audit_v12 RENAME TO secure_session_audit;
+        CREATE INDEX secure_session_audit_session_idx ON secure_session_audit(session_agent_id, audit_id);
+
+        CREATE TABLE secure_session_access_denial (
+          session_agent_id TEXT NOT NULL REFERENCES secure_session_state(session_agent_id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('task', 'agent', 'secret')),
+          subject_id TEXT NOT NULL CHECK (length(subject_id) BETWEEN 1 AND 256),
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_agent_id, kind, subject_id)
+        ) STRICT;
+
+        -- A previously used, stopped task may represent an explicit user stop.
+        -- Preserve that boundary; fresh tasks inherit project policy normally.
+        INSERT INTO secure_session_access_denial (session_agent_id, kind, subject_id, created_at)
+        SELECT state.session_agent_id, 'task', state.session_agent_id, state.updated_at
+        FROM secure_session_state state
+        WHERE state.principal_kind = 'manager'
+          AND state.execution_mode = 'standard'
+          AND EXISTS (
+            SELECT 1 FROM secure_session_lease lease
+            WHERE lease.session_agent_id = state.session_agent_id
+          );
+
+        -- Preserve explicit revocation of an inherited grant when no newer lease exists.
+        INSERT OR IGNORE INTO secure_session_access_denial (session_agent_id, kind, subject_id, created_at)
+        SELECT lease.session_agent_id, 'secret', lease.secret_id, MAX(lease.updated_at)
+        FROM secure_session_lease lease
+        WHERE lease.grant_source = 'project_default'
+          AND lease.state = 'revoked' AND lease.revocation_reason = 'user'
+          AND NOT EXISTS (
+            SELECT 1 FROM secure_session_lease active
+            WHERE active.session_agent_id = lease.session_agent_id
+              AND active.secret_id = lease.secret_id AND active.state = 'active'
+          )
+        GROUP BY lease.session_agent_id, lease.secret_id;
+      `);
+    }
   }
 ];
 

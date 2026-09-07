@@ -24,7 +24,7 @@ import {
 type AnyToolDefinition = ToolDefinition<any, any, any>;
 
 const SECURE_BASH_SECRET_SELECTION_MESSAGE =
-  "secure_bash requires secretAliases to list the exact active secret aliases this command needs; use [] when it needs only Secure Sessions SSH trust or isolation.";
+  "secure_bash requires secretAliases to list the exact project-granted or task-granted secret aliases this command needs; use [] when it needs only Secure Sessions SSH trust or isolation.";
 
 export function createSecurePiCodingTools(options: {
   cwd: string;
@@ -111,9 +111,9 @@ export function createSecurePiCodingTools(options: {
   secureBash.name = "secure_bash";
   secureBash.label = "Secure Bash · Linux container";
   secureBash.description =
-    "Execute Bash inside Forge's Linux secure container. Set secretAliases to the exact active secret aliases this command needs, or [] when it needs only Secure Sessions SSH trust or isolation. Only those approved Secure Sessions values are delivered; no new approval is created. SSH-agent selections set SSH_AUTH_SOCK automatically for ordinary ssh, scp, and Git commands. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
+    "Execute Bash inside Forge's Linux secure container. Set secretAliases to the exact project-granted or task-granted secret aliases this command needs, or [] when it needs only Secure Sessions SSH trust or isolation. Only those approved Secure Sessions values are delivered; no new approval is created. SSH-agent selections set SSH_AUTH_SOCK automatically for ordinary ssh, scp, and Git commands. The workspace and working directory are mapped automatically; prefer relative paths. Host programs, credential managers, and authenticated host CLIs are intentionally unavailable—use normal bash for those.";
   secureBash.promptSnippet =
-    "Use secure_bash only for commands that need approved secrets, SSH-agent keys, or Secure Sessions SSH trust; pass the exact needed active aliases in secretAliases, or [] for trust-only commands";
+    "Use secure_bash only for commands that need approved secrets, SSH-agent keys, or Secure Sessions SSH trust; pass the exact needed granted aliases in secretAliases, or [] for trust-only commands";
 
   return guardSecureRuntimeTools(
     [

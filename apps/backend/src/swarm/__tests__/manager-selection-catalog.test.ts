@@ -117,7 +117,7 @@ describe.sequential("manager selection catalog projection", () => {
       selectable: true,
     });
     expect(first.workModes.find((mode) => mode.id === "adaptive")?.description).toContain(
-      "ownership outcome by outcome",
+      "Starts directly; delegates when",
     );
     expect(first.defaults).toEqual({
       createManagerModel: {

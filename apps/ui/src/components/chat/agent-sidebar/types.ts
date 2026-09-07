@@ -122,6 +122,27 @@ export interface WorkerRowProps {
   highlightQuery?: string
 }
 
+export interface SessionContextMenuActionSource {
+  onStopSession?: (agentId: string) => void
+  onResumeSession?: (agentId: string) => void
+  onDeleteSession?: (agentId: string) => void
+  onArchiveSession?: (agentId: string) => void
+  onRequestRenameSession?: (agentId: string) => void
+  onForkSession?: (sourceAgentId: string) => void
+  onMarkUnread?: (agentId: string) => void
+  onPinSession?: (agentId: string, pinned: boolean) => void
+  onPromoteToProjectAgent?: (agentId: string) => void
+  onOpenProjectAgentSharing?: (agentId: string) => void
+  onOpenProjectAgentSettings?: (agentId: string) => void
+  onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
+  onChangeSessionModel?: (sessionAgentId: string) => void
+  onUseProjectDefault?: (sessionAgentId: string) => void
+  mutedAgents?: Set<string> | ReadonlySet<string>
+  onToggleMute?: (agentId: string) => void
+  hideCliSessions?: boolean
+  onToggleHideCliSessions?: () => void
+}
+
 export interface SessionRowItemProps {
   session: SessionRow
   statuses: StatusMap

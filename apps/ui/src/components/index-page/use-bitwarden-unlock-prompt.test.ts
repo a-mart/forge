@@ -41,16 +41,20 @@ function Harness({
   catalog = lockedCatalog,
   active = true,
   canUnlock = true,
+  providerIds,
+  promptWhenNeeded = false,
   unlock,
   onController,
 }: {
   catalog?: SecureSecretsCatalog | null
   active?: boolean
   canUnlock?: boolean
+  providerIds?: string[]
+  promptWhenNeeded?: boolean
   unlock: (providerId: string, masterPassword: string) => Promise<void>
   onController: (controller: PromptController) => void
 }) {
-  const nextController = useBitwardenUnlockPrompt({ catalog, active, canUnlock, unlock })
+  const nextController = useBitwardenUnlockPrompt({ catalog, active, canUnlock, unlock, providerIds, promptWhenNeeded })
   useEffect(() => {
     onController(nextController)
   }, [nextController, onController])
@@ -69,17 +73,30 @@ afterEach(() => {
 })
 
 describe('useBitwardenUnlockPrompt', () => {
-  it('prompts once at launch and re-prompts when starting a secure session', async () => {
+  it('prompts for a needed project source, stays quiet after cancellation, and ignores unrelated sources', async () => {
+    const unlock = vi.fn(async () => undefined)
+    await act(async () => root.render(createElement(Harness, {
+      unlock, onController: captureController, providerIds: ['unrelated'], promptWhenNeeded: true,
+    })))
+    expect(controller.prompt).toBeNull()
+    await act(async () => root.render(createElement(Harness, {
+      unlock, onController: captureController, providerIds: ['bitwarden-password-manager'], promptWhenNeeded: true,
+    })))
+    expect(controller.prompt?.providerId).toBe('bitwarden-password-manager')
+    act(() => controller.dismissPrompt())
+    await act(async () => root.render(createElement(Harness, {
+      unlock, onController: captureController, providerIds: ['bitwarden-password-manager'], promptWhenNeeded: true,
+    })))
+    expect(controller.prompt).toBeNull()
+    expect(unlock).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet at launch and prompts only when protected access needs unlocking', async () => {
     const unlock = vi.fn(async () => undefined)
     await act(async () => {
       root.render(createElement(Harness, { unlock, onController: captureController }))
     })
 
-    expect(controller.prompt).toMatchObject({
-      providerId: 'bitwarden-password-manager',
-      reason: 'launch',
-    })
-    act(() => controller.dismissPrompt())
     expect(controller.prompt).toBeNull()
 
     let startResult!: Promise<boolean>

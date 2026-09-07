@@ -298,9 +298,9 @@ describe('SessionModelPicker compact menu', () => {
     expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
   })
 
-  it('returns an overridden session to the project default', async () => {
+  it.each(['session_override', 'profile_default'] as const)('applies the current project default to a %s session', async (modelOrigin) => {
     const onUpdate = vi.fn(async () => {})
-    renderPicker(onUpdate, { modelOrigin: 'session_override' })
+    renderPicker(onUpdate, { modelOrigin, currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'high' } })
     await openPicker()
 
     flushSync(() => {
