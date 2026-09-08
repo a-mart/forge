@@ -2245,8 +2245,13 @@ describe('SwarmManager', () => {
     expect(workerRuntime).toBeDefined()
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: pre-tagged')
 
-    await manager.sendMessage('manager', worker.agentId, 'WORKER REPORT: status: done', 'auto')
-    expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: WORKER REPORT: status: done')
+    for (const message of ['WORKER REPORT: status: done', 'SYSTEM: pre-tagged follow-up']) {
+      await manager.sendMessage('manager', worker.agentId, message, 'auto')
+      const runtimeText = String(workerRuntime?.sendCalls.at(-1)?.message)
+      expect(runtimeText.split('\n')[0]).toBe(message.startsWith('SYSTEM:') ? message : `SYSTEM: ${message}`)
+      expect(runtimeText.match(/SYSTEM:/g)).toHaveLength(1)
+      expect(runtimeText).toContain('[Forge follow-up instructions]')
+    }
   })
 
   it('accepts busy-runtime messages as steer regardless of requested delivery', async () => {

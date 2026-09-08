@@ -254,7 +254,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private freshBoundaryRequestEpoch: number | undefined;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
-  private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
+  private latestAutoCompactionReason: "agent" | "threshold" | "overflow" | undefined;
   private autoCompactionEntryKeysBefore: Set<string> | undefined;
   private autoCompactionFailureCooldownUntilMs = 0;
   private suppressSessionEventsUntilIdle: { active: true; expiresAt: number } | null = null;
@@ -1149,7 +1149,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
     this.autoFreshRecoveryClaimedBeforeStart = true;
-    this.latestAutoCompactionReason ??= reason === "manual" ? undefined : reason === "agent" ? "threshold" : reason;
+    this.latestAutoCompactionReason ??= reason === "manual" ? undefined : reason;
     this.autoCompactionEntryKeysBefore ??= this.getCompactionEntryKeys();
     if (!this.autoCompactionRecoveryInProgress) {
       this.beginAutoCompactionRecovery();
@@ -1790,17 +1790,20 @@ export class AgentRuntime implements SwarmAgentRuntime {
         this.autoCompactionEntryKeysBefore = this.getCompactionEntryKeys();
       }
       clearForgePiCompactionFailure(this.compactionFailureScopeKey);
-      this.latestAutoCompactionReason = event.reason;
+      const requestedFresh = this.latestAutoCompactionReason === "agent";
+      if (!requestedFresh) this.latestAutoCompactionReason = event.reason;
       if (!this.autoCompactionRecoveryInProgress) {
         this.beginAutoCompactionRecovery();
       }
       await this.reportRuntimeError({
         phase: "compaction",
-        message: "Automatic compaction started",
+        message: requestedFresh ? "Requested Fresh context transition started" : "Automatic compaction started",
         details: {
           recoveryStage: "auto_compaction_started",
           compactionReason: event.reason,
-          userFacingMessage: "Context is getting full — compacting automatically."
+          userFacingMessage: requestedFresh
+            ? "Fresh context requested — switching to a new window."
+            : "Context is getting full — compacting automatically."
         }
       });
       return;
@@ -2818,11 +2821,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       await this.reportRuntimeError({
         phase: "compaction",
-        message: "Context automatically compacted",
+        message: compactionReason === "agent" ? "Requested Fresh context transition completed" : "Context automatically compacted",
         details: {
           recoveryStage: "auto_compaction_succeeded",
           compactionReason,
-          userFacingMessage: "Automatic compaction completed."
+          userFacingMessage: compactionReason === "agent"
+            ? "Requested Fresh context transition completed."
+            : "Automatic compaction completed."
         }
       });
       this.latestAutoCompactionReason = undefined;
@@ -3058,7 +3063,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private dropTrailingOverflowErrorIfPresent(
-    compactionReason: "threshold" | "overflow" | undefined
+    compactionReason: "agent" | "threshold" | "overflow" | undefined
   ): void {
     if (compactionReason !== "overflow") {
       return;

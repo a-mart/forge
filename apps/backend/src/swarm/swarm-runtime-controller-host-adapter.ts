@@ -119,5 +119,7 @@ export function createSwarmRuntimeControllerHost(
     searchHistory: toolHost.searchHistory?.bind(toolHost),
     readHistory: toolHost.readHistory?.bind(toolHost),
     listHistorySessions: toolHost.listHistorySessions?.bind(toolHost),
+    listHistoryWindows: toolHost.listHistoryWindows?.bind(toolHost),
+    listHistoryItems: toolHost.listHistoryItems?.bind(toolHost),
   } satisfies SwarmRuntimeControllerHost;
 }

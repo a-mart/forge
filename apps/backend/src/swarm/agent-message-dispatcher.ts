@@ -52,6 +52,10 @@ import type {
 
 const CORTEX_ARCHETYPE_ID = "cortex";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
+const WORKER_FOLLOWUP_REMINDER =
+  "[Forge follow-up instructions]\n" +
+  "If this message requests an answer now, send that answer to your manager using send_message_to_agent before continuing. " +
+  "Otherwise, incorporate the update into your work; no acknowledgment is required.";
 
 export type AgentMessageOrigin = "user" | "internal";
 export type AgentMessageInternalDeliveryKind =
@@ -313,21 +317,13 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       ? await this.resolvePlanAssignment(sender, sendOptions.planStep)
       : undefined;
 
-    if (sender.role === "worker" && target.role === "manager" && sender.managerId !== target.agentId) {
-      throw new Error(
-        `Worker ${sender.agentId} cannot message manager ${targetAgentId} (own manager is ${sender.managerId})`,
-      );
-    }
-
-    if (sender.role === "worker" && target.role === "manager") {
-      throw new Error(
-        "Workers return results through their final assistant output; direct worker-to-manager messages are not supported.",
-      );
+    if (sender.role === "worker" && (target.role !== "manager" || sender.managerId !== target.agentId)) {
+      throw new Error(`Worker ${sender.agentId} can only message its own manager (${sender.managerId}).`);
     }
 
     this.options.codex.assertWorkerDeliveryAllowed(sender, target, sendOptions);
 
-    const origin = sendOptions?.origin ?? "internal";
+    const origin = sender.role === "worker" ? "internal" : sendOptions?.origin ?? "internal";
     const attachments = this.options.attachments.normalize(sendOptions?.attachments);
     const activeExternalTurn = this.options.turns.getActiveExternalProjectAgentTurn(fromAgentId);
     if (activeExternalTurn && targetAgentId !== activeExternalTurn.fromAgentId) {
@@ -601,9 +597,15 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     if (input.sendOptions?.requiresSecureRuntime && !secureWorkerPrepared) {
       throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
     }
+    // Runtime guidance must not replace the authored message in the audit trail.
+    const runtimeText = typeof workerAssignmentExpectation === "string"
+      ? `${input.message}\n\n${WORKER_FOLLOWUP_REMINDER}`
+      : input.sender.role === "worker" && !input.workerResult
+        ? `Message from worker ${input.sender.agentId}:\n${input.message}`
+        : input.message;
     let modelMessage = await this.prepareModelInboundMessage(
       input.target.agentId,
-      { text: input.message, attachments: input.attachments },
+      { text: runtimeText, attachments: input.attachments },
       input.origin,
     );
     const outputInput: AgentMessageOutputInput = {

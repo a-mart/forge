@@ -474,3 +474,130 @@ describe("SwarmWorkerHealthService", () => {
     expect(service.workerStallState.get(workerDescriptor.agentId)?.lastProgressAt).toBe(Date.now());
   });
 });
+
+
+describe("long-running assignment ownership review", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function setup(extra: Parameters<typeof createHarness>[0] = {}) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-16T12:09:00.000Z"));
+    const owner = manager("idle");
+    const running = worker(); // Assigned at 11:59, independent of recent activity.
+    const harness = createHarness({
+      descriptors: new Map([[owner.agentId, owner], [running.agentId, running]]),
+      ...extra,
+    });
+    harness.service.workerStallState.set(running.agentId, {
+      lastProgressAt: Date.now(), nudgeSent: false, nudgeSentAt: null,
+      lastToolName: null, lastToolInput: null, lastToolOutput: null, lastDetailedReportAt: null,
+    });
+    harness.service.workerActivityState.set(running.agentId, {
+      currentToolName: null, currentToolStartedAt: null, lastProgressAt: Date.now(),
+      toolCallCount: 88, errorCount: 0, turnCount: 1,
+    });
+    return { ...harness, owner, running };
+  }
+
+  it("reviews a still-active assignment once, without publishing, stopping, or completing it", async () => {
+    const { service, sendMessage, publishToUser, terminateDescriptor, deliverCompletedWorker, running } = setup();
+    await Promise.all([service.checkForStalledWorkers(), service.checkForStalledWorkers()]);
+    service.workerStallState.get(running.agentId)!.lastProgressAt = Date.now();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith("manager-1", "manager-1",
+      expect.stringContaining("[WORKER ASSIGNMENT REVIEW]"), "auto", { origin: "internal" });
+    expect(sendMessage).toHaveBeenCalledWith("manager-1", "manager-1",
+      expect.stringContaining("Observed 88 tool calls"), "auto", { origin: "internal" });
+    expect(publishToUser).not.toHaveBeenCalled();
+    expect(terminateDescriptor).not.toHaveBeenCalled();
+    expect(deliverCompletedWorker).not.toHaveBeenCalled();
+    expect(running.workerParentContext).not.toHaveProperty("completedAt");
+  });
+
+  it("waits ten minutes and allows a new assignment on the same worker its own review", async () => {
+    const { service, running, sendMessage } = setup();
+    running.workerParentContext.assignedAt = new Date(Date.now() - 9 * 60_000).toISOString();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    running.workerParentContext.assignmentId = "next-assignment";
+    running.workerParentContext.assignedAt = new Date().toISOString();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date(Date.now() + 10 * 60_000));
+    service.workerStallState.get(running.agentId)!.lastProgressAt = Date.now();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries failed delivery on the next sweep without stopping the worker", async () => {
+    const { service, sendMessage, terminateDescriptor } = setup();
+    sendMessage.mockRejectedValueOnce(new Error("manager busy recovering"));
+    await service.checkForStalledWorkers();
+    await service.checkForStalledWorkers();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(terminateDescriptor).not.toHaveBeenCalled();
+  });
+
+  it.each(["manager", "worker"])("defers during %s context recovery", async (target) => {
+    let recovering = true;
+    const { service, sendMessage } = setup({
+      isRuntimeInContextRecovery: (id) => recovering && id === `${target}-1`,
+    });
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+    recovering = false;
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers while restart recovery awaits the user", async () => {
+    let pending = true;
+    const { service, sendMessage } = setup({ isRestartRecoveryDecisionPending: () => pending });
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+    pending = false;
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["stopped", "terminated", "error"] as const)("never wakes a %s manager", async (status) => {
+    const { service, owner, sendMessage } = setup();
+    owner.status = status;
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not wake an archived manager even if its status has not settled", async () => {
+    const { service, owner, sendMessage } = setup();
+    owner.archivedAt = new Date().toISOString();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips completed, invalidly dated, and unowned assignments", async () => {
+    const { service, running, sendMessage } = setup();
+    running.workerParentContext.assignedAt = "invalid";
+    await service.checkForStalledWorkers();
+    running.workerParentContext.assignedAt = "2026-07-16T11:59:00.000Z";
+    running.workerParentContext.managerId = "foreign-manager";
+    await service.checkForStalledWorkers();
+    running.workerParentContext.managerId = running.managerId;
+    Object.assign(running.workerParentContext, { completedAt: "2026-07-16T12:08:00.000Z" });
+    await service.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("lets the existing stall warning handle an inactive worker without another review", async () => {
+    const { service, running, sendMessage } = setup();
+    service.workerStallState.get(running.agentId)!.lastProgressAt = Date.now() - 5 * 60_000;
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith("manager-1", "manager-1",
+      expect.stringContaining("[WORKER STALL DETECTED]"), "auto", { origin: "internal" });
+  });
+});

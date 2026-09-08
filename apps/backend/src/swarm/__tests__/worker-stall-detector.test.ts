@@ -141,6 +141,27 @@ afterEach(() => {
 });
 
 describe("worker stall detector", () => {
+  it("delivers one internal ownership review despite ongoing tool activity through the real manager", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
+    const { manager, worker, managerRuntime } = await setupManagerWithStreamingWorker();
+    vi.setSystemTime(new Date(Date.now() + 10 * 60_000));
+    await emitRuntimeEvent(manager, worker.agentId, {
+      type: "tool_execution_end", toolName: "bash", toolCallId: "still-inspecting",
+      result: { ok: true }, isError: false,
+    });
+    await (manager as any).checkForStalledWorkers();
+    await (manager as any).checkForStalledWorkers();
+    const reviews = managerRuntime.sendCalls.filter((call) =>
+      typeof call.message === "string" && call.message.includes("[WORKER ASSIGNMENT REVIEW]"));
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]!.message).toContain("SYSTEM:");
+    expect(manager.publishedToUserCalls).toHaveLength(0);
+    expect(manager.getAgent(worker.agentId)?.status).toBe("streaming");
+    expect(manager.listAgentsForInternalUse().find((candidate) => candidate.agentId === worker.agentId)
+      ?.workerParentContext?.completedAt).toBeUndefined();
+  });
+
   it("sends a nudge when a worker has no meaningful activity for 5 minutes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));

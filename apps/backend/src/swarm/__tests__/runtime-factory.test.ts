@@ -1864,7 +1864,7 @@ describe("RuntimeFactory", () => {
     expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-first", "worker-second"]);
   });
 
-  it("does not expose manager coordination tools to ordinary Pi worker runtimes", async () => {
+  it("exposes interim manager replies to Pi workers with extension session context", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -1872,7 +1872,7 @@ describe("RuntimeFactory", () => {
     await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
     await writeFile(
       join(rootDir, "data", "extensions", "context.ts"),
-      'export default (forge) => { forge.on("tool:before", (event, ctx) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: ctx.agent.agentId, message: JSON.stringify({ sessionAgentId: ctx.session.sessionAgentId, sessionLabel: ctx.session.label, sessionCwd: ctx.session.cwd, agentCwd: ctx.agent.cwd }) } }) : undefined) }\n',
+      'export default (forge) => { forge.on("tool:before", (event, ctx) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: ctx.session.sessionAgentId, message: JSON.stringify({ sessionAgentId: ctx.session.sessionAgentId, sessionLabel: ctx.session.label, sessionCwd: ctx.session.cwd, agentCwd: ctx.agent.cwd }) } }) : undefined) }\n',
       "utf8"
     );
 
@@ -1911,11 +1911,19 @@ describe("RuntimeFactory", () => {
     await factory.createRuntimeForDescriptor(descriptor, "system prompt", 1);
     const tools = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
     const sendTool = tools.find((tool) => tool.name === "send_message_to_agent");
-    await sendTool?.execute("tool-context", { targetAgentId: "worker-original", message: "ignored" });
+    await sendTool?.execute("tool-context", { targetAgentId: managerDescriptor.agentId, message: "Tests passed; continuing." });
 
-    expect(tools.map((tool) => tool.name)).toEqual(["knowledge"]);
-    expect(sendTool).toBeUndefined();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(tools.map((tool) => tool.name)).toEqual(["send_message_to_agent", "knowledge"]);
+    expect(sendTool).toBeDefined();
+    expect(sendMessage).toHaveBeenCalledWith(
+      descriptor.agentId, managerDescriptor.agentId, JSON.stringify({
+        sessionAgentId: managerDescriptor.agentId,
+        sessionLabel: "Manager Session",
+        sessionCwd: managerCwd,
+        agentCwd: workerCwd,
+      }), undefined,
+      expect.objectContaining({ observabilityParentTool: expect.objectContaining({ toolName: "send_message_to_agent" }) }),
+    );
   });
 
   it("does not leave active Forge runtime snapshots behind when Pi runtime creation fails", async () => {

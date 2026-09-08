@@ -639,10 +639,11 @@ async function createControlledFreshSession(extraTools?: (getRuntime: () => Agen
   const native = await createFreshSession({ sessionFile: descriptor.sessionFile, customTools: [
     createTaskNotesTool(notes), ...createContextManagementTools(getRuntime), ...(extraTools?.(getRuntime) ?? []),
   ] });
+  const onRuntimeError = vi.fn();
   const runtime = new AgentRuntime({ descriptor, session: native.session, dataDir,
-    getContextMode, callbacks: { onStatusChange: () => {} },
+    getContextMode, callbacks: { onStatusChange: () => {}, onRuntimeError },
   });
-  return { ...native, descriptor, dataDir, notes, runtime };
+  return { ...native, descriptor, dataDir, notes, runtime, onRuntimeError };
 }
 
 describe("agent-controlled native Fresh continuation", () => {
@@ -657,7 +658,8 @@ describe("agent-controlled native Fresh continuation", () => {
         return { content: [{ type: "text", text: "effect completed once: violet-receipt" }], details: {} };
       },
     }]);
-    const { session, faux, notes, runtime, sessionFile, root } = harness;
+    const { session, faux, notes, runtime, sessionFile, root, onRuntimeError } = harness;
+    vi.spyOn(session, "getContextUsage").mockReturnValue({ tokens: 1000, contextWindow: 32_000, percent: 3.125 } as never);
     await notes.write({ path: "checkpoint.md", text: "Objective: finish synthetic task. Permission: local synthetic writes only. Next: verify violet-receipt and report." });
     let secondContext = "";
     faux.setResponses([
@@ -666,6 +668,10 @@ describe("agent-controlled native Fresh continuation", () => {
     ]);
     await session.prompt("Complete the synthetic task without repeating its effect.");
     await session.waitForIdle();
+    expect(onRuntimeError.mock.calls.map(([, error]) => error.details?.userFacingMessage)).toEqual([
+      "Fresh context requested — switching to a new window.",
+      "Requested Fresh context transition completed.",
+    ]);
     expect(effects).toBe(1);
     expect(faux.state.callCount).toBe(2);
     expect(compactionsInsideTool).toBe(0);
@@ -793,7 +799,7 @@ describe("agent-controlled native Fresh continuation", () => {
 
 
   it("reminds once before using reserved capacity and checkpoints after the notes tool settles", async () => {
-    const { session, faux, runtime } = await createControlledFreshSession(() => [{
+    const { session, faux, runtime, onRuntimeError } = await createControlledFreshSession(() => [{
       name: "inspect", label: "Inspect", description: "Synthetic inspection", parameters: Type.Object({}),
       async execute() { return { content: [{ type: "text", text: "Inspected state" }], details: {} }; },
     }]);
@@ -810,6 +816,10 @@ describe("agent-controlled native Fresh continuation", () => {
     ]);
     await session.prompt("Inspect and finish the task.");
     await session.waitForIdle();
+    expect(onRuntimeError.mock.calls.map(([, error]) => error.details?.userFacingMessage)).toEqual([
+      "Context is getting full — compacting automatically.",
+      "Automatic compaction completed.",
+    ]);
     expect(reminderContext).toContain("Context is nearing its reserved capacity");
     expect(freshContext).toContain("Fresh window checkpoint");
     const branch = session.sessionManager.getBranch();
@@ -821,6 +831,27 @@ describe("agent-controlled native Fresh continuation", () => {
     await runtime.terminate({ abort: false });
   });
 
+
+  it("preserves automatic Summary start and completion messages", async () => {
+    const { session, faux, runtime, onRuntimeError } = await createControlledFreshSession(undefined, () => "summary");
+    faux.setResponses([fauxAssistantMessage("Initial response."), fauxAssistantMessage("Next response."), fauxAssistantMessage("Summary of the task."), fauxAssistantMessage("Turn prefix summary.")]);
+    await session.prompt("Preserve this task. ".repeat(1000));
+    await session.waitForIdle();
+    await session.prompt("Continue the task.");
+    await session.waitForIdle();
+    session.settingsManager.applyOverrides({ compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 4096 } });
+    await (session as unknown as {
+      _runAutoCompaction(reason: "threshold", willRetry: boolean): Promise<boolean>;
+    })._runAutoCompaction("threshold", false);
+    await vi.waitFor(() => expect(onRuntimeError.mock.calls.map(([, error]) => error.details?.userFacingMessage)).toEqual([
+      "Context is getting full — compacting automatically.",
+      "Automatic compaction completed.",
+    ]));
+    const compactions = session.sessionManager.getBranch().filter(entry => entry.type === "compaction");
+    expect(compactions).toHaveLength(1);
+    expect(compactions[0].details).not.toMatchObject({ forgeContext: { mode: "fresh" } });
+    await runtime.terminate({ abort: false });
+  });
 
   it("keeps registered tools truthful across a live Summary-to-Fresh policy switch", async () => {
     let mode: "summary" | "fresh" = "summary";

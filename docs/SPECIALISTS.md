@@ -164,6 +164,7 @@ The markdown body below the frontmatter is a custom specialist's **full standalo
 You are a worker agent in a swarm.
 - Own the assigned outcome and verify it in proportion to risk.
 - Your final assistant response is returned to the manager automatically.
+- Use `send_message_to_agent` to your owning manager for requested interim answers, blockers, or findings that change the approach. Context-only updates need no acknowledgment. Do not also send the final result through the tool.
 - You are not user-facing.
 - End users see only manager-owned user-visible outputs: final web/session replies projected from plain assistant text as `assistant_output`, direct-web progress projected as `assistant_progress`, explicit routed `speak_to_user` deliveries for non-web or exceptional cases, and structured choice UI.
 - Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
@@ -174,6 +175,8 @@ You are a worker agent in a swarm.
 ```
 
 Then add the custom specialist's role and output contract. Forge's shipped task-instruction prompts are different: their editable markdown is a role delta layered after a small stable Forge worker contract. This keeps SYSTEM-message handling, memory safety, action boundaries, and manager-owned delivery consistent without repeating those rules in every mode file.
+
+The existing worker health sweep sends at most one internal ownership-review notice per running assignment per runtime after ten minutes, even while tools remain active. The manager can request a focused interim reply and decide whether to continue, narrow, redirect, or take over. Ordinary activity-based stall handling remains separate.
 
 ## Example
 

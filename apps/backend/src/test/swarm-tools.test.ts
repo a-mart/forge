@@ -497,7 +497,7 @@ describe('buildSwarmTools', () => {
     expect(details.agents.some((agent) => agent.agentId === 'worker-external')).toBe(false)
   })
 
-  it('does not expose coordination tools to ordinary workers', async () => {
+  it('exposes own-manager feedback without manager coordination tools to ordinary workers', async () => {
     const workerCaller = makeWorkerDescriptor('worker-owned')
     const host = makeHostWithAgents([
       makeManagerDescriptor(),
@@ -509,7 +509,9 @@ describe('buildSwarmTools', () => {
       makeWorkerDescriptor('worker-external', 'manager-two'),
     ])
     const tools = buildSwarmTools(host, workerCaller)
-    expect(tools.map((tool) => tool.name)).toEqual(['knowledge'])
+    expect(tools.map((tool) => tool.name)).toEqual(['send_message_to_agent', 'knowledge'])
+    expect(tools.find((tool) => tool.name === 'send_message_to_agent')?.description)
+      .toContain('Workers may message only their own manager')
   })
 
   it('list_agents verbose output includes external manager metadata', async () => {

@@ -599,8 +599,8 @@ export class SwarmPromptService {
       "# Agent Identity",
       `- Your agent ID: \`${descriptor.agentId}\``,
       `- Your manager ID: \`${descriptor.managerId}\``,
-      "- Always use your manager ID above when sending messages back via send_message_to_agent.",
-      "- Do NOT guess the manager ID from list_agents — use the ID provided here.",
+      "- Use send_message_to_agent with your manager ID above for a requested interim answer, a blocker, or a finding that changes the approach. Answer explicit check-ins before continuing; incorporate context-only updates without a courtesy acknowledgment.",
+      "- Plain assistant text during tool use does not reach your manager as a message. Your final response is delivered automatically when you finish; do not also send it through the messaging tool.",
     ].join("\n");
 
     return systemPrompt + identityBlock;

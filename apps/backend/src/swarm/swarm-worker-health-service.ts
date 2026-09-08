@@ -19,6 +19,7 @@ const STALL_CHECK_INTERVAL_MS = 60_000;
 const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
 const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
 const STALL_KILL_AFTER_NUDGE_MS = 25 * 60_000;
+const ASSIGNMENT_REVIEW_AFTER_MS = 10 * 60_000;
 export const TRANSIENT_WORKER_TERMINATED_GRACE_MS = 60_000;
 
 interface PendingTransientWorkerTerminatedError {
@@ -93,6 +94,9 @@ export class SwarmWorkerHealthService {
   private readonly deferredWorkerResultAgentIds = new Set<string>();
   private readonly workerCompletionCandidateAssignments = new Map<string, string>();
   private readonly notifiedFailedAssignmentIds = new Set<string>();
+
+  // One advisory per assignment per runtime; completion/reassignment owns its lifetime.
+  private readonly reviewedWorkerAssignments = new Map<string, string>();
 
   private stallCheckInterval: NodeJS.Timeout | null = null;
   private stallCheckPromise: Promise<void> | null = null;
@@ -352,6 +356,7 @@ export class SwarmWorkerHealthService {
   }
 
   clearWorkerHealthState(agentId: string): void {
+    this.reviewedWorkerAssignments.delete(agentId);
     this.workerStallState.delete(agentId);
     this.workerActivityState.delete(agentId);
     this.cancelPendingTransientWorkerTerminatedError(agentId, "clear_state");
@@ -392,6 +397,59 @@ export class SwarmWorkerHealthService {
   private async runWorkerHealthCheck(): Promise<void> {
     await this.reconcileWorkerResults();
     await this.runStalledWorkerCheck();
+    await this.reviewLongRunningAssignments();
+  }
+
+  private async reviewLongRunningAssignments(): Promise<void> {
+    for (const [agentId, assignmentId] of this.reviewedWorkerAssignments) {
+      const worker = this.options.descriptors.get(agentId);
+      if (!worker || worker.workerParentContext?.assignmentId !== assignmentId ||
+        worker.workerParentContext.completedAt || isNonRunningAgentStatus(worker.status)) {
+        this.reviewedWorkerAssignments.delete(agentId);
+      }
+    }
+    if (this.options.isRestartRecoveryDecisionPending?.()) return;
+
+    const now = Date.now();
+    for (const worker of this.options.descriptors.values()) {
+      const assignment = worker.workerParentContext;
+      if (!isWorkerDescriptor(worker) || isExternalThreadDescriptor(worker) ||
+        worker.status !== "streaming" || worker.archivedAt || !assignment || assignment.completedAt ||
+        assignment.managerId !== worker.managerId ||
+        this.reviewedWorkerAssignments.get(worker.agentId) === assignment.assignmentId ||
+        this.isWorkerStallRecoveryActive(worker.agentId, worker) ||
+        this.hasPendingTransientWorkerTerminatedError(worker.agentId)) continue;
+      const assignedAt = Date.parse(assignment.assignedAt);
+      if (!Number.isFinite(assignedAt) || now - assignedAt < ASSIGNMENT_REVIEW_AFTER_MS) continue;
+      const manager = this.options.descriptors.get(worker.managerId);
+      if (!manager || manager.role !== "manager" || manager.archivedAt || isNonRunningAgentStatus(manager.status)) continue;
+      const stall = this.workerStallState.get(worker.agentId);
+      // An existing stall warning already asks the manager to intervene.
+      if (stall && (stall.nudgeSent || now - stall.lastProgressAt >= STALL_NUDGE_THRESHOLD_MS)) continue;
+
+      const activity = this.getWorkerActivity(worker.agentId);
+      const activitySummary = activity
+        ? ` Observed ${activity.toolCalls} tool calls and ${activity.errors} tool errors.`
+        : "";
+      const message = `SYSTEM: [WORKER ASSIGNMENT REVIEW]\nWorker \`${worker.agentId}\` has an unfinished assignment after ${this.formatDuration(now - assignedAt)}.${activitySummary}\n` +
+        "This is a one-time ownership review, not a stall or failure verdict. " +
+        "Assess available findings and remaining work; request a focused interim reply if needed. " +
+        "Continue when the path is sound, narrow or redirect an investigation that is not converging, " +
+        "or take over within your work mode after stopping the worker and confirming settlement. " +
+        "Do not repeat completed work or send the user a routine status update merely because this notice arrived.";
+      this.reviewedWorkerAssignments.set(worker.agentId, assignment.assignmentId);
+      try {
+        await this.options.sendMessage(manager.agentId, manager.agentId, message, "auto", { origin: "internal" });
+      } catch (error) {
+        if (this.reviewedWorkerAssignments.get(worker.agentId) === assignment.assignmentId) {
+          this.reviewedWorkerAssignments.delete(worker.agentId);
+        }
+        this.options.logDebug("worker:assignment_review:send_error", {
+          agentId: worker.agentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   private async reconcileWorkerResults(): Promise<void> {

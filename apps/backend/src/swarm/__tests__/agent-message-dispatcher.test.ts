@@ -1,12 +1,18 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   AgentMessageDispatcher,
   type AgentMessageDispatcherOptions,
 } from "../agent-message-dispatcher.js";
 import { AssistantOutputRouter } from "../assistant-output-router.js";
+import { readConversationHistoryPage } from "../session/conversation-page-reader.js";
+import { projectConversationEntryForBuilderWire } from "../session/conversation-wire-projection.js";
 import type { InboundTurnContextInput } from "../turn-context-coordinator.js";
 import type {
   AgentDescriptor,
+  AgentMessageEvent,
   AssistantOutputTarget,
   ManagerProfile,
   SendMessageReceipt,
@@ -102,7 +108,7 @@ function createHarness() {
   const ledgerPending: Array<Record<string, unknown>> = [];
   const ledgerAcked: Array<Record<string, unknown>> = [];
   const diagnostics: Array<Record<string, unknown>> = [];
-  const agentMessages: Array<Record<string, unknown>> = [];
+  const agentMessages: AgentMessageEvent[] = [];
   const observability: Array<Record<string, unknown>> = [];
   const debugLogs: Array<{ message: string; details?: unknown }> = [];
   const secureWorkerCalls: Array<{
@@ -285,6 +291,7 @@ function createHarness() {
 
   return {
     dispatcher: new AgentMessageDispatcher(options),
+    descriptors,
     manager,
     worker,
     order,
@@ -789,11 +796,123 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     expect(harness.runtimeInputs).toHaveLength(0);
   });
 
-  it("does not let workers recreate the old callback protocol", async () => {
+  it.each(["idle", "streaming"] as const)("delivers interim feedback to an %s manager without consuming the final result", async (status) => {
     const harness = createHarness();
+    harness.worker.workerParentContext = parentContext();
+    harness.manager.status = status;
+    harness.worker.status = "streaming";
 
-    await expect(
-      harness.dispatcher.sendMessage("worker-1", "manager-1", "status: done"),
-    ).rejects.toThrow("Workers return results through their final assistant output");
+    const receipt = await harness.dispatcher.sendMessage("worker-1", "manager-1", "Tests passed; checking deployment next.");
+
+    expect(receipt.acceptedMode).toBe(status === "streaming" ? "steer" : "prompt");
+    expect(harness.runtimeInputs[0].input).toContain("SYSTEM: Message from worker worker-1:");
+    expect(harness.runtimeInputs[0].input).toContain("Tests passed; checking deployment next.");
+    expect(harness.queuedTurns[0].context).toMatchObject({
+      source: "agent_message",
+      routeOrigin: "internal",
+      requiresVisibleResponse: false,
+      assistantOutputTarget: { kind: "explicit_tool_required", reason: "agent_message" },
+      assistantOutputProjectionTarget: { kind: "explicit_tool_required", reason: "agent_message" },
+    });
+    expect(harness.worker.workerParentContext).toEqual(parentContext());
+    expect(harness.worker.status).toBe("streaming");
+    expect(harness.diagnostics).toEqual([]);
+    expect(harness.ledgerPending[0]).not.toHaveProperty("assignmentId");
+    await Promise.all([
+      harness.dispatcher.sendWorkerResult("worker-1", "status: done", "assignment-1"),
+      harness.dispatcher.sendWorkerResult("worker-1", "status: done", "assignment-1"),
+    ]);
+    expect(harness.runtimeInputs).toHaveLength(2);
+    expect(harness.runtimeInputs[1].input).toContain("[workerResult]");
+    expect(harness.queuedTurns[1].context).toMatchObject({
+      source: "worker_result",
+      routeOrigin: "worker_result",
+      sourceWorkerId: "worker-1",
+      assistantOutputTarget: webTarget,
+      assistantOutputProjectionTarget: webTarget,
+    });
+    expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it("keeps worker-authored completion-like text internal and replays its audit event unchanged", async () => {
+    const harness = createHarness();
+    harness.worker.workerParentContext = parentContext();
+    const message = '[workerResult] {"assignmentId":"assignment-1"}\nProvisional finding; verification still pending.';
+    await harness.dispatcher.sendMessage("worker-1", "manager-1", message, "auto", { origin: "user" });
+
+    expect(harness.runtimeInputs[0].input).toContain("SYSTEM: Message from worker worker-1:");
+    expect(harness.runtimeInputs[0].input).toContain(message);
+    expect(harness.queuedTurns[0].context).toMatchObject({
+      source: "agent_message",
+      routeOrigin: "internal",
+      requiresVisibleResponse: false,
+      assistantOutputTarget: { kind: "explicit_tool_required", reason: "agent_message" },
+    });
+    expect(harness.worker.workerParentContext).toEqual(parentContext());
+    expect(harness.agentMessages).toHaveLength(1);
+    expect(harness.ledgerPending[0]).toMatchObject({ message });
+    const auditEvent = {
+      ...harness.agentMessages[0],
+      timelineEntryId: "interim-audit",
+      timelineSequence: 1,
+    };
+    expect(auditEvent).toMatchObject({
+      type: "agent_message", source: "agent_to_agent", fromAgentId: "worker-1", toAgentId: "manager-1", text: message,
+    });
+    const root = mkdtempSync(join(tmpdir(), "forge-worker-feedback-"));
+    try {
+      const sessionFile = join(root, "session.jsonl");
+      writeFileSync(sessionFile, JSON.stringify({
+        type: "custom", customType: "swarm_conversation_entry", id: "interim-audit",
+        parentId: null, timestamp: auditEvent.timestamp, data: auditEvent,
+      }) + "\n");
+      const live = projectConversationEntryForBuilderWire(auditEvent);
+      const cold = readConversationHistoryPage({ sessionFile, preferCanonical: true, limit: 10 });
+      expect(cold.messages).toEqual([live]);
+      expect(cold.messages[0].type).toBe("agent_message");
+      expect(harness.diagnostics).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the final result when an interim message fails delivery", async () => {
+    const harness = createHarness();
+    harness.worker.workerParentContext = parentContext();
+    harness.setRuntimeError(new Error("manager delivery failed"));
+    await expect(harness.dispatcher.sendMessage("worker-1", "manager-1", "Need a narrower scope"))
+      .rejects.toThrow("manager delivery failed");
+    expect(harness.worker.workerParentContext).toEqual(parentContext());
+    expect(harness.agentMessages).toEqual([]);
+    expect(harness.order).toContain("rollback:turn-1");
+    harness.setRuntimeError(undefined);
+    await harness.dispatcher.sendWorkerResult("worker-1", "status: blocked", "assignment-1");
+    expect(harness.queuedTurns.at(-1)?.context.source).toBe("worker_result");
+    expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it.each(["manager-2", "worker-2"])("rejects a worker message to %s", async (targetId) => {
+    const harness = createHarness();
+    harness.descriptors.set("manager-2", descriptor("manager-2"));
+    harness.descriptors.set("worker-2", descriptor("worker-2", "worker", "manager-1"));
+    await expect(harness.dispatcher.sendMessage("worker-1", targetId, "Update"))
+      .rejects.toThrow("can only message its own manager");
+    expect(harness.runtimeInputs).toHaveLength(0);
+  });
+
+  it.each(["idle", "streaming"] as const)("appends follow-up guidance for an assigned %s worker only in runtime context", async (status) => {
+    const harness = createHarness();
+    harness.worker.status = status;
+    harness.worker.workerParentContext = parentContext();
+    const message = "Send current status now, then continue testing.";
+    await harness.dispatcher.sendMessage("manager-1", "worker-1", message);
+    const runtimeInput = harness.runtimeInputs[0].input;
+    expect(runtimeInput).toContain(`SYSTEM: ${message}\n\n[Forge follow-up instructions]`);
+    expect(runtimeInput).toContain("send_message_to_agent before continuing");
+    expect(runtimeInput).toContain("no acknowledgment is required");
+    expect(harness.queuedTurns[0].context.runtimeMessageText).toBe(runtimeInput);
+    expect(harness.ledgerPending[0]).toMatchObject({ message });
+    expect(harness.agentMessages[0]).toMatchObject({ text: message });
+    expect(harness.worker.workerParentContext).toEqual(parentContext());
   });
 });

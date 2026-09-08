@@ -893,12 +893,20 @@ describe("SwarmManager Codex mention routing", () => {
     const sibling = await manager.spawnAgent("manager", { agentId: "sibling-worker" });
     await expect(
       manager.sendMessage(worker!.agentId, sibling.agentId, "do not fan out"),
-    ).rejects.toThrow(/only report to their owning manager/i);
+    ).rejects.toThrow(/can only message its own manager/i);
     await expect(
       manager.sendMessage(sibling.agentId, worker!.agentId, "sibling follow-up"),
-    ).rejects.toThrow(/only accept follow-ups from their owning manager/i);
+    ).rejects.toThrow(/can only message its own manager/i);
 
+    expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore + 1);
+    expect(manager.getCodexPluginScopeForWorker(worker!.agentId)).toBeDefined();
+
+    const parentBeforeFeedback = structuredClone(worker!.workerParentContext);
     const managerRuntime = manager.runtimeByAgentId.get("manager");
+    await manager.sendMessage(worker!.agentId, "manager", "Found the requested meetings; checking dates.");
+    expect(String(managerRuntime?.sendCalls.at(-1)?.message)).toContain(`Message from worker ${worker!.agentId}:`);
+    expect(worker!.workerParentContext).toEqual(parentBeforeFeedback);
+    expect(manager.getCodexPluginScopeForWorker(worker!.agentId)).toBeDefined();
     const managerSendCountBeforeResult = managerRuntime?.sendCalls.length ?? 0;
     await completeWorker(manager, worker!.agentId, "Scoped plugin result.");
     expect(managerRuntime?.sendCalls.length ?? 0).toBe(managerSendCountBeforeResult + 1);

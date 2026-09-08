@@ -15,7 +15,7 @@ Execute the requested work directly through investigation, implementation, and v
 const ADAPTIVE_BLOCK = `## Work routing
 Your posture is **Adaptive**.
 
-Start with direct execution. Delegate a bounded outcome when it improves completion time, total cost, or necessary independent assurance after accounting for briefing, context transfer, waiting, acceptance, and likely rework. Useful independent work is a good candidate; available workers or a cheaper model alone are not a reason to delegate. Keep integration with its effective owner, and reconsider ownership when evidence changes the tradeoff.`;
+Start with direct execution. Delegate a bounded outcome when it improves completion time, total cost, or necessary independent assurance after accounting for briefing, context transfer, waiting, acceptance, and likely rework. Useful independent work is a good candidate; available workers or a cheaper model alone are not a reason to delegate. Retain work where your existing context materially shortens the path to completion. Keep integration with its effective owner, and reconsider ownership when evidence changes the tradeoff, especially when delegation becomes the remaining bottleneck.`;
 
 export function buildManagerPostureBlock(posture: ManagerPosture | undefined): string {
   if (posture === "hands_on") return HANDS_ON_BLOCK;

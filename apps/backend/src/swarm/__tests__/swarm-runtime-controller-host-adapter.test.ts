@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
+import type {
+  HistoryItemsResponse,
+  HistoryReadResponse,
+  HistoryWindowsResponse,
+} from "@forge/protocol";
+import { buildHistoryRecallTools } from "../history-recall-tool.js";
 import {
   createSwarmRuntimeControllerHost,
   type SwarmRuntimeControllerHostAdapterOptions,
 } from "../swarm-runtime-controller-host-adapter.js";
 import type { SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
+import type { AgentDescriptor } from "../types.js";
 
 type FixtureOwnedOption =
   | "toolHost"
@@ -108,6 +115,94 @@ describe("createSwarmRuntimeControllerHost", () => {
     void host.searchHistory?.("manager", { query: "old" });
     expect(contextReceiver).toBe(toolHost);
     expect(historyReceiver).toBe(toolHost);
+  });
+
+  it("exposes history windows/items through the adapter and binds them to the original tool host", async () => {
+    let windowsReceiver: unknown;
+    let itemsReceiver: unknown;
+    let windowsArgs: unknown[] | undefined;
+    let itemsArgs: unknown[] | undefined;
+    const windowsResponse = {
+      results: [],
+      complete: true,
+      warnings: ["windows-ok"],
+    } satisfies HistoryWindowsResponse;
+    const itemsResponse = {
+      results: [],
+      complete: false,
+      warnings: ["items-ok"],
+    } satisfies HistoryItemsResponse;
+    const readResponse = {
+      entry: {
+        ref: {
+          sessionAgentId: "session",
+          actorAgentId: "worker",
+          entryId: "entry",
+          sourceVersion: "generation",
+        },
+        kind: "message",
+        timestamp: "2026-07-13T00:00:00.000Z",
+        windowId: "window:initial",
+        text: "evidence",
+        offset: 0,
+        totalChars: 8,
+      },
+      before: [],
+      after: [],
+      warnings: [],
+    } satisfies HistoryReadResponse;
+    const toolHost = createToolHost(() => undefined);
+    toolHost.searchHistory = async function () {
+      return { scope: "session", results: [], complete: true, warnings: [] };
+    };
+    toolHost.readHistory = async function () {
+      return readResponse;
+    };
+    toolHost.listHistoryWindows = async function (...args) {
+      windowsReceiver = this;
+      windowsArgs = args;
+      return windowsResponse;
+    };
+    toolHost.listHistoryItems = async function (...args) {
+      itemsReceiver = this;
+      itemsArgs = args;
+      return itemsResponse;
+    };
+    const host = createAdapter({ toolHost });
+    const [tool] = buildHistoryRecallTools(host, {
+      agentId: "worker",
+      managerId: "session",
+      role: "worker",
+    } as AgentDescriptor);
+
+    expect(tool).toBeDefined();
+    const ops = (
+      (tool.parameters as { anyOf?: Array<{ properties?: { op?: { const?: string } } }> }).anyOf ?? []
+    ).map((branch) => branch.properties?.op?.const);
+    expect(ops).toEqual(expect.arrayContaining(["windows", "items"]));
+
+    const windowsResult = await tool.execute("windows", {
+      op: "windows",
+      actorAgentId: "worker",
+      limit: 5,
+    });
+    const itemsResult = await tool.execute("items", {
+      op: "items",
+      windowId: "window:initial",
+      role: "user",
+    });
+    expect(windowsReceiver).toBe(toolHost);
+    expect(itemsReceiver).toBe(toolHost);
+    expect(windowsArgs).toEqual(["worker", { actorAgentId: "worker", limit: 5 }]);
+    expect(itemsArgs).toEqual(["worker", { windowId: "window:initial", role: "user" }]);
+    expect(windowsResult).toMatchObject({
+      details: windowsResponse,
+      content: [{ type: "text", text: JSON.stringify(windowsResponse) }],
+    });
+    expect(itemsResult).toMatchObject({
+      details: itemsResponse,
+      content: [{ type: "text", text: JSON.stringify(itemsResponse) }],
+    });
   });
 
   it("binds the Secure Session runtime capability resolver to the tool host", () => {

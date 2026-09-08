@@ -320,7 +320,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "send_message_to_agent",
       label: "Send Message To Agent",
       description:
-        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass its stable id in planStepId. Set requiresSecureRuntime=true when this assignment needs granted Secure Sessions material; Forge fails closed before delivery if the target cannot use the secure boundary.",
+        "Send a message to another agent by id. Workers may message only their own manager for requested interim answers, findings that change the approach, questions, or blockers; final results are delivered automatically. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass its stable id in planStepId. Set requiresSecureRuntime=true when this assignment needs granted Secure Sessions material; Forge fails closed before delivery if the target cannot use the secure boundary.",
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
@@ -454,7 +454,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         })
       : [];
 
-    const workerBaseTools = shared.filter((tool) => tool.name === "knowledge" || tool.name === "history");
+    const workerBaseTools = shared.filter((tool) =>
+      tool.name === "knowledge" || tool.name === "history" || tool.name === "send_message_to_agent"
+    );
 
     return [...workerBaseTools, ...secureSessionTools, ...codexPluginTools];
   }

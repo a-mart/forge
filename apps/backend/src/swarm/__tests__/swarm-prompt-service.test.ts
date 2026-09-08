@@ -820,6 +820,25 @@ Always preserve the user's release notes.`,
     expect(specialistRegistry.resolveRoster).toHaveBeenCalledWith("manager", "collaboration");
   });
 
+  it("gives every worker an exact manager identity and meaningful interim feedback contract", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, { agentId: "worker", managerId: "manager" }),
+      role: "worker" as const,
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker);
+    const prompt = service.injectWorkerIdentityContext(worker, "Custom worker instructions");
+    expect(prompt).toContain("Custom worker instructions");
+    expect(prompt).toContain("Your manager ID: `manager`");
+    expect(prompt).toContain("requested interim answer, a blocker, or a finding that changes the approach");
+    expect(prompt).toContain("Answer explicit check-ins before continuing");
+    expect(prompt).toContain("Plain assistant text during tool use does not reach your manager as a message");
+    expect(prompt).toContain("do not also send it through the messaging tool");
+    expect(prompt).toContain("context-only updates without a courtesy acknowledgment");
+    expect(service.injectWorkerIdentityContext({ ...worker, role: "manager" }, "Manager prompt"))
+      .toBe("Manager prompt");
+  });
+
   it.each([
     ["architect", "architecture role"],
     ["planner", "planning role"],
@@ -844,6 +863,8 @@ Always preserve the user's release notes.`,
     const prompt = await service.resolveSystemPromptForDescriptor(worker);
 
     expect(prompt).toContain("# Forge Worker Contract");
+    expect(prompt).toContain("proceed with implementation or the decisive test");
+    expect(prompt).toContain("send your manager the findings, unresolved question, and recommended next step");
     expect(prompt).toContain("Messages prefixed with `SYSTEM:` are internal control");
     expect(prompt).toContain("Write memory only when explicitly asked");
     expect(prompt).toContain("Escalate before destructive actions");

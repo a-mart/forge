@@ -9,7 +9,7 @@ Forge passes its planned runtime tools as SDK `customTools` to Pi's `createAgent
 
 The Forge tool set is contextual rather than one universal reserved list:
 
-- Ordinary workers normally receive `list_agents`, `send_message_to_agent`, and `knowledge`.
+- Ordinary workers receive `send_message_to_agent` for meaningful interim feedback to their own manager and `knowledge`, plus `history` when available. Their final result is delivered automatically.
 - Managers can additionally receive `update_plan`, `spawn_agent`, `retry_codex_plugin_worker`, `kill_agent`, `speak_to_user`, `present_choices`, and `save_learning`.
 - Capabilities and session purpose can add `create_session` or `create_project_agent`, while Collaboration, Cortex, and capture-check contexts filter the normal set.
 - A scoped Codex Plugin worker receives delegation-specific exact plugin tool names and may receive `export_scoped_codex_plugin_result`.
