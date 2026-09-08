@@ -13,7 +13,6 @@ import {
   type ManagerSelectionCatalogDefaults,
   type ManagerSelectionCatalogResponse,
   type ManagerSelectionReasoningOption,
-  type WorkModeId,
   type WorkModeOption,
   type WorkModeUnavailableReason,
 } from '@forge/protocol'
