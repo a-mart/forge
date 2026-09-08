@@ -9,6 +9,11 @@ name: Electron Build
 
 on:
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact approved release commit (40 lowercase hex characters)
+        required: true
+        type: string
   push:
     branches:
       - 'electron/*'
@@ -30,8 +35,31 @@ jobs:
             platform: windows-x64
 
     steps:
-      - name: Checkout
+      - name: Validate release event SHA
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            [[ "$EVENT_SHA" == "$EXPECTED_SHA" ]] || exit 1
+          fi
+
+      - name: Checkout exact event SHA
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Assert checked-out SHA
+        shell: bash
+        env:
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EVENT_SHA" ]]
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -83,9 +111,6 @@ jobs:
           pnpm exec vitest run \
             src/swarm/__tests__/pi-denied-trust-loader-characterization.test.ts \
             src/swarm/__tests__/project-executable-trust.test.ts
-
-      - name: Build workspace
-        run: pnpm build
 
       - name: Package Electron
         shell: bash

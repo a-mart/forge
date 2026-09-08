@@ -275,7 +275,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
 - **Never publish beta assets to the stable channel.** A beta-tagged build must not be published as a normal GitHub Release.
 - **Stable promotion happens later.** After beta validation, publish a separate stable release flow using a stable version, not by treating the beta release as stable on day one.
 
-1. **Stage 1: update, push, and preflight the release version**
+1. **Version first, then ONE complete final-SHA preflight**
    - The release version must be identical in `version.json` and `apps/electron/package.json`.
    - From the repository root, invoke the project-scoped script with the canonical path and `--version`:
 
@@ -286,23 +286,26 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
        --version "$VERSION"
      ```
 
-   - The `--version` stage updates both authority files, commits those two files, pushes the resulting commit to `main`, and automatically exits before packaging, Windows CI or `workflow_dispatch`, draft creation, tagging, asset upload, or publishing. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against the new 40-character release commit. Do not package until every gate passes for that exact SHA.
+   - The `--version` stage updates both authority files, commits those two files, pushes the resulting commit to the selected clean synchronized `main` or `release/vMAJOR.MINOR.PATCH` branch, and automatically exits before packaging, Windows CI or `workflow_dispatch`, draft creation, tagging, asset upload, or publishing. Run the mandatory full exact-SHA candidate preflight—including the fresh detached worktree, frozen install, local `pnpm quality:full -- --json`, Manual Quality, and Secure Sessions—against the new 40-character release commit. Local full, Manual Quality full, and Secure Sessions push may run concurrently. Earlier content checks are not a second mandatory release prerequisite. Do not package until every gate passes for that exact SHA.
    - After preflight passes, invoke the same project-scoped release script **without `--version`** for packaging (add `--prerelease` for a prerelease version):
 
      ```bash
      bash ~/.forge/profiles/middleman-project/pi/skills/electron-release/release.sh \
-       --repo /absolute/path/to/forge
+       --repo /absolute/path/to/fresh-packaging-clone \
+       --expected-sha "$FINAL_SHA" --evidence /absolute/path/to/cut.json
      ```
 
    - The `--version` stage does not package, dispatch CI, create a draft, tag, upload assets, or publish. Do not rely on a tag-first flow.
 
-2. **Build and validate macOS locally**
+2. **Start/register exact-SHA Windows, then build and validate macOS locally**
+   - Before either platform starts, `release.sh --evidence` verifies isolated preparation/install/toolchain/store provenance, the actual complete local full report, matching Manual Quality `workflow_dispatch` full-report artifact, and successful Secure Sessions **push** run on the final SHA. Use the skill helper `prepare-packaging` for a separate fresh remote clone/install; never copy quality build outputs or developer `node_modules`.
+   - Windows dispatch requires `expected_sha`; the workflow validates the event SHA before checkout/install/build and asserts the exact checked-out HEAD. The operator persists dispatch intent/run ID before macOS starts and resumes that run, never dispatching twice after interruption.
    - Install the official Node 26.5.0 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
    - This build clears `apps/electron/release/` first; copy/archive older artifacts elsewhere if you need to keep them
    - Confirm the expected macOS assets exist in `apps/electron/release/`
 
-3. **Build Windows through GitHub Actions**
-   - Use `.github/workflows/electron-build.yml` via `workflow_dispatch` for release Windows artifacts
+3. **Join and collect Windows after macOS cleanup/build**
+   - Use the already registered `.github/workflows/electron-build.yml` `workflow_dispatch` run for release Windows artifacts; collect only after local macOS packaging has finished clearing its output. Download into a per-cut isolated directory. The packaging build remains authoritative; there is no redundant CI workspace build.
    - Pushes to `electron/*` branches are for validation only
    - Do not use tag pushes as the release trigger
 
@@ -316,9 +319,28 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
    - In practice, upload the standard current-run macOS and Windows files from `apps/electron/release/`. The package step clears stale output first; never promote an experimental Linux `dir` output.
 
 6. **Publish last**
+   - Every full build stops at the verified draft. After downloading and hash-checking all eight assets/manifests, exercise actual Desktop startup, interaction, and persistence after relaunch from the downloaded macOS artifact with isolated data/ports. Record the exact SHA/version, all asset hashes, signing/notary/native-host evidence and smoke timings. Staged module/Pi smoke is not Desktop startup. Surface native-keychain prompts immediately rather than silently retrying; mock-keychain smoke is limited evidence, not native qualification.
+   - Use `--publish-draft --expected-sha "$FINAL_SHA" --evidence /absolute/path/to/cut.json` to revalidate the same assets and hash-bound smoke/signing evidence without rebuilding, publish, then redownload/hash-check the published inventory. Windows unsigned native-host integrity and CI tests do not establish Windows headed qualification; report absent target-platform smoke explicitly.
    - Publish the draft only after both platforms are validated and the full asset set is attached
    - For beta builds, publish it as a **GitHub prerelease**
    - For stable builds, publish only after the beta rollout has been validated and you are intentionally cutting a stable version
+
+### Release timing and evidence
+
+The skill's per-cut JSON retains the original approval `startedAt`, final SHA,
+local preparation/full reports and FD logs, MQ/SS IDs, Windows dispatch intent/run,
+and UTC phase events with elapsed time including failed invocations. Preserve
+install, CI queue/job, macOS signing/notary, artifact transfer, actual smoke and
+post-publish verification measurements; do not reset the clock after a retry.
+
+The <=30-minute target is not yet demonstrated. Observed full local quality is
+about 6 minutes, Manual Quality about 12 minutes, Secure Sessions about 4 minutes,
+and Windows about 7–8 minutes. Removing a required pre-version gate round and
+overlapping platforms removes serial work, not validation. Mac/notary and final
+transfer/smoke remain unmeasured. Characterize one cold isolated-store and two
+warm download-cache authorized cuts before claiming measured timing. External
+queues have no guaranteed maximum; never skip a gate or cancel healthy work to
+meet a deadline. The canonical skill documents the exact cut/smoke JSON schema.
 
 ### Why the full asset set matters
 
