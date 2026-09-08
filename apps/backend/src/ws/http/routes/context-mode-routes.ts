@@ -15,6 +15,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 
 const PROFILE_CONTEXT_MODE_PATTERN = /^\/api\/profiles\/([^/]+)\/context-mode$/;
 const AGENT_CONTEXT_MODE_PATTERN = /^\/api\/agents\/([^/]+)\/context-mode$/;
+const CONTEXT_ARTIFACTS_PATTERN = /^\/api\/agents\/([^/]+)\/context-artifacts$/;
 const CONTEXT_MODE_METHODS = "GET, PUT, OPTIONS";
 
 export function createContextModeRoutes(options: {
@@ -22,6 +23,39 @@ export function createContextModeRoutes(options: {
   runtimeTarget: RuntimeTarget;
 }): HttpRoute[] {
   return [
+    {
+      methods: "GET, OPTIONS",
+      matches: pathname => CONTEXT_ARTIFACTS_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        applyCorsHeaders(request, response, "GET, OPTIONS");
+        response.setHeader("Cache-Control", "no-store");
+        if (request.method === "OPTIONS") {
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        if (!isBuilderRuntimeTarget(options.runtimeTarget)) {
+          sendJson(response, 404, { error: "Context artifacts are only available in Builder runtime." });
+          return;
+        }
+        if (request.method !== "GET") {
+          response.setHeader("Allow", "GET, OPTIONS");
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const agentId = decodePathSegment(requestUrl.pathname.match(CONTEXT_ARTIFACTS_PATTERN)?.[1]);
+        if (!agentId) {
+          sendJson(response, 400, { error: "Missing agent id" });
+          return;
+        }
+        try {
+          const payload = await options.swarmManager.getSessionContextArtifacts(agentId);
+          sendJson(response, 200, payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          sendContextModeError(response, error);
+        }
+      },
+    },
     {
       methods: CONTEXT_MODE_METHODS,
       matches: (pathname) => PROFILE_CONTEXT_MODE_PATTERN.test(pathname),

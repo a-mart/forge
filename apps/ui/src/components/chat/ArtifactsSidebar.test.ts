@@ -11,6 +11,8 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })))
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -25,6 +27,20 @@ afterEach(() => {
 })
 
 describe('ArtifactsSidebar controlled tab', () => {
+  it('does not fetch context files while closed or in the schedules tab', async () => {
+    const props = { wsUrl: 'ws://localhost:47187', managerId: 'manager', artifacts: [],
+      onClose: () => {}, onArtifactClick: () => {} }
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(ArtifactsSidebar, { ...props, isOpen: false }))
+    })
+    expect(fetch).not.toHaveBeenCalled()
+    await act(async () => {
+      root!.render(createElement(ArtifactsSidebar, { ...props, isOpen: true, activeTab: 'schedules' }))
+    })
+    expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes('context-artifacts'))).toBe(true)
+  })
+
   it('reflects parent-provided activeTab for schedules', () => {
     act(() => {
       root = createRoot(container)
@@ -123,6 +139,7 @@ describe('ArtifactsSidebar controlled tab', () => {
       )
     })
 
+    expect((container.querySelector('[aria-label="Artifacts panel"]') as HTMLElement).style.width).toBe('')
     expect(container.querySelector('[data-slot="tabs-list"]')).not.toBeNull()
     expect(container.textContent).toContain('Artifacts')
     expect(container.textContent).toContain('Schedules')

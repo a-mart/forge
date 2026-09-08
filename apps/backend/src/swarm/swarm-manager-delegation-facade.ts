@@ -1,6 +1,7 @@
 import {
   DEFAULT_CONTEXT_MODE,
   type ContextMode,
+  type SessionContextArtifacts,
   type SessionContextModeSnapshot,
 } from "@forge/protocol";
 import {
@@ -11,6 +12,7 @@ import {
 import type { SwarmManagerFacadeServices } from "./swarm-manager-facade-services.js";
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import { SwarmManagerSecureSessionsFacade } from "./secure-sessions/swarm-manager-secure-sessions-facade.js";
+import { TaskNotesStore } from "./task-notes-store.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 /** Stateless public facade for manager posture, delegation-roster, and context-mode settings. */
@@ -78,6 +80,25 @@ export abstract class SwarmManagerDelegationFacade extends SwarmManagerSecureSes
       actor: caller,
       runtime: services.runtime.runtimes.get(manager.agentId),
     });
+  }
+
+  async getSessionContextArtifacts(agentId: string): Promise<SessionContextArtifacts> {
+    const contextMode = this.getSessionContextMode(agentId);
+    if (contextMode.sessionAgentId !== agentId) {
+      throw new Error("Context artifacts are only available for manager sessions.");
+    }
+    const snapshot = await new TaskNotesStore({ dataDir: this.getFacadeServices().host.config.paths.dataDir })
+      .forActor({ profileId: contextMode.profileId, sessionAgentId: agentId, actorAgentId: agentId })
+      .snapshot();
+    return {
+      contextMode,
+      revision: snapshot.revision,
+      files: snapshot.notes.map(note => ({
+        ...note,
+        kind: note.path.startsWith("runtime/") ? "recovery" as const
+          : note.path === "checkpoint.md" ? "checkpoint" as const : "working" as const,
+      })).sort((a, b) => a.path.localeCompare(b.path)),
+    };
   }
 
   getContextMode(callerAgentId: string): ContextMode {

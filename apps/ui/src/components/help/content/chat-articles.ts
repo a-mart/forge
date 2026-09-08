@@ -332,7 +332,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-artifacts',
     title: 'Artifact Panel',
     category: 'chat',
-    summary: 'How to view files and artifacts generated during a conversation.',
+    summary: 'View conversation artifacts, Context v2 task notes, and window recovery files.',
     content: chatArtifactsContent,
     keywords: [
       'artifact',

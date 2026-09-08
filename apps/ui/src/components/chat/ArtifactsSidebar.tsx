@@ -9,6 +9,7 @@ import {
   type ArtifactCategory,
 } from '@/lib/collect-artifacts'
 import { cn } from '@/lib/utils'
+import { ContextArtifactsSection } from './context-artifacts/ContextArtifactsSection'
 import { SchedulesPanel } from './SchedulesPanel'
 import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
 
@@ -156,7 +157,7 @@ export function ArtifactsSidebar({
             : 'w-0 opacity-0 overflow-hidden max-md:hidden',
           isOpen && 'opacity-100',
         )}
-        style={isOpen ? { width: paneWidth } : undefined}
+        style={isOpen && isDesktopViewport ? { width: paneWidth } : undefined}
         aria-label="Artifacts panel"
         aria-hidden={!isOpen}
       >
@@ -211,6 +212,11 @@ export function ArtifactsSidebar({
               'hover:[&>[data-slot=scroll-area-scrollbar]>[data-slot=scroll-area-thumb]]:bg-border',
             )}
           >
+            {isOpen && activeTab === 'artifacts' && managerId
+              && (!desktopOnly || isDesktopViewport) && (!mobileOnly || !isDesktopViewport) && <ContextArtifactsSection
+              key={`${wsUrl}:${managerId}`} wsUrl={wsUrl} managerId={managerId}
+            />}
+            <h3 className="px-3 pt-3 text-xs font-semibold">Conversation artifacts</h3>
             {artifacts.length === 0 ? (
               <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
                 <FileText className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
