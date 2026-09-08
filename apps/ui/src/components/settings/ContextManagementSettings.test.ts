@@ -92,7 +92,7 @@ describe('ContextManagementSettings', () => {
     expect(apiMock.fetchProjectContextMode).toHaveBeenCalledWith(apiClient, 'forge')
     expect(container.textContent).toContain('Context management')
     expect(container.textContent).toContain('Summary carries forward a summary')
-    expect(container.textContent).toContain('Fresh windows uses task notes')
+    expect(container.textContent).toContain('Context v2 uses task notes')
     expect(container.textContent).toContain('earlier messages and tool results')
     expect(container.textContent).not.toContain('Full conversation history stays searchable')
     expect(container.textContent).not.toContain('does not use embeddings')
@@ -102,9 +102,9 @@ describe('ContextManagementSettings', () => {
     flushSync(() => {
       fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' }))
     })
     await flushAsyncWork()
 
@@ -121,9 +121,9 @@ describe('ContextManagementSettings', () => {
     flushSync(() => {
       fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' }))
     })
     await flushAsyncWork()
 
@@ -138,7 +138,7 @@ describe('ContextManagementSettings', () => {
 
     rerenderSettings('fresh', 1)
     await flushAsyncWork()
-    expect(getByRole(container, 'combobox', { name: 'Context management' }).textContent).toContain('Fresh windows (experimental)')
+    expect(getByRole(container, 'combobox', { name: 'Context management' }).textContent).toContain('Context v2 (experimental)')
 
     apiMock.fetchProjectContextMode.mockResolvedValueOnce(snapshot('summary'))
     rerenderSettings('fresh', 2)
@@ -165,9 +165,9 @@ describe('ContextManagementSettings', () => {
     flushSync(() => {
       fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' }))
     })
     await flushAsyncWork()
     expect(apiMock.updateProjectContextMode).toHaveBeenCalledWith(clientA, 'project-a', 'fresh')
@@ -188,13 +188,13 @@ describe('ContextManagementSettings', () => {
     flushSync(() => {
       fireEvent.pointerDown(laterTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' }))
     })
     await flushAsyncWork()
     expect(apiMock.updateProjectContextMode).toHaveBeenLastCalledWith(clientB, 'project-b', 'fresh')
-    expect(getByRole(container, 'combobox', { name: 'Context management' }).textContent).toContain('Fresh windows (experimental)')
+    expect(getByRole(container, 'combobox', { name: 'Context management' }).textContent).toContain('Context v2 (experimental)')
   })
 
   it('does not apply a rejected previous-project save after switching clients', async () => {
@@ -211,9 +211,9 @@ describe('ContextManagementSettings', () => {
     flushSync(() => {
       fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'Fresh windows (experimental)' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'Context v2 (experimental)' }))
     })
     await flushAsyncWork()
 

@@ -156,7 +156,7 @@ Settings → General → **Repositories** (Builder/local only) stores clone defa
 
 **Pause indexing** persists `{ "paused": true }` in `shared/config/history-index.json`, outside the disposable index. It waits behind current bounded work, stops background indexing and search/read-triggered catch-up, and survives restart. Conversations continue saving; existing indexed results remain available, but newer content may be absent from lexical search. Query-free window/item traversal, literal search, and direct canonical reads remain available without SQLite. Privacy-related cache invalidation remains active. **Resume indexing** saves `false` and schedules catch-up without resetting the index. Unreadable or malformed preferences pause indexing defensively; explicit resume replaces them if the preference file can be saved. A failed save leaves the previous preference unchanged.
 
-`GET /api/history/index` returns diagnostics; `PATCH /api/history/index` accepts only a boolean `paused`. These endpoints are not composed on Collaboration/Remote runtimes. This page does not delete conversations or rebuild the cache, and does not change Summary/Fresh policy or history eligibility/security boundaries.
+`GET /api/history/index` returns diagnostics; `PATCH /api/history/index` accepts only a boolean `paused`. These endpoints are not composed on Collaboration/Remote runtimes. This page does not delete conversations or rebuild the cache, and does not change Summary/Context v2 policy or history eligibility/security boundaries.
 
 ### Embedded data versioning
 
@@ -170,13 +170,13 @@ The embedded Git service versions Forge's allowlisted knowledge, profile-memory,
 
 ### Compaction
 
-Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not controlled by these settings; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices. These controls do not choose Summary vs Fresh; that policy lives in Project Settings, not Settings → General.
+Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. Cursor SDK, xAI/Grok, and user-added OpenRouter manager models are not controlled by these settings; OpenRouter manager eligibility is a separate policy and OpenRouter models are not compaction choices. These controls do not choose Summary vs Context v2; that policy lives in Project Settings, not Settings → General.
 
 ### Context management
 
 Local Builder projects persist a project default context mode (`summary` | `fresh`) on the profile as `defaultContextMode`. Sessions may persist an optional `contextModeOverride`; absence means inherit the project default. Summary remains the default when neither value is set. The saved effective preference is `sessionOverride ?? projectDefault ?? summary` and survives restart. Saving a mode does not reset the current conversation; it applies at the next context transition.
 
-The session snapshot separates that preference (`effectiveMode`) from the supported policy (`appliedMode`). An unsupported runtime uses Summary while retaining the Fresh preference, `freshSupported: false`, and an `unsupportedReason`. The session picker shows the supported policy and explains any retained Fresh preference. Older servers without `appliedMode` are interpreted using `effectiveMode` and `freshSupported`.
+The session snapshot separates that preference (`effectiveMode`) from the supported policy (`appliedMode`). An unsupported runtime uses Summary while retaining the Context v2 preference, `freshSupported: false`, and an `unsupportedReason`. The session picker shows the supported policy and explains any retained Context v2 preference. Older servers without `appliedMode` are interpreted using `effectiveMode` and `freshSupported`.
 
 Builder-only HTTP routes:
 
@@ -187,9 +187,9 @@ Builder-only HTTP routes:
 | `GET` | `/api/agents/:agentId/context-mode` | — | session snapshot including `projectDefault`, optional `sessionOverride`, `effectiveMode`, `appliedMode`, `freshSupported`, and optional `unsupportedReason` |
 | `PUT` | `/api/agents/:agentId/context-mode` | `{ mode: "summary" \| "fresh" \| null }` | same snapshot; `null` restores inheritance |
 
-These routes are registered only on Builder. Fresh is experimental and requires an ordinary Pi Builder manager using an existing compaction-eligible provider (OpenAI/Codex or Anthropic), with a recognized catalog model that supports tools and has at least 32,000 context tokens. Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot execute Fresh. Workers retain the owning manager's preference but apply Summary. A session PUT of `fresh` on an unsupported runtime is rejected; a project can still save Fresh as a preference.
+These routes are registered only on Builder. Context v2 is experimental and requires an ordinary Pi Builder manager using an existing compaction-eligible provider (OpenAI/Codex or Anthropic), with a recognized catalog model that supports tools and has at least 32,000 context tokens. Collaboration, Cortex/system, Cursor SDK, plugin/external threads, and workers cannot execute Context v2. Workers retain the owning manager's preference but apply Summary. The persisted/API value for Context v2 remains `fresh`. A session PUT of `fresh` on an unsupported runtime is rejected; a project can still save Context v2 as a preference.
 
-Compact and Smart compact use the policy frozen for that attempt. Summary keeps its handoff/resume path. Fresh saves a continuation checkpoint with task-note and canonical-history entry points, without an AI summarizing pass. Busy manual Fresh attempts are rejected until idle; an idle manager stays idle. Agent-requested transitions settle the tool batch before resetting the window. Pins and unresolved tool references are budgeted as complete pieces rather than silently cut from the end of the checkpoint.
+Compact and Smart compact use the policy frozen for that attempt. Summary keeps its handoff/resume path. Context v2 saves a continuation checkpoint with task-note and canonical-history entry points, without an AI summarizing pass. Busy manual Context v2 attempts are rejected until idle; an idle manager stays idle. Agent-requested transitions settle the tool batch before resetting the window. Pins and unresolved tool references are budgeted as complete pieces rather than silently cut from the end of the checkpoint.
 
 #### Task notes and continuation
 
@@ -222,7 +222,7 @@ The continuation workflow is:
 
 1. Maintain `checkpoint.md` during substantial work and put exact evidence references beside decisions that may need rechecking.
 2. Use `get_context_remaining` to assess remaining room. Update notes before requesting `new_context` or responding to a near-limit reminder.
-3. The runtime completes pending tool outcomes and prepares the Fresh checkpoint through the existing compaction lifecycle. An unsuccessful transition leaves the existing window in place.
+3. The runtime completes pending tool outcomes and prepares the Context v2 checkpoint through the existing compaction lifecycle. An unsuccessful transition leaves the existing window in place.
 4. After the transition, read the notes and recover missing evidence with `history`. Preserve still-applicable user instructions and authorization from this continuing task; notes and unrelated historical content cannot grant new authority. Check current files and runtime state before repeating consequential actions.
 
 A context transition does not create a goal, revive completed work, or replace the authoritative task, turn, plan, and worker state. Task-local recovery is independent of the cross-project index's health.

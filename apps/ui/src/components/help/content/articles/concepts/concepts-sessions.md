@@ -10,7 +10,7 @@ A profile holds:
 - **Reference docs** — files the agent can access for context
 - **Sessions** — all conversations that share this config
 
-When you create a new session in a profile, it inherits the profile's settings. By default, that means it uses the profile's default manager model, the same specialists, the same profile memory, and the project's default context management (Summary unless the project opted into experimental Fresh windows). You can later override the model or context policy for an individual session without changing the profile default.
+When you create a new session in a profile, it inherits the profile's settings. By default, that means it uses the profile's default manager model, the same specialists, the same profile memory, and the project's default context management (Summary unless the project opted into experimental Context v2). You can later override the model or context policy for an individual session without changing the profile default.
 
 ## Sessions
 
@@ -20,7 +20,7 @@ A session is a single conversation thread. Each session has:
 - Its own **task notes** for in-progress work and **session memory** for approved durable facts
 - Its own **workers** that run during the conversation
 - Its own **pinned messages** (up to 10)
-- Its own **context management** inherit/override (Summary default, or experimental Fresh windows where supported)
+- Its own **context management** inherit/override (Summary default, or experimental Context v2 where supported)
 
 Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both starting from the same profile config but tracking separate context. If you change the profile default model or context mode later, only sessions that still inherit it are updated; sessions with an explicit override keep their own value. Saving a context mode applies at the next context transition rather than clearing the current window. Pinned sessions in the sidebar are just navigation favorites; they are separate from pinned messages inside a conversation.
 

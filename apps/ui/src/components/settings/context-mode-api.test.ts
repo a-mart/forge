@@ -77,14 +77,14 @@ describe('context-mode-api', () => {
       projectDefault: 'summary',
       effectiveMode: 'summary',
       freshSupported: false,
-      unsupportedReason: 'Fresh windows are not supported for Cursor SDK runtimes.',
+      unsupportedReason: 'Context v2 is not supported for Cursor SDK runtimes.',
     })).toEqual({
       sessionAgentId: 'manager',
       profileId: 'forge',
       projectDefault: 'summary',
       effectiveMode: 'summary',
       freshSupported: false,
-      unsupportedReason: 'Fresh windows are not supported for Cursor SDK runtimes.',
+      unsupportedReason: 'Context v2 is not supported for Cursor SDK runtimes.',
     })
   })
 
@@ -92,7 +92,7 @@ describe('context-mode-api', () => {
     const snapshot = {
       sessionAgentId: 'manager', profileId: 'forge', projectDefault: 'fresh',
       effectiveMode: 'fresh', appliedMode: 'summary', freshSupported: false,
-      unsupportedReason: 'This model does not support Fresh windows.',
+      unsupportedReason: 'This model does not support Context v2.',
     }
     expect(parseSessionContextModeSnapshot(snapshot)).toEqual(snapshot)
     expect(() => parseSessionContextModeSnapshot({ ...snapshot, appliedMode: 'unknown' })).toThrow(
@@ -164,11 +164,11 @@ describe('context-mode-api', () => {
   it('surfaces API errors from failed writes', async () => {
     const client = createBuilderSettingsApiClient(BUILDER_WS)
     fetchSpy.mockResolvedValueOnce(jsonResponse(
-      { error: 'Fresh windows are not supported for Cursor SDK runtimes.' },
+      { error: 'Context v2 is not supported for Cursor SDK runtimes.' },
       409,
     ))
     await expect(updateSessionContextMode(client, 'cursor', 'fresh')).rejects.toThrow(
-      'Fresh windows are not supported for Cursor SDK runtimes.',
+      'Context v2 is not supported for Cursor SDK runtimes.',
     )
   })
 

@@ -1251,7 +1251,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return { accepted: false, message: "New input or a context boundary arrived while preparing the request. Incorporate it, update checkpoint.md, and request again." };
     }
     this.freshContextRequest = { inputEpoch, windowId };
-    return { accepted: true, message: "Fresh context requested. The runtime will validate recovery notes and commit the boundary after all tools in this batch finish. Continue the same task using checkpoint.md and history." };
+    return { accepted: true, message: "Context v2 requested. The runtime will validate recovery notes and commit the boundary after all tools in this batch finish. Continue the same task using checkpoint.md and history." };
   }
 
   private getFreshTaskNotes() {
@@ -1342,7 +1342,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.claimFreshAutoRecovery(request.reason);
     }
     if (!this.dataDir) {
-      throw new Error("Fresh context checkpoint requires a data directory");
+      throw new Error("Context v2 checkpoint requires a data directory");
     }
     const model = this.session.model as { contextWindow?: number; maxTokens?: number } | undefined;
     const inputEpoch = this.freshInputEpoch;
@@ -1352,7 +1352,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       const checkpoint = notes.notes.find(note => note.path === "checkpoint.md");
       if (request.reason === "agent" && (!notes.ready || !checkpoint || checkpoint.bytes === 0
         || checkpoint.revision <= this.getFreshCheckpointRevision())) {
-        throw new Error("Fresh context requires a current readable notes checkpoint.md; previous context preserved.");
+        throw new Error("Context v2 requires a current readable notes checkpoint.md; previous context preserved.");
       }
       const result = await buildFreshContextHandlerResult({
         dataDir: this.dataDir,
@@ -1372,7 +1372,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         },
       });
       if (request.signal?.aborted || inputEpoch !== this.freshInputEpoch || this.lifecycleInterruptionInProgress) {
-        throw new Error("Fresh context preparation was superseded by new input or interrupted; previous context preserved.");
+        throw new Error("Context v2 preparation was superseded by new input or interrupted; previous context preserved.");
       }
       if (checkpoint) Object.assign(result.details.forgeContext, { taskCheckpointRevision: checkpoint.revision });
       return result;
@@ -1797,12 +1797,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
       await this.reportRuntimeError({
         phase: "compaction",
-        message: requestedFresh ? "Requested Fresh context transition started" : "Automatic compaction started",
+        message: requestedFresh ? "Requested Context v2 transition started" : "Automatic compaction started",
         details: {
           recoveryStage: "auto_compaction_started",
           compactionReason: event.reason,
           userFacingMessage: requestedFresh
-            ? "Fresh context requested — switching to a new window."
+            ? "Context v2 requested — switching to a new window."
             : "Context is getting full — compacting automatically."
         }
       });
@@ -2821,12 +2821,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       await this.reportRuntimeError({
         phase: "compaction",
-        message: compactionReason === "agent" ? "Requested Fresh context transition completed" : "Context automatically compacted",
+        message: compactionReason === "agent" ? "Requested Context v2 transition completed" : "Context automatically compacted",
         details: {
           recoveryStage: "auto_compaction_succeeded",
           compactionReason,
           userFacingMessage: compactionReason === "agent"
-            ? "Requested Fresh context transition completed."
+            ? "Requested Context v2 transition completed."
             : "Automatic compaction completed."
         }
       });

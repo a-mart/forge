@@ -18,14 +18,14 @@ project default follow a later model change; a session with its own override doe
 not.
 
 **Context management** chooses how this project continues when context fills:
-**Summary (default)** or **Fresh windows (experimental)**. Summary carries forward
-a summary. Fresh uses task notes and retrieves earlier messages and tool results
+**Summary (default)** or **Context v2 (experimental)**. Summary carries forward
+a summary. Context v2 uses task notes and retrieves earlier messages and tool results
 as needed. Saving this setting does not clear the current conversation; it
 applies at the next context transition.
 
 Eligible local Builder managers can inherit this default or override it from
 **Context management** beside Send. That control shows the supported policy and
-explains when Summary is used while a Fresh preference stays saved. Fresh requires
+explains when Summary is used while a Context v2 preference stays saved. Context v2 requires
 a supported ordinary Pi Builder manager and an eligible model. Workers and other
 unsupported runtimes continue using Summary. Indexing pause and diagnostics live
 in **Settings → History**. **Settings → General → Compaction** holds the compaction

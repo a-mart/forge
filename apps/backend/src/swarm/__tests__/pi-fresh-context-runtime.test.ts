@@ -150,13 +150,13 @@ describe("pi fresh-window native runtime", () => {
     expect(disk).toContain("\"mode\":\"fresh\"");
     const active = JSON.stringify(session.sessionManager.buildSessionContext().messages);
     expect(session.sessionManager.buildSessionContext().messages.some(message => message.role === "user")).toBe(false);
-    expect(active).toContain("Fresh window checkpoint");
+    expect(active).toContain("Context v2 checkpoint");
     const branch = session.sessionManager.getBranch();
     expect(branch.some((entry) => entry.type === "message")).toBe(true);
     const reopened = SessionManager.open(sessionFile, undefined, root);
     const reopenedActive = JSON.stringify(reopened.buildSessionContext().messages);
     expect(reopened.buildSessionContext().messages.some(message => message.role === "user")).toBe(false);
-    expect(reopenedActive).toContain("Fresh window checkpoint");
+    expect(reopenedActive).toContain("Context v2 checkpoint");
     expect(reopened.getBranch().some((entry) => entry.type === "compaction")).toBe(true);
     unsubscribe();
     session.dispose();
@@ -669,13 +669,13 @@ describe("agent-controlled native Fresh continuation", () => {
     await session.prompt("Complete the synthetic task without repeating its effect.");
     await session.waitForIdle();
     expect(onRuntimeError.mock.calls.map(([, error]) => error.details?.userFacingMessage)).toEqual([
-      "Fresh context requested — switching to a new window.",
-      "Requested Fresh context transition completed.",
+      "Context v2 requested — switching to a new window.",
+      "Requested Context v2 transition completed.",
     ]);
     expect(effects).toBe(1);
     expect(faux.state.callCount).toBe(2);
     expect(compactionsInsideTool).toBe(0);
-    expect(secondContext).toContain("Fresh window checkpoint");
+    expect(secondContext).toContain("Context v2 checkpoint");
     expect(secondContext).toContain("violet-receipt");
     expect(secondContext).not.toContain('"role":"toolResult"');
     const branch = session.sessionManager.getBranch();
@@ -821,7 +821,7 @@ describe("agent-controlled native Fresh continuation", () => {
       "Automatic compaction completed.",
     ]);
     expect(reminderContext).toContain("Context is nearing its reserved capacity");
-    expect(freshContext).toContain("Fresh window checkpoint");
+    expect(freshContext).toContain("Context v2 checkpoint");
     const branch = session.sessionManager.getBranch();
     expect(branch.filter(entry => entry.type === "custom_message" && entry.customType === "forge_context_reserve")).toHaveLength(1);
     const compactions = branch.filter(entry => entry.type === "compaction");
@@ -871,8 +871,8 @@ describe("agent-controlled native Fresh continuation", () => {
     await session.prompt("Exercise the currently selected context policy.");
     await session.waitForIdle();
     expect(summaryContext).toContain("Agent-requested fresh context is unavailable in this runtime or mode.");
-    expect(summaryContext).not.toContain("Fresh window checkpoint");
-    expect(freshContext).toContain("Fresh window checkpoint");
+    expect(summaryContext).not.toContain("Context v2 checkpoint");
+    expect(freshContext).toContain("Context v2 checkpoint");
     expect(session.sessionManager.getBranch().filter(entry => entry.type === "compaction")).toHaveLength(1);
     expect(faux.state.callCount).toBe(3);
     await runtime.terminate({ abort: false });

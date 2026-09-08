@@ -106,7 +106,7 @@ describe("createContextModeRoutes", () => {
     const swarmManager = {
       getSessionContextMode: vi.fn(),
       updateSessionContextMode: vi.fn(async () => {
-        throw new Error("Fresh windows are not supported for Cursor SDK runtimes.");
+        throw new Error("Context v2 is not supported for Cursor SDK runtimes.");
       }),
     } as unknown as SwarmManager;
     const server = await createRouteServer(
@@ -120,7 +120,7 @@ describe("createContextModeRoutes", () => {
     });
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      error: "Fresh windows are not supported for Cursor SDK runtimes.",
+      error: "Context v2 is not supported for Cursor SDK runtimes.",
     });
   });
 

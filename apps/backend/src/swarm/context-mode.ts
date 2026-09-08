@@ -16,25 +16,25 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 
 export const FRESH_CONTEXT_UNSUPPORTED_COLLAB =
-  "Fresh windows are not supported for Collaboration sessions.";
+  "Context v2 is not supported for Collaboration sessions.";
 export const FRESH_CONTEXT_UNSUPPORTED_SPECIAL_PURPOSE =
-  "Fresh windows are only supported for ordinary Builder manager compaction runtimes.";
+  "Context v2 is only supported for ordinary Builder manager compaction runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_PLUGIN =
-  "Fresh windows are not supported for plugin workers.";
+  "Context v2 is not supported for plugin workers.";
 export const FRESH_CONTEXT_UNSUPPORTED_EXTERNAL_THREAD =
-  "Fresh windows are not supported for external-thread runtimes.";
+  "Context v2 is not supported for external-thread runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_CORTEX =
-  "Fresh windows are not supported for Cortex sessions.";
+  "Context v2 is not supported for Cortex sessions.";
 export const FRESH_CONTEXT_UNSUPPORTED_SYSTEM_PROFILE =
-  "Fresh windows are not supported for system-managed profiles.";
+  "Context v2 is not supported for system-managed profiles.";
 export const FRESH_CONTEXT_UNSUPPORTED_CURSOR_SDK =
-  "Fresh windows are not supported for Cursor SDK runtimes.";
+  "Context v2 is not supported for Cursor SDK runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_NON_PI =
-  "Fresh windows are currently limited to Pi-backed Builder manager compaction runtimes.";
+  "Context v2 is currently limited to Pi-backed Builder manager compaction runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_PROVIDER =
-  "Fresh windows are only supported for existing Pi-backed compaction providers.";
+  "Context v2 is only supported for existing Pi-backed compaction providers.";
 export const FRESH_CONTEXT_UNSUPPORTED_MODEL =
-  "Fresh windows require a recognized tool-capable model with at least 32,000 context tokens.";
+  "Context v2 requires a recognized tool-capable model with at least 32,000 context tokens.";
 export const FRESH_CONTEXT_UNSUPPORTED_WORKER =
   "Workers retain the owning manager preference, but currently run with Summary context.";
 export const CONTEXT_MODE_WORKER_WRITE_ERROR =

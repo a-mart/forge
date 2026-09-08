@@ -28,6 +28,6 @@ When sources are actually missing, unreadable, or omitted by indexing safety lim
 
 ## About this index
 
-This section shows schema version, catalog discovery, and last cache update. Canonical conversation JSONL remains the source of truth. `shared/cache/history-recall.db` is a rebuildable cache with no embeddings and no human history drawer. This page does not return transcript contents, rebuild or delete the cache, or change Summary/Fresh policy.
+This section shows schema version, catalog discovery, and last cache update. Canonical conversation JSONL remains the source of truth. `shared/cache/history-recall.db` is a rebuildable cache with no embeddings and no human history drawer. This page does not return transcript contents, rebuild or delete the cache, or change Summary/Context v2 policy.
 
 See **Project Settings → Context management** for continuation policy, and compaction help for how agents use the `history` tool.

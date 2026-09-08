@@ -4,18 +4,18 @@ export type SessionContextModeChoice = 'inherit' | ContextMode
 
 export const CONTEXT_MODE_OPTION_LABELS: Record<ContextMode, string> = {
   summary: 'Summary (default)',
-  fresh: 'Fresh windows (experimental)',
+  fresh: 'Context v2 (experimental)',
 }
 
 export const CONTEXT_MODE_SHORT_LABELS: Record<ContextMode, string> = {
   summary: 'Summary',
-  fresh: 'Fresh windows',
+  fresh: 'Context v2',
 }
 
 export const CONTEXT_MANAGEMENT_TITLE = 'Context management'
 
 export const CONTEXT_MANAGEMENT_DESCRIPTION =
-  'Choose how this project continues when context fills. Summary carries forward a summary. Fresh windows uses task notes and retrieves earlier messages and tool results as needed.'
+  'Choose how this project continues when context fills. Summary carries forward a summary. Context v2 uses task notes and retrieves earlier messages and tool results as needed.'
 
 export const CONTEXT_MODE_DESCRIPTIONS: Record<ContextMode, string> = {
   summary: 'Continues from a summary of earlier work.',

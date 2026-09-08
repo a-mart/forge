@@ -219,7 +219,7 @@ export function SessionContextModePicker({
         </fieldset>
         {!freshSupported ? (
           <p className="px-1 text-[11px] leading-snug text-amber-800 dark:text-amber-200" role="status">
-            {unsupportedReason ?? 'Fresh windows are not supported for this session. Summary is used instead.'}
+            {unsupportedReason ?? 'Context v2 is not supported for this session. Summary is used instead.'}
           </p>
         ) : null}
         {error ? (

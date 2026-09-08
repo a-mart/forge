@@ -100,7 +100,7 @@ export abstract class SwarmManagerDelegationFacade extends SwarmManagerSecureSes
     const snapshot = this.getSessionContextMode(sessionAgentId);
     if (mode === "fresh" && !snapshot.freshSupported) {
       throw new Error(
-        snapshot.unsupportedReason ?? "Fresh windows are not supported for this session runtime.",
+        snapshot.unsupportedReason ?? "Context v2 is not supported for this session runtime.",
       );
     }
     return this.configuration.updateSessionContextMode(sessionAgentId, mode);

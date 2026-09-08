@@ -111,7 +111,7 @@ describe('SessionContextModePicker', () => {
     await openPicker()
     expect(getByRole(document.body, 'radio', { name: 'Use project default (Summary)' })).toBeTruthy()
     expect(getByRole(document.body, 'radio', { name: /^Summary \(default\)/ })).toBeTruthy()
-    expect(getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ })).toBeTruthy()
+    expect(getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ })).toBeTruthy()
     expect(document.body.textContent).toContain('Using: Summary · project default')
     expect(document.body.textContent).toContain('does not clear the current conversation')
   })
@@ -135,7 +135,7 @@ describe('SessionContextModePicker', () => {
     })).toBeTruthy()
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'radio', { name: 'Use project default (Fresh windows)' }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: 'Use project default (Context v2)' }))
     })
     await flushAsyncWork()
     expect(apiMock.updateSessionContextMode).toHaveBeenLastCalledWith(apiClient, 'manager-1', null)
@@ -148,27 +148,27 @@ describe('SessionContextModePicker', () => {
     await openPicker()
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ }))
     })
     await flushAsyncWork()
 
     expect(document.body.textContent).toContain('Could not persist session context mode.')
     expect((getByRole(document.body, 'radio', { name: 'Use project default (Summary)' }) as HTMLInputElement).checked).toBe(true)
-    expect((getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ }) as HTMLInputElement).checked).toBe(false)
+    expect((getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ }) as HTMLInputElement).checked).toBe(false)
   })
 
   it('disables fresh windows on unsupported sessions and shows the reason', async () => {
     apiMock.fetchSessionContextMode.mockResolvedValue(makeSnapshot({
       freshSupported: false,
-      unsupportedReason: 'Fresh windows are not supported for Cursor SDK runtimes.',
+      unsupportedReason: 'Context v2 is not supported for Cursor SDK runtimes.',
     }))
     renderPicker(makeConfig())
     await flushAsyncWork()
     await openPicker()
 
-    const fresh = getByRole(document.body, 'radio', { name: /Fresh windows \(experimental\)/ }) as HTMLInputElement
+    const fresh = getByRole(document.body, 'radio', { name: /Context v2 \(experimental\)/ }) as HTMLInputElement
     expect(fresh.disabled).toBe(true)
-    expect(document.body.textContent).toContain('Fresh windows are not supported for Cursor SDK runtimes.')
+    expect(document.body.textContent).toContain('Context v2 is not supported for Cursor SDK runtimes.')
     fireEvent.click(fresh)
     expect(apiMock.updateSessionContextMode).not.toHaveBeenCalled()
   })
@@ -179,18 +179,18 @@ describe('SessionContextModePicker', () => {
       effectiveMode: 'fresh',
       appliedMode,
       freshSupported: false,
-      unsupportedReason: 'This model does not support Fresh windows.',
+      unsupportedReason: 'This model does not support Context v2.',
     }))
     renderPicker(makeConfig())
     await flushAsyncWork()
     await openPicker()
 
     expect(getByRole(container, 'button', {
-      name: 'Context management: Summary (default). Fresh windows saved as project default.',
+      name: 'Context management: Summary (default). Context v2 saved as project default.',
     })).toBeTruthy()
-    expect(document.body.textContent).toContain('Using: Summary · Fresh windows saved as project default')
-    expect((getByRole(document.body, 'radio', { name: 'Use project default (Fresh windows)' }) as HTMLInputElement).checked).toBe(true)
-    expect(document.body.textContent).toContain('This model does not support Fresh windows.')
+    expect(document.body.textContent).toContain('Using: Summary · Context v2 saved as project default')
+    expect((getByRole(document.body, 'radio', { name: 'Use project default (Context v2)' }) as HTMLInputElement).checked).toBe(true)
+    expect(document.body.textContent).toContain('This model does not support Context v2.')
     expect(apiMock.updateSessionContextMode).not.toHaveBeenCalled()
   })
 
@@ -209,16 +209,16 @@ describe('SessionContextModePicker', () => {
     await openPicker()
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'radio', { name: 'Use project default (Fresh windows)' }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: 'Use project default (Context v2)' }))
     })
     expect(getByRole(container, 'button', {
-      name: 'Context management: Summary (default). Fresh windows saved as project default.',
+      name: 'Context management: Summary (default). Context v2 saved as project default.',
     })).toBeTruthy()
     expect(apiMock.updateSessionContextMode).toHaveBeenCalledWith(apiClient, 'manager-1', null)
 
     resolveSave?.(makeSnapshot({ projectDefault: 'fresh', effectiveMode: 'fresh', appliedMode: 'summary', freshSupported: false }))
     await flushAsyncWork()
-    expect(document.body.textContent).toContain('Using: Summary · Fresh windows saved as project default')
+    expect(document.body.textContent).toContain('Using: Summary · Context v2 saved as project default')
   })
 
   it('reloads after reconnect and keeps Compact/Smart Compact out of this control', async () => {
@@ -300,12 +300,12 @@ describe('SessionContextModePicker', () => {
       effectiveMode: 'fresh',
     }))
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ }))
     })
     await flushAsyncWork()
     expect(apiMock.updateSessionContextMode).toHaveBeenLastCalledWith(clientB, 'manager-b', 'fresh')
     expect(getByRole(container, 'button', {
-      name: 'Context management: Fresh windows (experimental). session override.',
+      name: 'Context management: Context v2 (experimental). session override.',
     })).toBeTruthy()
   })
 
@@ -329,7 +329,7 @@ describe('SessionContextModePicker', () => {
     await flushAsyncWork()
     await openPicker()
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ }))
+      fireEvent.click(getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ }))
     })
     await flushAsyncWork()
 
@@ -346,6 +346,6 @@ describe('SessionContextModePicker', () => {
 
     expect(document.body.textContent).not.toContain('stale session-a save')
     expect((getByRole(document.body, 'radio', { name: 'Use project default (Summary)' }) as HTMLInputElement).checked).toBe(true)
-    expect((getByRole(document.body, 'radio', { name: /^Fresh windows \(experimental\)/ }) as HTMLInputElement).disabled).toBe(false)
+    expect((getByRole(document.body, 'radio', { name: /^Context v2 \(experimental\)/ }) as HTMLInputElement).disabled).toBe(false)
   })
 })

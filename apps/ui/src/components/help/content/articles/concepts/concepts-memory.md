@@ -12,7 +12,7 @@ Each chat session has its own `memory.md` for durable facts and decisions you as
 
 ## Task notes
 
-The agent can keep task notes automatically while doing authorized work: the objective, your corrections, progress, open questions, evidence references, and next steps. These notes are separate from `memory.md`. They survive context transitions and restart without automatically becoming profile memory or Cortex knowledge. Fresh windows uses these notes to continue the same task and retrieves earlier evidence when more detail is needed.
+The agent can keep task notes automatically while doing authorized work: the objective, your corrections, progress, open questions, evidence references, and next steps. These notes are separate from `memory.md`. They survive context transitions and restart without automatically becoming profile memory or Cortex knowledge. Context v2 uses these notes to continue the same task and retrieves earlier evidence when more detail is needed.
 
 Each agent owns its notes. A fork from the current state receives an independent snapshot; a fork at an earlier message starts fresh notes so later discoveries do not leak into that branch. Clearing or deleting a session removes its task notes. Notes preserve working state, but do not create new permission or prove the current state of files and services.
 
