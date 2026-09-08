@@ -2,10 +2,13 @@
 import { cn } from '@/lib/utils'
 import type { MessageSourceContext } from '@forge/protocol'
 
-export function formatTimestamp(iso: string): string {
+export function formatTimestamp(iso: string, options?: { includeDate?: boolean }): string {
   try {
     const date = new Date(iso)
     if (Number.isNaN(date.getTime())) return ''
+    if (options?.includeDate) {
+      return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    }
 
     const now = new Date()
     const isToday =

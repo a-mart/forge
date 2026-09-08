@@ -93,6 +93,14 @@ describe('PlanSummaryRow', () => {
     act(() => listButton?.click())
     expect(container.querySelector('[data-work-graph-view="list"]')).not.toBeNull()
     expect(container.textContent).toContain('After Inspect implementation')
+    const step = [...container.querySelectorAll('button')].find(button =>
+      button.getAttribute('aria-label')?.startsWith('Inspect implementation,'))
+    act(() => step?.click())
+    const inspector = container.querySelector('section[aria-label="Step inspector: Inspect implementation"]')
+    expect(inspector?.textContent).toContain('Inspect the implementation.')
+    expect(inspector?.textContent).toContain('Manager accepted this step.')
+    expect(inspector?.textContent).toContain('Frozen returned evidence.')
+    expect(inspector?.textContent).toContain('legacy-worker')
   })
 })
 
@@ -116,7 +124,11 @@ function graphSummary(): PlanSummaryEvent {
           dependsOn: [],
           route: 'auto',
           effort: 'support',
-          attempts: [],
+          attempts: [{
+            id: 'legacy-attempt', number: 1, status: 'succeeded',
+            startedAt: '2026-07-13T00:50:00.000Z', behaviorMode: 'research',
+            workerId: 'legacy-worker', summary: 'Frozen returned evidence.',
+          }],
         },
         {
           id: 'review',

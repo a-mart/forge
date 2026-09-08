@@ -10,7 +10,7 @@ import { getWorkGraphNodeWorkerId } from './work-graph-node-worker'
 import { useWorkGraphWorkerHighlight } from './work-graph-worker-highlight-context'
 import { WorkerRow } from './agent-sidebar/WorkerRow'
 import { SessionRowItem } from './agent-sidebar/SessionRowItem'
-import { WorkGraphDiagram } from './plan/WorkGraphDiagram'
+import { WorkGraphView } from './plan/WorkGraphView'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -93,13 +93,13 @@ function HighlightProbe() {
 }
 
 describe('work graph worker highlights', () => {
-  it('maps graph clicks to the current attempt and replays the signal on repeated clicks', () => {
+  it('maps Graph and List clicks to the current attempt and repeats the same highlight signal', () => {
     act(() => {
       root.render(createElement(
         WorkGraphWorkerHighlightProvider,
         null,
         createElement(HighlightProbe),
-        createElement(WorkGraphDiagram, { graph, compact: false }),
+        createElement(WorkGraphView, { graph, compact: false }),
       ))
     })
 
@@ -114,6 +114,12 @@ describe('work graph worker highlights', () => {
 
     act(() => node?.click())
     expect(container.querySelector('output')?.textContent).toBe('worker-1:2')
+    act(() => [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'List')?.click())
+    const listNode = container.querySelector<HTMLButtonElement>('button[aria-label^="Implement highlight,"]')!
+    act(() => listNode.click())
+    expect(container.querySelector('output')?.textContent).toBe('worker-1:3')
+    act(() => listNode.click())
+    expect(container.querySelector('output')?.textContent).toBe('worker-1:4')
   })
 
   it('outlines only visible targets without selecting a worker or navigating', () => {

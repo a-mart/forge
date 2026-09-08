@@ -68,13 +68,13 @@ describe('WorkGraphView', () => {
     expect(container.textContent).toContain('Dynamic work graph')
     expect(container.textContent).toContain('up to 4 parallel')
     expect(container.textContent).toContain('Review support')
-    expect(container.textContent).toContain('Accept when: Evidence cites the inspected path.')
+    expect(inspector().textContent).toContain('Evidence cites the inspected path.')
     expect(container.textContent).toContain('0 of 2 accepted')
     expect(container.querySelector('[data-work-graph-view="graph"]')).not.toBeNull()
     expect(buttonNamed('Graph').getAttribute('aria-pressed')).toBe('true')
 
     act(() => buttonNamed('Synthesize recommendation').click())
-    expect(container.textContent).toContain('After: Research current behavior')
+    expect(inspector().textContent).toContain('Research current behavior · Awaiting review · Unresolved')
   })
 
   it('keeps graph node cards opaque so connector lines cannot show through', () => {
@@ -110,10 +110,126 @@ describe('WorkGraphView', () => {
     }
   })
 
-  it('keeps compact rendering denser without long acceptance copy', () => {
+  it('keeps the complete inspector available in compact rendering', () => {
     act(() => root.render(createElement(WorkGraphView, { graph, compact: true })))
     expect(container.textContent).toContain('Research current behavior')
-    expect(container.textContent).not.toContain('Accept when:')
+    expect(inspector().textContent).toContain('Evidence cites the inspected path.')
+  })
+
+  it('preserves selection between views and updates the selected snapshot live', () => {
+    act(() => root.render(createElement(WorkGraphView, { graph })))
+    act(() => buttonNamed('Synthesize recommendation').click())
+    act(() => buttonNamed('List').click())
+    expect(inspector().getAttribute('aria-label')).toBe('Step inspector: Synthesize recommendation')
+    expect(buttonNamed('Synthesize recommendation').getAttribute('aria-pressed')).toBe('true')
+    act(() => buttonNamed('Graph').click())
+    expect(buttonNamed('Synthesize recommendation').getAttribute('aria-pressed')).toBe('true')
+    act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: graph.nodes.map(node => ({ ...node, status: 'completed' as const })),
+    } })))
+    expect(inspector().textContent).toContain('Manager accepted this step.')
+    expect(inspector().textContent).toContain('Unresolved dependencies · 0')
+  })
+
+  it('shows every attempt newest first, expandable complete literal results and legacy attribution', () => {
+    const text = '<script>doNotRun()</script>\n' + 'evidence '.repeat(200) + 'END OF STORED TEXT'
+    act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: [{ ...graph.nodes[0], attempts: [graph.nodes[0].attempts[0], {
+        ...graph.nodes[0].attempts[0], id: 'attempt-2', number: 2, summary: text,
+        model: { provider: 'provider', modelId: 'model', thinkingLevel: 'high' },
+      }] }],
+    } })))
+    const attempts = [...inspector().querySelectorAll('section[aria-label="Execution attempts"] > details')]
+    expect(attempts.map(el => el.querySelector('summary')?.textContent)).toEqual([
+      'Attempt 2 · Succeeded (worker result)', 'Attempt 1 · Succeeded (worker result)',
+    ])
+    expect(attempts[0].hasAttribute('open')).toBe(true)
+    expect(attempts[1].hasAttribute('open')).toBe(false)
+    expect(inspector().textContent).toContain('Worker succeeded. Manager acceptance is still required.')
+    expect(inspector().textContent).toContain('provider / model')
+    const result = attempts[0].querySelector('details')!
+    act(() => result.querySelector('summary')!.click())
+    expect(result.open).toBe(true)
+    expect(result.querySelector('p')?.textContent).toBe(text)
+    expect(container.querySelector('script')).toBeNull()
+    act(() => attempts[1].querySelector('summary')!.click())
+    expect((attempts[1] as HTMLDetailsElement).open).toBe(true)
+    expect(attempts[1].textContent).toContain('Not recorded')
+    expect(attempts[1].textContent).toContain('support')
+  })
+
+  it('keeps cancelled steps inspectable and missing dependencies unresolved', () => {
+    act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: [{ ...graph.nodes[1], status: 'cancelled', dependsOn: ['missing'] }],
+    } })))
+    expect(inspector().textContent).toContain('missing · Missing from snapshot · Unresolved')
+    expect(inspector().textContent).toContain('No execution attempts recorded.')
+    expect(inspector().textContent).toContain('No acceptance criteria recorded.')
+    act(() => buttonNamed('List').click())
+    const button = buttonNamed('Synthesize recommendation')
+    expect(button.disabled).toBe(false)
+    expect(button.getAttribute('aria-controls')).toBe(inspector().id)
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    expect(inspector().textContent).toContain('Cancelled')
+  })
+
+  it('preserves the selected step and expanded older result through live status and result updates', () => {
+    const olderText = '<b>literal</b>' + 'x'.repeat(600)
+    const attempts = [
+      { ...graph.nodes[0].attempts[0], summary: olderText },
+      { ...graph.nodes[0].attempts[0], id: 'attempt-2', number: 2, status: 'running' as const },
+    ]
+    const renderStatus = (status: 'running' | 'awaiting_review' | 'completed') => act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: [graph.nodes[1], { ...graph.nodes[0], status, attempts: attempts.map((attempt, index) => index === 1
+        ? { ...attempt, status: status === 'running' ? 'running' as const : 'succeeded' as const, summary: `Live result: ${status}` }
+        : attempt) }],
+    } })))
+    renderStatus('running')
+    act(() => buttonNamed('Research current behavior').click())
+    const older = inspector().querySelectorAll<HTMLDetailsElement>('section[aria-label="Execution attempts"] > details')[1]
+    act(() => older.querySelector('summary')!.click())
+    const text = older.querySelector('details')!
+    act(() => text.querySelector('summary')!.click())
+    for (const status of ['awaiting_review', 'completed'] as const) {
+      renderStatus(status)
+      act(() => buttonNamed(status === 'awaiting_review' ? 'List' : 'Graph').click())
+      expect(inspector().getAttribute('aria-label')).toBe('Step inspector: Research current behavior')
+      expect(older.isConnected && older.open && text.open).toBe(true)
+      expect(text.querySelector('p')?.textContent).toBe(olderText)
+      expect(inspector().textContent).toContain(`Live result: ${status}`)
+      expect(inspector().textContent).toContain(status === 'completed' ? 'Manager accepted this step.' : 'Manager acceptance is still required.')
+    }
+  })
+
+  it('does not satisfy dependencies with a cancelled predecessor', () => {
+    act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: [{ ...graph.nodes[0], status: 'cancelled' }, { ...graph.nodes[1], dependsOn: ['research', 'missing'] }],
+    } })))
+    act(() => buttonNamed('Synthesize recommendation').click())
+    expect(inspector().textContent).toContain('Unresolved dependencies · 2')
+    expect(inspector().textContent).toContain('Research current behavior · Cancelled · Unresolved')
+    expect(inspector().textContent).toContain('missing · Missing from snapshot · Unresolved')
+  })
+
+  it.each([new Date().toISOString(), '2026-07-18T12:00:00.000Z'])('formats calendar date and time retaining exact %s and tolerates invalid legacy timestamps', (timestamp) => {
+    act(() => root.render(createElement(WorkGraphView, { graph: {
+      ...graph, nodes: [{ ...graph.nodes[0], statusUpdatedAt: timestamp, attempts: [{ ...graph.nodes[0].attempts[0], completedAt: 'invalid legacy date' }] }],
+    } })))
+    const time = inspector().querySelector('time')!
+    expect(time.dateTime).toBe(timestamp)
+    expect(time.title).toBe(timestamp)
+    expect(time.textContent).toBe(new Date(timestamp).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))
+    expect(inspector().textContent).toContain('invalid legacy date')
+  })
+
+  it('falls back after selected-node removal and handles empty snapshots', () => {
+    act(() => root.render(createElement(WorkGraphView, { graph })))
+    act(() => buttonNamed('Synthesize recommendation').click())
+    act(() => root.render(createElement(WorkGraphView, { graph: { ...graph, nodes: [graph.nodes[0]] } })))
+    expect(inspector().getAttribute('aria-label')).toBe('Step inspector: Research current behavior')
+    act(() => root.render(createElement(WorkGraphView, { graph: { ...graph, nodes: [] } })))
+    expect(container.textContent).toContain('No steps in this graph.')
   })
 
   it('derives graph columns from stage width, not compact mode', () => {
@@ -153,4 +269,8 @@ function buttonNamed(name: string): HTMLButtonElement {
     ))
   if (!(button instanceof HTMLButtonElement)) throw new Error(`Missing button: ${name}`)
   return button
+}
+
+function inspector(): HTMLElement {
+  return container.querySelector('section[aria-label^="Step inspector:"]')!
 }

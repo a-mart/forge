@@ -14,6 +14,14 @@ Forge dispatches ready non-decision nodes up to the graph's concurrency limit. A
 
 Use a graph only when coordination changes the outcome. Short checklists and one-worker tasks are clearer without one.
 
+## Inline step inspector
+
+Select a step in **Graph** or **List** to open the inline inspector. The same selected step stays selected when you switch views. Completed and cancelled steps remain inspectable.
+
+The inspector shows the stored assignment, acceptance criteria, and the graph's authoritative step status. A worker succeeding is not manager acceptance: a succeeded attempt can still leave the step **awaiting review**. Unresolved dependencies include every predecessor that is not **completed**; only accepted steps satisfy a dependency.
+
+Execution attempts appear newest first, with worker attribution, specialist or route, model, and the stored result summary. Older attempts stay collapsed until you expand them. Long assignment, criteria, and summary text stay truncated until expanded, then reveal the complete stored text.
+
 ## Persistence and scope
 
 Plans are scoped to one Builder session. The current snapshot is stored in `plan.json`; replaced revisions append to `plan-history.ndjson`; assignment and token-usage estimates append to `plan-usage.ndjson`. A graph is stored in that same current snapshot and still projects ordinary plan steps for display and compatibility.

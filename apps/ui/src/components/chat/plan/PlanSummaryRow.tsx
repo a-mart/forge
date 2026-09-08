@@ -26,21 +26,21 @@ export function PlanSummaryRow({
     : active[0]?.step
 
   return (
-    <section className={cn('mx-auto w-full px-4 py-1', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isComplete ? (isGraph ? 'Completed graph' : 'Completed plan') : (isGraph ? 'Work graph' : 'Working plan')}>
+    <section className={cn('mx-auto w-full px-2 sm:px-4 py-1', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isComplete ? (isGraph ? 'Completed graph' : 'Completed plan') : (isGraph ? 'Work graph' : 'Working plan')}>
       <div className={cn('overflow-hidden rounded-xl bg-card/60', isComplete ? 'border border-emerald-500/20' : 'border border-border/70')}>
         <button
           type="button"
-          className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/40"
+          className="flex w-full items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2.5 text-left hover:bg-muted/40"
           aria-expanded={expanded}
           aria-controls={detailsId}
           onClick={() => setExpanded((current) => !current)}
         >
-          <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', isComplete ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-500')}>
+          <span className={cn('flex size-6 sm:size-8 shrink-0 items-center justify-center rounded-lg', isComplete ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-500')}>
             {isGraph ? <GitBranch className="size-4" /> : <ClipboardList className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {isComplete ? (isGraph ? 'Graph complete' : 'Plan complete') : (isGraph ? 'Work graph' : 'Working plan')}
               </span>
               <span className={cn('inline-flex items-center gap-1 text-[11px] tabular-nums', isComplete ? 'text-emerald-500' : 'text-muted-foreground')}>
@@ -58,7 +58,7 @@ export function PlanSummaryRow({
           )} />
         </button>
         {expanded ? (
-          <div id={detailsId} className="border-t border-border/60 px-4 py-3">
+          <div id={detailsId} className="border-t border-border/60 px-2 py-3 sm:px-4">
             <PlanView snapshot={snapshot} />
           </div>
         ) : null}

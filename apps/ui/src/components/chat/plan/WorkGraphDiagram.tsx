@@ -15,8 +15,6 @@ import {
   WorkGraphNodeStatusIcon,
 } from './WorkGraphNodeMeta'
 import { workGraphNodeStatusLabel } from './work-graph-node-status'
-import { getWorkGraphNodeWorkerId } from '../work-graph-node-worker'
-import { useWorkGraphWorkerHighlight } from '../work-graph-worker-highlight-context'
 import { workGraphColumnCount } from './plan-surface'
 
 interface PositionedNode {
@@ -36,16 +34,19 @@ interface GraphEdge {
 export function WorkGraphDiagram({
   graph,
   compact,
+  selectedNodeId,
+  onSelectNode,
+  inspectorId,
 }: {
   graph: WorkGraphSnapshot
   compact: boolean
+  selectedNodeId: string
+  onSelectNode: (id: string) => void
+  inspectorId: string
 }) {
-  const { highlightWorker } = useWorkGraphWorkerHighlight()
   const stageRef = useRef<HTMLDivElement | null>(null)
   const nodeRefs = useRef(new Map<string, HTMLButtonElement>())
-  const userSelectedRef = useRef(false)
   const [stageWidth, setStageWidth] = useState(720)
-  const [selectedNodeId, setSelectedNodeId] = useState(() => defaultSelectedNodeId(graph.nodes))
   const [edges, setEdges] = useState<GraphEdge[]>([])
   // Column count is always width-driven so dock and inline surfaces share layout.
   const columnCount = workGraphColumnCount(stageWidth)
@@ -53,21 +54,7 @@ export function WorkGraphDiagram({
     () => positionGraphNodes(graph.nodes, columnCount),
     [columnCount, graph.nodes],
   )
-  const titleById = useMemo(
-    () => new Map(graph.nodes.map((node) => [node.id, node.title])),
-    [graph.nodes],
-  )
-  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes[0]
-
-  useEffect(() => {
-    const fallback = defaultSelectedNodeId(graph.nodes)
-    if (!graph.nodes.some((node) => node.id === selectedNodeId)) {
-      userSelectedRef.current = false
-      setSelectedNodeId(fallback)
-    } else if (!userSelectedRef.current && fallback !== selectedNodeId) {
-      setSelectedNodeId(fallback)
-    }
-  }, [graph.nodes, selectedNodeId])
+  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId)
 
   useEffect(() => {
     const stage = stageRef.current
@@ -139,10 +126,6 @@ export function WorkGraphDiagram({
 
   if (!selectedNode) return null
 
-  const dependencyLabel = selectedNode.dependsOn.length > 0
-    ? selectedNode.dependsOn.map((id) => titleById.get(id) ?? id).join(' + ')
-    : 'Ready immediately'
-
   return (
     <div className={cn('space-y-2.5', compact && 'space-y-2')} data-work-graph-view="graph">
       <div
@@ -201,6 +184,7 @@ export function WorkGraphDiagram({
                 type="button"
                 variant="outline"
                 aria-pressed={selected}
+                aria-controls={inspectorId}
                 aria-label={`${node.title}, ${workGraphNodeStatusLabel(node.status)}`}
                 className={cn(
                   'h-auto min-h-16 w-full min-w-0 flex-col items-stretch gap-1.5 overflow-hidden bg-background px-2.5 py-2 text-left shadow-none',
@@ -216,16 +200,14 @@ export function WorkGraphDiagram({
                 )}
                 style={style}
                 onClick={() => {
-                  userSelectedRef.current = true
-                  setSelectedNodeId(node.id)
-                  highlightWorker(getWorkGraphNodeWorkerId(node))
+                  onSelectNode(node.id)
                 }}
               >
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="min-w-0 flex-1 truncate text-xs font-medium normal-case">{node.title}</span>
                   <WorkGraphNodeStatusIcon node={node} className="size-3.5" />
                 </span>
-                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal normal-case">
+                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 whitespace-normal [overflow-wrap:anywhere] font-normal normal-case">
                   <span className="text-[10px] capitalize text-muted-foreground">{node.kind}</span>
                   <span className="text-[10px] text-muted-foreground/50">·</span>
                   <WorkGraphNodeRuntime node={node} />
@@ -235,26 +217,7 @@ export function WorkGraphDiagram({
           })}
         </div>
       </div>
-      <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5" aria-live="polite">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{selectedNode.title}</p>
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-              <span className="capitalize">{selectedNode.kind}</span>
-              {' · '}{workGraphNodeStatusLabel(selectedNode.status)}
-              {' · '}After: {dependencyLabel}
-            </p>
-          </div>
-          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-            {workGraphNodeStatusLabel(selectedNode.status)}
-          </span>
-        </div>
-        {!compact && selectedNode.acceptanceCriteria ? (
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            Accept when: {selectedNode.acceptanceCriteria}
-          </p>
-        ) : null}
-      </div>
+
     </div>
   )
 }
@@ -314,13 +277,6 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
     chunks.push(items.slice(index, index + size))
   }
   return chunks
-}
-
-function defaultSelectedNodeId(nodes: readonly WorkGraphNode[]): string {
-  return nodes.find((node) => ['running', 'awaiting_review', 'waiting', 'blocked'].includes(node.status))?.id
-    ?? nodes.find((node) => node.status === 'pending')?.id
-    ?? nodes.at(-1)?.id
-    ?? ''
 }
 
 function edgeState(source: WorkGraphNode, target: WorkGraphNode): GraphEdge['state'] {

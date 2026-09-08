@@ -126,7 +126,7 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
                   {isComplete ? (isGraph ? 'Graph complete' : 'Plan complete') : (isGraph ? 'Work graph' : 'Working plan')}
                 </p>
               </div>
-              <div className="p-4">
+              <div className="p-2 sm:p-4">
                 <PlanView snapshot={snapshot} />
               </div>
             </div>

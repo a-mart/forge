@@ -227,7 +227,7 @@ describe('PlanDockIndicator', () => {
     }
 
     expect(popover?.textContent).toContain('Work graph')
-    expect(popover?.textContent).toContain('Accept when: Device is listed as authorized.')
+    expect(popover?.querySelector('section[aria-label="Acceptance criteria"]')?.textContent).toContain('Device is listed as authorized.')
     expect(popover?.querySelector('[data-work-graph-view="graph"]')).not.toBeNull()
   })
 

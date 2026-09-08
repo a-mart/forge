@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
-import type { ActivitySummaryEvent, ChoiceRequestEvent, ConversationMessageEvent, PlanSummaryEvent } from '@forge/protocol'
+import type {
+  ActivitySummaryEvent,
+  ChoiceRequestEvent,
+  ConversationMessageEvent,
+  PlanSummaryEvent,
+  WorkGraphSnapshot,
+} from '@forge/protocol'
 import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -72,6 +78,91 @@ function makePlanSummary(
     plan: [{ step: 'Finish the first plan', status: 'completed' }],
     ...overrides,
   }
+}
+
+function makeInspectableWorkGraph(
+  overrides: Partial<WorkGraphSnapshot> = {},
+): WorkGraphSnapshot {
+  return {
+    maxConcurrency: 2,
+    nodes: [{
+      id: 'research',
+      title: 'Research behavior',
+      task: 'Inspect the current behavior and return evidence.',
+      kind: 'research',
+      status: 'awaiting_review',
+      statusUpdatedAt: '2026-07-18T12:02:00.000Z',
+      dependsOn: [],
+      acceptanceCriteria: 'Evidence cites the inspected path.',
+      route: 'auto',
+      effort: 'auto',
+      attempts: [{
+        id: 'attempt-1',
+        number: 1,
+        status: 'blocked',
+        startedAt: '2026-07-18T12:00:00.000Z',
+        completedAt: '2026-07-18T12:01:00.000Z',
+        workerId: 'graph-research-1',
+        behaviorMode: 'research',
+        executionPolicy: 'support',
+        summary: 'First attempt stalled on a missing fixture.',
+      }, {
+        id: 'attempt-2',
+        number: 2,
+        status: 'succeeded',
+        startedAt: '2026-07-18T12:01:30.000Z',
+        completedAt: '2026-07-18T12:02:00.000Z',
+        workerId: 'graph-research-2',
+        behaviorMode: 'research',
+        requestedRoute: 'auto',
+        resolvedRouteId: 'research',
+        resolvedRouteLabel: 'Research specialist',
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          thinkingLevel: 'high',
+        },
+        summary: 'Worker succeeded with cited evidence. Manager acceptance is still required.',
+      }],
+    }, {
+      id: 'cancelled-review',
+      title: 'Cancelled review',
+      task: 'Review only if research is accepted.',
+      kind: 'review',
+      status: 'cancelled',
+      dependsOn: ['research'],
+      route: 'auto',
+      attempts: [],
+    }],
+    ...overrides,
+  }
+}
+
+function expectInspectableWorkGraph(workGraph: WorkGraphSnapshot | undefined): void {
+  expect(workGraph).toEqual(makeInspectableWorkGraph())
+  expect(workGraph?.nodes[0]?.attempts).toEqual([
+    expect.objectContaining({
+      id: 'attempt-1',
+      number: 1,
+      status: 'blocked',
+      workerId: 'graph-research-1',
+      executionPolicy: 'support',
+      summary: 'First attempt stalled on a missing fixture.',
+    }),
+    expect.objectContaining({
+      id: 'attempt-2',
+      number: 2,
+      status: 'succeeded',
+      workerId: 'graph-research-2',
+      resolvedRouteLabel: 'Research specialist',
+      model: {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        thinkingLevel: 'high',
+      },
+      summary: 'Worker succeeded with cited evidence. Manager acceptance is still required.',
+    }),
+  ])
 }
 
 function makeActivitySummary(overrides: Partial<ActivitySummaryEvent> = {}): ActivitySummaryEvent {
@@ -368,59 +459,135 @@ describe('handleConversationEvent plan snapshots', () => {
     expect(next.planSnapshots.manager.plan[0]?.step).toBe('Current live step')
   })
 
-  it('preserves work-graph detail on both live snapshots and replayed summary cards', () => {
-    const workGraph = {
-      maxConcurrency: 2,
-      nodes: [{
-        id: 'research',
-        title: 'Research behavior',
-        task: 'Inspect behavior.',
-        kind: 'research' as const,
-        status: 'running' as const,
-        dependsOn: [],
-        route: 'auto' as const,
-        effort: 'auto' as const,
-        attempts: [{
-          id: 'attempt-1',
-          number: 1,
-          status: 'running' as const,
-          startedAt: '2026-07-18T12:00:00.000Z',
-          workerId: 'graph-research-1',
-          behaviorMode: 'research' as const,
-          executionPolicy: 'support' as const,
-        }],
-      }],
-    }
-    const live = runHandler(createInitialManagerWsState('manager'), {
+  it('applies newer live session_plan_snapshot revisions without dropping work-graph inspector fields', () => {
+    const initial = runHandler(createInitialManagerWsState('manager'), {
       type: 'session_plan_snapshot',
       sessionAgentId: 'manager',
       profileId: 'manager',
       revision: 4,
       updatedAt: '2026-07-18T12:00:00.000Z',
       coordinationMode: 'graph',
-      plan: [{ step: 'Research behavior', status: 'in_progress' }],
-      workGraph,
+      plan: [{ id: 'research', step: 'Research behavior', status: 'in_progress' }],
+      workGraph: {
+        maxConcurrency: 2,
+        nodes: [{
+          id: 'research',
+          title: 'Research behavior',
+          task: 'Inspect the current behavior.',
+          kind: 'research',
+          status: 'running',
+          dependsOn: [],
+          route: 'auto',
+          attempts: [{
+            id: 'attempt-1',
+            number: 1,
+            status: 'running',
+            startedAt: '2026-07-18T12:00:00.000Z',
+            workerId: 'graph-research-1',
+            behaviorMode: 'research',
+            executionPolicy: 'support',
+          }],
+        }],
+      },
     })
-    expect(live.planSnapshots.manager.workGraph?.nodes[0]?.attempts[0])
-      .toMatchObject({ workerId: 'graph-research-1', executionPolicy: 'support' })
 
-    const replayed = runHandler(live, {
-      type: 'plan_summary',
-      id: 'graph-summary',
-      agentId: 'manager',
-      timestamp: '2026-07-18T12:00:00.000Z',
+    const liveRevision = runHandler(initial, {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 5,
+      updatedAt: '2026-07-18T12:02:00.000Z',
+      coordinationMode: 'graph',
+      plan: [{ id: 'research', step: 'Research behavior', status: 'in_progress' }],
+      workGraph: makeInspectableWorkGraph(),
+    })
+    expect(liveRevision.planSnapshots.manager.revision).toBe(5)
+    expectInspectableWorkGraph(liveRevision.planSnapshots.manager.workGraph)
+
+    const delayedOlder = runHandler(liveRevision, {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
       revision: 4,
       updatedAt: '2026-07-18T12:00:00.000Z',
-      state: 'active',
       coordinationMode: 'graph',
-      plan: [{ step: 'Research behavior', status: 'in_progress' }],
+      plan: [{ id: 'research', step: 'Stale bootstrap step', status: 'in_progress' }],
+      workGraph: {
+        maxConcurrency: 1,
+        nodes: [{
+          id: 'research',
+          title: 'Stale bootstrap step',
+          task: 'Missing inspector fields.',
+          kind: 'research',
+          status: 'running',
+          dependsOn: [],
+          attempts: [],
+        }],
+      },
+    })
+    expect(delayedOlder.planSnapshots.manager.revision).toBe(5)
+    expectInspectableWorkGraph(delayedOlder.planSnapshots.manager.workGraph)
+  })
+
+  it('retains work-graph attempts, models, and summaries on live snapshots and plan_summary replay/bootstrap', () => {
+    const workGraph = makeInspectableWorkGraph()
+    const liveSnapshot = runHandler(createInitialManagerWsState('manager'), {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 5,
+      updatedAt: '2026-07-18T12:02:00.000Z',
+      coordinationMode: 'graph',
+      plan: [{ id: 'research', step: 'Research behavior', status: 'in_progress' }],
       workGraph,
     })
-    expect(replayed.messages.at(-1)).toMatchObject({
-      type: 'plan_summary',
+    expectInspectableWorkGraph(liveSnapshot.planSnapshots.manager.workGraph)
+
+    const liveSummary = makePlanSummary('graph-summary', {
+      timestamp: '2026-07-18T12:02:00.000Z',
+      revision: 5,
+      updatedAt: '2026-07-18T12:02:00.000Z',
+      state: 'active',
       coordinationMode: 'graph',
-      workGraph: { maxConcurrency: 2 },
+      plan: [{ id: 'research', step: 'Research behavior', status: 'in_progress' }],
+      workGraph,
     })
+    const liveCard = runHandler(liveSnapshot, liveSummary)
+    expectInspectableWorkGraph(
+      liveCard.messages.find((entry) => entry.type === 'plan_summary')?.workGraph,
+    )
+
+    const replayedBootstrap = runHandler(liveCard, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [{
+        ...liveSummary,
+        workGraph: {
+          maxConcurrency: 2,
+          nodes: [{
+            id: 'research',
+            title: 'Research behavior',
+            task: 'Stripped bootstrap payload.',
+            kind: 'research',
+            status: 'running',
+            dependsOn: [],
+            attempts: [],
+          }],
+        },
+      }],
+    })
+    const replayedCard = replayedBootstrap.messages.find((entry) => entry.type === 'plan_summary')
+    expect(replayedBootstrap.messages.filter((entry) => entry.type === 'plan_summary')).toHaveLength(1)
+    expectInspectableWorkGraph(replayedCard?.workGraph)
+
+    const bootstrappedOnly = runHandler(createInitialManagerWsState('manager'), {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [liveSummary],
+    })
+    expectInspectableWorkGraph(
+      bootstrappedOnly.messages.find((entry) => entry.type === 'plan_summary')?.workGraph,
+    )
   })
 })
 

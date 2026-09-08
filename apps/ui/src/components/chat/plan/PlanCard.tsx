@@ -24,24 +24,24 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
     : active[0]?.step
 
   return (
-    <section className={cn('mx-auto w-full px-4 pt-3', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isGraph ? 'Work graph' : 'Working plan'}>
+    <section className={cn('mx-auto w-full px-2 sm:px-4 pt-3', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isGraph ? 'Work graph' : 'Working plan'}>
       <div className="overflow-hidden rounded-xl border border-border/70 bg-card/80 shadow-sm backdrop-blur">
         <button
           type="button"
-          className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/40"
+          className="flex w-full items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2.5 text-left hover:bg-muted/40"
           aria-expanded={expanded}
           aria-controls={detailsId}
           onClick={() => onExpandedChange(!expanded)}
         >
           <span className={cn(
-            'flex size-8 shrink-0 items-center justify-center rounded-lg',
+            'flex size-6 sm:size-8 shrink-0 items-center justify-center rounded-lg',
             isComplete ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-500',
           )}>
             {isGraph ? <GitBranch className="size-4" /> : <ClipboardList className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {isComplete ? (isGraph ? 'Graph complete' : 'Plan complete') : (isGraph ? 'Work graph' : 'Working plan')}
               </span>
               <span className="text-[11px] tabular-nums text-muted-foreground">{completed}/{snapshot.plan.length}</span>
@@ -53,7 +53,7 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
           <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')} />
         </button>
         {expanded ? (
-          <div id={detailsId} className="border-t border-border/60 px-4 py-3">
+          <div id={detailsId} className="border-t border-border/60 px-2 py-3 sm:px-4">
             <PlanView snapshot={snapshot} />
           </div>
         ) : null}
