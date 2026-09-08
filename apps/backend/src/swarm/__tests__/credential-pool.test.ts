@@ -751,3 +751,20 @@ describe("CredentialPoolService — getCredentialAuthKey", () => {
     expect(key).toBe(`openai-codex:${added.id}`);
   });
 });
+
+
+describe("CredentialPoolService — validated auth recovery", () => {
+  it("preserves a quota cooldown recorded before validation completes", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+    const service = new CredentialPoolService(deps);
+    const { credentials } = await service.listPool("openai-codex");
+    const id = credentials[0].id;
+    await service.markAuthError("openai-codex", id);
+    const cooldownUntil = Date.now() + 60_000;
+    await service.markExhausted("openai-codex", id, { cooldownUntil });
+    await service.recoverAuthError("openai-codex", id);
+    const restarted = new CredentialPoolService(deps);
+    expect((await restarted.listPool("openai-codex")).credentials[0]).toMatchObject({ health: "cooldown", cooldownUntil });
+    expect(await restarted.select("openai-codex")).toBeNull();
+  });
+});

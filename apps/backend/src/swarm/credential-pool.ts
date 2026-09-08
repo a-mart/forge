@@ -443,6 +443,18 @@ export class CredentialPoolService {
     await this.persist();
   }
 
+  /** Recover after successful authenticated validation without clearing a concurrent quota cooldown. */
+  async recoverAuthError(provider: string, credentialId: string): Promise<void> {
+    this.assertSupportedProvider(provider);
+    await this.ensureLoaded();
+
+    const entry = this.findCredential(provider, credentialId);
+    if (entry.health !== "auth_error") return;
+    entry.health = "healthy";
+    entry.cooldownUntil = null;
+    await this.persist();
+  }
+
   async resetCooldown(provider: string, credentialId: string): Promise<void> {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();

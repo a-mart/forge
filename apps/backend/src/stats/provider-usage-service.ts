@@ -240,14 +240,15 @@ export class ProviderUsageService {
                 signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
               });
               if (!response.ok) {
-                if (response.status === 401 || response.status === 403) {
-                  await pool.markAuthError("openai-codex", cred.id);
-                }
+                // Usage-endpoint rejection does not establish that model authentication failed.
                 entries.push(unavailable);
                 continue;
               }
 
               const body = (await response.json()) as OpenAIUsageResponse;
+              if (cred.health === "auth_error") {
+                await pool.recoverAuthError("openai-codex", cred.id);
+              }
               const usage = await this.withHistoricalPace("openai", mapOpenAIResponse(body), nowMs);
               if (includeAccountIdentity) {
                 usage.accountId = cred.id;
@@ -352,14 +353,15 @@ export class ProviderUsageService {
               });
 
               if (!response.ok) {
-                if (response.status === 401 || response.status === 403) {
-                  await pool.markAuthError("anthropic", cred.id);
-                }
+                // Usage-endpoint rejection does not establish that model authentication failed.
                 entries.push(unavailable);
                 continue;
               }
 
               const body = (await response.json()) as AnthropicUsageResponse;
+              if (cred.health === "auth_error") {
+                await pool.recoverAuthError("anthropic", cred.id);
+              }
               const usage = await this.withHistoricalPace("anthropic", {
                 ...mapAnthropicResponse(body),
                 ...(includeAccountIdentity ? { accountId: cred.id, accountLabel: cred.label } : {})

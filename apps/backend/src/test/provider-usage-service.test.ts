@@ -452,14 +452,14 @@ describe("ProviderUsageService", () => {
     expect(distinctAccountKeys.size).toBe(2);
   });
 
-  it("marks single pooled OpenAI credentials auth_error when usage fetch returns 401", async () => {
+  it.each([401, 403])("does not disable pooled OpenAI credentials when usage fetch returns %s", async (status) => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
 
     const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
     vi.spyOn(Date, "now").mockReturnValue(nowMs);
 
-    const fetchMock = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    const fetchMock = vi.fn(async () => new Response("unauthorized", { status }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
@@ -503,9 +503,51 @@ describe("ProviderUsageService", () => {
     expect(snapshot.openai).toEqual([{ provider: "openai", available: false }]);
     expect(pool.listPool).toHaveBeenCalledWith("openai-codex");
     expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("openai-codex", "cred_openai");
-    expect(pool.markAuthError).toHaveBeenCalledWith("openai-codex", "cred_openai");
+    expect(pool.markAuthError).not.toHaveBeenCalled();
     expect(readOpenAIAuthSpy).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["openai-codex", "anthropic"])("recovers %s selection after usage validation and restart", async (provider) => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { CredentialPoolService } = await import("../swarm/credential-pool.js");
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const directory = await mkdtemp(join(tmpdir(), "usage-auth-recovery-"));
+    try {
+      const authFile = join(directory, "auth.json");
+      await writeFile(authFile, JSON.stringify({
+        [provider]: { type: "oauth", access: "test-access", refresh: "test-refresh", expires: Date.now() + 3_600_000 }
+      }));
+      const deps = { authDir: directory, authFile };
+      const pool = new CredentialPoolService(deps);
+      const { credentials } = await pool.listPool(provider);
+      const credentialId = credentials[0].id;
+      await pool.markAuthError(provider, credentialId);
+      expect(await pool.select(provider)).toBeNull();
+      const service = new ProviderUsageService(authFile, join(directory, "history.jsonl")) as any;
+      service.setCredentialPoolGetter(() => pool);
+      vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+      vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+      vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
+      const fetchMock = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await service.getSnapshot();
+      expect(await pool.select(provider)).toBeNull();
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify(
+        provider === "openai-codex"
+          ? { plan_type: "plus", rate_limit: { primary_window: { used_percent: 10, reset_at: 1_800_000_000 } } }
+          : { five_hour: { utilization: 10, resets_at: "2026-10-01T00:00:00Z" } }
+      ), { status: 200 }));
+      service.cache = {};
+      const snapshot = await service.getSnapshot();
+      expect(snapshot[provider === "openai-codex" ? "openai" : "anthropic"][0].available).toBe(true);
+      expect(await pool.select(provider)).toMatchObject({ credentialId });
+      expect(await new CredentialPoolService(deps).select(provider)).toMatchObject({ credentialId });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("does not fall back to single-account auth when configured pooled credentials are unusable", async () => {
@@ -649,14 +691,14 @@ describe("ProviderUsageService", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("marks pooled Anthropic credentials auth_error when usage fetch returns 403", async () => {
+  it.each([401, 403])("does not disable pooled Anthropic credentials when usage fetch returns %s", async (status) => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
 
     const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
     vi.spyOn(Date, "now").mockReturnValue(nowMs);
 
-    const fetchMock = vi.fn(async () => new Response("forbidden", { status: 403 }));
+    const fetchMock = vi.fn(async () => new Response("forbidden", { status }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
@@ -694,7 +736,7 @@ describe("ProviderUsageService", () => {
 
     expect(snapshot.anthropic).toEqual([{ provider: "anthropic", available: false }]);
     expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_only");
-    expect(pool.markAuthError).toHaveBeenCalledWith("anthropic", "cred_only");
+    expect(pool.markAuthError).not.toHaveBeenCalled();
     expect(readAnthropicAuthSpy).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -952,7 +994,7 @@ describe("ProviderUsageService", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
 
-    const fetchMock = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    const fetchMock = vi.fn(async () => new Response("unauthorized", { status }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
