@@ -39,6 +39,48 @@ function messageEntry(
 }
 
 describe("fresh context checkpoint helper", () => {
+  it.each([20_000, 30_000])("fits a 64K window with %i retained tokens and a larger output capability", async (retainedContextTokens) => {
+    const budget = { contextWindow: 64_000, maxOutputTokens: 128_000, retainedContextTokens };
+    expect(resolveFreshCheckpointBudget(budget)).toBe(6_592);
+    const handler = createFreshContextHandler({
+      dataDir: await temporaryRoot(),
+      descriptor: { agentId: "s", profileId: "p", role: "manager", managerId: "s" },
+      getContextMode: () => "fresh",
+      getBudget: () => budget,
+    });
+    const result = await handler({ reason: "threshold", willRetry: true, tokensBefore: 60_000, branchEntries: [
+      messageEntry("original", { role: "user", content: "Finish the authorized work without repeating completed actions." }),
+    ] });
+    expect(result?.summary).toContain("Active continuation");
+    expect(result?.summary).toContain("Finish the authorized work without repeating completed actions.");
+    expect(result!.summary.length).toBeLessThanOrEqual(resolveFreshCheckpointBudget(budget));
+    expect(result?.details.forgeContext.recoveryNote).toBeDefined();
+  });
+
+  it("keeps the existing full checkpoint budget when the output capability fits", () => {
+    expect(resolveFreshCheckpointBudget({
+      contextWindow: 272_000, maxOutputTokens: 128_000, retainedContextTokens: 30_000,
+    })).toBe(8_000);
+    expect(resolveFreshCheckpointBudget({
+      contextWindow: 32_000, maxOutputTokens: 1_024, retainedContextTokens: 2_000,
+    })).toBe(8_000);
+  });
+
+  it.each([63_000, 64_000, 65_000])("rejects %i retained tokens when a 64K window cannot fit a safe checkpoint", async (retainedContextTokens) => {
+    const dataDir = await temporaryRoot();
+    const budget = { contextWindow: 64_000, maxOutputTokens: 128_000, retainedContextTokens };
+    expect(resolveFreshCheckpointBudget(budget)).toBe(0);
+    const handler = createFreshContextHandler({
+      dataDir,
+      descriptor: { agentId: "s", profileId: "p", role: "manager", managerId: "s" },
+      getContextMode: () => "fresh",
+      getBudget: () => budget,
+    });
+    await expect(handler({ reason: "threshold", willRetry: true, branchEntries: [] })).rejects.toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
+    const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
+    expect((await notes.list()).notes).toEqual([]);
+  });
+
   it("budgets the fresh window without subtracting discarded overflow context", async () => {
     const handler = createFreshContextHandler({
       dataDir: await temporaryRoot(),
@@ -241,7 +283,10 @@ describe("fresh context checkpoint helper", () => {
         retainedContextTokens: 1_900,
       })).rejects.toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
     });
-  it("retains all ten full pins in a readable checkpoint when inline sections exceed budget", async () => {
+  it.each([
+    { name: "default", budget: undefined },
+    { name: "64K context cap", budget: { contextWindow: 64_000, maxOutputTokens: 128_000, retainedContextTokens: 30_000 } },
+  ])("retains all ten full pins in a readable checkpoint with $name", async ({ budget }) => {
     const dataDir = await temporaryRoot();
     const descriptor = { agentId: "s", profileId: "p", managerId: "s", role: "manager" as const };
     await savePins(getSessionDir(dataDir, "p", "s"), { version: 1, pins: Object.fromEntries(
@@ -250,12 +295,12 @@ describe("fresh context checkpoint helper", () => {
         timestamp: "2026-01-01T00:00:00.000Z", pinnedAt: "2026-01-01T00:00:00.000Z",
       }]),
     ) });
-    const handler = createFreshContextHandler({ dataDir, descriptor, getContextMode: () => "fresh" });
+    const handler = createFreshContextHandler({ dataDir, descriptor, getContextMode: () => "fresh", getBudget: () => budget ?? {} });
     const result = await handler({ reason: "agent", willRetry: true, branchEntries: [
       messageEntry("first", { role: "user", content: "Build the original requested outcome" }),
       messageEntry("latest", { role: "user", content: "Yes, continue." }),
     ] });
-    expect(result!.summary.length).toBeLessThanOrEqual(8000);
+    expect(result!.summary.length).toBeLessThanOrEqual(resolveFreshCheckpointBudget(budget));
     expect(result!.summary).toContain('notes({op:"read",path:"runtime/continuity-0.md"})');
     expect(result!.summary).toContain("Protected pins");
     const notes = new TaskNotesStore({ dataDir }).forActor({ profileId: "p", sessionAgentId: "s", actorAgentId: "s" });
@@ -269,6 +314,14 @@ describe("fresh context checkpoint helper", () => {
   it("refuses oversized sections without a durable recovery reference instead of slicing them", () => {
     expect(() => formatFreshContextCheckpoint({ trigger: "manual", willRetry: false,
       pins: [{ role: "user", text: "x".repeat(9000) }], maxChars: 8000,
+    })).toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
+  });
+
+  it("refuses to truncate required continuation and recovery instructions even with a recovery note", () => {
+    expect(() => formatFreshContextCheckpoint({
+      trigger: "threshold", willRetry: true, maxChars: 600,
+      recoveryNote: { path: "runtime/continuity-0.md", revision: 1, digest: "a".repeat(64) },
+      pins: [{ role: "user", text: "Preserve this authorization boundary." }],
     })).toThrow(FRESH_CONTEXT_TOO_LARGE_ERROR);
   });
 

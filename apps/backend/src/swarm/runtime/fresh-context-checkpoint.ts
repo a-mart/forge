@@ -59,6 +59,7 @@ export interface UnconsumedToolEvidence {
 
 export interface FreshCheckpointBudget {
   contextWindow?: number;
+  /** Model output capability; the effective per-request allowance can be smaller. */
   maxOutputTokens?: number;
   /** Prompt, active tool schemas and pending input retained AFTER rollover; never old window usage. */
   retainedContextTokens?: number;
@@ -68,6 +69,8 @@ const DEFAULT_MAX_CHECKPOINT_CHARS = 8_000;
 const MIN_CHECKPOINT_CHARS = 1_200;
 const CHECKPOINT_HEADROOM_CHARS = 1_600;
 const CHARS_PER_TOKEN = 4;
+// Matches Pi's per-request output clamp in pi-ai/api/simple-options.
+const CONTEXT_OUTPUT_SAFETY_TOKENS = 4_096;
 const MAX_EVIDENCE_IDS = 32;
 const MAX_PINS = 10;
 const MAX_TOOL_NAME_CHARS = 80;
@@ -95,7 +98,16 @@ export function resolveFreshCheckpointBudget(options: FreshCheckpointBudget = {}
   if (!contextWindow) {
     return DEFAULT_MAX_CHECKPOINT_CHARS;
   }
-  const remainingTokens = Math.max(0, contextWindow - retainedTokens - maxOutputTokens);
+  const availableTokens = contextWindow - retainedTokens;
+  // The catalog maximum is not a fixed allocation. Estimate Pi's effective
+  // output allowance before adding this checkpoint; the actual request clamps
+  // again against its complete input. This only budgets checkpoint input and
+  // does not impose or promise an output limit for providers such as Codex.
+  const outputAllowance = Math.min(
+    maxOutputTokens,
+    Math.max(1, availableTokens - CONTEXT_OUTPUT_SAFETY_TOKENS),
+  );
+  const remainingTokens = Math.max(0, availableTokens - outputAllowance);
   const remainingChars = Math.floor(remainingTokens / 2) * CHARS_PER_TOKEN;
   const budget = remainingChars - CHECKPOINT_HEADROOM_CHARS;
   if (budget < MIN_CHECKPOINT_CHARS) {

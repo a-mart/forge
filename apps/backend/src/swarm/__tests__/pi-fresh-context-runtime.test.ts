@@ -44,7 +44,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function createFreshSession(options?: { persist?: boolean; sessionFile?: string; customTools?: ToolDefinition[] }) {
+async function createFreshSession(options?: { persist?: boolean; sessionFile?: string; customTools?: ToolDefinition[]; modelLimits?: { contextWindow: number; maxTokens: number } }) {
   const root = await mkdtemp(join(tmpdir(), "forge-pi-fresh-"));
   tempDirs.push(root);
   const agentDir = join(root, "agent");
@@ -53,7 +53,7 @@ async function createFreshSession(options?: { persist?: boolean; sessionFile?: s
   const faux = registerFauxProvider({
     api: "forge-fresh-api",
     provider: "forge-fresh",
-    models: [{ id: "fresh-model", name: "Fresh", contextWindow: 32_000, maxTokens: 1024 }],
+    models: [{ id: "fresh-model", name: "Fresh", contextWindow: 32_000, maxTokens: 1024, ...options?.modelLimits }],
   });
   fauxRegistrations.push(faux);
   faux.setResponses([fauxAssistantMessage("fresh-ok")]);
@@ -626,7 +626,8 @@ describe("pi fresh-window AgentRuntime policy", () => {
 
 
 async function createControlledFreshSession(extraTools?: (getRuntime: () => AgentRuntime) => ToolDefinition[],
-  getContextMode: () => "fresh" | "summary" = () => "fresh") {
+  getContextMode: () => "fresh" | "summary" = () => "fresh",
+  modelLimits?: { contextWindow: number; maxTokens: number }) {
   const root = await mkdtemp(join(tmpdir(), "forge-controlled-fresh-"));
   tempDirs.push(root);
   const dataDir = join(root, "data");
@@ -636,7 +637,7 @@ async function createControlledFreshSession(extraTools?: (getRuntime: () => Agen
     profileId: descriptor.profileId!, sessionAgentId: descriptor.agentId, actorAgentId: descriptor.agentId,
   });
   const getRuntime = () => runtime;
-  const native = await createFreshSession({ sessionFile: descriptor.sessionFile, customTools: [
+  const native = await createFreshSession({ sessionFile: descriptor.sessionFile, modelLimits, customTools: [
     createTaskNotesTool(notes), ...createContextManagementTools(getRuntime), ...(extraTools?.(getRuntime) ?? []),
   ] });
   const onRuntimeError = vi.fn();
@@ -798,12 +799,15 @@ describe("agent-controlled native Fresh continuation", () => {
   });
 
 
-  it("reminds once before using reserved capacity and checkpoints after the notes tool settles", async () => {
+  it.each([
+    { contextWindow: 32_000, maxTokens: 1024, usedTokens: 29_500 },
+    { contextWindow: 64_000, maxTokens: 128_000, usedTokens: 59_000 },
+  ])("reminds once and commits a native threshold checkpoint with $contextWindow context and $maxTokens output ceiling", async limits => {
     const { session, faux, runtime, onRuntimeError } = await createControlledFreshSession(() => [{
       name: "inspect", label: "Inspect", description: "Synthetic inspection", parameters: Type.Object({}),
       async execute() { return { content: [{ type: "text", text: "Inspected state" }], details: {} }; },
-    }]);
-    vi.spyOn(session, "getContextUsage").mockReturnValue({ tokens: 29_500, contextWindow: 32_000, percent: 92.18 } as never);
+    }], () => "fresh", limits);
+    vi.spyOn(session, "getContextUsage").mockReturnValue({ tokens: limits.usedTokens, contextWindow: limits.contextWindow, percent: limits.usedTokens / limits.contextWindow * 100 } as never);
     let reminderContext = "";
     let freshContext = "";
     faux.setResponses([
