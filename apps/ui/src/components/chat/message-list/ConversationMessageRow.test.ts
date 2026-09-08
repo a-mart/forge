@@ -45,6 +45,44 @@ function buildMessage(): ConversationMessageEvent {
 }
 
 describe('ConversationMessageRow', () => {
+  it.each([
+    ['Context v2 requested — switching to a new window.', 'started'],
+    ['Requested Context v2 transition completed.', 'completed'],
+    ['Context is getting full — compacting automatically.', 'started'],
+    ['Automatic compaction completed.', 'completed'],
+    ['Compacting manager context...', 'started'],
+    ['Compaction complete.', 'completed'],
+  ])('renders %s as a quiet context update for live and replayed messages', (text, status) => {
+    const live: ConversationMessageEvent = {
+      type: 'conversation_message', agentId: 'manager-1', id: 'context-notice',
+      role: 'system', source: 'system', text, timestamp: '2026-09-08T12:00:00Z',
+    }
+    for (const message of [live, JSON.parse(JSON.stringify(live)) as ConversationMessageEvent]) {
+      flushSync(() => root.render(createElement(ConversationMessageRow, { message })))
+      expect(container.querySelector(`[data-context-transition="${status}"]`)).not.toBeNull()
+      expect(container.textContent).toContain('Context update')
+      expect(container.textContent).toContain(text)
+      expect(container.querySelector('time')?.dateTime).toBe(live.timestamp)
+      expect(container.innerHTML).not.toContain('amber')
+      // Historical start notices must not appear to be running forever.
+      expect(container.innerHTML).not.toContain('animate-spin')
+    }
+  })
+
+  it.each([
+    'Automatic compaction failed: previous context preserved.',
+    'Requested Context v2 transition completed. Warning: recovery failed.',
+    'Context v2 is unavailable for this runtime.',
+  ])('keeps attention styling for %s', text => {
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message', agentId: 'manager-1', id: 'failure',
+      role: 'system', source: 'system', text, timestamp: '2026-09-08T12:00:00Z',
+    }
+    flushSync(() => root.render(createElement(ConversationMessageRow, { message })))
+    expect(container.querySelector('[data-context-transition]')).toBeNull()
+    expect(container.innerHTML).toContain('border-amber-300')
+  })
+
   it('renders model-change notices with neutral informational styling', () => {
     const message: ConversationMessageEvent = {
       type: 'conversation_message',

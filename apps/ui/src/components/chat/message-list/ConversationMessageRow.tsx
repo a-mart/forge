@@ -1,6 +1,6 @@
 import { memo, useState, useCallback } from 'react'
 import { isUserVisibleAssistantConversationMessage } from '@forge/protocol'
-import { Copy, Check, GitFork, Pin, Reply } from 'lucide-react'
+import { Copy, Check, GitFork, Pin, Reply, Layers, CircleCheck } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -13,6 +13,17 @@ import { ExternalThreadContextCard } from './ExternalThreadContextCard'
 import { ProjectAgentMessageRow } from './ProjectAgentMessageRow'
 import { ReplyPreview } from './ReplyPreview'
 import type { ConversationMessageEntry, MessageListSurface } from './types'
+
+// These canonical notices predate structured notice kinds. Match complete text
+// so both live events and saved transcripts improve without downgrading failures.
+const CONTEXT_TRANSITIONS = new Map<string, 'started' | 'completed'>([
+  ['Context v2 requested — switching to a new window.', 'started'],
+  ['Requested Context v2 transition completed.', 'completed'],
+  ['Context is getting full — compacting automatically.', 'started'],
+  ['Automatic compaction completed.', 'completed'],
+  ['Compacting manager context...', 'started'],
+  ['Compaction complete.', 'completed'],
+])
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -285,6 +296,27 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               <span>{timestampLabel}</span>
             </div>
           ) : null}
+        </div>
+      )
+    }
+
+    const contextTransition = !message.systemNoticeKind
+      && (!message.source || message.source === 'system')
+      ? CONTEXT_TRANSITIONS.get(normalizedText) : undefined
+    if (contextTransition) {
+      const Icon = contextTransition === 'completed' ? CircleCheck : Layers
+      return (
+        <div data-context-transition={contextTransition} className="flex items-start gap-2.5 rounded-md border-l-2 border-border/70 px-3 py-2 text-muted-foreground">
+          <Icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
+              <span className="font-medium">Context update</span>
+              <SourceBadge sourceContext={sourceContext} />
+              {timestampLabel && <time dateTime={message.timestamp}>{timestampLabel}</time>}
+            </div>
+            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">{normalizedText}</p>
+            <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
+          </div>
         </div>
       )
     }
