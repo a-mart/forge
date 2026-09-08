@@ -316,7 +316,7 @@ FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
 5. **Upload the full updater asset set**
    - Upload everything required by the auto-updater, not just installers
    - Upload exactly the standard macOS and Windows asset set listed in [Platform Notes](#platform-notes); no Linux asset is publishable
-   - In practice, upload the standard current-run macOS and Windows files from `apps/electron/release/`. The package step clears stale output first; never promote an experimental Linux `dir` output.
+   - After macOS cleanup/build, collect the already-registered exact-SHA Windows run into a per-cut isolated directory. The project-scoped script then uploads the complete 8-asset draft set from that current-run inventory. Never promote leftover serial downloads or an experimental Linux `dir` output.
 
 6. **Publish last**
    - Every full build stops at the verified draft. After downloading and hash-checking all eight assets/manifests, exercise actual Desktop startup, interaction, and persistence after relaunch from the downloaded macOS artifact with isolated data/ports. Record the exact SHA/version, all asset hashes, signing/notary/native-host evidence and smoke timings. Staged module/Pi smoke is not Desktop startup. Surface native-keychain prompts immediately rather than silently retrying; mock-keychain smoke is limited evidence, not native qualification.
@@ -351,7 +351,7 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 - `workflow_dispatch` is the credential-free unsigned Windows release build path: all `WIN_CSC_*` / `CSC_*` values and signer metadata are blanked and identity auto-discovery is disabled
 - `electron/*` branch pushes are validation-only builds with the same credential isolation; the optional Chrome adapter package is deliberately non-deployable
 - The workflow does not publish a GitHub Release on its own
-- Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
+- After local macOS cleanup/build, collect the already-registered exact-SHA `workflow_dispatch` run into a per-cut isolated directory. The project-scoped release script then uploads the complete 8-asset draft set; do not manually download Windows leftovers and upload them serially beside macOS files from `apps/electron/release/`
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable
 
 ## Port Configuration
