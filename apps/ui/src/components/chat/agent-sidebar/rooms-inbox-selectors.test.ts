@@ -81,6 +81,33 @@ describe('selectRoomsInboxSections', () => {
     expect(result.activeWorkerCount).toBe(2)
   })
 
+  it('gives server attention priority over a still-streaming session and never infers Needs You from local pendingChoiceCount', () => {
+    const streamingChoice = session('streaming-choice', {
+      agentStatus: 'streaming',
+      pendingChoiceCount: 1,
+      activeWorkerCount: 1,
+    })
+    const streamingOnly = session('streaming-only', {
+      agentStatus: 'streaming',
+      pendingChoiceCount: 2,
+    })
+    const result = selectRoomsInboxSections([
+      origin(
+        [streamingChoice, streamingOnly],
+        'local',
+        [attention('streaming-choice', 'decision_waiting')],
+      ),
+    ], { now: NOW })
+
+    expect(ids(result.needsYou)).toEqual(['streaming-choice'])
+    expect(result.needsYou[0]).toMatchObject({
+      reason: 'decision_waiting',
+      attentionId: 'attention-streaming-choice',
+    })
+    expect(ids(result.active)).toEqual(['streaming-only'])
+    expect(ids(result.active)).not.toContain('streaming-choice')
+  })
+
   it('orders server attention by raisedAt and dedupes origin-scoped sessions', () => {
     const duplicate = session('same')
     const result = selectRoomsInboxSections([origin(

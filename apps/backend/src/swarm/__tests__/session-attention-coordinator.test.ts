@@ -236,6 +236,114 @@ describe("SessionAttentionCoordinator state machine", () => {
     expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("work_settled");
   });
 
+  it("raises decision_waiting for unanswered present_choices even while the accepted-turn barrier is armed", async () => {
+    // Coordinator reproduction of the screenshot class: Input requested +
+    // concurrent work remaining in Active. This is not a reconstruction of the
+    // inaccessible remote session; it proves the barrier/work paths that can
+    // hide a committed pending choice from Needs You.
+    const queued = createHarness();
+    await queued.coordinator.initialize();
+    await armManager(queued);
+
+    await queued.coordinator.observeAggregateChange(session("streaming", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 1,
+      activeWorkerCount: 1,
+    }));
+    expect(queued.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
+
+    // Dequeued before the manager streams: barrier stays armed, choice still
+    // raises, and idle must not be read as completion.
+    const dequeued = createHarness();
+    await dequeued.coordinator.initialize();
+    await armManager(dequeued);
+    await dequeued.coordinator.observeStatus(statusObservation(
+      "streaming",
+      "idle",
+      session("idle", { pendingTurnContextCount: 1 }),
+    ));
+    await dequeued.coordinator.observeAggregateChange(session("idle", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 0,
+    }));
+    expect(dequeued.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
+    await dequeued.coordinator.observeStatus(statusObservation(
+      "idle",
+      "idle",
+      session("idle", { pendingChoiceCount: 1 }),
+    ));
+    expect(dequeued.coordinator.getSnapshot().attentions).toHaveLength(1);
+    expect(dequeued.coordinator.getSnapshot().attentions[0]?.reason).toBe("decision_waiting");
+
+    // Rolling back one accepted turn cannot clear the fence while another is
+    // still queued, but the unanswered choice must still raise.
+    const rollback = createHarness();
+    await rollback.coordinator.initialize();
+    await armManager(rollback);
+    await rollback.coordinator.observeStatus(statusObservation(
+      "streaming",
+      "idle",
+      session("idle", { pendingTurnContextCount: 1 }),
+    ));
+    await rollback.coordinator.releaseContinuationBarrier(session("idle", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 1,
+    }));
+    expect(rollback.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
+  });
+
+  it("retracts an answered or cancelled choice through the barrier without settling early", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 1,
+    }));
+    expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("decision_waiting");
+
+    // Answer and cancel are the same aggregate edge: pendingChoiceCount -> 0.
+    await h.coordinator.observeAggregateChange(session("streaming", {
+      pendingChoiceCount: 0,
+      pendingTurnContextCount: 1,
+    }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    // Dequeue is still not permission to complete.
+    await h.coordinator.observeAggregateChange(session("idle", { pendingTurnContextCount: 0 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.observeStatus(statusObservation("idle", "streaming", session("streaming")));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+    await h.coordinator.observeStatus(statusObservation("streaming", "idle", session("idle")));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-2",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "work_settled",
+      raisedAt: NOW,
+    }]);
+  });
+
   it("does not settle when an accepted turn is dequeued before the manager streams", async () => {
     // Regression: TurnContextCoordinator dequeues on the provider's user
     // message_start, which can precede the manager's streaming projection.

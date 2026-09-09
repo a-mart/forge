@@ -39,6 +39,9 @@ export interface SessionAttentionSessionSnapshot {
    * settling there would broadcast a completion that never happened. Release
    * happens only via an authoritative manager streaming transition or an
    * explicit releaseContinuationBarrier() when there is no continuation.
+   *
+   * The barrier fences completion only. A committed pending choice still raises
+   * decision_waiting on an armed epoch, including while this fence is set.
    */
   pendingTurnContextCount: number;
 }
@@ -245,8 +248,10 @@ export class SessionAttentionCoordinator {
 
       // Latch the barrier here too: a status observation carrying a queued
       // accepted turn must not later be settled by a bare count-to-zero.
-      if (normalizeCount(observation.pendingTurnContextCount) > 0 && !record.awaitingContinuation) {
-        record = { ...record, awaitingContinuation: true };
+      // Progress still runs so a concurrent pending choice can raise.
+      const latched = latchContinuationIfQueued(record, observation);
+      if (latched !== record) {
+        record = latched;
         next.sessions[sessionAgentId] = record;
         changed = true;
       }
@@ -298,16 +303,14 @@ export class SessionAttentionCoordinator {
 
       // Latch the barrier for this epoch the first time an accepted turn is
       // seen queued, so a later drop to zero cannot be read as permission.
-      if (normalizeCount(session.pendingTurnContextCount) > 0) {
-        if (current.awaitingContinuation) return { value: undefined };
-        const latched = cloneSessionAttentionState(state);
-        latched.sessions[sessionAgentId] = { ...current, awaitingContinuation: true };
-        return { value: undefined, state: latched, changes: [] };
-      }
-
-      const progressed = await this.progressWorkingEpoch(session, current);
+      // Keep progressing: a pending choice must still raise through the fence.
+      const record = latchContinuationIfQueued(current, session);
+      const progressed = await this.progressWorkingEpoch(session, record);
       if (!progressed) {
-        return { value: undefined };
+        if (record === current) return { value: undefined };
+        const latched = cloneSessionAttentionState(state);
+        latched.sessions[sessionAgentId] = record;
+        return { value: undefined, state: latched, changes: [] };
       }
       const next = cloneSessionAttentionState(state);
       next.sessions[sessionAgentId] = progressed.record;
@@ -334,12 +337,20 @@ export class SessionAttentionCoordinator {
       }
 
       // A rollback can remove one accepted turn while another remains queued.
-      // Never clear the epoch fence until the authoritative queue is empty.
+      // Never clear the epoch fence until the authoritative queue is empty,
+      // but still raise or retract a concurrent pending choice.
       if (normalizeCount(session.pendingTurnContextCount) > 0) {
-        if (current.awaitingContinuation) return { value: undefined };
-        const latched = cloneSessionAttentionState(state);
-        latched.sessions[sessionAgentId] = { ...current, awaitingContinuation: true };
-        return { value: undefined, state: latched, changes: [] };
+        const record = latchContinuationIfQueued(current, session);
+        const progressed = await this.progressWorkingEpoch(session, record);
+        if (!progressed) {
+          if (record === current) return { value: undefined };
+          const latched = cloneSessionAttentionState(state);
+          latched.sessions[sessionAgentId] = record;
+          return { value: undefined, state: latched, changes: [] };
+        }
+        const next = cloneSessionAttentionState(state);
+        next.sessions[sessionAgentId] = progressed.record;
+        return { value: undefined, state: next, changes: progressed.changes };
       }
 
       if (!current.awaitingContinuation) {
@@ -424,15 +435,14 @@ export class SessionAttentionCoordinator {
   /**
    * A pending present_choices is itself a user-attention edge: the manager can
    * still read streaming because the tool is open, but the turn is waiting.
-   * Raise decision_waiting on an armed epoch, retract it if work continues after
-   * the answer, and only then allow a full quiescence settle.
+   * Raise decision_waiting on an armed epoch even through the continuation
+   * barrier, retract it if work continues after the answer, and only then allow
+   * a full quiescence settle. The barrier still fences completion.
    */
   private async progressWorkingEpoch(
     session: SessionAttentionSessionSnapshot,
     record: PersistedSessionAttentionRecord,
   ): Promise<{ record: PersistedSessionAttentionRecord; changes: SessionAttentionChange[] } | undefined> {
-    if (record.awaitingContinuation) return undefined;
-
     const sessionAgentId = session.manager.agentId;
     if (hasPendingChoice(session)) {
       // Already raised or explicitly dismissed for this epoch. Do not mint a
@@ -448,7 +458,8 @@ export class SessionAttentionCoordinator {
       };
     }
 
-    if (!isReadyToSettle(session)) {
+    // Awaiting continuation is not quiescence: dequeue can precede streaming.
+    if (!isReadyToSettle(session) || record.awaitingContinuation) {
       const visible = toAttention(sessionAgentId, record);
       if (visible?.reason !== "decision_waiting") return undefined;
       const retracted = { ...record };
@@ -686,6 +697,16 @@ function visibleAttentions(state: PersistedSessionAttentionState): SessionAttent
 
 function hasPendingChoice(session: SessionAttentionSessionSnapshot): boolean {
   return normalizeCount(session.pendingChoiceCount) > 0;
+}
+
+function latchContinuationIfQueued(
+  record: PersistedSessionAttentionRecord,
+  session: SessionAttentionSessionSnapshot,
+): PersistedSessionAttentionRecord {
+  if (normalizeCount(session.pendingTurnContextCount) > 0 && !record.awaitingContinuation) {
+    return { ...record, awaitingContinuation: true };
+  }
+  return record;
 }
 
 function isReadyToSettle(session: SessionAttentionSessionSnapshot): boolean {
