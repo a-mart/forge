@@ -26,6 +26,7 @@ The optional Chrome adapter has no Electron view or recording authority. Its coo
 - **Backend runtime** — `.stage/backend/dist/index.mjs` bundled from `apps/backend/dist/index.js`, plus staged runtime dependencies under `.stage/backend/node_modules/`
 - **Renderer** — `.stage/ui/`, copied from `apps/ui/.output/public/`; `_shell.html` is promoted to `index.html` for packaged startup
 - **Forge resources** — `.stage/forge-resources/`, containing built-in skills, archetypes, operational prompts, specialists, static assets, and related runtime resources
+- **Brave Search skill dependencies** — the unbundled Brave scripts keep their manifest-declared runtime dependency closure in their own staged `node_modules/`. This preserves package-relative assets and does not rely on the separate backend dependency tree or an end-user install.
 - **CLI runtime** — `.stage/cli/cli.js`, copied from `packages/cli/dist/cli.js` and packaged as `resources/cli/cli.js` for the desktop CLI shim
 - **Stream Deck plugin installer** — `.stage/stream-deck/com.forge.command-center.streamDeckPlugin`, built, validated, and packaged from `apps/stream-deck/` for the optional local Command Center installation flow
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
