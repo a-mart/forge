@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:net'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
   type BrowserAutomationFailure,
@@ -241,6 +241,37 @@ async function fakeExtensionLoop(
 }
 
 describe('authenticated External Chrome Desktop relay runtime', () => {
+  it.each(['missing', 'rejected', 'wrong-payload'] as const)(
+    'does not count a %s reload acknowledgement as clean-quit recovery', async (acknowledgement) => {
+      const expected = { payloadVersion: 'm4-runtime.1', sha256: 'a'.repeat(64), shellAbi: 1 }
+      const { runtime, client, root } = await connectedRuntime()
+      let replacement: AuthenticatedRelayClient | undefined
+      try {
+        runtime.configureExpectedRuntime(expected, undefined, true)
+        const reload = await client.receive()
+        expect(reload).toMatchObject({ method: 'forge.runtime.reload' })
+        if (acknowledgement !== 'missing') {
+          await client.send({ jsonrpc: '2.0', id: reload!.id, ...(acknowledgement === 'rejected' ? {
+            error: { code: -32603, message: 'fixture reload rejected' },
+          } : { result: {
+            protocolVersion: 1,
+            payloadVersion: 'wrong-runtime', accepted: true,
+          } }) })
+          await vi.waitFor(() => expect(runtime.recoveryStatus()).toBe('manual-extension-reload'))
+        }
+        // A new authenticated generation supersedes the old one, but still needs its own reload proof.
+        replacement = await connectRelayClient(path.join(root, 'relay.sock'))
+        await sendRuntimeHello(replacement, 'instance_profile_a')
+        expect(runtime.recoveryStatus()).toBe('updating')
+        await expect(replacement.receive()).resolves.toMatchObject({ method: 'forge.runtime.reload' })
+      } finally {
+        client.close()
+        replacement?.close()
+        runtime.deactivate()
+      }
+    },
+  )
+
   it('ignores a valid late response by method tombstone and keeps the authenticated runtime healthy', async () => {
     const { runtime, client } = await connectedRuntime()
     const session = { sessionAgentId: 'session-a', profileId: 'profile-a' }

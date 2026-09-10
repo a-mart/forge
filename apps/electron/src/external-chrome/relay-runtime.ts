@@ -801,6 +801,9 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private observedStaleRuntimeKey: string | null = null
   private activatedRuntimeKey: string | null = null
   private failedActivationRuntimeKey: string | null = null
+  private resumeMatchingRuntime = false
+  /** Each profile needs a reload acknowledgement followed by a newer authenticated connection. */
+  private readonly runtimeReloadGenerations = new Map<string, number>()
   private lifecycleBarrierRecovery: RuntimeRecovery | null = null
   private hadReadyConnection = false
   private readonly readinessWaiters = new Set<{ wake: () => void; cancel: () => void }>()
@@ -826,11 +829,14 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   configureExpectedRuntime(
     runtime: { payloadVersion: string; sha256: string; shellAbi: number } | null,
     activate?: () => Promise<void>,
+    resumeMatchingRuntime = false,
   ): void {
     const previousKey = this.expectedRuntimeKey()
     this.expectedRuntime = runtime === null ? null : { ...runtime }
     this.activateExpectedRuntime = activate ?? null
     const nextKey = this.expectedRuntimeKey()
+    this.resumeMatchingRuntime = resumeMatchingRuntime && nextKey !== null
+    this.runtimeReloadGenerations.clear()
     if (previousKey !== nextKey) {
       this.observedStaleRuntimeKey = null
       this.activatedRuntimeKey = null
@@ -840,7 +846,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.runtimeStateRevision += 1
     for (const [extensionInstanceId, state] of this.instanceStates) {
       if (!state.authoritySnapshotReceived) state.recovery = 'reconnecting'
-      else if (this.runtimeMatchesExpected(state.connection.inventory)) state.recovery = 'ready'
+      else if (this.runtimeMatchesExpected(state.connection.inventory)) {
+        state.recovery = this.requiresRuntimeResume(extensionInstanceId, state) ? 'updating' : 'ready'
+        if (state.recovery === 'updating') this.beginRuntimeReload(extensionInstanceId, state, nextKey!)
+      }
       else this.beginRuntimeUpdate(extensionInstanceId, state)
     }
     this.scheduleRuntimeUpdateBarrier()
@@ -1589,13 +1598,17 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
 
     state.authoritySnapshotReceived = true
-    state.recovery = this.runtimeMatchesExpected(connection.inventory) ? 'ready' : 'reconnecting'
+    state.recovery = this.runtimeMatchesExpected(connection.inventory)
+      ? (this.requiresRuntimeResume(extensionInstanceId, state) ? 'updating' : 'ready')
+      : 'reconnecting'
     this.runtimeStateRevision += 1
     if (state.recovery === 'ready') {
       this.hadReadyConnection = true
       this.notifyReadinessChanged()
       const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(extensionInstanceId).catch(() => undefined) }, 0)
       reconciliation.unref?.()
+    } else if (this.runtimeMatchesExpected(connection.inventory)) {
+      this.beginRuntimeReload(extensionInstanceId, state, this.expectedRuntimeKey()!)
     } else {
       this.beginRuntimeUpdate(extensionInstanceId, state)
     }
@@ -1838,8 +1851,22 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     }
   }
 
+  private requiresRuntimeResume(extensionInstanceId: string, state: RuntimeInstanceState): boolean {
+    const reloadedGeneration = this.runtimeReloadGenerations.get(extensionInstanceId)
+    return this.resumeMatchingRuntime && (reloadedGeneration === undefined || state.generation <= reloadedGeneration)
+  }
+
   private beginRuntimeReload(extensionInstanceId: string, state: RuntimeInstanceState, runtimeKey: string): void {
-    if (state.reloadAttempt !== null || this.expectedRuntime === null || this.activatedRuntimeKey !== runtimeKey) return
+    if (this.runtimeReloadGenerations.get(extensionInstanceId) === state.generation) {
+      state.recovery = 'reconnecting'
+      return
+    }
+    if (state.reloadAttempt !== null || this.expectedRuntime === null ||
+      (this.activatedRuntimeKey !== runtimeKey && !this.requiresRuntimeResume(extensionInstanceId, state))) return
+    if (!state.connection.inventory?.methods.includes('forge.runtime.reload')) {
+      state.recovery = 'manual-extension-reload'
+      return
+    }
     const expected = { ...this.expectedRuntime }
     const generation = state.generation
     const connection = state.connection
@@ -1851,7 +1878,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       protocolVersion: 1, payloadVersion: expected.payloadVersion, sha256: expected.sha256,
     }).then((reloaded) => {
       if (reloaded.payloadVersion !== expected.payloadVersion || reloaded.accepted !== true) throw new Error('runtime.reload acknowledgement changed payload identity')
-      if (current()) state.recovery = 'reconnecting'
+      if (current()) {
+        if (this.resumeMatchingRuntime) this.runtimeReloadGenerations.set(extensionInstanceId, generation)
+        state.recovery = 'reconnecting'
+      }
     }).catch(() => {
       if (current()) state.recovery = 'manual-extension-reload'
     }).finally(() => {

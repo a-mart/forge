@@ -135,13 +135,13 @@ const access = new PosixCurrentUserAccessController(process.getuid?.())
 const noSchedule = (() => ({ unref: () => undefined })) as unknown as typeof setInterval
 const noUnschedule = (() => undefined) as unknown as typeof clearInterval
 
-async function connectToCoordinator(dataRoot: string): Promise<AuthenticatedRelayClient> {
+async function connectToCoordinator(dataRoot: string, wrongSecret = false): Promise<AuthenticatedRelayClient> {
   const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
   const rendezvous = JSON.parse(await readFile(paths.rendezvous, 'utf8')) as ExternalChromeRendezvousDocument
   const secret = Buffer.from((await readFile(paths.authKey, 'utf8')).trim(), 'base64')
   return AuthenticatedRelayClient.connect({
     rendezvous: { read: async () => rendezvous },
-    secrets: { getSecret: async () => Buffer.from(secret) },
+    secrets: { getSecret: async () => wrongSecret ? Buffer.alloc(32) : Buffer.from(secret) },
     connector: new NodeSocketConnector(384 * 1_024),
     expectedUserScope: rendezvous.userScope,
     expectedExtensionOrigin: 'chrome-extension://fcchfcnadajoejfbiclihglkmbcfhajd/',
@@ -154,6 +154,7 @@ async function sendCoordinatorRuntimeHello(
   extensionInstanceId: string,
   payloadVersion: string,
   payloadSha256: string,
+  sendSnapshot = true,
 ): Promise<void> {
   await client.send({
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
@@ -168,6 +169,7 @@ async function sendCoordinatorRuntimeHello(
     },
   })
   await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1 } })
+  if (!sendSnapshot) return
   await client.send({
     jsonrpc: '2.0', method: 'browser.authoritySnapshot',
     params: { protocolVersion: 1, snapshotId: `snapshot-${extensionInstanceId}`, reports: [] },
@@ -215,6 +217,98 @@ async function lifecycleExtensionLoop(
 }
 
 describe('ExternalChromeHostCoordinator', () => {
+  it.each([false, true])('reloads each clean-quit profile after authenticated reconnect (identical pending deployment: %s)', async (identicalPending) => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const coordinators: ExternalChromeHostCoordinator[] = []
+    const clients: AuthenticatedRelayClient[] = []
+    const deployed = await deployer.verifyDeployment()
+    if (deployed.state !== 'ready') throw new Error('fixture deployment is not ready')
+    const { payloadVersion, payloadSha256 } = deployed.install
+    const activateStaged = vi.fn(async () => deployed.install)
+    const createCoordinator = (pid: number) => {
+      const endpoints = new TrackingRelayEndpoints()
+      const coordinator = new ExternalChromeHostCoordinator({
+        dataRoot, platform: 'linux', pid, username: 'clean-quit-test', uid: 701,
+        instanceId: `desktop_clean_quit_${pid}`, access, endpoints, registration,
+        isProcessAlive: () => false, deploymentVerifier: identicalPending && pid === 702 ? {
+          verifyDeployment: () => deployer.verifyDeployment(),
+          pendingDeployment: async () => deployed.install,
+          activateStaged,
+        } : deployer,
+        setInterval: noSchedule, clearInterval: noUnschedule,
+      })
+      endpoints.accept = (socket) => coordinator.transport().accept(socket)
+      coordinators.push(coordinator)
+      return coordinator
+    }
+    const connect = async () => {
+      const client = await connectToCoordinator(dataRoot)
+      clients.push(client)
+      return client
+    }
+    const marker = path.join(resolveExternalChromeDataPaths(dataRoot, 'linux').state, 'recovery-marker.json')
+    try {
+      const first = createCoordinator(701)
+      await first.enable()
+      const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+      const loops: Promise<void>[] = []
+      for (const instanceId of ['profile_a', 'profile_b']) {
+        const beforeQuit = await connect()
+        await sendCoordinatorRuntimeHello(beforeQuit, instanceId, payloadVersion, payloadSha256)
+        loops.push(lifecycleExtensionLoop(beforeQuit, requests, instanceId))
+      }
+      await first.quiesce('desktop-quit')
+      await Promise.all(loops)
+      expect(requests.filter(({ method }) => method === 'forge.runtime.prepareUpdate')).toHaveLength(2)
+
+      const restarted = createCoordinator(702)
+      await restarted.resumeIfEnabled()
+      for (const instanceId of ['profile_a', 'profile_b']) {
+        const quiesced = await connect()
+        await sendCoordinatorRuntimeHello(quiesced, instanceId, payloadVersion, payloadSha256)
+        // Matching bytes alone cannot reopen the extension's operations gate.
+        expect(restarted.transport().recoveryStatus()).toBe('updating')
+        const reload = await quiesced.receive()
+        expect(reload).toMatchObject({ method: 'forge.runtime.reload', params: { payloadVersion, sha256: payloadSha256 } })
+        await quiesced.send({ jsonrpc: '2.0', id: reload!.id, result: { protocolVersion: 1, payloadVersion, accepted: true } })
+        await vi.waitFor(() => expect(restarted.transport().recoveryStatus()).toBe('reconnecting'))
+        // Another snapshot on the same authenticated connection is not a reload.
+        await quiesced.send({ jsonrpc: '2.0', method: 'browser.authoritySnapshot', params: {
+          protocolVersion: 1, snapshotId: `repeat-${instanceId}`, reports: [],
+        } })
+        await quiesced.send({ jsonrpc: '2.0', id: 'barrier', method: 'forge.runtime.ping', params: {
+          protocolVersion: 1, nonce: 'barrier', sentAt: new Date().toISOString(),
+        } })
+        // Ping's response is a processing barrier for the preceding snapshot.
+        await expect(quiesced.receive()).resolves.toMatchObject({ id: 'barrier', result: { nonce: 'barrier' } })
+        expect(restarted.transport().recoveryStatus()).not.toBe('ready')
+        quiesced.close()
+
+        await expect(connectToCoordinator(dataRoot, true)).rejects.toThrow()
+        const resumed = await connect()
+        expect(restarted.transport().inventory().map((runtime) => runtime.extensionInstanceId)).not.toContain(instanceId)
+        await sendCoordinatorRuntimeHello(resumed, instanceId, payloadVersion, payloadSha256, false)
+        expect(restarted.transport().recoveryStatus()).toBe('reconnecting')
+        await resumed.send({ jsonrpc: '2.0', method: 'browser.authoritySnapshot', params: {
+          protocolVersion: 1, snapshotId: `resumed-${instanceId}`, reports: [],
+        } })
+        await vi.waitFor(() => expect(restarted.transport().recoveryStatus()).toBe('ready'))
+        const resumedRequests: Array<{ method: string; params: Record<string, unknown> }> = []
+        void lifecycleExtensionLoop(resumed, resumedRequests, instanceId)
+        await expect(restarted.transport().listEligibleTabs({ sessionAgentId: 'session-test', profileId: 'profile-test' }))
+          .resolves.toMatchObject({ tabs: expect.arrayContaining([expect.objectContaining({ url: 'https://fixture.invalid/' })]) })
+        expect(resumedRequests.map(({ method }) => method)).toContain('forge.browser.inventory')
+        await expect(readFile(marker, 'utf8')).resolves.toContain('desktop-quit')
+      }
+      expect(activateStaged).not.toHaveBeenCalled()
+    } finally {
+      for (const client of clients) client.close()
+      for (const coordinator of coordinators) coordinator.transport().deactivate()
+      for (const coordinator of coordinators) await coordinator.quiesce('desktop-quit').catch(() => undefined)
+    }
+  })
+
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('repairs legacy Windows state-directory inheritance on access denial without replacing metadata', async () => {
     const { dataRoot } = await root()
     const paths = resolveExternalChromeDataPaths(dataRoot, 'win32')

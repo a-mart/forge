@@ -418,7 +418,7 @@ export class ExternalChromeHostCoordinator {
           shellAbi: expectedDeployment.shellAbi,
         } : null, pendingDeployment && this.deploymentVerifier?.activateStaged
           ? async () => { await this.deploymentVerifier!.activateStaged!() }
-          : undefined)
+          : undefined, await this.requiresRuntimeResumeUnlocked())
       }
       const epoch = createRendezvousEpoch()
       this.relay.activate(
@@ -639,6 +639,19 @@ export class ExternalChromeHostCoordinator {
       return marker.status === 'release-unproven' ? 'manual-extension-reload' : 'reconnecting'
     } catch {
       return 'ready'
+    }
+  }
+
+  private async requiresRuntimeResumeUnlocked(): Promise<boolean> {
+    try {
+      const raw = await fs.readFile(this.recoveryMarkerPath, 'utf8')
+      if (Buffer.byteLength(raw) > 2_048) return false
+      const marker = JSON.parse(raw) as { reason?: unknown; status?: unknown }
+      // Retain this marker: profiles reconnect independently, and a Desktop crash
+      // must repeat the reload proof rather than trust volatile completion.
+      return marker.reason === 'desktop-quit' && marker.status === 'quiesced'
+    } catch {
+      return false
     }
   }
 
