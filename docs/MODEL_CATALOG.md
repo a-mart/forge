@@ -56,9 +56,12 @@ Field semantics are product-facing, not a merge API: an absent field inherits th
 The controls are:
 
 - **ZDR** versus **data collection** — separate filters. Required ZDR limits routing to eligible zero-retention endpoints and still permits implicit in-memory prompt caching. Disallowing provider collection/training is not a ZDR guarantee. OpenRouter account guardrails still apply. See [ZDR](https://openrouter.ai/docs/guides/features/zdr), [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection), and [OpenRouter privacy settings](https://openrouter.ai/settings/privacy).
-- **Preferred providers (`order`)** — ordered preference, not a hard allowlist. **Allowed providers only (`only`)** is a hard allowlist. **Excluded providers (`ignore`)** cannot serve the request and must not conflict with the allowlist. Preferred order and **routing strategy (`sort`)** are mutually exclusive.
+- **Preferred providers (`order`)** — ordered preference, not a hard allowlist. **Allowed providers only (`only`)** is a hard allowlist. **Excluded providers (`ignore`)** cannot serve the request and must not conflict with the allowlist.
+- **Routing strategy (`sort`)** — selects lowest price, highest throughput, or lowest latency. Automatic sorting and preferred order are mutually exclusive.
 - **Provider fallback (`allow_fallbacks`)** — OpenRouter endpoint fallback among still-eligible providers. It is distinct from Forge automatic model fallback across models or providers.
-- **Require parameter support**, USD-per-million input/output **price ceilings**, and **quantizations** — optional hard filters. Price ceilings are endpoint filters, not a session budget; a custom price object replaces the inherited one.
+- **Require parameter support** — filters to endpoints that support all request parameters. It is not auto-enabled. Recommended for tool-using agents; it may reduce availability.
+- USD-per-million input/output **price ceilings** — optional hard filters. Price ceilings are endpoint filters, not a session budget; a custom price object replaces the inherited one.
+- **Allowed quantizations** — optional hard filter that restricts eligible endpoint formats (`int4`, `int8`, `fp4`, `fp6`, `fp8`, `fp16`, `bf16`, `fp32`, `unknown`).
 
 A saved change applies to the next OpenRouter model call. Calls already in progress are unchanged. No matching endpoint, an invalid policy, or an unreadable saved file fails closed rather than relaxing filters. Hard filters (required ZDR, denied collection, allowlist, exclusions, price ceilings, quantizations, required parameters, or disabled OpenRouter endpoint fallback) suppress Forge automatic model fallback; preferences-only settings such as preferred order or sort do not.
 
