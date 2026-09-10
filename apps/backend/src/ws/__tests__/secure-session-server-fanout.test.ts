@@ -47,6 +47,27 @@ describe("secure session server transport", () => {
     )).toBe(true);
 
     await server.start();
+    const settingsUrl = `http://${config.host}:${config.port}/api/settings/secure-secrets`;
+    try {
+      for (const headers of [
+        {},
+        { Origin: `http://${config.host}:${config.port}` },
+      ]) {
+        const settingsRead = await fetch(settingsUrl, { headers });
+        expect(settingsRead.status).toBe(200);
+        await expect(settingsRead.json()).resolves.toMatchObject({
+          settings: { maxProjectDefaults: 50 },
+        });
+      }
+      const hostileSettingsRead = await fetch(settingsUrl, {
+        headers: { Origin: "https://evil.example" },
+      });
+      expect(hostileSettingsRead.status).toBe(403);
+    } catch (error) {
+      await server.stop();
+      throw error;
+    }
+
     const hostileHttpResponse = await fetch(
       `http://${config.host}:${config.port}/api/secure-secrets/providers`,
       { headers: { Origin: "https://evil.example" } },
