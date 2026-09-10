@@ -26,6 +26,6 @@ Global task instructions are file-backed and can be overridden per project. Chan
 
 ## Routing and fallback
 
-The manager receives a compact instruction/custom-specialist block plus a separate versioned `[delegationRoster]` context containing the active roster specialists. Forge pins the resolved specialist, model, and fallback on each attempt, then handles availability fallback and worker-result attribution internally. Capability escalation is a distinct new-attempt decision.
+The manager receives a compact instruction/custom-specialist block plus a separate versioned `[delegationRoster]` context containing the active roster specialists. Forge pins the resolved specialist, model, and fallback on each attempt, then handles availability fallback and worker-result attribution internally. Capability escalation is a distinct new-attempt decision. Hard OpenRouter routing/privacy filters on the primary model suppress that automatic model fallback; preferences-only OpenRouter settings do not. OpenRouter endpoint fallback is a different control from Forge specialist fallback.
 
 Configure this under **Settings → Delegation**. Project-level task-instruction overrides take precedence over global definitions; roster selection resolves global → project → session.

@@ -47,6 +47,23 @@ Manager eligibility is deliberately a separate, opt-in policy:
 
 Manager eligibility does not change compaction policy. OpenRouter is not in the supported Forge compaction provider allowlist and does not appear in the compaction model selector.
 
+### OpenRouter routing and privacy
+
+**Settings → Models** also stores shared OpenRouter provider routing and privacy filters on the selected backend. **OpenRouter defaults** apply to every OpenRouter manager and worker call on that backend, including exact IDs that are not added yet. **Configure routing** on an added model stores an exact-model override; add the model before configuring that override. On a Collaboration server this configuration is admin-only.
+
+Field semantics are product-facing, not a merge API: an absent field inherits the shared default (or OpenRouter's unrestricted default when Forge has none); `null` clears the field; arrays (`order`, `only`, `ignore`, `quantizations`) and `max_price` replace rather than merge. Shared **Require ZDR** and **Disallow collection** are a privacy floor that a per-model override cannot weaken, including with a previously saved clear.
+
+The controls are:
+
+- **ZDR** versus **data collection** — separate filters. Required ZDR limits routing to eligible zero-retention endpoints and still permits implicit in-memory prompt caching. Disallowing provider collection/training is not a ZDR guarantee. OpenRouter account guardrails still apply. See [ZDR](https://openrouter.ai/docs/guides/features/zdr), [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection), and [OpenRouter privacy settings](https://openrouter.ai/settings/privacy).
+- **Preferred providers (`order`)** — ordered preference, not a hard allowlist. **Allowed providers only (`only`)** is a hard allowlist. **Excluded providers (`ignore`)** cannot serve the request and must not conflict with the allowlist. Preferred order and **routing strategy (`sort`)** are mutually exclusive.
+- **Provider fallback (`allow_fallbacks`)** — OpenRouter endpoint fallback among still-eligible providers. It is distinct from Forge automatic model fallback across models or providers.
+- **Require parameter support**, USD-per-million input/output **price ceilings**, and **quantizations** — optional hard filters. Price ceilings are endpoint filters, not a session budget; a custom price object replaces the inherited one.
+
+A saved change applies to the next OpenRouter model call. Calls already in progress are unchanged. No matching endpoint, an invalid policy, or an unreadable saved file fails closed rather than relaxing filters. Hard filters (required ZDR, denied collection, allowlist, exclusions, price ceilings, quantizations, required parameters, or disabled OpenRouter endpoint fallback) suppress Forge automatic model fallback; preferences-only settings such as preferred order or sort do not.
+
+These filters constrain OpenRouter HTTPS completions routing only. They do not erase Forge local transcripts, control how tools handle data, or govern separately configured non-OpenRouter summarization or compaction. Endpoint discovery in Settings is advisory and is not a paid test or proof of account-specific routability.
+
 ## Codex app-server sidecar
 
 The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server as a direct sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it to the visible `Codex Plugin` specialist worker. The plugin-scoped path is read-only/safety-gated, uses server-owned scoped exact plugin tools, and returns preview/metadata-bounded normal tool output. Full connector exports use the scoped export artifact path instead of chat chunk relay. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
