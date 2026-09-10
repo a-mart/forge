@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProviderAccountUsage, ProviderUsageWindow } from '@forge/protocol'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { buildRows, getAccountLabel, getUsageMetrics, MiniVerticalGauge } from './SidebarUsageWidget'
+import { buildRows, getAccountLabel, getUsageMetrics, MiniVerticalGauge, SidebarUsagePanel } from './SidebarUsageWidget'
 
 const WEEK_SECONDS = 7 * 24 * 60 * 60
 
@@ -90,6 +90,15 @@ describe('getAccountLabel', () => {
 })
 
 describe('buildRows', () => {
+  it('hides the OpenAI session row only when no session window is reported', () => {
+    const weeklyUsage = { percent: 81, resetInfo: '4.3d', windowSeconds: WEEK_SECONDS }
+    const rows = buildRows({ openai: [
+      { provider: 'openai', available: true, weeklyUsage },
+      { provider: 'openai', available: true, weeklyUsage, sessionUsage: { percent: 20, resetInfo: '1h' } },
+    ] })
+    expect(rows.map(row => row.showSession)).toEqual([false, true])
+  })
+
   it('renders xAI as a weekly-only provider with the xAI brand asset', () => {
     const rows = buildRows({
       xai: [
@@ -138,6 +147,25 @@ describe('MiniVerticalGauge', () => {
     }
     root = null
     container.remove()
+  })
+
+  it('renders weekly-only OpenAI usage without an empty Session card', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SidebarUsagePanel, {
+        providers: { openai: [{ provider: 'openai', available: true,
+          weeklyUsage: { percent: 81, resetInfo: '4.3d', windowSeconds: WEEK_SECONDS },
+        }] },
+        open: true,
+        onClose: () => {},
+      }))
+    })
+    expect(container.textContent).toContain('Weekly')
+    expect(container.textContent).toContain('81% used')
+    expect(container.textContent).not.toContain('Session')
+    expect(container.textContent).not.toContain('Reset unavailable')
   })
 
   it('renders an accessible unknown marker for weekly-only xAI usage without a percent', () => {

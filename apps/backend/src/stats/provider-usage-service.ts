@@ -194,7 +194,8 @@ export class ProviderUsageService {
       try {
         const brokerUsage = await brokerUsageGetter();
         if (brokerUsage !== null) {
-          this.cache.openai = brokerUsage.map((data) => makeCachedEntry(data, nowMs));
+          this.cache.openai = await Promise.all(brokerUsage.map(async (data) =>
+            makeCachedEntry(await this.withHistoricalPace("openai", data, nowMs), nowMs)));
           this.queuePersistCacheWrite();
           return;
         }
@@ -586,6 +587,7 @@ export class ProviderUsageService {
     data: ProviderAccountUsage,
     sampledAtMs: number
   ): Promise<ProviderAccountUsage> {
+    data = normalizeOpenAIUsageWindows(data);
     const weeklyUsage = data.weeklyUsage;
     if (!data.available || !weeklyUsage?.resetAtMs || !weeklyUsage.windowSeconds || weeklyUsage.windowSeconds <= 0) {
       return data;
@@ -720,6 +722,19 @@ export class ProviderUsageService {
 
 function isFresh(entry: CachedProviderUsageEntry | undefined, nowMs: number): boolean {
   return Boolean(entry && nowMs - entry.lastAttemptMs < CACHE_TTL_MS);
+}
+
+/** OpenAI's primary slot can be weekly on accounts without a short-term limit. */
+function normalizeOpenAIUsageWindows(data: ProviderAccountUsage): ProviderAccountUsage {
+  if (data.provider !== "openai" || data.sessionUsage?.windowSeconds !== 7 * 24 * 60 * 60) {
+    return data;
+  }
+
+  return {
+    ...data,
+    sessionUsage: data.weeklyUsage?.windowSeconds === 5 * 60 * 60 ? data.weeklyUsage : undefined,
+    weeklyUsage: data.sessionUsage
+  };
 }
 
 function mapOpenAIResponse(body: OpenAIUsageResponse): ProviderAccountUsage {
@@ -957,7 +972,7 @@ function parseCachedProviderUsageEntry(value: unknown): CachedProviderUsageEntry
   }
 
   return {
-    data: value.data as unknown as ProviderAccountUsage,
+    data: normalizeOpenAIUsageWindows(value.data as unknown as ProviderAccountUsage),
     fetchedAtMs,
     lastAttemptMs
   };

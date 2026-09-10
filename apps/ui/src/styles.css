@@ -510,6 +510,8 @@ body {
   padding-bottom: 0.5rem;
 }
 .sidebar-room-inbox-section {
+  /* Keep raised tree controls below the sticky Needs you section. */
+  isolation: isolate;
   border: 1px solid var(--sidebar-room-section-border);
   border-radius: 0.75rem;
   background: var(--sidebar-room-section-surface);
