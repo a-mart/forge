@@ -1,3 +1,4 @@
+import { blocksOpenRouterFallback } from "./runtime/pi/openrouter-request-policy.js";
 import type {
   DelegationRoster,
   DelegationRoute,
@@ -702,7 +703,7 @@ export class SwarmAgentLifecycleService {
         specialistFallbackModel.thinkingLevel =
           normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
       }
-      model = routePrimaryCapacityBlocked && specialistFallbackModel
+      model = routePrimaryCapacityBlocked && specialistFallbackModel && !blocksOpenRouterFallback(model)
         ? { ...specialistFallbackModel }
         : this.resolveSpawnModelWithCapacityFallback(model);
 
@@ -912,6 +913,7 @@ export class SwarmAgentLifecycleService {
     ) {
       if (
         specialistFallbackModel
+        && !blocksOpenRouterFallback(model)
         && supportsSecureRuntimeProvider(specialistFallbackModel.provider)
       ) {
         model = { ...specialistFallbackModel };

@@ -18,6 +18,8 @@ import type { SettingsApiClient } from './settings-api-client'
 interface OpenRouterModelCardProps {
   clientOrWsUrl: SettingsApiClient | string | undefined
   model: OpenRouterModelEntry
+  routingSummary?: string
+  onConfigureRouting?: () => void
   override?: ModelOverrideEntry
   onRemove: (modelId: string) => void
   isRemoving: boolean
@@ -30,6 +32,8 @@ export function OpenRouterModelCard({
   clientOrWsUrl,
   model,
   override,
+  routingSummary,
+  onConfigureRouting,
   onRemove,
   isRemoving,
   onRefresh,
@@ -126,6 +130,10 @@ export function OpenRouterModelCard({
         </Button>
       </div>
 
+      {onConfigureRouting ? <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onConfigureRouting} disabled={isRemoving}>Configure routing</Button>
+        <p className="text-xs text-muted-foreground">{routingSummary}</p>
+      </div> : null}
       <div className="space-y-1.5 border-t border-border/50 pt-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <span>Manager agents</span>

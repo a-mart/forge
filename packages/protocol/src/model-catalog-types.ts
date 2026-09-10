@@ -1,3 +1,4 @@
+import type { OpenRouterRoutingConfig } from "./openrouter-routing.js";
 import type { OpenAIBrokerDegradedReason } from './openai-auth-broker.js'
 
 export type ForgeProviderAvailabilityMode = 'managed-auth' | 'external'
@@ -133,6 +134,7 @@ export interface ModelOverridesFile {
 }
 
 export interface OpenRouterModelEntry {
+  routing?: OpenRouterRoutingConfig
   modelId: string
   displayName: string
   contextWindow: number
@@ -159,6 +161,7 @@ export interface ModelOverridesResponse {
 }
 
 export interface OpenRouterModelsFile {
+  routingDefaults?: OpenRouterRoutingConfig
   version: 1
   models: Record<string, OpenRouterModelEntry>
 }

@@ -248,6 +248,7 @@ function generateApprovedProviderProjection(provider: ForgeProviderDefinition): 
 function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition): PiModelDefinition[] {
   if (provider.providerId === "openrouter") {
     return modelCatalogService.getOpenRouterModels().map((model) => ({
+      compat: { openRouterRouting: modelCatalogService.getEffectiveOpenRouterRouting(model.modelId) },
       id: model.modelId,
       name: model.displayName,
       reasoning: model.supportsReasoning,

@@ -1,6 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import type { OpenRouterModelEntry } from "@forge/protocol";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "../swarm/pi/pi-ai-compat.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { getOpenRouterModelsPath, getSharedModelOverridesPath } from "../swarm/data-paths.js";
@@ -19,6 +19,15 @@ const tempRoots: string[] = [];
 const TEST_OPENROUTER_MODEL_ID =
   getModels("openrouter").find((model) => model.id.startsWith("anthropic/claude"))?.id ??
   "anthropic/claude-sonnet-4";
+
+beforeEach(() => {
+  const originalFetch = globalThis.fetch;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.startsWith("https://openrouter.ai/")) return Promise.reject(new Error("No external network in routing tests"));
+    return originalFetch(input, init);
+  });
+});
 
 afterEach(async () => {
   resetLiveOpenRouterModelsCacheForTests();
@@ -378,9 +387,10 @@ describe("openrouter-routes", () => {
     try {
       const responsePromise = fetch(`http://${config.host}:${config.port}/api/settings/openrouter/models`);
       await reloadStarted;
-      await removeOpenRouterModel(config.paths.dataDir, removedEntry.modelId);
-      await addOpenRouterModel(config.paths.dataDir, addedEntry);
+      const removePromise = removeOpenRouterModel(config.paths.dataDir, removedEntry.modelId);
+      const addPromise = addOpenRouterModel(config.paths.dataDir, addedEntry);
       allowReloadFailure?.();
+      await Promise.all([removePromise, addPromise]);
 
       const response = await responsePromise;
       expect(response.status).toBe(500);
@@ -390,7 +400,7 @@ describe("openrouter-routes", () => {
       const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
         models: Record<string, { supportsTools?: boolean }>;
       };
-      expect(storedFile.models[legacyEntry.modelId]?.supportsTools).toBe(true);
+      expect(storedFile.models[legacyEntry.modelId]?.supportsTools).toBeUndefined();
       expect(storedFile.models[removedEntry.modelId]).toBeUndefined();
       expect(storedFile.models[addedEntry.modelId]?.supportsTools).toBe(true);
     } finally {
@@ -939,5 +949,79 @@ describe("openrouter-routes", () => {
     } finally {
       await server.stop();
     }
+  });
+});
+
+describe("OpenRouter routing settings API", () => {
+  it("saves global and exact-model routing, rejects stale/invalid changes, and rolls back failed apply", async () => {
+    const { config, manager, server } = await startServer();
+    const base = `http://${config.host}:${config.port}/api/settings/openrouter/routing`;
+    const modelId = "test/routing-model";
+    const modelUrl = `${base}/models/${encodeURIComponent(modelId)}`;
+    const put = (url: string, body: unknown) => fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    try {
+      const initial = await (await fetch(base)).json() as { revision: string };
+      const saved = await put(base, { revision: initial.revision, routing: { zdr: true, data_collection: "deny", only: ["azure"], max_price: { prompt: 1 } } });
+      expect(saved.status).toBe(200);
+      const global = await saved.json() as { revision: string };
+      expect((await put(base, { revision: initial.revision, routing: {} })).status).toBe(409);
+      expect((await put(base, { revision: global.revision, routing: { only: [] } })).status).toBe(400);
+      expect((await put(base, { revision: global.revision, routing: { zdr: "false" } })).status).toBe(400);
+      expect((await fetch(modelUrl)).status).toBe(404);
+      await addOpenRouterModel(config.paths.dataDir, { modelId, displayName: "Test", contextWindow: 1000, maxOutputTokens: 100, supportsReasoning: false, supportedReasoningLevels: ["none"], inputModes: ["text"], addedAt: "2026-09-10T00:00:00Z" });
+      const model = await (await fetch(modelUrl)).json() as { revision: string };
+      const modelSave = await put(modelUrl, { revision: model.revision, routing: { zdr: null, data_collection: "allow", only: ["openai"], max_price: null, sort: "latency" } });
+      expect(modelSave.status).toBe(200);
+      const modelSaved = await modelSave.json() as { revision: string; effective: unknown; routing: unknown };
+      expect(modelSaved.effective).toEqual({ zdr: true, data_collection: "deny", only: ["openai"], sort: "latency" });
+      expect(modelSaved.routing).toMatchObject({ zdr: null, max_price: null });
+      const reloaded = await (await fetch(modelUrl)).json();
+      expect(reloaded).toEqual(modelSaved);
+      const projection = JSON.parse(await readFile(getPiModelsProjectionPath(config.paths.dataDir), "utf8"));
+      expect(projection.providers.openrouter.models.find((entry: { id: string }) => entry.id === modelId).compat.openRouterRouting).toEqual(modelSaved.effective);
+      const spy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection").mockRejectedValueOnce(new Error("apply failed"));
+      expect((await put(base, { revision: modelSaved.revision, routing: { zdr: true } })).status).toBe(500);
+      spy.mockRestore();
+      expect(await (await fetch(modelUrl)).json()).toEqual(modelSaved);
+      // Two editors of different scopes still share one file-wide revision.
+      const outcomes = await Promise.all([
+        put(base, { revision: modelSaved.revision, routing: { zdr: true } }),
+        put(modelUrl, { revision: modelSaved.revision, routing: { only: ["google-vertex"] } }),
+      ]);
+      expect(outcomes.map((response) => response.status).sort()).toEqual([200, 409]);
+    } finally { await server.stop(); }
+  });
+
+  it("discovers actual endpoint tags, joins ZDR by exact model/tag, caches and reports stale privacy", async () => {
+    const original = globalThis.fetch;
+    let offline = false;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (!url.startsWith("https://openrouter.ai/")) return original(input, init);
+      calls.push(url);
+      if (offline) throw new Error("offline");
+      const endpoint = { tag: "azure/swedencentral", model_id: "test/model", provider_name: "Azure", name: "Azure model", supported_parameters: ["tools"], pricing: { prompt: "0.000002", completion: "0.000008" }, context_length: 1000 };
+      return new Response(JSON.stringify({ data: url.endsWith("/endpoints/zdr") ? [endpoint, { ...endpoint, model_id: "other/model", tag: "openai" }] : { endpoints: [endpoint, { ...endpoint, tag: "openai", provider_name: "OpenAI" }] } }));
+    });
+    const { config, server } = await startServer();
+    const url = `http://${config.host}:${config.port}/api/settings/openrouter/endpoints/test%2Fmodel`;
+    try {
+      const data = await (await fetch(url)).json() as { status: string; zdrStatus: string; endpoints: Array<{ tag: string; zdr: string; pricing: unknown }> };
+      expect(data.status).toBe("fresh");
+      expect(data.zdrStatus).toBe("fresh");
+      expect(data.endpoints.map((entry) => [entry.tag, entry.zdr])).toEqual([["azure/swedencentral", "eligible"], ["openai", "not-listed"]]);
+      expect(data.endpoints[0].pricing).toEqual({ prompt: 2, completion: 8 });
+      await fetch(url);
+      expect(calls).toHaveLength(2);
+      offline = true;
+      const stale = await (await fetch(`${url}?refresh=true`)).json() as typeof data;
+      expect(stale.status).toBe("stale");
+      expect(stale.zdrStatus).toBe("stale");
+      expect(stale.endpoints.every((entry) => entry.zdr === "unknown")).toBe(true);
+      const unknown = await (await fetch(url.replace("test%2Fmodel", "new%2Fmodel"))).json() as typeof data;
+      expect(unknown.status).toBe("unavailable");
+      expect(unknown.endpoints).toEqual([]);
+    } finally { await server.stop(); }
   });
 });

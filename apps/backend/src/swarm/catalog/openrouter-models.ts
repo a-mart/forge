@@ -1,11 +1,15 @@
 import {
   isRetiredForgeModel,
+  parseOpenRouterRoutingConfig,
+  resolveOpenRouterRouting,
   type ForgeInputMode,
   type ForgeReasoningLevel,
   type OpenRouterModelEntry,
   type OpenRouterModelsFile,
 } from "@forge/protocol";
-import { readJsonFileIfExists, writeJsonFileAtomic } from "../../utils/atomic-files.js";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { getOpenRouterModelsPath } from "../data-paths.js";
 
 const OPENROUTER_MODELS_VERSION = 1 as const;
@@ -59,6 +63,7 @@ function sanitizeOpenRouterModelEntry(value: unknown): OpenRouterModelEntry | nu
   }
 
   const candidate = value as Record<string, unknown>;
+  const routing = candidate.routing === undefined ? undefined : parseOpenRouterRoutingConfig(candidate.routing);
   const modelId = typeof candidate.modelId === "string" ? candidate.modelId.trim() : "";
   const displayName = typeof candidate.displayName === "string" ? candidate.displayName.trim() : "";
   const supportedReasoningLevels = sanitizeStringArray(
@@ -101,6 +106,7 @@ function sanitizeOpenRouterModelEntry(value: unknown): OpenRouterModelEntry | nu
   }
 
   return {
+    ...(routing === undefined ? {} : { routing }),
     modelId,
     displayName,
     contextWindow: candidate.contextWindow,
@@ -115,36 +121,48 @@ function sanitizeOpenRouterModelEntry(value: unknown): OpenRouterModelEntry | nu
 
 function sanitizeOpenRouterModelsFile(value: unknown): OpenRouterModelsFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return emptyOpenRouterModelsFile();
+    throw new Error("Invalid saved OpenRouter configuration");
   }
 
   const candidate = value as Record<string, unknown>;
+  if (candidate.version !== 1) throw new Error("Unsupported OpenRouter configuration version");
+  const routingDefaults = candidate.routingDefaults === undefined ? undefined : parseOpenRouterRoutingConfig(candidate.routingDefaults);
   const rawModels = candidate.models;
   if (!rawModels || typeof rawModels !== "object" || Array.isArray(rawModels)) {
-    return emptyOpenRouterModelsFile();
+    throw new Error("Invalid saved OpenRouter configuration");
   }
 
   const models: Record<string, OpenRouterModelEntry> = {};
 
-  for (const entry of Object.values(rawModels)) {
+  for (const [key, entry] of Object.entries(rawModels)) {
     const sanitizedEntry = sanitizeOpenRouterModelEntry(entry);
     if (!sanitizedEntry) {
+      if (entry && typeof entry === "object" && "routing" in entry) throw new Error(`Invalid model ${JSON.stringify(key)} with saved OpenRouter routing`);
       continue;
     }
 
+    if (key !== sanitizedEntry.modelId || Object.hasOwn(models, sanitizedEntry.modelId)) throw new Error(`Mismatched or duplicate OpenRouter model identity at ${JSON.stringify(key)}`);
+    resolveOpenRouterRouting(routingDefaults, sanitizedEntry.routing);
     models[sanitizedEntry.modelId] = sanitizedEntry;
   }
 
   return {
     version: OPENROUTER_MODELS_VERSION,
     models,
+    ...(routingDefaults === undefined ? {} : { routingDefaults }),
   };
 }
 
 export async function readOpenRouterModels(dataDir: string): Promise<OpenRouterModelsFile> {
   const filePath = getOpenRouterModelsPath(dataDir);
-  const parsed = await readJsonFileIfExists(filePath);
-  return parsed === undefined ? emptyOpenRouterModelsFile() : sanitizeOpenRouterModelsFile(parsed);
+  let text: string;
+  try { text = await readFile(filePath, "utf8"); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyOpenRouterModelsFile();
+    throw error;
+  }
+  try { return sanitizeOpenRouterModelsFile(JSON.parse(text)); } catch (error) {
+    throw new Error(`Cannot load OpenRouter settings at ${filePath}. Repair the saved configuration and reload: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
 }
 
 export async function writeOpenRouterModels(dataDir: string, file: OpenRouterModelsFile): Promise<void> {
@@ -156,6 +174,7 @@ export async function writeOpenRouterModels(dataDir: string, file: OpenRouterMod
 export async function mutateOpenRouterModelsFile(
   dataDir: string,
   mutate: (currentFile: OpenRouterModelsFile) => OpenRouterModelsFile | null,
+  apply?: () => Promise<void>,
 ): Promise<{
   previousFile: OpenRouterModelsFile;
   nextFile: OpenRouterModelsFile;
@@ -170,6 +189,11 @@ export async function mutateOpenRouterModelsFile(
 
     const nextFile = sanitizeOpenRouterModelsFile(candidateFile);
     await writeOpenRouterModels(dataDir, nextFile);
+    try { await apply?.(); } catch (error) {
+      await writeOpenRouterModels(dataDir, previousFile);
+      try { await apply?.(); } catch { /* Preserve original apply failure. */ }
+      throw error;
+    }
     return { previousFile, nextFile, mutated: true };
   });
 }
@@ -230,3 +254,7 @@ async function withOpenRouterModelsWriteLock<T>(operation: () => Promise<T>): Pr
   }
 }
 
+
+export function getOpenRouterRoutingRevision(file: OpenRouterModelsFile): string {
+  return createHash("sha256").update(JSON.stringify(file)).digest("hex");
+}

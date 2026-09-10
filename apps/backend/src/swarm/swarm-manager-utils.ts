@@ -1,3 +1,4 @@
+import { blocksOpenRouterFallback } from "./runtime/pi/openrouter-request-policy.js";
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -830,6 +831,7 @@ export function shouldRetrySpecialistSpawnWithFallback(
   error: unknown,
   attemptedModel: Pick<AgentModelDescriptor, "provider" | "modelId">
 ): boolean {
+  if (blocksOpenRouterFallback(attemptedModel)) return false;
   const message = error instanceof Error ? error.message : String(error);
   const capacity = classifyRuntimeCapacityError(message);
   if (capacity.isQuotaOrRateLimit) {

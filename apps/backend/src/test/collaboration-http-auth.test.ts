@@ -97,6 +97,21 @@ const REMOTE_BUILD_ON: CollaborationHttpAccessPolicy = { remoteBuildEnabled: tru
 const REMOTE_BUILD_OFF: CollaborationHttpAccessPolicy = { remoteBuildEnabled: false, terminalsEnabled: true };
 
 describe("collaboration HTTP auth middleware", () => {
+  it.each([
+    ["/api/settings/openrouter/routing", "GET"],
+    ["/api/settings/openrouter/routing", "PUT"],
+    ["/api/settings/openrouter/routing/models/openai%2Fgpt-4.1", "GET"],
+    ["/api/settings/openrouter/routing/models/openai%2Fgpt-4.1", "PUT"],
+    ["/api/settings/openrouter/endpoints/openai%2Fgpt-4.1", "GET"],
+  ])("keeps shared OpenRouter configuration admin-only: %s %s", (pathname, method) => {
+    for (const policy of [REMOTE_BUILD_ON, REMOTE_BUILD_OFF]) {
+      expect(classifyCollaborationHttpRequest(pathname, method, policy)).toBe("admin");
+      expect(enforcePathAccess(pathname, method, null, policy)).toMatchObject({ ok: false, statusCode: 401 });
+      expect(enforcePathAccess(pathname, method, createAuthContext("member"), policy)).toMatchObject({ ok: false, statusCode: 403 });
+      expect(enforcePathAccess(pathname, method, createAuthContext("admin"), policy)).toEqual({ ok: true });
+    }
+  });
+
   it("classifies public, member, and admin endpoints", () => {
     expect(classifyCollaborationHttpRequest("/api/health", "GET")).toBe("public");
     expect(classifyCollaborationHttpRequest("/api/auth/sign-in/email", "POST")).toBe("public");

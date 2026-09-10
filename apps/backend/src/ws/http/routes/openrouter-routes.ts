@@ -1,5 +1,5 @@
+import { createOpenRouterRoutingRoutes } from "./openrouter-routing-routes.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { isDeepStrictEqual } from "node:util";
 import { getModels } from "../../../swarm/pi/pi-ai-compat.js";
 import {
   getOpenRouterModelOverrideKey,
@@ -13,11 +13,8 @@ import {
 } from "@forge/protocol";
 import {
   getOpenRouterModels,
-  addOpenRouterModel,
   mutateOpenRouterModelsFile,
   readOpenRouterModels,
-  removeOpenRouterModel,
-  writeOpenRouterModels,
 } from "../../../swarm/openrouter-models.js";
 import { readModelOverrides, resetModelOverride, writeModelOverrides } from "../../../swarm/model-overrides.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
@@ -81,6 +78,7 @@ export function createOpenRouterRoutes(options: {
   const { swarmManager, broadcastEvent } = options;
 
   return [
+    ...createOpenRouterRoutingRoutes(options),
     {
       methods: AVAILABLE_MODELS_METHODS,
       matches: (pathname) => pathname === AVAILABLE_MODELS_ENDPOINT_PATH,
@@ -153,27 +151,10 @@ async function handleOpenRouterModelsRequest(
       const reconciliation = await mutateOpenRouterModelsFile(
         dataDir,
         (currentFile) => reconcileStoredOpenRouterToolCapabilities(currentFile, liveModels),
+        () => swarmManager.reloadOpenRouterModelsAndProjection(),
       );
 
       if (reconciliation.mutated) {
-        try {
-          await swarmManager.reloadOpenRouterModelsAndProjection();
-        } catch (error) {
-          await mutateOpenRouterModelsFile(dataDir, (currentFile) =>
-            isDeepStrictEqual(currentFile, reconciliation.nextFile)
-              ? reconciliation.previousFile
-              : null
-          );
-
-          try {
-            await swarmManager.reloadOpenRouterModelsAndProjection();
-          } catch {
-            // Best-effort restoration. Preserve the original projection error below.
-          }
-
-          throw error;
-        }
-
         broadcastModelConfigChanged(broadcastEvent);
       }
 
@@ -233,9 +214,8 @@ async function handleOpenRouterModelsRequest(
       await mutateOpenRouterModelsWithProjectionReload({
         swarmManager,
         dataDir,
-        previousFile: existingModels,
-        mutate: async () => {
-          await addOpenRouterModel(dataDir, entry);
+        mutate: (current) => current.models[modelId] ? null : {
+          ...current, models: { ...current.models, [modelId]: entry },
         },
       });
       broadcastModelConfigChanged(broadcastEvent);
@@ -264,12 +244,13 @@ async function handleOpenRouterModelsRequest(
       await mutateOpenRouterModelsWithProjectionReload({
         swarmManager,
         dataDir,
-        previousFile: existingModels,
         previousOverrides,
-        mutate: async () => {
-          await removeOpenRouterModel(dataDir, modelId);
-          await resetModelOverride(dataDir, getOpenRouterModelOverrideKey(modelId));
+        mutate: (current) => {
+          const models = { ...current.models };
+          delete models[modelId];
+          return { ...current, models };
         },
+        beforeReload: () => resetModelOverride(dataDir, getOpenRouterModelOverrideKey(modelId)),
       });
       broadcastModelConfigChanged(broadcastEvent);
       sendJson(response, 200, { ok: true });
@@ -287,37 +268,22 @@ async function handleOpenRouterModelsRequest(
 async function mutateOpenRouterModelsWithProjectionReload(options: {
   swarmManager: SwarmManager;
   dataDir: string;
-  previousFile: OpenRouterModelsFile;
   previousOverrides?: Awaited<ReturnType<typeof readModelOverrides>>;
-  mutate: () => Promise<void>;
+  mutate: (current: OpenRouterModelsFile) => OpenRouterModelsFile | null;
+  beforeReload?: () => Promise<void>;
 }): Promise<void> {
-  const { swarmManager, dataDir, previousFile, previousOverrides, mutate } = options;
-
-  try {
-    await mutate();
-    if (previousOverrides) {
-      await swarmManager.reloadModelCatalogOverridesAndProjection();
-    } else {
-      await swarmManager.reloadOpenRouterModelsAndProjection();
-    }
-  } catch (error) {
-    await writeOpenRouterModels(dataDir, previousFile);
-    if (previousOverrides) {
+  const { swarmManager, dataDir, previousOverrides } = options;
+  let applying = true;
+  await mutateOpenRouterModelsFile(dataDir, options.mutate, async () => {
+    if (applying) {
+      applying = false;
+      await options.beforeReload?.();
+    } else if (previousOverrides) {
       await writeModelOverrides(dataDir, previousOverrides);
     }
-
-    try {
-      if (previousOverrides) {
-        await swarmManager.reloadModelCatalogOverridesAndProjection();
-      } else {
-        await swarmManager.reloadOpenRouterModelsAndProjection();
-      }
-    } catch {
-      // Best-effort restoration. Preserve the original mutation or projection error below.
-    }
-
-    throw error;
-  }
+    if (previousOverrides) await swarmManager.reloadModelCatalogOverridesAndProjection();
+    else await swarmManager.reloadOpenRouterModelsAndProjection();
+  });
 }
 
 async function buildOpenRouterModelEntryForAddition(
@@ -383,7 +349,7 @@ function reconcileStoredOpenRouterToolCapabilities(
   }
 
   return reconciledModels
-    ? { version: file.version, models: reconciledModels }
+    ? { ...file, models: reconciledModels }
     : null;
 }
 

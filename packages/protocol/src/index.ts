@@ -78,3 +78,4 @@ export * from './history-recall.js'
 export * from './context-mode.js'
 export * from './context-artifacts.js'
 export * from './history-index.js'
+export * from "./openrouter-routing.js";

@@ -1,3 +1,4 @@
+import { installOpenRouterRequestPolicy } from "./openrouter-request-policy.js";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   type AgentRuntimeExtensionSnapshot,
@@ -524,6 +525,9 @@ export class PiRuntimeCreator {
     // the first prompt can start.
     toolOutputBudget.augmentSessionTools(session);
     installPiProviderContextImageResize(session, secureRuntimeBinding);
+    // Must precede generationTelemetry.install(): telemetry captures this stream.
+    // Keeping policy underneath telemetry also protects SDK compaction after restore.
+    installOpenRouterRequestPolicy(session);
     const runtimeCallbacks: SwarmRuntimeCallbacks = {
       onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
         await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);

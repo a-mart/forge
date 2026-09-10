@@ -1,5 +1,8 @@
 import {
   FORGE_MODEL_CATALOG,
+  resolveOpenRouterRouting,
+  type OpenRouterRoutingConfig,
+  type OpenRouterRoutingPolicy,
   getCatalogFamily,
   getCatalogModel,
   getCatalogModelsByFamily,
@@ -32,6 +35,8 @@ export class ModelCatalogService {
   private readonly catalog: ForgeModelCatalog;
   private overrides: Record<string, ModelOverrideEntry> = {};
   private openRouterModels: Record<string, OpenRouterModelEntry> = {};
+  private openRouterRoutingDefaults: OpenRouterRoutingConfig = {};
+  private openRouterRoutingError: unknown;
   private xaiOAuthActive = false;
   private xaiOAuthModels = new Map<string, ForgeModelDefinition>();
   private loadedDataDir: string | null = null;
@@ -43,24 +48,36 @@ export class ModelCatalogService {
 
   async loadOverrides(dataDir: string): Promise<void> {
     const generation = ++this.overrideGeneration;
+    let openRouterRoutingError: unknown;
     const [overrideFile, openRouterFile] = await Promise.all([
       readModelOverrides(dataDir),
-      readOpenRouterModels(dataDir),
+      readOpenRouterModels(dataDir).catch((error) => { openRouterRoutingError = error; return null; }),
     ]);
     if (generation !== this.overrideGeneration) return;
     this.loadedDataDir = dataDir;
     this.overrides = normalizeLoadedOverrides(overrideFile.overrides);
-    this.openRouterModels = { ...openRouterFile.models };
+    this.openRouterModels = { ...openRouterFile?.models };
+    this.openRouterRoutingDefaults = openRouterFile?.routingDefaults ?? {};
+    this.openRouterRoutingError = openRouterRoutingError;
   }
 
   async reloadOpenRouterModels(): Promise<void> {
     if (!this.loadedDataDir) {
       this.openRouterModels = {};
+      this.openRouterRoutingDefaults = {};
       return;
     }
 
-    const file = await readOpenRouterModels(this.loadedDataDir);
+    const file = await readOpenRouterModels(this.loadedDataDir).catch((error) => { this.openRouterRoutingError = error; throw error; });
     this.openRouterModels = { ...file.models };
+    this.openRouterRoutingDefaults = file.routingDefaults ?? {};
+    this.openRouterRoutingError = undefined;
+  }
+
+  getEffectiveOpenRouterRouting(modelId: string): OpenRouterRoutingPolicy {
+    if (!this.loadedDataDir) throw new Error("OpenRouter routing is not initialized; wait for settings to load before sending requests");
+    if (this.openRouterRoutingError) throw new Error("Saved OpenRouter routing is unreadable; repair settings before sending requests", { cause: this.openRouterRoutingError });
+    return resolveOpenRouterRouting(this.openRouterRoutingDefaults, this.openRouterModels[modelId]?.routing);
   }
 
   getOverrides(): Record<string, ModelOverrideEntry> {

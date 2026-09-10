@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Loader2, Plug, Search } from 'lucide-react'
-import { getOpenRouterModelOverrideKey, type ModelOverrideEntry } from '@forge/protocol'
+import { getOpenRouterModelOverrideKey, resolveOpenRouterRouting, type OpenRouterRoutingConfig, type ModelOverrideEntry } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { OpenRouterRoutingDialog } from './OpenRouterRoutingDialog'
+import { routingSummary } from './openrouter-routing-summary'
+import { fetchOpenRouterRouting } from './openrouter-routing-api'
 import { OpenRouterModelCard } from './OpenRouterModelCard'
 import { OpenRouterBrowseDialog } from './OpenRouterBrowseDialog'
 import type { SettingsApiClient } from './settings-api-client'
@@ -18,7 +21,11 @@ interface SettingsOpenRouterProps {
   onCardSaveEnd?: (modelKey: string) => void
 }
 
-export function SettingsOpenRouter({
+export function SettingsOpenRouter(props: SettingsOpenRouterProps) {
+  return <SettingsOpenRouterContent key={props.apiClient?.endpoint('/') ?? props.wsUrl ?? 'local'} {...props} />
+}
+
+function SettingsOpenRouterContent({
   wsUrl,
   apiClient,
   modelConfigChangeKey,
@@ -28,6 +35,10 @@ export function SettingsOpenRouter({
   onCardSaveEnd,
 }: SettingsOpenRouterProps) {
   const clientOrWsUrl: SettingsApiClient | string | undefined = apiClient ?? wsUrl
+  const [routingScope, setRoutingScope] = useState<string | null | undefined>(undefined)
+  const [defaults, setDefaults] = useState<OpenRouterRoutingConfig | null>(null)
+  const [routingError, setRoutingError] = useState('')
+  const loadSequence = useRef(0)
   const [data, setData] = useState<OpenRouterModelsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -37,15 +48,16 @@ export function SettingsOpenRouter({
   const [actionError, setActionError] = useState<string | null>(null)
 
   const loadModels = useCallback(async () => {
+    const sequence = ++loadSequence.current
     setError(null)
     setLoading(true)
     try {
       const response = await fetchOpenRouterModels(clientOrWsUrl)
-      setData(response)
+      if (sequence === loadSequence.current) setData(response)
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError))
+      if (sequence === loadSequence.current) setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
   }, [clientOrWsUrl])
 
@@ -58,6 +70,21 @@ export function SettingsOpenRouter({
   useEffect(() => {
     void loadModels()
   }, [loadModels, modelConfigChangeKey])
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchOpenRouterRouting(clientOrWsUrl).then((response) => {
+      if (!cancelled) { setDefaults(response.defaults); setRoutingError('') }
+    }).catch((reason: unknown) => {
+      if (!cancelled) { setDefaults(null); setRoutingError(String(reason)) }
+    })
+    return () => { cancelled = true }
+  }, [clientOrWsUrl, modelConfigChangeKey, data])
+
+  const summaryFor = (routing: OpenRouterRoutingConfig | undefined) => {
+    if (!defaults) return 'Routing settings unavailable'
+    try { return routingSummary(resolveOpenRouterRouting(defaults, routing)) } catch { return 'Routing configuration needs repair' }
+  }
 
   const handleRemove = useCallback(async (modelId: string) => {
     if (!data) return
@@ -99,21 +126,6 @@ export function SettingsOpenRouter({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {hasModels ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 px-2.5 text-xs"
-              onClick={(e) => {
-                e.stopPropagation()
-                setDialogOpen(true)
-              }}
-            >
-              <Search className="size-3" />
-              Browse Models
-            </Button>
-          ) : null}
           {!loading ? (
             isConfigured ? (
               <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
@@ -132,6 +144,28 @@ export function SettingsOpenRouter({
           )}
         </div>
       </button>
+
+      <div className="flex flex-wrap items-center gap-2">
+          {hasModels ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 px-2.5 text-xs"
+              onClick={(e) => {
+                e.stopPropagation()
+                setDialogOpen(true)
+              }}
+            >
+              <Search className="size-3" />
+              Browse Models
+            </Button>
+          ) : null}
+
+        <Button type="button" variant="outline" size="sm" onClick={() => setRoutingScope(null)}>OpenRouter defaults</Button>
+        <p className="text-xs text-muted-foreground">{summaryFor(undefined)}</p>
+      </div>
+      {routingError ? <p role="alert" className="text-xs text-destructive">Cannot load routing: {routingError}</p> : null}
 
       {/* Content (collapsed hides) */}
       {!collapsed ? (
@@ -169,6 +203,8 @@ export function SettingsOpenRouter({
                   key={model.modelId}
                   clientOrWsUrl={clientOrWsUrl}
                   model={model}
+                  routingSummary={summaryFor(model.routing)}
+                  onConfigureRouting={() => setRoutingScope(model.modelId)}
                   override={overrides[getOpenRouterModelOverrideKey(model.modelId)]}
                   onRemove={(id) => void handleRemove(id)}
                   isRemoving={removingModelId === model.modelId}
@@ -208,6 +244,14 @@ export function SettingsOpenRouter({
         </>
       ) : null}
 
+      {routingScope !== undefined ? <OpenRouterRoutingDialog
+        key={routingScope ?? 'defaults'}
+        clientOrWsUrl={clientOrWsUrl}
+        modelId={routingScope ?? undefined}
+        modelConfigChangeKey={modelConfigChangeKey}
+        onClose={() => setRoutingScope(undefined)}
+        onSaved={() => void loadModels()}
+      /> : null}
       <OpenRouterBrowseDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}

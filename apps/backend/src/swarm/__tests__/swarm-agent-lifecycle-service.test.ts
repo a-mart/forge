@@ -1,3 +1,4 @@
+import { modelCatalogService } from "../model-catalog-service.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -3558,6 +3559,107 @@ describe("SwarmAgentLifecycleService", () => {
       expect(descriptors.get(spawned.agentId)?.delegationFallbackModel)
         .toEqual(expectedFallbackModel);
     } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([{ restricted: false, preemptive: true }, { restricted: true, preemptive: true }, { restricted: false, preemptive: false }, { restricted: true, preemptive: false }])("respects hard OpenRouter policy during spawn fallback %j", async ({ restricted, preemptive }) => {
+    const routing = vi.spyOn(modelCatalogService, "getEffectiveOpenRouterRouting").mockReturnValue(restricted ? { zdr: true } : {});
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-route-capacity-fallback-"));
+    try {
+      const settings = await resolveDelegationRosterSettings(dataDir);
+      const roster = settings.rosters[0]!;
+      const route = roster.routes.find((candidate) => candidate.routeId === "fast-builder")!;
+      const primary = {
+        provider: "openrouter",
+        modelId: "openai/gpt-4.1",
+        reasoningLevel: "medium" as const,
+      };
+      const configuredFallback = {
+        provider: "anthropic",
+        modelId: "claude-sonnet-5",
+        reasoningLevel: "high" as const,
+      };
+      await saveDelegationRosterSettings(dataDir, {
+        ...settings,
+        rosters: [{
+          ...roster,
+          defaultRouteId: route.routeId,
+          modeRoutes: {},
+          routes: [{
+            ...route,
+            ...primary,
+            availabilityFallback: configuredFallback,
+            capabilityEscalationRouteId: undefined,
+          }],
+        }],
+      });
+      const persisted = await resolveDelegationRosterSettings(dataDir);
+      const persistedRoute = persisted.rosters[0]!.routes.find((candidate) => candidate.routeId === route.routeId)!;
+      expect(persistedRoute).toMatchObject({
+        provider: primary.provider,
+        modelId: primary.modelId,
+        availabilityFallback: configuredFallback,
+      });
+
+      const manager = createAgentDescriptor({
+        agentId: "capacity-manager",
+        role: "manager",
+        managerId: "capacity-manager",
+        profileId: "capacity-manager",
+        status: "idle",
+        cwd: "/proj",
+        delegationRosterId: roster.rosterId,
+        delegationRosterOrigin: "global_default",
+      });
+      const descriptors = new Map([[manager.agentId, manager]]);
+      const modelCapacityBlocks = new Map<string, {
+        provider: string;
+        modelId: string;
+        blockedUntilMs: number;
+      }>();
+      modelCapacityBlocks.set(
+        buildModelCapacityBlockKey(persistedRoute.provider, persistedRoute.modelId)!,
+        {
+          provider: persistedRoute.provider,
+          modelId: persistedRoute.modelId,
+          blockedUntilMs: Date.now() + 60_000,
+        },
+      );
+      if (!preemptive) modelCapacityBlocks.clear();
+      const createRuntimeForDescriptor = vi.fn(async (descriptor: AgentDescriptor) => {
+        if (!preemptive && descriptor.model.provider === "openrouter") throw new Error("429 rate limit");
+        return makeRuntimeStub({ descriptor });
+      });
+      const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+        createRuntimeForDescriptor,
+        dataDir,
+        descriptors,
+        modelCapacityBlocks,
+        assertManager: () => manager,
+      }));
+
+      if (!preemptive && restricted) {
+        await expect(svc.spawnAgent(manager.agentId, { agentId: "capacity-worker", route: route.routeId })).rejects.toThrow("429 rate limit");
+        expect(createRuntimeForDescriptor).toHaveBeenCalledTimes(1);
+        return;
+      }
+      const spawned = await svc.spawnAgent(manager.agentId, {
+        agentId: "capacity-worker",
+        route: route.routeId,
+      });
+
+      const expectedFallbackModel = {
+        provider: configuredFallback.provider,
+        modelId: configuredFallback.modelId,
+        thinkingLevel: configuredFallback.reasoningLevel,
+      };
+      expect(spawned.model).toEqual(restricted ? { provider: primary.provider, modelId: primary.modelId, thinkingLevel: primary.reasoningLevel } : expectedFallbackModel);
+      expect(spawned.model.modelId).not.toBe("gpt-5.5");
+      expect(descriptors.get(spawned.agentId)?.delegationFallbackModel)
+        .toEqual(expectedFallbackModel);
+    } finally {
+      routing.mockRestore();
       await rm(dataDir, { recursive: true, force: true });
     }
   });

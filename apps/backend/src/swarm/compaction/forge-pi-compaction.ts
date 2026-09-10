@@ -1,5 +1,6 @@
 import type { ManagerExactModelSelection, ManagerReasoningLevel } from "@forge/protocol";
-import type { Api, Model } from "../pi/pi-ai-compat.js";
+import { streamSimple, type Api, type Model } from "../pi/pi-ai-compat.js";
+import { withOpenRouterRequestPolicy } from "../runtime/pi/openrouter-request-policy.js";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { compact as runPiCompaction, type CompactionResult } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
@@ -195,8 +196,8 @@ export async function runForgePiCompaction(options: {
   );
 
   resolvedAuth.markExecutionAttempted?.();
-  // Leave streamFn undefined so Pi uses compat completeSimple with this explicit auth
-  // instead of re-resolving active-session auth through session.agent.streamFn.
+  // Preserve explicit compaction auth, while resolving routing for each summary request.
+  // Do not use the active session stream here: it re-resolves authentication.
   const result = await runPiCompaction(
     bounded.preparation,
     compactionModel,
@@ -205,7 +206,7 @@ export async function runForgePiCompaction(options: {
     options.combinedInstructions,
     options.event.signal,
     thinkingLevel,
-    undefined,
+    compactionModel.provider === "openrouter" ? withOpenRouterRequestPolicy(streamSimple) : undefined,
     resolvedAuth.env,
   );
 

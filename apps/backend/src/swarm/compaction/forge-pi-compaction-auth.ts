@@ -20,7 +20,7 @@ export interface ResolvedForgePiCompactionAuth {
   model: Model<Api>;
   apiKey: string;
   headers?: Record<string, string>;
-  /** Provider process env from Pi ModelRegistry auth (passed to compact(); streamFn stays undefined). */
+  /** Provider process env from Pi ModelRegistry auth, preserved by the compaction request stream. */
   env?: Record<string, string>;
   authSource: ForgePiCompactionAuthSource;
   markExecutionAttempted?: () => void;
