@@ -20,7 +20,7 @@ Each manager has a default model set during creation. To change it, open Setting
 - **Claude Opus** is stronger for complex reasoning and code review.
 - **GPT models** work well and offer an alternative when you want model diversity.
 
-Delegated workers can use different models than the manager. Configure complete specialists under **Settings → Delegation → Rosters**.
+Delegated workers can use different models than the manager. Configure complete specialists under **Settings → Delegation → Rosters**. After you add OpenRouter models, **Settings > Models** can set shared OpenRouter routing/privacy defaults and exact-model overrides on the selected backend. Those filters apply to the next OpenRouter call and constrain OpenRouter inference routing only; they are not specialist fallback.
 
 ## Project basics
 

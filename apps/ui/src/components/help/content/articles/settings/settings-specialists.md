@@ -26,6 +26,8 @@ Managers normally choose the work to delegate and let Forge use that task type's
 
 The roster selection order is global default → project default → session override. Roster changes affect future attempts; running attempts keep their pinned specialist and execution settings. Availability fallback swaps only the model when the primary is unavailable and keeps the same attempt. Capability escalation starts a fresh attempt on another specialist and never happens merely because a provider is rate-limited.
 
+OpenRouter provider routing is configured separately in **Settings > Models**. Hard OpenRouter filters on the primary model suppress Forge automatic model fallback; preferences-only order or sort do not. OpenRouter endpoint fallback is not this specialist fallback. Shared required ZDR and disallowed collection cannot be weakened per model.
+
 Configure this under **Rosters**. Select a specialist to edit both what it does and how it runs. Its task-type badge shows its job; the **Default** badge shows whether Forge chooses it automatically for that task. Use **Make default** to replace the current default without editing a separate routing table. Use the compact work menu beside Send to select a session roster, return to the project default, or make the current choice the project default.
 
 ## Global, project, and Collaboration scopes

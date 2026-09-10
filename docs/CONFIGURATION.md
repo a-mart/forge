@@ -392,6 +392,12 @@ For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot`
 
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. Codex selector mentions are handled separately as plugin-scoped turns that delegate to the visible Codex Plugin specialist, not through the manager model selector list. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
+### OpenRouter routing
+
+OpenRouter provider routing and privacy filters live in **Settings → Models** on the selected backend and persist in `shared/config/openrouter-models.json` as `routingDefaults` plus optional per-model `routing`. Shared defaults apply to every OpenRouter manager and worker call, including exact IDs that are not added yet. A per-model override requires the model to be added first. On a Collaboration server this configuration is admin-only.
+
+An absent field inherits; `null` clears the field; arrays and `max_price` replace. Shared required ZDR and disallowed collection are a privacy floor that a per-model override cannot weaken. ZDR and data-collection controls are separate; preferred provider order is not a hard allowlist; allowed/excluded lists, USD-per-million input/output price ceilings, quantizations, required parameters, and disabled OpenRouter endpoint fallback are. OpenRouter endpoint fallback (`allow_fallbacks`) is distinct from Forge automatic model fallback. A saved change applies to the next OpenRouter model call. No matching endpoint, invalid policy, or an unreadable saved file fails closed. Hard filters suppress Forge automatic model fallback; preferences-only order or sort do not. These filters constrain OpenRouter HTTPS completions routing only — not local transcripts, tools, or non-OpenRouter summarization/compaction. Endpoint discovery is advisory and is not a paid test. See [ZDR](https://openrouter.ai/docs/guides/features/zdr), [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection), and [OpenRouter privacy settings](https://openrouter.ai/settings/privacy).
+
 Appearance preferences are separate from server/shared configuration. They are stored in local renderer/browser state for the active UI only, so changes to Light/Dark/System mode, templates, colors, or fonts stay local to that client instead of syncing through shared profile config.
 
 ## Retired Telegram data (operator cleanup only)
@@ -439,6 +445,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
 │   │   ├── history-index.json             # Persistent History indexing pause preference
 │   │   ├── secure-secret-settings.json    # Secure secret grant limit
+│   │   ├── openrouter-models.json         # User-added OpenRouter models plus routingDefaults and per-model routing
 │   ├── state/
 │   │   ├── secure-sessions.db             # Secure Session metadata and OS-encrypted material
 │   │   ├── builder-sidebar-order.json     # Local unified project order
@@ -449,7 +456,6 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── model-cache-visualization.json # Model-cache visualization preference
 │   │   ├── model-overrides.json           # Model visibility, context caps, instructions
 │   │   ├── notification-settings.json     # Notification sound preferences
-│   │   ├── openrouter-models.json         # User-added OpenRouter models
 │   │   ├── phoenix-observability.json     # Builder Phoenix tracing settings
 │   │   ├── project-resources.json         # Repo-resource trust/override settings
 │   │   ├── remote-build-settings.json     # Collaboration Remote Projects policy
