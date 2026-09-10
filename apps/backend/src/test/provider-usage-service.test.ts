@@ -49,6 +49,69 @@ afterEach(() => {
 });
 
 describe("ProviderUsageService", () => {
+  it.each(["direct", "broker"])("classifies a weekly primary window via %s and survives restart", async (source) => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+    const nowMs = Date.parse("2026-09-10T00:00:00Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+    const resetAtMs = nowMs + 4 * 24 * 60 * 60 * 1000;
+    const windowSeconds = 7 * 24 * 60 * 60;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      rate_limit: {
+        primary_window: { used_percent: 81, reset_at: resetAtMs / 1000, limit_window_seconds: windowSeconds },
+        secondary_window: null
+      }
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const cacheFilePath = makeCacheFilePath();
+    const historyFilePath = makeHistoryFilePath();
+    const service = new ProviderUsageService("/tmp/shared-auth.json", historyFilePath, cacheFilePath) as any;
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue({ tokens: { access_token: "test-token" } });
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readXaiAuth").mockResolvedValue(null);
+    if (source === "broker") {
+      service.setOpenAIAuthBrokerUsageGetter(async () => [{
+        provider: "openai", available: true,
+        sessionUsage: { percent: 81, resetInfo: "4d", resetAtMs, windowSeconds }
+      }]);
+    }
+    const snapshot = await service.getSnapshot();
+    expect(snapshot.openai[0].sessionUsage).toBeUndefined();
+    expect(snapshot.openai[0].weeklyUsage).toMatchObject({ percent: 81, resetAtMs, windowSeconds });
+    expect(await readFile(historyFilePath, "utf8")).toContain('"windowKind":"weekly"');
+    await service.persistQueue;
+
+    // Also repair a last-known-good cache written by the old positional mapper.
+    const persisted = JSON.parse(await readFile(cacheFilePath, "utf8"));
+    const data = persisted.entries.openai[0].data;
+    data.sessionUsage = data.weeklyUsage;
+    delete data.weeklyUsage;
+    await writeFile(cacheFilePath, JSON.stringify(persisted));
+    const restarted = new ProviderUsageService("/tmp/shared-auth.json", historyFilePath, cacheFilePath) as any;
+    vi.spyOn(restarted, "readAnthropicAuth").mockResolvedValue(null);
+    vi.spyOn(restarted, "readXaiAuth").mockResolvedValue(null);
+    const restored = await restarted.getSnapshot();
+    expect(restored.openai[0].sessionUsage).toBeUndefined();
+    expect(restored.openai[0].weeklyUsage).toMatchObject({ percent: 81, resetAtMs, windowSeconds });
+  });
+
+  it.each([
+    [18000, 604800, 20, 81],
+    [604800, 18000, 81, 20],
+    [undefined, undefined, 20, 81]
+  ])("preserves dual windows and legacy duration-less responses (%s/%s)", async (primarySeconds, secondarySeconds, primaryPercent, secondaryPercent) => {
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const result = await service.withHistoricalPace("openai", {
+      provider: "openai", available: true,
+      sessionUsage: { percent: primaryPercent, resetInfo: "soon", windowSeconds: primarySeconds },
+      weeklyUsage: { percent: secondaryPercent, resetInfo: "soon", windowSeconds: secondarySeconds }
+    }, Date.now());
+    expect(result.sessionUsage.percent).toBe(20);
+    expect(result.weeklyUsage.percent).toBe(81);
+  });
+
   it("preserves cached good data on failed refresh attempts", async () => {
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
     const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;

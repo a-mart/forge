@@ -474,6 +474,7 @@ export function buildRows(providers: ProviderUsageStats | null): ProviderRowConf
         iconClassName: 'dark:invert',
         usage: openaiAccounts[i],
         provider: 'openai',
+        showSession: Boolean(openaiAccounts[i].sessionUsage),
       })
     }
   }
