@@ -3,7 +3,7 @@ import fs, { existsSync, readFileSync } from 'node:fs'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { builtinModules, createRequire } from 'node:module'
+import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 import { prepareElectronBetterSqlite3Binding } from './prepare-dev-native.mjs'
@@ -145,7 +145,6 @@ const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
 const docsPrunableExtensions = new Set(['', '.md', '.mdx', '.markdown', '.txt', '.rst', '.adoc', '.rtf'])
-const NODE_BUILTIN_MODULES = new Set([...builtinModules, ...builtinModules.map((moduleName) => `node:${moduleName}`)])
 
 export async function cleanReleaseDir(targetDir = releaseDir) {
   await mkdir(targetDir, { recursive: true })
@@ -680,10 +679,10 @@ const PI_SINGLETON_RUNTIME_PACKAGES = new Set([
  * Non-Pi packages may resolve multiple versions; secondary installs are staged
  * nested under the requesting parent install (by realpath) so nothing is silently discarded.
  */
-export async function collectRuntimePackageClosure(rootPackages) {
+export async function collectRuntimePackageClosure(rootPackages, resolveFromManifestPath = backendWorkspaceManifestPath) {
   const queuedPackages = rootPackages.map(({ packageName, optional }) => ({
     packageName,
-    resolveFromManifestPath: backendWorkspaceManifestPath,
+    resolveFromManifestPath,
     optional,
     parentPackageName: null,
     parentPackageRoot: null,
@@ -781,16 +780,14 @@ export async function collectRuntimePackageClosure(rootPackages) {
 function collectRuntimeDependencyDescriptors(manifest) {
   const descriptors = []
 
+  // Manifest dependencies name installed packages, even when Node has a builtin
+  // with the same name (e.g. tr46 requires the declared npm package via punycode/).
   for (const packageName of Object.keys(manifest.dependencies ?? {})) {
-    if (!NODE_BUILTIN_MODULES.has(packageName)) {
-      descriptors.push({ packageName, optional: false })
-    }
+    descriptors.push({ packageName, optional: false })
   }
 
   for (const packageName of Object.keys(manifest.optionalDependencies ?? {})) {
-    if (!NODE_BUILTIN_MODULES.has(packageName)) {
-      descriptors.push({ packageName, optional: true })
-    }
+    descriptors.push({ packageName, optional: true })
   }
 
   return descriptors
@@ -907,18 +904,18 @@ function isStagedPackageManifestResolutionError(error) {
   )
 }
 
-async function stageRuntimePackages(runtimePackages) {
+async function stageRuntimePackages(runtimePackages, nodeModulesDir = backendStageNodeModulesDir) {
   const hoisted = Array.isArray(runtimePackages) ? runtimePackages : runtimePackages.hoisted
   const nested = Array.isArray(runtimePackages) ? [] : runtimePackages.nested
   if (hoisted.length === 0 && nested.length === 0) {
     return
   }
 
-  await mkdir(backendStageNodeModulesDir, { recursive: true })
+  await mkdir(nodeModulesDir, { recursive: true })
   const stagedTargetByRealpath = new Map()
 
   for (const runtimePackage of hoisted) {
-    const packageTargetDir = path.join(backendStageNodeModulesDir, ...runtimePackage.name.split('/'))
+    const packageTargetDir = path.join(nodeModulesDir, ...runtimePackage.name.split('/'))
     await copyRuntimePackage(runtimePackage, packageTargetDir)
     stagedTargetByRealpath.set(await fs.promises.realpath(runtimePackage.packageRoot), packageTargetDir)
   }
@@ -1718,6 +1715,20 @@ function normalizeRendererAssetReference(reference) {
   return reference
 }
 
+export async function stageBraveSearchDependencies(
+  stagedSkillDir = path.join(stagedBuiltinSkillsDir, 'brave-search'),
+  sourceManifestPath = path.join(backendWorkspaceDir, 'src', 'swarm', 'skills', 'builtins', 'brave-search', 'package.json'),
+) {
+  const manifest = JSON.parse(await readFile(sourceManifestPath, 'utf8'))
+  const runtimePackages = await collectRuntimePackageClosure(
+    collectRuntimeDependencyDescriptors(manifest),
+    sourceManifestPath,
+  )
+  // These unbundled CLIs cannot resolve the sibling backend/node_modules tree.
+  // Copy packages intact through the existing owner to preserve jsdom/css-tree assets.
+  await stageRuntimePackages(runtimePackages, path.join(stagedSkillDir, 'node_modules'))
+}
+
 async function stageBackendResources() {
   await mkdir(forgeResourcesDir, { recursive: true })
 
@@ -1739,6 +1750,7 @@ async function stageBackendResources() {
     path.join(repoRoot, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
   )
+  await stageBraveSearchDependencies()
   await copyDirectory(
     path.join(repoRoot, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
