@@ -40,3 +40,12 @@ describe('global theme-consistent scrollbars', () => {
     )
   })
 })
+
+describe('Inbox section stacking', () => {
+  it('contains raised tree controls beneath the sticky Needs you section', () => {
+    expect(blockAfter(css, '.sidebar-room-inbox-section {')).toMatch(/isolation:\s*isolate;/)
+    const needsYou = blockAfter(css, '.sidebar-room-inbox-section--needs-you {')
+    expect(needsYou).toMatch(/position:\s*sticky;/)
+    expect(needsYou).toMatch(/z-index:\s*1;/)
+  })
+})
