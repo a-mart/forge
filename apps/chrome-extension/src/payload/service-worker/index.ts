@@ -448,8 +448,17 @@ export class Runtime implements ServiceWorkerPayload {
     }
     if (params.operation === 'status') {
       try {
-        const tab = await this.chrome.tabs.get(params.tabId)
+        let tab = await this.chrome.tabs.get(params.tabId)
         authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
+        if (!(tab.url ?? tab.pendingUrl)) {
+          const neutralInitialTarget = authority.createdByForge && authority.initialNavigationPending &&
+            await this.authorities.hasAuthorizedNeutralInitialTarget(tab)
+          authority = this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
+          if (!neutralInitialTarget) {
+            return this.executeFailure(params, 'restricted-target', 'The leased Chrome tab URL could not be proved.', true)
+          }
+          tab = { ...tab, url: 'about:blank' }
+        }
         return this.executeResponse(params, true, {
           available: true,
           host: { connected: true, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null },
