@@ -6,6 +6,57 @@ import { FakePort, fakeChrome } from './fakes.js'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('service-worker native relay recovery', () => {
+  it.each([{ message: 'Native host has exited.' }, undefined])('consumes runtime.lastError (%j) only inside current and stale disconnect callbacks', async (error) => {
+    const chrome = fakeChrome()
+    const ports: FakePort[] = []
+    chrome.runtime.connectNative = () => {
+      const port = new FakePort()
+      port.onPost = (message) => {
+        const request = message as { id?: string; method?: string }
+        if (request.method === 'forge.runtime.hello') {
+          port.emitMessage({
+            jsonrpc: '2.0', id: request.id,
+            result: { protocolVersion: 1, desktopInstanceId: 'desktop-fixture', heartbeatMs: 10_000, maxMessageBytes: 262_144, requiredShellAbi: 1 },
+          })
+        }
+      }
+      ports.push(port)
+      return port
+    }
+    let inDisconnectCallback = false
+    const lastError = vi.fn(() => {
+      expect(inDisconnectCallback).toBe(true)
+      return error
+    })
+    Object.defineProperty(chrome.runtime, 'lastError', { get: lastError })
+    const alarms = vi.spyOn(chrome.alarms, 'create')
+    vi.stubGlobal('chrome', chrome)
+    const runtime = new Runtime()
+    try {
+      const sha256 = 'a'.repeat(64)
+      await runtime.initialize({ directory: `${PAYLOAD_VERSION}-${sha256}`, sha256 })
+      await Promise.resolve()
+      expect(lastError).not.toHaveBeenCalled()
+      alarms.mockClear()
+      inDisconnectCallback = true
+      try { ports[0]!.emitDisconnect() } finally { inDisconnectCallback = false }
+      expect.soft(lastError).toHaveBeenCalledTimes(1)
+      expect(ports).toHaveLength(2)
+      expect(alarms.mock.calls).toEqual([['forge.externalChrome.transportGrace.v2', { delayInMinutes: 0.5 }]])
+      await Promise.resolve()
+      alarms.mockClear()
+      inDisconnectCallback = true
+      try { ports[0]!.emitDisconnect() } finally { inDisconnectCallback = false }
+      expect.soft(lastError).toHaveBeenCalledTimes(2)
+      await Promise.resolve()
+      expect(ports).toHaveLength(2)
+      expect(alarms).not.toHaveBeenCalled()
+      expect(ports[1]!.disconnected).toBe(false)
+    } finally {
+      await runtime.shutdown()
+    }
+  })
+
   it('restarts native negotiation from the durable transport-grace alarm after Desktop disconnect', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: 'https://fixture.invalid/' }] })
     const send = chrome.debugger.sendCommand.bind(chrome.debugger)

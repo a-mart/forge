@@ -226,6 +226,7 @@ export class Runtime implements ServiceWorkerPayload {
     this.chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 })
     this.native = new NativeRpcClient({
       connect: (host) => this.chrome.runtime.connectNative(host),
+      consumeLastError: () => { void this.chrome.runtime.lastError },
       extensionInstanceId: this.extensionInstanceId,
       chromeVersion: chromeVersion(),
       payloadSha256: identity.sha256,

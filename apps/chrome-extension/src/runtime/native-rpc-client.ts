@@ -51,6 +51,7 @@ const browserScheduler: NativeRpcScheduler = {
 
 export interface NativeRpcClientOptions {
   connect: (hostName: string) => ChromeRuntimePort
+  consumeLastError?: () => void
   extensionInstanceId: string
   chromeVersion: string
   payloadSha256?: string
@@ -181,6 +182,8 @@ export class NativeRpcClient {
       if (this.port === port) this.receive(message)
     })
     port.onDisconnect.addListener(() => {
+      // Chrome's callback-scoped lastError must be consumed even for a stale port.
+      this.options.consumeLastError?.()
       if (this.port !== port) return
       this.port = null
       this.resetNegotiatedState()
