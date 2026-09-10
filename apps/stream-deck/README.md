@@ -43,6 +43,10 @@ pnpm --filter @forge/stream-deck run link
 pnpm streamdeck:pack
 ```
 
+Validation and packaging use the installed Elgato schemas with `--no-update-check` so a
+registry outage cannot block local packaging or Forge Desktop startup. Plugin validation
+remains enabled; schema updates belong in dependency updates.
+
 The packaged artifact is written to
 `apps/stream-deck/com.forge.command-center.streamDeckPlugin`.
 

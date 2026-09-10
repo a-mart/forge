@@ -8,9 +8,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "watch": "rollup -c -w",
-    "validate": "streamdeck validate com.forge.command-center.sdPlugin",
+    "validate": "streamdeck validate com.forge.command-center.sdPlugin --no-update-check",
     "link": "streamdeck link com.forge.command-center.sdPlugin",
-    "pack": "streamdeck pack com.forge.command-center.sdPlugin --force"
+    "pack": "streamdeck pack com.forge.command-center.sdPlugin --force --no-update-check"
   },
   "dependencies": {
     "@elgato/streamdeck": "2.1.0",
