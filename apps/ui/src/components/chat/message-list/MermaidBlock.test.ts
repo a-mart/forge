@@ -9,6 +9,8 @@ import { MermaidBlock } from './MermaidBlock'
 
 let root: Root
 let container: HTMLDivElement
+const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
 
 beforeEach(() => {
   container = document.createElement('div')
@@ -29,6 +31,16 @@ afterEach(() => {
   document.documentElement.classList.remove('dark')
   vi.restoreAllMocks()
   vi.useRealTimers()
+  for (const [key, descriptor] of [
+    ['createObjectURL', originalCreateObjectURL],
+    ['revokeObjectURL', originalRevokeObjectURL],
+  ] as const) {
+    if (descriptor) {
+      Object.defineProperty(URL, key, descriptor)
+    } else {
+      Reflect.deleteProperty(URL, key)
+    }
+  }
 })
 
 function renderMermaid(code: string) {
@@ -268,11 +280,18 @@ describe('MermaidBlock', () => {
   })
 
   it('exports SVG via the iframe bridge', async () => {
+    vi.useFakeTimers()
     const createObjectURL = vi.fn(() => 'blob:diagram-svg')
+    const revokeObjectURL = vi.fn()
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       writable: true,
       value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      writable: true,
+      value: revokeObjectURL,
     })
     const anchorClick = vi
       .spyOn(HTMLAnchorElement.prototype, 'click')
@@ -330,6 +349,14 @@ describe('MermaidBlock', () => {
 
     expect(createObjectURL).toHaveBeenCalled()
     expect(anchorClick).toHaveBeenCalled()
+    expect(document.querySelector('a[download]')).toBeTruthy()
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(document.querySelector('a[download]')).toBeNull()
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:diagram-svg')
   })
 
   it('opens fullscreen with a second isolated iframe renderer', async () => {

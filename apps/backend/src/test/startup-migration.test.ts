@@ -100,10 +100,10 @@ describe('checkDataDirMigration', () => {
         await withTTY(true, true, async () => {
           await checkDataDirMigration({ prompt })
         })
+        expect(process.env.FORGE_DATA_DIR).toBeUndefined()
       })
 
       expect(prompt).not.toHaveBeenCalled()
-      expect(process.env.FORGE_DATA_DIR).toBeUndefined()
     } finally {
       await rm(fakeHome, { recursive: true, force: true })
     }
