@@ -36,7 +36,7 @@ The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**.
 
 > Forge no longer includes the Claude Agent SDK runtime. Existing known SDK model selections load as native Anthropic selections, but Claude Code login credentials do not transfer. Configure Anthropic in Forge before continuing those sessions. Unknown SDK selections remain unavailable until you choose a native Anthropic model; canonical Forge history remains viewable and external Claude Code data is untouched.
 
-Choose providers based on the models and runtimes you need. Anthropic covers Claude models, OpenAI covers GPT and Codex, xAI covers native Grok models, OpenRouter credentials support user-added OpenRouter models, and Cursor SDK credentials support its catalog models when visible. Existing local OpenAI or Anthropic credentials may still be reflected in provider status, but the current Settings cards add OAuth accounts rather than presenting a general API-key entry flow.
+Choose providers based on the models and runtimes you need. Anthropic covers Claude models, OpenAI covers GPT and Codex, xAI covers native Grok models, OpenRouter credentials support user-added OpenRouter models, and Cursor SDK credentials support its catalog models when visible. Existing local OpenAI or Anthropic credentials may still be reflected in provider status, but the current Settings cards add OAuth accounts rather than presenting a general API-key entry flow. After you add OpenRouter models, **Settings → Models** can set shared OpenRouter routing/privacy defaults and exact-model overrides on the selected backend; see [OpenRouter routing and privacy](MODEL_CATALOG.md#openrouter-routing-and-privacy).
 
 For xAI, either paste an API key and select **Save**, or select **Login with OAuth**. For browser login, use **Open authorization URL** or **Copy URL**; if the local callback cannot reach Forge, paste the full callback URL from that login attempt. For a remote or headless backend, choose the device option when prompted, open the verification URL elsewhere, and enter the displayed code. Completing OAuth replaces a stored xAI API key, and saving a key replaces stored xAI OAuth. Native `grok-4.6` is the default and `grok-4.5` remains an explicit variant; both are available for normal manager creation, manager model changes, and exact per-session manager overrides when xAI auth is configured, as well as specialist and explicit worker-spawn choices. With OAuth, authenticated account discovery may also expose the OAuth-only `grok-build` and `grok-composer-2.5-fast` models; those entitlement-gated choices remain for specialists and explicit worker-spawn usage, are not universal entitlements, and are hidden under API-key auth. Native xAI `grok-composer-2.5-fast` is distinct from Cursor SDK `composer-2.5`.
 
@@ -657,6 +657,10 @@ A remote selection makes supported project-scoped surfaces use the remote origin
 
 Turning the browser preference off does not revoke the collaboration session, stop remote agents, or change server policy. Likewise, a server disabling Remote Projects denies subsequent member Builder HTTP requests and commands but does not disconnect existing sockets or subscriptions. Disabling remote terminals blocks subsequent member terminal lifecycle and ticket access; it does not terminate an already attached terminal socket or make the server a full sandbox. See the [canonical Remote Projects guide](collaboration/REMOTE_PROJECTS.md).
 
+### OpenRouter routing
+
+**Settings → Models** stores shared OpenRouter provider routing and privacy filters on the selected backend, including Remote Projects' selected server. Shared defaults apply to every OpenRouter call on that backend; a per-model override requires the model to be added first. On a Collaboration server this is admin-only. Changes apply to the next OpenRouter model call. Hard filters fail closed and suppress Forge automatic model fallback; preferences-only order or sort do not. OpenRouter endpoint fallback is not Forge model fallback. These filters constrain OpenRouter inference routing only — not local transcripts, tools, or non-OpenRouter summarization/compaction. Endpoint discovery is advisory and is not a paid test. See [Configuration](CONFIGURATION.md#openrouter-routing).
+
 ### Observability
 
 **Settings → Observability** configures the Builder-only Arize Phoenix exporter. Forge sends OTLP HTTP/protobuf traces to a local loopback endpoint, defaulting to `http://127.0.0.1:6006/v1/traces`. Rich capture can include runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback spans. Use the capture toggles, redaction settings, and content caps to control what goes into Phoenix.
@@ -681,6 +685,8 @@ Different models have different strengths. A powerful workflow pattern is routin
 - **Code review** → Two separate models reviewing independently, then a third model remediating
 
 Your manager can handle this routing automatically once you've taught it your preferences. Tell it which models to use for which kinds of tasks.
+
+OpenRouter endpoint routing is a different control: shared defaults and exact-model overrides in **Settings → Models** constrain which OpenRouter providers may serve an OpenRouter call. That is not specialist fallback or Forge automatic model fallback.
 
 ### Plan → Review → Remediate Cycles
 

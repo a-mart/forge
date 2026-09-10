@@ -30,6 +30,8 @@ A manager create, change, or session override must name `{ provider: "openrouter
 
 OpenRouter manager eligibility is also separate from compaction: OpenRouter remains outside the supported compaction provider list and its models are not compaction choices.
 
+OpenRouter provider routing is a different control from specialist fallback. Shared defaults and exact-model overrides in **Settings > Models** constrain which OpenRouter endpoints may serve the next call. Preferred provider order is not a hard allowlist; allowed/excluded lists, ZDR, denied collection, price ceilings, quantizations, required parameters, and disabled OpenRouter endpoint fallback are. OpenRouter endpoint fallback is not Forge automatic model fallback. Hard OpenRouter filters suppress Forge automatic model fallback because there is no equivalent-policy contract across models or providers; preferences-only order or sort do not. Shared required ZDR and disallowed collection cannot be weakened per model. These filters apply only to OpenRouter inference routing, not local transcripts, tools, or non-OpenRouter summarization/compaction. Discovery metadata is advisory. See the Provider Guide for the full control list and OpenRouter's [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection) documentation.
+
 ## Custom specialists
 
 A saved custom specialist is an escape hatch for a durable domain-specific prompt or model assignment. It is selected directly and is not combined with a task type or roster route.
@@ -39,6 +41,8 @@ A saved custom specialist is an escape hatch for a durable domain-specific promp
 Each roster specialist and direct custom specialist can define an availability fallback. Recoverable provider or model availability failures are handled inside the runtime before an error reaches the manager. Fallback does not imply greater capability.
 
 A roster specialist may separately name another specialist for a fresh attempt after evidence that the original executor was insufficient. The resolved worker descriptor and usage telemetry retain the concrete roster, internal route, model, and specialist attribution.
+
+When the primary model is OpenRouter, hard routing/privacy filters on that exact model suppress this automatic model fallback. Preferences-only OpenRouter settings do not.
 
 ## Compatibility
 

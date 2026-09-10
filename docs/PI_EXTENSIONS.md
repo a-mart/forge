@@ -212,6 +212,11 @@ Tool error state and non-model-facing `details` are unchanged.
 
 An extension that deliberately replaces the raw provider payload in `before_provider_request` is
 operating outside the canonical message lifecycle and owns the size of any tool content it inserts.
+For OpenRouter HTTPS completions, Forge still enforces saved routing/privacy filters on the outbound
+request: an extension cannot weaken required ZDR, denied collection, required parameters, or disabled
+endpoint fallback, and conflicting hard filters (`only`, `ignore`, `max_price`, `quantizations`, or
+`order` versus `sort`) fail closed rather than being merged. Align the extension with **Settings → Models**
+OpenRouter routing instead of overriding it.
 
 ### Available Events
 
