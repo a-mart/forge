@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   EXTERNAL_CHROME_LATE_RESPONSE_TOMBSTONE_TTL_MS,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
@@ -58,6 +58,52 @@ function welcomePort(
 }
 
 describe('bounded native JSON-RPC negotiation and reconnect', () => {
+  it.each(['current', 'stale'] as const)('consumes callback-scoped lastError once for a %s port without changing reconnect scheduling', async (epoch) => {
+    const scheduler = new FakeScheduler()
+    const port = welcomePort()
+    const replacement = welcomePort()
+    const connect = vi.fn().mockReturnValueOnce(port).mockReturnValue(replacement)
+    let inDisconnectCallback = false
+    const lastError = vi.fn(() => {
+      expect(inDisconnectCallback).toBe(true)
+      return { message: 'Native host has exited.' }
+    })
+    const runtime = { get lastError() { return lastError() } }
+    const onDisconnected = vi.fn()
+    const client = new NativeRpcClient({
+      connect,
+      consumeLastError: () => { void runtime.lastError },
+      extensionInstanceId: 'instance', chromeVersion: '125', scheduler,
+      onDisconnected,
+    })
+    try {
+      client.start()
+      await Promise.resolve()
+      if (epoch === 'stale') {
+        client.stop()
+        client.start()
+        await Promise.resolve()
+      }
+      const attempts = connect.mock.calls.length
+      const schedule = vi.spyOn(scheduler, 'setTimeout')
+      inDisconnectCallback = true
+      try { port.emitDisconnect() } finally { inDisconnectCallback = false }
+      expect.soft(lastError).toHaveBeenCalledTimes(1)
+      expect(onDisconnected.mock.calls).toEqual(epoch === 'current' ? [['native port disconnected']] : [])
+      expect(schedule.mock.calls.map(([, delay]) => delay)).toEqual(epoch === 'current' ? [250] : [])
+      scheduler.advance(249)
+      expect(connect).toHaveBeenCalledTimes(attempts)
+      scheduler.advance(1)
+      await Promise.resolve()
+      expect(connect).toHaveBeenCalledTimes(attempts + (epoch === 'current' ? 1 : 0))
+      expect(client.isConnected()).toBe(true)
+      expect(replacement.disconnected).toBe(false)
+      expect.soft(lastError).toHaveBeenCalledTimes(1)
+    } finally {
+      client.stop()
+    }
+  })
+
   it('negotiates honest capabilities using the shared strict contract', async () => {
     const scheduler = new FakeScheduler()
     const port = welcomePort()
