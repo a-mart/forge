@@ -122,7 +122,7 @@ async function writeRosterFile(roster: Record<string, unknown>): Promise<string>
 
 async function runHelper(args: string[]): Promise<CliResult> {
   return await new Promise((resolveRun, reject) => {
-    const env = { ...process.env, SWARM_DATA_DIR: "/tmp/forge-skill-test-data" };
+    const env: NodeJS.ProcessEnv = { ...process.env, SWARM_DATA_DIR: "/tmp/forge-skill-test-data" };
     delete env.FORCE_COLOR;
     const child = spawn(process.execPath, [helperScript, ...args], {
       cwd: skillDir,
