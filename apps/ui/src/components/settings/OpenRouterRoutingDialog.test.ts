@@ -30,6 +30,7 @@ const close = vi.fn()
 const saved = vi.fn()
 
 beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn()
   defaults = {}; routing = {}; revision = 1; offline = false; conflict = false
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
   client = {
@@ -57,126 +58,189 @@ afterEach(() => { flushSync(() => root.unmount()); container.remove(); vi.clearA
 const body = () => document.body
 async function renderDialog(model: string | undefined = modelId, event = 0) {
   flushSync(() => root.render(createElement(OpenRouterRoutingDialog, { clientOrWsUrl: client, modelId: model, modelConfigChangeKey: event, onClose: close, onSaved: saved })))
-  await waitFor(() => expect(getByRole(body(), 'button', { name: 'Save routing' })).toBeTruthy())
+  await waitFor(() => expect(getByRole(body(), 'switch', { name: 'Zero data retention' })).toBeTruthy())
 }
 function change(label: string, value: string) { flushSync(() => fireEvent.change(getByLabelText(body(), label), { target: { value } })) }
 function click(name: string) { flushSync(() => fireEvent.click(getByRole(body(), 'button', { name }))) }
+function toggle(name: string) { flushSync(() => fireEvent.click(getByRole(body(), 'switch', { name }))) }
+function expand(title: string) {
+  const summary = [...body().querySelectorAll('summary')].find((item) => item.textContent?.startsWith(title))!
+  if (!summary.parentElement?.hasAttribute('open')) flushSync(() => fireEvent.click(summary))
+}
+function fieldAction(label: string, action: 'reset' | 'clear' | 'custom' = 'clear') {
+  const trigger = getByRole(body(), 'button', { name: new RegExp(`^${label} source:`) })
+  flushSync(() => fireEvent.keyDown(trigger, { key: 'Enter' }))
+  flushSync(() => fireEvent.click(getByRole(body(), 'menuitem', { name: action === 'clear' ? 'Clear · no additional restriction' : action === 'custom' ? 'Customize' : /Use .* default/ })))
+}
+function strategy(name: string) {
+  expand('Advanced routing')
+  flushSync(() => fireEvent.keyDown(getByRole(body(), 'combobox', { name: 'Routing strategy' }), { key: 'ArrowDown' }))
+  flushSync(() => fireEvent.click(getByRole(body(), 'option', { name })))
+}
 const preview = () => getByRole(body(), 'region', { name: 'Effective routing preview' }).textContent
-async function save() { click('Save routing'); await waitFor(() => expect(saved).toHaveBeenCalled()) }
+async function save() { click('Save changes'); await waitFor(() => expect(saved).toHaveBeenCalled()) }
 
 describe('OpenRouter routing editor', () => {
-  it('saves shared defaults, reopens persisted values, and resets without paid calls', async () => {
+  it('opens compactly with collapsed help and advanced controls; saves defaults and reopens', async () => {
     await renderDialog('')
-    change('Require zero data retention', 'true'); change('Provider data collection', 'deny')
-    expect(preview()).toContain('"zdr": true')
-    await save()
-    expect(defaults).toEqual({ zdr: true, data_collection: 'deny' })
+    expect([...body().querySelectorAll('details')].every((item) => !item.open)).toBe(true)
+    expect(body().querySelector('pre')).toBeNull()
+    toggle('Zero data retention'); toggle('Block data collection')
+    expect(preview()).toContain('ZDR required')
+    await save(); expect(defaults).toEqual({ zdr: true, data_collection: 'deny' })
     flushSync(() => root.render(null)); await renderDialog('')
-    expect(getByLabelText(body(), 'Require zero data retention')).toHaveProperty('value', 'true')
-    click('Reset all defaults'); expect(preview()).not.toContain('"zdr"')
-    saved.mockClear(); await save(); expect(defaults).toEqual({})
-    expect(client.fetch).toHaveBeenCalledTimes(2)
+    expect(getByRole(body(), 'switch', { name: 'Zero data retention' }).getAttribute('aria-checked')).toBe('true')
+    expand('Advanced routing'); click('Reset all defaults'); saved.mockClear(); await save()
+    expect(defaults).toEqual({}); expect(client.fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('distinguishes field inheritance, explicit clear, replacement, and privacy floors', async () => {
+  it('shows enforced privacy floors without mutating saved false or clear overrides', async () => {
     defaults = { zdr: true, data_collection: 'deny', only: ['azure'], max_price: { prompt: 1, completion: 2 } }
     routing = { zdr: false, data_collection: null }
     await renderDialog()
-    expect(preview()).toContain('"zdr": true'); expect(preview()).toContain('"data_collection": "deny"')
-    const zdr = getByLabelText(body(), 'Require zero data retention') as HTMLSelectElement
-    expect(zdr.querySelector('option[value="false"]')).toHaveProperty('disabled', true)
-    expect(zdr.querySelector('option[value="clear"]')).toHaveProperty('disabled', true)
-    change('Allowed providers only mode', 'clear'); expect(preview()).not.toContain('"only"')
-    change('Price ceilings mode', 'custom'); change('Input price ceiling', '3'); change('Output price ceiling', '')
-    expect(preview()).toContain('"prompt": 3'); expect(preview()).not.toContain('"completion"')
-    await save(); expect(routing.only).toBeNull(); expect(routing.max_price).toEqual({ prompt: 3 })
-    click('Reset all to inherit'); expect(preview()).toContain('"azure"')
+    for (const name of ['Zero data retention', 'Block data collection']) {
+      expect(getByRole(body(), 'switch', { name })).toHaveProperty('disabled', true)
+      expect(getByRole(body(), 'switch', { name }).getAttribute('aria-checked')).toBe('true')
+      expect(getByRole(body(), 'button', { name: `${name} source: Required` })).toBeTruthy()
+    }
+    const trigger = getByRole(body(), 'button', { name: 'Zero data retention source: Required' })
+    flushSync(() => fireEvent.keyDown(trigger, { key: 'Enter' }))
+    expect(getByRole(body(), 'menuitem', { name: 'Clear · no additional restriction' }).getAttribute('data-disabled')).not.toBeNull()
+    flushSync(() => fireEvent.keyDown(getByRole(body(), 'menu'), { key: 'Escape' }))
+    click('Automatic'); expand('Advanced routing'); change('Input price ceiling', '3'); change('Output price ceiling', '')
+    await save(); expect(routing).toEqual({ zdr: false, data_collection: null, only: null, order: null, max_price: { prompt: 3 } })
   })
 
-  it('reopens a saved model clear and resets it to inherit the shared allowlist', async () => {
-    defaults = { only: ['azure'] }
+  it('explicit Automatic clears inherited lists; per-field reset restores each independently', async () => {
+    defaults = { only: ['azure'], order: ['azure'], sort: null }
+    await renderDialog(); click('Automatic'); await save()
+    expect(routing).toEqual({ only: null, order: null })
+    flushSync(() => root.render(null)); await renderDialog()
+    expect(getByRole(body(), 'button', { name: 'Automatic' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(body(), 'button', { name: 'Allowed providers only source: Cleared' })).toBeTruthy()
+    fieldAction('Allowed providers only', 'reset')
+    expand('Preference within selection'); fieldAction('Preferred providers', 'reset')
+    saved.mockClear(); await save(); expect(routing).toEqual({})
+  })
+
+  it('retains combined only + order on reopen and unrelated save; edits order accessibly', async () => {
+    routing = { only: ['azure/east', 'openai'], order: ['openai', 'azure/east'], max_price: { prompt: 0 } }
     await renderDialog()
-    change('Allowed providers only mode', 'clear')
-    await save()
+    expect(getByRole(body(), 'button', { name: 'Only selected' }).getAttribute('aria-pressed')).toBe('true')
+    toggle('Zero data retention'); await save()
+    expect(routing.order).toEqual(['openai', 'azure/east']); expect(routing.max_price).toEqual({ prompt: 0 })
     flushSync(() => root.render(null)); await renderDialog()
-    expect(getByLabelText(body(), 'Allowed providers only mode')).toHaveProperty('value', 'clear')
-    expect(preview()).not.toContain('"only"')
-    click('Reset all to inherit'); saved.mockClear(); await save()
-    expect(routing).toEqual({})
-    flushSync(() => root.render(null)); await renderDialog()
-    expect(preview()).toContain('"azure"')
+    expand('Preference within selection'); click('Move azure/east up'); saved.mockClear(); await save()
+    expect(routing.order).toEqual(['azure/east', 'openai']); expect(routing.only).toEqual(['azure/east', 'openai'])
   })
 
-  it('requires explicit clearing of inherited preferred order before sort, and vice versa', async () => {
-    defaults = { order: ['azure'] }; await renderDialog()
-    change('Routing strategy', 'latency')
+  it('rejects empty only and preferred lists instead of silently reverting to automatic', async () => {
+    await renderDialog(); click('Only selected')
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    click('Prefer providers')
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    click('Add openai to Preferred providers'); await save()
+    expect(routing).toEqual({ only: null, order: ['openai'] })
+  })
+
+  it('requires explicit clearing of inherited order before sorting, and vice versa', async () => {
+    defaults = { order: ['azure'] }; await renderDialog(); strategy('Lowest latency')
     expect(getByText(body(), 'OpenRouter order and sort are mutually exclusive')).toBeTruthy()
-    expect(getByRole(body(), 'button', { name: 'Save routing' })).toHaveProperty('disabled', true)
-    change('Preferred providers mode', 'clear'); await save()
-    expect(routing).toEqual({ order: null, sort: 'latency' })
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    fieldAction('Preferred providers'); await save(); expect(routing).toEqual({ order: null, sort: 'latency' })
     flushSync(() => root.render(null)); defaults = { sort: 'price' }; routing = {}; await renderDialog()
-    change('Preferred providers mode', 'custom'); click('Add openai to Preferred providers')
-    expect(getByRole(body(), 'button', { name: 'Save routing' })).toHaveProperty('disabled', true)
-    change('Routing strategy', 'clear'); expect(preview()).toContain('"openai"')
+    click('Prefer providers'); click('Add openai to Preferred providers')
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    expand('Advanced routing'); fieldAction('Routing strategy'); saved.mockClear(); await save()
+    expect(routing).toEqual({ only: null, order: ['openai'], sort: null })
   })
 
-  it('searches real endpoint slugs, orders accessibly, and validates allow/exclude conflicts', async () => {
-    await renderDialog(); change('Preferred providers mode', 'custom')
-    change('Search Preferred providers', 'azure'); expect(queryByText(body(), 'OpenAI · openai')).toBeNull()
-    click('Add azure/east to Preferred providers'); change('Search Preferred providers', ''); click('Add openai to Preferred providers')
-    click('Move openai up'); expect(preview()!.indexOf('openai')).toBeLessThan(preview()!.indexOf('azure/east'))
-    change('Allowed providers only mode', 'custom'); click('Add openai to Allowed providers only')
-    change('Excluded providers mode', 'custom'); click('Add openai to Excluded providers')
+  it('searches endpoint slugs and validates allow/exclude conflicts', async () => {
+    await renderDialog(); click('Only selected')
+    change('Search Allowed providers only', 'azure'); expect(queryByText(body(), 'OpenAI · openai')).toBeNull()
+    click('Add azure/east to Allowed providers only')
+    expand('Advanced routing'); click('Add excluded providers'); click('Add azure/east to Excluded providers')
     expect(getByText(body(), 'OpenRouter allowed providers conflict with excluded providers')).toBeTruthy()
-    change('Excluded providers mode', 'clear'); await save(); expect(routing.order).toEqual(['openai', 'azure/east'])
+    fieldAction('Excluded providers'); await save(); expect(routing.only).toEqual(['azure/east'])
   })
 
-  it('retains unknown saved slugs offline and permits manual entry without inventing ZDR badges', async () => {
+  it('retains offline custom slugs and permits manual entry', async () => {
     offline = true; routing = { only: ['unknown/saved'] }; await renderDialog()
     expect(getByText(body(), 'unknown/saved')).toBeTruthy()
     expect(getByText(body(), 'Unverified selection (retained)')).toBeTruthy()
-    change('Manual slug for Allowed providers only', 'manual/new'); click('Add slug')
+    change('Search Allowed providers only', 'manual/new'); click('Add slug')
     await save(); expect(routing.only).toEqual(['unknown/saved', 'manual/new'])
-    expect(body().textContent).not.toContain('ZDR advisory: eligible')
+    expect(body().textContent).not.toContain('ZDR eligible*')
   })
 
-  it('marks cached endpoint metadata stale on refresh failure without losing selections', async () => {
+  it('marks cached metadata stale on refresh failure without losing selections', async () => {
     routing = { only: ['azure/east'] }; await renderDialog()
-    expect(getByText(body(), /ZDR advisory: eligible/)).toBeTruthy()
-    offline = true; click('Refresh endpoints')
+    expect(getByText(body(), 'ZDR eligible*')).toBeTruthy()
+    offline = true; expand('Scope & privacy details'); click('Refresh endpoints')
     await waitFor(() => expect(getByText(body(), /Endpoint discovery unavailable. Selections remain/)).toBeTruthy())
-    expect(queryByText(body(), /ZDR advisory: eligible/)).toBeNull()
-    expect(getByText(body(), 'azure/east')).toBeTruthy()
+    expect(queryByText(body(), 'ZDR eligible*')).toBeNull(); expect(getByText(body(), 'azure/east')).toBeTruthy()
   })
 
-  it('validates advanced prices and saves all advanced controls and quantization filters', async () => {
-    await renderDialog(); change('Price ceilings mode', 'custom'); change('Input price ceiling', '-1')
-    expect(getByRole(body(), 'button', { name: 'Save routing' })).toHaveProperty('disabled', true)
-    change('Input price ceiling', '0'); change('Output price ceiling', '4.5')
-    change('Allowed quantizations mode', 'custom')
-    flushSync(() => fireEvent.click(getByLabelText(body(), 'fp8')))
-    change('Require parameter support', 'true'); change('Provider fallback', 'false')
-    await save(); expect(routing).toEqual({ max_price: { prompt: 0, completion: 4.5 }, quantizations: ['fp8'], require_parameters: true, allow_fallbacks: false })
+  it('validates prices, preserves zero, replaces objects, and supports multiple quantizations', async () => {
+    defaults = { max_price: { prompt: 1, completion: 2 }, quantizations: ['fp16'] }
+    await renderDialog(); expand('Advanced routing'); change('Input price ceiling', '-1')
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    change('Input price ceiling', '0'); change('Output price ceiling', '')
+    for (const name of ['fp8', 'bf16']) flushSync(() => fireEvent.click(getByLabelText(body(), name)))
+    toggle('Require parameter support'); toggle('Provider fallback')
+    await save(); expect(routing).toEqual({ max_price: { prompt: 0 }, quantizations: ['fp16', 'fp8', 'bf16'], require_parameters: true, allow_fallbacks: false })
+    flushSync(() => root.render(null)); await renderDialog(); expand('Advanced routing')
+    fieldAction('Price ceilings', 'reset'); fieldAction('Allowed quantizations'); saved.mockClear(); await save()
+    expect(routing.max_price).toBeUndefined(); expect(routing.quantizations).toBeNull()
+  })
+
+  it('distinguishes inherited, explicit false, clear, and reset in source menus', async () => {
+    await renderDialog()
+    expect(getByRole(body(), 'button', { name: 'Zero data retention source: Default' })).toBeTruthy()
+    toggle('Zero data retention'); toggle('Zero data retention')
+    expect(getByRole(body(), 'button', { name: 'Zero data retention source: Override' })).toBeTruthy()
+    await save(); expect(routing.zdr).toBe(false)
+    flushSync(() => root.render(null)); await renderDialog()
+    fieldAction('Zero data retention'); saved.mockClear(); await save(); expect(routing.zdr).toBeNull()
+    expect(getByRole(body(), 'button', { name: 'Zero data retention source: Cleared' })).toBeTruthy()
+    flushSync(() => root.render(null)); await renderDialog()
+    fieldAction('Zero data retention', 'reset'); saved.mockClear(); await save(); expect(routing).toEqual({})
+  })
+
+  it('resets every field independently without changing unrelated overrides', async () => {
+    routing = { zdr: true, data_collection: 'deny', only: ['openai'], order: ['openai'], ignore: ['other'], allow_fallbacks: false, require_parameters: true, max_price: { prompt: 0, completion: 4 }, quantizations: ['fp8', 'bf16'] }
+    await renderDialog(); expand('Advanced routing'); expand('Preference within selection')
+    fieldAction('Provider fallback', 'reset'); fieldAction('Require parameter support', 'reset')
+    fieldAction('Preferred providers', 'reset'); fieldAction('Excluded providers', 'reset')
+    fieldAction('Block data collection', 'reset'); fieldAction('Price ceilings', 'reset')
+    fieldAction('Allowed quantizations', 'reset'); fieldAction('Allowed providers only', 'reset')
+    await save(); expect(routing).toEqual({ zdr: true })
+  })
+
+  it('replaces an inherited provider list when editing, and clears the last quantization explicitly', async () => {
+    defaults = { only: ['azure/east', 'openai'], quantizations: ['fp8'] }
+    await renderDialog(); click('Remove azure/east from Allowed providers only')
+    expand('Advanced routing'); flushSync(() => fireEvent.click(getByLabelText(body(), 'fp8')))
+    await save(); expect(routing).toEqual({ only: ['openai'], quantizations: null })
   })
 
   it('preserves drafts on 409, disables resave, and explicitly reloads before review', async () => {
-    await renderDialog(); change('Require zero data retention', 'true'); conflict = true; click('Save routing')
+    await renderDialog(); toggle('Zero data retention'); conflict = true; click('Save changes')
     await waitFor(() => expect(getByText(body(), /Routing changed elsewhere/)).toBeTruthy())
-    expect(getByLabelText(body(), 'Require zero data retention')).toHaveProperty('value', 'true')
+    expect(getByRole(body(), 'switch', { name: 'Zero data retention' }).getAttribute('aria-checked')).toBe('true')
     expect(saved).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled()
-    expect(getByRole(body(), 'button', { name: 'Save routing' })).toHaveProperty('disabled', true)
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
     defaults = { data_collection: 'deny' }; conflict = false; click('Reload settings')
-    await waitFor(() => expect(getByLabelText(body(), 'Require zero data retention')).toHaveProperty('value', 'inherit'))
-    expect(preview()).toContain('"data_collection": "deny"')
+    await waitFor(() => expect(getByRole(body(), 'switch', { name: 'Zero data retention' }).getAttribute('aria-checked')).toBe('false'))
+    expect(preview()).toContain('No provider collection')
   })
 
-  it('live model_config_changed invalidates an open draft rather than overwriting it', async () => {
-    await renderDialog(); change('Provider fallback', 'false'); defaults = { zdr: true }
+  it('live model_config_changed retains the open draft until explicit reload', async () => {
+    await renderDialog(); toggle('Provider fallback'); defaults = { zdr: true }
     await renderDialog(modelId, 1)
-    expect(getByLabelText(body(), 'Provider fallback')).toHaveProperty('value', 'false')
-    expect(getByRole(body(), 'button', { name: 'Save routing' })).toHaveProperty('disabled', true)
-    click('Reload settings')
-    await waitFor(() => expect(preview()).toContain('"zdr": true'))
+    expect(getByRole(body(), 'switch', { name: 'Provider fallback' }).getAttribute('aria-checked')).toBe('false')
+    expect(getByRole(body(), 'button', { name: 'Save changes' })).toHaveProperty('disabled', true)
+    click('Reload settings'); await waitFor(() => expect(preview()).toContain('ZDR required'))
   })
 })
 
@@ -201,7 +265,7 @@ describe('Settings OpenRouter refresh and scope', () => {
     renderSettings(other)
     release({ defaults: { zdr: true }, revision: '1', effective: { zdr: true } })
     await waitFor(() => expect(getByText(body(), 'No models added yet')).toBeTruthy())
-    expect(queryByText(body(), 'Save routing')).toBeNull()
+    expect(queryByText(body(), 'Save changes')).toBeNull()
     expect(body().textContent).not.toContain('ZDR required')
     expect(vi.mocked(client.fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
