@@ -257,7 +257,13 @@ export class ModelCatalogService {
       return cap !== undefined ? Math.min(model.contextWindow, cap) : model.contextWindow;
     }
 
-    return this.openRouterModels[normalizedModelId]?.contextWindow;
+    if (provider && provider.trim().toLowerCase() !== "openrouter") {
+      return undefined;
+    }
+    const openRouterModel = this.openRouterModels[normalizedModelId];
+    if (!openRouterModel) return undefined;
+    const cap = this.overrides[getOpenRouterModelOverrideKey(normalizedModelId)]?.contextWindowCap;
+    return cap !== undefined ? Math.min(openRouterModel.contextWindow, cap) : openRouterModel.contextWindow;
   }
 
   getModelDisplayName(modelId: string, provider?: string): string {

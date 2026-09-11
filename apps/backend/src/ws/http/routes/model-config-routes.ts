@@ -118,7 +118,7 @@ async function handleModelOverridesRequest(
 
       const patch = body as Record<string, unknown>;
       const nextOverride = overrideTarget.kind === "openrouter"
-        ? mergeOpenRouterManagerEnabledOverride(
+        ? mergeOpenRouterOverride(
             (await readModelOverrides(dataDir)).overrides[overrideTarget.key],
             patch,
             overrideTarget.model,
@@ -268,29 +268,39 @@ function hasModelSpecificInstructionsPatch(patch: Record<string, unknown>): bool
   return Object.prototype.hasOwnProperty.call(patch, "modelSpecificInstructions");
 }
 
-function mergeOpenRouterManagerEnabledOverride(
+function mergeOpenRouterOverride(
   current: ModelOverrideEntry | undefined,
   patch: Record<string, unknown>,
   model: OpenRouterModelEntry,
 ): ModelOverrideEntry | null {
   const keys = Object.keys(patch);
-  if (keys.length !== 1 || keys[0] !== "managerEnabled") {
-    throw new Error("OpenRouter model overrides only accept managerEnabled");
-  }
-
-  const managerEnabled = patch.managerEnabled;
-  if (managerEnabled === true && model.supportsTools !== true) {
-    throw new Error(`Model ${model.displayName} is not verified for manager agents`);
-  }
-  if (managerEnabled !== null && typeof managerEnabled !== "boolean") {
-    throw new Error("managerEnabled must be a boolean or null");
+  if (keys.length === 0 || keys.some((key) => key !== "managerEnabled" && key !== "contextWindowCap")) {
+    throw new Error("OpenRouter model overrides only accept managerEnabled and contextWindowCap");
   }
 
   const next: ModelOverrideEntry = { ...(current ?? {}) };
-  if (managerEnabled === null) {
-    delete next.managerEnabled;
-  } else {
-    next.managerEnabled = managerEnabled;
+  if (Object.prototype.hasOwnProperty.call(patch, "managerEnabled")) {
+    const managerEnabled = patch.managerEnabled;
+    if (managerEnabled === true && model.supportsTools !== true) {
+      throw new Error(`Model ${model.displayName} is not verified for manager agents`);
+    }
+    if (managerEnabled === null) {
+      delete next.managerEnabled;
+    } else if (typeof managerEnabled === "boolean") {
+      next.managerEnabled = managerEnabled;
+    } else {
+      throw new Error("managerEnabled must be a boolean or null");
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "contextWindowCap")) {
+    const cap = patch.contextWindowCap;
+    if (cap === null) {
+      delete next.contextWindowCap;
+    } else if (typeof cap === "number" && Number.isSafeInteger(cap) && cap > 0) {
+      next.contextWindowCap = cap;
+    } else {
+      throw new Error("contextWindowCap must be a positive integer or null");
+    }
   }
 
   return Object.keys(next).length > 0 ? next : null;

@@ -1,3 +1,4 @@
+import { getOpenRouterModelOverrideKey } from "@forge/protocol";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -69,6 +70,40 @@ describe("model-overrides", () => {
       modelId: "claude-opus-5",
       thinkingLevel: "high",
     });
+  });
+
+  it("reloads provider-scoped OpenRouter caps on restart and preserves them through metadata refresh", async () => {
+    const dataDir = await makeTempDataDir();
+    const model = {
+      modelId: "anthropic/claude-opus-4-6", displayName: "OpenRouter Opus", contextWindow: 200_000,
+      maxOutputTokens: 8_192, supportsReasoning: false,
+      supportedReasoningLevels: ["none"] as const, inputModes: ["text"] as const,
+      addedAt: "2026-04-03T00:00:00.000Z", supportsTools: true,
+    };
+    await openRouterModels.addOpenRouterModel(dataDir, model);
+    await openRouterModels.addOpenRouterModel(dataDir, { ...model, modelId: "other/model" });
+    await writeModelOverrides(dataDir, {
+      version: 1, overrides: {
+        [getOpenRouterModelOverrideKey(model.modelId)]: { contextWindowCap: 80_000, managerEnabled: true },
+        "claude-opus-4-6": { contextWindowCap: 300_000 },
+      },
+    });
+    const service = new ModelCatalogService();
+    await service.loadOverrides(dataDir);
+    expect(service.getContextWindow(model.modelId, "openrouter")).toBe(80_000);
+    expect(service.getEffectiveContextWindow(model.modelId)).toBe(80_000);
+    expect(service.getEffectiveContextWindow(model.modelId, "anthropic")).toBeUndefined();
+    expect(service.getEffectiveContextWindow("claude-opus-4-6", "anthropic")).toBe(300_000);
+    expect(service.getEffectiveContextWindow("other/model", "openrouter")).toBe(200_000);
+    expect(service.getOpenRouterModel(model.modelId)?.contextWindow).toBe(200_000);
+    await openRouterModels.addOpenRouterModel(dataDir, { ...model, contextWindow: 60_000 });
+    await service.reloadOpenRouterModels();
+    expect(service.getContextWindow(model.modelId, "openrouter")).toBe(60_000);
+    expect(service.getOverride(model.modelId, "openrouter")).toEqual({ contextWindowCap: 80_000, managerEnabled: true });
+    const restarted = new ModelCatalogService();
+    await restarted.loadOverrides(dataDir);
+    expect(restarted.getContextWindow(model.modelId, "openrouter")).toBe(60_000);
+    expect(restarted.getOverride(model.modelId, "openrouter")).toEqual({ contextWindowCap: 80_000, managerEnabled: true });
   });
 
   it("maps persisted Claude SDK overrides in memory with deterministic collision rules", async () => {

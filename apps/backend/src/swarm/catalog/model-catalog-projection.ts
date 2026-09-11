@@ -253,7 +253,7 @@ function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition
       name: model.displayName,
       reasoning: model.supportsReasoning,
       input: [...model.inputModes],
-      contextWindow: model.contextWindow,
+      contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId, "openrouter") ?? model.contextWindow,
       maxTokens: model.maxOutputTokens,
       ...projectThinkingLevelMap(model),
     }));

@@ -1,3 +1,4 @@
+import { getOpenRouterModelOverrideKey } from "@forge/protocol";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -422,11 +423,16 @@ describe("model-catalog-projection", () => {
       modelId: "anthropic/claude-3.5-sonnet",
       displayName: "Claude 3.5 Sonnet",
       contextWindow: 200_000,
-      maxOutputTokens: 8_192,
+      maxOutputTokens: 128_000,
       supportsReasoning: true,
       supportedReasoningLevels: ["none", "low", "medium", "high"],
       inputModes: ["text", "image"],
       addedAt: "2026-04-03T00:00:00.000Z",
+    });
+
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: { [getOpenRouterModelOverrideKey("anthropic/claude-3.5-sonnet")]: { contextWindowCap: 50_000, managerEnabled: true } },
     });
 
     const projectionPath = await generatePiProjection(dataDir);
@@ -443,17 +449,24 @@ describe("model-catalog-projection", () => {
       expect.objectContaining({
         id: "anthropic/claude-3.5-sonnet",
         name: "Claude 3.5 Sonnet",
+        contextWindow: 50_000,
       }),
     ]);
 
-    const registry = new (ModelRegistry as unknown as new (...args: unknown[]) => unknown)(authStorageStub as any, projectionPath) as {
-      getError: () => unknown;
-      find: (provider: string, modelId: string) => { api?: string; contextWindow?: number } | undefined;
-    };
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath);
     expect(registry.getError()).toBeUndefined();
-    expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.contextWindow).toBe(200_000);
-    expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.api).toBe("openai-completions");
-    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
+    expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")).toMatchObject({
+      contextWindow: 50_000, maxTokens: 128_000, api: "openai-completions",
+    });
+    // Match built-in caps: advertised output metadata stays intact, while Pi bounds
+    // each request's output budget to the effective window minus prompt and reserve.
+    const { buildBaseOptions } = await import("@earendil-works/pi-ai/api/simple-options");
+    const projectedModel = registry.find("openrouter", "anthropic/claude-3.5-sonnet")!;
+    expect(buildBaseOptions(projectedModel, { messages: [] }).maxTokens).toBe(50_000 - 4096);
+
   });
 
   it("projects catalog-only built-in Anthropic models missing from Pi upstream through ModelRegistry", async () => {

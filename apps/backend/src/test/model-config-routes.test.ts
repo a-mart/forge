@@ -217,7 +217,44 @@ describe("model config routes", () => {
     },
   );
 
-  it("rejects OpenRouter override writes that are not a prefixed managerEnabled-only patch", async () => {
+  it("saves and resets OpenRouter caps independently of manager eligibility and rejects invalid patches", async () => {
+    const harness = await createModelConfigRouteHarness();
+    const model = {
+      modelId: "z-ai/glm-5.1", displayName: "GLM", contextWindow: 200_000,
+      maxOutputTokens: 8_192, supportsReasoning: false,
+      supportedReasoningLevels: ["none"] as const, inputModes: ["text"] as const,
+      addedAt: "2026-04-03T00:00:00.000Z", supportsTools: true,
+    };
+    await addOpenRouterModel(harness.dataDir, model);
+    await modelCatalogService.loadOverrides(harness.dataDir);
+    const key = getOpenRouterModelOverrideKey(model.modelId);
+    const put = (patch: unknown) => fetch(
+      `${harness.server.baseUrl}/api/settings/model-overrides/${encodeURIComponent(key)}`,
+      { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) },
+    );
+    expect((await put({ managerEnabled: true, contextWindowCap: 50_000 })).status).toBe(200);
+    expect((await put({ contextWindowCap: 80_000 })).status).toBe(200);
+    expect(modelCatalogService.getOverride(model.modelId, "openrouter")).toEqual({ managerEnabled: true, contextWindowCap: 80_000 });
+    expect((await put({ managerEnabled: null })).status).toBe(200);
+    expect(modelCatalogService.getOverride(model.modelId, "openrouter")).toEqual({ contextWindowCap: 80_000 });
+    for (const cap of [0, -1, 1.5, "1000", true, {}, [], Number.MAX_SAFE_INTEGER + 1]) {
+      expect((await put({ contextWindowCap: cap })).status).toBe(400);
+    }
+    expect((await put({})).status).toBe(400);
+    expect((await put({ contextWindowCap: 50_000, routing: {} })).status).toBe(400);
+    expect(modelCatalogService.getEffectiveContextWindow(model.modelId, "openrouter")).toBe(80_000);
+    expect((await put({ managerEnabled: true })).status).toBe(200);
+    expect((await put({ contextWindowCap: 900_000 })).status).toBe(200);
+    expect(modelCatalogService.getEffectiveContextWindow(model.modelId, "openrouter")).toBe(200_000);
+    expect((await put({ contextWindowCap: null })).status).toBe(200);
+    expect(modelCatalogService.getOverride(model.modelId, "openrouter")).toEqual({ managerEnabled: true });
+    expect(modelCatalogService.getEffectiveContextWindow(model.modelId, "openrouter")).toBe(200_000);
+    expect((await put({ managerEnabled: null })).status).toBe(200);
+    expect((await readModelOverrides(harness.dataDir)).overrides[key]).toBeUndefined();
+    expect(harness.swarmManager.notifyModelSpecificInstructionsChanged).not.toHaveBeenCalled();
+  });
+
+  it("rejects OpenRouter override writes that are not a prefixed supported patch", async () => {
     const harness = await createModelConfigRouteHarness();
     const toolCapable = {
       modelId: "z-ai/glm-5.1",
@@ -262,7 +299,7 @@ describe("model config routes", () => {
     );
     expect(extraFieldResponse.status).toBe(400);
     await expect(extraFieldResponse.json()).resolves.toMatchObject({
-      error: "OpenRouter model overrides only accept managerEnabled",
+      error: "OpenRouter model overrides only accept managerEnabled and contextWindowCap",
     });
 
     const unverifiedResponse = await fetch(

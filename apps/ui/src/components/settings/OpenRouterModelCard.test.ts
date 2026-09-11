@@ -61,7 +61,7 @@ async function flushPromises(): Promise<void> {
 
 function renderCard(props: {
   model?: OpenRouterModelEntry
-  override?: { managerEnabled?: boolean }
+  override?: { managerEnabled?: boolean; contextWindowCap?: number }
 } = {}): { onRefresh: ReturnType<typeof vi.fn> } {
   const onRefresh = vi.fn(async () => {})
   root = createRoot(container)
@@ -143,5 +143,77 @@ describe('OpenRouterModelCard manager toggle', () => {
     expect(queryByLabelText(container, /manager agents/i)).toBeNull()
     expect(getByText(container, 'Tools unverified')).toBeTruthy()
     expect(getByText(container, 'Tool support could not be verified from OpenRouter. Reload this section to retry.')).toBeTruthy()
+  })
+})
+
+
+describe('OpenRouter context window', () => {
+  it('saves only a cap through the canonical key and resets only the cap', async () => {
+    const { onRefresh } = renderCard({ override: { managerEnabled: true, contextWindowCap: 80000 } })
+    const input = getByRole(container, 'spinbutton')
+    fireEvent.input(input, { target: { value: '50000' } })
+    fireEvent.change(input, { target: { value: '50000' } })
+    await flushPromises()
+    fireEvent.click(getByRole(container, 'button', { name: 'Apply' }))
+    await flushPromises()
+    expect(modelsApiMock.updateModelOverride).toHaveBeenLastCalledWith(
+      'ws://127.0.0.1:47187', getOpenRouterModelOverrideKey('z-ai/glm-5.1'), { contextWindowCap: 50000 },
+    )
+    expect(onRefresh).toHaveBeenCalledOnce()
+    fireEvent.click(getByRole(container, 'button', { name: 'Reset context window' }))
+    await flushPromises()
+    expect(modelsApiMock.updateModelOverride).toHaveBeenLastCalledWith(
+      'ws://127.0.0.1:47187', getOpenRouterModelOverrideKey('z-ai/glm-5.1'), { contextWindowCap: null },
+    )
+  })
+
+  it('rejects invalid caps and lets a blank draft clear the cap', async () => {
+    renderCard({ override: { contextWindowCap: 80000 } })
+    const input = getByRole(container, 'spinbutton')
+    for (const value of ['0', '-1', '1.5']) {
+      fireEvent.change(input, { target: { value } })
+      await flushPromises()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(getByRole(container, 'button', { name: 'Apply' })).toHaveProperty('disabled', true)
+    }
+    expect(modelsApiMock.updateModelOverride).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: '' } })
+    await flushPromises()
+    fireEvent.click(getByRole(container, 'button', { name: 'Apply' }))
+    await flushPromises()
+    expect(modelsApiMock.updateModelOverride).toHaveBeenLastCalledWith(
+      'ws://127.0.0.1:47187', getOpenRouterModelOverrideKey('z-ai/glm-5.1'), { contextWindowCap: null },
+    )
+  })
+
+  it('keeps a draft across metadata refresh, clamps summary and resets drafts on model changes', async () => {
+    renderCard({ override: { contextWindowCap: 80000 } })
+    fireEvent.change(getByRole(container, 'spinbutton'), { target: { value: '70000' } })
+    await flushPromises()
+    const rerender = (model: OpenRouterModelEntry, cap?: number) => flushSync(() => {
+      root?.render(createElement(OpenRouterModelCard, {
+        clientOrWsUrl: 'ws://127.0.0.1:47187', model, override: { contextWindowCap: cap },
+        onRemove: vi.fn(), isRemoving: false, onRefresh: vi.fn(async () => {}),
+      }))
+    })
+    rerender(toolCapableModel({ contextWindow: 60000 }), 80000)
+    await flushPromises()
+    expect(getByRole(container, 'spinbutton')).toHaveProperty('value', '70000')
+    expect(getByText(container, /60k effective.*60k default maximum/i)).toBeTruthy()
+    rerender(toolCapableModel({ modelId: 'other/model' }), 30000)
+    await flushPromises()
+    expect(getByRole(container, 'spinbutton')).toHaveProperty('value', '30000')
+    expect(modelsApiMock.updateModelOverride).not.toHaveBeenCalled()
+  })
+
+  it('surfaces save failure without discarding the draft', async () => {
+    renderCard()
+    modelsApiMock.updateModelOverride.mockRejectedValueOnce(new Error('Save failed'))
+    fireEvent.change(getByRole(container, 'spinbutton'), { target: { value: '50000' } })
+    await flushPromises()
+    fireEvent.click(getByRole(container, 'button', { name: 'Apply' }))
+    await flushPromises()
+    expect(getByRole(container, 'alert').textContent).toBe('Save failed')
+    expect(getByRole(container, 'spinbutton')).toHaveProperty('value', '50000')
   })
 })

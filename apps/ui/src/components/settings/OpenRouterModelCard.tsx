@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { formatTokenCount } from '@/lib/format-utils'
 import { updateModelOverride } from './models-api'
+import { OpenRouterContextWindow } from './OpenRouterContextWindow'
 import type { SettingsApiClient } from './settings-api-client'
 
 interface OpenRouterModelCardProps {
@@ -41,6 +42,7 @@ export function OpenRouterModelCard({
   onCardSaveEnd,
 }: OpenRouterModelCardProps) {
   const [isSavingManagerEnabled, setIsSavingManagerEnabled] = useState(false)
+  const [isSavingContext, setIsSavingContext] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const hasVision = model.inputModes.includes('image')
@@ -123,7 +125,7 @@ export function OpenRouterModelCard({
           size="sm"
           className="h-7 w-7 shrink-0 p-0 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
           onClick={() => onRemove(model.modelId)}
-          disabled={isRemoving || isSavingManagerEnabled}
+          disabled={isRemoving || isSavingManagerEnabled || isSavingContext}
           aria-label={`Remove ${model.displayName}`}
         >
           <X className="size-3.5" />
@@ -134,6 +136,12 @@ export function OpenRouterModelCard({
         <Button type="button" variant="outline" size="sm" onClick={onConfigureRouting} disabled={isRemoving}>Configure routing</Button>
         <p className="text-xs text-muted-foreground">{routingSummary}</p>
       </div> : null}
+      <OpenRouterContextWindow
+        model={model} override={override} clientOrWsUrl={clientOrWsUrl}
+        disabled={isRemoving || isSavingManagerEnabled || isSavingContext} onRefresh={onRefresh}
+        onSaveStart={() => { setIsSavingContext(true); onCardSaveStart?.(overrideKey) }}
+        onSaveEnd={() => { setIsSavingContext(false); onCardSaveEnd?.(overrideKey) }}
+      />
       <div className="space-y-1.5 border-t border-border/50 pt-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <span>Manager agents</span>
@@ -149,7 +157,7 @@ export function OpenRouterModelCard({
             <Switch
               checked={effectiveManagerEnabled}
               onCheckedChange={saveManagerEnabled}
-              disabled={isSavingManagerEnabled || isRemoving}
+              disabled={isSavingManagerEnabled || isRemoving || isSavingContext}
               aria-label={`Enable ${model.displayName} for manager agents`}
             />
             <span className="text-sm text-muted-foreground">{effectiveManagerEnabled ? 'Enabled' : 'Disabled'}</span>
@@ -160,7 +168,7 @@ export function OpenRouterModelCard({
               size="sm"
               className="h-8 px-2"
               onClick={() => void resetManagerEnabled()}
-              disabled={!hasManagerOverride || isSavingManagerEnabled || isRemoving}
+              disabled={!hasManagerOverride || isSavingManagerEnabled || isRemoving || isSavingContext}
             >
               Reset
             </Button>
