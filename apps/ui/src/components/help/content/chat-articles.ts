@@ -203,6 +203,9 @@ export const chatArticles: HelpArticle[] = [
       'done',
       'clear',
       'attention',
+      'recent',
+      'show more',
+      'show less',
     ],
     relatedIds: [
       'settings-collaboration',
