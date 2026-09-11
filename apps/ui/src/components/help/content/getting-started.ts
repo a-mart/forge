@@ -91,6 +91,9 @@ export const gettingStartedArticles: HelpArticle[] = [
       'remote projects',
       'collaboration connection',
       'remote server',
+      'OpenRouter',
+      'context window',
+      'context cap',
     ],
     relatedIds: [
       'settings-collaboration',

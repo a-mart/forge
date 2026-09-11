@@ -392,6 +392,8 @@ For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot`
 
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. Codex selector mentions are handled separately as plugin-scoped turns that delegate to the visible Codex Plugin specialist, not through the manager model selector list. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
+User-added OpenRouter cards include a **Context window** token input with **Apply** and **Reset**. A positive whole-number cap is stored on the existing `openrouter:<model-id>` override in `shared/config/model-overrides.json`; blank Apply or Reset removes only the cap. The effective maximum is `min(advertised window, cap)`, so a cap cannot increase capacity. Advertised metadata and max-output capability stay unchanged; the runtime request budget uses the effective context. Manager-enabled and **Configure routing** are independent and preserved. Removing the model deletes the whole override key, and re-adding it starts manager-off with no cap. Caps apply when an agent next starts; running agents keep their current snapshot.
+
 ### OpenRouter routing
 
 OpenRouter provider routing and privacy filters live in **Settings → Models** on the selected backend and persist in `shared/config/openrouter-models.json` as `routingDefaults` plus optional per-model `routing`. Shared defaults apply to every OpenRouter manager and worker call, including exact IDs that are not added yet. A per-model override requires the model to be added first. On a Collaboration server this configuration is admin-only.
@@ -446,6 +448,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── history-index.json             # Persistent History indexing pause preference
 │   │   ├── secure-secret-settings.json    # Secure secret grant limit
 │   │   ├── openrouter-models.json         # User-added OpenRouter models plus routingDefaults and per-model routing
+│   │   ├── model-overrides.json           # Model visibility, context caps, instructions
 │   ├── state/
 │   │   ├── secure-sessions.db             # Secure Session metadata and OS-encrypted material
 │   │   ├── builder-sidebar-order.json     # Local unified project order
@@ -454,7 +457,6 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── knowledge-v2.json              # Knowledge v2 mode and index caps
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── model-cache-visualization.json # Model-cache visualization preference
-│   │   ├── model-overrides.json           # Model visibility, context caps, instructions
 │   │   ├── notification-settings.json     # Notification sound preferences
 │   │   ├── phoenix-observability.json     # Builder Phoenix tracing settings
 │   │   ├── project-resources.json         # Repo-resource trust/override settings

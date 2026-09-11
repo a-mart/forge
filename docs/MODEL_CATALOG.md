@@ -39,11 +39,13 @@ OpenRouter models added by the user are persisted overlays, not checked-in catal
 Manager eligibility is deliberately a separate, opt-in policy:
 
 - Forge records `supportsTools` only from live OpenRouter metadata when adding a model and when OpenRouter Settings loads and reconciles stored exact IDs. Any request-body capability claim is ignored. A live `supportsTools: true` is a necessary verified-tool-call gate; `false` or an absent field is not manager eligible.
-- Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The OpenRouter override accepts only this manager field; removing it returns to the default-off state. Reconciliation refreshes only live-derived `supportsTools`; it does not enable managers or mutate the exact row's default-off `managerEnabled` opt-in.
+- Every user-added model starts with its per-model **Manager agents** setting off. Enable it explicitly with `managerEnabled: true` under the exact override key `openrouter:<model-id>`. The same override key can also store an optional `contextWindowCap`. Clearing the manager field returns that setting to the default-off state without removing a stored cap. Reconciliation refreshes only live-derived `supportsTools`; it does not enable managers, mutate the exact row's default-off `managerEnabled` opt-in, or change a stored cap.
 - Manager create, change, and session-override requests accept only an exact `{ provider: "openrouter", modelId: "<exact-id>" }` selection. OpenRouter rows have no family or preset fallback, and unknown IDs fail closed.
 - A configured OpenRouter credential is still required when the manager selection is resolved. Configure the key in Settings → Authentication or provide `OPENROUTER_API_KEY`.
 - When OpenRouter Settings loads, Forge automatically reconciles stored exact IDs against current live metadata and refreshes matched legacy rows. Unmatched or unrefreshable rows, and rows verified as `supportsTools: false`, remain non-manager and fail closed until a later live verification, even if retained for existing worker or specialist configuration.
-- Removing an OpenRouter row clears its manager override. Retired OpenRouter IDs remain rejected.
+- Removing an OpenRouter row deletes the whole `openrouter:<model-id>` override key, including any context cap. Re-adding the model starts with manager access off and no cap. Retired OpenRouter IDs remain rejected.
+
+An added OpenRouter card includes a **Context window** token input with **Apply** and **Reset**. Enter a positive whole number of tokens, then **Apply**. A blank **Apply** or **Reset** removes only the cap. The effective maximum is `min(advertised window, cap)`, so a cap cannot increase capacity above the advertised OpenRouter window. Advertised metadata and max-output capability stay unchanged; the runtime request budget uses the effective context. The manager-enabled setting and **Configure routing** are independent and remain preserved when you save or reset the cap. A saved cap applies when an agent next starts; running agents keep their current snapshot and are not recycled.
 
 Manager eligibility does not change compaction policy. OpenRouter is not in the supported Forge compaction provider allowlist and does not appear in the compaction model selector.
 
@@ -115,18 +117,18 @@ Local overrides are intentionally narrow and safe.
 Supported fields:
 
 - `enabled`: control whether a model can appear in manager-facing selectors, including create-session, change-default, and per-session override flows
-- `managerEnabled`: control manager-agent visibility separately from general model visibility. User-added OpenRouter rows default to off and require an explicit `true` after live tool verification
-- `contextWindowCap`: cap the effective context window
+- `managerEnabled`: control manager-agent visibility separately from general model visibility. User-added OpenRouter rows default to off and require an explicit `true` after live tool verification. OpenRouter stores this field on the same `openrouter:<model-id>` override as an optional context cap; the two fields are independent.
+- `contextWindowCap`: optional positive whole-number cap on the effective context window. For user-added OpenRouter models, **Settings → Models** exposes this as **Context window** with **Apply** and **Reset**. Blank Apply or Reset removes only the cap.
 
 ### Context window cap semantics
 
-Caps are applied with `min`, not replacement.
+Caps are applied with `min`, not replacement. The effective maximum is `min(advertised window, cap)`, so a cap cannot increase capacity.
 
-- catalog context window: `1_000_000`
+- advertised or catalog context window: `1_000_000`
 - override cap: `300_000`
 - effective context window: `300_000`
 
-Overrides can reduce limits, but never increase them above the checked-in catalog value.
+For checked-in catalog models, overrides can reduce limits but never increase them above the checked-in catalog value. For user-added OpenRouter models, the advertised OpenRouter window is the ceiling; advertised metadata and max-output capability remain unchanged while the runtime request budget uses the effective context. OpenRouter manager-enabled and routing settings stay independent of the cap. A saved cap applies when an agent next starts; running agents keep their current snapshot.
 
 ## Audit workflow
 
