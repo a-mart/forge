@@ -6,7 +6,7 @@ When you send a message, the manager reads it and decides what needs to happen. 
 - **Adaptive** — starts directly and hands off only when the total path, including briefing, waiting, acceptance, and likely rework, improves.
 - **Hands-on** — keeps investigation, implementation, and validation, including the critical path; explicit delegation remains available.
 
-When the manager delegates, each worker gets a focused job — edit a file, run a command, research a topic. Delegation returns immediately, so the manager can continue receiving your messages while workers run. Each worker's final assistant response is returned automatically to the manager when its run ends; the worker does not need to find the manager or call a messaging tool. Stalled-worker detection remains separate from result delivery. A bare runtime `errorMessage: "terminated"` waits out a short grace period before failure projection; fresh worker progress cancels that transient error.
+When the manager delegates, each worker gets a focused job — edit a file, run a command, research a topic. Delegation returns immediately, so the manager can continue receiving your messages while workers run. Each worker's final assistant response is returned automatically to the manager when its run ends; workers must not send a duplicate completion message. Workers may message only their owning manager for a requested interim answer, a blocker or question, or a finding that materially changes the approach. Stalled-worker detection remains separate from result delivery. A bare runtime `errorMessage: "terminated"` waits out a short grace period before failure projection; fresh worker progress cancels that transient error.
 
 ## What you see
 
