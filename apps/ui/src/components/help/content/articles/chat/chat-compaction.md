@@ -23,6 +23,8 @@ Open the **⋮ menu** in the chat header for:
 
 A manually compacted idle manager stays idle. On Context v2, manual compaction requires the manager to be idle; retry after active work settles. During compaction or recovery, the menu indicator spins and the session row shows a violet `C` badge. Continue the conversation normally once the transition finishes.
 
+Successful Compact and Context v2 start and completion notices appear in live and replayed transcripts as muted informational **Context update** rows, not amber **System** attention rows. Failures and unavailable transitions stay amber.
+
 ## Recovering earlier evidence
 
 Local Builder managers and ordinary workers can use the agent-only `history` tool to browse earlier context windows, list messages and tool results without guessing a search term, search, and read matching evidence. They start with the current session and its associated workers, then widen to the project or another explicitly identified scope when needed. Wider recall does not require an extra approval prompt, but it must have a reason when it crosses the current project boundary.
