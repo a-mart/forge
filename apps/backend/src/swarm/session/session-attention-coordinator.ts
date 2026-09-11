@@ -37,8 +37,9 @@ export interface SessionAttentionSessionSnapshot {
    * NOT release it: TurnContextCoordinator dequeues on the provider's user
    * message_start, which can precede the manager's streaming projection, so
    * settling there would broadcast a completion that never happened. Release
-   * happens only via an authoritative manager streaming transition or an
-   * explicit releaseContinuationBarrier() when there is no continuation.
+   * happens via an authoritative manager streaming transition, matched consume
+   * during an already-streaming run, or an explicit releaseContinuationBarrier()
+   * when there is no continuation.
    *
    * The barrier fences completion only. A committed pending choice still raises
    * decision_waiting on an armed epoch, including while this fence is set.
@@ -319,10 +320,11 @@ export class SessionAttentionCoordinator {
   }
 
   /**
-   * Explicit no-continuation release for the accepted-turn barrier: the turn
-   * ended without producing a continuation (rollback, discard, failure), so the
-   * epoch may settle again on its own merits. Without this, a dequeued turn that
-   * never streams would leave the epoch armed forever and miss the raise.
+   * Explicit release for the accepted-turn barrier. Used when the turn ended
+   * without a continuation (rollback, discard, failure) and when matched input
+   * was consumed during an already-streaming manager run. Without this, a
+   * dequeued in-turn steer never produces a nonstreaming→streaming edge and the
+   * epoch stays armed forever.
    */
   async releaseContinuationBarrier(session: SessionAttentionSessionSnapshot): Promise<void> {
     await this.runNatural(async () => this.applyMutation(async (state) => {

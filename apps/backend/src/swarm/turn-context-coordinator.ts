@@ -154,7 +154,10 @@ export interface TurnContextObservabilityPort {
 export interface TurnContextAttentionPort {
   /** Called after accepted input is durably represented in the pending queue. */
   observePendingQueueChange(agentId: string): Promise<void>;
-  /** Called when accepted input is removed without a provider continuation. */
+  /**
+   * Called when accepted input is removed without a new continuation, or when
+   * matched consume happens during an already-streaming manager run.
+   */
   releaseContinuationBarrier(agentId: string): Promise<void>;
 }
 
@@ -442,6 +445,15 @@ export class TurnContextCoordinator<
       if (nextContext) {
         this.activatedByAgentId.add(agentId);
         this.activateDequeuedContext(agentId, descriptor, nextContext);
+        // In-turn steer is consumed while descriptor.status is already
+        // streaming (Pi and Cursor). That is not a new continuation, so the
+        // fence must clear without waiting for a nonstreaming→streaming edge.
+        // Pi's next-cycle user message_start can still precede
+        // updateStatus("streaming"); idle matches must not release.
+        const manager = descriptor ?? this.options.descriptors.get(agentId);
+        if (manager?.role === "manager" && manager.status === "streaming") {
+          void this.options.attention.releaseContinuationBarrier(agentId);
+        }
       } else if (!this.activatedByAgentId.has(agentId)) {
         this.activateContext(agentId, descriptor, undefined);
       }
@@ -651,8 +663,8 @@ export class TurnContextCoordinator<
       this.pendingByAgentId.delete(agentId);
     }
     // dequeueNext is used only when the provider never matched/activated this
-    // accepted input. The message_start path uses dequeueForRuntimeMessage and
-    // deliberately does NOT release before streaming is projected.
+    // accepted input. Matched message_start releases only while already
+    // streaming; idle dequeue-before-first-streaming still does not release.
     void this.options.attention.releaseContinuationBarrier(agentId);
     return nextContext;
   }

@@ -33,8 +33,9 @@ export interface PersistedSessionAttentionRecord {
    * True once this epoch observed an accepted turn still queued. The queue is
    * dequeued on the provider's user message_start, which can precede the
    * manager's own streaming projection, so a drop to zero is NOT permission to
-   * settle. Only an authoritative manager streaming transition (continuation
-   * really began) or an explicit no-continuation release may clear it.
+   * settle. Clear it on an authoritative manager streaming transition, matched
+   * consume during an already-streaming run, or an explicit no-continuation
+   * release.
    */
   awaitingContinuation?: boolean;
   attention?: PersistedSessionAttention;
