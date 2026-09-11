@@ -54,10 +54,14 @@ one action. Saved local-vault and Bitwarden-backed aliases can be
 available to one selected project or all local projects. A project-specific alias
 overrides an all-projects alias of the same name in that project.
 
-Marking a secret automatic for one project creates one task lease for the manager
-session when Team Secure Mode starts. Eligible local Forge Pi workers use that same
-manager-owned sandbox and grant set. Use **Apply now** in the shield to apply or retry
-configured defaults without restarting. This policy does not configure a host
+Granting a saved alias to a project installs protected access for eligible
+agents in that task. Saving an alias or choosing its availability scope alone
+does not grant access. No separate **Start secure** or **Apply now** action is
+needed for inherited automatic access; the secure runner is prepared automatically
+on the first `secure_bash` use. Eligible local Forge Pi workers use that same manager-owned
+sandbox and grant set. Use the shield to unlock a source, grant additional access, or
+pause, block, revoke, or restore access; **Apply now** remains only on a genuinely
+manual, non-automatic path. This policy does not configure a host
 environment variable or grant standard Bash, prompts, terminals, or unsupported
 worker runtimes access. The Docker execution backend requires the pinned
 `forge-secure-runner:node22-v6` image, which can be built with the command in the

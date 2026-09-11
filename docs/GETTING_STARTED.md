@@ -180,21 +180,29 @@ arguments. Under **Settings → Secrets**, choose whether an alias is available 
 one project or to all local projects. Right-click a local project header and choose
 **Project Secrets** to open the same settings with that project preselected.
 
-Use the shield beside **Send** to start Team Secure Mode and grant task, timed, or
-one-use access. Each manager session owns one container and one grant set; every
-eligible local Forge Pi worker uses that same authority while working for the manager.
-A secret marked **Automatically available in this project** is evaluated once for the
-session. Use **Apply now** to apply or retry configured defaults without restarting.
+Granting a saved alias to a project installs protected access for eligible
+agents in that task. Saving an alias or choosing its availability scope alone
+does not grant access. No separate **Start secure** or **Apply now** action is
+needed for inherited automatic access. Each manager session owns one container and one
+grant set; every eligible local Forge Pi worker uses that same authority while
+working for the manager. The secure runner is prepared automatically on the first
+`secure_bash` use.
+
+Use the shield beside **Send** to unlock a needed source; grant additional task,
+timed, or one-use access; and pause, block, revoke, or restore access. The same
+control still covers any genuinely manual, non-automatic legacy path, including
+**Apply now** when that path is offered.
 
 Each agent keeps normal host `bash` for repository work, Git, GitHub CLI, and native
-tools. Team Secure Mode adds `secure_bash`, a Linux-container command tool used only
-when an approved value or Forge-managed SSH trust is needed. On Windows, normal
+tools. Protected project access adds `secure_bash`, a Linux-container command tool used
+only when an approved value or Forge-managed SSH trust is needed. On Windows, normal
 `bash` is normally Git Bash while `secure_bash` remains Linux. One task or timed grant
 can support many secure commands from the manager or its workers. You can revoke one
-shared grant or stop Team Secure Mode to revoke the whole session. Worker lifecycle
-changes do not create or destroy secret authority. Unsupported worker runtimes fail
-closed. Team processes can write the same selected workspace, so use separate Git
-worktrees for high-risk or concurrently writing agents.
+shared grant, pause inherited access, or stop Team Secure Mode on a manual path to
+revoke the whole session. Worker lifecycle changes do not create or destroy secret
+authority. Unsupported worker runtimes fail closed. Team processes can write the same
+selected workspace, so use separate Git worktrees for high-risk or concurrently
+writing agents.
 The agent can also propose an alias that does not exist. Its request contains only the
 alias, optional non-secret username, purpose, delivery, and lease. **Add secret and
 approve** collects the value privately in Forge Desktop and saves it to the current
