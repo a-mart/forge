@@ -69,9 +69,10 @@ start step. Forge prepares the shared protected environment on the first
 aliases they need; values never enter ordinary Bash or model prompts.
 
 New grants and recovered sources are checked on the next protected command. If a
-needed source is locked, use **Unlock secret sources** in the shield and retry the
-command. Unrelated locked sources do not prompt at launch. An unavailable source
-or delivery conflict skips only that grant. Each project
+needed granted Bitwarden Password Manager source is locked, unlock it from the
+chat shield and retry the command. Other unavailable sources still use **Unlock
+secret sources**. Unrelated locked sources do not prompt at launch. An unavailable
+source or delivery conflict skips only that grant. Each project
 supports at most 50 effective secure grants by default, for both automatic grants
 and one manual request batch. Change that limit under **Secure grants per project**
 to a whole number from 1 to 256. Forge rejects a lower limit when any project already
@@ -114,6 +115,12 @@ Project grants work without opening this control. Use the shield to:
 - Restore an explicitly blocked secret, or grant additional temporary access.
 - Revoke a grant. Revoking an inherited project secret also blocks it for this task
   until you restore it, so the next command cannot silently regrant it.
+
+If a relevant granted Bitwarden Password Manager source is locked, the shield stays
+labeled **Secrets** and turns yellow/amber. The popover says **Bitwarden vault
+locked** and offers **Unlock Bitwarden vault** (or directs you to open Forge Desktop to unlock the vault). Other
+unavailable sources still use **Unlock secret sources**. A pause or block takes
+precedence over that warning.
 
 A worker block resets the team's shared protected environment and interrupts
 protected commands to stop retained processes. Access blocks survive restarts.
