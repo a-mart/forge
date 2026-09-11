@@ -372,6 +372,89 @@ describe("SessionAttentionCoordinator state machine", () => {
     expect(h.coordinator.getSnapshot().attentions).toHaveLength(1);
   });
 
+  it("settles after matched consume during an already-streaming cycle", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", { pendingTurnContextCount: 1 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.releaseContinuationBarrier(session("streaming", { pendingTurnContextCount: 0 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.observeStatus(statusObservation("streaming", "idle", session("idle")));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "work_settled",
+      raisedAt: NOW,
+    }]);
+  });
+
+  it("keeps the fence when accepted input is still queued at idle", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", { pendingTurnContextCount: 1 }));
+    await h.coordinator.observeStatus(statusObservation(
+      "streaming",
+      "idle",
+      session("idle", { pendingTurnContextCount: 1 }),
+    ));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.observeAggregateChange(session("idle", { pendingTurnContextCount: 0 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+  });
+
+  it("does not false-settle queued tail input consumed by the next cycle", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", { pendingTurnContextCount: 1 }));
+    await h.coordinator.observeStatus(statusObservation(
+      "streaming",
+      "idle",
+      session("idle", { pendingTurnContextCount: 1 }),
+    ));
+    // Next-cycle message_start can precede streaming; pending=0 is not settle.
+    await h.coordinator.observeAggregateChange(session("idle", { pendingTurnContextCount: 0 }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+
+    await h.coordinator.observeStatus(statusObservation("idle", "streaming", session("streaming")));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([]);
+    await h.coordinator.observeStatus(statusObservation("streaming", "idle", session("idle")));
+    expect(h.coordinator.getSnapshot().attentions).toHaveLength(1);
+  });
+
+  it("still raises decision_waiting through the fence after in-cycle consume of one of two queued turns", async () => {
+    const h = createHarness();
+    await h.coordinator.initialize();
+    await armManager(h);
+
+    await h.coordinator.observeAggregateChange(session("streaming", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 2,
+    }));
+    expect(h.coordinator.getSnapshot().attentions[0]?.reason).toBe("decision_waiting");
+
+    await h.coordinator.releaseContinuationBarrier(session("streaming", {
+      pendingChoiceCount: 1,
+      pendingTurnContextCount: 1,
+    }));
+    expect(h.coordinator.getSnapshot().attentions).toEqual([{
+      attentionId: "attention-1",
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      reason: "decision_waiting",
+      raisedAt: NOW,
+    }]);
+  });
+
   it("releases the accepted-turn barrier when no continuation follows", async () => {
     // Rollback/discard: the turn ended without a continuation, so the epoch
     // must still be able to settle rather than staying armed forever.

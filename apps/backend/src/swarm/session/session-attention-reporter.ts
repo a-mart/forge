@@ -80,8 +80,10 @@ export class SessionAttentionReporter {
   }
 
   /**
-   * The accepted turn ended without producing a continuation (rollback/discard),
-   * so the deferred epoch may settle on its own merits again.
+   * Release the accepted-turn barrier after no-continuation removal or after
+   * matched consume during an already-streaming manager run. The snapshot is
+   * frozen before the coordinator mutation is queued so a later idle flip cannot
+   * rewrite consume-time status.
    */
   async reportContinuationAbandoned(sessionAgentId: string): Promise<void> {
     const snapshot = this.snapshot(sessionAgentId);
@@ -115,7 +117,7 @@ export class SessionAttentionReporter {
     if (!manager || manager.role !== "manager") return undefined;
 
     return {
-      manager,
+      manager: { ...manager },
       profile: manager.profileId ? this.options.getProfile(manager.profileId) : undefined,
       activeWorkerCount: this.options.getActiveWorkerCount(sessionAgentId),
       hasTerminallyErroredWorker: this.options.hasTerminallyErroredWorker(sessionAgentId),

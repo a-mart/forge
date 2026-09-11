@@ -227,6 +227,61 @@ describe("TurnContextCoordinator", () => {
     expect(harness.attentionReleaseCounts).toEqual([]);
   });
 
+  it("releases the accepted-turn barrier when matched consume happens while already streaming", async () => {
+    const harness = createHarness();
+    harness.descriptors.get("manager-1")!.status = "streaming";
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      runtimeMessageText: "[workerResult] result",
+    });
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "[workerResult] result"),
+    );
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.attentionReleaseCounts).toEqual([0]);
+  });
+
+  it("does not release on unmatched user message_start while already streaming", async () => {
+    const harness = createHarness();
+    harness.descriptors.get("manager-1")!.status = "streaming";
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      runtimeMessageText: "[workerResult] result",
+    });
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "unrelated user text"),
+    );
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+    expect(harness.attentionReleaseCounts).toEqual([]);
+  });
+
+  it("keeps the fence when a second accepted turn remains after matched consume", async () => {
+    const harness = createHarness();
+    harness.descriptors.get("manager-1")!.status = "streaming";
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      runtimeMessageText: "[workerResult] first",
+    });
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      runtimeMessageText: "[workerResult] second",
+    });
+
+    harness.coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "[workerResult] first"),
+    );
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
+    expect(harness.attentionReleaseCounts).toEqual([1]);
+  });
+
   it("records typed worker results distinctly in the durable turn ledger", async () => {
     const harness = createHarness();
 
