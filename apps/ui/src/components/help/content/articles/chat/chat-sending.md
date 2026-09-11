@@ -11,7 +11,7 @@ Your mode preference is saved across sessions.
 
 ## Changing the session model
 
-Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** applies the current project default to that session. Later default changes affect only new conversations.
+Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using a model selected from the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. **Use Project Default** copies the current project default onto that one session. Later project-default changes affect only new conversations and do not cascade into existing sessions.
 
 For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
 
@@ -25,7 +25,7 @@ Context v2 requires a supported ordinary Pi Builder manager and an eligible mode
 
 When a model or reasoning change is accepted for a session, Forge adds a neutral **Model change** notice to that session's conversation. It appears live and remains visible after reload or replay. The notice records the effective before-and-after values, for example: `Model changed from GPT-5.5 (reasoning: xhigh) to GPT-5.6 Luna (reasoning: high).` It is informational conversation history, not an assistant or user message.
 
-A notice is added only when the effective model or reasoning changes. Choosing the same effective settings again does not add one. Changing a project default affects sessions that still inherit it, so each inherited session that actually changes can receive a notice; sessions with an override are unaffected. **Use Project Default** can add a notice when it changes the session's effective model or reasoning, but not when the session already matches the project default.
+A notice is added only when the effective model or reasoning changes. Choosing the same effective settings again does not add one. Changing a project default does not emit model-change notices into other existing sessions. A notice may appear only in the session whose effective model actually changes through an explicit session action such as **Override Session Model** or **Use Project Default**. **Use Project Default** can add a notice when it changes that session's effective model or reasoning, but not when the session already matches the project default.
 
 ## Changing work mode
 

@@ -98,9 +98,9 @@ You're the executive. The manager is your team lead. Selected Work Mode decides 
 
 ### What Is a Session?
 
-A session is a conversation thread within a manager. Your first session is created automatically when you create the manager. You can create additional sessions for different workstreams: one for a feature, one for bug fixes, one for documentation. Each session has its own conversation history, its own memory, and can run workers independently. Sessions inherit the profile's default manager model unless you override the session explicitly.
+A session is a conversation thread within a manager. Your first session is created automatically when you create the manager. You can create additional sessions for different workstreams: one for a feature, one for bug fixes, one for documentation. Each session has its own conversation history, its own memory, and can run workers independently. New sessions copy the profile's default manager model; existing sessions keep their stored model unless you override that session explicitly.
 
-In eligible Builder manager sessions, a compact pill beside **Send** shows the effective model and reasoning level. Click it to open **Session Model**, choose a session override, or select **Use Project Default** to clear an existing override and resume tracking the project default. The pill is not shown in worker views, Collaboration channels, or system profiles such as Cortex.
+In eligible Builder manager sessions, a compact pill beside **Send** shows the effective model and reasoning level. Click it to open **Session Model**, choose a session override, or select **Use Project Default** to copy the current project default onto that one session. Later project-default changes do not cascade. The pill is not shown in worker views, Collaboration channels, or system profiles such as Cortex.
 
 The Send-adjacent work-mode control chooses how the manager owns subsequent turns:
 
@@ -331,7 +331,7 @@ Sessions are how you organize parallel workstreams. Each one holds a different c
 
 ### Creating New Sessions
 
-Click the **+** button in the session sidebar and give it a descriptive name. The new session inherits your manager's configuration (including the profile default manager model, system prompt, and skills) but starts with a fresh conversation. If you later change the profile default model, only sessions that still inherit it will update.
+Click the **+** button in the session sidebar and give it a descriptive name. The new session inherits your manager's configuration (including a copy of the profile default manager model, system prompt, and skills) but starts with a fresh conversation. If you later change the profile default model, existing sessions keep their stored model; only new conversations use the updated default.
 
 Name your sessions meaningfully. Forge forces you to enter a name when creating one for a reason. "fix-pagination-bug" is infinitely more useful than "test" when you're bouncing between six active workstreams.
 
@@ -343,7 +343,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Initial Pi model-input captures and Pi response-throughput measurements are also omitted, so a Pi-backed fork records its own first request and starts its own response-throughput history. Historical Codex sidecar display cards are omitted from forked sessions. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session keeps the source session's stored model. Later project-default changes do not cascade into the fork. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Initial Pi model-input captures and Pi response-throughput measurements are also omitted, so a Pi-backed fork records its own first request and starts its own response-throughput history. Historical Codex sidecar display cards are omitted from forked sessions. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 
@@ -889,7 +889,7 @@ Once you're comfortable with the basics:
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Review consolidation settings** — While Knowledge v2 is ON, use **Settings → General** for the daily entry consolidation schedule; manual consolidation is available under Cortex **Run**.
-6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state.
+6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default (new conversations only), **Override Session Model** for a one-off session, and **Use Project Default** to copy the current default onto that one session.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."

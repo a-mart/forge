@@ -11,9 +11,9 @@ A profile is the set of settings, memory, and resources that a manager uses. Whe
 
 ## Sessions and profiles
 
-Each profile can have multiple sessions. Sessions inherit all config from the profile but maintain their own conversation history and session memory. Think of it as: the profile is the "who," and sessions are individual conversations.
+Each profile can have multiple sessions. Sessions start from the profile's config but keep their own conversation history, session memory, and stored model. Think of it as: the profile is the "who," and sessions are individual conversations.
 
-By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Project default changes apply only to new conversations. Existing sessions retain their selected model. Use "Use Project Default" on a session to apply the current project default to that session, and the override action is available from the session context menu alongside the other session-management actions.
+New conversations copy the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Changing **Project Settings → Default model** or **Change Default Model** updates the project default for new conversations only; existing sessions retain their stored model. **Use Project Default** copies the current default onto that one session; later project-default changes do not cascade. The override action is available from the session context menu alongside the other session-management actions.
 
 Remote profiles remain authoritative on their Forge server. Their project headers appear with blue styling and a globe marker when the connection's Remote Projects preference and server policy are enabled; nested session rows use status dots. Header actions are limited to **Change Working Directory**, which opens the server directory browser. Local rename, archive, delete, fork, and model actions remain absent. A remote connection may instead show connecting, sign-in-required, unreachable, server-disabled, update-required, or empty status until its projects can be selected.
 
@@ -27,7 +27,7 @@ Use **Project Settings → Project name → Rename**, or the existing **Rename**
 
 ## Change default model
 
-Use **Project Settings → Default model → Change**, or the existing **Change Default Model** header shortcut, to update the default model and supported reasoning level. Sessions still using the project default are updated automatically. Sessions with a model override are not affected. Changes take effect on the next message or session resume.
+Use **Project Settings → Default model → Change**, or the existing **Change Default Model** header shortcut, to update the default model and supported reasoning level. That change applies to new conversations only. Existing sessions retain their stored model. **Use Project Default** copies the current default onto one session; later project-default changes do not cascade.
 
 ## Reorder profiles
 

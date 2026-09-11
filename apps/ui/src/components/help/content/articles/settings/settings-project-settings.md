@@ -13,9 +13,10 @@ Open it from a local project header in either place:
 ## Manage the selected project
 
 Use the page to rename the project, change its working directory, or change its
-default manager model and supported reasoning level. Sessions that inherit the
-project default follow a later model change; a session with its own override does
-not.
+default manager model and supported reasoning level. Changing the default model
+updates the project default for new conversations only; existing sessions retain
+their stored model. **Use Project Default** copies the current default onto that
+one session; later project-default changes do not cascade.
 
 **Context management** chooses how this project continues when context fills:
 **Summary (default)** or **Context v2 (experimental)**. Summary carries forward

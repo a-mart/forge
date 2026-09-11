@@ -6,7 +6,7 @@ Right-click a session in the sidebar and choose **Fork**. A dialog opens where y
 
 ## Full fork
 
-By default, forking copies the entire conversation history into a new session and preserves the source session's model state, including whether it was inheriting the profile default or using an explicit override.
+By default, forking copies the entire conversation history into a new session.
 
 ## Partial fork
 
@@ -14,9 +14,12 @@ You can also fork from a specific message. When triggered from a message context
 
 The forked session's memory header records where the fork happened, so the boundary with the parent session is explicit.
 
+Either way, the fork copies the source session's stored model. Later project-default changes do not cascade into the fork.
+
 ## What gets copied
 
 - **Conversation history** (all messages, or up to the selected message for partial forks).
+- The source session's **stored model**. Later project-default changes do not cascade into the fork.
 - A fresh **session memory** is created with a fork header noting the parent session.
 
 ## What does not get copied
