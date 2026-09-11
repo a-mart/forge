@@ -1,4 +1,4 @@
-Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar. Failed worker turns appear in the transcript as system error messages with the last error context preserved, and the same turn will not produce duplicate end reports.
+Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar. Final results are delivered automatically; workers may message only their owning manager for a requested interim answer, a blocker or question, or a finding that materially changes the approach, and they must not send a duplicate completion message. Failed worker turns appear in the transcript as system error messages with the last error context preserved, and the same turn will not produce duplicate end reports.
 
 ## Worker pill bar
 
