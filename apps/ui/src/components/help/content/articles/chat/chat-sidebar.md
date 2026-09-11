@@ -9,8 +9,8 @@ On desktop, Cortex lives in the activity-rail popover. On mobile, and in Classic
 Inbox is the default new project view. It lists:
 
 - **Needs you** — server-issued work-lifecycle attention. Unread badges and error dots do not create these items. An unanswered **Input requested** pending choice raises **Needs you** even while work still runs or follow-ups are queued; answering or cancelling retracts that item without marking the session complete, so remaining work can stay **Active**. The UI does not synthesize **Needs you** from local badges.
-- **Active** — currently working sessions, capped with an **N more** link into Projects.
-- **Recent** — sessions updated in the last 7 days, also bounded.
+- **Active** — currently working sessions, capped at five, with **N more** opening Projects.
+- **Recent** — idle sessions updated in the last 7 days, excluding **Needs you** and **Active**. Inbox initially shows five rows; **Show N more** expands the remaining matching rows inline, and **Show less** collapses back to five without switching to Projects.
 - **Projects** — the same project/session tree as Projects mode, shown inline after those sections.
 
 **Done** and **Clear** dismiss the exact **Needs you** items they target. Muting a session only hides it from **Needs you** and the Inbox badge; it does not dismiss the attention. Origins that do not support session attention omit **Needs you** instead of inventing items from local badges. Right-click a **Needs you**, **Active**, or **Recent** session for the same local session actions as Projects; remote Inbox rows stay limited the same way as remote project sessions.
