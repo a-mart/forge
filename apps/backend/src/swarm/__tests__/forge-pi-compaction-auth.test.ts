@@ -204,6 +204,7 @@ describe("configured Forge Pi compaction auth", () => {
     mocks.createPiModelRegistry.mockReturnValue(registry);
     const pool = {
       getPoolSize: vi.fn(async () => 2),
+      getTotalPoolSize: vi.fn(async () => 2),
       select: vi.fn(async () => ({ credentialId: "anthropic-cred-2", authStorageKey: "anthropic:cred-2" })),
       buildRuntimeAuthData: vi.fn(async () => ({
         anthropic: { type: "api_key", key: "pooled-anthropic-key" },
@@ -225,6 +226,7 @@ describe("configured Forge Pi compaction auth", () => {
     });
 
     expect(pool.getPoolSize).toHaveBeenCalledWith("anthropic");
+    expect(pool.getTotalPoolSize).toHaveBeenCalledWith("anthropic");
     expect(pool.select).toHaveBeenCalledWith("anthropic");
     expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "anthropic-cred-2");
     expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "anthropic-cred-2");
@@ -234,6 +236,30 @@ describe("configured Forge Pi compaction auth", () => {
       headers: { "x-pool": "selected" },
       authSource: "pool",
     });
+  });
+
+  it("fails closed when the only pooled credential is paused", async () => {
+    const handle = await makeHandle();
+    const descriptor = makeCompactionGuardDescriptor();
+    const pool = {
+      getPoolSize: vi.fn(async () => 0),
+      getTotalPoolSize: vi.fn(async () => 1),
+      select: vi.fn(),
+    };
+
+    await expect(resolveConfiguredForgePiCompactionAuth({
+      config: handle.config,
+      descriptor,
+      getPiModelsJsonPath: () => "/tmp/pi-models.json",
+      getCredentialPoolService: () => pool as never,
+      compactionSettings: {
+        timeoutMs: 300_000,
+        model: { provider: "anthropic", modelId: "claude-opus-4-5" },
+        reasoningLevel: "low",
+      },
+    })).rejects.toThrow("All pooled anthropic credentials are paused");
+
+    expect(pool.select).not.toHaveBeenCalled();
   });
 
   it("classifies configured auth that cannot expose a raw API key as unsupported", async () => {

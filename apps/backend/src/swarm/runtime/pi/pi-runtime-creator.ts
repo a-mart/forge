@@ -771,8 +771,18 @@ export class PiRuntimeCreator {
     if (!getPool) return null;
 
     const pool = getPool();
-    const poolSize = await pool.getPoolSize(provider);
-    if (poolSize <= 1) return null;
+    const enabledPoolSize = await pool.getPoolSize(provider);
+    if (enabledPoolSize === 0) {
+      const totalPoolSize = await pool.getTotalPoolSize(provider);
+      if (totalPoolSize === 0) return null;
+      this.deps.logDebug("runtime:credential_pool:all_paused", {
+        provider,
+        message: `All pooled ${provider} credentials are paused.`,
+      });
+      throw new Error(`All pooled ${provider} credentials are paused. Resume an account to continue.`);
+    }
+    const totalPoolSize = await pool.getTotalPoolSize(provider);
+    if (totalPoolSize <= 1) return null;
 
     const selection = await pool.select(provider);
     if (!selection) {

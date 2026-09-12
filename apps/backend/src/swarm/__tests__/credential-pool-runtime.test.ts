@@ -69,6 +69,16 @@ describe("CredentialPoolService runtime helpers", () => {
       const size = await pool.getPoolSize("openai-codex");
       expect(size).toBe(2);
     });
+
+    it("excludes paused credentials from the routable size but keeps them in the total", async () => {
+      await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+      const pool = new CredentialPoolService(deps);
+      const listed = await pool.listPool("openai-codex");
+      await pool.setCredentialEnabled("openai-codex", listed.credentials[0].id, false);
+
+      expect(await pool.getPoolSize("openai-codex")).toBe(0);
+      expect(await pool.getTotalPoolSize("openai-codex")).toBe(1);
+    });
   });
 
   describe("buildRuntimeAuthData", () => {
@@ -346,6 +356,7 @@ describe("credential pool rotation flow", () => {
     const pool = new CredentialPoolService(deps);
     await expect(pool.select("xai")).rejects.toThrow(/only supported for/);
     await expect(pool.getPoolSize("xai")).rejects.toThrow(/only supported for/);
+    await expect(pool.getTotalPoolSize("xai")).rejects.toThrow(/only supported for/);
     await expect(pool.buildRuntimeAuthData("xai", "cred_123")).rejects.toThrow(/only supported for/);
   });
 

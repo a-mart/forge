@@ -15,6 +15,7 @@ interface PersistedCredentialEntry {
   label: string;
   autoLabel?: string;
   isPrimary: boolean;
+  enabled?: boolean;
   accountId?: string;
   health: "healthy" | "cooldown" | "auth_error";
   cooldownUntil: number | null;
@@ -42,6 +43,11 @@ const POOLED_OAUTH_PROVIDERS = {
 
 function generateCredentialId(): string {
   return `cred_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+/** Persisted entries predate the pause/resume flag; treat missing values as enabled. */
+function isCredentialEnabled(entry: PersistedCredentialEntry): boolean {
+  return entry.enabled !== false;
 }
 
 /**
@@ -135,6 +141,7 @@ export class CredentialPoolService {
           id,
           label: "Primary Account",
           isPrimary: true,
+          enabled: true,
           health: "healthy",
           cooldownUntil: null,
           requestCount: 0,
@@ -157,6 +164,7 @@ export class CredentialPoolService {
       return { strategy: "fill_first", credentials: [] };
     }
 
+    this.normalizeCredentialFlags(provider);
     // Expire stale cooldowns before returning
     this.expireCooldowns(provider);
     const rawAuth = await readAuthFileRaw(this.deps.authFile);
@@ -183,10 +191,12 @@ export class CredentialPoolService {
     const providerPool = this.pool[provider];
     if (!providerPool || providerPool.credentials.length === 0) return null;
 
+    this.normalizeCredentialFlags(provider);
     this.expireCooldowns(provider);
 
     const candidates = orderCredentialSelectionCandidates(providerPool).filter(
-      (candidate) => candidate.id !== options?.excludeCredentialId
+      (candidate) =>
+        isCredentialEnabled(candidate) && candidate.id !== options?.excludeCredentialId
     );
     for (const candidate of candidates) {
       try {
@@ -218,9 +228,20 @@ export class CredentialPoolService {
   }
 
   /**
-   * Returns the number of credentials in the pool for a provider.
+   * Returns the number of enabled (routable) credentials in the pool for a provider.
+   * Paused credentials are excluded so singleton bypasses don't route to them.
    */
   async getPoolSize(provider: string): Promise<number> {
+    this.assertSupportedProvider(provider);
+    await this.ensureLoaded();
+    this.normalizeCredentialFlags(provider);
+    return this.pool[provider]?.credentials.filter((entry) => isCredentialEnabled(entry)).length ?? 0;
+  }
+
+  /**
+   * Returns the total number of credentials in the pool for a provider, including paused ones.
+   */
+  async getTotalPoolSize(provider: string): Promise<number> {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();
     return this.pool[provider]?.credentials.length ?? 0;
@@ -273,6 +294,7 @@ export class CredentialPoolService {
 
     let earliest: number | undefined;
     for (const entry of providerPool.credentials) {
+      if (!isCredentialEnabled(entry)) continue;
       if (entry.health === "cooldown" && entry.cooldownUntil !== null) {
         if (earliest === undefined || entry.cooldownUntil < earliest) {
           earliest = entry.cooldownUntil;
@@ -310,6 +332,7 @@ export class CredentialPoolService {
       label: identity?.label ?? (isFirst ? "Primary Account" : `Account ${this.pool[provider].credentials.length + 1}`),
       autoLabel: identity?.autoLabel,
       isPrimary: isFirst,
+      enabled: true,
       accountId: identity?.accountId,
       health: "healthy",
       cooldownUntil: null,
@@ -455,6 +478,15 @@ export class CredentialPoolService {
     await this.persist();
   }
 
+  async setCredentialEnabled(provider: string, credentialId: string, enabled: boolean): Promise<void> {
+    this.assertSupportedProvider(provider);
+    await this.ensureLoaded();
+
+    const entry = this.findCredential(provider, credentialId);
+    entry.enabled = enabled;
+    await this.persist();
+  }
+
   async resetCooldown(provider: string, credentialId: string): Promise<void> {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();
@@ -565,6 +597,17 @@ export class CredentialPoolService {
     newPrimary.isPrimary = true;
   }
 
+  private normalizeCredentialFlags(provider: string): void {
+    const providerPool = this.pool[provider];
+    if (!providerPool) return;
+
+    for (const entry of providerPool.credentials) {
+      if (entry.enabled === undefined) {
+        entry.enabled = true;
+      }
+    }
+  }
+
   private expireCooldowns(provider: string): void {
     const providerPool = this.pool[provider];
     if (!providerPool) return;
@@ -639,6 +682,7 @@ function toPooledCredentialInfo(
     label: entry.label,
     autoLabel: entry.autoLabel,
     isPrimary: entry.isPrimary,
+    enabled: isCredentialEnabled(entry),
     health: healthOverride ?? entry.health,
     cooldownUntil: entry.cooldownUntil,
     requestCount: entry.requestCount,

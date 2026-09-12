@@ -6,7 +6,9 @@ import {
   CircleAlert,
   Clipboard,
   Loader2,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RotateCcw,
   Star,
@@ -36,6 +38,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   fetchCredentialPool,
   setCredentialPoolStrategy,
+  pausePooledCredential,
+  resumePooledCredential,
   renamePooledCredential,
   setPrimaryPooledCredential,
   resetPooledCredentialCooldown,
@@ -56,6 +60,18 @@ import type { SettingsBackendTarget } from './settings-target'
 /* ------------------------------------------------------------------ */
 
 function HealthBadge({ credential, nowMs }: { credential: PooledCredentialInfo; nowMs: number }) {
+  if (credential.enabled === false) {
+    return (
+      <Badge
+        variant="outline"
+        className="gap-1 border-muted-foreground/30 bg-muted/40 text-muted-foreground"
+      >
+        <Pause className="size-3" />
+        Paused
+      </Badge>
+    )
+  }
+
   if (credential.health === 'healthy') {
     return (
       <Badge
@@ -105,6 +121,8 @@ function CredentialRow({
   onSetPrimary,
   onRename,
   onResetCooldown,
+  onPause,
+  onResume,
   onRemove,
 }: {
   credential: PooledCredentialInfo
@@ -113,6 +131,8 @@ function CredentialRow({
   onSetPrimary: () => void
   onRename: (newLabel: string) => void
   onResetCooldown: () => void
+  onPause: () => void
+  onResume: () => void
   onRemove: () => void
 }) {
   const [isEditing, setIsEditing] = useState(false)
@@ -127,9 +147,11 @@ function CredentialRow({
     setIsEditing(false)
   }
 
+  const isPaused = credential.enabled === false
+
   return (
     <>
-      <div className="group flex items-center gap-3 rounded-md border border-border bg-background/50 px-3 py-2.5 transition-colors hover:bg-background/80">
+      <div className={`group flex items-center gap-3 rounded-md border border-border bg-background/50 px-3 py-2.5 transition-colors hover:bg-background/80${isPaused ? ' opacity-70' : ''}`}>
         {/* Primary star */}
         <TooltipProvider delayDuration={300}>
           <Tooltip>
@@ -218,6 +240,45 @@ function CredentialRow({
 
         {/* Actions */}
         <div className="flex items-center gap-0.5">
+          {credential.enabled !== false ? (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-foreground"
+                    onClick={onPause}
+                    disabled={isBusy}
+                    aria-label="Pause account"
+                  >
+                    <Pause className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Pause account — skip when routing requests</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-foreground"
+                    onClick={onResume}
+                    disabled={isBusy}
+                    aria-label="Resume account"
+                  >
+                    <Play className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Resume account</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {credential.health === 'cooldown' && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -458,6 +519,32 @@ export function CredentialPoolPanel({
       await resetPooledCredentialCooldown(apiClient, provider, id)
       await loadPool()
       onSuccess('Cooldown reset.')
+    } catch (err) {
+      onError(toErrorMessage(err))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const handlePause = async (id: string) => {
+    setIsBusy(true)
+    try {
+      await pausePooledCredential(apiClient, provider, id)
+      await loadPool()
+      onSuccess('Account paused — it will be skipped when routing requests.')
+    } catch (err) {
+      onError(toErrorMessage(err))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const handleResume = async (id: string) => {
+    setIsBusy(true)
+    try {
+      await resumePooledCredential(apiClient, provider, id)
+      await loadPool()
+      onSuccess('Account resumed.')
     } catch (err) {
       onError(toErrorMessage(err))
     } finally {
@@ -719,6 +806,8 @@ export function CredentialPoolPanel({
               onSetPrimary={() => void handleSetPrimary(cred.id)}
               onRename={(label) => void handleRename(cred.id, label)}
               onResetCooldown={() => void handleResetCooldown(cred.id)}
+              onPause={() => void handlePause(cred.id)}
+              onResume={() => void handleResume(cred.id)}
               onRemove={() => void handleRemove(cred.id)}
             />
           ))}

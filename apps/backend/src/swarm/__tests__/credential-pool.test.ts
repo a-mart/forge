@@ -251,6 +251,76 @@ describe("CredentialPoolService — selection", () => {
     expect(result!.credentialId).toBe(credId);
   });
 
+  it("skips paused credentials during selection and resumes them on demand", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+
+    const service = new CredentialPoolService(deps);
+    await service.listPool("openai-codex");
+    const added = await service.addCredential("openai-codex", makeOAuthCredential("tok_2"), {
+      label: "Second Account",
+    });
+
+    const pool = await service.listPool("openai-codex");
+    const primaryId = pool.credentials.find((c) => c.isPrimary)!.id;
+    expect(pool.credentials.every((c) => c.enabled)).toBe(true);
+
+    await service.setCredentialEnabled("openai-codex", primaryId, false);
+    const pausedPool = await service.listPool("openai-codex");
+    expect(pausedPool.credentials.find((c) => c.id === primaryId)?.enabled).toBe(false);
+
+    const pausedSelection = await service.select("openai-codex");
+    expect(pausedSelection).not.toBeNull();
+    expect(pausedSelection!.credentialId).toBe(added.id);
+
+    await service.setCredentialEnabled("openai-codex", primaryId, true);
+    const resumedSelection = await service.select("openai-codex");
+    expect(resumedSelection).not.toBeNull();
+    expect(resumedSelection!.credentialId).toBe(primaryId);
+  });
+
+  it("treats legacy pool entries without an enabled flag as enabled", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+    await writeFile(
+      join(authDir, "credential-pool.json"),
+      JSON.stringify({
+        "openai-codex": {
+          strategy: "fill_first",
+          credentials: [
+            {
+              id: "cred_legacy",
+              label: "Legacy Account",
+              isPrimary: true,
+              health: "healthy",
+              cooldownUntil: null,
+              requestCount: 0,
+              createdAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      }),
+      "utf8"
+    );
+
+    const service = new CredentialPoolService(deps);
+    const pool = await service.listPool("openai-codex");
+    expect(pool.credentials[0].enabled).toBe(true);
+
+    const result = await service.select("openai-codex");
+    expect(result).not.toBeNull();
+    expect(result!.credentialId).toBe("cred_legacy");
+  });
+
+  it("returns null when every credential is paused", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+
+    const service = new CredentialPoolService(deps);
+    const pool = await service.listPool("openai-codex");
+    await service.setCredentialEnabled("openai-codex", pool.credentials[0].id, false);
+
+    expect(await service.select("openai-codex")).toBeNull();
+    expect(await service.getEarliestCooldownExpiry("openai-codex")).toBeUndefined();
+  });
+
   it("selects API-key credentials that were explicitly added to an OpenAI Codex pool", async () => {
     await writeAuthFile({});
 

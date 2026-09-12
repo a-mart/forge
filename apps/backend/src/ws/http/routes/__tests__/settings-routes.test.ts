@@ -559,6 +559,9 @@ describe('settings routes', () => {
       renamePooledCredential: vi.fn(async () => undefined),
       setPrimaryPooledCredential: vi.fn(async () => undefined),
       resetPooledCredentialCooldown: vi.fn(async () => undefined),
+      getCredentialPoolService: vi.fn(() => ({
+        setCredentialEnabled: vi.fn(async () => undefined),
+      })),
       removePooledCredential: vi.fn(async () => undefined),
       listCredentialPool: vi.fn(async () => pool),
     }
@@ -591,6 +594,19 @@ describe('settings routes', () => {
     expect(cooldownResponse.status).toBe(200)
     expect(swarmManager.resetPooledCredentialCooldown).toHaveBeenCalledWith('anthropic', 'acct-ant-2')
     await expect(cooldownResponse.json()).resolves.toEqual({ ok: true, pool })
+
+    const pauseResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/pause`, {
+      method: 'POST',
+    })
+    expect(pauseResponse.status).toBe(200)
+    expect(swarmManager.getCredentialPoolService).toHaveBeenCalled()
+    await expect(pauseResponse.json()).resolves.toEqual({ ok: true, pool })
+
+    const resumeResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/resume`, {
+      method: 'POST',
+    })
+    expect(resumeResponse.status).toBe(200)
+    await expect(resumeResponse.json()).resolves.toEqual({ ok: true, pool })
 
     const removeResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2`, {
       method: 'DELETE',
