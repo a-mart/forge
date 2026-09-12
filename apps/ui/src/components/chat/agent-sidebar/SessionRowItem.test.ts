@@ -73,6 +73,66 @@ function renderRow(overrides: Partial<SessionRowItemProps> = {}) {
   })
 }
 
+/** Tailwind `pl-<n>` on a row is its content inset: n * 0.25rem, i.e. n * 4px. */
+const PL_CLASS = /\bpl-(\d+(?:\.\d+)?)\b/
+
+function leftInsetPx(element: Element | null): number | null {
+  const className = element instanceof HTMLElement ? element.className : ''
+  const match = className.match(PL_CLASS)
+  return match ? Number(match[1]) * 4 : null
+}
+
+/** With a single worker the session row button is the only padded button in the tree. */
+function findSessionRowButton(scope: HTMLElement): Element | null {
+  return Array.from(scope.querySelectorAll('button')).find((button) => PL_CLASS.test(button.className)) ?? null
+}
+
+describe('SessionRowItem worker indentation', () => {
+  const worker = makeAgent({
+    agentId: 'worker-1',
+    displayName: 'worker-1',
+    role: 'worker',
+    managerId: 'session-1',
+  })
+
+  function renderSessionWithWorker(roomsV2: boolean) {
+    renderRow({
+      roomsV2,
+      isCollapsed: false,
+      session: {
+        sessionAgent: makeAgent({ workerCount: 1 }),
+        workers: [worker],
+        isDefault: false,
+      },
+    })
+    return {
+      sessionButton: findSessionRowButton(container),
+      workerRow: container.querySelector('[data-worker-row]'),
+    }
+  }
+
+  it('indents rooms-layout workers deeper than the session row', () => {
+    const { sessionButton, workerRow } = renderSessionWithWorker(true)
+    const sessionInset = leftInsetPx(sessionButton)
+    const workerInset = leftInsetPx(workerRow)
+
+    expect(sessionInset).toBe(24)
+    // Rooms keeps worker rows aligned with its "Show more" control (pl-8).
+    expect(workerInset).toBe(32)
+    expect(workerInset!).toBeGreaterThan(sessionInset!)
+  })
+
+  it('indents classic-layout workers deeper than the session row', () => {
+    const { sessionButton, workerRow } = renderSessionWithWorker(false)
+    const sessionInset = leftInsetPx(sessionButton)
+    const workerInset = leftInsetPx(workerRow)
+
+    expect(sessionInset).toBe(28)
+    expect(workerInset).toBe(48)
+    expect(workerInset!).toBeGreaterThan(sessionInset!)
+  })
+})
+
 describe('SessionRowItem creator attribution', () => {
   it('shows creator attribution when creatorAgentId is set and getCreatorAttribution returns a label', () => {
     renderRow({

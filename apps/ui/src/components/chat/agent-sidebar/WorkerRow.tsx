@@ -37,7 +37,7 @@ export const WorkerRow = React.memo(function WorkerRow({
           data-worker-row
           className={cn(
             roomsV2
-              ? 'sidebar-room-worker-row'
+              ? 'sidebar-room-worker-row pl-8'
               : 'relative flex w-full items-center gap-1 rounded-md py-1.5 pl-12 pr-1.5 transition-colors',
             roomsV2
               ? isSelected ? 'sidebar-room-row-selected' : undefined
