@@ -524,6 +524,18 @@ export async function resetPooledCredentialCooldown(client: SettingsApiClient, p
   dispatchSettingsAuthChanged()
 }
 
+export async function pausePooledCredential(client: SettingsApiClient, provider: string, id: string): Promise<void> {
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/pause`, { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+}
+
+export async function resumePooledCredential(client: SettingsApiClient, provider: string, id: string): Promise<void> {
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/resume`, { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+}
+
 export async function removePooledCredential(client: SettingsApiClient, provider: string, id: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))

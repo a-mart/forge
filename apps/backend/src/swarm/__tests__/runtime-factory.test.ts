@@ -1260,6 +1260,7 @@ describe("RuntimeFactory", () => {
 
     const pool = {
       getPoolSize: vi.fn().mockResolvedValue(2),
+      getTotalPoolSize: vi.fn().mockResolvedValue(2),
       select: vi.fn().mockResolvedValue({
         credentialId: "cred_anthropic_second",
         authStorageKey: "anthropic:cred_anthropic_second",
@@ -1287,6 +1288,7 @@ describe("RuntimeFactory", () => {
     );
 
     expect(pool.getPoolSize).toHaveBeenCalledWith("anthropic");
+    expect(pool.getTotalPoolSize).toHaveBeenCalledWith("anthropic");
     expect(pool.select).toHaveBeenCalledWith("anthropic");
     expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_anthropic_second");
     expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "cred_anthropic_second");
@@ -1309,6 +1311,41 @@ describe("RuntimeFactory", () => {
       pooledCredentialProvider: "anthropic",
       credentialPoolService: pool,
     });
+  });
+
+  it("fails closed when the only pooled credential is paused", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    setupPiModel("anthropic", "claude-opus-4-6");
+
+    const pool = {
+      getPoolSize: vi.fn().mockResolvedValue(0),
+      getTotalPoolSize: vi.fn().mockResolvedValue(1),
+      select: vi.fn(),
+      getEarliestCooldownExpiry: vi.fn(),
+      buildRuntimeAuthData: vi.fn(),
+      markUsed: vi.fn(),
+    };
+
+    const factory = createFactory(rootDir, {
+      getCredentialPoolService: () => pool as any,
+    });
+
+    await expect(factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "anthropic",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+    )).rejects.toThrow("All pooled anthropic credentials are paused");
+
+    expect(pool.select).not.toHaveBeenCalled();
+    expect(pool.buildRuntimeAuthData).not.toHaveBeenCalled();
   });
 
   it("swallows and logs DefaultResourceLoader reload errors while still creating Pi runtime", async () => {

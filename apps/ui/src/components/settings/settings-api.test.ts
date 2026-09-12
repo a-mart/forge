@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchServerVersion,
   fetchSkillsList,
+  pausePooledCredential,
+  resumePooledCredential,
   SETTINGS_AUTH_PROVIDER_META,
   removePooledCredential,
   resetPooledCredentialCooldown,
@@ -191,9 +193,11 @@ describe('settings-api auth changed events', () => {
     await setCredentialPoolStrategy(client, 'openai-codex', 'least_used')
     await setPrimaryPooledCredential(client, 'openai-codex', 'cred-1')
     await resetPooledCredentialCooldown(client, 'openai-codex', 'cred-1')
+    await pausePooledCredential(client, 'openai-codex', 'cred-1')
+    await resumePooledCredential(client, 'openai-codex', 'cred-1')
     await removePooledCredential(client, 'openai-codex', 'cred-1')
 
-    expect(listener).toHaveBeenCalledTimes(4)
+    expect(listener).toHaveBeenCalledTimes(6)
   })
 })
 

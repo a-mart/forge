@@ -20,6 +20,8 @@ const settingsApiMock = vi.hoisted(() => ({
   setCredentialPoolStrategy: vi.fn(),
   renamePooledCredential: vi.fn(),
   setPrimaryPooledCredential: vi.fn(),
+  pausePooledCredential: vi.fn(),
+  resumePooledCredential: vi.fn(),
   resetPooledCredentialCooldown: vi.fn(),
   removePooledCredential: vi.fn(),
   toErrorMessage: vi.fn((err: unknown) => (err instanceof Error ? err.message : String(err))),
@@ -59,6 +61,8 @@ vi.mock('./settings-api', () => ({
   setCredentialPoolStrategy: (...a: unknown[]) => settingsApiMock.setCredentialPoolStrategy(a[0], a[1], a[2]),
   renamePooledCredential: (...a: unknown[]) => settingsApiMock.renamePooledCredential(a[0], a[1], a[2], a[3]),
   setPrimaryPooledCredential: (...a: unknown[]) => settingsApiMock.setPrimaryPooledCredential(a[0], a[1], a[2]),
+  pausePooledCredential: (...a: unknown[]) => settingsApiMock.pausePooledCredential(a[0], a[1], a[2]),
+  resumePooledCredential: (...a: unknown[]) => settingsApiMock.resumePooledCredential(a[0], a[1], a[2]),
   resetPooledCredentialCooldown: (...a: unknown[]) => settingsApiMock.resetPooledCredentialCooldown(a[0], a[1], a[2]),
   removePooledCredential: (...a: unknown[]) => settingsApiMock.removePooledCredential(a[0], a[1], a[2]),
   toErrorMessage: (err: unknown) => settingsApiMock.toErrorMessage(err),
@@ -378,12 +382,66 @@ describe('CredentialPoolPanel', () => {
       expect(container.textContent).toContain('Auth Error')
     })
 
-    it('shows request count', async () => {
-      renderPanel('openai-codex', 'OpenAI')
+    it('shows paused badge for paused credentials', async () => {
+      const pool = makePool({
+        credentials: [makeCredential({ enabled: false })],
+      })
+      renderPanel('openai-codex', 'OpenAI', pool)
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('42')
+      expect(container.textContent).toContain('Paused')
+    })
+
+    it('pauses and resumes an account through the row controls', async () => {
+      const pool = makePool({
+        credentials: [
+          makeCredential({ id: 'cred-1', label: 'First', isPrimary: true }),
+          makeCredential({ id: 'cred-2', label: 'Second', isPrimary: false }),
+        ],
+      })
+      renderPanel('openai-codex', 'OpenAI', pool)
+      await flush()
+      await flush()
+
+      const pauseBtn = Array.from(container.querySelectorAll('button')).find(
+        (btn) => btn.getAttribute('aria-label') === 'Pause account',
+      )
+      expect(pauseBtn).toBeTruthy()
+      flushSync(() => {
+        fireEvent.click(pauseBtn!)
+      })
+      await flush()
+
+      expect(settingsApiMock.pausePooledCredential).toHaveBeenCalledWith(
+        mockApiClient,
+        'openai-codex',
+        'cred-1',
+      )
+    })
+
+    it('resumes a paused account through the row controls', async () => {
+      const pool = makePool({
+        credentials: [makeCredential({ enabled: false })],
+      })
+      renderPanel('openai-codex', 'OpenAI', pool)
+      await flush()
+      await flush()
+
+      const resumeBtn = Array.from(container.querySelectorAll('button')).find(
+        (btn) => btn.getAttribute('aria-label') === 'Resume account',
+      )
+      expect(resumeBtn).toBeTruthy()
+      flushSync(() => {
+        fireEvent.click(resumeBtn!)
+      })
+      await flush()
+
+      expect(settingsApiMock.resumePooledCredential).toHaveBeenCalledWith(
+        mockApiClient,
+        'openai-codex',
+        'cred-1',
+      )
     })
 
     it('shows Primary badge for primary credential', async () => {

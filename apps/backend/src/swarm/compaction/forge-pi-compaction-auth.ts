@@ -152,8 +152,17 @@ async function selectPooledCompactionCredential(
     return null;
   }
 
-  const poolSize = await pool.getPoolSize(provider);
-  if (poolSize <= 1) {
+  const enabledPoolSize = await pool.getPoolSize(provider);
+  if (enabledPoolSize === 0) {
+    const totalPoolSize = await pool.getTotalPoolSize(provider);
+    if (totalPoolSize === 0) {
+      return null;
+    }
+    throw new Error(`All pooled ${provider} credentials are paused. Resume an account to continue.`);
+  }
+
+  const totalPoolSize = await pool.getTotalPoolSize(provider);
+  if (totalPoolSize <= 1) {
     return null;
   }
 

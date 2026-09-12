@@ -623,6 +623,30 @@ async function handleCredentialPoolHttpRequest(
     return;
   }
 
+  if (request.method === "POST" && action === "pause") {
+    try {
+      await swarmManager.getCredentialPoolService().setCredentialEnabled(providerId, credentialId, false);
+      await invalidateProviderUsage(providerId);
+      const pool = await swarmManager.listCredentialPool(providerId);
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to pause credential" });
+    }
+    return;
+  }
+
+  if (request.method === "POST" && action === "resume") {
+    try {
+      await swarmManager.getCredentialPoolService().setCredentialEnabled(providerId, credentialId, true);
+      await invalidateProviderUsage(providerId);
+      const pool = await swarmManager.listCredentialPool(providerId);
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to resume credential" });
+    }
+    return;
+  }
+
   if (request.method === "DELETE" && action === undefined) {
     try {
       await swarmManager.removePooledCredential(providerId, credentialId);
