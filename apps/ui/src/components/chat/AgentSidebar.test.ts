@@ -663,7 +663,7 @@ describe('AgentSidebar', () => {
     expect(onRemoteOriginSignIn).toHaveBeenCalledWith('remote-empty')
   })
 
-  it('does not mount enabled sortable controls for either responsive Inbox tree', () => {
+  it('mounts enabled sortable controls for Inbox projects on both responsive trees', () => {
     localStorageMock.setItem('forge-sidebar-layout', 'rooms-v2')
     const first = sessionManager('first-session', 'first-project')
     const second = sessionManager('second-session', 'second-project')
@@ -677,7 +677,17 @@ describe('AgentSidebar', () => {
     })
 
     expect(container.querySelectorAll('aside')).toHaveLength(2)
-    expect(container.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(0)
+    const sidebar = getDesktopSidebar()
+    const projects = sidebar.querySelector('[data-inbox-section="projects"]') as HTMLElement
+    expect(projects).toBeTruthy()
+    expect(projects.textContent).not.toContain('recently used')
+    const activators = projects.querySelectorAll('button[aria-roledescription="sortable"]')
+    expect(activators).toHaveLength(2)
+    expect(Array.from(activators).map((element) => element.getAttribute('aria-label'))).toEqual([
+      'Collapse or drag project First Project',
+      'Collapse or drag project Second Project',
+    ])
+    expect(container.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(4)
   })
 
   it('opens Archive from the sidebar entry when archived items exist', () => {

@@ -208,7 +208,7 @@ export function RoomsInbox({
       ) : null}
 
       {hasInlineProjects ? (
-        <InboxSection title="Projects" detail="recently used" testId="projects">
+        <InboxSection title="Projects" testId="projects">
           <div className="sidebar-room-inbox-project-list">{projectTree}</div>
         </InboxSection>
       ) : null}

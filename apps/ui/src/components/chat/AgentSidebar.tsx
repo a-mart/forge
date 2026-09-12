@@ -965,15 +965,13 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     roomsV2,
   ])
 
-  // Both modes use the exact same project source and render callbacks. Inbox
-  // deliberately disables DnD: desktop and mobile sidebars remain mounted at
-  // once, so an inline sortable context would duplicate every sortable ID.
-  const renderRoomsProjectTree = (dndEnabled: boolean) => (
+  // Inbox and Projects use the same reorder path. The two modes stay mutually
+  // exclusive inside one sidebar; desktop and mobile each keep their own tree.
+  const renderRoomsProjectTree = () => (
     <RoomsProjectsTree
       rows={mixedProjectRows}
       activeView={Boolean(activeView)}
       isSearchActive={isSearchActive}
-      dndEnabled={dndEnabled}
       onMoveBuilderProject={onMoveBuilderProject}
       renderRow={mixedProjectContent}
       getMemoDependencies={(row) => {
@@ -1009,8 +1007,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       )}
     />
   )
-  const roomsProjectTree = renderRoomsProjectTree(true)
-  const roomsInboxProjectTree = renderRoomsProjectTree(false)
+  const roomsProjectTree = renderRoomsProjectTree()
+  const roomsInboxProjectTree = renderRoomsProjectTree()
   // The shared tree element is always composed, including when it only has an
   // empty-state placeholder. Inbox must instead gate on content the tree can
   // actually render: rows or its visible remote-origin status cards.

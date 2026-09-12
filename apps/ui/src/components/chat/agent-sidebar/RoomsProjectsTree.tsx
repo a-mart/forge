@@ -49,7 +49,7 @@ export function RoomsProjectsTree({
   rows: readonly RoomsProjectTreeRow[]
   activeView: boolean
   isSearchActive: boolean
-  /** Inbox embeds the same tree but deliberately has no competing sortable context. */
+  /** When false, the tree stays a static list. Inbox and Projects share the same reorder path. */
   dndEnabled?: boolean
   onMoveBuilderProject?: (active: BuilderSidebarOrderRef, over: BuilderSidebarOrderRef) => void
   renderRow: (

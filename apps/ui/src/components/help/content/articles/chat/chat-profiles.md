@@ -31,7 +31,7 @@ Use **Project Settings → Default model → Change**, or the existing **Change 
 
 ## Reorder profiles
 
-Drag local and connected remote project headers in the sidebar to intermix them. The order is saved automatically by your local Builder instance and shared by browsers or the desktop app connected to that instance. It is a display preference, not an access list: Forge does not write it to remote collaboration servers, and reordering a remote profile does not grant access or alter server policy. Projects that are offline, disabled, archived, or simply unseen by one client retain their positions. Forge never treats one browser's connection list or project snapshot as permission to remove another client's saved positions, so deleted projects or removed connections can remain as harmless hidden anchors until explicit local-instance cleanup is available. Local Cortex remains pinned above the reordered projects.
+Drag local and connected remote project headers in Inbox or Projects to intermix them. The order is saved automatically by your local Builder instance and shared by browsers or the desktop app connected to that instance. It is a display preference, not an access list: Forge does not write it to remote collaboration servers, and reordering a remote profile does not grant access or alter server policy. Projects that are offline, disabled, archived, or simply unseen by one client retain their positions. Forge never treats one browser's connection list or project snapshot as permission to remove another client's saved positions, so deleted projects or removed connections can remain as harmless hidden anchors until explicit local-instance cleanup is available. Local Cortex remains pinned above the reordered projects.
 
 ## Deleting a profile
 

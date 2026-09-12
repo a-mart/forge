@@ -169,7 +169,9 @@ describe('RoomsInbox', () => {
     fireEvent.click(getByRole(container, 'button', { name: '2 more' }))
     expect(onShowProjects).toHaveBeenCalledTimes(1)
     expect(container.textContent).not.toContain('All 1')
+    expect(container.textContent).not.toContain('recently used')
     expect(container.querySelector('[data-testid="real-project-tree"]')).not.toBeNull()
+    expect(container.querySelector('[data-inbox-section="projects"] .sidebar-room-inbox-section-detail')).toBeNull()
   })
 
   it('offers New Project for an empty Inbox even when the shared project tree element is supplied', () => {
