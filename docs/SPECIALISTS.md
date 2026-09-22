@@ -78,22 +78,36 @@ Project specialists shadow global ones with the same filename. Forge seeds the s
 
 ```yaml
 ---
-displayName: Backend Engineer        # Required — human-readable name shown in UI and badges
-color: "#2563eb"                     # Required — hex color (click color swatch in UI to pick)
-enabled: true                        # Required — whether the manager can use this specialist
-whenToUse: >-                        # Required — guidance for the manager on when to pick this specialist
-  Backend/core implementation, TypeScript refactors, debugging server routes
-defaultTier: fast                    # Optional — default tier when this lens is selected without tier
-modelId: gpt-5.5                     # Optional — direct custom specialist model override
-provider: openai-codex               # Optional with modelId — runtime provider
-reasoningLevel: high                 # Optional with modelId — defaults to model preset default
-fallbackModelId: gpt-5.5             # Optional — model if primary is unavailable (can be cross-provider)
-fallbackReasoningLevel: medium       # Optional — reasoning for fallback (defaults to primary)
-pin: true                            # Optional — pin to top of sidebar list
-TargetSpace: builder                 # Optional — builder, collaboration, or [builder, collaboration]
-builtin: true                        # Internal — marks Forge-shipped specialists (do not set manually)
+# Required: human-readable name shown in UI and badges
+displayName: Backend Engineer
+# Required: hex color (click color swatch in UI to pick)
+color: "#2563eb"
+# Required: whether the manager can use this specialist
+enabled: true
+# Required: guidance for the manager on when to pick this specialist
+whenToUse: "Backend/core implementation, TypeScript refactors, debugging server routes"
+# Optional: default tier when this lens is selected without tier
+defaultTier: fast
+# Optional: direct custom specialist model override
+modelId: gpt-5.5
+# Optional with modelId: runtime provider
+provider: openai-codex
+# Optional with modelId: defaults to model preset default
+reasoningLevel: high
+# Optional: model if primary is unavailable (can be cross-provider)
+fallbackModelId: gpt-5.5
+# Optional: reasoning for fallback (defaults to primary)
+fallbackReasoningLevel: medium
+# Optional: keep your edits to a builtin; Forge will not overwrite it on startup
+pinned: true
+# Optional: builder, collaboration, or [builder, collaboration]
+TargetSpace: builder
+# Internal: marks Forge-shipped specialists (do not set manually)
+builtin: true
 ---
 ```
+
+Every frontmatter value must fit on one line. The parser reads `key: value` pairs line by line and does not support YAML block scalars (`>-`, `|`), so a multi-line `whenToUse` is read as the literal text `>-` and the continuation lines are dropped. Put comments on their own lines as shown above; trailing inline comments are treated as part of the field value.
 
 `TargetSpace` is the canonical frontmatter key and is case-sensitive when Forge writes files. Use `builder` for normal Builder managers, `collaboration` for collaboration channel managers, or `[builder, collaboration]` for a shared definition available in both surfaces. Files without `TargetSpace` default to Builder-only for legacy compatibility. Collaboration channel-local specialist files are always treated as collaboration-scoped.
 
