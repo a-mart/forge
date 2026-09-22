@@ -416,8 +416,8 @@ describe('collaboration session surface metadata', () => {
     expect(manager.getAgent(sessionAgentId)).toMatchObject({
       model: {
         provider: 'anthropic',
-        modelId: 'claude-opus-5',
-        thinkingLevel: 'high',
+        modelId: 'claude-opus-5-5',
+        thinkingLevel: 'medium',
       },
       modelOrigin: 'session_override',
       sessionSurface: 'collab',
