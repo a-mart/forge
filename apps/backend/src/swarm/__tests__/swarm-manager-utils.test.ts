@@ -761,6 +761,19 @@ describe("resolveModel", () => {
     });
   });
 
+  it.each(["gpt-6-sol", "gpt-6-luna"])("resolves %s exactly without a Pi registry entry", (modelId) => {
+    const registry = {
+      find: vi.fn(() => undefined),
+      getAll: vi.fn(() => [{ id: "unrelated-fallback" }]),
+    } as unknown as ModelRegistry;
+    expect(resolveExactModel(registry, { provider: "openai-codex", modelId, thinkingLevel: "medium" })).toMatchObject({
+      id: modelId, provider: "openai-codex", api: "openai-codex-responses",
+      contextWindow: 272_000, maxTokens: 128_000,
+      thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
+    expect(registry.getAll).not.toHaveBeenCalled();
+  });
+
   it("rejects retired models before registry lookup or default fallback", () => {
     const registry = {
       find: vi.fn(() => ({ id: "retired-upstream-hit" })),

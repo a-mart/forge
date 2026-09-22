@@ -152,6 +152,40 @@ describe("model-catalog-projection", () => {
     expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
+  it.each([
+    ["gpt-6-sol", 2, 10, 0.2, 2.5],
+    ["gpt-6-luna", 0.1, 0.5, 0.01, 0.125],
+  ] as const)("projects and builds requests for pending %s", async (modelId, input, output, cacheRead, cacheWrite) => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-gpt6-"));
+    const projectionPath = await generatePiProjection(dataDir);
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath);
+    expect(registry.getError()).toBeUndefined();
+    const model = registry.find("openai-codex", modelId);
+    expect(model).toMatchObject({
+      id: modelId, provider: "openai-codex", api: "openai-codex-responses",
+      contextWindow: 272_000, maxTokens: 128_000,
+      thinkingLevelMap: { off: null, minimal: null, xhigh: "xhigh", max: "max" },
+      cost: {
+        input, output, cacheRead, cacheWrite,
+        tiers: [{ inputTokensAbove: 272_000, input: input * 2, output: output * 1.5, cacheRead: cacheRead * 2, cacheWrite: cacheWrite * 2 }],
+      },
+    });
+    const apiKey = `e30.${Buffer.from(JSON.stringify({
+      "https://api.openai.com/auth": { chatgpt_account_id: "acct_test" },
+    })).toString("base64url")}.sig`;
+    for (const reasoning of ["medium", "xhigh", "max"] as const) {
+      const onPayload = vi.fn((_payload: unknown) => { throw new Error("request captured before network"); });
+      await streamSimple(model!, {
+        messages: [{ role: "user", content: "Hello", timestamp: 0 }],
+      }, { apiKey, reasoning, onPayload }).result();
+      expect(onPayload).toHaveBeenCalledOnce();
+      expect(onPayload.mock.calls[0]?.[0]).toMatchObject({ model: modelId, reasoning: { effort: reasoning } });
+    }
+  });
+
   it("projects pending GPT-6 Astra with reasoning compatibility and tiered pricing", async () => {
     const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
       "@earendil-works/pi-coding-agent",

@@ -134,6 +134,22 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'gpt-6-sol': {
+    provider: 'openai-codex',
+    familyId: 'pi-6',
+    contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'gpt-6-luna': {
+    provider: 'openai-codex',
+    familyId: 'pi-6',
+    contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'gpt-5.6-sol': {
     provider: 'openai-codex',
     familyId: 'pi-5.6',
@@ -264,7 +280,7 @@ const EXPECTED_MODELS = {
   },
 } as const
 
-const NATIVE_MODEL_IDS = ['gpt-5.5', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
+const NATIVE_MODEL_IDS = ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
 
 describe('model-catalog', () => {
   it('keeps native Codex managers separate from Pi and worker presets', () => {
@@ -274,6 +290,26 @@ describe('model-catalog', () => {
       expect(getCatalogModel(id, 'codex-native')).toMatchObject({ modelId: id, provider: 'codex-native', familyId: 'codex-native' })
       expect(getCatalogModel(id, 'openai-codex')?.provider).toBe('openai-codex')
     }
+  })
+
+  it.each([
+    ['gpt-6-sol', 2, 10, 0.2, 2.5, true],
+    ['gpt-6-luna', 0.1, 0.5, 0.01, 0.125, false],
+  ] as const)('curates %s for both Codex runtimes', (modelId, input, output, cacheRead, cacheWrite, ultra) => {
+    for (const provider of ['openai-codex', 'codex-native']) {
+      const model = getCatalogModel(modelId, provider)
+      expect(model).toMatchObject({
+        contextWindow: 272_000, maxOutputTokens: 128_000,
+        defaultReasoningLevel: 'medium', inputModes: ['text', 'image'],
+        supportsTools: true, supportsStructuredOutput: true,
+        supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', ...(ultra ? ['ultra'] : [])],
+        piCost: {
+          input, output, cacheRead, cacheWrite,
+          tiers: [{ inputTokensAbove: 272_000, input: input * 2, output: output * 1.5, cacheRead: cacheRead * 2, cacheWrite: cacheWrite * 2 }],
+        },
+      })
+    }
+    expect(getCatalogModel(modelId)?.intentionalDivergenceNotes).toContain('272k default context')
   })
 
   it('contains the expected curated providers, families, and model set', () => {
@@ -287,7 +323,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual([...Object.keys(EXPECTED_FAMILIES), 'codex-native'])
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual([...Object.keys(EXPECTED_MODELS), ...NATIVE_MODEL_IDS.map(id => `codex-native/${id}`)])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(23)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(27)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')

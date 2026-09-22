@@ -90,6 +90,19 @@ describe('buildManagerModelRows provider availability gating', () => {
     }
   })
 
+  it.each(['openai-codex', 'codex-native'])('includes GPT-6 Sol/Luna for %s with verified efforts', (provider) => {
+    const rows = buildManagerModelRows('create', {}, { 'openai-codex': true, 'codex-native': true })
+    for (const modelId of ['gpt-6-sol', 'gpt-6-luna']) {
+      const model = rows.find((row) => row.key === `${provider}::${modelId}`)
+      expect(model).toMatchObject({
+        provider, modelId, defaultReasoningLevel: 'medium',
+        displayName: `GPT-6 ${modelId === 'gpt-6-sol' ? 'Sol' : 'Luna'}${provider === 'codex-native' ? ' (Codex native)' : ''}`,
+        supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', ...(modelId === 'gpt-6-sol' ? ['ultra'] : [])],
+      })
+      expect(model?.unavailableReason).toBeUndefined()
+    }
+  })
+
   it('includes GPT-6 Astra without changing existing OpenAI defaults', () => {
     const rows = buildManagerModelRows('create', {}, { 'openai-codex': true })
     const astra = rows.find((row) => row.key === 'openai-codex::gpt-6-astra')

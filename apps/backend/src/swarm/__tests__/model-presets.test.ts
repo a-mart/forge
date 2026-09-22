@@ -127,7 +127,10 @@ describe("model-presets", () => {
       defaultReasoningLevel: "high",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     });
-    expect(preset?.variants).toBeUndefined();
+    expect(preset?.variants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ modelId: "gpt-6-sol", defaultReasoningLevel: "medium" }),
+      expect.objectContaining({ modelId: "gpt-6-luna", defaultReasoningLevel: "medium" }),
+    ]));
     expect(resolveModelDescriptorFromPreset("pi-6")).toEqual({
       provider: "openai-codex",
       modelId: "gpt-6-astra",

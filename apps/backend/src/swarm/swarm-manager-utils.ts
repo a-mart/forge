@@ -57,6 +57,8 @@ const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
 const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "openai-codex": {
     "gpt-6-astra": "gpt-5.4",
+    "gpt-6-sol": "gpt-5.4",
+    "gpt-6-luna": "gpt-5.4",
     "gpt-5.6-sol": "gpt-5.4",
     "gpt-5.6-terra": "gpt-5.4",
     "gpt-5.6-luna": "gpt-5.4",

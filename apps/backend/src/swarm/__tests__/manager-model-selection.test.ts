@@ -78,6 +78,24 @@ describe("manager model selection", () => {
     )).toThrow("Choose a native Anthropic model");
   });
 
+  it.each(["openai-codex", "codex-native"])("selects GPT-6 Sol/Luna through %s with Codex effort support", async (provider) => {
+    await modelCatalogService.loadOverrides(await makeTempDataDir());
+    for (const modelId of ["gpt-6-sol", "gpt-6-luna"]) {
+      const selection = { provider, modelId };
+      const options = { surface: "create" as const, providerAvailability: new Map([[provider, true]]) };
+      expect(resolveExactManagerModelSelection(selection, options)).toEqual({ ...selection, thinkingLevel: "medium" });
+      expect(resolveExactManagerModelSelection(selection, { ...options, reasoningLevel: "ultra" })).toEqual({
+        ...selection, thinkingLevel: modelId === "gpt-6-sol" ? "ultra" : "max",
+      });
+      expect(resolveExactManagerModelSelection(selection, { ...options, reasoningLevel: "none" })).toEqual({
+        ...selection, thinkingLevel: "low",
+      });
+      expect(() => resolveExactManagerModelSelection(selection, {
+        ...options, providerAvailability: new Map([[provider, false]]),
+      })).toThrow();
+    }
+  });
+
   it("resolves exact GPT-6 Astra selections and clamps unsupported efforts", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
