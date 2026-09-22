@@ -64,6 +64,44 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
 }
 
 describe("Native Codex manager", () => {
+  it("releases the native writer on stop before resuming the same thread", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Original work");
+    await f.runtime.stopInFlight();
+    expect(f.client.shutdown).toHaveBeenCalledOnce();
+    expect(f.client.isDisposed()).toBe(true);
+    expect(f.auth.release).toHaveBeenCalledOnce();
+    await expect(f.runtime.sendMessage("Cannot reuse detached runtime")).rejects.toThrow("stopped or unavailable");
+    const resumed = await fixture({ root: f.root });
+    expect(resumed.client.request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "native-thread" }));
+    await resumed.runtime.sendMessage("Continue work");
+    expect(resumed.client.request).toHaveBeenCalledWith("turn/start", expect.objectContaining({ threadId: "native-thread" }));
+    await resumed.runtime.terminate();
+    await f.runtime.terminate();
+    expect(f.client.shutdown).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stop blocked when process exit is unconfirmed and permits cleanup retry", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Work");
+    f.client.shutdown.mockRejectedValueOnce(new Error("Exit unconfirmed"));
+    await expect(f.runtime.stopInFlight()).rejects.toThrow("Exit unconfirmed");
+    expect(f.auth.release).not.toHaveBeenCalled();
+    await expect(f.runtime.sendMessage("Unsafe replacement")).rejects.toThrow("stopped or unavailable");
+    await f.runtime.shutdownForReplacement();
+    expect(f.client.shutdown).toHaveBeenCalledTimes(2);
+    expect(f.auth.release).toHaveBeenCalledOnce();
+  });
+
+  it("releases an idle native writer when stopped", async () => {
+    const f = await fixture();
+    await f.runtime.stopInFlight();
+    expect(f.client.shutdown).toHaveBeenCalledOnce();
+    expect(f.auth.release).toHaveBeenCalledOnce();
+    await f.runtime.stopInFlight();
+    expect(f.client.shutdown).toHaveBeenCalledOnce();
+  });
+
   it("publishes separate native commentary live and replays it once after restart", async () => {
     let consume: (event: RuntimeSessionEvent) => void = () => {};
     const f = await fixture({ onEvent: event => consume(event) });

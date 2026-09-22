@@ -239,6 +239,12 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       if (!this.client.isDisposed()) await this.client.request("thread/backgroundTerminals/clean", { threadId: this.threadId }, remaining());
       await deadline(this.bridge.drain(), remaining());
       await deadline(this.events, remaining());
+      // Forge detaches stopped runtimes. Release the native thread writer before
+      // reporting cleanup complete so the next runtime can resume its history.
+      if (!this.client.shutdown) throw new Error("Native Codex client cannot confirm process exit");
+      await this.client.shutdown(remaining());
+      await this.options.auth.release();
+      this.closed = true;
       this.status = "idle";
       await this.publishStatus();
       this.stopping = false;
@@ -251,12 +257,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     await this.publishStatus();
   }
   async shutdownForReplacement(options?: RuntimeShutdownOptions): Promise<void> {
-    if (this.closed) return;
     await this.stopInFlight(options);
-    if (!this.client.shutdown) throw new Error("Native Codex client cannot confirm process exit");
-    await this.client.shutdown(options?.shutdownTimeoutMs);
-    await this.options.auth.release();
-    this.closed = true;
   }
   async recycle(): Promise<void> { await this.shutdownForReplacement(); }
 
