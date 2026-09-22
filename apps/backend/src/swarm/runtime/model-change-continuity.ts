@@ -10,7 +10,7 @@ import { isEnoentError } from "../../utils/fs-errors.js";
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
 const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
 
-export type ModelChangeContinuityRuntimeKind = "pi" | "cursor-sdk" | "codex";
+export type ModelChangeContinuityRuntimeKind = "pi" | "cursor-sdk" | "codex" | "claude";
 type PersistedModelChangeContinuityRuntimeKind = ModelChangeContinuityRuntimeKind | "claude" | "codex";
 
 export interface ModelChangeContinuityModel {
@@ -85,6 +85,7 @@ export function inferModelChangeContinuityRuntimeKind(
     return "cursor-sdk";
   }
   if (provider === "codex-native") return "codex";
+  if (provider === "claude-native") return "claude";
 
   return "pi";
 }
@@ -391,6 +392,7 @@ function isPersistedRuntimeKind(value: unknown): value is PersistedModelChangeCo
 
 function normalizeRuntimeKind(value: PersistedModelChangeContinuityRuntimeKind, provider: string): ModelChangeContinuityRuntimeKind {
   if (provider === "codex-native") return "codex";
+  if (provider === "claude-native") return "claude";
   return value === "cursor-sdk" ? "cursor-sdk" : "pi";
 }
 

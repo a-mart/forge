@@ -70,10 +70,10 @@ function testBitwardenCliSummary() {
 }
 
 describe("SecureSessionsService", () => {
-  it("keeps native bindings live through grant changes without recycling the app-server runtime", async () => {
+  it.each(["codex-native", "claude-native"])("keeps %s bindings live through grant changes without recycling", async (provider) => {
     const harness = createHarness();
     const descriptor = harness.descriptors.get("manager-a")!;
-    descriptor.model.provider = "codex-native";
+    descriptor.model.provider = provider;
     const binding = (await harness.service.prepareSecureRuntimeBinding(descriptor))!;
     expect(binding.guardValue("ordinary output")).toBe("ordinary output");
     const secret = await harness.service.createLocalSecureSecret({ displayAlias: "native-password",
@@ -7323,10 +7323,10 @@ describe("project Secure Sessions policy", () => {
     await h.close();
   });
 
-  it.each(["recycled", "deferred"] as const)("refreshes native project guidance through the %s runtime policy", async (disposition) => {
+  it.each([["recycled", "codex-native"], ["deferred", "codex-native"], ["recycled", "claude-native"], ["deferred", "claude-native"]] as const)("refreshes native project guidance through %s on %s", async (disposition, provider) => {
     const h = createHarness();
     const native = h.descriptors.get("manager-a")!;
-    native.model.provider = "codex-native";
+    native.model.provider = provider;
     await saveDefault(h);
     const binding = (await h.service.prepareSecureRuntimeBinding(native))!;
     await binding.executeBash(command());

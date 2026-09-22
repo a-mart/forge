@@ -873,16 +873,16 @@ export class SwarmPromptService {
 
   private async resolveManagerArchetypeEntry(archetypeId: string, profileId: string, descriptor: AgentDescriptor) {
     const entry = await this.options.promptRegistry.resolveEntry("archetype", archetypeId, profileId);
-    if (descriptor.model.provider === "codex-native" && archetypeId === MANAGER_ARCHETYPE_ID && entry?.sourceLayer === "builtin") {
-      return this.options.promptRegistry.resolveEntry("archetype", "codex-manager", profileId);
+    if (["codex-native", "claude-native"].includes(descriptor.model.provider) && archetypeId === MANAGER_ARCHETYPE_ID && entry?.sourceLayer === "builtin") {
+      return this.options.promptRegistry.resolveEntry("archetype", descriptor.model.provider === "claude-native" ? "claude-manager" : "codex-manager", profileId);
     }
     return entry;
   }
 
   private async resolveProjectAgentBasePrompt(descriptor: AgentDescriptor): Promise<{ content: string; source: ProjectAgentPromptSource }> {
-    if (descriptor.model.provider === "codex-native") {
-      const content = await this.options.promptRegistry.resolveAtLayer("archetype", "codex-manager", "builtin");
-      if (!content?.trim()) throw new Error("Native Codex integration prompt is missing");
+    if (["codex-native", "claude-native"].includes(descriptor.model.provider)) {
+      const content = await this.options.promptRegistry.resolveAtLayer("archetype", descriptor.model.provider === "claude-native" ? "claude-manager" : "codex-manager", "builtin");
+      if (!content?.trim()) throw new Error("Native integration prompt is missing");
       return { content, source: { kind: "project_agent_base" } };
     }
     try {

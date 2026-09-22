@@ -1183,7 +1183,7 @@ export class SwarmRuntimeController {
       managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
       profileId: descriptor.profileId,
       role: descriptor.role,
-      runtimeType: descriptor.model.provider === "cursor-sdk" ? "cursor-sdk" : "pi",
+      runtimeType: this.runtimes.get(agentId)?.runtimeType ?? (descriptor.model.provider === "claude-native" ? "claude" : descriptor.model.provider === "codex-native" ? "codex" : descriptor.model.provider === "cursor-sdk" ? "cursor-sdk" : "pi"),
       runtimeToken,
       agentName: descriptor.displayName,
       phase: error.phase,

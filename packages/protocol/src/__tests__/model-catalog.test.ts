@@ -287,11 +287,12 @@ describe('model-catalog', () => {
       'xai',
       'openrouter',
       'cursor-sdk',
+      'claude-native',
       'codex-native',
     ])
-    expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual([...Object.keys(EXPECTED_FAMILIES), 'codex-native'])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual([...Object.keys(EXPECTED_MODELS), ...NATIVE_MODEL_IDS.map(id => `codex-native/${id}`)])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
+    expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual([...Object.keys(EXPECTED_FAMILIES), 'claude-native', 'codex-native'])
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual([...Object.keys(EXPECTED_MODELS), ...Object.keys(EXPECTED_MODELS).filter(id => id.startsWith('claude-')).map(id => `claude-native/${id}`), ...NATIVE_MODEL_IDS.map(id => `codex-native/${id}`)])
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(29)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -761,6 +762,7 @@ describe('model-catalog', () => {
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
+      'claude-native',
       'codex-native',
     ])
 
@@ -773,6 +775,7 @@ describe('model-catalog', () => {
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
+      'claude-native',
       'codex-native',
     ])
 
@@ -807,4 +810,12 @@ it.each(['openai-codex', 'codex-native'])('excludes retired GPT-5.6 from the %s 
     expect(isRetiredForgeModel(provider, modelId)).toBe(true)
     expect(isRetiredForgeModel(provider, `${provider}/${modelId}`)).toBe(true)
   }
+})
+
+it('keeps native Claude on Builder managers and preserves existing Pi selections', () => {
+  expect(getCatalogProvider('claude-native')).toMatchObject({ availabilityMode: 'external', piProjectionMode: 'none' })
+  expect(getCatalogFamily('claude-native')).toMatchObject({ defaultModelId: 'claude-opus-5-5', visibleInSpawnPreset: false, visibleInSpecialists: false })
+  expect(getCatalogModel('claude-opus-5-5', 'claude-native')).toMatchObject({ provider: 'claude-native', familyId: 'claude-native', defaultReasoningLevel: 'medium' })
+  expect(getCatalogModel('claude-opus-5-5', 'anthropic')).toMatchObject({ provider: 'anthropic', familyId: 'pi-opus' })
+  expect(isCompactionProviderSupported('claude-native')).toBe(false)
 })

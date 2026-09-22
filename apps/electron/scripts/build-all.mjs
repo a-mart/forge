@@ -11,6 +11,7 @@ import { verifyElectronRuntime } from './verify-electron-runtime.mjs'
 import { stageExternalChromeResources } from './stage-external-chrome.mjs'
 import { assertReleaseEnvironment } from '../../native-messaging-host/scripts/release-signing.mjs'
 import { isStreamDeckSetupEnabled } from '../../../scripts/stream-deck-setup.mjs'
+import { assertResolvedInsideStage } from './staged-native-runtime-smoke.mjs'
 
 gracefulFs.gracefulify(fs)
 
@@ -67,6 +68,13 @@ const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
 export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
+  {
+    name: '@anthropic-ai/claude-agent-sdk',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.query === 'function' ? null : 'expected a query() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedClaudeSdkPackageDir(stagedPackageDir),
+  },
   {
     name: 'sharp',
     optional: false,
@@ -1555,6 +1563,7 @@ function shouldCopyRuntimePackagePath(packageName, packageRoot, sourcePath) {
 
 function shouldPruneNodeModulesFile(packageName, sourcePath) {
   const normalizedFileName = path.basename(sourcePath).toLowerCase()
+  if (packageName.startsWith('@anthropic-ai/claude-agent-sdk') && /^(readme|license|notice)/.test(normalizedFileName)) return false
 
   if (declarationMapSuffixes.some((suffix) => normalizedFileName.endsWith(suffix))) {
     return true
@@ -1836,4 +1845,21 @@ if (isEntrypoint) {
     console.error(error)
     process.exit(1)
   })
+}
+
+export function validateStagedClaudeSdkPackageDir(stagedPackageDir) {
+  // Backend resources live outside app.asar; retain the matched native package.
+  try {
+    const suffix = process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime ? '-musl' : ''
+    const packageName = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${suffix}`
+    const sdkRequire = createRequire(path.join(stagedPackageDir, 'sdk.mjs'))
+    const manifestPath = sdkRequire.resolve(`${packageName}/package.json`)
+    assertResolvedInsideStage(manifestPath, path.resolve(stagedPackageDir, '..', '..'), packageName)
+    const sdkManifest = JSON.parse(readFileSync(path.join(stagedPackageDir, 'package.json'), 'utf8'))
+    const nativeManifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    if (nativeManifest.version !== sdkManifest.version) return 'Claude SDK/native version mismatch'
+    const binary = path.join(path.dirname(manifestPath), process.platform === 'win32' ? 'claude.exe' : 'claude')
+    fs.accessSync(binary, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK)
+    return null
+  } catch { return 'Missing matched native Claude executable; install optional dependencies for this platform' }
 }
