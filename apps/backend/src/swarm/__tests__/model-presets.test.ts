@@ -240,6 +240,21 @@ describe("model-presets", () => {
     })).toBe("low");
   });
 
+  it("exposes Opus 5.5 with always-on adaptive thinking", () => {
+    for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId: "claude-opus-5-5",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "anthropic",
+      modelId: "claude-opus-5-5",
+      thinkingLevel: "none",
+    })).toBe("low");
+  });
+
   it("exposes Opus 5 with its full adaptive-thinking reasoning scale", () => {
     for (const level of ["none", "low", "medium", "high", "xhigh", "max"] as const) {
       expect(normalizeThinkingLevelForModelDescriptor({
