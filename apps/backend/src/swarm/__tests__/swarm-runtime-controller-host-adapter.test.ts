@@ -5,6 +5,7 @@ import type {
   HistoryWindowsResponse,
 } from "@forge/protocol";
 import { buildHistoryRecallTools } from "../history-recall-tool.js";
+import { buildSecureSessionTools } from "../secure-sessions/secure-session-tools.js";
 import {
   createSwarmRuntimeControllerHost,
   type SwarmRuntimeControllerHostAdapterOptions,
@@ -203,6 +204,30 @@ describe("createSwarmRuntimeControllerHost", () => {
       details: itemsResponse,
       content: [{ type: "text", text: JSON.stringify(itemsResponse) }],
     });
+  });
+
+  it("forwards current project Secure Sessions policy with the facade receiver", () => {
+    let enabled = false;
+    let receiver: unknown;
+    const toolHost = createToolHost(() => undefined);
+    toolHost.isSecureSessionsEnabledForAgent = vi.fn(function (this: SwarmToolHost, agentId: string) {
+      receiver = this;
+      return agentId === "manager" && enabled;
+    });
+    toolHost.getSecureSessionAgentView = vi.fn();
+    const host = createAdapter({ toolHost });
+    const descriptor = { agentId: "manager", managerId: "manager", role: "manager",
+      sessionSurface: "builder", model: { provider: "openai-codex" },
+    } as AgentDescriptor;
+
+    expect(host.isSecureSessionsEnabledForAgent?.("manager")).toBe(false);
+    expect(receiver).toBe(toolHost);
+    expect(toolHost.isSecureSessionsEnabledForAgent).toHaveBeenCalledWith("manager");
+    expect(buildSecureSessionTools(host, descriptor)).toEqual([]);
+    enabled = true;
+    expect(host.isSecureSessionsEnabledForAgent?.("manager")).toBe(true);
+    expect(buildSecureSessionTools(host, descriptor).map(tool => tool.name)).toContain("secure_session_status");
+    expect(createAdapter().isSecureSessionsEnabledForAgent).toBeUndefined();
   });
 
   it("binds the Secure Session runtime capability resolver to the tool host", () => {
