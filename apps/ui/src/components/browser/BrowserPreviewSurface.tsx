@@ -35,20 +35,35 @@ interface DragState extends OverlayPosition {
   moved: boolean
 }
 
+interface ResizeState {
+  pointerId: number
+  clientX: number
+  clientY: number
+  width: number
+  right: number
+  top: number
+  stackInset: number
+}
+
 interface BrowserPreviewSurfaceProps {
   hidden?: boolean
   onOpenManagedTab?: (tabId: string) => void | Promise<void>
 }
 
 const STACK_STEP_PX = 14
+const MIN_CARD_WIDTH_PX = 240
+const MAX_CARD_WIDTH_PX = 960
+const EDGE_INSET_PX = 8
 
 export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: BrowserPreviewSurfaceProps) {
   const bridge = window.electronBridge?.browserPreview
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const overlayRef = useRef<HTMLElement | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const resizeRef = useRef<ResizeState | null>(null)
   const suppressClickRef = useRef(false)
   const [position, setPosition] = useState<OverlayPosition | null>(null)
+  const [cardWidth, setCardWidth] = useState<number | null>(null)
   const [frontTabId, setFrontTabId] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<BrowserPreviewDeckSnapshot | null>(null)
   const snapshotRef = useRef<BrowserPreviewDeckSnapshot | null>(null)
@@ -177,13 +192,28 @@ export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: Brow
     : eligibleCards
   const hasCustomPosition = position !== null
   const cardCount = visibleCards.length
+  const stackInset = Math.min(Math.max(cardCount - 1, 0), 3) * STACK_STEP_PX
   useEffect(() => {
-    if (!hasCustomPosition) return
-    const constrain = (): void => setPosition((current) => {
-      if (!current) return null
-      const next = clampPosition(current, surfaceRef.current, overlayRef.current)
-      return next.x === current.x && next.y === current.y ? current : next
-    })
+    if (!hasCustomPosition || hidden) return
+    const constrain = (): void => {
+      const surface = surfaceRef.current
+      if (!surface) return
+      const bounds = surface.getBoundingClientRect()
+      if (bounds.width < 1 || bounds.height < 1) return
+      if (cardWidth !== null) {
+        const maxWidth = Math.min(
+          MAX_CARD_WIDTH_PX,
+          bounds.width - 24 - stackInset,
+          (bounds.height - 2 * EDGE_INSET_PX - stackInset) * 16 / 9,
+        )
+        setCardWidth((current) => current === null ? null : Math.min(current, Math.max(1, maxWidth)))
+      }
+      setPosition((current) => {
+        if (!current) return null
+        const next = clampPosition(current, surface, overlayRef.current)
+        return next.x === current.x && next.y === current.y ? current : next
+      })
+    }
     constrain()
     window.addEventListener('resize', constrain)
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(constrain)
@@ -193,7 +223,77 @@ export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: Brow
       window.removeEventListener('resize', constrain)
       observer?.disconnect()
     }
-  }, [cardCount, hasCustomPosition])
+  }, [cardCount, cardWidth, hasCustomPosition, hidden, stackInset])
+
+  const applyResize = (resize: ResizeState, width: number): void => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const surfaceRect = surface.getBoundingClientRect()
+    if (surfaceRect.width < 1 || surfaceRect.height < 1) return
+    const maxWidth = Math.min(
+      MAX_CARD_WIDTH_PX,
+      resize.right - EDGE_INSET_PX - resize.stackInset,
+      surfaceRect.width - 24 - resize.stackInset,
+      (surfaceRect.height - resize.top - EDGE_INSET_PX - resize.stackInset) * 16 / 9,
+    )
+    const nextWidth = Math.min(Math.max(width, Math.min(MIN_CARD_WIDTH_PX, maxWidth)), Math.max(1, maxWidth))
+    setCardWidth(nextWidth)
+    setPosition({ x: resize.right - nextWidth - resize.stackInset, y: resize.top })
+  }
+
+  const beginResize = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.button !== 0) return
+    const overlay = overlayRef.current
+    if (!overlay) return
+    const overlayRect = overlay.getBoundingClientRect()
+    const start = currentPosition(surfaceRef.current, overlay)
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      width: overlayRect.width - stackInset,
+      right: start.x + overlayRect.width,
+      top: start.y,
+      stackInset,
+    }
+    setPosition(start)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const moveResize = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const resize = resizeRef.current
+    if (!resize || resize.pointerId !== event.pointerId) return
+    const horizontalChange = resize.clientX - event.clientX
+    const verticalChange = (event.clientY - resize.clientY) * 16 / 9
+    const change = Math.abs(horizontalChange) >= Math.abs(verticalChange) ? horizontalChange : verticalChange
+    applyResize(resize, resize.width + change)
+  }
+
+  const endResize = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (resizeRef.current?.pointerId !== event.pointerId) return
+    resizeRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const direction = event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? 1
+      : event.key === 'ArrowRight' || event.key === 'ArrowUp' ? -1 : 0
+    if (!direction) return
+    const overlay = overlayRef.current
+    if (!overlay) return
+    event.preventDefault()
+    const bounds = overlay.getBoundingClientRect()
+    const start = currentPosition(surfaceRef.current, overlay)
+    applyResize({
+      pointerId: -1,
+      clientX: 0,
+      clientY: 0,
+      width: bounds.width - stackInset,
+      right: start.x + bounds.width,
+      top: start.y,
+      stackInset,
+    }, bounds.width - stackInset + direction * (event.shiftKey ? 80 : 24))
+  }
 
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     if (event.button !== 0) return
@@ -258,8 +358,6 @@ export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: Brow
   if (hidden || !snapshot || visibleCards.length === 0) return null
 
   const stackDepth = Math.min(visibleCards.length - 1, 3)
-  const stackInset = stackDepth * STACK_STEP_PX
-
   return (
     <div ref={surfaceRef} className="pointer-events-none absolute inset-0 z-40 overflow-hidden" data-browser-preview-layer>
       <section
@@ -270,7 +368,7 @@ export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: Brow
           position ? 'left-0 top-0' : 'right-3',
         )}
         style={{
-          width: `calc(23rem + ${stackInset}px)`,
+          width: cardWidth === null ? `calc(23rem + ${stackInset}px)` : `${cardWidth + stackInset}px`,
           ...(position ? { left: 0, transform: `translate3d(${position.x}px, ${position.y}px, 0)` } : {}),
         }}
         data-browser-preview-stack
@@ -330,6 +428,20 @@ export function BrowserPreviewSurface({ hidden = false, onOpenManagedTab }: Brow
               </button>
             )
           })}
+          <button
+            type="button"
+            aria-label="Resize browser previews"
+            title="Drag or use arrow keys to resize previews"
+            className="absolute bottom-0 left-0 z-10 flex h-7 w-7 touch-none cursor-nesw-resize items-end justify-start rounded-bl-[10px] bg-gradient-to-tr from-black/65 to-transparent p-1 text-white/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onKeyDown={resizeWithKeyboard}
+            data-browser-preview-resize
+          >
+            <span aria-hidden="true" className="block h-2.5 w-2.5 border-b-2 border-l-2 border-current" />
+          </button>
         </div>
       </section>
     </div>
@@ -419,7 +531,7 @@ function clampPosition(position: OverlayPosition, surface: HTMLElement | null, o
   if (!surface || !overlay) return position
   const surfaceRect = surface.getBoundingClientRect()
   const overlayRect = overlay.getBoundingClientRect()
-  const inset = 8
+  const inset = EDGE_INSET_PX
   return {
     x: Math.min(Math.max(inset, position.x), Math.max(inset, surfaceRect.width - overlayRect.width - inset)),
     y: Math.min(Math.max(inset, position.y), Math.max(inset, surfaceRect.height - overlayRect.height - inset)),

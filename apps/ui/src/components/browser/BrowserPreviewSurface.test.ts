@@ -285,6 +285,95 @@ describe('BrowserPreviewSurface', () => {
     expect(overlay.style.transform).toBe('translate3d(470px, 572px, 0)')
   })
 
+  it('resizes every preview from the corner while keeping the stack in Chat and preserving card clicks', async () => {
+    getSnapshot.mockResolvedValueOnce(snapshot({
+      cards: [card('managed-1', 0), card('managed-2', 1), card('managed-3', 2)],
+    }))
+    await render()
+    const surface = container.querySelector('[data-browser-preview-layer]') as HTMLDivElement
+    const overlay = container.querySelector('[data-browser-preview-stack]') as HTMLElement
+    const handle = container.querySelector('[data-browser-preview-resize]') as HTMLButtonElement & {
+      setPointerCapture(pointerId: number): void
+      releasePointerCapture(pointerId: number): void
+      hasPointerCapture(pointerId: number): boolean
+    }
+    let surfaceWidth = 1_000
+    let surfaceHeight = 800
+    surface.getBoundingClientRect = () => rect(0, 0, surfaceWidth, surfaceHeight)
+    overlay.getBoundingClientRect = () => {
+      const width = overlay.style.width.endsWith('px') ? Number.parseFloat(overlay.style.width) : 396
+      const match = overlay.style.transform.match(/translate3d\(([-\d.]+)px, ([-\d.]+)px/)
+      return match ? rect(Number(match[1]), Number(match[2]), width, (width - 28) * 9 / 16 + 28)
+        : rect(592, 12, width, (width - 28) * 9 / 16 + 28)
+    }
+    handle.setPointerCapture = vi.fn()
+    handle.releasePointerCapture = vi.fn()
+    handle.hasPointerCapture = vi.fn(() => true)
+
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 12, clientX: 620, clientY: 220, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 12, clientX: 420, clientY: 332, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 12, clientX: 420, clientY: 332, button: 0 }))
+      await Promise.resolve()
+    })
+
+    expect(handle.setPointerCapture).toHaveBeenCalledWith(12)
+    expect(handle.releasePointerCapture).toHaveBeenCalledWith(12)
+    expect(overlay.style.width).toBe('596px') // 568px card plus two 14px stack offsets
+    expect(overlay.style.transform).toBe('translate3d(392px, 12px, 0)')
+    expect(container.querySelector('[data-browser-preview-front="true"]')?.getAttribute('data-tab-id')).toBe('managed-1')
+
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 13, clientX: 420, clientY: 332, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 13, clientX: -2_000, clientY: 2_000, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 13, clientX: -2_000, clientY: 2_000, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(overlay.style.width).toBe('976px') // bounded by the Chat edge
+    expect(overlay.style.transform).toBe('translate3d(12px, 12px, 0)')
+
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 14, clientX: 0, clientY: 500, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 14, clientX: 2_000, clientY: -2_000, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 14, clientX: 2_000, clientY: -2_000, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(overlay.style.width).toBe('268px') // 240px minimum card width
+    expect(overlay.style.transform).toBe('translate3d(720px, 12px, 0)')
+
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }))
+      await Promise.resolve()
+    })
+    expect(overlay.style.width).toBe('292px')
+    expect(overlay.style.transform).toBe('translate3d(696px, 12px, 0)')
+
+    const thirdCard = container.querySelector('[data-tab-id="managed-3"]') as HTMLButtonElement
+    await act(async () => { thirdCard.click(); await Promise.resolve() })
+    expect(container.querySelector('[data-browser-preview-front="true"]')?.getAttribute('data-tab-id')).toBe('managed-3')
+
+    surfaceWidth = 500
+    surfaceHeight = 400
+    await act(async () => { window.dispatchEvent(new Event('resize')); await Promise.resolve() })
+    expect(overlay.style.transform).toBe('translate3d(200px, 12px, 0)')
+
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 15, clientX: 200, clientY: 200, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 15, clientX: -2_000, clientY: 2_000, button: 0 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 15, clientX: -2_000, clientY: 2_000, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(overlay.style.width).toBe('476px')
+    expect(overlay.style.transform).toBe('translate3d(16px, 12px, 0)')
+
+    await render(true)
+    expect(container.querySelector('[data-browser-preview-stack]')).toBeNull()
+    await render(false)
+    const restored = container.querySelector('[data-browser-preview-stack]') as HTMLElement
+    expect(restored.style.width).toBe('476px')
+    expect(restored.style.transform).toBe('translate3d(16px, 12px, 0)')
+  })
+
   it('pulls and decodes current-generation frames, then revokes them on privacy clear', async () => {
     await render()
     const withFrame = snapshot({
