@@ -45,6 +45,8 @@ export class CodexRuntimeCreator {
       runtimeType: "codex", runtimeToken: options.runtimeToken, projectExecutableTrustPlan: trust });
     const { swarmTools } = planRuntimeTools({ host: this.deps.host, descriptor,
       forgeExtensionHost: this.deps.forgeExtensionHost, preparedForgeBindings: prepared });
+    // Native threads persist their dynamic-tool contract. Keep these definitions stable
+    // across project setting changes; execution still checks current project authority.
     const tools = [...swarmTools, createNativeSecureBashTool(descriptor,
       actor => this.deps.host.getSecureRuntimeBinding?.(actor))];
     if (descriptor.profileId && tools.some(tool => tool.name === "history")) {
@@ -56,8 +58,12 @@ export class CodexRuntimeCreator {
       this.deps.getMemoryRuntimeResources(descriptor), this.deps.getSwarmContextFiles(descriptor.cwd),
     ]);
     const skills = memory.skillMetadata.map(skill => `- ${skill.skillName}: ${skill.description ?? ""} (file: ${skill.path})`).join("\n");
+    const secureSessionsEnabled = this.deps.host.isSecureSessionsEnabledForAgent?.(descriptor.agentId) !== false;
     const systemPrompt = [options.systemPrompt,
-      "Forge integration tools are in the forge namespace. Keep native coding tools and native context management. Use Forge workers for the configured roster; do not start a second coordination system. For credentialed work, when the Secure Sessions tools are available, inspect forge.secure_session_status and use forge.secure_bash with the exact granted aliases. Forge delivers values privately to that command and filters its output. Never ask for values in chat, copy them into files in the workspace, or use native shell/read tools to inspect credential material. Ordinary coding remains on native tools. For SSH password login use an SSH_ASKPASS binding; for a password needed after login, use a separate environment or stdin binding and pipe it to the remote program (such as sudo -S), keeping values out of command text. Browser login delivery is not supported. Older threads without the secure tools can continue ordinary work; a new or forked session is needed for secret delivery.",
+      "Forge integration tools are in the forge namespace. Keep native coding tools and native context management. Use Forge workers for the configured roster; do not start a second coordination system.",
+      secureSessionsEnabled
+        ? "For credentialed work, when the Secure Sessions tools are available, inspect forge.secure_session_status and use forge.secure_bash with the exact granted aliases. Forge delivers values privately to that command and filters its output. Never ask for values in chat, copy them into files in the workspace, or use native shell/read tools to inspect credential material. Ordinary coding remains on native tools. For SSH password login use an SSH_ASKPASS binding; for a password needed after login, use a separate environment or stdin binding and pipe it to the remote program (such as sudo -S), keeping values out of command text. Browser login delivery is not supported. Older threads without the secure tools can continue ordinary work; a new or forked session is needed for secret delivery."
+        : "Secure Sessions are disabled for this project. Use native tools and the normal host SSH configuration and authentication for authorized SSH, SCP, Git, and other host commands. Do not require Secure Sessions, secret grants, or secure_bash for that work. The Secure Sessions tool definitions remain registered for native thread compatibility, but they do not indicate availability or impose a requirement to use them. Do not call them while the project setting is disabled. Never print credential material or ask for secret values in chat.",
       memory.memoryContextFile.content ? `<forge_memory path=${JSON.stringify(memory.memoryContextFile.path)}>\n${memory.memoryContextFile.content}\n</forge_memory>` : "",
       ...contextFiles.map(file => `<forge_project_context path=${JSON.stringify(file.path)}>\n${file.content}\n</forge_project_context>`),
       skills ? `<forge_skills>\nRead a relevant skill's file before using it.\n${skills}\n</forge_skills>` : "",

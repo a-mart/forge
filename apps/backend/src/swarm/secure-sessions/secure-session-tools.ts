@@ -608,6 +608,8 @@ export function buildSecureSessionTools(
   host: SwarmToolHost,
   descriptor: AgentDescriptor,
 ): ToolDefinition[] {
+  // Native threads bind tool definitions at creation. Preserve that contract across
+  // project toggles; current project policy gates execution and runtime instructions.
   if (!isBuilderSurface(host, descriptor) || (descriptor.model.provider !== "codex-native" && host.isSecureSessionsEnabledForAgent?.(descriptor.agentId) === false)) {
     return [];
   }

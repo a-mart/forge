@@ -7323,6 +7323,25 @@ describe("project Secure Sessions policy", () => {
     await h.close();
   });
 
+  it.each(["recycled", "deferred"] as const)("refreshes native project guidance through the %s runtime policy", async (disposition) => {
+    const h = createHarness();
+    const native = h.descriptors.get("manager-a")!;
+    native.model.provider = "codex-native";
+    await saveDefault(h);
+    const binding = (await h.service.prepareSecureRuntimeBinding(native))!;
+    await binding.executeBash(command());
+    expect(h.recycles).toEqual([]); // Grant changes still keep the native runtime alive.
+    h.setRecycleDisposition(disposition);
+    await h.service.updateProjectSecureSessionsSettings("profile-a", false);
+    expect(h.recycles).toEqual(["manager-a"]);
+    expect(h.service.isSecureSessionsEnabledForAgent("manager-a")).toBe(false);
+    await expect(binding.executeBash(command())).rejects.toThrow();
+    await h.service.updateProjectSecureSessionsSettings("profile-a", true);
+    expect(h.recycles).toEqual(["manager-a", "manager-a"]);
+    await binding.executeBash(command());
+    await h.close();
+  });
+
   it("retains denial and cleans other sessions when one teardown fails", async () => {
     const h = createHarness({ destroyFailures: ["manager-a"] });
     h.descriptors.set("manager-b", descriptor("manager-b", "profile-a", "/workspace-b"));
