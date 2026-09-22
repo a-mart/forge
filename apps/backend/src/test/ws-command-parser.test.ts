@@ -132,17 +132,17 @@ describe('ws command parser session commands', () => {
       },
       fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
       merge_session_memory: { type: 'merge_session_memory', agentId: 'session-a' },
-      update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.6', reasoningLevel: undefined },
+      update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-6', reasoningLevel: undefined },
       update_project_delegation_defaults: {
         type: 'update_project_delegation_defaults',
         profileId: 'profile-a',
         managerPosture: 'adaptive',
         delegationRosterId: 'balanced',
       },
-      update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.6', reasoningLevel: undefined },
+      update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-6', reasoningLevel: undefined },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       stop_all_agents: { type: 'stop_all_agents', managerId: 'manager-a' },
-      create_manager: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.6' },
+      create_manager: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-6' },
       create_repository_project: {
         type: 'create_repository_project',
         name: 'Cloned',
@@ -251,11 +251,11 @@ describe('ws command parser session commands', () => {
       ok: false,
       error: 'merge_session_memory.requestId must be a string when provided',
     })
-    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.6' })).toEqual({
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-6' })).toEqual({
       ok: true,
-      command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.6', reasoningLevel: undefined, requestId: undefined },
+      command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-6', reasoningLevel: undefined, requestId: undefined },
     })
-    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.6', requestId: 123 })).toEqual({
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-6', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_profile_default_model.requestId must be a string when provided',
     })
@@ -263,11 +263,11 @@ describe('ws command parser session commands', () => {
       ok: true,
       command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'cursor-composer', reasoningLevel: undefined, requestId: undefined },
     })
-    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.6' })).toEqual({
+    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-6' })).toEqual({
       ok: true,
-      command: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.6', reasoningLevel: undefined, requestId: undefined },
+      command: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-6', reasoningLevel: undefined, requestId: undefined },
     })
-    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.6', requestId: 123 })).toEqual({
+    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-6', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_manager_model.requestId must be a string when provided',
     })
@@ -291,11 +291,11 @@ describe('ws command parser session commands', () => {
       ok: false,
       error: 'stop_all_agents.requestId must be a string when provided',
     })
-    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.6' })).toEqual({
+    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-6' })).toEqual({
       ok: true,
-      command: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.6', requestId: undefined },
+      command: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-6', requestId: undefined },
     })
-    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.6', requestId: 123 })).toEqual({
+    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-6', requestId: 123 })).toEqual({
       ok: false,
       error: 'create_manager.requestId must be a string when provided',
     })
@@ -479,7 +479,7 @@ describe('ws command parser session commands', () => {
       type: 'create_manager',
       name: 'Manager A',
       cwd: '/tmp/project',
-      model: 'pi-5.6',
+      model: 'pi-6',
       reasoningLevel: 'low',
     })).toEqual({
       ok: true,
@@ -487,7 +487,7 @@ describe('ws command parser session commands', () => {
         type: 'create_manager',
         name: 'Manager A',
         cwd: '/tmp/project',
-        model: 'pi-5.6',
+        model: 'pi-6',
         reasoningLevel: 'low',
         requestId: undefined,
       },
@@ -515,7 +515,7 @@ describe('ws command parser session commands', () => {
       type: 'create_manager',
       name: 'Manager A',
       cwd: '/tmp/project',
-      model: 'pi-5.6',
+      model: 'pi-6',
       reasoningLevel: 'galaxy',
     })).toEqual({
       ok: false,
@@ -1369,8 +1369,8 @@ describe('ws command parser session commands', () => {
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
       { type: 'mark_unread', agentId: 'manager--s2', requestId: 'req-mark-unread' },
-      { type: 'update_profile_default_model', profileId: 'manager', model: 'pi-5.6', requestId: 'req-update-profile-model' },
-      { type: 'update_manager_model', managerId: 'manager', model: 'pi-5.6', requestId: 'req-update-model' },
+      { type: 'update_profile_default_model', profileId: 'manager', model: 'pi-6', requestId: 'req-update-profile-model' },
+      { type: 'update_manager_model', managerId: 'manager', model: 'pi-6', requestId: 'req-update-model' },
       { type: 'update_manager_cwd', managerId: 'manager', cwd: '/tmp/project', requestId: 'req-update-cwd' },
       { type: 'archive_profile', profileId: 'manager', requestId: 'req-archive-profile' },
       { type: 'restore_profile', profileId: 'manager', requestId: 'req-restore-profile' },
@@ -1409,7 +1409,7 @@ describe('ws command parser session commands', () => {
 
 it('preserves true and false Secure Sessions choices for both project creation commands', () => {
   const commands = [
-    { type: 'create_manager', name: 'Project', cwd: '/tmp', model: 'pi-5.6' },
+    { type: 'create_manager', name: 'Project', cwd: '/tmp', model: 'pi-6' },
     { type: 'create_repository_project', name: 'Project', repositoryUrl: 'https://example.test/repo.git', repositoryBasePath: '/tmp', repositoryFolder: 'repo', modelSelection: { provider: 'openai', modelId: 'gpt-5.5' }, requestId: 'create-project' },
   ]
   for (const command of commands) {

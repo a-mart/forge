@@ -93,7 +93,7 @@ describe("SessionInteractionCoordinator", () => {
       delegationCapabilityEscalationRouteId: "deep-reasoner",
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.6-terra",
+        modelId: "gpt-6-sol",
         thinkingLevel: "medium",
       },
     });
@@ -125,7 +125,7 @@ describe("SessionInteractionCoordinator", () => {
         rosterRevision: 3,
         model: {
           provider: "openai-codex",
-          modelId: "gpt-5.6-terra",
+          modelId: "gpt-6-sol",
           thinkingLevel: "medium",
         },
         capabilityEscalationRouteId: "deep-reasoner",

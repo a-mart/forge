@@ -83,7 +83,7 @@ describe("manager model selection", () => {
     for (const modelId of ["gpt-6-sol", "gpt-6-luna"]) {
       const selection = { provider, modelId };
       const options = { surface: "create" as const, providerAvailability: new Map([[provider, true]]) };
-      expect(resolveExactManagerModelSelection(selection, options)).toEqual({ ...selection, thinkingLevel: "medium" });
+      expect(resolveExactManagerModelSelection(selection, options)).toEqual({ ...selection, thinkingLevel: provider === "codex-native" && modelId === "gpt-6-sol" ? "high" : "medium" });
       expect(resolveExactManagerModelSelection(selection, { ...options, reasoningLevel: "ultra" })).toEqual({
         ...selection, thinkingLevel: modelId === "gpt-6-sol" ? "ultra" : "max",
       });
@@ -118,40 +118,40 @@ describe("manager model selection", () => {
     });
   });
 
-  it("preserves supported exact GPT-5.6 Terra/Luna reasoning and clamps Luna Ultra to Max", async () => {
+  it("preserves supported exact GPT-6 Sol/Luna reasoning and clamps Luna Ultra to Max", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);
 
     expect(
       resolveExactManagerModelSelection(
-        { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+        { provider: "openai-codex", modelId: "gpt-6-sol" },
         { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "ultra" },
       ),
     ).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.6-terra",
+      modelId: "gpt-6-sol",
       thinkingLevel: "ultra",
     });
 
     expect(
       resolveExactManagerModelSelection(
-        { provider: "openai-codex", modelId: "gpt-5.6-luna" },
+        { provider: "openai-codex", modelId: "gpt-6-luna" },
         { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "max" },
       ),
     ).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.6-luna",
+      modelId: "gpt-6-luna",
       thinkingLevel: "max",
     });
 
     expect(
       resolveExactManagerModelSelection(
-        { provider: "openai-codex", modelId: "gpt-5.6-luna" },
+        { provider: "openai-codex", modelId: "gpt-6-luna" },
         { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "ultra" },
       ),
     ).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.6-luna",
+      modelId: "gpt-6-luna",
       thinkingLevel: "max",
     });
   });

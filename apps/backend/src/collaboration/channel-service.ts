@@ -5,7 +5,7 @@ import { getSessionContextDir } from "../swarm/data-paths.js";
 import {
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
-  normalizePersistedSwarmModelPresetValue,
+  resolvePersistedModelDescriptorFromPreset,
   normalizeThinkingLevelForModelDescriptor,
   resolveModelDescriptorFromPreset,
 } from "../swarm/model-presets.js";
@@ -773,14 +773,14 @@ function resolveChannelModel(
   }
 
   if (category?.defaultModelId) {
-    const persistedPreset = normalizePersistedSwarmModelPresetValue(category.defaultModelId);
+    const persistedPreset = resolvePersistedModelDescriptorFromPreset(category.defaultModelId);
     if (!persistedPreset) {
       throw new CollaborationChannelServiceError(
         "orphaned_workspace",
         `Collaboration category has unsupported default model preset ${category.defaultModelId}`,
       );
     }
-    return resolveModelDescriptorFromPreset(persistedPreset);
+    return persistedPreset;
   }
 
   if (workspace.defaultModelProvider && workspace.defaultModelId && workspace.defaultModelThinkingLevel) {

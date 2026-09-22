@@ -2213,6 +2213,34 @@ describe('SwarmManager', () => {
     )
   })
 
+  it.each([
+    ['openai-codex', 'gpt-5.6-sol', 'gpt-6-sol', 'xhigh'],
+    ['openai-codex', 'gpt-5.6-luna', 'gpt-6-luna', 'xhigh'],
+    ['openai-codex', 'gpt-5.6-terra', 'gpt-6-sol', 'low'],
+    ['codex-native', 'gpt-5.6-sol', 'gpt-6-sol', 'xhigh'],
+    ['codex-native', 'gpt-5.6-luna', 'gpt-6-luna', 'xhigh'],
+    ['codex-native', 'gpt-5.6-terra', 'gpt-6-sol', 'low'],
+  ])('migrates %s/%s manager and profile defaults at boot', async (provider, modelId, nextModelId, thinkingLevel) => {
+    const config = await makeTempConfig()
+    const legacyModel = { provider, modelId, thinkingLevel: 'xhigh' }
+    const timestamp = '2026-09-22T00:00:00.000Z'
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify({
+      agents: [{ agentId: 'manager', displayName: 'Manager', role: 'manager', managerId: 'manager',
+        profileId: 'manager', status: 'idle', createdAt: timestamp, updatedAt: timestamp,
+        cwd: config.defaultCwd, model: legacyModel, sessionFile: join(config.paths.sessionsDir, 'manager.jsonl') }],
+      profiles: [{ profileId: 'manager', displayName: 'Manager', defaultSessionAgentId: 'manager',
+        defaultModel: legacyModel, createdAt: timestamp, updatedAt: timestamp }],
+    }))
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+    const expected = { provider, modelId: nextModelId, thinkingLevel }
+    expect(manager.getAgent('manager')?.model).toEqual(expected)
+    expect(manager.listProfiles().find((profile) => profile.profileId === 'manager')?.defaultModel).toEqual(expected)
+    const persisted = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8'))
+    expect(persisted.agents.find((agent: AgentDescriptor) => agent.agentId === 'manager').model).toEqual(expected)
+    expect(persisted.profiles.find((profile: { profileId: string }) => profile.profileId === 'manager').defaultModel).toEqual(expected)
+  })
+
   it('migrates removed codex app-server descriptors to pi-codex on boot', async () => {
     const config = await makeTempConfig()
     const legacyCodexModel = {
@@ -2387,7 +2415,7 @@ describe('SwarmManager', () => {
 
   it('does not force the default session to inherited when an explicit profile default model differs', async () => {
     const config = await makeTempConfig()
-    const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-5.6')
+    const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-6')
 
     await writeFile(
       config.paths.agentsStoreFile,

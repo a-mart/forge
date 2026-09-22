@@ -120,19 +120,19 @@ const BALANCED_DEFAULT_MODEL_POLICIES: Readonly<Record<string, {
 }>> = {
   "quick-scout": {
     previous: { provider: "openai-codex", modelId: "gpt-5.6-terra", reasoningLevel: "low" },
-    current: { provider: "openai-codex", modelId: "gpt-5.6-luna", reasoningLevel: "high" },
+    current: { provider: "openai-codex", modelId: "gpt-6-luna", reasoningLevel: "high" },
   },
   "fast-builder": {
     previous: { provider: "openai-codex", modelId: "gpt-5.6-luna", reasoningLevel: "high" },
-    current: { provider: "openai-codex", modelId: "gpt-5.6-terra", reasoningLevel: "xhigh" },
+    current: { provider: "openai-codex", modelId: "gpt-6-sol", reasoningLevel: "low" },
   },
   planner: {
     previous: { provider: "xai", modelId: "grok-4.5", reasoningLevel: "high" },
-    current: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" },
+    current: { provider: "openai-codex", modelId: "gpt-6-sol", reasoningLevel: "xhigh" },
   },
   "deep-reasoner": {
     previous: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "max" },
-    current: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" },
+    current: { provider: "openai-codex", modelId: "gpt-6-sol", reasoningLevel: "xhigh" },
   },
 };
 

@@ -90,12 +90,12 @@ describe('CreateCategoryDialog', () => {
     expect(labels).toEqual(expect.arrayContaining(['Name', 'Default model']))
   })
 
-  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-5.6 Sol', async () => {
+  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-6 Sol', async () => {
     modelPresetMocks.presets = [{
-      presetId: 'pi-5.6',
-      displayName: 'GPT-5.6 Sol',
+      presetId: 'pi-6',
+      displayName: 'GPT-6 Sol',
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-sol',
+      modelId: 'gpt-6-sol',
       defaultReasoningLevel: 'max',
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     }]
@@ -114,9 +114,9 @@ describe('CreateCategoryDialog', () => {
     flushSync(() => {
       fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
     })
-    await vi.waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' })).toBeTruthy())
+    await vi.waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-6 Sol' })).toBeTruthy())
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' }))
+      fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-6 Sol' }))
     })
 
     const reasoningTrigger = await vi.waitFor(() => {

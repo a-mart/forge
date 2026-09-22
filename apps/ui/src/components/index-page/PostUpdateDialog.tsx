@@ -75,7 +75,7 @@ export function PostUpdateDialog({ source }: { source: SettingsApiClient | strin
                 </p>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <Recommendation icon={<Bot className="size-4" />} label="Manager model" value="GPT-5.6 Sol · High" detail="Codex native" />
+                <Recommendation icon={<Bot className="size-4" />} label="Manager model" value="GPT-6 Sol · High" detail="Codex native" />
                 <Recommendation icon={<GitBranch className="size-4" />} label="Work mode" value="Hands-on" detail="Manager owns the critical path" />
                 <Recommendation icon={<Sparkles className="size-4" />} label="Roster" value="Default" detail="Planning, review, and research support" wide />
               </div>

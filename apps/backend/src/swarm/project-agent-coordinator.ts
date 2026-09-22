@@ -61,6 +61,7 @@ export interface ProjectAgentAnalysisModel {
   apiKey?: string;
   headers?: Record<string, string>;
   modelLabel: string;
+  reasoningEffort?: "low";
 }
 
 export interface ProjectAgentWorkspaceResolverPort {
@@ -434,6 +435,7 @@ export class ProjectAgentCoordinator {
       sessionCwd: descriptor.cwd,
       apiKey: analysisModel.apiKey,
       headers: analysisModel.headers,
+      reasoningEffort: analysisModel.reasoningEffort,
     });
   }
 
@@ -866,7 +868,7 @@ export class ProjectAgentCoordinator {
     );
     const candidates = [
       { provider: "anthropic", modelId: "claude-opus-4-6" },
-      { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+      { provider: "openai-codex", modelId: "gpt-6-sol" },
       { provider: "openai-codex", modelId: "gpt-5.5" },
     ] as const;
     const failureMessages: string[] = [];
@@ -892,13 +894,14 @@ export class ProjectAgentCoordinator {
         apiKey: auth.apiKey,
         headers: auth.headers,
         modelLabel: `${candidate.provider}/${candidate.modelId}`,
+        ...(candidate.modelId === "gpt-6-sol" ? { reasoningEffort: "low" as const } : {}),
       };
     }
 
     throw new Error(
       [
         "No configured model is available for project agent analysis.",
-        "Tried anthropic/claude-opus-4-6, openai-codex/gpt-5.6-terra, then openai-codex/gpt-5.5.",
+        "Tried anthropic/claude-opus-4-6, openai-codex/gpt-6-sol, then openai-codex/gpt-5.5.",
         failureMessages.join(" "),
       ]
         .filter((part) => part.trim().length > 0)

@@ -255,7 +255,7 @@ describe('remote build settings response contract', () => {
 })
 
 it('keeps project Secure Sessions opt-in additive and preserves explicit false on the wire', () => {
-  const legacy: Extract<ClientCommand, { type: 'create_manager' }> = { type: 'create_manager', name: 'Project', cwd: '/tmp', model: 'pi-5.6' }
+  const legacy: Extract<ClientCommand, { type: 'create_manager' }> = { type: 'create_manager', name: 'Project', cwd: '/tmp', model: 'pi-6' }
   const disabled = { ...legacy, secureSessionsEnabled: false } satisfies ClientCommand
   const enabled = { ...legacy, secureSessionsEnabled: true } satisfies ClientCommand
   expect(legacy.secureSessionsEnabled).toBeUndefined()

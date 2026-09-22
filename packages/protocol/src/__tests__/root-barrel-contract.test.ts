@@ -603,11 +603,11 @@ describe('protocol root barrel contract', () => {
     const catalog: ForgeModelCatalog = FORGE_MODEL_CATALOG
 
     expect(catalog.providers['openai-codex']?.displayName).toBe('OpenAI Codex')
-    expect(CATALOG_FAMILY_IDS).toContain('pi-5.6')
+    expect(CATALOG_FAMILY_IDS).toContain('pi-6')
     expect(CATALOG_FAMILY_IDS).not.toContain('pi-5.4')
     expect(getCatalogProvider('openai-codex')?.providerId).toBe('openai-codex')
-    expect(getCatalogFamily('pi-5.6')?.defaultModelId).toBe('gpt-5.6-sol')
-    expect(getCatalogModel('gpt-5.6-sol', 'openai-codex')?.familyId).toBe('pi-5.6')
+    expect(getCatalogFamily('pi-6')?.defaultModelId).toBe('gpt-6-astra')
+    expect(getCatalogModel('gpt-6-sol', 'openai-codex')?.familyId).toBe('pi-6')
     expect(getCreateManagerFamilies().some((family) => family.familyId === 'pi-5.4')).toBe(false)
     expect(getSpecialistFamilies().some((family) => family.familyId === 'pi-opus')).toBe(true)
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4')).toBeUndefined()

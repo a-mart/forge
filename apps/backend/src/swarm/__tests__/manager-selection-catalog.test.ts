@@ -123,13 +123,13 @@ describe.sequential("manager selection catalog projection", () => {
     expect(first.defaults).toEqual({
       createManagerModel: {
         provider: "codex-native",
-        modelId: "gpt-5.6-sol",
+        modelId: "gpt-6-sol",
         reasoningId: "high",
       },
       workModeId: "hands_on",
     });
     expect(first.models.find((model) =>
-      model.provider === "codex-native" && model.modelId === "gpt-5.6-sol"
+      model.provider === "codex-native" && model.modelId === "gpt-6-sol"
     )).toMatchObject({
       providerLabel: "Codex native (Preferred)",
       defaultReasoningId: "high",

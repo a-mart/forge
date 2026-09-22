@@ -314,11 +314,11 @@ describe("SwarmAgentLifecycleService", () => {
 
   it("resolveSpawnModelWithCapacityFallback reroutes between adjacent supported OpenAI Codex models", () => {
     const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
-    const key = buildModelCapacityBlockKey("openai-codex", "gpt-5.6-sol");
+    const key = buildModelCapacityBlockKey("openai-codex", "gpt-6-sol");
     expect(key).toBeDefined();
     modelCapacityBlocks.set(key!, {
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       blockedUntilMs: Date.now() + 60_000
     });
 
@@ -330,13 +330,13 @@ describe("SwarmAgentLifecycleService", () => {
 
     const out = svc.resolveSpawnModelWithCapacityFallback({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "medium"
     });
-    expect(out.modelId).toBe("gpt-5.6-terra");
+    expect(out.modelId).toBe("gpt-6-luna");
   });
 
-  it("resolveSpawnModelWithCapacityFallback preserves or clamps Sol reasoning for GPT-5.6 variants", () => {
+  it("resolveSpawnModelWithCapacityFallback preserves or clamps Sol reasoning for GPT-6 variants", () => {
     const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
     const block = (modelId: string) => {
       const key = buildModelCapacityBlockKey("openai-codex", modelId);
@@ -347,28 +347,27 @@ describe("SwarmAgentLifecycleService", () => {
         blockedUntilMs: Date.now() + 60_000,
       });
     };
-    block("gpt-5.6-sol");
+    block("gpt-6-sol");
 
     const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({ modelCapacityBlocks }));
 
     expect(svc.resolveSpawnModelWithCapacityFallback({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "max",
     })).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.6-terra",
+      modelId: "gpt-6-luna",
       thinkingLevel: "max",
     });
 
-    block("gpt-5.6-terra");
     expect(svc.resolveSpawnModelWithCapacityFallback({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "ultra",
     })).toEqual({
       provider: "openai-codex",
-      modelId: "gpt-5.6-luna",
+      modelId: "gpt-6-luna",
       thinkingLevel: "max",
     });
   });
@@ -3028,8 +3027,8 @@ describe("SwarmAgentLifecycleService", () => {
   });
 
   it.each([
-    ["gpt-5.6-terra", "high"],
-    ["gpt-5.6-luna", "high"],
+    ["gpt-6-sol", "medium"],
+    ["gpt-6-luna", "medium"],
   ] as const)("uses the catalog reasoning default for a %s specialist that omits reasoning", async (modelId, expectedReasoningLevel) => {
     const manager = createAgentDescriptor({
       agentId: "manager",
@@ -3072,8 +3071,8 @@ describe("SwarmAgentLifecycleService", () => {
   });
 
   it.each([
-    ["gpt-5.6-terra", "high"],
-    ["gpt-5.6-luna", "high"],
+    ["gpt-6-sol", "medium"],
+    ["gpt-6-luna", "medium"],
   ] as const)("uses the catalog reasoning default for a %s compatibility lens that omits reasoning", async (modelId, expectedReasoningLevel) => {
     const manager = createAgentDescriptor({
       agentId: "manager",
@@ -3539,7 +3538,7 @@ describe("SwarmAgentLifecycleService", () => {
       const route = roster.routes.find((candidate) => candidate.routeId === "fast-builder")!;
       const primary = {
         provider: "openai-codex",
-        modelId: "gpt-5.6-sol",
+        modelId: "gpt-6-sol",
         reasoningLevel: "medium" as const,
       };
       const configuredFallback = {

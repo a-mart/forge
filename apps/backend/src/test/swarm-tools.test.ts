@@ -675,7 +675,7 @@ describe('buildSwarmTools', () => {
         ...makeWorkerDescriptor('worker-gpt54'),
         model: {
           provider: 'openai-codex',
-          modelId: 'gpt-5.6-sol',
+          modelId: 'gpt-6-sol',
           thinkingLevel: 'xhigh',
         },
       }
@@ -710,7 +710,7 @@ describe('buildSwarmTools', () => {
       agentId: 'worker-gpt54',
       model: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.6-sol',
+        modelId: 'gpt-6-sol',
         thinkingLevel: 'xhigh',
       },
     })

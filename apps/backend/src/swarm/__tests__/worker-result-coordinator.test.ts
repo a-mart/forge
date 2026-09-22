@@ -127,7 +127,7 @@ describe("WorkerResultCoordinator", () => {
     const worker = assignedWorker();
     worker.model = {
       provider: "openai-codex",
-      modelId: "gpt-5.6-terra",
+      modelId: "gpt-6-sol",
       thinkingLevel: "medium",
     };
     const manager = createAgentDescriptor({

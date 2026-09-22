@@ -217,8 +217,11 @@ function normalizeLoadedSettings(value: unknown): CompactionSettings {
   }
 
   const maybe = value as Partial<CompactionSettingsFile>;
-  const model = normalizeLoadedModel(maybe.model, defaults.model);
-  const reasoningLevel = normalizeLoadedReasoningLevel(maybe.reasoningLevel, defaults.reasoningLevel);
+  const loadedReasoning = normalizeLoadedReasoningLevel(maybe.reasoningLevel, defaults.reasoningLevel);
+  const loadedModel = normalizeLoadedModel(maybe.model, defaults.model);
+  const normalized = normalizePersistedSwarmModelDescriptor({ ...loadedModel, thinkingLevel: loadedReasoning });
+  const model = normalized ? { provider: normalized.provider, modelId: normalized.modelId } : loadedModel;
+  const reasoningLevel = normalizeLoadedReasoningLevel(normalized?.thinkingLevel, loadedReasoning);
   const timeoutMs = normalizeLoadedTimeoutMs(maybe.timeoutMs, defaults.timeoutMs);
 
   return {
@@ -244,10 +247,7 @@ function normalizeLoadedModel(
     return fallback;
   }
 
-  const normalized = normalizePersistedSwarmModelDescriptor({ provider, modelId });
-  return normalized
-    ? { provider: normalized.provider, modelId: normalized.modelId }
-    : { provider, modelId };
+  return { provider, modelId };
 }
 
 function normalizeLoadedReasoningLevel(

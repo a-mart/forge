@@ -15,8 +15,7 @@ import {
   isSwarmReasoningLevel,
   normalizeCursorSdkThinkingLevel,
   normalizePersistedSwarmModelDescriptor,
-  normalizePersistedSwarmModelPresetValue,
-  resolveModelDescriptorFromPreset,
+  resolvePersistedModelDescriptorFromPreset,
 } from "../../model-presets.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import { sanitizePathSegment } from "../../data-paths.js";
@@ -62,7 +61,7 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     description: "Cheap lookups, quick reads, simple edits, and lightweight checks.",
     color: "#6b7280",
     provider: "openai-codex",
-    modelId: "gpt-5.6-luna",
+    modelId: "gpt-6-luna",
     reasoningLevel: "low",
     fallbackProvider: "openai-codex",
     fallbackModelId: "gpt-5.5",
@@ -911,12 +910,12 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     const legacyProvider = parseOptionalString(frontmatterValues.provider);
     const effectiveDescriptor =
       modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset) ??
-      (() => {
-        const replacementPreset = normalizePersistedSwarmModelPresetValue(legacyModelPreset);
-        return replacementPreset ? resolveModelDescriptorFromPreset(replacementPreset) : undefined;
-      })();
+      resolvePersistedModelDescriptorFromPreset(legacyModelPreset);
     if (effectiveDescriptor) {
       frontmatterValues.modelId = effectiveDescriptor.modelId;
+      if (legacyModelPreset.trim().toLowerCase() === "pi-5.6" && !frontmatterValues.reasoningLevel) {
+        frontmatterValues.reasoningLevel = effectiveDescriptor.thinkingLevel;
+      }
       if (!frontmatterValues.provider) {
         frontmatterValues.provider = effectiveDescriptor.provider;
       }
@@ -1180,7 +1179,8 @@ function parseTargetSpace(value: string | undefined): SpecialistTargetSpace[] | 
 
 function isLegacyModelFieldModelId(modelId: string, provider: string | undefined): boolean {
   const inferredProvider = provider ?? inferProviderFromModelId(modelId) ?? undefined;
-  return modelCatalogService.isKnownModelId(modelId, inferredProvider);
+  const normalized = inferredProvider ? normalizePersistedSwarmModelDescriptor({ provider: inferredProvider, modelId }) : undefined;
+  return modelCatalogService.isKnownModelId(normalized?.modelId ?? modelId, normalized?.provider ?? inferredProvider);
 }
 
 function normalizeSelectedHandles(handles: readonly string[]): string[] {
@@ -1230,9 +1230,9 @@ function parseTierConfig(value: unknown, persisted = false): TierConfig | undefi
   if (persisted) {
     const normalizedModel = normalizePersistedSwarmModelDescriptor({ provider, modelId, thinkingLevel: reasoningLevel });
     if (normalizedModel) {
+      if (reasoningLevel || normalizedModel.modelId !== modelId) reasoningLevel = normalizedModel.thinkingLevel;
       provider = normalizedModel.provider;
       modelId = normalizedModel.modelId;
-      if (reasoningLevel) reasoningLevel = normalizedModel.thinkingLevel;
     }
   } else {
     assertClaudeSdkProviderNotSelected(provider, "tier config provider");
@@ -1261,9 +1261,9 @@ function parseTierConfig(value: unknown, persisted = false): TierConfig | undefi
         thinkingLevel: fallbackReasoningLevel,
       });
       if (normalizedFallback) {
+        if (fallbackReasoningLevel || normalizedFallback.modelId !== fallbackModelId) fallbackReasoningLevel = normalizedFallback.thinkingLevel;
         fallbackProvider = normalizedFallback.provider;
         fallbackModelId = normalizedFallback.modelId;
-        if (fallbackReasoningLevel) fallbackReasoningLevel = normalizedFallback.thinkingLevel;
       }
     } else {
       assertClaudeSdkProviderNotSelected(fallbackProvider, "tier config fallbackProvider");
@@ -1379,7 +1379,7 @@ function normalizeLegacyCursorAcpSpecialistModel(model: {
       return {
         provider: normalized.provider,
         modelId: normalized.modelId,
-        reasoningLevel: reasoningLevel ? normalized.thinkingLevel : undefined,
+        reasoningLevel: normalized.thinkingLevel,
       };
     }
   }

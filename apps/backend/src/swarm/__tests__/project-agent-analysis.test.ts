@@ -107,6 +107,7 @@ describe('project-agent-analysis', () => {
       sessionLabel: 'Backend API',
       sessionCwd: '/repo',
       apiKey: 'test-key',
+      reasoningEffort: 'low',
       now: () => 123,
       completeFn,
     })
@@ -139,6 +140,6 @@ describe('project-agent-analysis', () => {
     expect(firstCall?.[1]?.messages?.[0]?.content?.[0]?.text).toContain(
       'Current effective prompt context (Forge base norms plus durable conventions; use this as context, but do not copy generic Project Agent base rules into systemPrompt):',
     )
-    expect(firstCall?.[2]).toEqual({ apiKey: 'test-key' })
+    expect(firstCall?.[2]).toEqual({ apiKey: 'test-key', reasoningEffort: 'low' })
   })
 })

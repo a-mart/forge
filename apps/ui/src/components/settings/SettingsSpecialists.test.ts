@@ -327,7 +327,7 @@ describe('SettingsSpecialists', () => {
             ? {
                 ...route,
                 provider: 'openai-codex',
-                modelId: 'gpt-5.6-terra',
+                modelId: 'gpt-6-sol',
                 reasoningLevel: 'xhigh' as const,
               }
             : route),

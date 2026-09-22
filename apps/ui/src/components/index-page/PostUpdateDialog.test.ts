@@ -54,7 +54,7 @@ describe('PostUpdateDialog', () => {
       root.render(createElement(PostUpdateDialog, { source: 'ws://127.0.0.1:47187' }))
     })
 
-    expect(getByRole(document.body, 'dialog').textContent).toContain('GPT-5.6 Sol · High')
+    expect(getByRole(document.body, 'dialog').textContent).toContain('GPT-6 Sol · High')
     expect(getByRole(document.body, 'dialog').textContent).toContain('Hands-on')
     expect(getByRole(document.body, 'dialog').textContent).toContain('Default')
 

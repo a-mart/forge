@@ -92,7 +92,7 @@ export interface ManagerSelectionCatalogResponse {
 export const RECOMMENDED_MANAGER_DEFAULTS = {
   model: {
     provider: 'codex-native',
-    modelId: 'gpt-5.6-sol',
+    modelId: 'gpt-6-sol',
     reasoningId: 'high',
   },
   workModeId: 'hands_on',

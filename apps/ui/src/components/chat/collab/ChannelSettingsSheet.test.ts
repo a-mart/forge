@@ -159,16 +159,16 @@ describe('ChannelSettingsSheet', () => {
     })
   })
 
-  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-5.6 Sol', async () => {
+  it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-6 Sol', async () => {
     modelPresetMocks.presets = [{
-      presetId: 'pi-5.6',
-      displayName: 'GPT-5.6 Sol',
+      presetId: 'pi-6',
+      displayName: 'GPT-6 Sol',
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-sol',
+      modelId: 'gpt-6-sol',
       defaultReasoningLevel: 'max',
       supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     }]
-    renderSheet({ modelId: 'gpt-5.6-sol', reasoningLevel: 'xhigh' })
+    renderSheet({ modelId: 'gpt-6-sol', reasoningLevel: 'xhigh' })
 
     const reasoningTrigger = document.getElementById('collab-channel-settings-reasoning-level')
     expect(reasoningTrigger).toBeTruthy()

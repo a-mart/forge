@@ -458,7 +458,7 @@ describe("manager command handler", () => {
       command: {
         type: "update_profile_default_model",
         profileId: "alpha",
-        model: "pi-5.6",
+        model: "pi-6",
         requestId: "req-default-model",
       } as never,
       socket: {} as never,
@@ -470,11 +470,11 @@ describe("manager command handler", () => {
       handleDeletedAgentSubscriptions: vi.fn(),
     });
 
-    expect(swarmManager.updateProfileDefaultModel).toHaveBeenCalledWith("alpha", "pi-5.6", undefined);
+    expect(swarmManager.updateProfileDefaultModel).toHaveBeenCalledWith("alpha", "pi-6", undefined);
     expect(broadcastToSubscribed).toHaveBeenCalledWith({
       type: "profile_default_model_updated",
       profileId: "alpha",
-      model: "pi-5.6",
+      model: "pi-6",
       reasoningLevel: undefined,
       requestId: "req-default-model",
     });
@@ -676,7 +676,7 @@ it.each([false, true])("forwards the project Secure Sessions choice (%s) in both
   const context = { socket: {} as never, subscribedAgentId: "manager", swarmManager: { createManager } as never,
     repositoryProjectCreationService: { create } as never, resolveManagerContextAgentId: () => "manager",
     send: vi.fn(), broadcastToSubscribed: vi.fn(), handleDeletedAgentSubscriptions: vi.fn() };
-  await handleManagerCommand({ ...context, command: { type: "create_manager", name: "Project", cwd: "/tmp", model: "pi-5.6", secureSessionsEnabled: enabled } });
+  await handleManagerCommand({ ...context, command: { type: "create_manager", name: "Project", cwd: "/tmp", model: "pi-6", secureSessionsEnabled: enabled } });
   expect(createManager).toHaveBeenCalledWith("manager", expect.objectContaining({ secureSessionsEnabled: enabled }));
   await handleManagerCommand({ ...context, command: { type: "create_repository_project", name: "Project", repositoryUrl: "https://example.test/repo.git", repositoryBasePath: "/tmp", repositoryFolder: "repo", modelSelection: { provider: "openai", modelId: "gpt-5.5" }, secureSessionsEnabled: enabled, requestId: "create" } });
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ secureSessionsEnabled: enabled }));

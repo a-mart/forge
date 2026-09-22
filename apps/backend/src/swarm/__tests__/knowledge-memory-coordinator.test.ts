@@ -218,7 +218,7 @@ describe("KnowledgeMemoryCoordinator", () => {
     } as never);
 
     await expect(harness.coordinator.executeCaptureJudgePrompt("candidate prompt")).resolves.toBe("YES");
-    expect(registry.find).toHaveBeenNthCalledWith(1, "openai-codex", "gpt-5.6-luna");
+    expect(registry.find).toHaveBeenNthCalledWith(1, "openai-codex", "gpt-6-luna");
     expect(registry.find).toHaveBeenNthCalledWith(2, "openai-codex", "gpt-5.5");
     expect(registry.getApiKeyAndHeaders).toHaveBeenCalledWith(model);
     expect(piAiCompat.complete).toHaveBeenCalledWith(
@@ -243,7 +243,7 @@ describe("KnowledgeMemoryCoordinator", () => {
 
   it("skips an unauthorized candidate and uses the next configured model", async () => {
     const harness = await createHarness();
-    const firstModel = { provider: "openai-codex", id: "gpt-5.6-luna" };
+    const firstModel = { provider: "openai-codex", id: "gpt-6-luna" };
     const secondModel = { provider: "openai-codex", id: "gpt-5.5" };
     const registry = {
       find: vi.fn().mockReturnValueOnce(firstModel).mockReturnValueOnce(secondModel),

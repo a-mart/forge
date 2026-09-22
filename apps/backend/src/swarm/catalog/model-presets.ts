@@ -1,5 +1,6 @@
 import {
   getSpawnPresetFamilies,
+  getRetiredCodexModelReplacement,
   type ModelPresetInfo,
 } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
@@ -207,10 +208,22 @@ export function normalizePersistedSwarmModelPresetValue(value: string): SwarmMod
   return normalizeSwarmModelPresetValue(normalizedPreset) ?? PERSISTED_ONLY_PRESET_REPLACEMENTS[normalizedPreset];
 }
 
+/** Resolve legacy saved presets without changing the current family's default model. */
+export function resolvePersistedModelDescriptorFromPreset(value: string): AgentModelDescriptor | undefined {
+  if (value.trim().toLowerCase() === "pi-5.6") {
+    return { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "max" };
+  }
+  const preset = normalizePersistedSwarmModelPresetValue(value);
+  return preset ? resolveModelDescriptorFromPreset(preset) : undefined;
+}
+
 export function resolveRemovedSwarmModelReplacementPreset(
   provider: string,
   modelId: string,
 ): SwarmModelPreset | undefined {
+  if (getRetiredCodexModelReplacement(provider, modelId)) {
+    return provider.trim().toLowerCase() === "codex-native" ? "codex-native" : "pi-6";
+  }
   return resolveModelReplacementFromMap(REMOVED_MODEL_REPLACEMENTS, provider, modelId)
     ?? resolveModelReplacementFromMap(RETIRED_MODEL_REJECTION_REPLACEMENTS, provider, modelId);
 }
@@ -236,6 +249,12 @@ function resolveModelReplacementFromMap(
 
 export function assertSwarmModelIdNotRetired(provider: string, modelId: string, fieldName: string): void {
   assertClaudeSdkProviderNotSelected(provider, fieldName);
+  const exactReplacement = getRetiredCodexModelReplacement(provider, modelId);
+  if (exactReplacement) {
+    throw new Error(
+      `${fieldName} refers to retired model ${provider.trim()}/${modelId.trim()}; use ${exactReplacement.modelId}${exactReplacement.thinkingLevel ? ` with ${exactReplacement.thinkingLevel} reasoning` : ""} instead`,
+    );
+  }
   const replacementPreset = resolveRemovedSwarmModelReplacementPreset(provider, modelId);
   if (!replacementPreset) {
     return;
@@ -251,6 +270,16 @@ export function normalizePersistedSwarmModelDescriptor(
 ): AgentModelDescriptor | undefined {
   if (!descriptor) {
     return undefined;
+  }
+
+  const exactReplacement = getRetiredCodexModelReplacement(descriptor.provider, descriptor.modelId);
+  if (exactReplacement) {
+    const mapped = {
+      provider: descriptor.provider.trim().toLowerCase(),
+      modelId: exactReplacement.modelId,
+      thinkingLevel: exactReplacement.thinkingLevel ?? descriptor.thinkingLevel,
+    };
+    return { ...mapped, thinkingLevel: normalizeThinkingLevelForModelDescriptor(mapped) };
   }
 
   const legacyClaudeSdkMapping = mapLegacyClaudeSdkModel(descriptor);

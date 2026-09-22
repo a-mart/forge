@@ -716,6 +716,7 @@ describe("specialist-registry", () => {
     await writeModelOverrides(dataDir, {
       version: 1,
       overrides: {
+        "claude-opus-5-5": { enabled: false },
         "claude-opus-4-6": {
           enabled: false,
         },
@@ -1688,6 +1689,10 @@ describe("specialist-registry", () => {
 
   it.each([
     ["openai-codex", "gpt-5.3-codex-spark", "openai-codex", "gpt-5.5"],
+    ["openai-codex", "gpt-5.6-sol", "openai-codex", "gpt-6-sol"],
+    ["openai-codex", "gpt-5.6-luna", "openai-codex", "gpt-6-luna"],
+    ["openai-codex", "gpt-5.6-terra", "openai-codex", "gpt-6-sol"],
+    ["codex-native", "gpt-5.6-terra", "codex-native", "gpt-6-sol"],
     ["anthropic", "claude-sonnet-4-5-20250929", "anthropic", "claude-sonnet-5"],
     ["claude-sdk", "claude-haiku-4-5-20251001", "anthropic", "claude-sonnet-5"],
   ])("migrates persisted retired exact model %s/%s on specialist load", async (
@@ -2004,4 +2009,35 @@ describe("specialist-registry", () => {
       "Unknown specialist: missing-worker",
     );
   });
+});
+
+
+it("migrates Terra tier primary and fallback models to Sol low even without an effort", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "terra-tier-migration-"));
+  const sharedDir = join(dataDir, "shared", "specialists");
+  await mkdir(sharedDir, { recursive: true });
+  await writeFile(join(sharedDir, "tier-configs.json"), JSON.stringify({ tiers: [{
+    ...DEFAULT_TIER_CONFIGS.fast,
+    provider: "openai-codex", modelId: "gpt-5.6-terra", reasoningLevel: "ultra",
+    fallbackProvider: "openai-codex", fallbackModelId: "gpt-5.6-terra", fallbackReasoningLevel: undefined,
+  }] }));
+  const tiers = await resolveTierConfigs(dataDir);
+  expect(tiers.find((tier) => tier.tier === "fast")).toMatchObject({
+    modelId: "gpt-6-sol", reasoningLevel: "low", fallbackModelId: "gpt-6-sol", fallbackReasoningLevel: "low",
+  });
+});
+
+
+it.each([
+  ["pi-5.6", "max"],
+  ["gpt-5.6-terra", "low"],
+])("migrates legacy specialist model field %s without rewriting the source", async (model, reasoningLevel) => {
+  const root = await mkdtemp(join(tmpdir(), "retired-specialist-model-field-"));
+  const path = join(root, "worker.md");
+  const markdown = ["---", "displayName: Worker", "color: '#2563eb'", "enabled: true", "whenToUse: Tasks", `model: ${model}`, "---", "Worker prompt"].join("\n");
+  await writeFile(path, markdown);
+  expect((await parseSpecialistFile(path))?.frontmatter).toMatchObject({
+    provider: "openai-codex", modelId: "gpt-6-sol", reasoningLevel,
+  });
+  expect(await readFile(path, "utf8")).toBe(markdown);
 });

@@ -221,11 +221,11 @@ describe("collaboration channel service", () => {
     expect(effective.reasoningLevel).toBe("xhigh");
   });
 
-  it("uses GPT-5.6 max reasoning when channel model settings default or reset", async () => {
+  it("uses GPT-6 max reasoning when channel model settings default or reset", async () => {
     const { dbHelpers, service, workspace, manager, config } = await createChannelHarness();
     dbHelpers.updateWorkspaceDefaults(workspace.workspaceId, {
       defaultModelProvider: "openai-codex",
-      defaultModelId: "gpt-5.6-sol",
+      defaultModelId: "gpt-6-sol",
       defaultModelThinkingLevel: "max",
       defaultCwd: config.defaultCwd,
       updatedAt: new Date().toISOString(),
@@ -233,22 +233,22 @@ describe("collaboration channel service", () => {
 
     const channel = await service.createChannel({
       workspaceId: workspace.workspaceId,
-      name: "GPT-5.6 channel",
+      name: "GPT-6 channel",
     });
 
-    expect(channel.modelId).toBe("pi-5.6");
+    expect(channel.modelId).toBe("pi-6");
     expect(channel.reasoningLevel).toBe("max");
     expect(manager.getAgent(channel.sessionAgentId)?.model).toMatchObject({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "max",
     });
 
     const updated = service.updateChannel(channel.channelId, {
-      modelId: "pi-5.6",
+      modelId: "pi-6",
       reasoningLevel: null,
     });
-    expect(updated.modelId).toBe("pi-5.6");
+    expect(updated.modelId).toBe("pi-6");
     expect(updated.reasoningLevel).toBe("max");
   });
 

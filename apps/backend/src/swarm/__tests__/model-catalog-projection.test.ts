@@ -27,9 +27,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
             },
             "openai-codex": {
               "gpt-6-astra": { contextWindow: 1_050_000, maxTokens: 128_000 },
-              "gpt-5.6-sol": { contextWindow: 272_000, maxTokens: 128_000 },
-              "gpt-5.6-terra": { contextWindow: 272_000, maxTokens: 128_000 },
-              "gpt-5.6-luna": { contextWindow: 272_000, maxTokens: 128_000 },
+              "gpt-6-sol": { contextWindow: 272_000, maxTokens: 128_000 },
+              "gpt-6-sol": { contextWindow: 272_000, maxTokens: 128_000 },
+              "gpt-6-luna": { contextWindow: 272_000, maxTokens: 128_000 },
               "gpt-5.5": { contextWindow: 272_000, maxTokens: 128_000 },
             },
             anthropic: {
@@ -142,7 +142,7 @@ describe("model-catalog-projection", () => {
       contextWindow: 1_050_000,
       maxTokens: 128_000,
     });
-    for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    for (const modelId of ["gpt-6-sol", "gpt-6-luna"]) {
       expect(registry.find("openai-codex", modelId)?.contextWindow).toBe(272_000);
       expect(registry.find("openai-codex", modelId)?.maxTokens).toBe(128_000);
     }
@@ -654,9 +654,9 @@ describe("model-catalog-projection", () => {
       version: 1,
       overrides: {
         "grok-4": { enabled: false },
-        "gpt-5.6-sol": { enabled: false },
-        "gpt-5.6-terra": { enabled: false },
-        "gpt-5.6-luna": { enabled: false },
+        "gpt-6-sol": { enabled: false },
+        "gpt-6-sol": { enabled: false },
+        "gpt-6-luna": { enabled: false },
         "gpt-5.5": { enabled: false },
       },
     });
@@ -670,7 +670,7 @@ describe("model-catalog-projection", () => {
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");
     expect(registry.find("xai", "grok-4")?.contextWindow).toBe(256_000);
-    for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    for (const modelId of ["gpt-6-sol", "gpt-6-luna"]) {
       expect(registry.find("openai-codex", modelId)?.contextWindow).toBe(272_000);
     }
     expect(registry.find("openai-codex", "gpt-5.5")?.contextWindow).toBe(272_000);

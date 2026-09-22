@@ -32,7 +32,7 @@ const PRESET: DelegationRoster = {
       behaviorMode: 'general',
       useWhen: 'Bounded work.',
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-terra',
+      modelId: 'gpt-6-sol',
       reasoningLevel: 'medium',
       capabilityEscalationRouteId: 'balanced',
     },

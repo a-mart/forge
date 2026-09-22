@@ -59,14 +59,6 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
-  'pi-5.6': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.6-sol',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
   'pi-opus': {
     provider: 'anthropic',
     defaultModelId: 'claude-opus-5-5',
@@ -145,30 +137,6 @@ const EXPECTED_MODELS = {
   'gpt-6-luna': {
     provider: 'openai-codex',
     familyId: 'pi-6',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'gpt-5.6-sol': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.6',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'gpt-5.6-terra': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.6',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'gpt-5.6-luna': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.6',
     contextWindow: 272_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -280,7 +248,7 @@ const EXPECTED_MODELS = {
   },
 } as const
 
-const NATIVE_MODEL_IDS = ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
+const NATIVE_MODEL_IDS = ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
 
 describe('model-catalog', () => {
   it('keeps native Codex managers separate from Pi and worker presets', () => {
@@ -300,7 +268,7 @@ describe('model-catalog', () => {
       const model = getCatalogModel(modelId, provider)
       expect(model).toMatchObject({
         contextWindow: 272_000, maxOutputTokens: 128_000,
-        defaultReasoningLevel: 'medium', inputModes: ['text', 'image'],
+        defaultReasoningLevel: provider === 'codex-native' && modelId === 'gpt-6-sol' ? 'high' : 'medium', inputModes: ['text', 'image'],
         supportsTools: true, supportsStructuredOutput: true,
         supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', ...(ultra ? ['ultra'] : [])],
         piCost: {
@@ -323,7 +291,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual([...Object.keys(EXPECTED_FAMILIES), 'codex-native'])
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual([...Object.keys(EXPECTED_MODELS), ...NATIVE_MODEL_IDS.map(id => `codex-native/${id}`)])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(27)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -475,9 +443,9 @@ describe('model-catalog', () => {
   it('documents intentional catalog divergences from Pi upstream', () => {
     expect(getCatalogModel('gpt-6-astra')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.6')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
-    for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+    for (const modelId of ['gpt-6-sol', 'gpt-6-luna']) {
       expect(getCatalogModel(modelId)?.intentionalDivergenceNotes).toContain(
-        '272k context window reported by Codex capability metadata',
+        '272k default context',
       )
     }
     expect(getCatalogModel('claude-opus-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
@@ -622,10 +590,10 @@ describe('model-catalog', () => {
   it('provides working lookup helpers', () => {
     expect(getCatalogModel('gpt-6-astra')?.displayName).toBe('GPT-6 Astra')
     expect(getCatalogModel('gpt-6-astra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
-    expect(getCatalogModel('gpt-5.6-sol')?.displayName).toBe('GPT-5.6 Sol')
-    expect(getCatalogModel('gpt-5.6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-    expect(getCatalogModel('gpt-5.6-terra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-    expect(getCatalogModel('gpt-5.6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(getCatalogModel('gpt-6-sol')?.displayName).toBe('GPT-6 Sol')
+    expect(getCatalogModel('gpt-6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(getCatalogModel('gpt-6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(getCatalogModel('gpt-6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')
     expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.6')
@@ -667,14 +635,14 @@ describe('model-catalog', () => {
     expect(inferCatalogProvider('gpt-6-astra')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4')).toBeNull()
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
-    expect(inferCatalogProvider('gpt-5.6-sol')).toBe('openai-codex')
+    expect(inferCatalogProvider('gpt-6-sol')).toBe('openai-codex')
     expect(inferCatalogProvider('grok-4.6')).toBe('xai')
     expect(inferCatalogFamily('xai', 'grok-4.6')).toBe('pi-grok')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
     expect(inferCatalogFamily('openai-codex', 'gpt-6-astra')).toBe('pi-6')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBeUndefined()
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
-    expect(inferCatalogFamily('openai-codex', 'gpt-5.6-sol')).toBe('pi-5.6')
+    expect(inferCatalogFamily('openai-codex', 'gpt-6-sol')).toBe('pi-6')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-next')).toBe('pi-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBeUndefined()
@@ -787,7 +755,6 @@ describe('model-catalog', () => {
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-6',
-      'pi-5.6',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -800,7 +767,6 @@ describe('model-catalog', () => {
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-6',
-      'pi-5.6',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -813,7 +779,6 @@ describe('model-catalog', () => {
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-6',
-      'pi-5.6',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -825,7 +790,6 @@ describe('model-catalog', () => {
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-6',
-      'pi-5.6',
       'pi-opus',
       'pi-sonnet',
       'pi-fable',
@@ -834,4 +798,13 @@ describe('model-catalog', () => {
       'cursor-grok-45',
     ])
   })
+})
+
+
+it.each(['openai-codex', 'codex-native'])('excludes retired GPT-5.6 from the %s catalog', (provider) => {
+  for (const modelId of ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra']) {
+    expect(getCatalogModel(modelId, provider)).toBeUndefined()
+    expect(isRetiredForgeModel(provider, modelId)).toBe(true)
+    expect(isRetiredForgeModel(provider, `${provider}/${modelId}`)).toBe(true)
+  }
 })

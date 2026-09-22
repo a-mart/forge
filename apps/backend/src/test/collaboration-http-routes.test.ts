@@ -1006,13 +1006,13 @@ describe("collaboration HTTP routes", () => {
           "content-type": "application/json",
           cookie: adminCookieHeader,
         },
-        body: JSON.stringify({ modelId: "pi-5.6" }),
+        body: JSON.stringify({ modelId: "pi-6" }),
       },
     );
     expect(updateChannelModelResponse.status).toBe(200);
 
     await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
-      modelId: resolveModelDescriptorFromPreset("pi-5.6").modelId,
+      modelId: resolveModelDescriptorFromPreset("pi-6").modelId,
     });
 
     const dbHelpers = await createCollaborationDbHelpers(config);
@@ -1030,8 +1030,8 @@ describe("collaboration HTTP routes", () => {
     await expect(channelResponse.json()).resolves.toMatchObject({
       channel: expect.objectContaining({
         channelId: createChannelBody.channel.channelId,
-        modelId: "pi-5.6",
-        reasoningLevel: resolveModelDescriptorFromPreset("pi-5.6").thinkingLevel,
+        modelId: "pi-6",
+        reasoningLevel: resolveModelDescriptorFromPreset("pi-6").thinkingLevel,
       }),
     });
   });

@@ -7,7 +7,7 @@ Forge keeps checked-in metadata for its supported catalog models in one source o
 The public `packages/protocol/src/model-catalog.ts` module exports that data and its helpers. `model-catalog-data.ts` defines the catalog in three layers:
 
 - **providers**: runtime/provider behavior
-- **families**: preset groupings like the visible full Codex families `pi-6`, `pi-5.6`, and `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
+- **families**: preset groupings like the visible full Codex families `pi-6` and `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
 - **models**: concrete model metadata used by runtime and UI
 
 ## Source of truth rules
@@ -82,7 +82,7 @@ The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@C
 
 ## OpenAI GPT-6 Astra catalog
 
-`openai-codex/gpt-6-astra` is the checked-in model for the visible `pi-6` family. It is selectable for managers, compaction, specialists, and worker spawns and is used by the Default roster's Plan consultant, but it does not replace the `codex-native/gpt-5.6-sol` High manager default or enter the automatic Codex capacity fallback chain. Forge exposes low, medium, high, xhigh, and max reasoning with high as its catalog default; unsupported none and ultra selections clamp to low and max respectively.
+`openai-codex/gpt-6-astra` is the checked-in model for the visible `pi-6` family. It is selectable for managers, compaction, specialists, and worker spawns and is used by the Default roster's Plan consultant, but it does not replace the `codex-native/gpt-6-sol` High manager default or enter the automatic Codex capacity fallback chain. Forge exposes low, medium, high, xhigh, and max reasoning with high as its catalog default; unsupported none and ultra selections clamp to low and max respectively.
 
 Astra has a 1.05M-token context window (922k maximum input plus 128k maximum output), text-and-image input, text output, tool calling, and structured output. Base Pi cost metadata is $10/MTok input, $1/MTok cached input, $12.50/MTok cache writes, and $50/MTok output. Requests above 272k total input use the request-wide $20/$2/$25/$75 tier. Temperature is disabled for the synthetic projection.
 
@@ -182,3 +182,14 @@ This usually requires more than a catalog edit. You may also need to update:
 - Request behavior adapters: `apps/backend/src/swarm/catalog/model-catalog-request-behaviors.ts`
 - Local overrides persistence: `apps/backend/src/swarm/catalog/model-overrides.ts`
 - Audit script: `scripts/model-catalog-audit.mjs`
+
+### GPT-5.6 retirement
+
+GPT-5.6 Sol, Luna, and Terra are retired in both `openai-codex` and `codex-native`.
+New selections reject these IDs and the `pi-5.6` preset. Existing saved selections
+migrate on load: Sol to GPT-6 Sol and Luna to GPT-6 Luna, preserving supported
+reasoning; Terra to GPT-6 Sol at low reasoning regardless of its previous effort.
+Legacy saved `pi-5.6` presets resolve to GPT-6 Sol at max; the current `pi-6`
+preset retains Astra at high. The native manager default is GPT-6 Sol at high.
+The capacity fallback chain is now GPT-6 Sol → GPT-6 Luna → GPT-5.5.
+Historical transcript model labels are retained.

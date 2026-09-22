@@ -117,7 +117,7 @@ Every frontmatter value must fit on one line. The parser reads `key: value` pair
 
 | Tier | Default Model | Reasoning | Fallback |
 |---|---|---|---|
-| `light` | `openai-codex/gpt-5.6-luna` | low | `openai-codex/gpt-5.5` low |
+| `light` | `openai-codex/gpt-6-luna` | low | `openai-codex/gpt-5.5` low |
 | `fast` | `cursor-sdk/composer-2.5` | none | `openai-codex/gpt-5.5` high |
 | `standard` | `openai-codex/gpt-5.5` | medium | `openai-codex/gpt-5.5` medium |
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
@@ -143,9 +143,8 @@ Older builtin handles and tier/lens inputs are still rewritten internally for co
 | Model ID | Display Name | Provider | Supported Reasoning Levels |
 |---|---|---|---|
 | `gpt-6-astra` | GPT-6 Astra | OpenAI Codex | low, medium, high, xhigh, max |
-| `gpt-5.6-sol` | GPT-5.6 Sol | OpenAI Codex | low, medium, high, xhigh, max, ultra |
-| `gpt-5.6-terra` | GPT-5.6 Terra | OpenAI Codex | low, medium, high, xhigh, max, ultra |
-| `gpt-5.6-luna` | GPT-5.6 Luna | OpenAI Codex | low, medium, high, xhigh, max |
+| `gpt-6-sol` | GPT-6 Sol | OpenAI Codex | low, medium, high, xhigh, max, ultra |
+| `gpt-6-luna` | GPT-6 Luna | OpenAI Codex | low, medium, high, xhigh, max |
 | `gpt-5.5` | GPT-5.5 | OpenAI Codex | none, low, medium, high, xhigh |
 | `claude-fable-5-1` | Claude Fable 5.1 (default) | Anthropic | low, medium, high, xhigh, max |
 | `claude-fable-5` | Claude Fable 5 | Anthropic | low, medium, high, xhigh, max |

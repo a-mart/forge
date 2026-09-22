@@ -2019,13 +2019,13 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
-    const updatePromise = client.updateProfileDefaultModel(' profile-a ', 'pi-5.6', 'high')
+    const updatePromise = client.updateProfileDefaultModel(' profile-a ', 'pi-6', 'high')
     const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
     expect(updatePayload).toMatchObject({
       type: 'update_profile_default_model',
       profileId: 'profile-a',
-      model: 'pi-5.6',
+      model: 'pi-6',
       reasoningLevel: 'high',
     })
     expect(typeof updatePayload.requestId).toBe('string')
@@ -2058,7 +2058,7 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
-    const updatePromise = client.updateProfileDefaultModel('profile-a', 'pi-5.6')
+    const updatePromise = client.updateProfileDefaultModel('profile-a', 'pi-6')
 
     emitServerEvent(socket, {
       type: 'error',
@@ -2088,13 +2088,13 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
-    const updatePromise = client.updateManagerModel(' manager ', 'pi-5.6', 'high')
+    const updatePromise = client.updateManagerModel(' manager ', 'pi-6', 'high')
     const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
     expect(updatePayload).toMatchObject({
       type: 'update_manager_model',
       managerId: 'manager',
-      model: 'pi-5.6',
+      model: 'pi-6',
       reasoningLevel: 'high',
     })
     expect(typeof updatePayload.requestId).toBe('string')
@@ -2127,7 +2127,7 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
-    const updatePromise = client.updateManagerModel('manager', 'pi-5.6')
+    const updatePromise = client.updateManagerModel('manager', 'pi-6')
 
     emitServerEvent(socket, {
       type: 'error',

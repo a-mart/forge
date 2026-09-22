@@ -144,6 +144,24 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
   return undefined
 }
 
+/** Exact replacements for persisted retired Codex selections. Terra always uses low effort. */
+export function getRetiredCodexModelReplacement(
+  provider: string,
+  modelId: string,
+): { modelId: string; thinkingLevel?: 'low' } | undefined {
+  const normalizedProvider = provider.trim().toLowerCase()
+  if (normalizedProvider !== 'openai-codex' && normalizedProvider !== 'codex-native') return undefined
+  const trimmedModelId = modelId.trim().toLowerCase()
+  const prefix = `${normalizedProvider}/`
+  const normalizedModelId = trimmedModelId.startsWith(prefix) ? trimmedModelId.slice(prefix.length) : trimmedModelId
+  switch (normalizedModelId) {
+    case 'gpt-5.6-sol': return { modelId: 'gpt-6-sol' }
+    case 'gpt-5.6-luna': return { modelId: 'gpt-6-luna' }
+    case 'gpt-5.6-terra': return { modelId: 'gpt-6-sol', thinkingLevel: 'low' }
+    default: return undefined
+  }
+}
+
 const RETIRED_FORGE_MODELS = new Set([
   'openai-codex/gpt-5.3-codex-spark',
   'openai-codex/gpt-5.4',
@@ -181,7 +199,8 @@ export function isRetiredForgeModel(provider: string, modelId: string): boolean 
     normalizedModelId = normalizedModelId.slice(providerPrefix.length)
   }
 
-  return RETIRED_FORGE_MODELS.has(`${normalizedProvider}/${normalizedModelId}`)
+  return !!getRetiredCodexModelReplacement(normalizedProvider, normalizedModelId) ||
+    RETIRED_FORGE_MODELS.has(`${normalizedProvider}/${normalizedModelId}`)
 }
 
 /** Get context window for a specific model ID. Returns undefined if unknown. */

@@ -353,7 +353,7 @@ describe('progressive work graph scenarios', () => {
       {
         model: {
           provider: 'openai-codex',
-          modelId: 'gpt-5.6-terra',
+          modelId: 'gpt-6-sol',
           thinkingLevel: 'medium',
         },
       },

@@ -4,7 +4,7 @@ Every model choice is a tradeoff between cost, speed, and output quality. Here i
 
 Use these for high-volume or simple tasks where speed matters more than depth.
 
-- **GPT-5.6 Luna** — Fast with decent quality. The Scout specialist uses this by default for exploration and information gathering.
+- **GPT-6 Luna** — Fast with decent quality. The Scout specialist uses this by default for exploration and information gathering.
 - **GPT-5.5 at low reasoning** — A fast, cheaper Codex option for bulk formatting, simple code generation, and lightweight review. Good for doc-heavy and simple specialist work.
 
 ## Balanced
@@ -21,7 +21,7 @@ These work well for everyday development tasks.
 Reserve these for work where quality matters most.
 
 - **GPT-6 Astra** — The most capable Codex choice. Best for the hardest backend work, large multi-file refactors, and demanding research tasks.
-- **GPT-5.6 Sol at high reasoning** — Forge's recommended Codex-native manager default. Strong for everyday implementation and orchestration without paying the latency cost of the highest reasoning levels.
+- **GPT-6 Sol at high reasoning** — Forge's recommended Codex-native manager default. Strong for everyday implementation and orchestration without paying the latency cost of the highest reasoning levels.
 - **GPT-5.5 at medium reasoning** — A capable specialist-work balance of quality and cost. Best for frontend work, nuanced code review, and tasks that need careful judgment.
 - **Grok 4.6 at high reasoning** — The native xAI default configured for more thorough manager or specialist work.
 - **Cursor Grok 4.5** — Cursor SDK Grok 4.5 for high-quality Cursor runtime sessions; the fast variant trades higher price for lower latency.

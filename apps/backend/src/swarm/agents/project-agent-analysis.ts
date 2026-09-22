@@ -18,6 +18,7 @@ export interface AnalyzeSessionForPromotionOptions {
   profileId?: string;
   sessionCwd?: string;
   apiKey?: string;
+  reasoningEffort?: "low";
   headers?: Record<string, string>;
   now?: () => number;
   completeFn?: typeof complete;
@@ -72,10 +73,11 @@ export async function analyzeSessionForPromotion(
         }
       ]
     },
-    options.apiKey || options.headers
+    options.apiKey || options.headers || options.reasoningEffort
       ? {
           ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-          ...(options.headers ? { headers: options.headers } : {})
+          ...(options.headers ? { headers: options.headers } : {}),
+          ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {})
         }
       : undefined
   );

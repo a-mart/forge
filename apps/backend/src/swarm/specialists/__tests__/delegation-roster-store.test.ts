@@ -65,12 +65,12 @@ describe("delegation roster settings", () => {
       route.modelId,
       route.reasoningLevel,
     ])).toEqual([
-      ["quick-scout", "gpt-5.6-luna", "high"],
-      ["fast-builder", "gpt-5.6-terra", "xhigh"],
-      ["planner", "gpt-5.6-sol", "xhigh"],
+      ["quick-scout", "gpt-6-luna", "high"],
+      ["fast-builder", "gpt-6-sol", "low"],
+      ["planner", "gpt-6-sol", "xhigh"],
       ["research-analyst", "gpt-5.5", "medium"],
       ["independent-critic", "gpt-5.5", "high"],
-      ["deep-reasoner", "gpt-5.6-sol", "xhigh"],
+      ["deep-reasoner", "gpt-6-sol", "xhigh"],
     ]);
     expect(settings.rosters[0]?.description).toBe(
       "A balanced development team with a normal builder, focused alternatives, and evidence-based escalation.",
@@ -220,7 +220,7 @@ describe("delegation roster settings", () => {
                 useWhen: "Use for cheap lookups, file discovery, and bounded source gathering when low cost matters more than depth.",
                 avoidWhen: "Avoid when ambiguity, risk, or synthesis quality matters more than minimizing cost.",
                 capabilityEscalationRouteId: "research-analyst",
-                modelId: "gpt-5.6-terra",
+                modelId: "gpt-6-sol",
                 reasoningLevel: "low" as const,
               }
             : route.routeId === "fast-builder"
@@ -229,7 +229,7 @@ describe("delegation roster settings", () => {
                 label: "Fast Execution",
                 useWhen: "Well-specified implementation and focused fixes with clear acceptance.",
                 avoidWhen: undefined,
-                modelId: "gpt-5.6-luna",
+                modelId: "gpt-6-luna",
                 reasoningLevel: "high" as const,
               }
             : route.routeId === "planner"
@@ -260,16 +260,16 @@ describe("delegation roster settings", () => {
         label: "Quick Builder",
         useWhen: expect.stringContaining("small, well-specified implementation"),
         capabilityEscalationRouteId: "fast-builder",
-        modelId: "gpt-5.6-luna",
-        reasoningLevel: "high",
+        modelId: "gpt-6-sol",
+        reasoningLevel: "low",
       });
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "fast-builder"))
-      .toMatchObject({ modelId: "gpt-5.6-terra", reasoningLevel: "xhigh" });
+      .toMatchObject({ modelId: "gpt-6-luna", reasoningLevel: "high" });
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "planner"))
       .toMatchObject({
         useWhen: expect.stringContaining("decomposition"),
         avoidWhen: expect.stringContaining("implementation or source research"),
-        modelId: "gpt-5.6-sol",
+        modelId: "gpt-6-sol",
         reasoningLevel: "xhigh",
       });
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "research-analyst"))
@@ -277,7 +277,7 @@ describe("delegation roster settings", () => {
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "research-analyst")?.label)
       .toBe("My Planning Model");
     expect(migrated.rosters[0]?.routes.find((route) => route.routeId === "deep-reasoner"))
-      .toMatchObject({ modelId: "gpt-5.6-sol", reasoningLevel: "xhigh" });
+      .toMatchObject({ modelId: "gpt-6-sol", reasoningLevel: "max" });
   });
 
   it("consolidates the generated design reviewer into the independent reviewer without touching custom alternatives", async () => {
@@ -430,4 +430,28 @@ describe("delegation roster settings", () => {
     expect(context).not.toContain("availabilityFallback");
     expect(context).not.toContain("promptBody");
   });
+});
+
+
+it("migrates saved GPT-5.6 route and fallback selections across reloads", async () => {
+  const dataDir = await makeDataDir();
+  const settings = await resolveDelegationRosterSettings(dataDir);
+  const roster = settings.rosters[0]!;
+  const persisted = { ...settings, defaultRosterId: roster.rosterId, rosters: [{ ...roster, routes: roster.routes.map((route) => ({
+    ...route,
+    modelId: "gpt-5.6-terra",
+    provider: "openai-codex",
+    reasoningLevel: "ultra",
+    availabilityFallback: { provider: "openai-codex", modelId: "gpt-5.6-luna", reasoningLevel: "high" },
+  })) }] };
+  const path = getDelegationRostersPath(dataDir);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(persisted));
+  const loaded = await resolveDelegationRosterSettings(dataDir);
+  for (const route of loaded.rosters[0]!.routes) {
+    expect(route).toMatchObject({ modelId: "gpt-6-sol", reasoningLevel: "low",
+      availabilityFallback: { modelId: "gpt-6-luna", reasoningLevel: "high" } });
+  }
+  await saveDelegationRosterSettings(dataDir, loaded);
+  expect(await resolveDelegationRosterSettings(dataDir)).toEqual(loaded);
 });

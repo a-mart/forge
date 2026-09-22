@@ -203,24 +203,24 @@ describe("collaboration category service", () => {
     })).toThrow("Claude SDK has been retired");
   });
 
-  it("preserves GPT-5.6 max reasoning as the category default", async () => {
+  it("preserves GPT-6 high reasoning as the category default", async () => {
     const { service, workspace } = await createCategoryHarness();
 
     const created = service.createCategory({
       workspaceId: workspace.workspaceId,
       name: "Zero Day",
-      defaultModelId: "pi-5.6",
+      defaultModelId: "pi-6",
     });
 
-    expect(created.defaultModelId).toBe("pi-5.6");
-    expect(created.defaultReasoningLevel).toBe("max");
+    expect(created.defaultModelId).toBe("pi-6");
+    expect(created.defaultReasoningLevel).toBe("high");
     expect(created.channelCreationDefaults?.model).toMatchObject({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      thinkingLevel: "max",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "high",
     });
 
     const reset = service.updateCategory(created.categoryId, { defaultReasoningLevel: null });
-    expect(reset.defaultReasoningLevel).toBe("max");
+    expect(reset.defaultReasoningLevel).toBe("high");
   });
 });

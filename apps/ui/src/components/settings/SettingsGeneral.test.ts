@@ -389,18 +389,18 @@ describe('SettingsGeneral', () => {
       expect(queryByRole(document.body, 'option', { name: 'Cursor Composer' })).toBeNull()
     })
 
-    it('uses model-specific reasoning metadata for GPT-5.6 compaction variants', async () => {
+    it('uses model-specific reasoning metadata for GPT-6 compaction variants', async () => {
       modelPresetMock.fetchModelPresets.mockResolvedValueOnce([
         {
-          presetId: 'pi-5.6',
-          displayName: 'GPT-5.6 Sol',
+          presetId: 'pi-6',
+          displayName: 'GPT-6 Astra',
           provider: 'openai-codex',
-          modelId: 'gpt-5.6-sol',
-          defaultReasoningLevel: 'max',
-          supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          modelId: 'gpt-6-astra',
+          defaultReasoningLevel: 'high',
+          supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           variants: [
-            { modelId: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
-            { modelId: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+            { modelId: 'gpt-6-sol', label: 'GPT-6 Sol' },
+            { modelId: 'gpt-6-luna', label: 'GPT-6 Luna' },
           ],
         },
       ])
@@ -414,9 +414,9 @@ describe('SettingsGeneral', () => {
       flushSync(() => {
         fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' })).toBeTruthy())
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-6 Sol' })).toBeTruthy())
       flushSync(() => {
-        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Sol' }))
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-6 Sol' }))
       })
 
       let reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
@@ -440,9 +440,9 @@ describe('SettingsGeneral', () => {
       flushSync(() => {
         fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' })).toBeTruthy())
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-6 Sol' })).toBeTruthy())
       flushSync(() => {
-        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' }))
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-6 Sol' }))
       })
 
       await waitFor(() => expect(getByRole(container, 'combobox', { name: 'Compaction reasoning level' }).textContent).toContain('High'))
@@ -467,9 +467,9 @@ describe('SettingsGeneral', () => {
       flushSync(() => {
         fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' })).toBeTruthy())
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-6 Luna' })).toBeTruthy())
       flushSync(() => {
-        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Luna' }))
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-6 Luna' }))
       })
 
       reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })

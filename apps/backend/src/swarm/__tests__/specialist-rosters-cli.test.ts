@@ -40,7 +40,7 @@ function sampleRoster(overrides: Partial<Roster> = {}): Roster {
       behaviorMode: "general",
       useWhen: "Use for ordinary implementation.",
       provider: "openai-codex",
-      modelId: "gpt-5.6-terra",
+      modelId: "gpt-6-sol",
       reasoningLevel: "high",
     }],
     ...overrides,
@@ -51,10 +51,10 @@ async function startApi(initialSettings: Settings) {
   let settings = structuredClone(initialSettings);
   let putCount = 0;
   const models = [{
-    presetId: "gpt-5.6-terra",
-    displayName: "GPT-5.6 Terra",
+    presetId: "gpt-6-sol",
+    displayName: "GPT-6 Sol",
     provider: "openai-codex",
-    modelId: "gpt-5.6-terra",
+    modelId: "gpt-6-sol",
     defaultReasoningLevel: "medium",
     supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
   }];
@@ -175,7 +175,7 @@ describe("specialist-rosters skill helper", () => {
       ok: true,
       models: [{
         provider: "openai-codex",
-        modelId: "gpt-5.6-terra",
+        modelId: "gpt-6-sol",
         supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
       }],
     });

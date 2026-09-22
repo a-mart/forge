@@ -416,3 +416,26 @@ describe("normalizeTimeoutMs", () => {
     expect(() => normalizeTimeoutMs("300000" as never)).toThrow(CompactionSettingsValidationError);
   });
 });
+
+
+it("loads retired Terra compaction as Sol low and preserves it after saving and restart", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "compaction-terra-retirement-"));
+  const settingsPath = getCompactionSettingsPath(dataDir);
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify({
+    version: 1,
+    model: { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+    reasoningLevel: "ultra",
+    timeoutMs: 120_000,
+  }));
+  const options = { dataDir, getProviderAvailability: async () => createAvailabilityMap() };
+  const service = new CompactionSettingsService(options);
+  await service.load();
+  expect(service.getSettings()).toMatchObject({
+    model: { provider: "openai-codex", modelId: "gpt-6-sol" }, reasoningLevel: "low",
+  });
+  await service.update({ timeoutMs: 180_000 });
+  const restarted = new CompactionSettingsService(options);
+  await restarted.load();
+  expect(restarted.getSettings()).toEqual(service.getSettings());
+});

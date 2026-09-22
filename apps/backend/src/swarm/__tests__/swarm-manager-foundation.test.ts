@@ -107,7 +107,7 @@ describe("createSwarmManagerFoundation", () => {
     expect(foundation.config).not.toBe(config);
     expect(foundation.config.defaultModel).toMatchObject({
       provider: "codex-native",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "high",
     });
     expect(foundation.promptRegistry).toBeDefined();

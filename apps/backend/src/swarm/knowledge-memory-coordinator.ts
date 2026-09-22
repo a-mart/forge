@@ -408,7 +408,7 @@ export class KnowledgeMemoryCoordinator {
     const authStorage = AuthStorage.create(authFilePath);
     const modelRegistry = createPiModelRegistry(authStorage, this.options.getPiModelsJsonPath());
     const candidates = [
-      { provider: "openai-codex", modelId: "gpt-5.6-luna" },
+      { provider: "openai-codex", modelId: "gpt-6-luna" },
       { provider: "openai-codex", modelId: "gpt-5.5" },
     ] as const;
 

@@ -4,7 +4,7 @@ Forge connects to multiple AI providers and models. Each model has different str
 
 Three things affect the quality and speed of what you get back:
 
-- **The model itself.** GPT-6 Astra is the most capable Codex option. Forge recommends Codex-native GPT-5.6 Sol at High reasoning for managers. GPT-5.6 and GPT-5.5 remain selectable families, while smaller variants like GPT-5.6 Luna trade some depth for speed and cost.
+- **The model itself.** GPT-6 Astra is the most capable Codex option. Forge recommends Codex-native GPT-6 Sol at High reasoning for managers. GPT-6 and GPT-5.5 are selectable families, while smaller variants like GPT-6 Luna trade some depth for speed and cost.
 - **The reasoning level.** Higher reasoning means the model spends more time thinking before answering. This improves accuracy on hard problems but costs more and takes longer.
 - **The task.** A quick file read does not need the same model as a multi-file refactor. Match the model to the work.
 

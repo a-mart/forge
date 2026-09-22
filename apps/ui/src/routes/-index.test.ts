@@ -258,7 +258,7 @@ describe('isCortexDiffViewerSession', () => {
 })
 
 describe('IndexPage create project model selection', () => {
-  it('shows only allowed model presets and defaults to Codex-native GPT-5.6 Sol', async () => {
+  it('shows only allowed model presets and defaults to Codex-native GPT-6 Sol', async () => {
     await renderPage()
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
@@ -268,7 +268,7 @@ describe('IndexPage create project model selection', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Default Model' })
-    expect(modelSelect.textContent).toContain('GPT-5.6 Sol (Codex native)')
+    expect(modelSelect.textContent).toContain('GPT-6 Sol (Codex native)')
 
     click(modelSelect as HTMLElement)
 

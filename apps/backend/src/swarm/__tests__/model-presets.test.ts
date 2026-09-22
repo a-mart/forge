@@ -14,6 +14,7 @@ import {
   normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
+  resolvePersistedModelDescriptorFromPreset,
   resolveRemovedSwarmModelPresetAlias,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
@@ -106,7 +107,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-6", "pi-5.6", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-6", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -117,7 +118,7 @@ describe("model-presets", () => {
     expect(DEFAULT_SWARM_MODEL_PRESET).toBe("codex-native");
     expect(resolveModelDescriptorFromPreset(DEFAULT_SWARM_MODEL_PRESET)).toEqual({
       provider: "codex-native",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "high",
     });
     expect(preset).toMatchObject({
@@ -159,54 +160,38 @@ describe("model-presets", () => {
     })).toBe("max");
   });
 
-  it("exposes GPT-5.6 Sol/Terra/Luna as visible Codex presets and variants", () => {
-    const presets = getModelPresetInfoList();
-    const preset = presets.find((entry) => entry.presetId === "pi-5.6");
-
-    expect(preset).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      displayName: "GPT-5.6 Sol",
-      defaultReasoningLevel: "max",
-      supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    });
-    expect(preset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
-    expect(resolveModelDescriptorFromPreset("pi-5.6")).toEqual({
-      provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      thinkingLevel: "max",
-    });
+  it("preserves GPT-6 Sol and Luna reasoning capabilities", () => {
     expect(normalizeThinkingLevelForModelDescriptor({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "xhigh",
     })).toBe("xhigh");
     expect(normalizeThinkingLevelForModelDescriptor({
       provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       thinkingLevel: "ultra",
     })).toBe("ultra");
     for (const level of ["low", "medium", "high", "xhigh", "max", "ultra"] as const) {
       expect(normalizeThinkingLevelForModelDescriptor({
         provider: "openai-codex",
-        modelId: "gpt-5.6-terra",
+        modelId: "gpt-6-sol",
         thinkingLevel: level,
       })).toBe(level);
     }
     for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
       expect(normalizeThinkingLevelForModelDescriptor({
         provider: "openai-codex",
-        modelId: "gpt-5.6-luna",
+        modelId: "gpt-6-luna",
         thinkingLevel: level,
       })).toBe(level);
     }
     expect(normalizeThinkingLevelForModelDescriptor({
       provider: "openai-codex",
-      modelId: "gpt-5.6-luna",
+      modelId: "gpt-6-luna",
       thinkingLevel: "ultra",
     })).toBe("max");
-    expect(inferSwarmModelPresetFromDescriptor({ provider: "openai-codex", modelId: "gpt-5.6-luna" })).toBe("pi-5.6");
-    expect(modelCatalogService.isKnownModelId("gpt-5.6-sol", "openai-codex")).toBe(true);
+    expect(inferSwarmModelPresetFromDescriptor({ provider: "openai-codex", modelId: "gpt-6-luna" })).toBe("pi-6");
+    expect(modelCatalogService.isKnownModelId("gpt-6-sol", "openai-codex")).toBe(true);
   });
 
   it("exposes Claude Fable 5.1 by default and preserves Fable reasoning levels", () => {
@@ -557,7 +542,7 @@ describe("model-presets", () => {
   });
 
   it("uses the catalog-backed known model list without retired models or Claude SDK duplicates", () => {
-    expect(modelCatalogService.isKnownModelId("gpt-5.6-luna")).toBe(true);
+    expect(modelCatalogService.isKnownModelId("gpt-6-luna")).toBe(true);
     expect(modelCatalogService.isKnownModelId("gpt-5.4-mini")).toBe(false);
     expect(modelCatalogService.isKnownModelId("claude-opus-4-6", "anthropic")).toBe(true);
     expect(modelCatalogService.isKnownModelId("claude-opus-4-6", "claude-sdk")).toBe(false);
@@ -618,5 +603,32 @@ describe("model-presets", () => {
 
     expect(presets.find((preset) => preset.presetId === "pi-5.4")).toBeUndefined();
     expect(fiveFivePreset?.variants).toBeUndefined();
+  });
+});
+
+
+describe("GPT-5.6 retirement", () => {
+  it.each(["openai-codex", "codex-native"])("migrates saved %s selections and rejects new retired selections", (provider) => {
+    for (const [oldModel, modelId, thinkingLevel] of [
+      ["gpt-5.6-sol", "gpt-6-sol", "ultra"],
+      ["gpt-5.6-luna", "gpt-6-luna", "max"],
+      ["gpt-5.6-terra", "gpt-6-sol", "low"],
+    ]) {
+      for (const oldId of [oldModel, `${provider}/${oldModel}`]) {
+        expect(normalizePersistedSwarmModelDescriptor({ provider, modelId: oldId, thinkingLevel: "ultra" }))
+          .toEqual({ provider, modelId, thinkingLevel });
+        expect(() => assertSwarmModelIdNotRetired(provider, oldId, "model"))
+          .toThrow("retired model");
+      }
+    }
+    expect(normalizePersistedSwarmModelDescriptor({ provider, modelId: "gpt-5.6-terra" }))
+      .toEqual({ provider, modelId: "gpt-6-sol", thinkingLevel: "low" });
+  });
+
+  it("migrates the saved GPT-5.6 preset to Sol while preserving the GPT-6 Astra preset", () => {
+    expect(resolvePersistedModelDescriptorFromPreset("pi-5.6"))
+      .toEqual({ provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "max" });
+    expect(resolveModelDescriptorFromPreset("pi-6").modelId).toBe("gpt-6-astra");
+    expect(() => parseSwarmModelPreset("pi-5.6", "model")).toThrow();
   });
 });

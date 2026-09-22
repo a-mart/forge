@@ -178,9 +178,9 @@ describe("SwarmManager spawn_agent preset routing", () => {
       model: 'pi-codex',
     })
 
-    const pi56Worker = await manager.spawnAgent('manager', {
+    const pi6Worker = await manager.spawnAgent('manager', {
       agentId: 'GPT 5.6 Worker',
-      model: 'pi-5.6',
+      model: 'pi-6',
     })
 
     const opusWorker = await manager.spawnAgent('manager', {
@@ -193,10 +193,10 @@ describe("SwarmManager spawn_agent preset routing", () => {
       modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
-    expect(pi56Worker.model).toEqual({
+    expect(pi6Worker.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-sol',
-      thinkingLevel: 'max',
+      modelId: 'gpt-6-astra',
+      thinkingLevel: 'high',
     })
     expect(opusWorker.model).toEqual({
       provider: 'anthropic',
@@ -212,14 +212,14 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const overridden = await manager.spawnAgent('manager', {
       agentId: 'Override Worker',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-terra',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
       reasoningLevel: 'medium',
     })
 
     expect(overridden.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-terra',
+      modelId: 'gpt-6-sol',
       thinkingLevel: 'medium',
     })
   })
@@ -265,25 +265,25 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const overridden = await manager.spawnAgent('manager', {
       agentId: 'Fallback Override Worker',
-      modelId: 'gpt-5.6-luna',
+      modelId: 'gpt-6-luna',
       reasoningLevel: 'low',
     })
 
     expect(overridden.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.6-luna',
+      modelId: 'gpt-6-luna',
       thinkingLevel: 'low',
     })
   })
-  it('reroutes spawn_agent model from GPT-5.6 Sol to Terra when Sol is temporarily quota-blocked', async () => {
+  it('reroutes spawn_agent model from GPT-6 Sol to Luna when Sol is temporarily quota-blocked', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const solWorker = await manager.spawnAgent('manager', {
       agentId: 'Sol Block Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
     await (manager as any).handleRuntimeError(solWorker.agentId, {
@@ -293,22 +293,22 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const rerouted = await manager.spawnAgent('manager', {
       agentId: 'Sol Fallback Worker',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.6-terra')
+    expect(rerouted.model.modelId).toBe('gpt-6-luna')
   })
 
-  it('reroutes spawn_agent model from GPT-5.6 Sol to Terra when worker message_end stopReason is error', async () => {
+  it('reroutes spawn_agent model from GPT-6 Sol to Luna when worker message_end stopReason is error', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const solWorker = await manager.spawnAgent('manager', {
       agentId: 'Sol Message End Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
     await (manager as any).handleRuntimeSessionEvent(solWorker.agentId, {
@@ -323,45 +323,45 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const rerouted = await manager.spawnAgent('manager', {
       agentId: 'Sol Message End Fallback Worker',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.6-terra')
+    expect(rerouted.model.modelId).toBe('gpt-6-luna')
   })
 
-  it('reroutes spawn_agent model from Sol to Luna when Sol and Terra are blocked', async () => {
+  it('reroutes spawn_agent model from Sol to GPT-5.5 when Sol and Luna are blocked', async () => {
     const config = await makeSwarmManagerHarnessConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const solWorker = await manager.spawnAgent('manager', {
       agentId: 'Sol Block Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
-    const terraWorker = await manager.spawnAgent('manager', {
-      agentId: 'Terra Block Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-terra',
+    const lunaWorker = await manager.spawnAgent('manager', {
+      agentId: 'Luna Block Source',
+      model: 'pi-6',
+      modelId: 'gpt-6-luna',
     })
 
     await (manager as any).handleRuntimeError(solWorker.agentId, {
       phase: 'prompt_start',
       message: 'You have hit your ChatGPT usage limit (pro plan). Try again in 120 min.',
     })
-    await (manager as any).handleRuntimeError(terraWorker.agentId, {
+    await (manager as any).handleRuntimeError(lunaWorker.agentId, {
       phase: 'prompt_dispatch',
       message: 'Rate limit exceeded for requests per minute. Try again in 30 min.',
     })
 
     const rerouted = await manager.spawnAgent('manager', {
       agentId: 'Sol Escalation Worker',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.6-luna')
+    expect(rerouted.model.modelId).toBe('gpt-5.5')
   })
 
   it('does not reroute spawn_agent model for non-quota runtime errors', async () => {
@@ -371,8 +371,8 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const solWorker = await manager.spawnAgent('manager', {
       agentId: 'Sol Non Quota Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
     await (manager as any).handleRuntimeError(solWorker.agentId, {
@@ -382,11 +382,11 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const followup = await manager.spawnAgent('manager', {
       agentId: 'Sol Non Quota Followup',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
-    expect(followup.model.modelId).toBe('gpt-5.6-sol')
+    expect(followup.model.modelId).toBe('gpt-6-sol')
   })
 
   it('does not apply quota rerouting outside prompt_dispatch/prompt_start phases', async () => {
@@ -396,8 +396,8 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const solWorker = await manager.spawnAgent('manager', {
       agentId: 'Sol Steer Delivery Source',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
     await (manager as any).handleRuntimeError(solWorker.agentId, {
@@ -407,11 +407,11 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     const followup = await manager.spawnAgent('manager', {
       agentId: 'Sol Steer Delivery Followup',
-      model: 'pi-5.6',
-      modelId: 'gpt-5.6-sol',
+      model: 'pi-6',
+      modelId: 'gpt-6-sol',
     })
 
-    expect(followup.model.modelId).toBe('gpt-5.6-sol')
+    expect(followup.model.modelId).toBe('gpt-6-sol')
   })
 
   it('rejects invalid spawn_agent model presets with a clear error', async () => {
@@ -425,7 +425,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-6|pi-5.6|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
+      'spawn_agent.model must be one of pi-5.5|pi-6|pi-opus|pi-sonnet|pi-fable|pi-grok|cursor-composer|cursor-grok-45',
       )
   })
 

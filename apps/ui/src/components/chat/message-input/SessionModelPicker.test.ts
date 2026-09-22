@@ -190,10 +190,10 @@ describe('SessionModelPicker compact menu', () => {
     expect(getByRole(document.body, 'menuitemradio', { name: 'Max' })).toBeTruthy()
   })
 
-  it('shows Extra High, Max, and Ultra for GPT-5.6 Sol', async () => {
+  it('shows Extra High, Max, and Ultra for GPT-6 Sol', async () => {
     const onUpdate = vi.fn()
     renderPicker(onUpdate, {
-      currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'xhigh' },
+      currentModel: { provider: 'openai-codex', modelId: 'gpt-6-sol', thinkingLevel: 'xhigh' },
     })
     await flushAsyncWork()
 
@@ -206,8 +206,8 @@ describe('SessionModelPicker compact menu', () => {
   })
 
   it.each([
-    ['gpt-5.6-terra', true],
-    ['gpt-5.6-luna', false],
+    ['gpt-6-sol', true],
+    ['gpt-6-luna', false],
   ] as const)('shows model-specific deep reasoning choices for %s', async (modelId, supportsUltra) => {
     const onUpdate = vi.fn()
     renderPicker(onUpdate, {
@@ -247,7 +247,7 @@ describe('SessionModelPicker compact menu', () => {
 
     expect(document.body.textContent).toContain('Codex native (Preferred)')
     expect(getByRole(document.body, 'menuitemradio', {
-      name: 'GPT-5.6 Sol (Codex native)',
+      name: 'GPT-6 Sol (Codex native)',
     })).toBeTruthy()
   })
 
@@ -276,7 +276,7 @@ describe('SessionModelPicker compact menu', () => {
     await openPicker()
     await openSubmenu(/Model/)
 
-    const target = getByRole(document.body, 'menuitemradio', { name: 'GPT-5.6 Sol' })
+    const target = getByRole(document.body, 'menuitemradio', { name: 'GPT-6 Sol' })
     flushSync(() => {
       fireEvent.click(target)
     })
@@ -285,13 +285,13 @@ describe('SessionModelPicker compact menu', () => {
     expect(onUpdate).toHaveBeenCalledWith(
       'manager-1',
       'override',
-      { provider: 'openai-codex', modelId: 'gpt-5.6-sol' },
+      { provider: 'openai-codex', modelId: 'gpt-6-sol' },
       expect.any(String),
     )
     expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
 
     rerenderPicker(onUpdate, {
-      currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'xhigh' },
+      currentModel: { provider: 'openai-codex', modelId: 'gpt-6-sol', thinkingLevel: 'xhigh' },
     })
     await act(async () => {})
     await openSubmenu(/Reasoning/)
@@ -304,7 +304,7 @@ describe('SessionModelPicker compact menu', () => {
     expect(onUpdate).toHaveBeenLastCalledWith(
       'manager-1',
       'override',
-      { provider: 'openai-codex', modelId: 'gpt-5.6-sol' },
+      { provider: 'openai-codex', modelId: 'gpt-6-sol' },
       'high',
     )
     expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
@@ -312,7 +312,7 @@ describe('SessionModelPicker compact menu', () => {
 
   it.each(['session_override', 'profile_default'] as const)('applies the current project default to a %s session', async (modelOrigin) => {
     const onUpdate = vi.fn(async () => {})
-    renderPicker(onUpdate, { modelOrigin, currentModel: { provider: 'openai-codex', modelId: 'gpt-5.6-sol', thinkingLevel: 'high' } })
+    renderPicker(onUpdate, { modelOrigin, currentModel: { provider: 'openai-codex', modelId: 'gpt-6-sol', thinkingLevel: 'high' } })
     await openPicker()
 
     flushSync(() => {
