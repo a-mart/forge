@@ -95,7 +95,7 @@ describe('buildManagerModelRows provider availability gating', () => {
     for (const modelId of ['gpt-6-sol', 'gpt-6-luna']) {
       const model = rows.find((row) => row.key === `${provider}::${modelId}`)
       expect(model).toMatchObject({
-        provider, modelId, defaultReasoningLevel: 'medium',
+        provider, modelId, defaultReasoningLevel: provider === 'codex-native' && modelId === 'gpt-6-sol' ? 'high' : 'medium',
         displayName: `GPT-6 ${modelId === 'gpt-6-sol' ? 'Sol' : 'Luna'}${provider === 'codex-native' ? ' (Codex native)' : ''}`,
         supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', ...(modelId === 'gpt-6-sol' ? ['ultra'] : [])],
       })
