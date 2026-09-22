@@ -2252,10 +2252,12 @@ export class SecureSessionsService {
           }
         }
       } finally {
-        // Busy agents retain their current turn, but every new secure call checks the project policy.
+        // Project enablement changes native prompt guidance as well as execution authority.
+        // Refresh native runtimes too; the recycle policy defers busy agents until idle.
+        // Every new secure call still checks the project policy immediately.
         const recycles = await Promise.allSettled([...this.options.listDescriptors()]
           .filter(agent => agent.profileId === profileId)
-          .map(agent => this.recycleModeRuntime(agent.agentId)));
+          .map(agent => this.options.applyModeRuntimeRecycle(agent.agentId)));
         failed ||= recycles.some(result => result.status === "rejected");
       }
       if (failed) throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");

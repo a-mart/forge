@@ -1379,8 +1379,8 @@ Never use plain assistant text for user communication.`
     })
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-5',
-      thinkingLevel: 'high',
+      modelId: 'claude-opus-5-5',
+      thinkingLevel: 'medium',
     })
     expect(grokManager.model).toEqual({
       provider: 'xai',
@@ -1756,8 +1756,8 @@ Never use plain assistant text for user communication.`
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-5',
-      thinkingLevel: 'high',
+      modelId: 'claude-opus-5-5',
+      thinkingLevel: 'medium',
     })
 
     const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length

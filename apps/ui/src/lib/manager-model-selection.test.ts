@@ -152,6 +152,26 @@ describe('buildManagerModelRows provider availability gating', () => {
     expect(opus?.unavailableReason).toBeUndefined()
   })
 
+  it('includes Claude Opus 5.5 as default and retains Claude Opus 5', () => {
+    const rows = buildManagerModelRows('create', {}, { anthropic: true })
+    const opus = rows.find((row) => row.key === 'anthropic::claude-opus-5-5')
+    const priorOpus = rows.find((row) => row.key === 'anthropic::claude-opus-5')
+
+    expect(opus).toMatchObject({
+      provider: 'anthropic',
+      familyId: 'pi-opus',
+      modelId: 'claude-opus-5-5',
+      displayName: 'Claude Opus 5.5',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'medium',
+    })
+    expect(opus?.unavailableReason).toBeUndefined()
+    expect(priorOpus).toMatchObject({
+      modelId: 'claude-opus-5',
+      displayName: 'Claude Opus 5',
+    })
+  })
+
   it('includes Claude Fable 5.1 as default and retains Claude Fable 5', () => {
     const rows = buildManagerModelRows('create', {}, { anthropic: true })
     const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5-1')

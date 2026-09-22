@@ -184,12 +184,17 @@ describe.sequential("manager selection catalog projection", () => {
     const withoutAnthropic = new Map(ALL_AVAILABLE);
     withoutAnthropic.set("anthropic", false);
     const unavailable = buildManagerSelectionCatalog(withoutAnthropic);
-    const fable = unavailable.models.find((model) => model.modelId === "claude-fable-5-1");
-
-    expect(fable?.surfaces).toEqual({
-      create: { selectable: false, unavailableReason: "provider_not_configured" },
-      change: { selectable: false, unavailableReason: "provider_not_configured" },
-    });
+    for (const modelId of ["claude-fable-5-1", "claude-opus-5-5"]) {
+      const model = unavailable.models.find((row) => row.modelId === modelId);
+      expect(model?.surfaces).toEqual({
+        create: { selectable: false, unavailableReason: "provider_not_configured" },
+        change: { selectable: false, unavailableReason: "provider_not_configured" },
+      });
+      expect(available.models.find((row) => row.modelId === modelId)?.surfaces).toEqual({
+        create: { selectable: true },
+        change: { selectable: true },
+      });
+    }
     expect(unavailable.revision).not.toBe(available.revision);
     expect(unavailable.revision).toBe(buildManagerSelectionCatalog(withoutAnthropic).revision);
 

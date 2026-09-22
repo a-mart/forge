@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { getModels } from "../pi/pi-ai-compat.js";
+import { getModels, streamSimple } from "../pi/pi-ai-compat.js";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 const modelRegistryMockState = vi.hoisted(() => ({
@@ -235,6 +235,79 @@ describe("model-catalog-projection", () => {
       provider: "openai-codex",
       api: "openai-codex-responses",
       baseUrl: "https://chatgpt.com/backend-api",
+    });
+  });
+
+  it("projects pending Opus 5.5 with adaptive-thinking compatibility and curated pricing", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    expect(getModels("anthropic").some((model) => model.id === "claude-opus-5-5")).toBe(false);
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-opus55-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        models?: Array<{
+          id: string;
+          contextWindow?: number;
+          maxTokens?: number;
+          thinkingLevelMap?: Record<string, string | null>;
+          cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+          compat?: Record<string, unknown>;
+        }>;
+      }>;
+    };
+    const projectedOpus55 = projection.providers.anthropic?.models?.find(
+      (model) => model.id === "claude-opus-5-5",
+    );
+
+    expect(projectedOpus55).toMatchObject({
+      id: "claude-opus-5-5",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath);
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("anthropic", "claude-opus-5-5")).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+      compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+    });
+    const runtimeModel = registry.find("anthropic", "claude-opus-5-5");
+    expect(runtimeModel).toBeDefined();
+    const onPayload = vi.fn((_payload: unknown) => { throw new Error("request captured before network"); });
+    await streamSimple(runtimeModel!, {
+      messages: [{ role: "user", content: "Hello", timestamp: 0 }],
+    }, { apiKey: "test-key", reasoning: "medium", onPayload }).result();
+    expect(onPayload).toHaveBeenCalledOnce();
+    expect(onPayload.mock.calls[0]?.[0]).toMatchObject({
+      model: "claude-opus-5-5",
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "medium" },
     });
   });
 
