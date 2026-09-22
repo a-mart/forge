@@ -619,7 +619,7 @@ Never use plain assistant text for user communication.`
     expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
   }, 10_000)
 
-  it('invalidates in-flight manager runtime creation on project executable trust change', async () => {
+  it.each(['session preparation', 'runtime factory'])('invalidates in-flight manager runtime creation on project executable trust change: %s', async (boundary) => {
     const config = await makeTempConfig()
     execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
     await mkdir(join(config.defaultCwd, '.forge'), { recursive: true })
@@ -634,13 +634,25 @@ Never use plain assistant text for user communication.`
 
     let releaseCreation!: () => void
     const creationGate = new Promise<void>((resolve) => { releaseCreation = resolve })
+    let enteredCreation!: () => void
+    const creationEntered = new Promise<void>((resolve) => { enteredCreation = resolve })
+    if (boundary === 'session preparation') {
+      const lifecycle = (manager as unknown as { lifecycleService: { options: { ensureSessionFileParentDirectory: (file: string) => Promise<void> } } }).lifecycleService
+      const ensureParent = lifecycle.options.ensureSessionFileParentDirectory
+      vi.spyOn(lifecycle.options, 'ensureSessionFileParentDirectory').mockImplementation(async (file) => {
+        enteredCreation()
+        await creationGate
+        await ensureParent(file)
+      })
+    }
     manager.onCreateRuntime = async ({ creationCount }) => {
-      if (creationCount === 2) await creationGate
+      if (creationCount === 2 && boundary === 'runtime factory') {
+        enteredCreation()
+        await creationGate
+      }
     }
     const inFlight = manager.handleUserMessage('start delayed runtime', { targetAgentId: session.agentId })
-    await vi.waitFor(() => {
-      expect((manager as unknown as { runtimeCreationPromisesByAgentId: Map<string, unknown> }).runtimeCreationPromisesByAgentId.has(session.agentId)).toBe(true)
-    })
+    await creationEntered
 
     await manager.applyProjectResourceTrustChange(await realpath(join(config.defaultCwd, '.forge')))
     releaseCreation()

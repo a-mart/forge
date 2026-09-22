@@ -1878,13 +1878,27 @@ export class SwarmAgentLifecycleService {
       );
     }
 
+    // Pending creation must own its token before asynchronous preparation so
+    // lifecycle invalidation cannot be followed by allocating a fresh token.
+    const runtimeToken = this.options.allocateRuntimeToken(descriptor.agentId);
     const creationPromise = (async () => {
-      if (descriptor.role === "worker") {
-        await this.options.secureWorkers.prepareWorkerForSecureTeam(
-          descriptor.agentId,
-        );
+      try {
+        if (descriptor.role === "worker") {
+          await this.options.secureWorkers.prepareWorkerForSecureTeam(
+            descriptor.agentId,
+          );
+        }
+        return await this.createAndAttachRuntimeForDescriptor(descriptor, runtimeToken, requirements);
+      } catch (error) {
+        const attachedRuntime = this.options.runtimes.get(descriptor.agentId);
+        const ownsAttachedRuntime =
+          attachedRuntime !== undefined
+          && this.options.getRuntimeToken(descriptor.agentId) === runtimeToken;
+        if (!ownsAttachedRuntime) {
+          this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+        }
+        throw error;
       }
-      return this.createAndAttachRuntimeForDescriptor(descriptor, requirements);
     })();
     this.setRuntimeCreationPromise(descriptor.agentId, creationPromise);
 
@@ -2428,6 +2442,7 @@ export class SwarmAgentLifecycleService {
 
   private async createAndAttachRuntimeForDescriptor(
     descriptor: AgentDescriptor,
+    runtimeToken: number,
     requirements?: RuntimeAcquisitionRequirements,
   ): Promise<SwarmAgentRuntime> {
     await this.options.ensureSessionFileParentDirectory(descriptor.sessionFile);
@@ -2461,7 +2476,6 @@ export class SwarmAgentLifecycleService {
       Boolean(managerRuntimeCreation.runtimeCreationOptions?.startupRecoveryContext);
 
     const deferredContinuityRequest = managerRuntimeCreation?.continuityRequest;
-    const runtimeToken = this.options.allocateRuntimeToken(descriptor.agentId);
     const deferredRecoveryRuntimeRef: { current?: SwarmAgentRuntime } = {};
     const managerRuntimeCreationOptions =
       shouldDeferCursorStartupRecoveryAppliedMarker && deferredContinuityRequest
