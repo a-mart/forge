@@ -361,6 +361,11 @@ export function recordWorkGraphWorkerStarted(
   workerId: string,
   resolution: WorkGraphDispatchResolution = {},
 ): WorkGraphSnapshot {
+  const node = graph.nodes.find((candidate) => candidate.id === nodeId)
+  if (node?.status !== 'running' || currentAttempt(node)?.id !== attemptId
+    || currentAttempt(node)?.status !== 'dispatching') {
+    throw new WorkGraphValidationError(`Work graph dispatch for ${nodeId} is no longer active.`)
+  }
   return updateAttempt(graph, nodeId, attemptId, (node, attempt) => ({
     ...node,
     status: 'running',
@@ -399,6 +404,10 @@ export function recordWorkGraphDispatchFailure(
   error: unknown,
   now: () => string,
 ): WorkGraphSnapshot {
+  const node = graph.nodes.find((candidate) => candidate.id === nodeId)
+  // A late failure cannot revive a cancelled node or overwrite a newer attempt
+  // or an already-delivered result.
+  if (node?.status !== 'running' || currentAttempt(node)?.id !== attemptId) return graph
   const summary = truncateSummary(error instanceof Error ? error.message : String(error))
   return updateAttempt(graph, nodeId, attemptId, (node, attempt) => ({
     ...node,

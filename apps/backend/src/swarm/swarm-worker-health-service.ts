@@ -414,7 +414,7 @@ export class SwarmWorkerHealthService {
     for (const worker of this.options.descriptors.values()) {
       const assignment = worker.workerParentContext;
       if (!isWorkerDescriptor(worker) || isExternalThreadDescriptor(worker) ||
-        worker.status !== "streaming" || worker.archivedAt || !assignment || assignment.completedAt ||
+        (worker.status !== "streaming" && worker.status !== "idle") || worker.archivedAt || !assignment || assignment.completedAt ||
         assignment.managerId !== worker.managerId ||
         this.reviewedWorkerAssignments.get(worker.agentId) === assignment.assignmentId ||
         this.isWorkerStallRecoveryActive(worker.agentId, worker) ||
@@ -425,13 +425,16 @@ export class SwarmWorkerHealthService {
       if (!manager || manager.role !== "manager" || manager.archivedAt || isNonRunningAgentStatus(manager.status)) continue;
       const stall = this.workerStallState.get(worker.agentId);
       // An existing stall warning already asks the manager to intervene.
-      if (stall && (stall.nudgeSent || now - stall.lastProgressAt >= STALL_NUDGE_THRESHOLD_MS)) continue;
+      if (worker.status === "streaming" && stall && (stall.nudgeSent || now - stall.lastProgressAt >= STALL_NUDGE_THRESHOLD_MS)) continue;
 
       const activity = this.getWorkerActivity(worker.agentId);
       const activitySummary = activity
         ? ` Observed ${activity.toolCalls} tool calls and ${activity.errors} tool errors.`
         : "";
-      const message = `SYSTEM: [WORKER ASSIGNMENT REVIEW]\nWorker \`${worker.agentId}\` has an unfinished assignment after ${this.formatDuration(now - assignedAt)}.${activitySummary}\n` +
+      const idleSummary = worker.status === "idle"
+        ? " The worker is idle with no completed result; check whether dispatch is pending or execution stopped before assuming work is progressing."
+        : "";
+      const message = `SYSTEM: [WORKER ASSIGNMENT REVIEW]\nWorker \`${worker.agentId}\` has an unfinished assignment after ${this.formatDuration(now - assignedAt)}.${activitySummary}${idleSummary}\n` +
         "This is a one-time ownership review, not a stall or failure verdict. " +
         "Assess available findings and remaining work; request a focused interim reply if needed. " +
         "Continue when the path is sound, narrow or redirect an investigation that is not converging, " +

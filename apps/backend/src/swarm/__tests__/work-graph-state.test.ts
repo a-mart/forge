@@ -20,6 +20,19 @@ import {
 const now = () => '2026-07-18T12:00:00.000Z'
 
 describe('progressive work graph scenarios', () => {
+  it('does not revive a cancelled dispatch or let stale failure overwrite a retry', () => {
+    const first = claim(graphOf([node('work', 'Work')]))
+    const cancelled = normalizeWorkGraphInput({ nodes: [inputNode(first.graph.nodes[0]!, 'cancelled')] }, first.graph)
+    expect(() => recordWorkGraphWorkerStarted(cancelled, 'work', first.claims[0]!.attemptId, 'late-worker'))
+      .toThrow('no longer active')
+    expect(recordWorkGraphDispatchFailure(cancelled, 'work', first.claims[0]!.attemptId, new Error('Late'), now)).toBe(cancelled)
+    const retry = claimReadyWorkGraphNodes(
+      normalizeWorkGraphInput({ nodes: [inputNode(cancelled.nodes[0]!, 'pending')] }, cancelled),
+      { now, randomId: () => 'retry-attempt' },
+    )
+    expect(recordWorkGraphDispatchFailure(retry.graph, 'work', first.claims[0]!.attemptId, new Error('Late'), now)).toBe(retry.graph)
+  })
+
   it('1. leaves direct and light-plan work outside the executable graph', () => {
     const graph = graphOf([
       node('implement', 'Implement the focused change', { kind: 'implementation' }),

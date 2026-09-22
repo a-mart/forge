@@ -16,7 +16,7 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 async function fixture(options: { root?: string; agentId?: string; rejectResume?: boolean; prompt?: string;
-  onEvent?: (event: RuntimeSessionEvent) => void } = {}) {
+  onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void> } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "forge-native-codex-test-"));
   if (!options.root) roots.push(root);
   const agentId = options.agentId ?? "native-test";
@@ -50,7 +50,7 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
     }),
   };
   const runtime = await CodexAgentRuntime.create({ descriptor, callbacks: { onStatusChange: vi.fn(),
-    onSessionEvent: async (_id, event) => { events.push(event); options.onEvent?.(event); }, onRuntimeError: vi.fn(), onAgentEnd: vi.fn() },
+    onSessionEvent: async (_id, event) => { events.push(event); options.onEvent?.(event); }, onRuntimeError: vi.fn(), onAgentEnd: options.onAgentEnd ?? vi.fn() },
     systemPrompt: options.prompt ?? "Forge integration only", codexHome, projectTrusted: false, auth,
     host: { requestUserChoice }, tools: [{ name: "fixture_tool", label: "Fixture", description: "Fixture tool",
       parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }), execute: async (_id, args) => ({ content: [{ type: "text", text: args.value }], details: args }) }],
@@ -250,6 +250,70 @@ describe("Native Codex manager", () => {
     expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
     await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
     await vi.waitFor(() => expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(2));
+    await f.runtime.terminate();
+  });
+
+  it("continues an acknowledged but unconsumed worker result after successful completion exactly once", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Coordinate the graph.");
+    const result = "[workerResult] worker=first\nstatus: done\nsummary: Accept the first node and release its dependent.";
+    const receipt = await f.runtime.sendMessage(result);
+    const startCalls = () => f.client.request.mock.calls.filter(([method]) => method === "turn/start");
+    await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+    await vi.waitFor(() => expect(startCalls()).toHaveLength(2));
+    expect(startCalls()[1]![1]).toMatchObject({ clientUserMessageId: receipt.deliveryId, input: [{ type: "text", text: result }] });
+    expect(f.events.filter(event => event.type === "message_start" && event.message.role === "user" && event.message.content === result)).toHaveLength(1);
+    expect(f.client.request.mock.calls.some(([method]) => method === "thread/inject_items")).toBe(false);
+    const persisted = (await readFile(f.descriptor.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(persisted.filter(entry => entry.type === "message" && entry.message.content === result)).toHaveLength(1);
+    await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+    expect(startCalls()).toHaveLength(2);
+    expect(f.runtime.getStatus()).toBe("idle");
+    await f.runtime.terminate();
+  });
+
+  it("preserves multiple pending results ahead of an explicit follow-up", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Work");
+    await f.runtime.sendMessage("First result");
+    await f.runtime.sendMessage("Second result");
+    const followUp = await f.runtime.sendMessage("Follow-up", "followUp");
+    for (const count of [2, 3, 4]) {
+      await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+      await vi.waitFor(() => expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(count));
+    }
+    const starts = f.client.request.mock.calls.filter(([method]) => method === "turn/start");
+    expect(starts.map(([, params]) => params.input[0].text)).toEqual(["Work", "First result", "Second result", "Follow-up"]);
+    expect(starts[3]![1].clientUserMessageId).toBe(followUp.deliveryId);
+    await f.runtime.terminate();
+  });
+
+  it("does not resume unconsumed input after a provider failure", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Work");
+    await f.runtime.sendMessage("Pending result");
+    await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "failed", error: { message: "Unavailable" } } });
+    expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
+    expect(f.client.request.mock.calls.find(([method]) => method === "thread/inject_items")![1].items[0].content[0].text).toContain("Pending result");
+    expect(f.runtime.getStatus()).toBe("idle");
+    await f.runtime.terminate();
+  });
+
+  it("honors a stop after completion before a pending result can start another turn", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const pendingEnd = new Promise<void>(resolve => { release = resolve; });
+    const endEntered = new Promise<void>(resolve => { entered = resolve; });
+    const f = await fixture({ onAgentEnd: async () => { entered(); await pendingEnd; } });
+    await f.runtime.sendMessage("Work");
+    await f.runtime.sendMessage("Pending result");
+    const completion = f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+    await endEntered;
+    const stopping = f.runtime.stopInFlight();
+    release();
+    await Promise.all([completion, stopping]);
+    expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
+    expect(f.runtime.getPendingCount()).toBe(0);
     await f.runtime.terminate();
   });
 

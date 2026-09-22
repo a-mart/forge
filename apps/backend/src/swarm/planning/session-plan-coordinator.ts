@@ -19,6 +19,7 @@ import {
 import { shouldCreateCompletedPlanSummary } from './plan-summary.js'
 import {
   normalizeSessionPlanInput,
+  SessionPlanValidationError,
   type SessionPlanWriteInput,
   type SessionPlanState,
 } from './session-plan-state.js'
@@ -94,6 +95,13 @@ export class SessionPlanCoordinator {
     return this.withMutationLock(owner, async () => {
       const normalized = normalizeSessionPlanInput(input)
       const current = await this.getState(owner)
+      if (current.workGraph?.nodes.some((node) => (
+        node.status !== 'completed' && node.status !== 'cancelled'
+      ))) {
+        throw new SessionPlanValidationError(
+          'An unfinished work graph owns this plan. Use accept_work_graph_node for verified results or update_work_graph to revise or cancel remaining nodes before switching to a checklist.',
+        )
+      }
       const reconciled = {
         ...normalized,
         plan: reconcilePlanStepIds(normalized.plan, current.plan),

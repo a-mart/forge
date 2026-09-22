@@ -19,6 +19,11 @@ import { readNativeToolContract } from "./codex-tool-contract.js";
 
 export const NATIVE_CODEX_STATE = "swarm_native_codex_state";
 interface ThreadState { version: 1; threadId: string; ownerAgentId: string; cwd: string; promptDigest?: string; hasStartedTurn?: boolean }
+interface QueuedInput {
+  message: RuntimeUserMessage;
+  deliveryId: string;
+  recorded?: boolean;
+}
 interface ActiveTurn {
   id?: string;
   startedAt: number;
@@ -50,7 +55,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private readonly client: CodexAppServerClientPort;
   private readonly session: SessionManager;
   private readonly bridge: CodexRuntimeTools;
-  private readonly queued: RuntimeUserMessage[] = [];
+  private readonly queued: QueuedInput[] = [];
   private threadId = "";
   private hasStartedTurn = false;
   private active?: ActiveTurn;
@@ -172,7 +177,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       this.assertOpen();
       if (this.active?.finishing) await this.active.settled;
       if (this.active && requestedMode === "followUp") {
-        this.queued.push(message);
+        this.queued.push({ message, deliveryId });
         await this.publishStatus();
         return { targetAgentId: this.descriptor.agentId, deliveryId, acceptedMode: "followUp" };
       }
@@ -261,7 +266,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
   async recycle(): Promise<void> { await this.shutdownForReplacement(); }
 
-  private async startTurn(message: RuntimeUserMessage, deliveryId: string): Promise<void> {
+  private async startTurn(message: RuntimeUserMessage, deliveryId: string, recorded = false): Promise<void> {
     this.dispatching = true;
     const active = this.beginTurn();
     let submitted = false;
@@ -281,7 +286,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       if (typeof response?.turn?.id !== "string") throw new Error("Codex did not acknowledge a turn identity");
       active.id = response.turn.id;
       this.markThreadStarted();
-      this.recordUser(message);
+      if (!recorded) this.recordUser(message);
       if (!this.recoveryConsumed) {
         await this.options.creationOptions?.onStartupRecoveryConsumed?.();
         this.recoveryConsumed = true;
@@ -358,15 +363,22 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       active.finishing = true;
       active.failed = params.turn?.status === "failed";
       if (params.turn?.status === "interrupted" || active.failed) active.abort.abort();
-      // Codex can acknowledge a steer before consuming it. Preserve cancelled
-      // pending input as history, without starting another execution turn.
+      // Acknowledgement is not consumption. A successful turn must continue any
+      // unconsumed input (including worker results); only stopped/failed work is
+      // retained as history without an automatic restart.
       if (active.pendingSteers.size) {
-        await this.client.request("thread/inject_items", { threadId: this.threadId,
-          items: [...active.pendingSteers.values()].map(message => ({ type: "message", role: "user", content: [
-            { type: "input_text", text: `Historical user input sent during the previous turn, which has now ended. Preserve this context; do not restart cancelled work automatically.\n\n${message.text}` },
-            ...(message.images ?? []).map(image => ({ type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}`, detail: "auto" })),
-          ] })),
-        });
+        if (params.turn?.status === "completed" && !this.stopping) {
+          this.queued.unshift(...[...active.pendingSteers].map(([deliveryId, message]) => ({
+            message, deliveryId, recorded: true,
+          })));
+        } else {
+          await this.client.request("thread/inject_items", { threadId: this.threadId,
+            items: [...active.pendingSteers.values()].map(message => ({ type: "message", role: "user", content: [
+              { type: "input_text", text: `Historical user input sent during the previous turn, which has now ended. Preserve this context; do not restart cancelled work automatically.\n\n${message.text}` },
+              ...(message.images ?? []).map(image => ({ type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}`, detail: "auto" })),
+            ] })),
+          });
+        }
         active.pendingSteers.clear();
       }
       for (const event of active.mapper.finish()) await this.emit(event);
@@ -389,7 +401,13 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private dispatchQueued(): void {
     if (this.stopping || this.closed || this.active || this.queued.length === 0) return;
     const next = this.queued.shift()!;
-    void this.sendMessage(next).catch(error => this.fail(error));
+    void this.serialize(async () => {
+      if (this.stopping || this.closed) return;
+      // A user message may have started a turn while this dispatch was queued.
+      if (this.active) { this.queued.unshift(next); await this.publishStatus(); return; }
+      this.assertOpen();
+      await this.startTurn(next.message, next.deliveryId, next.recorded);
+    }).catch(error => this.fail(error));
   }
   private recordUser(message: RuntimeUserMessage): void {
     this.session.appendMessage({ role: "user", content: message.text, timestamp: Date.now() });

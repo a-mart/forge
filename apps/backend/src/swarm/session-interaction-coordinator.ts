@@ -1,6 +1,7 @@
 import type { ChoiceRequestEvent, SessionPlanSnapshotEvent } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import type { AgentDirectory } from "./agent-directory.js";
+import type { AgentMessageDispatcher } from "./agent-message-dispatcher.js";
 import type { AssistantOutputRouter } from "./assistant-output-router.js";
 import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-plugin-delegation-coordinator.js";
 import { CODEX_PLUGIN_SPECIALIST_ID } from "./codex-app-server/codex-plugin-scope-service.js";
@@ -122,6 +123,7 @@ export interface SessionInteractionCoordinatorOptions {
   >;
   runtimeOutput: SessionInteractionRuntimeOutputPort;
   lifecycle: Pick<SwarmAgentLifecycleService, "killAgent" | "spawnAgent">;
+  sendMessage: AgentMessageDispatcher["sendMessage"];
   codexPlugin: Pick<CodexPluginDelegationCoordinator, "spawnSpecialistWorker">;
   turns: SessionInteractionTurnPort;
   sessions: {
@@ -278,46 +280,69 @@ export class SessionInteractionCoordinator {
     const dispatched: UpdateWorkGraphResult["dispatched"] = [];
     const dispatchFailures: UpdateWorkGraphResult["dispatchFailures"] = [];
     for (const claim of claims) {
+      let workerId: string | undefined;
       try {
-        const delegation = resolveGraphDispatch(claim, descriptor.cwd);
-        const spawned = await this.spawnAgent(callerAgentId, delegation);
-        const internalWorker = this.options.descriptors.get(spawned.agentId) ?? spawned;
-        await this.options.plans.recordWorkGraphWorkerStarted(
-          descriptor,
-          claim.nodeId,
-          claim.attemptId,
-          spawned.agentId,
-          {
-            ...(internalWorker.delegationRouteId
-              ? { resolvedRouteId: internalWorker.delegationRouteId }
+        await this.options.withRuntimeAdmission(callerAgentId, async () => {
+          const { initialMessage, planStep, ...delegation } = resolveGraphDispatch(claim, descriptor.cwd);
+          const spawned = await this.spawnAdmittedAgent(callerAgentId, delegation);
+          workerId = spawned.agentId;
+          const internalWorker = this.options.descriptors.get(spawned.agentId) ?? spawned;
+          // Bind the actual allocated worker before sending its assignment. A fast
+          // result (including startup failure) must already have a graph owner.
+          await this.options.plans.recordWorkGraphWorkerStarted(
+            descriptor,
+            claim.nodeId,
+            claim.attemptId,
+            spawned.agentId,
+            {
+              ...(internalWorker.delegationRouteId
+                ? { resolvedRouteId: internalWorker.delegationRouteId }
+                : {}),
+              ...(internalWorker.delegationRouteLabel
+                ? { resolvedRouteLabel: internalWorker.delegationRouteLabel }
+                : {}),
+              ...(internalWorker.delegationRosterId
+                ? { rosterId: internalWorker.delegationRosterId }
+                : {}),
+              ...(internalWorker.delegationRosterRevision
+                ? { rosterRevision: internalWorker.delegationRosterRevision }
+                : {}),
+              model: { ...internalWorker.model },
+              ...(internalWorker.delegationCapabilityEscalationRouteId
+                ? {
+                    capabilityEscalationRouteId:
+                      internalWorker.delegationCapabilityEscalationRouteId,
+                  }
+                : {}),
+            },
+          );
+          await this.options.sendMessage(callerAgentId, spawned.agentId, initialMessage!, "auto", {
+            origin: "internal",
+            planStep,
+            planAssignmentSource: "spawn_agent",
+          });
+          dispatched.push({
+            nodeId: claim.nodeId,
+            workerId: spawned.agentId,
+            requestedRoute: claim.requestedRoute,
+            ...(spawned.delegationRouteId
+              ? { resolvedRouteId: spawned.delegationRouteId }
               : {}),
-            ...(internalWorker.delegationRouteLabel
-              ? { resolvedRouteLabel: internalWorker.delegationRouteLabel }
-              : {}),
-            ...(internalWorker.delegationRosterId
-              ? { rosterId: internalWorker.delegationRosterId }
-              : {}),
-            ...(internalWorker.delegationRosterRevision
-              ? { rosterRevision: internalWorker.delegationRosterRevision }
-              : {}),
-            model: { ...internalWorker.model },
-            ...(internalWorker.delegationCapabilityEscalationRouteId
-              ? {
-                  capabilityEscalationRouteId:
-                    internalWorker.delegationCapabilityEscalationRouteId,
-                }
-              : {}),
-          },
-        );
-        dispatched.push({
-          nodeId: claim.nodeId,
-          workerId: spawned.agentId,
-          requestedRoute: claim.requestedRoute,
-          ...(spawned.delegationRouteId
-            ? { resolvedRouteId: spawned.delegationRouteId }
-            : {}),
+          });
         });
       } catch (error) {
+        // A dispatch rejection must not leave an allocated worker behind to
+        // overlap a retry. killAgent owns settlement and its failure reporting.
+        if (workerId) {
+          try {
+            await this.options.lifecycle.killAgent(callerAgentId, workerId);
+          } catch (cleanupError) {
+            const message = `Dispatch failed: ${errorMessage(error)}. Worker ${workerId} cleanup is unconfirmed: ${errorMessage(cleanupError)}. Stop and settle that worker before retrying this node.`;
+            this.options.logDebug("work_graph:dispatch_cleanup:error", { workerId, message });
+            dispatchFailures.push({ nodeId: claim.nodeId, message });
+            continue;
+          }
+        }
         await this.options.plans.recordWorkGraphDispatchFailure(
           descriptor,
           claim.nodeId,

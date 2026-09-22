@@ -560,6 +560,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         markExplicitManagerAssistantOutput: (agentId) => this.runtimeController.markExplicitManagerAssistantOutput(agentId),
       },
       lifecycle: this.lifecycleService,
+      sendMessage: (...args) => this.sendMessage(...args),
       codexPlugin: this.codexPluginDelegationCoordinator,
       turns: this.turnContextCoordinator,
       sessions: {
@@ -573,8 +574,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         markSessionActivity: (agentId, timestamp) =>
           this.eventCoordinator.markSessionActivity(agentId, timestamp),
       },
-      recordToolSideEffect: (agentId, event) =>
-        this.observabilityCoordinator.recordToolSideEffect(agentId, event),
+      recordToolSideEffect: (agentId, event) => this.observabilityCoordinator.recordToolSideEffect(agentId, event),
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
     });

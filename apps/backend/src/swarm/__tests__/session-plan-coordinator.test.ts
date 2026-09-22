@@ -20,6 +20,48 @@ afterEach(async () => {
 })
 
 describe('SessionPlanCoordinator', () => {
+  it('preserves an unfinished graph when a checklist update is attempted, including after reload', async () => {
+    const harness = await createHarness()
+    const nodes = [
+      { id: 'first', title: 'First', task: 'Produce evidence.', status: 'pending' as const },
+      { id: 'next', title: 'Next', task: 'Use accepted evidence.', status: 'pending' as const, dependsOn: ['first'] },
+    ]
+    await harness.coordinator.updateWorkGraph(harness.owner, { nodes })
+    const [claim] = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
+    await harness.coordinator.recordWorkGraphWorkerStarted(harness.owner, 'first', claim!.attemptId, 'worker-first')
+    const before = await harness.coordinator.getSnapshot(harness.owner)
+    await expect(harness.coordinator.update(harness.owner, {
+      plan: [{ step: 'Replace the graph', status: 'in_progress' }],
+    })).rejects.toThrow('unfinished work graph')
+    harness.coordinator.forget(harness.owner.agentId)
+    expect(await harness.coordinator.getSnapshot(harness.owner)).toEqual(before)
+    await harness.coordinator.recordWorkGraphWorkerResult(harness.owner, 'worker-first', 'status: done\nsummary: Evidence.')
+    await expect(harness.coordinator.update(harness.owner, { plan: [] })).rejects.toThrow('accept_work_graph_node')
+    await harness.coordinator.acceptWorkGraphNode(harness.owner, 'first')
+    expect(await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)).toMatchObject([{ nodeId: 'next' }])
+  })
+
+  it.each(['pending', 'waiting', 'blocked'] as const)('does not abandon %s graph work for a checklist', async (status) => {
+    const harness = await createHarness()
+    await harness.coordinator.updateWorkGraph(harness.owner, { nodes: [{
+      id: 'outcome', title: 'Outcome', task: 'Finish the requested outcome.',
+      kind: status === 'waiting' ? 'decision' : 'task', status,
+    }] })
+    await expect(harness.coordinator.update(harness.owner, { plan: [] })).rejects.toThrow('unfinished work graph')
+  })
+
+  it.each(['completed', 'cancelled'] as const)('allows a checklist after all graph nodes are %s', async (status) => {
+    const harness = await createHarness()
+    await harness.coordinator.updateWorkGraph(harness.owner, { nodes: [{
+      id: 'outcome', title: 'Outcome', task: 'Previously settled outcome.', kind: 'decision', status,
+    }] })
+    await harness.coordinator.update(harness.owner, { plan: [{ step: 'Next task', status: 'in_progress' }] })
+    harness.coordinator.forget(harness.owner.agentId)
+    const restored = await harness.coordinator.getSnapshot(harness.owner)
+    expect(restored.workGraph).toBeUndefined()
+    expect(restored.plan).toMatchObject([{ step: 'Next task', status: 'in_progress' }])
+  })
+
   it('owns normalized snapshots, model context, and the durable summary lifecycle', async () => {
     const harness = await createHarness()
 

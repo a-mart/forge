@@ -515,6 +515,23 @@ describe("long-running assignment ownership review", () => {
     expect(running.workerParentContext).not.toHaveProperty("completedAt");
   });
 
+  it.each([false, true])("reviews an idle unfinished worker once even when dispatch is pending=%s", async (pending) => {
+    const { service, running, sendMessage, deliverCompletedWorker, terminateDescriptor } = setup({
+      runtimes: new Map([["worker-1", { getPendingCount: () => 0, hasPendingInputDispatch: () => pending } as SwarmAgentRuntime]]),
+    });
+    running.status = "idle";
+    service.workerStallState.get(running.agentId)!.lastProgressAt = Date.now() - 10 * 60_000;
+    service.workerActivityState.delete(running.agentId);
+    await service.checkForStalledWorkers();
+    await service.checkForStalledWorkers();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith("manager-1", "manager-1",
+      expect.stringContaining("idle with no completed result"), "auto", { origin: "internal" });
+    expect(deliverCompletedWorker).not.toHaveBeenCalled();
+    expect(terminateDescriptor).not.toHaveBeenCalled();
+    expect(running.workerParentContext).not.toHaveProperty("completedAt");
+  });
+
   it("waits ten minutes and allows a new assignment on the same worker its own review", async () => {
     const { service, running, sendMessage } = setup();
     running.workerParentContext.assignedAt = new Date(Date.now() - 9 * 60_000).toISOString();

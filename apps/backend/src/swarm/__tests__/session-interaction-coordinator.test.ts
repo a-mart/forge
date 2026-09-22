@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionPlanCoordinator } from "../planning/session-plan-coordinator.js";
 import {
   SessionInteractionCoordinator,
   type SessionInteractionCoordinatorOptions,
@@ -103,10 +107,12 @@ describe("SessionInteractionCoordinator", () => {
         route: "auto",
         behaviorMode: "research",
         lens: "researcher",
-        planStep: "research",
-        initialMessage: expect.stringContaining("Accepted dependency results"),
       }),
     );
+    expect(harness.options.lifecycle.spawnAgent).toHaveBeenCalledWith("manager", expect.not.objectContaining({ initialMessage: expect.anything() }));
+    expect(harness.options.sendMessage).toHaveBeenCalledWith("manager", "graph-research-1",
+      expect.stringContaining("Accepted dependency results"), "auto",
+      { origin: "internal", planStep: "research", planAssignmentSource: "spawn_agent" });
     expect(harness.options.plans.recordWorkGraphWorkerStarted).toHaveBeenCalledWith(
       harness.descriptors.get("manager"),
       "research",
@@ -200,10 +206,11 @@ describe("SessionInteractionCoordinator", () => {
       "manager",
       expect.objectContaining({
         agentId: "graph-synthesize-1",
-        planStep: "synthesize",
-        initialMessage: expect.stringContaining("Accepted dependency results"),
       }),
     );
+    expect(harness.options.sendMessage).toHaveBeenCalledWith("manager", "graph-synthesize-1",
+      expect.stringContaining("Accepted dependency results"), "auto",
+      { origin: "internal", planStep: "synthesize", planAssignmentSource: "spawn_agent" });
     expect(result).toMatchObject({
       acceptedNodeId: "research",
       alreadyAccepted: false,
@@ -254,6 +261,87 @@ describe("SessionInteractionCoordinator", () => {
     await expect(
       harness.coordinator.updatePlan("manager", "tool", { plan: [] }),
     ).rejects.toThrow("Manager is not running");
+  });
+
+  it("records fast worker results before releasing dependent work, using the actual allocated worker id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-graph-dispatch-"));
+    try {
+      const harness = createHarness();
+      const plans = new SessionPlanCoordinator({ dataDir: root, now: () => NOW,
+        getPlanSummaries: () => [], emitPlanSummary: () => {}, emitSnapshot: () => {} });
+      harness.options.plans = plans;
+      const owner = harness.descriptors.get("manager") as AgentDescriptor & { profileId: string };
+      vi.mocked(harness.options.lifecycle.spawnAgent).mockImplementation(async (_caller, input) => {
+        expect(input.initialMessage).toBeUndefined();
+        const worker = makeWorker(`${input.agentId}-allocated`);
+        worker.model.thinkingLevel = "medium";
+        harness.descriptors.set(worker.agentId, worker);
+        return worker;
+      });
+      vi.mocked(harness.options.sendMessage).mockImplementation(async (_caller, target, _message, _delivery, options) => {
+        const state = await plans.getSnapshot(owner);
+        expect(state.workGraph?.nodes.find(node => node.id === options?.planStep)?.attempts.at(-1)?.workerId).toBe(target);
+        await plans.recordWorkGraphWorkerResult(owner, target, "status: done\nsummary: Verified result.");
+        return { targetAgentId: target, deliveryId: "delivery", acceptedMode: "prompt" };
+      });
+      const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", { nodes: [
+        { id: "first", title: "First", task: "Produce evidence.", status: "pending" },
+        { id: "next", title: "Next", task: "Use evidence.", dependsOn: ["first"], status: "pending" },
+      ] });
+      expect(result.workGraph?.nodes.map(node => node.status)).toEqual(["awaiting_review", "pending"]);
+      expect(result.dispatchFailures).toEqual([]);
+      const accepted = await harness.coordinator.acceptWorkGraphNode("manager", "accept-tool", { nodeId: "first", evidence: "Checked result." });
+      expect(accepted.workGraph?.nodes.map(node => node.status)).toEqual(["completed", "awaiting_review"]);
+      expect(harness.options.sendMessage).toHaveBeenCalledTimes(2);
+      const restored = new SessionPlanCoordinator({ dataDir: root, now: () => NOW,
+        getPlanSummaries: () => [], emitPlanSummary: () => {}, emitSnapshot: () => {} });
+      expect((await restored.getSnapshot(owner)).workGraph).toEqual(accepted.workGraph);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([false, true])("settles a rejected graph dispatch before allowing retry; cleanup failure=%s", async (cleanupFails) => {
+    const harness = createHarness();
+    vi.mocked(harness.options.plans.claimReadyWorkGraphNodes).mockResolvedValue([{
+      nodeId: "first", attemptId: "attempt-1", agentId: "worker-first", title: "First", task: "Work",
+      behaviorMode: "general", requestedRoute: "auto",
+    }]);
+    vi.mocked(harness.options.sendMessage).mockRejectedValue(new Error("Assignment rejected"));
+    if (cleanupFails) vi.mocked(harness.options.lifecycle.killAgent).mockRejectedValue(new Error("Still stopping"));
+    const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", {
+      nodes: [{ id: "first", title: "First", task: "Work", status: "pending" }],
+    });
+    expect(harness.options.lifecycle.killAgent).toHaveBeenCalledWith("manager", "worker-first");
+    expect(result.dispatched).toEqual([]);
+    expect(result.dispatchFailures).toMatchObject([{ nodeId: "first", message: expect.stringContaining("Assignment rejected") }]);
+    if (cleanupFails) {
+      expect(harness.options.plans.recordWorkGraphDispatchFailure).not.toHaveBeenCalled();
+      expect(result.dispatchFailures[0].message).toContain("cleanup is unconfirmed");
+    } else {
+      expect(harness.options.plans.recordWorkGraphDispatchFailure).toHaveBeenCalledOnce();
+      expect(vi.mocked(harness.options.lifecycle.killAgent).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(harness.options.plans.recordWorkGraphDispatchFailure).mock.invocationCallOrder[0]);
+    }
+  });
+
+  it("does not start a graph assignment cancelled while its worker was being created", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-graph-cancel-"));
+    try {
+      const harness = createHarness();
+      const plans = new SessionPlanCoordinator({ dataDir: root, now: () => NOW,
+        getPlanSummaries: () => [], emitPlanSummary: () => {}, emitSnapshot: () => {} });
+      harness.options.plans = plans;
+      const owner = harness.descriptors.get("manager") as AgentDescriptor & { profileId: string };
+      const node = { id: "first", title: "First", task: "Work" };
+      vi.mocked(harness.options.lifecycle.spawnAgent).mockImplementation(async (_caller, input) => {
+        await plans.updateWorkGraph(owner, { nodes: [{ ...node, status: "cancelled" }] });
+        return makeWorker(input.agentId!);
+      });
+      const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", { nodes: [{ ...node, status: "pending" }] });
+      expect(harness.options.sendMessage).not.toHaveBeenCalled();
+      expect(harness.options.lifecycle.killAgent).toHaveBeenCalledOnce();
+      expect(result.workGraph?.nodes[0].status).toBe("cancelled");
+      expect(result.dispatchFailures[0].message).toContain("no longer active");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("preloads only non-Collaboration, non-Cortex session plans", async () => {
@@ -631,6 +719,7 @@ function createHarness(): Harness {
         agentId: input.agentId ?? worker.agentId,
       })),
     },
+    sendMessage: vi.fn(async (_caller, target) => ({ targetAgentId: target, deliveryId: "delivery", acceptedMode: "prompt" })),
     codexPlugin: {
       spawnSpecialistWorker: vi.fn(async (_callerAgentId, input) => ({
         ...worker,
