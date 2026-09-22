@@ -1,6 +1,24 @@
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+
 const EXPO_PUSH_SEND_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_PUSH_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const MAX_ACCESS_TOKEN_BYTES = 4096;
+
+function readAccessToken(path: string | undefined): string | undefined {
+  if (path === undefined) return undefined;
+  if (!isAbsolute(path)) throw new Error("Forge Expo push access token file must be an absolute path");
+  const file = statSync(path);
+  if (!file.isFile() || file.size === 0 || file.size > MAX_ACCESS_TOKEN_BYTES) {
+    throw new Error("Forge Expo push access token file must be a nonempty regular file under 4096 bytes");
+  }
+  const token = readFileSync(path, "utf8").replace(/\r?\n$/, "");
+  if (!/^[\x21-\x7e]{1,4096}$/.test(token)) {
+    throw new Error("Forge Expo push access token file is invalid");
+  }
+  return token;
+}
 
 export interface ExpoPushMessage {
   to: string;
@@ -31,10 +49,20 @@ export interface ExpoReceipt {
 export class ExpoPushClient {
   private readonly fetchImpl: typeof fetch;
   private readonly requestTimeoutMs: number;
+  private readonly accessToken: string | undefined;
 
-  constructor(options?: { fetchImpl?: typeof fetch; requestTimeoutMs?: number }) {
+  constructor(options?: { fetchImpl?: typeof fetch; requestTimeoutMs?: number; accessTokenFile?: string }) {
     this.fetchImpl = options?.fetchImpl ?? fetch;
     this.requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.accessToken = readAccessToken(options?.accessTokenFile ?? process.env.FORGE_EXPO_PUSH_ACCESS_TOKEN_FILE);
+  }
+
+  private headers(): Record<string, string> {
+    return {
+      "content-type": "application/json",
+      accept: "application/json",
+      ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+    };
   }
 
   async send(message: ExpoPushMessage): Promise<ExpoSendResult> {
@@ -42,10 +70,7 @@ export class ExpoPushClient {
     try {
       response = await this.fetchWithTimeout(EXPO_PUSH_SEND_URL, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json"
-        },
+        headers: this.headers(),
         body: JSON.stringify(message)
       });
     } catch (error) {
@@ -99,10 +124,7 @@ export class ExpoPushClient {
 
     const response = await this.fetchWithTimeout(EXPO_PUSH_RECEIPTS_URL, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json"
-      },
+      headers: this.headers(),
       body: JSON.stringify({ ids: receiptIds })
     });
 

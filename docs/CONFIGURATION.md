@@ -19,6 +19,12 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 
 > **Security:** The normal local Builder runtime does not require a browser account or app session. Keep it bound to loopback or a trusted network. Before exposing it more broadly, put an authentication-enforcing proxy in front of it or use the account-gated collaboration-server topology. A network bind or reverse proxy alone does not add authentication.
 
+### Mobile push
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FORGE_EXPO_PUSH_ACCESS_TOKEN_FILE` | Unset | Absolute path to a private file containing an Expo access token. When set, both push sends and receipt requests use it. An unreadable, empty, or malformed file fails startup instead of sending without authentication. Keep the token out of `.env`, logs, source control, and backups; restart Forge after rotation. Enable Expo enhanced push security only after every active sender in the Expo account has been configured and tested. |
+
 ### UI
 
 | Variable | Default | Description |
