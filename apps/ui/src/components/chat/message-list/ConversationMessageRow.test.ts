@@ -45,6 +45,14 @@ function buildMessage(): ConversationMessageEvent {
 }
 
 describe('ConversationMessageRow', () => {
+  it('renders old Claude login command dumps as a concise historical notice without changing the message', () => {
+    const text = "USER_MESSAGE_FAILED: Claude native needs its own Claude login. Run this in a terminal: '/private/node_modules/claude' auth login"
+    const message: ConversationMessageEvent = { type: 'conversation_message', agentId: 'manager-1', id: 'login', role: 'system', source: 'system', text, timestamp: '2026-09-22T12:00:00Z' }
+    flushSync(() => root.render(createElement(ConversationMessageRow, { message })))
+    expect(container.textContent).toContain('Claude needed a sign-in')
+    expect(container.textContent).not.toContain('/private/node_modules')
+    expect(message.text).toBe(text)
+  })
   it.each([
     ['Context v2 requested — switching to a new window.', 'started'],
     ['Requested Context v2 transition completed.', 'completed'],

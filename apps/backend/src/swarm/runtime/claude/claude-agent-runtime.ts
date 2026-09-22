@@ -53,6 +53,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private usage?: AgentContextUsage;
   private contextWindow?: number;
   private turnOpen = false;
+  private turnError?: string;
   private stopping = false;
   private closed = false;
   private recovery?: string;
@@ -239,7 +240,14 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       await this.begin(); await this.activate(input); this.sent.delete(id);
       if (!this.recoveryConsumed) { await this.options.creationOptions?.onStartupRecoveryConsumed?.(); this.recoveryConsumed = true; }
     }
-    for (const event of this.mapper.map(frame)) await this.emit(event);
+    // API failures arrive as synthetic assistant messages and can use a
+    // "success" result envelope with is_error=true. Keep the explanation for
+    // the runtime error path rather than dropping it as unfinished progress.
+    if (frame.type === "assistant" && frame.error) {
+      this.turnError = frame.message.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+    } else {
+      for (const event of this.mapper.map(frame)) await this.emit(event);
+    }
     if (frame.type === "stream_event" && frame.event.type === "message_start") {
       const usage = frame.event.message.usage;
       const tokens = contextInputTokens(usage);
@@ -257,7 +265,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         percent: this.usage.tokens / this.contextWindow * 100 };
     }
     const success = !frame.is_error;
-    for (const event of this.mapper.finish(success, frame.subtype === "success" ? frame.result : undefined)) await this.emit(event);
+    for (const event of this.mapper.finish(success, success && frame.subtype === "success" ? frame.result : undefined)) await this.emit(event);
     const cost = Math.max(0, frame.total_cost_usd - this.previousCost); this.previousCost = frame.total_cost_usd;
     await this.emit({ type: "turn_end", toolResults: [], meta: { provider: this.descriptor.model.provider, modelId: this.descriptor.model.modelId,
       api: "claude-agent-sdk", providerSessionId: this.state.sessionId, durationMs: frame.duration_ms, durationApiMs: frame.duration_api_ms,
@@ -267,10 +275,12 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       } } });
     const compaction = this.turnCompaction; this.turnCompaction = undefined;
     if (!success) {
-      const error = new Error("errors" in frame ? frame.errors.join("\n") : "Claude turn failed");
+      const error = new Error(("errors" in frame ? frame.errors.join("\n") : "")
+        || this.turnError || (frame.subtype === "success" ? frame.result : "") || "Claude turn failed");
       compaction?.reject(error);
       await this.options.callbacks.onRuntimeError?.(this.descriptor.agentId, { phase: "prompt_start", message: error.message });
     } else compaction?.resolve({});
+    this.turnError = undefined;
     this.turnOpen = false;
     this.status = this.sent.size ? "streaming" : "idle";
     await this.emit({ type: "agent_end" }); await this.publishStatus();

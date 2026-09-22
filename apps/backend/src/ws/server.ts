@@ -1,3 +1,5 @@
+import { ClaudeAuthService } from "../swarm/runtime/claude/claude-auth-service.js";
+import { createClaudeAuthRoutes } from "./http/routes/claude-auth-routes.js";
 import { createProjectSecureSessionsRoutes } from "./http/routes/project-secure-sessions-routes.js";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
@@ -207,6 +209,7 @@ export class SwarmWebSocketServer {
   private readonly secureBrowserAccessService: SecureBrowserAccessService;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
+  private readonly claudeAuthService: ClaudeAuthService | null;
   private readonly statsService: StatsService;
   private readonly tokenAnalyticsService: TokenAnalyticsService;
   private readonly generationThroughputService: GenerationThroughputService;
@@ -728,6 +731,7 @@ export class SwarmWebSocketServer {
         void this.telemetryService?.sendOnStatsRefresh(allStats);
       },
     });
+    this.claudeAuthService = isBuilder ? new ClaudeAuthService(this.swarmManager.getConfig()) : null;
     this.settingsRoutes = createSettingsRoutes({
       swarmManager: this.swarmManager,
       notificationSettingsService: this.notificationSettingsService,
@@ -894,6 +898,7 @@ export class SwarmWebSocketServer {
       ...createSessionAuditRoutes({ swarmManager: this.swarmManager }),
       ...createCodexCatalogRoutes({ swarmManager: this.swarmManager }),
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService, settingsService: this.terminalSettingsService }) : []),
+      ...(this.claudeAuthService ? createClaudeAuthRoutes(this.claudeAuthService) : []),
       ...this.settingsRoutes.routes,
       ...createSpecialistRoutes({
         swarmManager: this.swarmManager,
@@ -1153,6 +1158,7 @@ export class SwarmWebSocketServer {
     this.wsHandler.reset();
     this.cliWsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
+    await this.claudeAuthService?.shutdown();
     this.telemetryService?.stop();
 
     await this.swarmManager.flushPendingPersistence?.();
@@ -1288,6 +1294,10 @@ export class SwarmWebSocketServer {
     let route: HttpRoute | undefined;
 
     try {
+      if (this.claudeAuthService && requestUrl.pathname === "/api/settings/claude-native") {
+        const validation = validateSecureBuilderControlOrigin(request, { backendHost: this.host, backendPort: this.getPort() });
+        if (!validation.ok) { sendJson(response, 403, { error: validation.errorMessage }); return; }
+      }
       if (
         isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         && isSecureBuilderControlPath(requestUrl.pathname)

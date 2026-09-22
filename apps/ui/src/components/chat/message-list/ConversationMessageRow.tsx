@@ -1,3 +1,4 @@
+import { isClaudeSignInRequired } from '@forge/protocol'
 import { memo, useState, useCallback } from 'react'
 import { isUserVisibleAssistantConversationMessage } from '@forge/protocol'
 import { Copy, Check, GitFork, Pin, Reply, Layers, CircleCheck } from 'lucide-react'
@@ -224,6 +225,12 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   }
 
   if (message.role === 'system') {
+    if (isClaudeSignInRequired(normalizedText)) {
+      return <div className="px-3 py-2 text-xs text-muted-foreground">
+        This message could not start because Claude needed a sign-in. Connect Claude above or in Settings → Authentication, then retry.
+        {timestampLabel ? <time className="ml-2" dateTime={message.timestamp}>{timestampLabel}</time> : null}
+      </div>
+    }
     if (message.source === 'worker_report') {
       const sourceWorkerId = message.sourceWorkerId?.trim()
       const workerLabel = sourceWorkerId ? `Worker result · ${sourceWorkerId}` : 'Worker result'

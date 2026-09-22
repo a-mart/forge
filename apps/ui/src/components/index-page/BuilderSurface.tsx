@@ -2502,6 +2502,7 @@ export function BuilderSurface({
                   initialTab: 'incoming',
                 })}
                 lastError={state.lastError}
+                localSettingsClient={isRemoteOriginActive ? null : httpClientRef.current}
                 lastSuccess={state.lastSuccess}
                 restartRecovery={state.restartRecovery}
                 onResumeRestartRecovery={() => clientRef.current?.resumeRestartRecovery()}

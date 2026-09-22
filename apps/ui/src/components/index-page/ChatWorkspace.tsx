@@ -14,6 +14,9 @@ import { RemoteUpdateAwarenessBanner } from '@/components/diff-viewer/RemoteUpda
 import type { RemoteUpdateAwarenessSnapshotChange } from '@/components/diff-viewer/remote-update-awareness-mutation'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
+import { ClaudeNativeAuth } from '@/components/settings/ClaudeNativeAuth'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
+import { isClaudeSignInRequired } from '@forge/protocol'
 import type {
   RemoteUpdateAwarenessProjectSnapshot,
   RestartRecoverySnapshot,
@@ -31,6 +34,7 @@ interface ChatWorkspaceProps {
   onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
   onOpenRemoteUpdateIncoming?: () => void
   lastError: string | null
+  localSettingsClient?: SettingsApiClient | null
   lastSuccess: string | null
   restartRecovery: RestartRecoverySnapshot | null
   onResumeRestartRecovery: () => void
@@ -60,6 +64,7 @@ export function ChatWorkspace({
   onRemoteUpdateSnapshotChange,
   onOpenRemoteUpdateIncoming,
   lastError,
+  localSettingsClient,
   lastSuccess,
   restartRecovery,
   onResumeRestartRecovery,
@@ -125,7 +130,9 @@ export function ChatWorkspace({
         onDismiss={onDismissRestartRecovery}
       />
 
-      {lastError ? (
+      {lastError && localSettingsClient && isClaudeSignInRequired(lastError) ? (
+        <ClaudeNativeAuth key={headerProps.activeAgentId} apiClient={localSettingsClient} inConversation />
+      ) : lastError ? (
         <div role="alert" className="whitespace-pre-wrap break-words border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {lastError}
         </div>

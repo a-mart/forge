@@ -43,6 +43,25 @@ const result = (ids: string[], fields = {}) => ({ type: "result", subtype: "succ
   duration_ms: 5, duration_api_ms: 4, total_cost_usd: 0.1, usage: { input_tokens: 5, output_tokens: 3 }, modelUsage: {}, ...fields });
 
 describe("Claude native lifecycle", () => {
+  it.each([true, false])("preserves a provider rejection instead of hiding it as a generic turn failure (assistant frame: %s)", async assistantFrame => {
+    const root = await mkdtemp(join(tmpdir(), "forge-claude-error-"));
+    const binding = { guardValue: (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll("PRIVATE_TOKEN", "[REDACTED]")) } as SecureRuntimeBinding;
+    const f = await fixture(root, { binding });
+    try {
+      const input = await f.runtime.sendMessage("work"); await f.input.next();
+      const message = "API Error: 400 This model requires Claude Code 2.1.280. PRIVATE_TOKEN";
+      if (assistantFrame) await f.emit({ type: "assistant", error: "invalid_request", user_message_uuids: [input.deliveryId],
+        message: { content: [{ type: "text", text: message }] } });
+      await f.emit(result([input.deliveryId], { is_error: true, result: message }));
+      expect(f.errors).toHaveBeenCalledOnce();
+      expect(f.errors.mock.calls[0]?.[1].message).toContain("requires Claude Code 2.1.280");
+      expect(JSON.stringify(f.errors.mock.calls)).not.toContain("PRIVATE_TOKEN");
+      expect(f.events.some(e => e.type === "message_end" && JSON.stringify(e).includes("API Error"))).toBe(false);
+      expect(f.runtime.getStatus()).toBe("idle");
+      const next = await f.runtime.sendMessage("retry"); await f.input.next(); await f.emit(result([next.deliveryId]));
+      expect(f.errors).toHaveBeenCalledOnce();
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
   it("does not equate queue delivery with consumption, and activates coalesced steers once", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-claude-unit-"));
     const f = await fixture(root);

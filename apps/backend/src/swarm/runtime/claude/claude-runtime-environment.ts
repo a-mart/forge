@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import type { SwarmConfig } from "../../types.js";
+import { CLAUDE_SIGN_IN_REQUIRED } from "@forge/protocol";
 
 const execute = promisify(execFile);
 
@@ -60,14 +61,30 @@ export async function assertClaudeSetup(executable: string, env: NodeJS.ProcessE
   catch { throw new Error("Claude native could not launch its executable. Check CLAUDE_BIN, file permissions, and the installed platform/architecture. Remove CLAUDE_BIN to use the bundled runtime."); }
   const match = /^(\d+)\.(\d+)\.(\d+)\b/.exec(version);
   if (!match) throw new Error("Claude native received an unrecognized version response. Check that CLAUDE_BIN points to Claude Code. Remove CLAUDE_BIN to use Forge's bundled runtime.");
-  if (Number(match[1]) < 2 || (Number(match[1]) === 2 && (Number(match[2]) < 1 || (Number(match[2]) === 1 && Number(match[3]) < 273)))) {
-    throw new Error("Claude native requires Claude Code 2.1.273 or newer. Remove CLAUDE_BIN to use Forge's bundled runtime, or update your external installation with: claude update");
+  if (Number(match[1]) < 2 || (Number(match[1]) === 2 && (Number(match[2]) < 1 || (Number(match[2]) === 1 && Number(match[3]) < 280)))) {
+    throw new Error("Claude native requires Claude Code 2.1.280 or newer. Remove CLAUDE_BIN to use Forge's bundled runtime, or update your external installation with: claude update");
   }
   if (env.ANTHROPIC_API_KEY) return;
-  const login = process.platform === "win32" ? `& '${executable.replaceAll("'", "''")}' auth login` : `'${executable.replaceAll("'", "'\\''")}' auth login`;
+  if (!await isClaudeSignedIn(executable, env)) throw new Error(CLAUDE_SIGN_IN_REQUIRED);
+}
+
+export async function isClaudeSignedIn(executable: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  if (env.ANTHROPIC_API_KEY) return true;
+  let stdout: string;
   try {
-    const { stdout } = await execute(executable, ["auth", "status", "--json"], { env, timeout: 10_000, windowsHide: true });
-    if (JSON.parse(stdout).loggedIn === true) return;
-  } catch { /* Present the same actionable, credential-free error for missing/expired login. */ }
-  throw new Error(`Claude native needs its own Claude login. Run this in a terminal, then retry the message:\n\n${login}\n\n${env.CLAUDE_CONFIG_DIR ? "Use the same CLAUDE_CONFIG_DIR as Forge. " : ""}The existing Forge Anthropic OAuth login is separate. For explicit API-key billing, set FORGE_CLAUDE_AUTH_MODE=api_key and configure an Anthropic API key.`);
+    ({ stdout } = await execute(executable, ["auth", "status", "--json"], { env, timeout: 10_000, windowsHide: true }));
+  } catch (error) {
+    // Claude deliberately exits 1 with a valid signed-out JSON result. Other
+    // failures must not send a successfully signed-in user around a login loop.
+    const failure = error as { code?: unknown; stdout?: unknown };
+    if (failure.code !== 1 || typeof failure.stdout !== "string") {
+      throw new Error("Forge could not check the Claude connection. Try Check connection again. If it keeps failing, check that Claude can run on this computer.");
+    }
+    stdout = failure.stdout;
+  }
+  try {
+    const result = JSON.parse(stdout);
+    if (typeof result.loggedIn === "boolean") return result.loggedIn;
+  } catch { /* Never include raw CLI output, which may contain account details. */ }
+  throw new Error("Claude returned an unreadable connection status. Remove CLAUDE_BIN to use Forge's bundled runtime, then check the connection again.");
 }
