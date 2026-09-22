@@ -327,3 +327,12 @@ describe('groupManagerModelRows', () => {
     }
   })
 })
+
+it('offers native Claude separately from Pi and does not mistake Pi OAuth for native authentication', () => {
+  const rows = buildManagerModelRows('create', {}, { anthropic: false })
+  const native = rows.find(row => row.provider === 'claude-native' && row.modelId === 'claude-opus-5-5')
+  expect(native).toMatchObject({ displayName: 'Claude Opus 5.5 (Claude native)', defaultReasoningLevel: 'medium' })
+  expect(native?.unavailableReason).toBeUndefined()
+  expect(native?.supportedReasoningLevels).not.toContain('none')
+  expect(decodeManagerModelValue(native!.key)).toEqual({ provider: 'claude-native', modelId: 'claude-opus-5-5' })
+})

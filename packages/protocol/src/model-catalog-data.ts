@@ -569,6 +569,11 @@ export const FORGE_MODEL_CATALOG: ForgeModelCatalog = {
   ...BASE_MODEL_CATALOG,
   providers: {
     ...BASE_MODEL_CATALOG.providers,
+    'claude-native': {
+      providerId: 'claude-native', displayName: 'Claude native',
+      availabilityMode: 'external', piProjectionMode: 'none',
+      projectionScope: 'catalog-only', requestBehaviorId: null,
+    },
     'codex-native': {
       providerId: 'codex-native', displayName: 'Codex native (Preferred)',
       availabilityMode: 'managed-auth', piProjectionMode: 'none',
@@ -577,6 +582,12 @@ export const FORGE_MODEL_CATALOG: ForgeModelCatalog = {
   },
   families: {
     ...BASE_MODEL_CATALOG.families,
+    'claude-native': {
+      familyId: 'claude-native', displayName: 'Claude native', provider: 'claude-native',
+      defaultModelId: 'claude-opus-5-5', defaultReasoningLevel: 'medium',
+      visibleInCreateManager: true, visibleInChangeManager: true,
+      visibleInSpawnPreset: false, visibleInSpecialists: false,
+    },
     'codex-native': {
       familyId: 'codex-native', displayName: 'Codex native', provider: 'codex-native',
       defaultModelId: 'gpt-6-sol', defaultReasoningLevel: 'high',
@@ -586,6 +597,16 @@ export const FORGE_MODEL_CATALOG: ForgeModelCatalog = {
   },
   models: {
     ...BASE_MODEL_CATALOG.models,
+    ...Object.fromEntries(Object.values(BASE_MODEL_CATALOG.models)
+      .filter(model => model.provider === 'anthropic')
+      .map(model => [`claude-native/${model.modelId}`, {
+        ...model, catalogId: `claude-native/${model.modelId}`, provider: 'claude-native',
+        familyId: 'claude-native', displayName: `${model.displayName} (Claude native)`,
+        isFamilyDefault: model.modelId === 'claude-opus-5-5',
+        supportedReasoningLevels: model.supportedReasoningLevels.filter(level => level !== 'none'),
+        webSearchCapability: 'native' as const,
+        piUpstreamId: null, intentionalDivergenceNotes: 'Native Claude Agent SDK; no Pi projection. Effort is validated against runtime capabilities.',
+      }])),
     ...Object.fromEntries(Object.values(BASE_MODEL_CATALOG.models)
       .filter(model => model.provider === 'openai-codex')
       .map(model => [`codex-native/${model.modelId}`, {

@@ -610,7 +610,7 @@ export function buildSecureSessionTools(
 ): ToolDefinition[] {
   // Native threads bind tool definitions at creation. Preserve that contract across
   // project toggles; current project policy gates execution and runtime instructions.
-  if (!isBuilderSurface(host, descriptor) || (descriptor.model.provider !== "codex-native" && host.isSecureSessionsEnabledForAgent?.(descriptor.agentId) === false)) {
+  if (!isBuilderSurface(host, descriptor) || (!["codex-native", "claude-native"].includes(descriptor.model.provider) && host.isSecureSessionsEnabledForAgent?.(descriptor.agentId) === false)) {
     return [];
   }
 

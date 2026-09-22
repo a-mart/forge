@@ -228,7 +228,7 @@ interface BetterAuthRuntime {
         maxPasswordLength: number;
       };
     };
-    secret: string | BufferSource;
+    secret: Parameters<typeof makeSignature>[1];
     authCookies: {
       sessionToken: {
         name: string;
@@ -501,12 +501,12 @@ function createSessionCookieCollector(
     context: {
       authCookies: Awaited<BetterAuthRuntime["$context"]>["authCookies"];
       sessionConfig: Awaited<BetterAuthRuntime["$context"]>["sessionConfig"];
-      secret: string | BufferSource;
+      secret: Parameters<typeof makeSignature>[1];
       options?: Awaited<BetterAuthRuntime["$context"]>["options"];
       setNewSession(_session: CollaborationAuthSession): void;
     };
-    getSignedCookie(_name: string, _secret: string | BufferSource): Promise<string | null>;
-    setSignedCookie(name: string, value: string, secret: string | BufferSource, attributes: CookieAttributes): Promise<void>;
+    getSignedCookie(_name: string, _secret: Parameters<typeof makeSignature>[1]): Promise<string | null>;
+    setSignedCookie(name: string, value: string, secret: Parameters<typeof makeSignature>[1], attributes: CookieAttributes): Promise<void>;
     setCookie(name: string, value: string, attributes: CookieAttributes): void;
   };
 } {
@@ -535,7 +535,7 @@ function createSessionCookieCollector(
 async function serializeSignedCookie(
   name: string,
   value: string,
-  secret: string | BufferSource,
+  secret: Parameters<typeof makeSignature>[1],
   attributes: CookieAttributes,
 ): Promise<string> {
   const encodedValue = encodeURIComponent(value);

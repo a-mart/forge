@@ -17,7 +17,7 @@ export function nodeRequestToWebRequest(request: IncomingMessage): Request {
   return new Request(url, {
     method,
     headers,
-    body: Readable.toWeb(request) as BodyInit,
+    body: Readable.toWeb(request) as RequestInit["body"],
     duplex: "half",
   } as RequestInit & { duplex: "half" });
 }

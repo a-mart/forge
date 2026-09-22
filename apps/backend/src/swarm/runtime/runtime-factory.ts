@@ -25,6 +25,7 @@ import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compati
 import { assertSwarmModelIdNotRetired } from "../model-presets.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
 import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
+import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { CodexRuntimeCreator } from "./codex/codex-runtime-creator.js";
 import {
   SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
@@ -123,8 +124,9 @@ export class RuntimeFactory {
       ? { ...options, secureRuntimeBinding }
       : options;
 
-    if (descriptor.model.provider === "codex-native") {
-      return new CodexRuntimeCreator(this.deps).create({ descriptor, systemPrompt, runtimeToken, creationOptions,
+    if (["codex-native", "claude-native"].includes(descriptor.model.provider)) {
+      const creator = descriptor.model.provider === "codex-native" ? new CodexRuntimeCreator(this.deps) : new ClaudeRuntimeCreator(this.deps);
+      return creator.create({ descriptor, systemPrompt, runtimeToken, creationOptions,
         callbacks: {
           onStatusChange: (...args) => this.deps.callbacks.onStatusChange(runtimeToken, ...args),
           onSessionEvent: (...args) => this.deps.callbacks.onSessionEvent(runtimeToken, ...args),

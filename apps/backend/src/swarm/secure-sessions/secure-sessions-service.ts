@@ -2357,7 +2357,7 @@ export class SecureSessionsService {
   private recycleModeRuntime(agentId: string) {
     // Native tools resolve current authority per command; changing a grant must not
     // interrupt its app-server turn or change the persisted dynamic-tool contract.
-    if (this.options.getDescriptor(agentId)?.model.provider === "codex-native") return "none" as const;
+    if (["codex-native", "claude-native"].includes(this.options.getDescriptor(agentId)?.model.provider ?? "")) return "none" as const;
     return this.options.applyModeRuntimeRecycle(agentId);
   }
 
@@ -2365,7 +2365,7 @@ export class SecureSessionsService {
     let invalidated = false;
     const check = () => {
       const current = this.options.getDescriptor(descriptor.agentId);
-      if (invalidated || !current || current.cwd !== descriptor.cwd || current.model.provider !== "codex-native") {
+      if (invalidated || !current || current.cwd !== descriptor.cwd || current.model.provider !== descriptor.model.provider) {
         throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
       }
     };
@@ -2391,7 +2391,7 @@ export class SecureSessionsService {
   }
 
   async prepareSecureRuntimeBinding(descriptor: AgentDescriptor): Promise<SecureRuntimeBinding | undefined> {
-    if (descriptor.model.provider === "codex-native") return this.nativeRuntimeBinding(descriptor);
+    if (["codex-native", "claude-native"].includes(descriptor.model.provider)) return this.nativeRuntimeBinding(descriptor);
     return this.preparePinnedSecureRuntimeBinding(descriptor);
   }
 
@@ -5833,7 +5833,7 @@ export class SecureSessionsService {
   private isEligibleSecureWorker(descriptor: AgentDescriptor): boolean {
     if (
       descriptor.role !== "worker"
-      || descriptor.model.provider === "codex-native"
+      || ["codex-native", "claude-native"].includes(descriptor.model.provider)
       || descriptor.archivedAt
       || descriptor.sessionSurface === "collab"
       || descriptor.collab
