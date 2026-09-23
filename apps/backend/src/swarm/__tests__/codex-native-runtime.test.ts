@@ -16,7 +16,7 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 async function fixture(options: { root?: string; agentId?: string; rejectResume?: boolean; prompt?: string;
-  onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void> } = {}) {
+  onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void>; extraTool?: boolean } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "forge-native-codex-test-"));
   if (!options.root) roots.push(root);
   const agentId = options.agentId ?? "native-test";
@@ -53,7 +53,10 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
     onSessionEvent: async (_id, event) => { events.push(event); options.onEvent?.(event); }, onRuntimeError: vi.fn(), onAgentEnd: options.onAgentEnd ?? vi.fn() },
     systemPrompt: options.prompt ?? "Forge integration only", codexHome, projectTrusted: false, auth,
     host: { requestUserChoice }, tools: [{ name: "fixture_tool", label: "Fixture", description: "Fixture tool",
-      parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }), execute: async (_id, args) => ({ content: [{ type: "text", text: args.value }], details: args }) }],
+      parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }), execute: async (_id, args) => ({ content: [{ type: "text", text: args.value }], details: args }) },
+      ...(options.extraTool ? [{ name: "extra_tool", label: "Extra", description: "Extra tool",
+        parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }),
+        execute: async (_id: string, args: { value: string }) => ({ content: [{ type: "text" as const, text: args.value }] }) }] : [])],
     createClient: h => { handlers = h; return client as never; },
   });
   return { root, nativePath, descriptor, runtime, client, auth, events, requestUserChoice,
@@ -169,14 +172,65 @@ describe("Native Codex manager", () => {
     await resumed.runtime.terminate();
   });
 
-  it("still rejects an incompatible persisted tool schema without starting a replacement thread", async () => {
+  it("resumes when a tool description changes, keeping the existing native thread and tool", async () => {
     const f = await fixture();
+    await f.runtime.sendMessage("Create a persisted native turn");
+    await f.runtime.terminate();
+    const header = JSON.parse(await readFile(f.nativePath, "utf8"));
+    header.payload.dynamic_tools[0].tools[0].description = "Earlier wording";
+    await writeFile(f.nativePath, `${JSON.stringify(header)}\n`);
+    const resumed = await fixture({ root: f.root });
+    expect(resumed.client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    await resumed.runtime.sendMessage("Continue");
+    await expect(resumed.serverRequest("item/tool/call", { threadId: "native-thread", turnId: "turn-1",
+      namespace: "forge", tool: "fixture_tool", callId: "description", arguments: { value: "works" } }))
+      .resolves.toMatchObject({ success: true, contentItems: [{ text: "works" }] });
+    await resumed.runtime.terminate();
+  });
+
+  it("disables only a tool with a changed schema while keeping the native thread and other tools", async () => {
+    const f = await fixture({ extraTool: true });
     await f.runtime.sendMessage("Create a persisted native turn");
     await f.runtime.terminate();
     const header = JSON.parse(await readFile(f.nativePath, "utf8"));
     header.payload.dynamic_tools[0].tools[0].inputSchema.properties.value.type = "number";
     await writeFile(f.nativePath, `${JSON.stringify(header)}\n`);
-    await expect(fixture({ root: f.root })).rejects.toThrow("incompatible Forge tool configuration");
+    const resumed = await fixture({ root: f.root, extraTool: true });
+    expect(resumed.client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    await resumed.runtime.sendMessage("Continue");
+    await expect(resumed.serverRequest("item/tool/call", { threadId: "native-thread", turnId: "turn-1",
+      namespace: "forge", tool: "fixture_tool", callId: "changed", arguments: { value: "unsafe" } }))
+      .resolves.toMatchObject({ success: false, contentItems: [{ text: expect.stringContaining("changed since this native thread started") }] });
+    await expect(resumed.serverRequest("item/tool/call", { threadId: "native-thread", turnId: "turn-1",
+      namespace: "forge", tool: "extra_tool", callId: "unchanged", arguments: { value: "works" } }))
+      .resolves.toMatchObject({ success: true, contentItems: [{ text: "works" }] });
+    await resumed.runtime.terminate();
+  });
+
+  it("retires a tool removed from Forge without starting a replacement native thread", async () => {
+    const f = await fixture({ extraTool: true });
+    await f.runtime.sendMessage("Create a persisted native turn");
+    await f.runtime.terminate();
+    const resumed = await fixture({ root: f.root });
+    expect(resumed.client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    await resumed.runtime.sendMessage("Continue");
+    await expect(resumed.serverRequest("item/tool/call", { threadId: "native-thread", turnId: "turn-1",
+      namespace: "forge", tool: "extra_tool", callId: "removed", arguments: { value: "unused" } }))
+      .resolves.toMatchObject({ success: false });
+    await resumed.runtime.terminate();
+  });
+
+  it("hides tools added after a native thread started", async () => {
+    const f = await fixture();
+    await f.runtime.sendMessage("Create a persisted native turn");
+    await f.runtime.terminate();
+    const resumed = await fixture({ root: f.root, extraTool: true });
+    expect(resumed.client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    await resumed.runtime.sendMessage("Continue");
+    await expect(resumed.serverRequest("item/tool/call", { threadId: "native-thread", turnId: "turn-1",
+      namespace: "forge", tool: "extra_tool", callId: "added", arguments: { value: "unused" } }))
+      .rejects.toThrow("Unknown Forge tool");
+    await resumed.runtime.terminate();
   });
 
   it("uses full access without command approvals for new and resumed threads", async () => {

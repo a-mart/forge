@@ -6,11 +6,13 @@ import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import { normalizeNativeToolContract, stableToolContract } from "./codex-tool-contract.js";
 
 type Tool = ToolDefinition<any, any, any>;
+type NativeTool = { name: string; type: string; inputSchema: unknown };
 
 /** Dynamic tools preserve Forge ownership; native coding tools stay inside Codex. */
 export class CodexRuntimeTools {
   private readonly tools: Map<string, Tool>;
   private readonly pending = new Set<Promise<unknown>>();
+  private readonly unavailableTools = new Set<string>();
   private legacyBudgetTools = new Set<string>();
 
   constructor(private readonly options: {
@@ -31,19 +33,23 @@ export class CodexRuntimeTools {
   restoreContract(definitions: unknown): void {
     const persisted = normalizeNativeToolContract(definitions);
     const current = normalizeNativeToolContract(this.definitions());
-    // App-server binds dynamic tools at thread creation. Preserve older threads
-    // without pretending newly added Secure Sessions tools are available there.
-    const optionalAdditions = new Set(["secure_bash", "secure_session_status", "request_secret_access", "request_ssh_host_trust"]);
-    const persistedNamespaces = persisted.value as Array<{ tools: Array<{ name: string }> }>;
-    const persistedNames = new Set(persistedNamespaces.flatMap(namespace => namespace.tools.map(tool => tool.name)));
-    const unavailable = [...optionalAdditions].filter(name => !persistedNames.has(name));
-    for (const namespace of current.value as Array<{ tools: Array<{ name: string }> }>) {
-      namespace.tools = namespace.tools.filter(tool => !unavailable.includes(tool.name));
+    // App-server keeps the tool definitions from thread creation. A changed
+    // description is safe with the current implementation, but a changed input
+    // schema must never dispatch old arguments into a new handler.
+    const persistedTools = (persisted.value as Array<{ tools: NativeTool[] }>).flatMap(namespace => namespace.tools);
+    const currentTools = (current.value as Array<{ tools: NativeTool[] }>).flatMap(namespace => namespace.tools);
+    const oldByName = new Map(persistedTools.map(tool => [tool.name, tool]));
+    if (oldByName.size !== persistedTools.length) throw new Error("Invalid native Codex tool contract.");
+    for (const tool of currentTools) {
+      const old = oldByName.get(tool.name);
+      if (!old || stableToolContract(old.inputSchema) !== stableToolContract(tool.inputSchema) || old.type !== tool.type) {
+        this.tools.delete(tool.name);
+        if (old) this.unavailableTools.add(tool.name);
+      }
     }
-    if (stableToolContract(persisted.value) !== stableToolContract(current.value)) {
-      throw new Error("This native Codex thread has an incompatible Forge tool configuration. Fork this session or start a new session to use the changed tools.");
+    for (const old of persistedTools) {
+      if (!this.tools.has(old.name)) this.unavailableTools.add(old.name);
     }
-    for (const name of unavailable) this.tools.delete(name);
     this.legacyBudgetTools = persisted.legacyBudgetTools;
   }
 
@@ -102,6 +108,10 @@ export class CodexRuntimeTools {
 
   private async callTool(params: Record<string, any>, signal: AbortSignal): Promise<unknown> {
     const tool = params.namespace === "forge" ? this.tools.get(params.tool) : undefined;
+    if (!tool && params.namespace === "forge" && this.unavailableTools.has(params.tool)) {
+      return { success: false, contentItems: [{ type: "inputText",
+        text: `Forge tool ${params.tool} changed since this native thread started. Continue with available tools, or fork the session to use the current version.` }] };
+    }
     if (!tool) throw new Error("Unknown Forge tool for this runtime");
     let args = params.arguments;
     if (this.legacyBudgetTools.has(tool.name) && args && typeof args === "object" && !Array.isArray(args)) {

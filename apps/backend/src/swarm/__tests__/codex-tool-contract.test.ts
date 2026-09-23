@@ -57,6 +57,8 @@ it("resumes pre-secrets native threads without exposing tools absent from their 
   expect(() => current.restoreContract(old.definitions())).not.toThrow();
   expect(current.definitions()).toEqual(old.definitions());
   await expect(current.request("item/tool/call", { namespace: "forge", tool: "secure_bash", arguments: {}, callId: "call" }, new AbortController().signal)).rejects.toThrow("Unknown Forge tool");
-  const changed = new CodexRuntimeTools({ ...options, tools: [{ ...tool("existing"), description: "Incompatible change" }, tool("secure_bash")] });
-  expect(() => changed.restoreContract(old.definitions())).toThrow("incompatible");
+  const changed = new CodexRuntimeTools({ ...options, tools: [{ ...tool("existing"), description: "Updated wording" }, tool("secure_bash")] });
+  expect(() => changed.restoreContract(old.definitions())).not.toThrow();
+  await expect(changed.request("item/tool/call", { namespace: "forge", tool: "existing", arguments: {}, callId: "description" }, new AbortController().signal))
+    .resolves.toMatchObject({ success: true });
 });
