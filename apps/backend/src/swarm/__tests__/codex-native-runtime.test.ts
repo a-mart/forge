@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { CodexAgentRuntime, NATIVE_CODEX_STATE } from "../runtime/codex/codex-agent-runtime.js";
+import { ChoiceRequestCancelledError, SwarmChoiceService } from "../swarm-choice-service.js";
 import { nativeCodexEnvironment } from "../runtime/codex/codex-runtime-auth.js";
 import { ManagerAssistantOutputTracker } from "../runtime/manager-assistant-output-tracker.js";
 import { extractCleanManagerAssistantFinalMessage } from "../runtime/manager-assistant-final-message.js";
@@ -11,12 +12,14 @@ import { ConversationProjector } from "../conversation-projector.js";
 import type { CodexAppServerClientHandlers } from "../codex-app-server/types.js";
 import type { AgentDescriptor, ConversationMessageEvent } from "../types.js";
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
+import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestEvent } from "@forge/protocol";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 async function fixture(options: { root?: string; agentId?: string; rejectResume?: boolean; prompt?: string;
-  onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void>; extraTool?: boolean } = {}) {
+  onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void>; extraTool?: boolean;
+  choiceHandler?: (agentId: string, questions: ChoiceQuestion[]) => Promise<ChoiceAnswer[]> } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "forge-native-codex-test-"));
   if (!options.root) roots.push(root);
   const agentId = options.agentId ?? "native-test";
@@ -32,7 +35,7 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
   let interruptCompletes = true;
   const events: RuntimeSessionEvent[] = [];
   const auth = { login: vi.fn(async () => {}), refresh: vi.fn(), release: vi.fn(async () => {}) };
-  const requestUserChoice = vi.fn(async () => [{ questionId: "approval", selectedOptionIds: ["decline"] }]);
+  const requestUserChoice = vi.fn(options.choiceHandler ?? (async () => [{ questionId: "approval", selectedOptionIds: ["decline"] }]));
   const client = {
     connect: vi.fn(async () => {}), notify: vi.fn(), dispose: vi.fn(() => { disposed = true; }), isDisposed: () => disposed,
     shutdown: vi.fn(async () => { disposed = true; }),
@@ -470,6 +473,63 @@ describe("Native Codex manager", () => {
     const persisted = (await readFile(f.descriptor.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     const assistant = persisted.find(entry => entry.type === "message" && entry.message.role === "assistant");
     expect(assistant.message).toMatchObject({ stopReason: "stop", usage: { totalTokens: 0, cost: { total: 0 } } });
+    await f.runtime.terminate();
+  });
+
+  it("turns a native asynchronous question into one Forge choice and resumes from its answer", async () => {
+    const cards: ChoiceRequestEvent[] = [];
+    const choices = new SwarmChoiceService({ now: () => new Date().toISOString(),
+      getDescriptor: agentId => agentId === f.descriptor.agentId ? f.descriptor : undefined,
+      emitChoiceRequest: event => cards.push(event), emitAgentsSnapshot: () => {},
+    });
+    const f = await fixture({ choiceHandler: (agentId, questions) => choices.requestUserChoice(agentId, questions) });
+    await f.runtime.sendMessage("Check the preview");
+    const question = { threadId: "native-thread", turnId: "turn-1", item: {
+      type: "agentMessage", id: "async-choice", delivery: "async", phase: "final_answer",
+      text: "Do both thumbnails show?\n- Yes\n- No",
+      questions: [{ title: "Do both thumbnails show?", options: ["Yes", "No"] }],
+    } };
+    await f.notify("item/completed", question);
+    await f.notify("item/completed", question);
+    expect(f.requestUserChoice).toHaveBeenCalledOnce();
+    expect(f.requestUserChoice).toHaveBeenCalledWith("native-test", [{ id: "0", question: "Do both thumbnails show?",
+      options: [{ id: "0", label: "Yes" }, { id: "1", label: "No" }] }]);
+    expect(cards).toEqual([expect.objectContaining({ type: "choice_request", status: "pending",
+      agentId: "native-test", questions: expect.any(Array) })]);
+    expect(f.events.filter(event => event.type === "message_end")).toHaveLength(0);
+    await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+    choices.resolveChoiceRequest(cards[0]!.choiceId, [{ questionId: "0", selectedOptionIds: ["0"] }]);
+    await vi.waitFor(() => expect(f.client.request).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+      input: [expect.objectContaining({ text: "Question: Do both thumbnails show?\nAnswer: Yes" })],
+    })));
+    await f.runtime.terminate();
+  });
+
+  it("steers an answer to an asynchronous choice while the native turn is still active", async () => {
+    const f = await fixture({ choiceHandler: async () => [{ questionId: "0", selectedOptionIds: ["1"] }] });
+    await f.runtime.sendMessage("Check the preview");
+    await f.notify("item/completed", { threadId: "native-thread", turnId: "turn-1", item: {
+      type: "agentMessage", id: "async-choice", delivery: "async",
+      questions: [{ title: "Does resizing work?", options: ["Yes", "No"] }],
+    } });
+    await vi.waitFor(() => expect(f.client.request).toHaveBeenCalledWith("turn/steer", expect.objectContaining({
+      input: [expect.objectContaining({ text: "Question: Does resizing work?\nAnswer: No" })],
+    })));
+    await f.runtime.terminate();
+  });
+
+  it("does not resume a cancelled native asynchronous question", async () => {
+    let cancel!: (reason: Error) => void;
+    const f = await fixture({ choiceHandler: async () => new Promise((_resolve, reject) => { cancel = reject; }) });
+    await f.runtime.sendMessage("Work");
+    await f.notify("item/completed", { threadId: "native-thread", turnId: "turn-1", item: {
+      type: "agentMessage", id: "async-choice", delivery: "async",
+      questions: [{ title: "Continue?", options: ["Yes", "No"] }],
+    } });
+    await vi.waitFor(() => expect(f.requestUserChoice).toHaveBeenCalledOnce());
+    cancel(new ChoiceRequestCancelledError("cancelled"));
+    await f.notify("turn/completed", { threadId: "native-thread", turn: { id: "turn-1", status: "completed" } });
+    expect(f.client.request.mock.calls.filter(([method]) => method === "turn/start")).toHaveLength(1);
     await f.runtime.terminate();
   });
 

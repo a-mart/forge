@@ -80,8 +80,10 @@ session's native tool definitions.
 - Native managers run with full access (`danger-full-access`) and command approvals
   disabled (`never`), including when resuming existing threads. Native commands can
   access the host filesystem and network without per-command approval prompts.
-  Genuine clarification questions still use Forge's choice UI. If the server sends
-  an exceptional approval request, Forge presents it rather than auto-accepting it;
+  Genuine clarification questions use Forge's choice UI. Native asynchronous
+  questions become Forge choice cards, with answers sent back as new user input.
+  If the server sends an exceptional approval request, Forge presents it rather
+  than auto-accepting it;
   file approval requires a complete bounded diff. Unknown requests and secret-entry
   questions fail closed; MCP elicitation is declined.
 - Forge tool hooks apply to bridged Forge tools. Pi extensions do not run inside

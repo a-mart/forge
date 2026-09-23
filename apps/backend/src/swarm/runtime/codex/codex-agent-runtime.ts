@@ -14,8 +14,10 @@ import { nativeCodexEnvironment, type CodexRuntimeAuth } from "./codex-runtime-a
 import { buildModelChangeRecoveryContext } from "../model-change-recovery-context.js";
 import { isConversationEntryEvent } from "../../conversation-validators.js";
 import { getCatalogContextWindow } from "@forge/protocol";
+import type { ChoiceQuestion, ChoiceAnswer } from "@forge/protocol";
 import { assertNativeCodexVersion, resolveNativeCodexBinary } from "./codex-native-binary.js";
 import { readNativeToolContract } from "./codex-tool-contract.js";
+import { ChoiceRequestCancelledError } from "../../swarm-choice-service.js";
 
 export const NATIVE_CODEX_STATE = "swarm_native_codex_state";
 interface ThreadState { version: 1; threadId: string; ownerAgentId: string; cwd: string; promptDigest?: string; hasStartedTurn?: boolean }
@@ -30,6 +32,7 @@ interface ActiveTurn {
   failed?: boolean;
   finishing?: boolean;
   pendingSteers: Map<string, RuntimeUserMessage>;
+  asyncQuestionIds: Set<string>;
   abort: AbortController;
   mapper: CodexRuntimeEvents;
   settled: Promise<void>;
@@ -308,7 +311,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
   private beginTurn(): ActiveTurn {
     let settle!: () => void;
-    const active: ActiveTurn = { startedAt: Date.now(), pendingSteers: new Map(), abort: new AbortController(), mapper: new CodexRuntimeEvents(),
+    const active: ActiveTurn = { startedAt: Date.now(), pendingSteers: new Map(), asyncQuestionIds: new Set(), abort: new AbortController(), mapper: new CodexRuntimeEvents(),
       settled: new Promise<void>(resolve => { settle = resolve; }), settle: () => settle() };
     this.active = active;
     this.status = "streaming";
@@ -356,6 +359,26 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         this.usage = { tokens, contextWindow: window, percent: window ? tokens / window * 100 : 0 };
         await this.publishStatus();
       }
+      return;
+    }
+    const asyncQuestions = method === "item/completed" && params.item?.type === "agentMessage" && params.item.delivery === "async"
+      ? parseNativeAsyncQuestions(params.item.questions) : undefined;
+    if (asyncQuestions) {
+      const itemId = String(params.item.id ?? "");
+      if (active.asyncQuestionIds.has(itemId)) return;
+      active.asyncQuestionIds.add(itemId);
+      // Native async questions complete the Codex turn without a blocking server
+      // request. Present a Forge card, then return the answer as fresh user input.
+      void this.options.host.requestUserChoice(this.descriptor.agentId, asyncQuestions)
+        .then(answers => {
+          if (this.closed || this.stopping) return;
+          return this.sendMessage(formatNativeAsyncAnswers(asyncQuestions, answers));
+        })
+        .catch(error => {
+          if (error instanceof ChoiceRequestCancelledError || this.closed || this.stopping) return;
+          return this.options.callbacks.onRuntimeError?.(this.descriptor.agentId,
+            { ...normalizeRuntimeError(error), phase: "prompt_start" });
+        });
       return;
     }
     for (const event of active.mapper.map(method, params)) await this.emit(event);
@@ -460,6 +483,32 @@ function nativeInput(message: RuntimeUserMessage) {
     ...(message.images ?? []).map(image => ({ type: "image", url: `data:${image.mimeType};base64,${image.data}` }))];
 }
 function record(value: unknown): Record<string, any> { return value && typeof value === "object" ? value as Record<string, any> : {}; }
+
+function parseNativeAsyncQuestions(value: unknown): ChoiceQuestion[] | undefined {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) return undefined;
+  const questions: ChoiceQuestion[] = [];
+  for (const [index, item] of value.entries()) {
+    const raw = item as Record<string, unknown> | null;
+    if (!raw || typeof raw !== "object" || raw.isSecret === true ||
+      typeof raw.title !== "string" || !raw.title.trim() || raw.title.length > 2_000 ||
+      (raw.options !== undefined && !Array.isArray(raw.options))) return undefined;
+    const labels: unknown[] = raw.options ?? [];
+    if (labels.length > 8 || labels.some(label => typeof label !== "string" || !label.trim() || label.length > 200)) return undefined;
+    questions.push({ id: String(index), question: raw.title,
+      ...(labels.length ? { options: labels.map((label, optionIndex) => ({ id: String(optionIndex), label: label as string })) }
+        : { isOther: true }),
+    });
+  }
+  return questions;
+}
+
+function formatNativeAsyncAnswers(questions: ChoiceQuestion[], answers: ChoiceAnswer[]): string {
+  return answers.map(answer => {
+    const question = questions.find(item => item.id === answer.questionId);
+    const selections = answer.selectedOptionIds.map(id => question?.options?.find(option => option.id === id)?.label ?? id);
+    return `Question: ${question?.question ?? answer.questionId}\nAnswer: ${[...selections, answer.text?.trim()].filter(Boolean).join("; ")}`;
+  }).join("\n\n");
+}
 async function deadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => {
