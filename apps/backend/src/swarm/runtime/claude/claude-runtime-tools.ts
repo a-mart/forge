@@ -18,10 +18,9 @@ export class ClaudeRuntimeTools {
     guard<T>(value: T): T;
   }) {
     const tools = new Map(options.tools.map(tool => [tool.name, tool]));
+    const listed = options.tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: claudeInputSchema(tool) }));
     const instance = new McpServer({ name: "forge", version: "1.0.0" }, { capabilities: { tools: {} } });
-    instance.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: options.tools.map(tool => ({
-      name: tool.name, description: tool.description, inputSchema: { ...tool.parameters, type: "object" as const },
-    })) }));
+    instance.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: listed }));
     instance.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const work = (async () => {
         const signal = AbortSignal.any([extra.signal, options.signal]);
@@ -76,4 +75,38 @@ export class ClaudeRuntimeTools {
         new Promise<never>((_resolve, reject) => { abort = () => reject(new Error("Claude turn stopped")); signal.addEventListener("abort", abort, { once: true }); })]);
     } finally { signal.removeEventListener("abort", abort); }
   }
+}
+
+type JsonSchema = Record<string, any>;
+
+/**
+ * Claude silently omits MCP tools whose input schema is not a plain root object, so a root
+ * union of object branches is advertised as one object. Calls still validate against the
+ * original union.
+ */
+function claudeInputSchema(tool: ToolDefinition<any, any, any>): { type: "object" } & JsonSchema {
+  const schema = tool.parameters as JsonSchema;
+  if (!Array.isArray(schema.anyOf)) {
+    if (schema.type !== "object") throw new Error(`Forge tool ${tool.name} must use an object input schema.`);
+    return schema as { type: "object" };
+  }
+  const branches = schema.anyOf as JsonSchema[];
+  if (!branches.every(branch => branch.type === "object")) throw new Error(`Forge tool ${tool.name} must use object schema branches.`);
+  const variants = new Map<string, JsonSchema[]>();
+  for (const branch of branches) {
+    for (const [key, value] of Object.entries(branch.properties ?? {})) {
+      const seen = variants.get(key) ?? [];
+      if (!seen.some(entry => JSON.stringify(entry) === JSON.stringify(value))) seen.push(value as JsonSchema);
+      variants.set(key, seen);
+    }
+  }
+  const required = branches.map(branch => new Set<string>(branch.required ?? []))
+    .reduce((common, next) => new Set([...common].filter(key => next.has(key))));
+  return {
+    ...(schema.description ? { description: schema.description } : {}),
+    type: "object",
+    properties: Object.fromEntries([...variants].map(([key, values]) => [key, values.length === 1 ? values[0] : { anyOf: values }])),
+    ...(required.size ? { required: [...required] } : {}),
+    additionalProperties: false,
+  };
 }

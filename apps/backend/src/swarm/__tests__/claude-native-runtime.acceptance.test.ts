@@ -9,6 +9,9 @@ import { Type } from "@sinclair/typebox";
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeAgentRuntime, NATIVE_CLAUDE_STATE } from "../runtime/claude/claude-agent-runtime.js";
 import { resolveClaudeExecutable, claudeRuntimeEnvironment } from "../runtime/claude/claude-runtime-environment.js";
+import { BROWSER_AUTOMATION_OPERATIONS } from "@forge/protocol";
+import { buildBrowserAutomationTools } from "../browser-automation/browser-automation-tools.js";
+import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { createNativeSecureBashTool } from "../secure-sessions/runtime/native-secure-bash-tool.js";
 import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -32,6 +35,7 @@ describe("Claude native process acceptance", () => {
     let redactionSawCanary = false;
     let forgeCalls = 0;
     let secureCalls = 0;
+    const unionCalls: unknown[] = [];
     const requestUserChoice = vi.fn(async () => [{ questionId: "0", selectedOptionIds: ["1"] }]);
     const server = createServer(async (request, response) => {
       let raw = ""; for await (const chunk of request) raw += chunk;
@@ -45,6 +49,8 @@ describe("Claude native process acceptance", () => {
       const calls: Record<string, { name: string; input: unknown }> = {
         CASE_READ: { name: "Read", input: { file_path: join(cwd, "input.txt") } },
         CASE_FORGE: { name: "mcp__forge__fixture_tool", input: { value: "tool value" } },
+        CASE_CLICK: { name: "mcp__forge__browser_click", input: { selector: "#save" } },
+        CASE_UNION: { name: "mcp__forge__fixture_union_tool", input: { mode: "b", count: 2 } },
         CASE_SECURE: { name: "mcp__forge__secure_bash", input: { command: "opaque credential command", secretAliases: ["fixture-password"] } },
         CASE_HOOK: { name: "Bash", input: { command: "printf \"$FIXTURE_CANARY\"" } },
         CASE_QUESTION: { name: "AskUserQuestion", input: { questions: [{ question: "Pick the fixture option", header: "Fixture", options: [{ label: "First", description: "First option" }, { label: "Second", description: "Second option" }], multiSelect: false }] } },
@@ -62,6 +68,7 @@ describe("Claude native process acceptance", () => {
       redactionSawCanary ||= raw.includes(canary);
       return JSON.parse(raw.replaceAll(canary, "[REDACTED]"));
     };
+    const invokeBrowserAutomation = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
     const binding: SecureRuntimeBinding = { guardValue: guard, createOutputGuard: vi.fn(), executeBash: async request => {
       expect(request.secretAliases).toEqual(["fixture-password"]); secureCalls++;
       request.onData(Buffer.from("credentialed result [REDACTED]")); return { exitCode: 0 };
@@ -74,11 +81,15 @@ describe("Claude native process acceptance", () => {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", FIXTURE_CANARY: canary },
       executable: await resolveClaudeExecutable({}), projectTrusted: false, host: { requestUserChoice }, creationOptions: { secureRuntimeBinding: binding },
       callbacks: { onStatusChange: vi.fn(), onAgentEnd: vi.fn(), onRuntimeError: (_id, error) => { errors.push(error); }, onSessionEvent: (_id, event) => { events.push(event); } },
-      tools: [createNativeSecureBashTool(descriptor(id), () => binding), { name: "fixture_tool", label: "Fixture", description: "Fixture Forge tool",
+      tools: [...buildBrowserAutomationTools({ invokeBrowserAutomation } as unknown as SwarmToolHost, descriptor(id)),
+        createNativeSecureBashTool(descriptor(id), () => binding), { name: "fixture_tool", label: "Fixture", description: "Fixture Forge tool",
         parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }), execute: async (id, args: any, signal) => {
           expect(id).toBe("toolu_CASE_FORGE"); expect(signal?.aborted).toBe(false); forgeCalls++;
           return { content: [{ type: "text", text: `${args.value} ${canary}` }], details: {} };
-        } }],
+        } }, { name: "fixture_union_tool", label: "Fixture union", description: "Fixture Forge tool with a root union schema",
+        parameters: Type.Union([Type.Object({ mode: Type.Literal("a"), text: Type.String() }, { additionalProperties: false }),
+          Type.Object({ mode: Type.Literal("b"), count: Type.Integer() }, { additionalProperties: false })]),
+        execute: async (_id, args: any) => { unionCalls.push(args); return { content: [{ type: "text", text: "union ok" }], details: {} }; } }],
       createQuery: args => query({ ...args, options: { ...args.options, spawnClaudeCodeProcess: options => {
         const child = args.options!.spawnClaudeCodeProcess!(options); const index = exits.push(false) - 1;
         child.once("exit", () => { exits[index] = true; }); return child;
@@ -99,6 +110,16 @@ describe("Claude native process acceptance", () => {
       expect(tools).not.toContain("Agent"); expect(tools).not.toContain("CronCreate");
       expect(JSON.stringify(requests[0]!.body.system)).toContain("FORGE_APPEND_FIXTURE");
       expect(JSON.stringify(requests[0]!.body.system).length).toBeGreaterThan(2000);
+      // Claude silently drops MCP tools whose root schema is not a plain object.
+      const browserTools = requests[0]!.body.tools.filter((t: any) => t.name.startsWith("mcp__forge__browser_"));
+      expect(browserTools).toHaveLength(BROWSER_AUTOMATION_OPERATIONS.length);
+      for (const tool of browserTools) expect(tool.input_schema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
+      await send("CASE_CLICK Click the save button.");
+      expect(invokeBrowserAutomation).toHaveBeenCalledWith("owner", "click", expect.objectContaining({ selector: "#save" }));
+      const union = requests[0]!.body.tools.find((t: any) => t.name === "mcp__forge__fixture_union_tool");
+      expect(union?.input_schema).toMatchObject({ type: "object", properties: { mode: { anyOf: [{ const: "a" }, { const: "b" }] }, text: {}, count: {} }, required: ["mode"] });
+      await send("CASE_UNION Use the union tool.");
+      expect(unionCalls).toEqual([{ mode: "b", count: 2 }]);
       await send("CASE_FORGE Use the fixture tool.");
       await send("CASE_SECURE Use Secure Bash.");
       await send("CASE_HOOK Exercise native output redaction.");
