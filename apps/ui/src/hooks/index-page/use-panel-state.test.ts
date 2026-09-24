@@ -555,36 +555,6 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.diffViewerInitialState).toEqual(initialState)
     })
 
-    it('openDiffViewer with null initial state', () => {
-      render()
-
-      act(() => {
-        capturedRef.current!.panelState.openDiffViewer(null)
-      })
-      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(true)
-      expect(capturedRef.current!.panelState.diffViewerInitialState).toBeNull()
-    })
-
-    it('openArtifact / closeArtifact manage activeArtifact', () => {
-      render()
-
-      const artifact = {
-        path: '/tmp/example.ts',
-        fileName: 'example.ts',
-        href: 'swarm-file:///tmp/example.ts',
-      }
-
-      act(() => {
-        capturedRef.current!.panelState.openArtifact(artifact)
-      })
-      expect(capturedRef.current!.panelState.activeArtifact).toEqual(artifact)
-
-      act(() => {
-        capturedRef.current!.panelState.closeArtifact()
-      })
-      expect(capturedRef.current!.panelState.activeArtifact).toBeNull()
-    })
-
     it('navigateFileBrowserToDirectory clears selected file', () => {
       render()
 

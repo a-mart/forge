@@ -31,21 +31,6 @@ describe("createPiModelRegistry", () => {
     expect(modelRegistryMockState.construct).not.toHaveBeenCalled();
   });
 
-  it("creates a registry from the generated projection file", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-pi-model-registry-"));
-    const projectionPath = join(rootDir, "pi-models.json");
-    await writeFile(projectionPath, '{"providers":{}}\n', "utf8");
-
-    const registry = {
-      getError: () => undefined,
-    };
-    const authStorage = { tag: "auth" };
-    modelRegistryMockState.construct.mockReturnValue(registry);
-
-    expect(createPiModelRegistry(authStorage as never, projectionPath)).toBe(registry);
-    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorage, projectionPath);
-  });
-
   it("surfaces ModelRegistry errors after creation", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-pi-model-registry-"));
     const projectionPath = join(rootDir, "pi-models.json");

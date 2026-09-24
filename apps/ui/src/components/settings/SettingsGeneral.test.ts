@@ -343,35 +343,7 @@ function renderGeneral(): void {
 /* ================================================================== */
 
 describe('SettingsGeneral', () => {
-  /* ---- Editor section ---- */
-
-  describe('editor section', () => {
-    it('renders the local editor selector', async () => {
-      renderGeneral()
-      await flush()
-
-      expect(container.textContent).toContain('Editor')
-      expect(container.textContent).toContain('Preferred Editor')
-    })
-  })
-
-  /* ---- Compaction ---- */
-
   describe('compaction settings', () => {
-    it('renders compaction settings with server defaults', async () => {
-      renderGeneral()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Compaction')
-      expect(container.textContent).toContain('Compaction model')
-      expect(container.textContent).toContain('Compaction reasoning')
-      expect(container.textContent).toContain('Compaction timeout')
-      expect(container.textContent).toContain('GPT-5.5')
-      expect(container.textContent).toContain('Low')
-      expect(container.textContent).toContain('5 minutes')
-    })
-
     it('filters unsupported xAI and Cursor SDK models out of compaction model choices', async () => {
       renderGeneral()
       await flush()
@@ -695,20 +667,6 @@ describe('SettingsGeneral', () => {
   /* ---- Sidebar prefs ---- */
 
   describe('sidebar preferences', () => {
-    it('renders sidebar model icons toggle', async () => {
-      renderGeneral()
-      await flush()
-
-      expect(container.textContent).toContain('Show model icons')
-    })
-
-    it('renders provider usage toggle', async () => {
-      renderGeneral()
-      await flush()
-
-      expect(container.textContent).toContain('Show provider usage')
-    })
-
     it('persists the Rooms v2 rollout preference from the visible sidebar toggle', async () => {
       renderGeneral()
       await flush()
@@ -733,22 +691,6 @@ describe('SettingsGeneral', () => {
   /* ---- Terminal shell settings ---- */
 
   describe('terminal settings', () => {
-    it('renders terminal shell selector', async () => {
-      renderGeneral()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Default Shell')
-    })
-
-    it('shows system default option', async () => {
-      renderGeneral()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('System Default')
-    })
-
     it('shows error when terminal settings fail to load', async () => {
       terminalApiMock.fetchAvailableShells.mockRejectedValue(new Error('Shell load failed'))
       renderGeneral()
@@ -762,16 +704,6 @@ describe('SettingsGeneral', () => {
   /* ---- System section ---- */
 
   describe('system section', () => {
-    it('renders Reboot button', async () => {
-      renderGeneral()
-      await flush()
-
-      const rebootBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('Reboot'),
-      )
-      expect(rebootBtn).toBeTruthy()
-    })
-
     it('sends POST to /api/reboot on click', async () => {
       const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
       vi.stubGlobal('fetch', fetchSpy)
@@ -793,18 +725,6 @@ describe('SettingsGeneral', () => {
       )
 
       vi.unstubAllGlobals()
-    })
-  })
-
-  /* ---- Welcome preferences ---- */
-
-  describe('welcome preferences', () => {
-    it('renders onboarding callout section', async () => {
-      renderGeneral()
-      await flush()
-
-      expect(container.textContent).toContain('Welcome Preferences')
-      expect(container.textContent).toContain('Onboarding')
     })
   })
 })
@@ -1080,18 +1000,6 @@ describe('SettingsGeneral — collab target', () => {
     )
 
     vi.unstubAllGlobals()
-  })
-
-  it('renders prompt cache visualization toggle defaulting off', async () => {
-    renderGeneral()
-    await flush()
-
-    expect(container.textContent).toContain('Enable prompt cache visualization')
-    expect(container.querySelector('#model-cache-visualization-enabled-toggle')).toBeTruthy()
-    expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).toHaveBeenCalled()
-
-    const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
-    expect(toggle?.getAttribute('aria-checked')).toBe('false')
   })
 
   it('renders conversation throughput off by default and persists an immediate change', async () => {

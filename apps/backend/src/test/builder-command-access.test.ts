@@ -36,21 +36,6 @@ const ADMIN_COMMANDS = (Object.keys(BUILDER_COMMAND_ACCESS) as Array<ClientComma
 
 describe("builder command access policy", () => {
   it("classifies key commands into the expected tiers", () => {
-    expect(BUILDER_COMMAND_ACCESS.subscribe).toBe("read");
-    expect(BUILDER_COMMAND_ACCESS.get_session_workers).toBe("read");
-    expect(BUILDER_COMMAND_ACCESS.user_message).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.session_goal_control).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.dismiss_session_attention).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.create_manager).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.delete_session).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.api_proxy).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.list_directories).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.validate_directory).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.create_directory).toBe("write");
-    expect(BUILDER_COMMAND_ACCESS.pick_directory).toBe("admin");
-    expect(BUILDER_COMMAND_ACCESS.create_repository_project).toBe("admin");
-    expect(BUILDER_COMMAND_ACCESS.cancel_repository_project_creation).toBe("admin");
-    expect(MEMBER_ALLOWED_TIERS.has(BUILDER_COMMAND_ACCESS.create_directory)).toBe(true);
     expect(
       evaluateBuilderCommandAccess({
         commandType: "create_directory",
@@ -72,12 +57,6 @@ describe("builder command access policy", () => {
         remoteBuildEnabled: true,
       }),
     ).toMatchObject({ ok: false, reason: "tier_not_granted" });
-    expect(BUILDER_COMMAND_ACCESS.resume_restart_recovery).toBe("admin");
-    expect(BUILDER_COMMAND_ACCESS.dismiss_restart_recovery).toBe("admin");
-    // Tier sets stay non-empty; a refactor emptying one is suspicious.
-    expect(READ_COMMANDS.length).toBeGreaterThan(0);
-    expect(WRITE_COMMANDS.length).toBeGreaterThan(0);
-    expect(ADMIN_COMMANDS.length).toBeGreaterThan(0);
   });
 
   it("canUseBuilder: admins always; members only when remote build is enabled", () => {

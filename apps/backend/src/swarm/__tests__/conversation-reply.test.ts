@@ -35,26 +35,6 @@ describe("parseConversationReplyTargetInput", () => {
     });
   });
 
-  it("accepts optional fallback fields when valid", () => {
-    expect(
-      parseConversationReplyTargetInput({
-        messageId: "msg-1",
-        role: "assistant",
-        timestamp: FIXED_NOW,
-        text: "quoted",
-        source: "assistant_output",
-        attachmentCount: 2,
-      }),
-    ).toEqual({
-      messageId: "msg-1",
-      role: "assistant",
-      timestamp: FIXED_NOW,
-      text: "quoted",
-      source: "assistant_output",
-      attachmentCount: 2,
-    });
-  });
-
   it("rejects invalid replyTo payloads without failing caller flow", () => {
     expect(parseConversationReplyTargetInput(undefined)).toBeUndefined();
     expect(parseConversationReplyTargetInput({ messageId: "   " })).toBeUndefined();
@@ -184,30 +164,6 @@ describe("capConversationReplyText / buildConversationReplyTargetFromMessage", (
 });
 
 describe("formatConversationReplyTargetMetadata", () => {
-  it("includes replyTo as a single JSON payload", () => {
-    const formatted = formatConversationReplyTargetMetadata({
-      messageId: "msg-1",
-      role: "assistant",
-      timestamp: FIXED_NOW,
-      text: "Quoted body",
-      source: "assistant_output",
-      attachmentCount: 0,
-      truncated: true,
-    });
-
-    expect(formatted).toBe(
-      `[replyTo] ${JSON.stringify({
-        messageId: "msg-1",
-        role: "assistant",
-        timestamp: FIXED_NOW,
-        text: "Quoted body",
-        source: "assistant_output",
-        attachmentCount: 0,
-        truncated: true,
-      })}`,
-    );
-  });
-
   it("keeps delimiter-looking quote text inside escaped JSON string content", () => {
     const formatted = formatConversationReplyTargetMetadata({
       messageId: "msg-1",

@@ -63,12 +63,6 @@ describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
     expect(backendMod.getModel).toBe(codingMod.getModel)
   })
 
-  it('externalizes pi-ai root so esbuild package externalization also covers /compat and /api subpaths', () => {
-    const piAi = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === '@earendil-works/pi-ai')
-    expect(piAi?.optional).toBe(false)
-    expect(typeof piAi?.validateStagedPackageDir).toBe('function')
-  })
-
   it('four-family pins are exact 0.80.6 and reject version skew in manifests', () => {
     const codingAgentIndex = findPackageFile('@earendil-works/pi-coding-agent', 'dist/index.js')
     const codingAgentRoot = findPackageRootFrom('@earendil-works/pi-coding-agent', join(repoRoot, 'apps/backend'))

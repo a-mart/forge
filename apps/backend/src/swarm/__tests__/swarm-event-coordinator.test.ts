@@ -56,7 +56,7 @@ function setup(initialDescriptors: AgentDescriptor[] = [manager()]) {
     managerToolActivity: new ManagerToolActivityState(),
     now: () => "2026-07-13T00:00:05.000Z",
   });
-  return { coordinator, emitted, upsertDescriptor, conversationProjector, observability };
+  return { coordinator, emitted, upsertDescriptor };
 }
 
 describe("SwarmEventCoordinator", () => {
@@ -79,22 +79,6 @@ describe("SwarmEventCoordinator", () => {
 
     expect(owner.updatedAt).toBe("2026-07-13T00:00:04.000Z");
     expect(upsertDescriptor).toHaveBeenCalledWith(owner);
-  });
-
-  it("projects visible messages and records observability through one boundary", () => {
-    const { coordinator, conversationProjector, observability } = setup();
-    const event = {
-      type: "conversation_message",
-      agentId: "manager-1",
-      role: "assistant",
-      content: "done",
-      timestamp: "2026-07-13T00:00:04.000Z",
-    } as Parameters<SwarmEventCoordinator["emitConversationMessage"]>[0];
-
-    coordinator.emitConversationMessage(event);
-
-    expect(conversationProjector.emitConversationMessage).toHaveBeenCalledWith(event, undefined);
-    expect(observability.recordUserVisibleMessage).toHaveBeenCalledWith(event);
   });
 
   it("projects only manager-owned tool starts into the count-only activity wire shape", () => {
@@ -196,23 +180,6 @@ describe("SwarmEventCoordinator", () => {
         sessionAgentId: owner.agentId,
         toolCount: 0,
       }),
-    });
-  });
-
-  it("publishes the owning session worker snapshot", () => {
-    const owner = manager();
-    const workerDescriptor = worker("worker-1", owner.agentId);
-    const { coordinator, emitted } = setup([owner, workerDescriptor]);
-
-    coordinator.emitSessionWorkersSnapshot(owner.agentId, [workerDescriptor]);
-
-    expect(emitted).toContainEqual({
-      name: "session_workers_snapshot",
-      event: {
-        type: "session_workers_snapshot",
-        sessionAgentId: owner.agentId,
-        workers: [workerDescriptor],
-      },
     });
   });
 });

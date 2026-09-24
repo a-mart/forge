@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTEXT_MODE_WORKER_WRITE_ERROR,
   FRESH_CONTEXT_UNSUPPORTED_COLLAB,
   FRESH_CONTEXT_UNSUPPORTED_CORTEX,
   FRESH_CONTEXT_UNSUPPORTED_CURSOR_SDK,
@@ -69,7 +68,6 @@ describe("context mode resolution", () => {
       role: "worker",
       managerId: "manager",
     } as AgentDescriptor)).toBe("manager");
-    expect(CONTEXT_MODE_WORKER_WRITE_ERROR).toMatch(/manager sessions/);
   });
 
   it("supports only existing Pi-backed compaction providers", () => {

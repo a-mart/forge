@@ -81,17 +81,6 @@ afterEach(() => {
 })
 
 describe('CreateChannelDialog', () => {
-  it('shows category and description controls for channel defaults', () => {
-    renderDialog({ defaultCategoryId: 'cat-eng' })
-
-    const categoryTrigger = document.getElementById('collab-create-channel-category')
-    expect(categoryTrigger?.textContent).toContain('Engineering')
-    expect(document.getElementById('collab-create-channel-description')).toBeTruthy()
-
-    const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
-    expect(labels).toEqual(expect.arrayContaining(['Name', 'Category', 'Description']))
-  })
-
   it('submits name, category, and description as a trimmed payload', async () => {
     const returnedChannel: CollaborationChannel = {
       channelId: 'new-1',

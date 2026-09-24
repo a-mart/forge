@@ -80,38 +80,4 @@ describe('UserAvatarPopover', () => {
       expect(reloadSpy).toHaveBeenCalledOnce()
     })
   })
-
-  it('does not show Settings button in the profile popover (moved to sidebar footer)', async () => {
-    flushSync(() => {
-      root.render(
-        createElement(
-          TooltipProvider,
-          null,
-          createElement(UserAvatarPopover, {
-            wsUrl: 'ws://127.0.0.1:47387',
-            currentUser: {
-              userId: 'user-1',
-              email: 'admin@test.com',
-              name: 'Admin',
-              role: 'admin',
-              disabled: false,
-            },
-          }),
-        ),
-      )
-    })
-
-    // Open the user popover by clicking the avatar trigger
-    const trigger = getByRole(container, 'button', { name: 'Admin' })
-    fireEvent.click(trigger)
-
-    await waitFor(() => {
-      expect(getByRole(document.body, 'button', { name: 'Sign out' })).toBeTruthy()
-    })
-
-    // Settings button should not be present — settings access is in the sidebar footer
-    const allButtons = document.body.querySelectorAll('button')
-    const settingsButton = Array.from(allButtons).find(btn => btn.getAttribute('aria-label') === 'Collab Settings')
-    expect(settingsButton).toBeUndefined()
-  })
 })

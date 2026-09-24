@@ -954,18 +954,6 @@ describe('AutomaticBrowserHost', () => {
       ok: false, error: { code: 'tab-not-found' },
     })
   })
-
-  it('advertises one v2 host with typed private target capabilities', () => {
-    const host = createHost(new FakeManagedAdapter(), new FakeExternalAdapter())
-    expect(host.capabilities).toMatchObject({
-      protocolVersions: { minimum: 2, maximum: 2 },
-      supportedOperations: BROWSER_AUTOMATION_OPERATIONS,
-      targets: {
-        'managed-electron': { available: true, physicalViewport: true, recording: true, reveal: false },
-        'external-chrome': { available: true, physicalViewport: false, recording: false, reveal: true },
-      },
-    })
-  })
 })
 
 function createHost(

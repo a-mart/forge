@@ -1,7 +1,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
@@ -18,22 +17,12 @@ import {
   cloneDescriptor,
   cloneProjectAgentInfoValue,
   compareRuntimeExtensionSnapshots,
-  createDeferred,
-  errorToMessage,
   escapeXmlForPreview,
   extractDescriptorAgentId,
-  extractRuntimeMessageText,
   extractVersionedToolPath,
-  finalizeMergedMemoryContent,
   formatBinaryAttachmentForPrompt,
   formatInboundUserMessageForManager,
   formatTextAttachmentForPrompt,
-  formatToolExecutionPayload,
-  hashMemoryMergeContent,
-  isEnoentError,
-  isPostApplyFailureStage,
-  isRecord,
-  isVersionedWriteToolName,
   normalizeAgentId,
   normalizeContextUsage,
   normalizeConversationAttachments,
@@ -43,10 +32,8 @@ import {
   normalizeMessageSourceContext,
   normalizeMessageTargetContext,
   normalizeOptionalAgentId,
-  normalizeOptionalAttachmentPath,
   normalizeOptionalModelId,
   normalizeThinkingLevelForProvider,
-  nowIso,
   parseCompactSlashCommand,
   parseSessionNumberFromAgentId,
   parseTimestampToMillis,
@@ -66,8 +53,6 @@ import {
   toDisplayToolName,
   toRuntimeDispatchAttachments,
   toRuntimeImageAttachments,
-  trimToMaxChars,
-  trimToMaxCharsFromEnd,
   validateAgentDescriptor,
   withManagerTimeout
 } from "../swarm-manager-utils.js";
@@ -92,15 +77,7 @@ function baseDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescript
   };
 }
 
-describe("isRecord / extractDescriptorAgentId", () => {
-  it("isRecord distinguishes objects from arrays and null", () => {
-    expect(isRecord({})).toBe(true);
-    expect(isRecord({ a: 1 })).toBe(true);
-    expect(isRecord(null)).toBe(false);
-    expect(isRecord([])).toBe(false);
-    expect(isRecord("x")).toBe(false);
-  });
-
+describe("extractDescriptorAgentId", () => {
   it.each([
     [{ agentId: "  abc  " }, "abc"],
     [{ agentId: "" }, undefined],
@@ -108,14 +85,6 @@ describe("isRecord / extractDescriptorAgentId", () => {
     [null, undefined]
   ])("extractDescriptorAgentId(%j) -> %j", (input, expected) => {
     expect(extractDescriptorAgentId(input)).toBe(expected);
-  });
-});
-
-describe("isEnoentError", () => {
-  it("detects ENOENT code", () => {
-    expect(isEnoentError({ code: "ENOENT" })).toBe(true);
-    expect(isEnoentError({ code: "ENOTFOUND" })).toBe(false);
-    expect(isEnoentError(new Error("fail"))).toBe(false);
   });
 });
 
@@ -253,16 +222,6 @@ describe("memory merge helpers", () => {
     expect(normalizeMemoryMergeContent("a\r\nb  \n  ")).toBe("a\nb");
   });
 
-  it("finalizeMergedMemoryContent adds trailing newline when non-empty", () => {
-    expect(finalizeMergedMemoryContent("x")).toBe("x\n");
-    expect(finalizeMergedMemoryContent("")).toBe("");
-  });
-
-  it("hashMemoryMergeContent is stable sha256 of normalized content", () => {
-    const h = hashMemoryMergeContent("a\r\nb");
-    expect(h).toBe(createHash("sha256").update("a\nb").digest("hex"));
-  });
-
   it("normalizeMemoryTemplateLines drops empty lines and normalizes newlines", () => {
     expect(normalizeMemoryTemplateLines("a\r\n\nb\n")).toEqual(["a", "b"]);
   });
@@ -276,18 +235,6 @@ describe("buildSessionMemoryRuntimeView", () => {
     expect(out).toContain("# Session Memory");
     expect(out).toContain("session");
     expect(out).toContain("---");
-  });
-});
-
-describe("isPostApplyFailureStage", () => {
-  it.each([
-    ["refresh_session_meta_stats", true],
-    ["record_attempt", true],
-    ["write_audit", true],
-    ["save_store", true],
-    ["merge_session", false]
-  ] as const)("%s -> %s", (stage, expected) => {
-    expect(isPostApplyFailureStage(stage)).toBe(expected);
   });
 });
 
@@ -899,7 +846,7 @@ describe("analyzeLatestCortexCloseoutNeed", () => {
   });
 });
 
-describe("parseTimestampToMillis / previewForLog / safeJson / formatToolExecutionPayload", () => {
+describe("parseTimestampToMillis / previewForLog / safeJson", () => {
   it("parseTimestampToMillis handles undefined and invalid", () => {
     expect(parseTimestampToMillis(undefined)).toBeUndefined();
     expect(parseTimestampToMillis("not-a-date")).toBeUndefined();
@@ -915,19 +862,9 @@ describe("parseTimestampToMillis / previewForLog / safeJson / formatToolExecutio
     a.self = a;
     expect(safeJson(a)).toBe("[object Object]");
   });
-
-  it("formatToolExecutionPayload passes strings through", () => {
-    expect(formatToolExecutionPayload("plain")).toBe("plain");
-    expect(formatToolExecutionPayload({ x: 1 })).toContain("x");
-  });
 });
 
-describe("trim helpers / toDisplayToolName", () => {
-  it("trimToMaxChars / trimToMaxCharsFromEnd", () => {
-    expect(trimToMaxChars("abcd", 2)).toBe("ab");
-    expect(trimToMaxCharsFromEnd("abcd", 2)).toBe("cd");
-  });
-
+describe("toDisplayToolName", () => {
   it("toDisplayToolName title-cases segments", () => {
     expect(toDisplayToolName("read_file")).toBe("Read File");
     expect(toDisplayToolName("   ")).toBe("Unknown");
@@ -1031,19 +968,7 @@ describe("sanitizeAttachmentFileName / sanitizePathSegment (utils)", () => {
   });
 });
 
-describe("normalizeOptionalAttachmentPath", () => {
-  it("trims or undefined", () => {
-    expect(normalizeOptionalAttachmentPath("  /p  ")).toBe("/p");
-    expect(normalizeOptionalAttachmentPath("   ")).toBeUndefined();
-  });
-});
-
-describe("extractRuntimeMessageText / formatInboundUserMessageForManager", () => {
-  it("extractRuntimeMessageText handles string or object", () => {
-    expect(extractRuntimeMessageText("x")).toBe("x");
-    expect(extractRuntimeMessageText({ text: "y" } as any)).toBe("y");
-  });
-
+describe("formatInboundUserMessageForManager", () => {
   it("formatInboundUserMessageForManager includes JSON context", () => {
     const out = formatInboundUserMessageForManager(" hi ", {
       channel: "web"
@@ -1136,28 +1061,13 @@ describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => 
   });
 });
 
-describe("escapeXmlForPreview / errorToMessage / nowIso", () => {
+describe("escapeXmlForPreview", () => {
   it("escapeXmlForPreview escapes XML specials", () => {
     expect(escapeXmlForPreview(`a&b<c>'"`)).toBe("a&amp;b&lt;c&gt;&apos;&quot;");
   });
-
-  it("errorToMessage unwraps Error", () => {
-    expect(errorToMessage(new Error("e"))).toBe("e");
-    expect(errorToMessage(42)).toBe("42");
-  });
-
-  it("nowIso returns ISO string", () => {
-    expect(nowIso()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  });
 });
 
-describe("isVersionedWriteToolName / extractVersionedToolPath", () => {
-  it("isVersionedWriteToolName", () => {
-    expect(isVersionedWriteToolName("write")).toBe(true);
-    expect(isVersionedWriteToolName("edit")).toBe(true);
-    expect(isVersionedWriteToolName("read")).toBe(false);
-  });
-
+describe("extractVersionedToolPath", () => {
   it.each([
     [{ path: " /tmp/a.ts " }, "/tmp/a.ts"],
     [{ filePath: "src/b.ts" }, "src/b.ts"],
@@ -1198,17 +1108,5 @@ describe("withManagerTimeout", () => {
     await expect(
       withManagerTimeout(new Promise(() => {}), 15, "op")
     ).rejects.toThrow(/op timed out after 15ms/);
-  });
-});
-
-describe("createDeferred", () => {
-  it("resolves and rejects", async () => {
-    const d = createDeferred<number>();
-    d.resolve(42);
-    await expect(d.promise).resolves.toBe(42);
-
-    const d2 = createDeferred<void>();
-    d2.reject(new Error("nope"));
-    await expect(d2.promise).rejects.toThrow("nope");
   });
 });

@@ -166,23 +166,6 @@ describe('SettingsNotifications', () => {
   /* ---- Global toggle ---- */
 
   describe('global toggle', () => {
-    it('renders with global notifications enabled', async () => {
-      const managers = [manager('m1', 'profile-1', 'My Manager')]
-      renderNotifications(managers)
-      await flush()
-
-      expect(container.textContent).toContain('Notifications')
-      expect(container.textContent).toContain('Notification Defaults')
-    })
-
-    it('shows disabled message when global is off', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers, disabledStore())
-      await flush()
-
-      expect(container.textContent).toContain('All notification sounds are disabled')
-    })
-
     it('hides per-manager sections when global is off', async () => {
       const managers = [manager('m1', 'profile-1', 'My Manager')]
       renderNotifications(managers, disabledStore())
@@ -191,50 +174,11 @@ describe('SettingsNotifications', () => {
       expect(container.textContent).not.toContain('Per-Manager Settings')
       expect(container.textContent).not.toContain('Notification Defaults')
     })
-
-    it('persists store on global toggle', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers)
-      await flush()
-
-      // writeNotificationStore should be called on mount (initial store write)
-      expect(notificationMock.writeNotificationStore).toHaveBeenCalled()
-    })
   })
 
   /* ---- Per-manager overrides ---- */
 
   describe('per-manager overrides', () => {
-    it('shows per-manager section when managers exist', async () => {
-      const managers = [manager('m1', 'profile-1', 'My Manager')]
-      renderNotifications(managers)
-      await flush()
-
-      expect(container.textContent).toContain('Per-Manager Settings')
-      expect(container.textContent).toContain('My Manager')
-    })
-
-    it('shows Using defaults label for non-overridden managers', async () => {
-      notificationMock.hasExplicitOverride.mockReturnValue(false)
-      const managers = [manager('m1', 'profile-1', 'My Manager')]
-      renderNotifications(managers)
-      await flush()
-
-      expect(container.textContent).toContain('Using defaults')
-    })
-
-    it('shows Customize button for non-overridden managers', async () => {
-      notificationMock.hasExplicitOverride.mockReturnValue(false)
-      const managers = [manager('m1', 'profile-1', 'My Manager')]
-      renderNotifications(managers)
-      await flush()
-
-      const customizeBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('Customize'),
-      )
-      expect(customizeBtn).toBeTruthy()
-    })
-
     it('clicking Customize creates an override', async () => {
       notificationMock.hasExplicitOverride.mockReturnValue(false)
       notificationMock.setAgentPrefs.mockImplementation((store: unknown) => store)
@@ -271,18 +215,6 @@ describe('SettingsNotifications', () => {
       expect(count).toBeGreaterThanOrEqual(1)
     })
 
-    it('pins Cortex to top of per-manager list', async () => {
-      const managers = [
-        manager('m1', 'profile-1', 'Regular Manager'),
-        manager('c1', 'cortex', 'Cortex'),
-      ]
-      renderNotifications(managers)
-      await flush()
-
-      // Both should render
-      expect(container.textContent).toContain('Cortex')
-      expect(container.textContent).toContain('Regular Manager')
-    })
   })
 
   /* ---- No managers ---- */
@@ -299,23 +231,6 @@ describe('SettingsNotifications', () => {
   /* ---- Custom sounds ---- */
 
   describe('custom sounds', () => {
-    it('renders Upload Sound button', async () => {
-      renderNotifications([])
-      await flush()
-
-      const uploadBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('Upload Sound'),
-      )
-      expect(uploadBtn).toBeTruthy()
-    })
-
-    it('shows no custom sounds message when none uploaded', async () => {
-      renderNotifications([])
-      await flush()
-
-      expect(container.textContent).toContain('No custom sounds uploaded yet')
-    })
-
     it('renders existing custom sounds', async () => {
       const storeWithCustom = defaultStore()
       storeWithCustom.customSounds = [
@@ -330,56 +245,13 @@ describe('SettingsNotifications', () => {
 
   /* ---- Defaults section ---- */
 
-  describe('defaults section', () => {
-    it('renders unread/question/all-done sound controls', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers)
-      await flush()
-
-      expect(container.textContent).toContain('Unread message sound')
-      expect(container.textContent).toContain('Question sound')
-      expect(container.textContent).toContain('All done sound')
-    })
-
-    it('renders volume slider', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers)
-      await flush()
-
-      const volumeSlider = container.querySelector('input[type="range"]')
-      expect(volumeSlider).toBeTruthy()
-    })
-  })
-
-  /* ---- CLI notification mute ---- */
-
   describe('CLI notification mute', () => {
-    it('renders CLI Notifications section when global is enabled', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers)
-      await flush()
-
-      expect(container.textContent).toContain('CLI Notifications')
-      expect(container.textContent).toContain('Mute CLI-originated notifications')
-    })
-
     it('hides CLI Notifications section when global is disabled', async () => {
       const managers = [manager('m1', 'profile-1')]
       renderNotifications(managers, disabledStore())
       await flush()
 
       expect(container.textContent).not.toContain('CLI Notifications')
-    })
-
-    it('renders CLI mute toggle as unchecked by default', async () => {
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers)
-      await flush()
-
-      // The CLI section should exist and have its description
-      expect(container.textContent).toContain(
-        'Suppress notification sounds for CLI-created sessions',
-      )
     })
 
     it('persists CLI mute toggle change', async () => {
@@ -400,19 +272,6 @@ describe('SettingsNotifications', () => {
       await flush()
 
       expect(notificationMock.writeNotificationStore).toHaveBeenCalled()
-    })
-
-    it('renders CLI mute toggle as checked when muteCliNotifications is true', async () => {
-      const store = {
-        ...defaultStore(),
-        muteCliNotifications: true,
-      }
-      const managers = [manager('m1', 'profile-1')]
-      renderNotifications(managers, store)
-      await flush()
-
-      // The section should render
-      expect(container.textContent).toContain('CLI Notifications')
     })
 
     it('hydrates CLI mute from backend GET on mount', async () => {

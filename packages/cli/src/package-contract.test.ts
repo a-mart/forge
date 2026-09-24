@@ -1,11 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { CLI_EXIT_CODES, CLI_PROTOCOL_VERSION as PROTOCOL_CLI_VERSION } from '@forge/protocol/cli'
 import { build } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
-import { CLI_PROTOCOL_VERSION, CLI_VERSION, EXIT_CODES } from './version.js'
+import { CLI_VERSION } from './version.js'
 
 interface PackageJson {
   name: string
@@ -32,11 +31,6 @@ describe('@forge/cli package contract', () => {
     expect(packageJson.scripts?.prepack).toBe('pnpm run build')
     expect(packageJson.scripts?.['test:pack-clean']).toBe('node scripts/verify-pack-clean.mjs')
     expect(packageJson.publishConfig?.access).toBe('public')
-  })
-
-  it('consumes protocol-owned wire and exit-code constants', () => {
-    expect(CLI_PROTOCOL_VERSION).toBe(PROTOCOL_CLI_VERSION)
-    expect(EXIT_CODES).toBe(CLI_EXIT_CODES)
   })
 
   it('uses published protocol leaf exports for runtime values', async () => {

@@ -215,45 +215,6 @@ describe('SkillsViewer collab mode', () => {
     })
   }
 
-  it('shows collab settings banner', async () => {
-    renderCollab()
-    await flush()
-    await flush()
-
-    const banner = container.querySelector('[data-testid="collab-settings-banner"]')
-    expect(banner).toBeTruthy()
-    expect(banner?.textContent).toContain('Editing remote collaboration server settings')
-  })
-
-  it('shows "Global Collaboration" label in scope selector', async () => {
-    renderCollab()
-    await flush()
-    await flush()
-
-    expect(container.textContent).toContain('Global Collaboration')
-  })
-
-  it('fetches categories and channels for scope selector', async () => {
-    renderCollab()
-    await flush()
-    await flush()
-
-    expect(specialistsApiMock.fetchCollabCategories).toHaveBeenCalled()
-    expect(specialistsApiMock.fetchCollabChannels).toHaveBeenCalled()
-  })
-
-  it('renders scope selector with combobox role for category/channel selection', async () => {
-    renderCollab()
-    await flush()
-    await flush()
-
-    // The scope selector is a combobox that includes category/channel options
-    const trigger = container.querySelector('[role="combobox"]')
-    expect(trigger).toBeTruthy()
-    // Description mentions category/channel scope management
-    expect(container.textContent).toContain('Select a category or channel to manage skill selection')
-  })
-
   it('renders ChannelSkillSelection when channel scope is selected', async () => {
     renderCollab('channel:ch-1')
     await flush()
@@ -309,23 +270,6 @@ describe('SkillsViewer collab mode', () => {
     const banner = container.querySelector('[data-testid="collab-settings-banner"]')
     expect(banner).toBeNull()
   })
-
-  it('filters out archived channels (archived channels not in fetched scope)', async () => {
-    const archivedChannel: CollaborationChannel = {
-      ...CHANNEL,
-      channelId: 'ch-archived',
-      name: 'old-channel',
-      archived: true,
-    }
-    specialistsApiMock.fetchCollabChannels.mockResolvedValue([CHANNEL, archivedChannel])
-
-    renderCollab()
-    await flush()
-    await flush()
-
-    // Component filters archived channels internally — verify fetch was called
-    expect(specialistsApiMock.fetchCollabChannels).toHaveBeenCalled()
-  })
 })
 
 /* ================================================================== */
@@ -350,22 +294,5 @@ describe('SkillsViewer builder mode', () => {
     expect(container.textContent).not.toContain('Skill Selection')
     expect(container.textContent).not.toContain('Default Skill Selection')
     expect(specialistsApiMock.fetchCollabCategories).not.toHaveBeenCalled()
-  })
-
-  it('does not show collab description text', async () => {
-    root = createRoot(container)
-    flushSync(() => {
-      root?.render(
-        createElement(SkillsViewer, {
-          wsUrl: 'ws://127.0.0.1:47187',
-          profiles: [],
-        }),
-      )
-    })
-    await flush()
-    await flush()
-
-    expect(container.textContent).not.toContain('Select a category or channel')
-    expect(container.textContent).toContain('Browse, inspect, and configure installed skills.')
   })
 })

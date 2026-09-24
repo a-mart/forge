@@ -7,8 +7,6 @@ import {
   configureXaiOAuthProxyClient,
   getOAuthProvider,
   resetOAuthProviders,
-  XAI_GROK_PROXY_COMPATIBILITY_SOURCE,
-  XAI_GROK_PROXY_COMPATIBILITY_VERSION,
   xaiOAuthProvider,
 } from "@earendil-works/pi-ai/oauth";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -49,13 +47,6 @@ describe("patched Pi xAI OAuth provider", () => {
     resetOAuthProviders();
 
     expect(getOAuthProvider("xai")).toBe(xaiOAuthProvider);
-  });
-
-  it("pins proxy compatibility to the official Grok Build source", () => {
-    expect(XAI_GROK_PROXY_COMPATIBILITY_VERSION).toBe("0.2.112");
-    expect(XAI_GROK_PROXY_COMPATIBILITY_SOURCE).toBe(
-      "https://github.com/xai-org/grok-build/commit/02d9359435d0e9c20a20945679389cdce441e431",
-    );
   });
 
   it("routes only OAuth-backed xAI models with exact per-model proxy headers", () => {

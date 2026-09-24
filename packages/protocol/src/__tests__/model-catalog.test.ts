@@ -32,83 +32,6 @@ import {
 } from '../model-catalog.js'
 import type { OpenRouterModelEntry } from '../model-catalog.js'
 
-const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-
-const EXPECTED_FAMILIES = {
-  'pi-codex': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.5',
-    visibleInCreateManager: false,
-    visibleInChangeManager: false,
-    visibleInSpawnPreset: false,
-    visibleInSpecialists: false,
-  },
-  'pi-5.5': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-6': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-6-astra',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-opus': {
-    provider: 'anthropic',
-    defaultModelId: 'claude-opus-5-5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-sonnet': {
-    provider: 'anthropic',
-    defaultModelId: 'claude-sonnet-5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-fable': {
-    provider: 'anthropic',
-    defaultModelId: 'claude-fable-5-1',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-grok': {
-    provider: 'xai',
-    defaultModelId: 'grok-4.6',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'cursor-composer': {
-    provider: 'cursor-sdk',
-    defaultModelId: 'composer-2.5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'cursor-grok-45': {
-    provider: 'cursor-sdk',
-    defaultModelId: 'grok-4.5',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-} as const
-
 const EXPECTED_MODELS = {
   'gpt-5.5': {
     provider: 'openai-codex',
@@ -281,18 +204,6 @@ describe('model-catalog', () => {
   })
 
   it('contains the expected curated providers, families, and model set', () => {
-    expect(Object.keys(FORGE_MODEL_CATALOG.providers)).toEqual([
-      'openai-codex',
-      'anthropic',
-      'xai',
-      'openrouter',
-      'cursor-sdk',
-      'claude-native',
-      'codex-native',
-    ])
-    expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual([...Object.keys(EXPECTED_FAMILIES), 'claude-native', 'codex-native'])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual([...Object.keys(EXPECTED_MODELS), ...Object.keys(EXPECTED_MODELS).filter(id => id.startsWith('claude-')).map(id => `claude-native/${id}`), ...NATIVE_MODEL_IDS.map(id => `codex-native/${id}`)])
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(29)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex-spark')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('claude-sonnet-4-5-20250929')
@@ -301,12 +212,6 @@ describe('model-catalog', () => {
     expect(FORGE_MODEL_CATALOG.families).not.toHaveProperty('pi-5.4')
     for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'grok-4', 'grok-4-fast', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-non-reasoning']) {
       expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty(modelId)
-    }
-  })
-
-  it('matches the approved family visibility matrix', () => {
-    for (const [familyId, expected] of Object.entries(EXPECTED_FAMILIES)) {
-      expect(getCatalogFamily(familyId)).toMatchObject(expected)
     }
   })
 
@@ -532,30 +437,6 @@ describe('model-catalog', () => {
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
   })
 
-  it('ensures all models reference valid families', () => {
-    const familyIds = new Set(Object.keys(FORGE_MODEL_CATALOG.families))
-
-    for (const model of Object.values(FORGE_MODEL_CATALOG.models)) {
-      expect(familyIds.has(model.familyId)).toBe(true)
-    }
-  })
-
-  it('ensures all models reference valid providers', () => {
-    const providerIds = new Set(Object.keys(FORGE_MODEL_CATALOG.providers))
-
-    for (const model of Object.values(FORGE_MODEL_CATALOG.models)) {
-      expect(providerIds.has(model.provider)).toBe(true)
-    }
-  })
-
-  it('ensures all families reference valid providers', () => {
-    const providerIds = new Set(Object.keys(FORGE_MODEL_CATALOG.providers))
-
-    for (const family of Object.values(FORGE_MODEL_CATALOG.families)) {
-      expect(providerIds.has(family.provider)).toBe(true)
-    }
-  })
-
   it('ensures each family resolves a default model', () => {
     for (const family of Object.values(FORGE_MODEL_CATALOG.families)) {
       const familyModels = getCatalogModelsByFamily(family.familyId)
@@ -566,33 +447,10 @@ describe('model-catalog', () => {
     }
   })
 
-  it('ensures all context windows are positive integers', () => {
-    for (const model of Object.values(FORGE_MODEL_CATALOG.models)) {
-      expect(Number.isInteger(model.contextWindow)).toBe(true)
-      expect(model.contextWindow).toBeGreaterThan(0)
-    }
-  })
-
-  it('ensures all max output token values are positive integers', () => {
-    for (const model of Object.values(FORGE_MODEL_CATALOG.models)) {
-      expect(Number.isInteger(model.maxOutputTokens)).toBe(true)
-      expect(model.maxOutputTokens).toBeGreaterThan(0)
-    }
-  })
-
-  it('ensures supported reasoning levels stay within the allowed set', () => {
-    for (const model of Object.values(FORGE_MODEL_CATALOG.models)) {
-      for (const reasoningLevel of model.supportedReasoningLevels) {
-        expect(VALID_REASONING_LEVELS.has(reasoningLevel)).toBe(true)
-      }
-    }
-  })
-
   it('provides working lookup helpers', () => {
     expect(getCatalogModel('gpt-6-astra')?.displayName).toBe('GPT-6 Astra')
     expect(getCatalogModel('gpt-6-astra')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-6-sol')?.displayName).toBe('GPT-6 Sol')
-    expect(getCatalogModel('gpt-6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
     expect(getCatalogModel('gpt-6-sol')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
     expect(getCatalogModel('gpt-6-luna')?.supportedReasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')

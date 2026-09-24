@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { PhoenixObservabilitySettings, PhoenixObservabilitySettingsPatch, PhoenixObservabilityStatus, PhoenixObservabilityTestResponse } from '@forge/protocol'
+import type { PhoenixObservabilitySettings, PhoenixObservabilitySettingsPatch, PhoenixObservabilityStatus } from '@forge/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   P0HttpRouteFakeSwarmManager as FakeSwarmManager,
@@ -90,18 +90,6 @@ describe('createPhoenixObservabilityRoutes', () => {
     } finally {
       await server.stop()
     }
-  })
-
-  it('invokes testConnection only for explicit POST test requests', async () => {
-    const service = new FakeObservabilityService('builder')
-    const server = await createRouteServer(createPhoenixObservabilityRoutes({ observabilityService: service, runtimeTarget: 'builder' }))
-
-    const response = await fetch(`${server.baseUrl}/api/phoenix-observability/test`, { method: 'POST' })
-    const body = await response.json() as PhoenixObservabilityTestResponse
-
-    expect(response.status).toBe(200)
-    expect(body.ok).toBe(true)
-    expect(service.testConnection).toHaveBeenCalledTimes(1)
   })
 })
 

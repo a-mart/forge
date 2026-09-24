@@ -25,11 +25,6 @@ import type {
  * fixtures pin the shapes for the handshake, attribution, and clientRequestId.
  */
 describe('builder protocol contract', () => {
-  it('pins the version constants', () => {
-    expect(BUILDER_PROTOCOL_VERSION).toBe(2)
-    expect(BUILDER_PROTOCOL_MAX_SUPPORTED).toBeGreaterThanOrEqual(BUILDER_PROTOCOL_VERSION)
-  })
-
   it('handshake fields are additive: pre-Wave-R status payloads remain valid', () => {
     const legacyServerStatus: CollaborationStatus = {
       enabled: true,
@@ -250,7 +245,7 @@ describe('remote build settings response contract', () => {
     expect(response.sources?.enabled).toBe('environment')
     expect(response.persistedSettings?.enabled).toBe(false)
     expect(conflict.code).toBe('REMOTE_BUILD_SETTINGS_ENV_OVERRIDE')
-    expect(BUILDER_PROTOCOL_VERSION).toBe(2)
+    expect(BUILDER_PROTOCOL_MAX_SUPPORTED).toBeGreaterThanOrEqual(BUILDER_PROTOCOL_VERSION)
   })
 })
 

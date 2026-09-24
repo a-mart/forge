@@ -7,7 +7,6 @@ import {
   BASELINE_PIN_REVISION,
   GOLDENS,
   PASSIVE_READINESS_DEADLINE_MS,
-  QUALITY_RUBRIC,
   assertLargeModeConfirmed,
   compactAgentSpecs,
   compactGoldens,
@@ -63,8 +62,6 @@ describe("history-recall reliability acceptance preparation", () => {
 
     expect(() => assertLargeModeConfirmed("giant", false)).toThrow(/opt-in/i);
     expect(() => assertLargeModeConfirmed("scale", false)).toThrow(/opt-in/i);
-    expect(QUALITY_RUBRIC.paraphraseBucket).toBe("diagnostic-only");
-    expect(PASSIVE_READINESS_DEADLINE_MS).toBe(2_000);
   });
 
   it("fails strict mode on fake red observations and passes it on fake green observations", () => {

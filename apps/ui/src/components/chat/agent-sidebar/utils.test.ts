@@ -206,29 +206,17 @@ describe('findCliHideNavigationTarget', () => {
 describe('buildSessionContextMenuActions', () => {
   it('binds local session actions and disables archive on the default session', () => {
     const onArchiveSession = vi.fn()
-    const onRequestRenameSession = vi.fn()
-    const onForkSession = vi.fn()
-    const onChangeSessionModel = vi.fn()
     const onPromoteToProjectAgent = vi.fn()
     const session = makeSession(makeAgent({ agentId: 'main', profileId: 'p1' }), [], true)
 
     const actions = buildSessionContextMenuActions(session, {
       onArchiveSession,
-      onRequestRenameSession,
-      onForkSession,
-      onChangeSessionModel,
       onPromoteToProjectAgent,
     }, { canPromoteToProjectAgent: false })
 
     expect(actions.onArchive).toBeUndefined()
     expect(actions.archiveDisabledReason).toBe('The default session for a project can\u2019t be archived directly.')
     expect(actions.onPromoteToProjectAgent).toBeUndefined()
-    actions.onRename?.()
-    actions.onFork?.()
-    actions.onChangeSessionModel?.()
-    expect(onRequestRenameSession).toHaveBeenCalledWith('main')
-    expect(onForkSession).toHaveBeenCalledWith('main')
-    expect(onChangeSessionModel).toHaveBeenCalledWith('main')
   })
 
   it('archives a non-default session through the same handler as Projects', () => {

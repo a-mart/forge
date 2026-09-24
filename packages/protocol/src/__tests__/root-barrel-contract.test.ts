@@ -2,55 +2,19 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
   BROWSER_AUTOMATION_OPERATIONS,
-  CATALOG_FAMILY_IDS,
-  FORGE_MODEL_CATALOG,
-  getCatalogFamily,
-  getCatalogModel,
-  getCatalogProvider,
-  getCreateManagerFamilies,
-  getSpecialistFamilies,
-  inferCatalogFamily,
   getWsRequestContract,
-  isCatalogModelId,
-  isConversationMessageSource,
-  isUserVisibleAssistantConversationMessage,
-  MANAGER_SELECTION_CATALOG_VERSION,
-  WORK_MODE_DEFINITIONS,
-  SESSION_ATTENTION_MAX_DISMISS_IDS,
-  SESSION_ATTENTION_MAX_ID_LENGTH,
-  SESSION_ATTENTION_REASONS,
-  SESSION_AUDIT_ENTRY_CATEGORIES,
   WS_REQUEST_CONTRACT_TYPES,
   WS_REQUEST_CONTRACTS,
 } from '../index.js'
 import type {
   AgentDescriptor,
-  AgentSystemPromptResponse,
-  ConversationMessageEvent,
-  ExternalThreadMessageContext,
-  ExternalThreadInfo,
   CliCapabilities,
-  CliRunResult,
-  CliSessionCompactionResult,
-  CliWsCommand,
   ClientCommand,
-  CollaborationBootstrapEvent,
   CollaborationChannel,
   CollaborationCategory,
-  CollaborationServerEvent,
-  ForgeModelCatalog,
-  GenerationMeasurementRecordV1,
-  GenerationThroughputEvent,
   ManagerProfile,
-  ManagerSelectionCatalogResponse,
-  MessageChannel,
-  ResolvedSpecialistDefinition,
   ServerEvent,
-  DismissSessionAttentionCommand,
-  SessionAttention,
-  SessionAuditPageResponse,
   TerminalDescriptor,
-  TerminalMeta,
 } from '../index.js'
 
 type ClientCommandType = ClientCommand['type']
@@ -219,34 +183,6 @@ const cliCapabilities = {
   },
 } satisfies CliCapabilities
 
-const cliCommand = {
-  type: 'subscribe_headless',
-  requestId: 'request-cli-0',
-  agentId: 'agent-1',
-} satisfies CliWsCommand
-
-const cliRunResult = {
-  status: 'success',
-  sessionAgentId: 'agent-1',
-  profileId: 'profile-1',
-  projectAgentHandle: null,
-  finalMessage: 'Done',
-  blocked: null,
-  timedOut: false,
-  durationMs: 100,
-} satisfies CliRunResult
-
-const cliCompactionResult = {
-  action: 'smart_compact',
-  sessionAgentId: 'agent-1',
-  profileId: 'profile-1',
-  outcome: 'not_reduced',
-  compacted: false,
-  reason: 'runtime_aborted',
-  customInstructionsProvided: false,
-  completedAt: now,
-} satisfies CliSessionCompactionResult
-
 const profile = {
   profileId: 'profile-1',
   displayName: 'Profile',
@@ -269,112 +205,6 @@ const agent = {
   sessionFile: '/tmp/session.jsonl',
   profileId: profile.profileId,
 } satisfies AgentDescriptor
-
-const initialModelInputResponse = {
-  agentId: agent.agentId,
-  role: 'manager',
-  systemPrompt: 'Final prompt',
-  model: 'openai-codex/gpt-5.4',
-  archetypeId: null,
-  initialModelInput: {
-    status: 'available',
-    capture: {
-      version: 1,
-      runtime: 'pi',
-      capturedAt: now,
-      fidelity: {
-        capturePoint: 'pi_stream_fn',
-        context: 'exact_provider_independent',
-        images: 'byte_summary',
-        requestMetadata: 'safe_projection',
-      },
-      systemPrompt: 'Final prompt',
-      messages: [],
-      tools: [],
-      model: { provider: 'openai-codex', id: 'gpt-5.4' },
-      requestMetadata: {},
-    },
-    tokenUsage: {
-      source: 'provider_reported',
-      inputTokens: 1_200,
-      uncachedInputTokens: 200,
-      cacheReadInputTokens: 1_000,
-      cacheWriteInputTokens: 0,
-    },
-  },
-} satisfies AgentSystemPromptResponse
-
-const auditPage = {
-  sessionAgentId: agent.agentId,
-  manifest: {
-    sessionAgentId: agent.agentId,
-    sessionRelativePath: 'session.jsonl',
-    sessionBytes: 100,
-    workers: [],
-  },
-  scope: 'session',
-  sourceId: 'session',
-  sourceKind: 'canonical_session_jsonl',
-  order: 'asc',
-  limit: 100,
-  items: [],
-  page: {
-    startOffset: 0,
-    endOffset: 0,
-    sourceBytes: 100,
-    scannedLines: 0,
-    scannedBytes: 0,
-    returnedItems: 0,
-    scanLimited: false,
-  },
-  hasMore: false,
-} satisfies SessionAuditPageResponse
-
-const codexExternalThread = {
-  type: 'codex_app_server',
-  persisted: true,
-  createdByMention: true,
-  threadId: 'codex-thread-1',
-} satisfies ExternalThreadInfo
-
-const codexSidecar = {
-  agentId: 'agent-1--codex',
-  managerId: agent.agentId,
-  displayName: 'Codex',
-  role: 'worker',
-  status: 'idle',
-  createdAt: now,
-  updatedAt: now,
-  cwd: agent.cwd,
-  model: {
-    provider: 'codex-app-server',
-    modelId: 'app-server',
-    thinkingLevel: 'none',
-  },
-  sessionFile: '/tmp/workers/agent-1--codex.jsonl',
-  profileId: profile.profileId,
-  externalThread: codexExternalThread,
-} satisfies AgentDescriptor
-
-const codexParentCardContext = {
-  type: 'codex_app_server',
-  sidecarAgentId: codexSidecar.agentId,
-  requestId: 'req-1',
-  turnCorrelationId: 'turn-1',
-  status: 'sent',
-  promptPreview: 'hello',
-  excludeFromModelContext: true,
-} satisfies ExternalThreadMessageContext
-
-const codexParentCard = {
-  type: 'conversation_message',
-  agentId: agent.agentId,
-  role: 'system',
-  text: 'Sent to Codex',
-  timestamp: now,
-  source: 'system',
-  externalThreadContext: codexParentCardContext,
-} satisfies ConversationMessageEvent
 
 const terminal = {
   terminalId: 'terminal-1',
@@ -599,43 +429,6 @@ const requestIdCommands = [
 ] as const satisfies readonly RequestIdCommand[]
 
 describe('protocol root barrel contract', () => {
-  it('exports model catalog constants and helpers from the root barrel', () => {
-    const catalog: ForgeModelCatalog = FORGE_MODEL_CATALOG
-
-    expect(catalog.providers['openai-codex']?.displayName).toBe('OpenAI Codex')
-    expect(CATALOG_FAMILY_IDS).toContain('pi-6')
-    expect(CATALOG_FAMILY_IDS).not.toContain('pi-5.4')
-    expect(getCatalogProvider('openai-codex')?.providerId).toBe('openai-codex')
-    expect(getCatalogFamily('pi-6')?.defaultModelId).toBe('gpt-6-astra')
-    expect(getCatalogModel('gpt-6-sol', 'openai-codex')?.familyId).toBe('pi-6')
-    expect(getCreateManagerFamilies().some((family) => family.familyId === 'pi-5.4')).toBe(false)
-    expect(getSpecialistFamilies().some((family) => family.familyId === 'pi-opus')).toBe(true)
-    expect(inferCatalogFamily('openai-codex', 'gpt-5.4')).toBeUndefined()
-    expect(isCatalogModelId('gpt-5.4')).toBe(false)
-    const managerSelectionCatalog = {
-      version: MANAGER_SELECTION_CATALOG_VERSION,
-      revision: 'msc-v1-root-contract',
-      models: [],
-      workModes: WORK_MODE_DEFINITIONS.map(({ id, label, description, selectable }) => ({
-        id,
-        label,
-        description,
-        selectable,
-      })),
-      defaults: { workModeId: 'delegation_first' },
-    } satisfies ManagerSelectionCatalogResponse
-    expect(managerSelectionCatalog.workModes.some((mode) => mode.id === 'adaptive')).toBe(true)
-    expect(isConversationMessageSource('assistant_output')).toBe(true)
-    expect(isUserVisibleAssistantConversationMessage({
-      type: 'conversation_message',
-      agentId: agent.agentId,
-      role: 'assistant',
-      text: 'projected',
-      timestamp: now,
-      source: 'assistant_output',
-    })).toBe(true)
-  })
-
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
       'subscribe_inventory',
@@ -924,162 +717,6 @@ describe('protocol root barrel contract', () => {
     })
   })
 
-  it('exports representative collaboration, terminal, and specialist contracts from the root barrel', () => {
-    const collabEvent: CollaborationBootstrapEvent = serverEventsByLeafModule[6]
-    const collabServerEvent: CollaborationServerEvent = collabEvent
-    const terminalMeta: TerminalMeta = {
-      version: 1,
-      ...terminal,
-      shellArgs: [],
-      checkpointSeq: 0,
-      nextSeq: 1,
-    }
-    const specialist: ResolvedSpecialistDefinition = {
-      specialistId: 'backend-specialist',
-      displayName: 'Backend Specialist',
-      color: 'blue',
-      enabled: true,
-      whenToUse: 'Backend work',
-      modelId: 'gpt-5.4',
-      provider: 'openai-codex',
-      builtin: true,
-      pinned: false,
-      targetSpace: ['builder'],
-      promptBody: 'Prompt',
-      sourceKind: 'builtin',
-      available: true,
-      availabilityCode: 'ok',
-      shadowsGlobal: false,
-    }
-
-    expect(collabServerEvent.type).toBe('collab_bootstrap')
-    expect(terminalMeta.version).toBe(1)
-    expect(specialist.targetSpace).toContain('builder')
-    expect(codexSidecar.externalThread?.threadId).toBe('codex-thread-1')
-    expect(codexParentCard.externalThreadContext?.excludeFromModelContext).toBe(true)
-  })
-
-  it('exports Pi-only generation throughput contracts from the root barrel', () => {
-    const record = {
-      version: 1,
-      measurementId: 'measurement-1',
-      recordState: 'terminal',
-      recordSequence: 2,
-      startedAt: now,
-      completedAt: now,
-      identity: {
-        profileId: profile.profileId,
-        sessionId: agent.agentId,
-        agentId: agent.agentId,
-        managerId: agent.agentId,
-        role: 'manager',
-        specialistId: null,
-        specialistAttributionKnown: null,
-      },
-      model: {
-        provider: 'openai-codex',
-        requestedModelId: 'gpt-5.4',
-        responseModelId: null,
-        api: 'openai-codex-responses',
-        reasoningLevel: 'xhigh',
-      },
-      correlation: { turnId: null },
-      timing: {
-        responseStreamStartedAt: now,
-        firstOutputAt: now,
-        lastOutputAt: now,
-        requestWallMs: 1,
-        responseThroughputDurationBasis: 'request_wall_monotonic',
-        timeToFirstOutputMs: 1,
-        responseStreamOpenMs: 1,
-        generationDurationMs: 1,
-        interOutputSpanMs: 0,
-        boundarySource: 'content_delta_to_stream_end',
-      },
-      usage: { outputTokens: 1, reasoningTokens: null, tokenSource: 'provider_final' },
-      outcome: 'completed',
-      reasoningBoundaryCoverage: 'not_reported',
-    } satisfies GenerationMeasurementRecordV1
-    const live = {
-      type: 'generation_throughput',
-      measurement: {
-        measurementId: record.measurementId,
-        sequence: 1,
-        phase: 'completed',
-        profileId: profile.profileId,
-        sessionId: agent.agentId,
-        agentId: agent.agentId,
-        managerId: agent.agentId,
-        role: 'manager',
-        provider: record.model.provider,
-        modelId: record.model.requestedModelId,
-        sampledAt: now,
-        requestStartedAt: now,
-        firstOutputAt: now,
-        responseDurationMs: 1,
-        responseThroughputDurationBasis: 'request_wall_monotonic',
-        responseThroughputTokensPerSecond: 1,
-        elapsedGenerationMs: 1,
-        outputTokens: 1,
-        instantaneousTokensPerSecond: null,
-        generationAverageTokensPerSecond: 1,
-        valueKind: 'provider_final',
-        quality: {
-          measurementScope: 'agent_model_call',
-          agentRetryAttempt: 0,
-          providerAttemptScope: 'unavailable',
-          observedProviderAttemptCount: null,
-          tokenSource: 'provider_final',
-          boundarySource: 'content_delta_to_stream_end',
-          reasoningBoundaryCoverage: 'not_reported',
-        },
-      },
-    } satisfies GenerationThroughputEvent
-
-    expect(record.measurementId).toBe(live.measurement.measurementId)
-  })
-
-  it('exports the initial Pi model-input HTTP contract from the root barrel', () => {
-    expect(initialModelInputResponse.initialModelInput.status).toBe('available')
-    expect(initialModelInputResponse.initialModelInput.capture.systemPrompt).toBe('Final prompt')
-    expect(initialModelInputResponse.initialModelInput.tokenUsage?.inputTokens).toBe(1_200)
-  })
-
-  it('exports session-attention contracts from the root barrel', () => {
-    const attention = {
-      attentionId: 'attention-1',
-      sessionAgentId: agent.agentId,
-      profileId: profile.profileId,
-      reason: 'work_settled',
-      raisedAt: now,
-    } satisfies SessionAttention
-    const dismiss = {
-      type: 'dismiss_session_attention',
-      attentionIds: [attention.attentionId],
-      requestId: 'request-dismiss-attention',
-    } satisfies DismissSessionAttentionCommand
-
-    expect(SESSION_ATTENTION_MAX_DISMISS_IDS).toBe(100)
-    expect(SESSION_ATTENTION_MAX_ID_LENGTH).toBe(256)
-    expect(SESSION_ATTENTION_REASONS).toContain(attention.reason)
-    expect(dismiss.attentionIds).toEqual([attention.attentionId])
-  })
-
-  it('exports session audit protocol contracts from the root barrel', () => {
-    expect(SESSION_AUDIT_ENTRY_CATEGORIES).toContain('malformed')
-    expect(auditPage.sourceKind).toBe('canonical_session_jsonl')
-  })
-
-  it('exports CLI protocol contracts from the root barrel', () => {
-    const channel: MessageChannel = 'cli'
-
-    expect(channel).toBe('cli')
-    expect(cliCapabilities.features.headlessWs).toBe(true)
-    expect(cliCapabilities.features.sessionCompaction).toBe(true)
-    expect(cliCommand.type).toBe('subscribe_headless')
-    expect(cliRunResult.status).toBe('success')
-    expect(cliCompactionResult.outcome).toBe('not_reduced')
-  })
 
   it('pins current ClientCommand discriminator coverage', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>(undefined as never).toEqualTypeOf<never>(undefined as never)

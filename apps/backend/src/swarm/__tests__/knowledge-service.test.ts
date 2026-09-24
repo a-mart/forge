@@ -8,7 +8,7 @@ import {
   type KnowledgeEntryScope,
   type KnowledgeEntrySource,
 } from "../knowledge-service.js";
-import { createKnowledgeConsolidatorApi, type KnowledgeConsolidatorApi } from "../knowledge-consolidator-api.js";
+import { createKnowledgeConsolidatorApi } from "../knowledge-consolidator-api.js";
 import type { AgentDescriptor } from "../types.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { VersioningMutation, VersioningMutationSink } from "../../versioning/versioning-types.js";
@@ -81,10 +81,6 @@ describe("KnowledgeService", () => {
   });
 
   it("exposes a consolidator API without create and carries source ids on merge", async () => {
-    type HasCreate = "create" extends keyof KnowledgeConsolidatorApi ? true : false;
-    const hasCreate: HasCreate = false;
-    expect(hasCreate).toBe(false);
-
     const service = createService(await tempDir());
     const first = await service.upsertEntry(baseEntry("Merge A"));
     const second = await service.upsertEntry(baseEntry("Merge B", "s2"));

@@ -5,7 +5,6 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { getScheduleFilePath } from '../schedule-storage.js'
 
 const execFile = promisify(execFileCallback)
 const scheduleCliPath = resolve(
@@ -30,13 +29,6 @@ async function runScheduleCli(args: string[], dataDir: string) {
 }
 
 describe('schedule-storage', () => {
-  it('stores schedules under profile-scoped files', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'swarm-schedules-path-'))
-    expect(getScheduleFilePath(dataDir, 'release-manager')).toBe(
-      join(dataDir, 'profiles', 'release-manager', 'schedules', 'schedules.json'),
-    )
-  })
-
   it('cron scheduling CLI resolves a session managerId to the owning profile schedule path', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'swarm-schedule-cli-'))
     const agentsStorePath = join(dataDir, 'swarm', 'agents.json')

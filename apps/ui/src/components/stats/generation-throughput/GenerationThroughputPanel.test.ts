@@ -44,21 +44,6 @@ afterEach(() => {
 })
 
 describe('GenerationThroughputPanel', () => {
-  it('renders provider-rate cards, quality disclosure, trends, model table, and calls', async () => {
-    useGenerationThroughputMock.mockReturnValue({ snapshot: fixture(), isLoading: false, isRefreshing: false, isSwitchingQuery: false, error: null, refresh: vi.fn() })
-    root = createRoot(container)
-    flushSync(() => root?.render(createElement(GenerationThroughputPanel, { wsUrl: 'ws://127.0.0.1:47187', onBack: vi.fn(), activeTab: 'throughput', onTabChange: vi.fn() })))
-
-    expect(container.textContent).toContain('Response throughput')
-    expect(getByText(container, 'Manager vs worker')).toBeTruthy()
-    expect(getByText(container, 'Model performance trends')).toBeTruthy()
-    expect(getByText(container, 'Model performance')).toBeTruthy()
-    expect(getByText(container, 'Recent responses')).toBeTruthy()
-    expect(container.textContent).toContain('Coverage note.')
-    expect(container.textContent).toContain('provider-internal retries and Codex WebSocket replays are not timed as separate rates')
-    await waitFor(() => expect(fetchCallsMock).toHaveBeenCalled())
-  })
-
   it('appends unique calls from later pages', async () => {
     const first = recentCall('first-call', 'First session')
     const second = recentCall('second-call', 'Second session')

@@ -7,7 +7,6 @@ import {
   isWorkerQuickLookActivity,
 } from '../manager-context-visibility.js'
 import { isVisibleInBuilderTimeline } from '../builder-timeline-visibility.js'
-import type { PendingChoicesSnapshotEvent } from '../transport-events.js'
 
 const activeManagerId = 'manager-1'
 const workerId = 'worker-1'
@@ -150,20 +149,6 @@ describe('manager All view plan_summary visibility', () => {
     }
 
     expect(isVisibleInManagerAllView(entry, visibilityOptions())).toBe(false)
-  })
-})
-
-describe('PendingChoicesSnapshotEvent protocol shape', () => {
-  it('keeps choiceIds and accepts optional hydrated choice payloads', () => {
-    const snapshot: PendingChoicesSnapshotEvent = {
-      type: 'pending_choices_snapshot',
-      agentId: activeManagerId,
-      choiceIds: ['choice-1'],
-      choices: [choiceRequest({ agentId: workerId, sessionAgentId: activeManagerId })],
-    }
-
-    expect(snapshot.choiceIds).toEqual(['choice-1'])
-    expect(snapshot.choices?.[0]?.sessionAgentId).toBe(activeManagerId)
   })
 })
 

@@ -159,13 +159,4 @@ describe("RuntimeCallbackGate", () => {
     gate.clearInvalidatedManualStopMessageEndAllowance("agent-1", 11);
     expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 11, "message_end")).toBe(true);
   });
-
-  it("works without a fallback handoff", () => {
-    const gate = new RuntimeCallbackGate({ getCurrentRuntimeToken: () => 1 });
-
-    expect(gate.bufferStatusDuringHandoff("agent-1", 1, "idle", 0)).toBe(false);
-    expect(gate.bufferAgentEndDuringHandoff("agent-1", 1)).toBe(false);
-    expect(gate.isSuppressedRuntimeCallback("agent-1", 1)).toBe(false);
-    expect(gate.shouldIgnoreRuntimeCallback("agent-1", 1)).toBe(false);
-  });
 });

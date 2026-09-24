@@ -30,17 +30,6 @@ async function digest(directory: string): Promise<string> {
 }
 
 describe('deterministic MV3 package', () => {
-  it('registers worker listeners synchronously before selector I/O', async () => {
-    const source = await readFile(path.join(root, 'src/shell/service-worker-bootstrap.ts'), 'utf8')
-    const firstRegister = source.indexOf("register(chromeApi.runtime.onInstalled")
-    const boot = source.indexOf('async function boot')
-    const bootInvocation = source.indexOf('void boot()')
-    expect(firstRegister).toBeGreaterThan(0)
-    expect(firstRegister).toBeLessThan(boot)
-    expect(boot).toBeLessThan(bootInvocation)
-    expect(source).toContain("register(chromeApi.debugger.onDetach, 'debugger.detach')")
-  })
-
   it('builds twice byte-for-byte with normalized inventory and no source maps', async () => {
     const temporary = await mkdtemp(path.join(os.tmpdir(), 'forge-extension-repro-'))
     const first = path.join(temporary, 'first')

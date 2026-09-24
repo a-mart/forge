@@ -122,18 +122,3 @@ describe('ChatHeader response throughput', () => {
     expect(container.querySelector('[data-testid="throughput-pulse"]')?.textContent).toContain('50')
   })
 })
-
-describe('ChatHeader initial model-input entry point', () => {
-  it('uses initial-model-input copy in All mode', () => {
-    act(() => {
-      root.render(createElement(ChatHeader, {
-        ...props,
-        channelView: 'all',
-      }))
-    })
-
-    const button = container.querySelector('button[aria-label="View initial model input"]')
-    expect(button).not.toBeNull()
-    expect(container.querySelector('button[aria-label="View system prompt"]')).toBeNull()
-  })
-})

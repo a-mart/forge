@@ -7,9 +7,7 @@ import {
 } from './manager-selection-catalog.fixture'
 import {
   MANAGER_SELECTION_CATALOG_PATH,
-  RECOMMENDED_MANAGER_DEFAULTS_PATH,
   ManagerSelectionCatalogRequestError,
-  applyRecommendedManagerDefaults,
   fetchManagerSelectionCatalog,
 } from './manager-selection-catalog-api'
 import { LEGACY_MANAGER_SELECTION_CATALOG_REVISION } from './manager-selection-catalog-legacy'
@@ -103,23 +101,5 @@ describe('fetchManagerSelectionCatalog', () => {
     await expect(fetchManagerSelectionCatalog(makeClient(malformedFetch)))
       .rejects.toThrow('Unsupported manager selection catalog version')
     expect(malformedFetch).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('applyRecommendedManagerDefaults', () => {
-  it('posts through the settings client and returns the applied scope', async () => {
-    const result = {
-      profileIds: ['project-1'],
-      rosterId: 'default',
-      rosterRevision: 1,
-    }
-    const client = makeClient(vi.fn())
-    vi.mocked(client.fetchJson).mockResolvedValue(result)
-
-    await expect(applyRecommendedManagerDefaults(client)).resolves.toEqual(result)
-    expect(client.fetchJson).toHaveBeenCalledWith(
-      RECOMMENDED_MANAGER_DEFAULTS_PATH,
-      { method: 'POST' },
-    )
   })
 })

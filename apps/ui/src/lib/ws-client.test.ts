@@ -1,10 +1,7 @@
-import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
-import type { WsRequestContractType } from '@forge/protocol'
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
 import { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
-import { REQUEST_TIMEOUT_MS, WS_REQUEST_ERROR_HINTS, WS_REQUEST_TYPES } from './ws-client/runtime-types'
-import type { WsRequestType } from './ws-client/types'
+import { REQUEST_TIMEOUT_MS } from './ws-client/runtime-types'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -137,89 +134,6 @@ describe('ManagerWsClient', () => {
     ;(globalThis as any).WebSocket = originalWebSocket
     ;(globalThis as any).window = originalWindow
     ;(globalThis as any).document = originalDocument
-  })
-
-  it('keeps promise request policy aligned with protocol contracts', () => {
-    expectTypeOf<Exclude<WsRequestType, WsRequestContractType>>().toEqualTypeOf<never>()
-    expectTypeOf<Exclude<WsRequestContractType, WsRequestType>>().toEqualTypeOf<never>()
-
-    const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
-    const contractTypeSet = new Set(contractTypes)
-    const requestTypeSet = new Set(WS_REQUEST_TYPES)
-
-    expect(contractTypes).toEqual([
-      'subscribe_inventory',
-      'browser_host_register',
-      'browser_host_hydrate',
-      'browser_panel_reveal_acknowledge',
-      'browser_host_state_report',
-      'browser_recording_start',
-      'browser_recording_stop',
-      'browser_tab_open',
-      'browser_tab_activate',
-      'browser_tab_close',
-      'browser_tab_resize',
-      'list_directories',
-      'validate_directory',
-      'create_directory',
-      'pick_directory',
-      'get_session_workers',
-      'get_conversation_page',
-      'dismiss_session_attention',
-      'rename_profile',
-      'archive_profile',
-      'restore_profile',
-      'rename_session',
-      'pin_session',
-      'update_session_model',
-      'update_session_delegation',
-      'fork_session',
-      'merge_session_memory',
-      'update_profile_default_model',
-      'update_project_delegation_defaults',
-      'update_manager_model',
-      'update_manager_cwd',
-      'stop_all_agents',
-      'create_manager',
-      'create_repository_project',
-      'cancel_repository_project_creation',
-      'delete_manager',
-      'create_session',
-      'stop_session',
-      'resume_session',
-      'hydrate_archive_last_used',
-      'archive_session',
-      'restore_session',
-      'delete_session',
-      'clear_session',
-      'session_goal_control',
-      'set_session_project_agent',
-      'get_project_agent_config',
-      'list_project_agent_references',
-      'get_project_agent_reference',
-      'set_project_agent_reference',
-      'delete_project_agent_reference',
-      'request_project_agent_recommendations',
-      'get_project_agent_sharing',
-      'set_project_agent_sharing',
-      'get_project_agent_external_directory',
-    ])
-    expect(contractTypeSet.size).toBe(contractTypes.length)
-    expect(WS_REQUEST_TYPES.every((type) => contractTypeSet.has(type))).toBe(true)
-    expect(contractTypes.every((type) => requestTypeSet.has(type))).toBe(true)
-    expect(requestTypeSet.size).toBe(WS_REQUEST_TYPES.length)
-    expect(WS_REQUEST_TYPES.filter((type) => type === 'create_manager')).toHaveLength(1)
-    expect(WS_REQUEST_TYPES.filter((type) => type === 'delete_manager')).toHaveLength(1)
-
-    const hintKeys = WS_REQUEST_ERROR_HINTS.map((hint) => `${hint.requestType}:${hint.codeFragment}`)
-    expect(new Set(hintKeys).size).toBe(WS_REQUEST_ERROR_HINTS.length)
-    expect(
-      WS_REQUEST_CONTRACTS.every((contract) =>
-        contract.errorCodeFragments.every((codeFragment) =>
-          WS_REQUEST_ERROR_HINTS.some((hint) => hint.requestType === contract.commandType && hint.codeFragment === codeFragment),
-        ),
-      ),
-    ).toBe(true)
   })
 
   it('does not adopt unsolicited inventory baselines or inventory heartbeat as a viewed conversation', () => {

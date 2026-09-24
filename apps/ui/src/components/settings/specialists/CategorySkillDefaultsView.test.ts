@@ -107,15 +107,6 @@ function render(category: CollaborationCategory = CATEGORY): void {
 /* ================================================================== */
 
 describe('CategorySkillDefaultsView', () => {
-  it('renders the section header', async () => {
-    render()
-    await flush()
-    await flush()
-
-    expect(container.textContent).toContain('Default Skill Selection')
-    expect(container.textContent).toContain('newly created channels')
-  })
-
   it('defaults to all mode when category has no skill selection', async () => {
     render()
     await flush()

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  CONVERSATION_MESSAGE_SOURCES,
   isAssistantProgressConversationMessage,
   isConversationMessageSource,
   isExplicitRoutedAssistantConversationMessage,
@@ -20,9 +19,6 @@ const base = {
 
 describe('conversation source semantics', () => {
   it('recognizes assistant output sources as first-class conversation message sources', () => {
-    expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_output')
-    expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_progress')
-    expect(CONVERSATION_MESSAGE_SOURCES).toContain('worker_report')
     expect(isConversationMessageSource('assistant_output')).toBe(true)
     expect(isConversationMessageSource('assistant_progress')).toBe(true)
     expect(isConversationMessageSource('worker_report')).toBe(true)

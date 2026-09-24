@@ -87,11 +87,3 @@ export function createDefaultCompactionRuntimeSettingsProvider(): CompactionRunt
     timeoutMs: DEFAULT_COMPACTION_TIMEOUT_MS,
   });
 }
-
-export function createCompactionRuntimeSettingsProviderFromService(
-  service: Pick<CompactionSettingsService, "getSettings">,
-): CompactionRuntimeSettingsProvider {
-  const provider = createLiveCompactionRuntimeSettingsProvider();
-  provider.attachSettingsService(service);
-  return provider;
-}

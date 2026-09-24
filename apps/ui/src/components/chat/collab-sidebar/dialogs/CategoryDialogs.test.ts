@@ -75,21 +75,6 @@ afterEach(() => {
 })
 
 describe('CreateCategoryDialog', () => {
-  it('renders the default model selector', () => {
-    flushSync(() => {
-      root.render(
-        createElement(CreateCategoryDialog, {
-          open: true,
-          onClose: vi.fn(),
-        }),
-      )
-    })
-
-    expect(document.getElementById('collab-create-category-default-model')).toBeTruthy()
-    const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
-    expect(labels).toEqual(expect.arrayContaining(['Name', 'Default model']))
-  })
-
   it('shows distinct Extra High, Max, and Ultra reasoning choices for GPT-6 Sol', async () => {
     modelPresetMocks.presets = [{
       presetId: 'pi-6',

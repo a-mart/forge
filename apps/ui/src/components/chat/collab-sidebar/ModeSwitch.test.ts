@@ -54,30 +54,6 @@ function getButtons(): HTMLButtonElement[] {
 // ---------------------------------------------------------------------------
 
 describe('ModeSwitch', () => {
-  it('renders builder and collab buttons', () => {
-    render()
-    const buttons = getButtons()
-    expect(buttons).toHaveLength(2)
-    expect(buttons[0].textContent).toContain('builder')
-    expect(buttons[1].textContent).toContain('collab')
-  })
-
-  it('renders a health dot inside each button', () => {
-    render()
-    const dots = getDots()
-    expect(dots).toHaveLength(2)
-    const buttons = getButtons()
-    expect(buttons[0].contains(dots[0])).toBe(true)
-    expect(buttons[1].contains(dots[1])).toBe(true)
-  })
-
-  it('marks the active surface button as pressed', () => {
-    render('collab')
-    const buttons = getButtons()
-    expect(buttons[0].getAttribute('aria-pressed')).toBe('false')
-    expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
-  })
-
   // ---------------------------------------------------------------------------
   // Health dot colors — WS-based reporting
   // ---------------------------------------------------------------------------

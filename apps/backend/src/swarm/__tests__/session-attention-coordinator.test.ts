@@ -9,7 +9,6 @@ import {
   SessionAttentionCoordinator,
   type SessionAttentionSessionSnapshot,
 } from "../session/session-attention-coordinator.js";
-import { isSessionAttentionEligible } from "../session/session-attention-eligibility.js";
 import {
   cloneSessionAttentionState,
   emptySessionAttentionState,
@@ -720,23 +719,6 @@ describe("SessionAttentionCoordinator state machine", () => {
     expect(h.coordinator.getSnapshot().attentions).toEqual([]);
     await h.coordinator.retireSession("manager-1"); // delete is idempotent
     expect(h.coordinator.getSnapshot().attentions).toEqual([]);
-  });
-
-  it("uses the WP1 eligibility predicate as an injected seam", async () => {
-    const eligible = vi.fn(isSessionAttentionEligible);
-    const memory = new MemoryAttentionStore();
-    const coordinator = new SessionAttentionCoordinator({
-      store: memory.store,
-      isEligible: eligible,
-      now: () => NOW,
-      randomId: () => "attention-1",
-    });
-    await coordinator.initialize();
-    await coordinator.observeStatus(statusObservation("idle", "streaming"));
-    await coordinator.observeStatus(statusObservation("streaming", "idle"));
-
-    expect(eligible).toHaveBeenCalled();
-    expect(coordinator.getSnapshot().attentions).toHaveLength(1);
   });
 });
 

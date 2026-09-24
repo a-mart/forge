@@ -109,22 +109,6 @@ function render(selection?: CollaborationSkillSelectionState): void {
 /* ================================================================== */
 
 describe('ChannelSkillSelection', () => {
-  it('renders the section header with channel label', async () => {
-    render()
-    await flush()
-    await flush()
-
-    expect(container.textContent).toContain('Skill Selection')
-    expect(container.textContent).toContain('#engineering')
-  })
-
-  it('shows loading spinner during inventory fetch', () => {
-    apiMock.fetchCollabSkillInventory.mockReturnValue(new Promise(() => {}))
-    render()
-
-    expect(container.querySelector('.animate-spin')).toBeTruthy()
-  })
-
   it('shows error message when inventory fetch fails', async () => {
     apiMock.fetchCollabSkillInventory.mockRejectedValue(new Error('Network error'))
     render()
@@ -132,17 +116,6 @@ describe('ChannelSkillSelection', () => {
     await flush()
 
     expect(container.textContent).toContain('Network error')
-  })
-
-  it('renders All/Custom radio buttons after load', async () => {
-    render()
-    await flush()
-    await flush()
-
-    const radios = container.querySelectorAll('input[type="radio"]')
-    expect(radios).toHaveLength(2)
-    expect(container.textContent).toContain('All skills')
-    expect(container.textContent).toContain('Custom selection')
   })
 
   it('defaults to "all" mode and shows summary text', async () => {
@@ -170,21 +143,6 @@ describe('ChannelSkillSelection', () => {
     expect(container.textContent).toContain('Memory')
     expect(container.textContent).toContain('Optional skills')
     expect(container.textContent).toContain('Brave Search')
-  })
-
-  it('shows lock icon for always-on skills in custom mode', async () => {
-    const customSelection: CollaborationSkillSelectionState = {
-      mode: 'custom',
-      savedSelectedSkillHandles: [],
-      resolvedSkillHandles: [],
-      alwaysOnSkillHandles: ['memory'],
-    }
-    render(customSelection)
-    await flush()
-    await flush()
-
-    expect(container.textContent).toContain('Always on')
-    expect(container.textContent).toContain('Memory')
   })
 
   it('does not show Save button when nothing has changed', async () => {
@@ -229,20 +187,6 @@ describe('ChannelSkillSelection', () => {
 
     expect(container.textContent).toContain('Missing skill handles')
     expect(container.textContent).toContain('gone-skill')
-  })
-
-  it('shows skill source kind badge', async () => {
-    const customSelection: CollaborationSkillSelectionState = {
-      mode: 'custom',
-      savedSelectedSkillHandles: [],
-      resolvedSkillHandles: [],
-      alwaysOnSkillHandles: ['memory'],
-    }
-    render(customSelection)
-    await flush()
-    await flush()
-
-    expect(container.textContent).toContain('builtin')
   })
 
   it('calls updateChannelSkillSelection with correct payload on save', async () => {

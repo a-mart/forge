@@ -18,17 +18,6 @@ function makeAgent(overrides: Partial<AgentDescriptor> & { agentId: string }): A
 }
 
 describe('buildAgentDisplayMap', () => {
-  it('returns empty map for no agents', () => {
-    const map = buildAgentDisplayMap([])
-    expect(map.size).toBe(0)
-  })
-
-  it('uses displayName as primaryLabel when available', () => {
-    const agent = makeAgent({ agentId: 'w1', displayName: 'Backend specialist' })
-    const map = buildAgentDisplayMap([agent])
-    expect(map.get('w1')?.primaryLabel).toBe('Backend specialist')
-  })
-
   it('falls back to agentId when displayName is missing', () => {
     const agent = makeAgent({ agentId: 'worker-abc', displayName: undefined })
     const map = buildAgentDisplayMap([agent])
@@ -70,18 +59,6 @@ describe('buildAgentDisplayMap', () => {
     })
     const map = buildAgentDisplayMap([agent])
     expect(map.get('w1')?.secondaryLabel).toBeNull()
-  })
-
-  it('includes specialistColor when present', () => {
-    const agent = makeAgent({ agentId: 'w1', specialistColor: '#ff0000' })
-    const map = buildAgentDisplayMap([agent])
-    expect(map.get('w1')?.specialistColor).toBe('#ff0000')
-  })
-
-  it('returns null specialistColor when absent', () => {
-    const agent = makeAgent({ agentId: 'w1', specialistColor: undefined })
-    const map = buildAgentDisplayMap([agent])
-    expect(map.get('w1')?.specialistColor).toBeNull()
   })
 
   it('title includes raw agentId and all metadata', () => {

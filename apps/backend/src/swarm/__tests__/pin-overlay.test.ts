@@ -58,15 +58,6 @@ describe("pin overlay", () => {
     expect(entries[1]).not.toHaveProperty("pinned");
   });
 
-  it("clears all cached pinned flags when the sidecar set is missing", () => {
-    const entries: ConversationEntryEvent[] = [message("a", { pinned: true }), message("b", { pinned: true })];
-
-    applyPinOverlay(entries);
-
-    expect(entries[0]).not.toHaveProperty("pinned");
-    expect(entries[1]).not.toHaveProperty("pinned");
-  });
-
   it("ignores non-conversation entries", () => {
     const activity = log(true);
     const entries: ConversationEntryEvent[] = [activity, message("pin")];

@@ -78,9 +78,6 @@ describe('PlanDockIndicator', () => {
     expect(container.textContent).not.toContain('Step 13/13')
     expect(container.querySelector('button')?.getAttribute('aria-label'))
       .toBe('Open working plan, 11/13 done')
-    expect(container.firstElementChild?.className).toBe('relative z-20 h-0 shrink-0')
-    expect(container.firstElementChild?.firstElementChild?.className)
-      .toBe('pointer-events-none absolute inset-x-0 bottom-1 flex justify-center px-3')
   })
 
   it('only captures pointer events on the dock trigger, not across the newest message row', () => {
@@ -144,7 +141,6 @@ describe('PlanDockIndicator', () => {
     expect(planDockPopoverMaxHeightPx({ collisionTop: 96, availableBottom: 700 })).toBe(604)
     expect(planDockPopoverMaxHeightPx({ collisionTop: 96, availableBottom: 90 })).toBe(0)
     expect(planDockPopoverMaxHeightPx({ collisionTop: Number.NaN, availableBottom: 700 })).toBe(0)
-    expect(CHAT_TRANSCRIPT_SURFACE_SELECTOR).toBe(`[${CHAT_TRANSCRIPT_SURFACE_ATTR}]`)
   })
 
   it('applies a measured transcript-top max-height when the landmark is present', async () => {

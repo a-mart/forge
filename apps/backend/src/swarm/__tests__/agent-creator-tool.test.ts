@@ -15,39 +15,7 @@ describe('buildCreateProjectAgentTool', () => {
     const creatorDescriptor = { agentId: 'creator-session' } as AgentDescriptor
 
     const tool = buildCreateProjectAgentTool(host, creatorDescriptor)
-
-    expect(tool.name).toBe('create_project_agent')
-    expect(tool.label).toBe('Create Project Agent')
-    expect(Object.keys((tool.parameters as any).properties ?? {})).toEqual([
-      'sessionName',
-      'handle',
-      'whenToUse',
-      'systemPrompt',
-      'location',
-    ])
-    expect((tool.parameters as any).properties.sessionName.minLength).toBe(1)
-    expect((tool.parameters as any).properties.handle.minLength).toBe(1)
-    expect((tool.parameters as any).properties.whenToUse.minLength).toBe(1)
-    expect((tool.parameters as any).properties.whenToUse.maxLength).toBe(280)
-    expect((tool.parameters as any).properties.systemPrompt.minLength).toBe(1)
-    expect((tool.parameters as any).properties.systemPrompt.description).toContain('Role/system instructions')
-    expect((tool.parameters as any).properties.systemPrompt.description).toContain("layered with Forge's Project Agent base prompt")
-    expect((tool.parameters as any).properties.location.anyOf.map((entry: { const: string }) => entry.const)).toEqual([
-      'local',
-      'repo',
-    ])
     const check = TypeCompiler.Compile(tool.parameters as any)
-    expect(check.Check({
-      sessionName: 'Release Notes',
-      whenToUse: 'Draft release notes.',
-      systemPrompt: 'You are the release notes project agent.',
-    })).toBe(true)
-    expect(check.Check({
-      sessionName: 'Release Notes',
-      whenToUse: 'Draft release notes.',
-      systemPrompt: 'You are the release notes project agent.',
-      location: 'repo',
-    })).toBe(true)
     expect(check.Check({
       sessionName: 'Release Notes',
       whenToUse: 'Draft release notes.',

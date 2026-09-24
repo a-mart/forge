@@ -174,38 +174,6 @@ describe('CreateManagerDialog', () => {
   })
 
   describe('scaffold forge resources checkbox', () => {
-    it('renders checked by default when scaffoldForgeResources is true', async () => {
-      const props = defaultProps({ scaffoldForgeResources: true })
-
-      await act(async () => {
-        root = createRoot(container)
-        root.render(createElement(CreateManagerDialog, props))
-      })
-
-      const checkbox = findScaffoldCheckbox()
-      expect(checkbox).toBeTruthy()
-      expect(checkbox!.getAttribute('data-state')).toBe('checked')
-      expect(checkbox!.getAttribute('aria-checked')).toBe('true')
-
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).toContain('Create .forge project resources')
-      expect(dialog?.textContent).toContain('project-level skills, specialists, and extensions')
-    })
-
-    it('renders unchecked when scaffoldForgeResources is false', async () => {
-      const props = defaultProps({ scaffoldForgeResources: false })
-
-      await act(async () => {
-        root = createRoot(container)
-        root.render(createElement(CreateManagerDialog, props))
-      })
-
-      const checkbox = findScaffoldCheckbox()
-      expect(checkbox).toBeTruthy()
-      expect(checkbox!.getAttribute('data-state')).toBe('unchecked')
-      expect(checkbox!.getAttribute('aria-checked')).toBe('false')
-    })
-
     it('calls onScaffoldForgeResourcesChange when clicked', async () => {
       const props = defaultProps({ scaffoldForgeResources: true })
 
@@ -254,22 +222,6 @@ describe('CreateManagerDialog', () => {
         ...overrides,
       })
     }
-
-    it('exposes toggle source selector semantics with aria-pressed', async () => {
-      await act(async () => {
-        root = createRoot(container)
-        root.render(createElement(CreateManagerDialog, cloneProps({ sourceMode: 'local_folder' })))
-      })
-
-      const group = document.body.querySelector('[aria-label="Project source"]')
-      expect(group).toBeTruthy()
-      expect(group?.getAttribute('role')).not.toBe('radiogroup')
-      const toggles = group!.querySelectorAll('button[aria-pressed]')
-      expect(toggles.length).toBe(2)
-      expect(toggles[0]?.getAttribute('aria-pressed')).toBe('true')
-      expect(toggles[1]?.getAttribute('aria-pressed')).toBe('false')
-      expect(toggles[0]?.getAttribute('role')).not.toBe('radio')
-    })
 
     it('blocks generic dismiss while cloning and keeps Cancel clone through ack', async () => {
       const onOpenChange = vi.fn()

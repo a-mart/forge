@@ -5,12 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCollaborationAuthMigrations } from "../collaboration/auth/migration-runner.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { COLLABORATION_CHANNEL_ARCHETYPE_ID, COLLABORATION_PROFILE_ID } from "../collaboration/constants.js";
-import {
-  CollaborationWorkspaceService,
-  hasInitializedWorkspaceDefaults,
-  requireInitializedWorkspaceDefaults,
-  workspaceDefaultsFromConfig,
-} from "../collaboration/workspace-service.js";
+import { CollaborationWorkspaceService } from "../collaboration/workspace-service.js";
 import { createTempConfig } from "../test-support/temp-config.js";
 
 const tempRoots: string[] = [];
@@ -126,25 +121,6 @@ describe("collaboration workspace service", () => {
       defaultModelProvider: expectedProvider,
       defaultModelId: expectedModelId,
       defaultModelThinkingLevel: expectedThinkingLevel,
-    });
-  });
-
-  it("exports initialized default helpers", () => {
-    const defaults = workspaceDefaultsFromConfig({
-      defaultModel: {
-        provider: "openai-codex",
-        modelId: "gpt-5.5",
-        thinkingLevel: "xhigh",
-      },
-      defaultCwd: "/repo",
-    } as never);
-
-    expect(hasInitializedWorkspaceDefaults(defaults)).toBe(true);
-    expect(requireInitializedWorkspaceDefaults(defaults)).toEqual({
-      defaultModelProvider: "openai-codex",
-      defaultModelId: "gpt-5.5",
-      defaultModelThinkingLevel: "xhigh",
-      defaultCwd: "/repo",
     });
   });
 });

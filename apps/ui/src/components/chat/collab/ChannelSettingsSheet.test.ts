@@ -98,21 +98,6 @@ afterEach(() => {
 })
 
 describe('ChannelSettingsSheet', () => {
-  it('renders Additional instructions with the updated labeling', () => {
-    renderSheet()
-
-    const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
-    expect(labels).toEqual(expect.arrayContaining([
-      'Channel name',
-      'Topic / description',
-      'Category',
-      'Model',
-      'Auto-reply',
-      'Additional instructions',
-    ]))
-    expect(labels).not.toContain('Prompt overlay')
-  })
-
   it('shows Save button disabled when nothing has changed', () => {
     renderSheet()
 
@@ -184,17 +169,5 @@ describe('ChannelSettingsSheet', () => {
       'Max',
       'Ultra',
     ])
-  })
-
-  it('tracks reasoningLevel in baseline and change detection', () => {
-    renderSheet({ reasoningLevel: 'high' })
-
-    // No changes yet — save should be disabled
-    const saveButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
-      (btn) => btn.textContent?.includes('Save'),
-    ) as HTMLButtonElement | undefined
-
-    expect(saveButton).toBeTruthy()
-    expect(saveButton?.disabled).toBe(true)
   })
 })

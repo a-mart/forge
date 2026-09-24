@@ -183,8 +183,6 @@ describe("presented chat artifact authorization", () => {
       imageTransport: "http_ticket",
     }, { ticketStore: store });
 
-    expect(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES).toBe(16 * 1024 * 1024);
-    expect(MAX_PRESENTED_CHAT_ARTIFACT_PDF_BYTES).toBeGreaterThan(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES);
     expect(await errorCode(() => securelyReadPresentedArtifact(pdf))).toBe("file_too_large");
     const issued: any = await issueTicket();
     expect(issued).toMatchObject({

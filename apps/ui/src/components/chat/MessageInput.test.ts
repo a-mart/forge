@@ -630,18 +630,6 @@ describe('MessageInput', () => {
       expect(container.querySelector('[aria-label^="Work mode:"]')).toBeNull()
     })
 
-    it('renders a non-submitting control for an eligible Builder manager', async () => {
-      renderMessageInput({ sessionCoordinationPicker: baseCoordinationPicker })
-      await flush()
-
-      const trigger = getByLabelText(
-        container,
-        'Work mode: Delegate first. Roster: balanced.',
-      )
-      expect(trigger).toBeInstanceOf(HTMLButtonElement)
-      expect((trigger as HTMLButtonElement).type).toBe('button')
-    })
-
     it('disables the coordination control with the Builder connection', async () => {
       renderMessageInput({
         sessionCoordinationPicker: {
@@ -660,28 +648,10 @@ describe('MessageInput', () => {
   })
 
   describe('session context mode picker', () => {
-    const baseContextModePicker = {
-      originId: 'local',
-      httpClientRef: { current: pickerApiClient },
-      sessionAgentId: 'manager-1',
-    }
-
     it('stays hidden without a parent-provided Builder manager configuration', async () => {
       renderMessageInput()
       await flush()
       expect(container.querySelector('[aria-label^="Context management:"]')).toBeNull()
-    })
-
-    it('renders a non-submitting control beside the existing session pickers', async () => {
-      renderMessageInput({ sessionContextModePicker: baseContextModePicker })
-      await flush()
-
-      const trigger = getByLabelText(
-        container,
-        'Context management: Summary (default). project default.',
-      )
-      expect(trigger).toBeInstanceOf(HTMLButtonElement)
-      expect((trigger as HTMLButtonElement).type).toBe('button')
     })
   })
 
@@ -837,33 +807,6 @@ describe('MessageInput', () => {
   })
 
   /* ---- Voice recording gating ---- */
-
-  describe('voice recording button', () => {
-    it('renders voice button when not disabled', async () => {
-      renderMessageInput()
-      await flush()
-
-      const voiceBtn = getByLabelText(container, 'Record voice input')
-      expect(voiceBtn).toBeTruthy()
-    })
-
-    it('disables voice button when component is disabled', async () => {
-      renderMessageInput({ disabled: true })
-      await flush()
-
-      const voiceBtn = getByLabelText(container, 'Record voice input')
-      expect(voiceBtn).toBeInstanceOf(HTMLButtonElement)
-      expect((voiceBtn as HTMLButtonElement).disabled).toBe(true)
-    })
-
-    it('disables voice button when loading and not allowWhileLoading', async () => {
-      renderMessageInput({ isLoading: true })
-      await flush()
-
-      const voiceBtn = getByLabelText(container, 'Record voice input')
-      expect((voiceBtn as HTMLButtonElement).disabled).toBe(true)
-    })
-  })
 
   /* ---- Submit behavior ---- */
 

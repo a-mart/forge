@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import {
   SOURCE_CONTROL_AUTO_FETCH_FRESHNESS_MS,
-  buildSourceControlAutoFetchKey,
   isSourceControlAutoFetchEligible,
   markOriginFetchCompleted,
   resetSourceControlAutoFetchFreshnessForTests,
@@ -11,22 +10,6 @@ import {
 describe('source-control-auto-fetch', () => {
   beforeEach(() => {
     resetSourceControlAutoFetchFreshnessForTests()
-  })
-
-  it('builds stable keys for repo/worktree context', () => {
-    expect(
-      buildSourceControlAutoFetchKey({
-        agentId: 'agent-1',
-        repoTarget: 'workspace',
-        worktreeId: 'wt-1',
-      }),
-    ).toBe('agent-1:workspace:wt-1:origin')
-    expect(
-      buildSourceControlAutoFetchKey({
-        agentId: 'agent-1',
-        repoTarget: 'workspace',
-      }),
-    ).toBe('agent-1:workspace:session:origin')
   })
 
   it('allows auto-fetch only for workspace repos with origin configured', () => {

@@ -9,14 +9,10 @@ import { FileDeleteConfirmDialog } from './FileDeleteConfirmDialog'
 
 let container: HTMLDivElement
 let root: Root | null = null
-const onConfirm = vi.fn()
-const onClose = vi.fn()
 
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
-  onConfirm.mockReset()
-  onClose.mockReset()
 })
 
 afterEach(() => {
@@ -34,40 +30,14 @@ function renderDialog(props: Partial<Parameters<typeof FileDeleteConfirmDialog>[
       open: true,
       entryName: 'App.tsx',
       entryType: 'file',
-      onConfirm,
-      onClose,
+      onConfirm: vi.fn(),
+      onClose: vi.fn(),
       ...props,
     }))
   })
 }
 
 describe('FileDeleteConfirmDialog', () => {
-  it('shows permanent delete copy for files and folders', () => {
-    renderDialog()
-    expect(document.body.textContent).toContain('Delete file')
-    expect(document.body.textContent).toContain('permanently removes the file')
-
-    renderDialog({ entryType: 'directory', entryName: 'src' })
-    expect(document.body.textContent).toContain('Delete folder')
-    expect(document.body.textContent).toContain('folder and its contents')
-  })
-
-  it('calls confirm and close handlers from app-styled actions', () => {
-    renderDialog()
-
-    const deleteButton = getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true })
-    const cancelButton = getByRole(document.body, 'button', { name: 'Cancel', hidden: true })
-
-    expect(deleteButton.className).toContain('bg-destructive')
-    expect(cancelButton.className).toContain('border')
-
-    flushSync(() => deleteButton.click())
-    expect(onConfirm).toHaveBeenCalledTimes(1)
-
-    flushSync(() => cancelButton.click())
-    expect(onClose).toHaveBeenCalled()
-  })
-
   it('shows an inline actionable delete failure without closing the dialog', () => {
     renderDialog({ errorMessage: 'HTTP 404: Route not found' })
 

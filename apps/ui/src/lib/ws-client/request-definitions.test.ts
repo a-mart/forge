@@ -1,34 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildBrowserRecordingStartCommand,
-  buildBrowserRecordingStopCommand,
   buildCreateManagerCommand,
   buildCreateRepositoryProjectCommand,
-  buildHydrateArchiveLastUsedCommand,
   buildProfileArchiveActionCommand,
   buildSessionActionCommand,
   buildUpdateProjectDelegationDefaultsCommand,
   buildUpdateSessionDelegationCommand,
-  buildSessionGoalControlCommand,
 } from './request-definitions'
-
-describe('browser recording command builders', () => {
-  it('send only canonical identifiers and never a filesystem path', () => {
-    expect(buildBrowserRecordingStartCommand('session-1', 'tab-1', 'request-start')).toEqual({
-      type: 'browser_recording_start',
-      requestId: 'request-start',
-      sessionAgentId: 'session-1',
-      tabId: 'tab-1',
-    })
-    expect(buildBrowserRecordingStopCommand('session-1', 'tab-1', 'recording-1', 'request-stop')).toEqual({
-      type: 'browser_recording_stop',
-      requestId: 'request-stop',
-      sessionAgentId: 'session-1',
-      tabId: 'tab-1',
-      recordingId: 'recording-1',
-    })
-  })
-})
 
 describe('buildCreateManagerCommand', () => {
   it('serializes reasoningLevel with preset create_manager payloads', () => {
@@ -87,13 +65,6 @@ describe('archive request command builders', () => {
     })
   })
 
-  it('serializes archive last-used hydration requests', () => {
-    expect(buildHydrateArchiveLastUsedCommand('req-hydrate')).toEqual({
-      type: 'hydrate_archive_last_used',
-      requestId: 'req-hydrate',
-    })
-  })
-
   it('serializes profile archive and restore requests', () => {
     expect(buildProfileArchiveActionCommand('archive_profile', ' profile-a ', 'req-archive-profile')).toEqual({
       type: 'archive_profile',
@@ -104,22 +75,6 @@ describe('archive request command builders', () => {
       type: 'restore_profile',
       profileId: 'profile-a',
       requestId: 'req-restore-profile',
-    })
-  })
-})
-
-describe('buildSessionGoalControlCommand', () => {
-  it('preserves the narrow discriminated goal action', () => {
-    expect(buildSessionGoalControlCommand('session-a', {
-      action: 'edit',
-      objective: 'Refined outcome',
-      tokenBudget: null,
-    })).toEqual({
-      type: 'session_goal_control',
-      agentId: 'session-a',
-      action: 'edit',
-      objective: 'Refined outcome',
-      tokenBudget: null,
     })
   })
 })

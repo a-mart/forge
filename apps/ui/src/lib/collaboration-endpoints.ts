@@ -18,7 +18,6 @@ import {
   normalizeServerUrl,
   removeCollaborationConnection,
   upsertCollaborationConnection,
-  type CollaborationEndpointTarget,
 } from './collaboration-connections'
 
 // ---------------------------------------------------------------------------
@@ -133,37 +132,6 @@ export function isCollabServerRemote(): boolean {
  */
 export function resolveCollaborationWsUrl(): string {
   return getDefaultCollaborationConnection().wsUrl
-}
-
-// ---------------------------------------------------------------------------
-// Target-aware endpoint resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the API base URL for a specific connection target.
- */
-export function resolveCollaborationApiBaseUrlFor(
-  target: CollaborationEndpointTarget,
-): string {
-  return target.apiBaseUrl
-}
-
-/**
- * Resolve the WS URL for a specific connection target.
- */
-export function resolveCollaborationWsUrlFor(
-  target: CollaborationEndpointTarget,
-): string {
-  return target.wsUrl
-}
-
-/**
- * Whether a specific connection target is remote.
- */
-export function isCollabServerRemoteFor(
-  target: CollaborationEndpointTarget,
-): boolean {
-  return target.isRemote
 }
 
 // ---------------------------------------------------------------------------

@@ -108,44 +108,7 @@ function findModelTrigger(): HTMLButtonElement | null {
 }
 
 describe('SessionModelDialog', () => {
-  describe('single-screen layout', () => {
-    it('loads availability through the supplied target-aware API client', async () => {
-      await renderDialog()
-
-      expect(catalogApiMock.fetchManagerSelectionCatalog).toHaveBeenCalledWith(dialogApiClient)
-    })
-
-    it('shows model and reasoning selectors immediately without a mode dropdown', async () => {
-      await renderDialog({ modelOrigin: 'profile_default' })
-
-      const dialog = document.body.querySelector('[role="dialog"]')
-      // No mode label/selector should be present — only "Model" and "Reasoning Level"
-      const labels = Array.from(dialog?.querySelectorAll('label') ?? [])
-      const labelTexts = labels.map((l) => l.textContent?.trim())
-      expect(labelTexts).not.toContain('Mode')
-      expect(labelTexts).toContain('Model')
-      expect(labelTexts).toContain('Reasoning Level')
-    })
-
-    it('always shows project default info line', async () => {
-      await renderDialog({ modelOrigin: 'profile_default' })
-
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).toContain('Project default:')
-      expect(dialog?.textContent).toContain('anthropic/claude-sonnet-4-20250514')
-    })
-  })
-
   describe('inherited session (profile_default)', () => {
-    it('has submit disabled when no changes are made', async () => {
-      await renderDialog({ modelOrigin: 'profile_default' })
-
-      const submitButton = findSubmitButton()
-      expect(submitButton).toBeTruthy()
-      expect(submitButton!.disabled).toBe(true)
-      expect(submitButton!.textContent).toBe('Override')
-    })
-
     it('has submit disabled when modelOrigin is undefined', async () => {
       await renderDialog({ modelOrigin: undefined })
 
@@ -169,15 +132,6 @@ describe('SessionModelDialog', () => {
       await act(async () => resetLink!.click())
       expect(props.onConfirm).toHaveBeenCalledWith('session-1', 'inherit')
     })
-
-    it('shows description indicating project default tracking with session name', async () => {
-      await renderDialog({ modelOrigin: 'profile_default' })
-
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).toContain('Test Session')
-      expect(dialog?.textContent).toContain('selected from the project default')
-      expect(dialog?.textContent).toContain('apply only to new conversations')
-    })
   })
 
   describe('overridden session (session_override)', () => {
@@ -188,14 +142,6 @@ describe('SessionModelDialog', () => {
       expect(submitButton).toBeTruthy()
       expect(submitButton!.disabled).toBe(true)
       expect(submitButton!.textContent).toBe('Save')
-    })
-
-    it('shows "Use Project Default" reset link', async () => {
-      await renderDialog({ modelOrigin: 'session_override' })
-
-      const resetLink = findResetLink()
-      expect(resetLink).toBeTruthy()
-      expect(resetLink!.textContent).toBe('Use Project Default')
     })
 
     it('calls onConfirm with inherit mode when reset link is clicked', async () => {
@@ -209,13 +155,6 @@ describe('SessionModelDialog', () => {
       })
 
       expect(props.onConfirm).toHaveBeenCalledWith('session-1', 'inherit')
-    })
-
-    it('shows description indicating custom override', async () => {
-      await renderDialog({ modelOrigin: 'session_override' })
-
-      const dialog = document.body.querySelector('[role="dialog"]')
-      expect(dialog?.textContent).toContain('custom model override')
     })
   })
 

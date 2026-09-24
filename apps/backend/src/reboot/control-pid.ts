@@ -31,11 +31,6 @@ export function getControlPidFilePath(repoRoot: string, port?: number): string {
   return join(tmpdir(), `${CONTROL_PID_FILE_PREFIX}${controlHash}${CONTROL_PID_FILE_SUFFIX}`);
 }
 
-export function getControlRestartFilePath(repoRoot: string, port?: number): string {
-  const controlHash = createControlPidHash(repoRoot, port);
-  return join(tmpdir(), `${CONTROL_PID_FILE_PREFIX}${controlHash}${CONTROL_RESTART_FILE_SUFFIX}`);
-}
-
 export function getRestartFilePathForPidFile(pidFile: string): string {
   return pidFile.endsWith(CONTROL_PID_FILE_SUFFIX)
     ? `${pidFile.slice(0, -CONTROL_PID_FILE_SUFFIX.length)}${CONTROL_RESTART_FILE_SUFFIX}`

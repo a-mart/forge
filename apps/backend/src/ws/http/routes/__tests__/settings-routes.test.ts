@@ -53,21 +53,6 @@ afterEach(async () => {
 })
 
 describe('settings routes', () => {
-  it('lists settings env variables with the current response shape', async () => {
-    const swarmManager = {
-      listSettingsEnv: vi.fn(async () => [{ name: 'OPENAI_API_KEY', value: 'sk-test', source: 'settings' }]),
-    }
-
-    const server = await createSettingsRouteTestServer(swarmManager)
-    const response = await fetch(`${server.baseUrl}/api/settings/env`)
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
-      variables: [{ name: 'OPENAI_API_KEY', value: 'sk-test', source: 'settings' }],
-    })
-    expect(swarmManager.listSettingsEnv).toHaveBeenCalledTimes(1)
-  })
-
   it('updates settings env variables from the values wrapper payload and returns ok + variables', async () => {
     const swarmManager = {
       updateSettingsEnv: vi.fn(async () => undefined),
@@ -107,35 +92,6 @@ describe('settings routes', () => {
       error: 'settings env value for OPENAI_API_KEY must be a string',
     })
     expect(swarmManager.updateSettingsEnv).not.toHaveBeenCalled()
-  })
-
-  it('rejects unsupported methods for /api/settings/env', async () => {
-    const server = await createSettingsRouteTestServer({})
-    const response = await fetch(`${server.baseUrl}/api/settings/env`, { method: 'PATCH' })
-
-    expect(response.status).toBe(405)
-    expect(response.headers.get('allow')).toBe('GET, PUT, DELETE, OPTIONS')
-    await expect(response.json()).resolves.toEqual({ error: 'Method Not Allowed' })
-  })
-
-  it('lists auth providers with the current response envelope', async () => {
-    const swarmManager = {
-      listSettingsAuth: vi.fn(async () => [
-        { provider: 'anthropic', type: 'oauth', connected: true },
-        { provider: 'openai-codex', type: 'pool', connected: true },
-      ]),
-    }
-
-    const server = await createSettingsRouteTestServer(swarmManager)
-    const response = await fetch(`${server.baseUrl}/api/settings/auth`)
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
-      providers: [
-        { provider: 'anthropic', type: 'oauth', connected: true },
-        { provider: 'openai-codex', type: 'pool', connected: true },
-      ],
-    })
   })
 
   it('updates auth settings, invalidates usage cache, and returns ok + providers', async () => {

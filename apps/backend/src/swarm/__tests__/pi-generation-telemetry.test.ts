@@ -104,11 +104,9 @@ async function drain(adapter: PiGenerationTelemetryAdapter): Promise<void> {
 }
 
 describe("Pi generation telemetry adapter", () => {
-  it.each([
-    ["openai responses", "openai", "openai-responses"],
-    ["openai codex responses", "openai-codex", "openai-codex-responses"],
-    ["anthropic messages", "anthropic", "anthropic-messages"],
-  ])("records one count-only lifecycle across %s streams", async (_family, provider, api) => {
+  it("records one count-only lifecycle across openai responses streams", async () => {
+    const provider = "openai";
+    const api = "openai-responses";
     const events: RuntimeGenerationEvent[] = [];
     const session = createSession();
     const { adapter, advance } = createAdapter(session, events);

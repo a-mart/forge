@@ -5,44 +5,6 @@ import {
 } from "../runtime/runtime-recovery-state.js";
 
 describe("RuntimeRecoveryState", () => {
-  it("tracks pending manager runtime recycle reasons", () => {
-    const state = new RuntimeRecoveryState();
-
-    expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
-    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBeUndefined();
-
-    state.setPendingManagerRuntimeRecycle("m1", "cwd_change");
-
-    expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(true);
-    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBe("cwd_change");
-
-    state.setPendingManagerRuntimeRecycle("m1", "specialist_roster_change");
-    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBe("specialist_roster_change");
-
-    state.setPendingManagerRuntimeRecycle("m1", "secure_session_mode_change");
-    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBe("secure_session_mode_change");
-
-    state.clearPendingManagerRuntimeRecycle("m1");
-    expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
-    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBeUndefined();
-  });
-
-  it("tracks recovery-aborted worker turns independently from pending recycle state", () => {
-    const state = new RuntimeRecoveryState();
-
-    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(false);
-    state.markRecoveryAbortedWorkerTurn("w1");
-
-    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(true);
-    expect(state.hasPendingManagerRuntimeRecycle("w1")).toBe(false);
-
-    state.setPendingManagerRuntimeRecycle("m1", "model_change");
-    state.clearRecoveryAbortedWorkerTurn("w1");
-
-    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(false);
-    expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(true);
-  });
-
   it("detects active recovery with active helper before in-progress fallback", () => {
     expect(isRuntimeRecoveryActiveForRuntime()).toBe(false);
     expect(isRuntimeRecoveryActiveForRuntime({

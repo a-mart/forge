@@ -2,7 +2,6 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { buildUpdatePlanTool } from '../planning/update-plan-tool.js'
 import { shouldCreateCompletedPlanSummary } from '../planning/plan-summary.js'
 import {
   appendSessionPlanCompactionInstructions,
@@ -13,8 +12,6 @@ import {
 } from '../planning/session-plan-state.js'
 import { SessionPlanStore } from '../planning/session-plan-store.js'
 import { getSessionPlanHistoryPath, getSessionPlanPath } from '../storage/data-paths.js'
-import type { SwarmToolHost } from '../swarm-tool-host.js'
-import type { AgentDescriptor } from '../types.js'
 
 describe('Codex-style session plans', () => {
   it('normalizes a full plan and supports parallel in-progress steps', () => {
@@ -248,26 +245,6 @@ describe('Codex-style session plans', () => {
     expect(combined).toContain('Preserve user constraints.')
     expect(combined).toContain('[workingPlan] {"revision":7')
     expect(appendSessionPlanCompactionInstructions(combined, snapshot)).toBe(combined)
-  })
-
-  it('exposes the same narrow schema and delegates updates through the host', async () => {
-    const updatePlan = vi.fn(async (_agentId, _toolCallId, input) => ({
-      sessionAgentId: 'session-1',
-      revision: 1,
-      updatedAt: '2026-07-12T00:00:00.000Z',
-      ...input,
-    }))
-    const tool = buildUpdatePlanTool({ updatePlan } as unknown as SwarmToolHost, {
-      agentId: 'session-1',
-      role: 'manager',
-    } as AgentDescriptor)
-    const input = { plan: [{ step: 'Verify', status: 'in_progress' as const }] }
-
-    const result = await tool.execute('tool-call-1', input)
-
-    expect(tool.name).toBe('update_plan')
-    expect(updatePlan).toHaveBeenCalledWith('session-1', 'tool-call-1', input)
-    expect(result.details).toMatchObject({ revision: 1, plan: input.plan })
   })
 })
 

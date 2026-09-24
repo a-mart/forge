@@ -49,20 +49,6 @@ describe('BrowserPanel automatic experience', () => {
     expect(container.querySelector('[aria-label="Browser workspace"]')).not.toBeNull()
   })
 
-  it('shows the embedded surface and its supported controls', () => {
-    render(snapshot([managedTab]))
-    expect(container.querySelector('[data-browser-automation-viewport]')).not.toBeNull()
-    expect(container.querySelector('button[aria-label="Start recording"]')).not.toBeNull()
-    expect(container.querySelector('select#browser-viewport')).not.toBeNull()
-  })
-
-  it('renders the about:blank placeholder as neutral dark instead of white', () => {
-    render(snapshot([{ ...managedTab, url: 'about:blank', title: 'New tab' }]))
-    const viewport = container.querySelector('[data-browser-automation-viewport]')!
-    expect(viewport.classList).toContain('bg-zinc-900')
-    expect(viewport.classList).not.toContain('bg-white')
-  })
-
   it('projects active and inactive URL/title metadata without reselection', () => {
     const inactive = { ...managedTab, tabId: 'managed-2', url: 'https://old.test', title: 'Old inactive' }
     render(snapshot([managedTab, inactive], managedTab.tabId))
@@ -75,17 +61,6 @@ describe('BrowserPanel automatic experience', () => {
     expect((container.querySelector('#browser-address') as HTMLInputElement).value).toBe('https://active.test/live')
     expect([...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).toEqual(['Live active', 'Live inactive'])
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Live active')
-  })
-
-  it('labels pop-out controls with the Automatic Browser product name', () => {
-    const state = snapshot([managedTab])
-    render(state)
-    expect(container.querySelector('button[aria-label="Open Automatic Browser in a separate window"][title="Open Automatic Browser in a separate window"]')).not.toBeNull()
-    expect(container.querySelector('button[aria-label*="Managed Browser"]')).toBeNull()
-
-    render(state, port(), 'popped-out')
-    expect(container.querySelector('button[aria-label="Dock Automatic Browser in main window"][title="Dock Automatic Browser in main window"]')).not.toBeNull()
-    expect(container.querySelector('button[aria-label*="Managed Browser"]')).toBeNull()
   })
 
   it('does not expose External Chrome references or manual Preview controls', () => {

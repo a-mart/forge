@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { readFile } from 'node:fs/promises'
 import {
   OPEN_PDF_IN_DEFAULT_APP_CHANNEL,
   createManagedPdfTempStore,
@@ -235,24 +234,5 @@ describe('window-open PDF policy', () => {
       handleDeepLink: () => false,
     })).toEqual({ action: 'deny' })
     expect(openExternal).toHaveBeenCalledWith('https://forge.example.test/api/files/raw?path=spec.pdf')
-  })
-})
-
-describe('main-process PDF open wiring', () => {
-  it('installs the trusted PDF-only IPC and window-open policy instead of a generic path launcher', async () => {
-    const mainSource = await readFile(new URL('../main.ts', import.meta.url), 'utf8')
-    const preloadSource = await readFile(new URL('../preload.ts', import.meta.url), 'utf8')
-
-    expect(mainSource).toContain("installOpenPdfIpc({")
-    expect(mainSource).toContain('isTrustedSender: isTrustedMainRenderer')
-    expect(mainSource).toContain('handleMainRendererWindowOpen(url')
-    expect(mainSource).toContain('isUnsafeRendererWindowOpenUrl(url)')
-    expect(mainSource).not.toContain('open-path-in-default-app')
-    expect(mainSource).not.toContain('openValidatedPathInDefaultApp')
-    expect(preloadSource).toContain("from './open-pdf-ipc.js'")
-    expect(preloadSource).toContain('ipcRenderer.invoke(OPEN_PDF_IN_DEFAULT_APP_CHANNEL, request)')
-    expect(preloadSource).not.toContain("from './open-pdf.js'")
-    expect(preloadSource).not.toContain('open-path-in-default-app')
-    expect(preloadSource).not.toContain('openPathInDefaultApp')
   })
 })

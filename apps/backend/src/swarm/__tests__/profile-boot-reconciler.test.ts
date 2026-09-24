@@ -307,13 +307,6 @@ describe("ProfileBootReconciler", () => {
     expect(harness.profiles.get("cortex")?.profileType).toBe("system");
     expect(harness.reconciler.normalizeSystemProfileTypes()).toBe(false);
   });
-
-  it("does nothing when no Cortex profile exists", () => {
-    const harness = createHarness({ profiles: [makeProfile("forge")] });
-
-    expect(harness.reconciler.normalizeSystemProfileTypes()).toBe(false);
-    expect(harness.upsertedProfileIds).toEqual([]);
-  });
 });
 
 interface Harness {

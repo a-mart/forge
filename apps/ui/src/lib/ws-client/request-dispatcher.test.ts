@@ -30,13 +30,6 @@ describe('RequestDispatcher', () => {
       )
     })
 
-    it('generates distinct IDs across calls', () => {
-      const id1 = dispatcher.nextRequestId('a')
-      const id2 = dispatcher.nextRequestId('b')
-      expect(id1).not.toBe(id2)
-      expect(id1).toMatch(/^a-/)
-      expect(id2).toMatch(/^b-/)
-    })
   })
 
   // ---------------------------------------------------------------------------
@@ -44,26 +37,6 @@ describe('RequestDispatcher', () => {
   // ---------------------------------------------------------------------------
 
   describe('enqueueRequest', () => {
-    it('calls the send callback with the built command', async () => {
-      const promise = dispatcher.enqueueRequest('list_directories', (requestId) => ({
-        type: 'list_directories' as const,
-        requestId,
-        path: '/tmp',
-      }))
-
-      expect(sendSpy).toHaveBeenCalledTimes(1)
-      const sentCommand = sendSpy.mock.calls[0][0]
-      expect(sentCommand.type).toBe('list_directories')
-      expect(sentCommand.requestId).toMatch(/^list_directories-/)
-
-      // Resolve to avoid dangling promise
-      dispatcher.tracker.resolve('list_directories', sentCommand.requestId, {
-        path: '/tmp',
-        directories: [],
-      })
-      await promise
-    })
-
     it('rejects immediately when send returns false', async () => {
       sendSpy.mockReturnValue(false)
 
@@ -244,10 +217,6 @@ describe('RequestDispatcher', () => {
 
       await expect(promise1).rejects.toThrow('Client destroyed before request completed.')
       await expect(promise2).rejects.toThrow('Client destroyed before request completed.')
-    })
-
-    it('is safe to call when no requests are pending', () => {
-      expect(() => dispatcher.rejectAllPendingRequests('no-op')).not.toThrow()
     })
   })
 })

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -149,32 +149,5 @@ describe('message-pins', () => {
 
     const formatted = formatPinnedMessagesForCompaction(registry)
     expect(formatted).toContain('[Attached: image.png (image/png), document.pdf (application/pdf)]')
-  })
-
-  it('writes valid json to the sidecar file', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'forge-message-pins-'))
-
-    await savePins(sessionDir, {
-      version: 1,
-      pins: {
-        'msg-1': {
-          pinnedAt: '2026-03-27T14:30:00.000Z',
-          role: 'user',
-          text: 'Persist me',
-          timestamp: '2026-03-27T14:30:00.000Z',
-        },
-      },
-    })
-
-    const raw = await readFile(join(sessionDir, 'pinned-messages.json'), 'utf8')
-    expect(JSON.parse(raw)).toMatchObject({
-      version: 1,
-      pins: {
-        'msg-1': {
-          role: 'user',
-          text: 'Persist me',
-        },
-      },
-    })
   })
 })

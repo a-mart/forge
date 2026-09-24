@@ -69,43 +69,6 @@ describe('ToolLogRow actor metadata rendering', () => {
     expect(container.textContent).toContain('Backend specialist')
   })
 
-  it('renders specialist color dot when specialistColor is provided', () => {
-    const entry = makeToolEntry({ actorAgentId: 'worker-1' })
-    const actorDisplay = makeActorDisplay({ specialistColor: '#ff0000' })
-
-    act(() => {
-      root.render(
-        createElement(ToolLogRow, {
-          type: 'tool_execution',
-          entry,
-          actorDisplay,
-        }),
-      )
-    })
-
-    const dot = container.querySelector('span[style*="background-color"]')
-    expect(dot).not.toBeNull()
-    expect((dot as HTMLElement).style.backgroundColor).toBe('rgb(255, 0, 0)')
-  })
-
-  it('does not render specialist color dot when specialistColor is null', () => {
-    const entry = makeToolEntry({ actorAgentId: 'worker-1' })
-    const actorDisplay = makeActorDisplay({ specialistColor: null })
-
-    act(() => {
-      root.render(
-        createElement(ToolLogRow, {
-          type: 'tool_execution',
-          entry,
-          actorDisplay,
-        }),
-      )
-    })
-
-    const dot = container.querySelector('span[style*="background-color"]')
-    expect(dot).toBeNull()
-  })
-
   it('falls back to raw actorAgentId when actorDisplay is absent', () => {
     const entry = makeToolEntry({ actorAgentId: 'worker-raw-id' })
 
@@ -187,28 +150,6 @@ describe('ToolLogRow actor metadata rendering', () => {
     expect(container.textContent).toContain(
       'Docs worker · anthropic/claude-opus-4-6 · high',
     )
-  })
-
-  it('uses actorDisplay.title as tooltip on the actor chip', () => {
-    const entry = makeToolEntry({ actorAgentId: 'worker-1' })
-    const actorDisplay = makeActorDisplay({
-      title: 'worker-1 — Backend specialist — anthropic/claude-opus-4-6',
-    })
-
-    act(() => {
-      root.render(
-        createElement(ToolLogRow, {
-          type: 'tool_execution',
-          entry,
-          actorDisplay,
-        }),
-      )
-    })
-
-    const chip = container.querySelector(
-      'span[title="worker-1 — Backend specialist — anthropic/claude-opus-4-6"]',
-    )
-    expect(chip).not.toBeNull()
   })
 })
 

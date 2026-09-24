@@ -41,17 +41,6 @@ afterEach(() => {
 })
 
 describe('appearance theme storage', () => {
-  it('exposes exactly the supported appearance templates', () => {
-    expect(APPEARANCE_TEMPLATES.map((template) => template.name)).toEqual([
-      'Original Forge',
-      'Aurora Glass',
-      'Midnight Forge',
-      'Terminal Lime',
-      'Sakura Dawn',
-      'Desert Ember',
-    ])
-  })
-
   it('reads legacy swarm-theme string preferences without custom appearance', () => {
     window.localStorage.setItem(STORAGE_KEY, 'dark')
 

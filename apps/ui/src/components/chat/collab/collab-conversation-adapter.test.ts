@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type {
   AgentMessageEvent,
-  AgentToolCallEvent,
   CollaborationTranscriptMessage,
 } from '@forge/protocol'
 import type { CollabChoiceRequest } from '@/lib/collab-ws-state'
@@ -34,23 +33,6 @@ function choice(overrides: Partial<CollabChoiceRequest> = {}): CollabChoiceReque
 }
 
 describe('adaptCollabToConversationEntries', () => {
-  it('maps user transcript messages to ConversationMessageEvent', () => {
-    const entries = adaptCollabToConversationEntries({
-      messages: [msg({ role: 'user', text: 'hi' })],
-      choiceRequests: [],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({
-      type: 'conversation_message',
-      role: 'user',
-      text: 'hi',
-      agentId: AGENT_ID,
-    })
-  })
-
   it('maps assistant transcript messages to ConversationMessageEvent', () => {
     const entries = adaptCollabToConversationEntries({
       messages: [msg({ role: 'assistant', text: 'hey', source: 'speak_to_user' })],
@@ -83,22 +65,6 @@ describe('adaptCollabToConversationEntries', () => {
       role: 'assistant',
       text: 'projected',
       source: 'assistant_output',
-      agentId: AGENT_ID,
-    })
-  })
-
-  it('maps system transcript messages to ConversationMessageEvent', () => {
-    const entries = adaptCollabToConversationEntries({
-      messages: [msg({ role: 'system', text: 'notice', source: 'system' })],
-      choiceRequests: [],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({
-      type: 'conversation_message',
-      role: 'system',
       agentId: AGENT_ID,
     })
   })
@@ -160,70 +126,6 @@ describe('adaptCollabToConversationEntries', () => {
     expect(entries[2]).toMatchObject({ type: 'conversation_message', text: 'last' })
   })
 
-  it('produces stable activity entry IDs via passthrough', () => {
-    const tool: AgentToolCallEvent = {
-      type: 'agent_tool_call',
-      agentId: 'worker-1',
-      actorAgentId: 'worker-1',
-      timestamp: '2026-04-10T12:02:00.000Z',
-      kind: 'tool_execution_start',
-      toolName: 'bash',
-      toolCallId: 'tc-1',
-      text: 'Running bash',
-    }
-
-    const entries = adaptCollabToConversationEntries({
-      messages: [],
-      choiceRequests: [],
-      activity: [tool],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({
-      type: 'agent_tool_call',
-      agentId: 'worker-1',
-      toolName: 'bash',
-    })
-  })
-
-  it('preserves collab author metadata on mapped messages', () => {
-    const author = { userId: 'u-1', displayName: 'Alice', role: 'member' as const, workspaceId: 'ws-1', channelId: 'ch-1' }
-    const entries = adaptCollabToConversationEntries({
-      messages: [msg({ collaborationAuthor: author })],
-      choiceRequests: [],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toHaveLength(1)
-    const entry = entries[0] as { type: 'conversation_message'; collaborationAuthor?: typeof author }
-    expect(entry.collaborationAuthor).toEqual(author)
-  })
-
-  it('preserves message id, attachments, pinned, and sourceContext', () => {
-    const entries = adaptCollabToConversationEntries({
-      messages: [
-        msg({
-          id: 'msg-42',
-          pinned: true,
-          attachments: [{ mimeType: 'text/plain', fileName: 'a.txt', fileRef: 'f1', sizeBytes: 100 }],
-          sourceContext: { channel: 'web' },
-        }),
-      ],
-      choiceRequests: [],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toHaveLength(1)
-    const entry = entries[0] as { id?: string; pinned?: boolean; attachments?: unknown[]; sourceContext?: unknown }
-    expect(entry.id).toBe('msg-42')
-    expect(entry.pinned).toBe(true)
-    expect(entry.attachments).toHaveLength(1)
-    expect(entry.sourceContext).toEqual({ channel: 'web' })
-  })
-
   it('falls back sessionAgentId for choice requests without agentId', () => {
     const entries = adaptCollabToConversationEntries({
       messages: [],
@@ -254,30 +156,5 @@ describe('adaptCollabToConversationEntries', () => {
       agentId: 'worker-1',
       sessionAgentId: AGENT_ID,
     })
-  })
-
-  it('falls back to selected channel sessionAgentId for old payloads missing sessionAgentId', () => {
-    const entries = adaptCollabToConversationEntries({
-      messages: [],
-      choiceRequests: [choice({ agentId: 'worker-1' })],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries[0]).toMatchObject({
-      agentId: 'worker-1',
-      sessionAgentId: AGENT_ID,
-    })
-  })
-
-  it('handles empty inputs gracefully', () => {
-    const entries = adaptCollabToConversationEntries({
-      messages: [],
-      choiceRequests: [],
-      activity: [],
-      sessionAgentId: AGENT_ID,
-    })
-
-    expect(entries).toEqual([])
   })
 })

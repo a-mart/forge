@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitGraphLaneX, commitGraphWidth, layoutCommitGraph } from './commit-graph-layout'
+import { layoutCommitGraph } from './commit-graph-layout'
 
 describe('layoutCommitGraph', () => {
   it('keeps a linear history in a single column', () => {
@@ -60,12 +60,5 @@ describe('layoutCommitGraph', () => {
       { sha: 'origin', column: 0, laneCount: 1 },
       { sha: 'older', column: 0, laneCount: 1 },
     ])
-  })
-
-  it('sizes the graph column from the occupied lane count', () => {
-    expect(commitGraphWidth(1)).toBe(28)
-    expect(commitGraphWidth(2)).toBe(40)
-    expect(commitGraphLaneX(0)).toBe(8)
-    expect(commitGraphLaneX(1)).toBe(20)
   })
 })

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   getControlPidFilePath,
-  getControlRestartFilePath,
   readControlPidFromFile
 } from "../reboot/control-pid.js";
 
@@ -19,13 +18,6 @@ describe("control-pid helper", () => {
     expect(first).toMatch(/swarm-prod-daemon-[0-9a-f]{10}\.pid$/);
     expect(differentPort).not.toBe(first);
     expect(differentRepo).not.toBe(first);
-  });
-
-  it("derives matching restart-file paths for the same repo root + port", () => {
-    const pidFile = getControlPidFilePath("/repo/one", 47187);
-    const restartFile = getControlRestartFilePath("/repo/one", 47187);
-
-    expect(restartFile.replace(/\.restart$/, ".pid")).toBe(pidFile);
   });
 
   it("reads pid files safely", async () => {

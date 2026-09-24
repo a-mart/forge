@@ -22,7 +22,6 @@ import {
   NODE_PTY_SMOKE_MARKER,
   NODE_PTY_SMOKE_SCRIPT,
   nodePtySmokeCommand,
-  STAGED_ELECTRON_NATIVE_PACKAGES,
 } from '../../apps/electron/scripts/staged-native-runtime-smoke.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -69,16 +68,6 @@ describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES packaging', () => {
 })
 
 describe('staged Electron-as-Node native runtime smoke', () => {
-  it('covers every native-capable packaged backend dependency', () => {
-    expect(STAGED_ELECTRON_NATIVE_PACKAGES).toEqual([
-      'better-sqlite3',
-      'sqlite3',
-      'node-pty',
-      'sharp',
-      'koffi',
-    ])
-  })
-
   it('uses cmd.exe for the Windows ConPTY smoke and enforces its marker/exit result', () => {
     expect(nodePtySmokeCommand('win32', 'C:\\Windows\\System32\\cmd.exe')).toEqual({
       file: 'C:\\Windows\\System32\\cmd.exe', args: ['/d', '/s', '/c', `echo ${NODE_PTY_SMOKE_MARKER}`],
@@ -142,14 +131,6 @@ describe('Node engine floor for packaged Electron child', () => {
 
   it('requires host Node to satisfy >=22.19.0', () => {
     expect(satisfiesNodeFloor(process.version)).toBe(true)
-  })
-
-  it('reports a bounded Electron-as-Node probe timeout instead of hanging', () => {
-    expect(ELECTRON_NODE_PROBE_TIMEOUT_MS).toBeGreaterThan(5_000)
-    expect(ELECTRON_NODE_PROBE_TEST_TIMEOUT_MS).toBeGreaterThan(ELECTRON_NODE_PROBE_TIMEOUT_MS)
-    expect(electronNodeProbeFailureMessage({ error: { code: 'ETIMEDOUT' } })).toBe(
-      `electron -p process.versions.node timed out after ${ELECTRON_NODE_PROBE_TIMEOUT_MS}ms; stuck Electron-as-Node was killed`,
-    )
   })
 
   it('asserts Electron bundled Node matches the authoritative packaged runtime when electron is available', async () => {

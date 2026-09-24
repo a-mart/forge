@@ -75,35 +75,6 @@ describe("SwarmManagerFacade", () => {
     expect(new OverrideFacade(services).listAgents()).toEqual([]);
   });
 
-  it("forwards configuration, skill, auth, and credential arguments exactly", async () => {
-    const services = createServices();
-    const facade = new TestFacade(services);
-
-    await facade.updateSessionModel("session", "override", "fast", "high");
-    await facade.listSkillFiles("skill", "references", { profileId: "profile" });
-    await facade.updateSettingsAuth({ OPENAI_API_KEY: "redacted" });
-    await facade.setCredentialPoolStrategy("openai", "round_robin");
-
-    expect(services.configuration.updateSessionModel).toHaveBeenCalledWith(
-      "session",
-      "override",
-      "fast",
-      "high",
-    );
-    expect(services.configuration.listSkillFiles).toHaveBeenCalledWith(
-      "skill",
-      "references",
-      { profileId: "profile" },
-    );
-    expect(services.configuration.updateSettingsAuth).toHaveBeenCalledWith({
-      OPENAI_API_KEY: "redacted",
-    });
-    expect(services.configuration.setCredentialPoolStrategy).toHaveBeenCalledWith(
-      "openai",
-      "round_robin",
-    );
-  });
-
   it("preserves conversation fallback and extension session projection", async () => {
     const services = createServices();
     const facade = new TestFacade(services);
@@ -123,25 +94,6 @@ describe("SwarmManagerFacade", () => {
     expect(facade.getConversationHistoryWithDiagnostics()).toMatchObject({
       history: [],
       diagnostics: { detail: "missing_agent" },
-    });
-  });
-
-  it("keeps Codex, Project Agent, and knowledge APIs on their focused owners", async () => {
-    const services = createServices();
-    const facade = new TestFacade(services);
-
-    await facade.browseCodexMcpCatalog("manager");
-    await facade.getProjectAgentReference("manager", "guide.md");
-    await facade.searchKnowledge("manager", { query: "preference", scope: "all" });
-
-    expect(services.codexPlugin.browseCatalog).toHaveBeenCalledWith("manager");
-    expect(services.projectAgents.getReference).toHaveBeenCalledWith(
-      "manager",
-      "guide.md",
-    );
-    expect(services.knowledge.searchKnowledge).toHaveBeenCalledWith("manager", {
-      query: "preference",
-      scope: "all",
     });
   });
 

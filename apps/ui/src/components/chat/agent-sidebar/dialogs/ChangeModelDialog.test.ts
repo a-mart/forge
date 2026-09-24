@@ -134,20 +134,6 @@ describe('ChangeModelDialog', () => {
     })
   })
 
-  describe('availability loading/error', () => {
-    it('selectors are enabled after availability loads successfully', async () => {
-      await renderDialog()
-
-      const modelTrigger = findModelTrigger()
-      expect(modelTrigger).toBeTruthy()
-      expect(modelTrigger!.disabled).toBe(false)
-
-      const reasoningTrigger = findReasoningTrigger()
-      expect(reasoningTrigger).toBeTruthy()
-      expect(reasoningTrigger!.disabled).toBe(false)
-    })
-  })
-
   describe('fetch failure', () => {
     it('disables selectors and submit, shows error with retry on fetch failure', async () => {
       // Override the mock for this test to simulate failure, then immediately restore

@@ -1,7 +1,6 @@
 import type { Api, AssistantMessage, Model } from '../swarm/pi/pi-ai-compat.js'
 import { describe, expect, it } from 'vitest'
 import {
-  buildMemoryMergeUserPrompt,
   executeLLMMergeWithFallback,
   extractMergedMemoryText,
   stripWrappingCodeFence,
@@ -46,15 +45,6 @@ function createAssistantMessage(text: string): AssistantMessage {
 }
 
 describe('memory-merge', () => {
-  it('builds a prompt containing labeled profile and session memory blocks', () => {
-    const prompt = buildMemoryMergeUserPrompt('# Profile', '# Session')
-
-    expect(prompt).toContain('----- BEGIN PROFILE MEMORY -----')
-    expect(prompt).toContain('# Profile')
-    expect(prompt).toContain('----- BEGIN SESSION MEMORY -----')
-    expect(prompt).toContain('# Session')
-  })
-
   it('extracts assistant text and strips outer code fences', () => {
     const extracted = extractMergedMemoryText(createAssistantMessage('```markdown\n# Swarm Memory\n- merged\n```'))
 
