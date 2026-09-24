@@ -27,7 +27,6 @@ const tabId = Type.Optional(Type.String({ minLength: 1, maxLength: 128, descript
 const timeoutMs = Type.Optional(Type.Integer({ minimum: 1, maximum: BROWSER_AUTOMATION_MAX_TIMEOUT_MS, default: 15_000 }));
 const locator = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
 const selector = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
-const viewportPreset = Type.Union(Object.keys(BROWSER_VIEWPORT_PRESETS).map((id) => Type.Literal(id)));
 
 const schemas: Record<BrowserAutomationOperation, TSchema> = {
   status: Type.Object({ tabId }, { additionalProperties: false }),
@@ -40,67 +39,43 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
     show: Type.Optional(Type.Boolean({ default: true })),
     reuseExistingTab: Type.Optional(Type.Boolean({ default: true })),
   }, { additionalProperties: false }),
-  navigate: Type.Union([
-    Type.Object({
-      tabId,
-            url: Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH }),
-      readiness: Type.Optional(Type.Union([Type.Literal("load"), Type.Literal("domContentLoaded"), Type.Literal("none")], { default: "load" })),
-      timeoutMs,
-    }, { additionalProperties: false }),
-    Type.Object({
-      tabId,
-            environmentPort: Type.Integer({ minimum: 1, maximum: 65_535 }),
-      environmentProtocol: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("https")])),
-      path: Type.Optional(Type.String({ maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH })),
-      readiness: Type.Optional(Type.Union([Type.Literal("load"), Type.Literal("domContentLoaded"), Type.Literal("none")], { default: "load" })),
-      timeoutMs,
-    }, { additionalProperties: false }),
-  ]),
-  resize: Type.Union([
-    Type.Object({ tabId, mode: Type.Literal("fill"), timeoutMs }, { additionalProperties: false }),
-    Type.Object({
-      tabId,
-            mode: Type.Literal("freeform"),
-      width: Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION }),
-      height: Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION }),
-      timeoutMs,
-    }, { additionalProperties: false }),
-    Type.Object({
-      tabId,
-            mode: Type.Literal("preset"),
-      presetId: viewportPreset,
-      orientation: Type.Optional(Type.Union([Type.Literal("portrait"), Type.Literal("landscape")])),
-      timeoutMs,
-    }, { additionalProperties: false }),
-  ]),
+  // Tool schemas stay single root objects: Claude drops, and other providers flatten, root anyOf
+  // schemas. parseBrowserAutomationInput enforces the mutually exclusive field combinations.
+  navigate: Type.Object({
+    tabId,
+    url: Type.Optional(Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH, description: "Destination URL. Provide exactly one of url or environmentPort." })),
+    environmentPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65_535, description: "Local environment port. Provide exactly one of url or environmentPort." })),
+    environmentProtocol: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("https")], { description: "Requires environmentPort." })),
+    path: Type.Optional(Type.String({ maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH, description: "Requires environmentPort." })),
+    readiness: Type.Optional(Type.Union([Type.Literal("load"), Type.Literal("domContentLoaded"), Type.Literal("none")], { default: "load" })),
+    timeoutMs,
+  }, { additionalProperties: false }),
+  resize: Type.Object({
+    tabId,
+    mode: Type.Union([Type.Literal("fill"), Type.Literal("freeform"), Type.Literal("preset")]),
+    width: Type.Optional(Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION, description: "Required for mode='freeform' only." })),
+    height: Type.Optional(Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION, description: "Required for mode='freeform' only." })),
+    presetId: Type.Optional(Type.Union(Object.keys(BROWSER_VIEWPORT_PRESETS).map((id) => Type.Literal(id)), { description: "Required for mode='preset' only." })),
+    orientation: Type.Optional(Type.Union([Type.Literal("portrait"), Type.Literal("landscape")], { description: "Optional for mode='preset' only." })),
+    timeoutMs,
+  }, { additionalProperties: false }),
   snapshot: Type.Object({ tabId }, { additionalProperties: false }),
-  click: Type.Union([
-    Type.Object({ tabId, locator, timeoutMs }, { additionalProperties: false }),
-    Type.Object({ tabId, selector, timeoutMs }, { additionalProperties: false }),
-    Type.Object({ tabId, x: Type.Number(), y: Type.Number(), timeoutMs }, { additionalProperties: false }),
-  ]),
-  type: Type.Union([
-    Type.Object({
-      tabId,
-            text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
-      clear: Type.Optional(Type.Boolean({ default: false })),
-      locator,
-      timeoutMs,
-    }, { additionalProperties: false }),
-    Type.Object({
-      tabId,
-            text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
-      clear: Type.Optional(Type.Boolean({ default: false })),
-      selector,
-      timeoutMs,
-    }, { additionalProperties: false }),
-    Type.Object({
-      tabId,
-            text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
-      clear: Type.Optional(Type.Boolean({ default: false })),
-      timeoutMs,
-    }, { additionalProperties: false }),
-  ]),
+  click: Type.Object({
+    tabId,
+    locator: Type.Optional(locator),
+    selector: Type.Optional(selector),
+    x: Type.Optional(Type.Number({ description: "Viewport x coordinate; requires y." })),
+    y: Type.Optional(Type.Number({ description: "Viewport y coordinate; requires x." })),
+    timeoutMs,
+  }, { additionalProperties: false }),
+  type: Type.Object({
+    tabId,
+    text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
+    clear: Type.Optional(Type.Boolean({ default: false })),
+    locator: Type.Optional(locator),
+    selector: Type.Optional(selector),
+    timeoutMs,
+  }, { additionalProperties: false }),
   press: Type.Object({
     tabId,
         key: Type.String({ minLength: 1, maxLength: 128 }),

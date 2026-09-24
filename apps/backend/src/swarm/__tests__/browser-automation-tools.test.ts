@@ -56,12 +56,6 @@ const validInputs: Record<string, Record<string, unknown>> = {
   browser_recording_stop: {},
 };
 
-function schemaObjectBranches(schema: Record<string, unknown>): Array<Record<string, unknown>> {
-  const anyOf = schema.anyOf;
-  if (Array.isArray(anyOf)) return anyOf.flatMap((branch) => schemaObjectBranches(branch as Record<string, unknown>));
-  return schema.type === "object" ? [schema] : [];
-}
-
 describe("browser automation tools", () => {
   it("defines all 13 manager-native schemas and applies protocol defaults through one capability", async () => {
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
@@ -112,13 +106,13 @@ describe("browser automation tools", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps every schema branch strict", async () => {
+  it("keeps every schema a single strict object that provider tool APIs accept", async () => {
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
     const tools = buildBrowserAutomationTools(host(invoke), descriptor());
     for (const tool of tools) {
-      const branches = schemaObjectBranches(tool.parameters as unknown as Record<string, unknown>);
-      expect(branches.length, tool.name).toBeGreaterThan(0);
-      for (const branch of branches) expect(branch.additionalProperties, tool.name).toBe(false);
+      const schema = tool.parameters as unknown as Record<string, unknown>;
+      expect(schema, tool.name).toMatchObject({ type: "object", additionalProperties: false, properties: expect.any(Object) });
+      for (const keyword of ["anyOf", "oneOf", "allOf"]) expect(schema[keyword], tool.name).toBeUndefined();
       expect(Value.Check(tool.parameters, { ...validInputs[tool.name], unexpectedSelector: "external-chrome" }), tool.name).toBe(false);
     }
   });
